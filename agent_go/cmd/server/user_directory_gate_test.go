@@ -63,3 +63,40 @@ func TestAuthMiddlewareDirectoryGateIsNarrow(t *testing.T) {
 		t.Fatalf("single-user mode must not gate: status %d body %s", rr.Code, rr.Body.String())
 	}
 }
+
+func TestAuthMiddlewareCanonicalizesLinkedSSOIdentityWithoutMergingAnotherAccount(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	t.Setenv("AUTH_SECRET", "test-auth-secret-with-enough-entropy")
+	withMemoryUserDirectory(t, `{"users":[
+	  {"id":"owner-id","username":"manish","email":"owner@example.com","sso":{"provider":"supabase-google","external_id":"old-supabase-id"},"admin":true,"can_create":true,"products":[]},
+	  {"id":"reader-id","username":"manish.reader","email":"reader@example.com","sso":{"provider":"supabase-google","external_id":"reader-supabase-id"},"admin":false,"can_create":false,"can_edit":false,"products":["agentworks"]}
+	]}`)
+
+	requestID := func(userID, username, email string) string {
+		t.Helper()
+		token, err := GenerateJWTWithProvider(userID, username, email, "supabase-google")
+		if err != nil {
+			t.Fatalf("GenerateJWTWithProvider: %v", err)
+		}
+		got := ""
+		handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got = GetUserIDFromContext(r.Context())
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		req := httptest.NewRequest(http.MethodGet, "/api/terminals", nil)
+		req.Header.Set("Authorization", "Bearer "+token)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusNoContent {
+			t.Fatalf("status %d body %s", rr.Code, rr.Body.String())
+		}
+		return got
+	}
+
+	if got := requestID("old-supabase-id", "Manish Prakash", "OWNER@example.com"); got != "owner-id" {
+		t.Fatalf("linked owner id = %q, want owner-id", got)
+	}
+	if got := requestID("reader-supabase-id", "Manish Confida", "reader@example.com"); got != "reader-id" {
+		t.Fatalf("reader id = %q, want reader-id", got)
+	}
+}

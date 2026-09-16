@@ -48,14 +48,16 @@ func (api *StreamingAPI) mcpToolUserID(ctx context.Context) (string, error) {
 	return userID, nil
 }
 
-// OAuth discovery metadata is deliberately absent from the global status map.
-// Read the same per-account cache key used by discovery, without making a live
-// connection just to render the server list.
+// OAuth discovery metadata is platform-wide. userID remains in this signature
+// for compatibility with callers that also use it for audit attribution.
 func (api *StreamingAPI) mcpToolStatusForUser(name, userID string, cfg mcpclient.MCPServerConfig) ToolStatus {
+	_ = userID
 	if cfg.OAuth != nil {
-		oauth := *cfg.OAuth
-		oauth.TokenFile = getUserTokenFilePath(userID, name)
-		cfg.OAuth = &oauth
+		if strings.TrimSpace(cfg.OAuth.TokenFile) == "" {
+			oauth := *cfg.OAuth
+			oauth.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+			cfg.OAuth = &oauth
+		}
 		if !hasOAuthTokenFile(cfg) {
 			return ToolStatus{Name: name, Server: name, Status: "not_connected", RequiresOAuth: true}
 		}

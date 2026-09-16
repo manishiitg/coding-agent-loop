@@ -25,14 +25,15 @@ owner of the fix and name the runner-up in the ticket body. Then:
 (`agent_go/cmd/server/pulse_register_integrity_test.go`) enforces the
 register ↔ file invariant in both directions.
 
-## Categories (318 tickets, 2026-09-14)
+## Categories (319 tickets, 2026-09-16)
 
 | Directory | Tickets | What belongs here |
 |---|---|---|
 | `pulse-governance/` | 49 | Pulse reviews, Gate, Fixer, finding identity/lifecycle/dedup, Review+Fix dispatch, verification, review modules, finalizer, focus rotation, goal metrics |
 | `coding-agent-bridge/` | 48 | CLI adapters (Claude/Codex/Pi/Cursor), retained turns, tmux sessions, tool-call event identity, transcripts, live-input, live-attach, MCP bridge behavior |
 | `step-execution/` | 40 | Step execution models (message_sequence/scripted/todo/routing/branch), step_config, step tool surface and DB/filesystem grants, workspace tools, schema migration |
-| `frontend-chat/` | 32 | Chat UI, activity monitor, report pane and reports, execution logs, decision cards, plan/goal views, chat restore, deploy chunk issues |
+| `frontend-chat/` | 31 | Chat UI presentation, activity monitor, report pane and reports, execution logs, decision cards, plan/goal views, deploy chunk issues |
+| `chat-reliability/` | 2 | Durable chat history, user ownership and storage, resume/restore continuity, native transcript reconciliation, chat migration |
 | `scheduler-runs/` | 29 | Scheduling, cron, occurrences, fire decisions, leases, terminal-state reconciliation, run-folder identity, retention, schedule history |
 | `security-sandbox/` | 22 | Landlock/sandbox, Folder Guard, secrets, read-only tier, session isolation, MCP management boundaries, access control |
 | `learnings-knowledge/` | 19 | Reflection turn, learnings/KB contracts and locks, skill and prompt guidance, guidance tests |
@@ -101,7 +102,7 @@ ambiguity is documented rather than lost. Format: ticket → chosen (runner-up).
 - PLAT-171 → coding-agent-bridge (scheduler-runs)
 - PLAT-175 → step-execution (security-sandbox)
 - PLAT-176 → scheduler-runs (step-execution)
-- PLAT-178 → frontend-chat (coding-agent-bridge)
+- PLAT-178 → chat-reliability (coding-agent-bridge)
 - PLAT-182 → scheduler-runs (step-execution)
 - PLAT-184 → cost-telemetry (pulse-governance)
 - PLAT-185 → security-sandbox (step-execution)

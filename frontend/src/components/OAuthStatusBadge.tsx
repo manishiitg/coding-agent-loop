@@ -9,6 +9,7 @@ import { oauthApi } from '../services/oauthApi';
 import type { OAuthDiscoveryResponse } from '../services/oauthApi';
 import { mcpConfigApi } from '../services/mcpConfigApi';
 import { useChatStore } from '../stores';
+import { useAuthStore } from '../stores/useAuthStore';
 import { READ_ONLY_TITLE } from '../hooks/useCanWriteWorkflow';
 
 /** Toasts are global, so read the action lazily rather than subscribing to the store. */
@@ -46,6 +47,14 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
   variant = 'label',
   readOnly = false,
 }) => {
+  const canManagePlatformMCP = useAuthStore(state =>
+    state.user?.is_admin === true || (state.isMultiUserModeChecked && !state.isMultiUserMode),
+  );
+  const effectiveReadOnly = readOnly || !canManagePlatformMCP;
+  const readOnlyTitle = !canManagePlatformMCP
+    ? 'Only a platform administrator can connect or disconnect this shared service'
+    : READ_ONLY_TITLE;
+
   // When the caller knows the connection state, this component stops asking the
   // server about it — that is what removes ~24 polls per 10s from the directory.
   const connectionDriven = connection !== undefined;
@@ -115,6 +124,9 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
   }, [serverName, requiresOAuth, connectionDriven, checkTokenStatus]);
 
   const handleLogin = async (clientId?: string) => {
+    if (!clientId && !window.confirm(
+      `Connect ${serverName} as a shared AgentWorks connection? All users, Work projects, workflows, chats, and schedules will be able to use this authenticated account.`,
+    )) return;
     setLoading(true);
     console.log(`[OAuthStatusBadge] Starting OAuth login for ${serverName}${clientId ? ' with client_id' : ''}`);
     try {
@@ -153,7 +165,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
             setTokenValid(true);
             setLoading(false);
             prevTokenValidRef.current = true;
-            notify(`Connected to ${serverName}`, 'success');
+            notify(`Connected ${serverName} across AgentWorks`, 'success');
             // Only trigger refresh if transitioning from invalid to valid
             if (wasInvalid) {
               console.log(`[OAuthStatusBadge] Triggering onAuthChange for ${serverName}`);
@@ -205,7 +217,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
         handleLogin();
         return;
       }
-      notify(`Connected to ${serverName}`, 'success');
+      notify(`Connected ${serverName} across AgentWorks`, 'success');
       onAuthChange?.(true);
     } catch (error) {
       console.error('[OAuthStatusBadge] Connect failed:', error);
@@ -216,7 +228,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
   };
 
   const handleDisconnect = async () => {
-    if (!window.confirm(`Disconnect ${serverName}? Any workflow using it will lose access until you reconnect.`)) return;
+    if (!window.confirm(`Disconnect the shared ${serverName} connection? Work, workflows, chats, and schedules across AgentWorks will lose access until an administrator reconnects it.`)) return;
     setLoading(true);
     try {
       await mcpConfigApi.disconnectServer(serverName);
@@ -238,6 +250,9 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
       handleLogin();
       return;
     }
+    if (!window.confirm(
+      `Connect ${serverName} as a shared AgentWorks connection? All users, Work projects, workflows, chats, and schedules will be able to use it.`,
+    )) return;
     // Open servers may accept an optional key; ask before connecting.
     setDialogMode('api_key');
   };
@@ -255,6 +270,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
   };
 
   const handleLogout = async () => {
+    if (!window.confirm(`Disconnect the shared ${serverName} connection? AgentWorks users and scheduled workflows will lose access until an administrator reconnects it.`)) return;
     setLoading(true);
     try {
       await oauthApi.logout(serverName);
@@ -309,6 +325,10 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
           {discoveryInfo?.message || `This server does not support automatic client registration. Please enter your OAuth App client ID.`}
         </p>
 
+        <p className="mb-4 rounded-md bg-blue-50 p-2 text-xs text-blue-700 dark:bg-blue-900/20 dark:text-blue-300">
+          This OAuth app and its connected account are shared across AgentWorks, including Work, workflows, chats, and schedules.
+        </p>
+
         {discoveryInfo?.scopes_supported && discoveryInfo.scopes_supported.length > 0 && (
           <div className="mb-4 p-2 bg-blue-50 dark:bg-blue-900/20 rounded text-xs text-blue-700 dark:text-blue-300">
             <span className="font-medium">Discovered scopes:</span>{' '}
@@ -347,7 +367,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
           </button>
           <button
             onClick={handleClientIdSubmit}
-            disabled={readOnly || !clientIdInput.trim()}
+            disabled={effectiveReadOnly || !clientIdInput.trim()}
             className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Continue
@@ -379,7 +399,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
         </div>
 
         <p className="text-sm text-gray-600 dark:text-gray-400 mb-4">
-          This server works without a key. Adding one may unlock additional tools.
+          This server works without a key. Adding one may unlock additional tools. Any key entered here is shared across AgentWorks, including Work, workflows, chats, and schedules.
         </p>
 
         <div className="mb-4">
@@ -407,7 +427,7 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
           </button>
           <button
             onClick={handleApiKeySubmit}
-            disabled={readOnly}
+            disabled={effectiveReadOnly}
             className="px-4 py-2 text-sm font-medium bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
           >
             Connect
@@ -435,13 +455,13 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
               handleLogin();
             }
           }}
-          disabled={readOnly || loading}
+          disabled={effectiveReadOnly || loading}
           className={`group/btn flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border transition-colors disabled:opacity-50 ${
             isConnected
               ? 'border-red-500/30 bg-red-500/10 text-red-500 hover:border-red-500/50 hover:bg-red-500/20 hover:text-red-400'
               : 'border-gray-300 text-gray-500 hover:bg-gray-100 hover:text-gray-900 dark:border-gray-600 dark:text-gray-400 dark:hover:bg-gray-700 dark:hover:text-gray-100'
           }`}
-          title={readOnly ? READ_ONLY_TITLE : isConnected ? `Disconnect ${serverName}` : `Connect ${serverName}`}
+          title={effectiveReadOnly ? readOnlyTitle : isConnected ? `Disconnect ${serverName}` : `Connect ${serverName}`}
           aria-label={isConnected ? `Disconnect ${serverName}` : `Connect ${serverName}`}
         >
           {loading ? (
@@ -464,9 +484,9 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
         <div className="flex items-center gap-1">
           <button
             onClick={() => (connectionDriven ? handleConnectClick() : handleLogin())}
-            disabled={readOnly || loading}
+            disabled={effectiveReadOnly || loading}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-gray-900 dark:bg-gray-100 text-white dark:text-gray-900 hover:bg-gray-700 dark:hover:bg-gray-300 rounded-md transition-colors disabled:opacity-50"
-            title={readOnly ? READ_ONLY_TITLE : 'Connect this service'}
+            title={effectiveReadOnly ? readOnlyTitle : 'Connect this shared platform service'}
           >
             {loading ? (
               <>
@@ -486,9 +506,9 @@ export const OAuthStatusBadge: React.FC<OAuthStatusBadgeProps> = ({
     <div className="flex items-center gap-1.5">
       <button
         onClick={() => (connectionDriven ? handleDisconnect() : handleLogout())}
-        disabled={readOnly || loading}
+        disabled={effectiveReadOnly || loading}
         className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-gray-700 dark:text-gray-300 border border-gray-300 dark:border-gray-600 hover:bg-red-50 dark:hover:bg-red-900/20 hover:text-red-600 dark:hover:text-red-400 hover:border-red-300 dark:hover:border-red-800 rounded-md transition-colors disabled:opacity-50"
-        title={readOnly ? READ_ONLY_TITLE : 'Disconnect — removes the saved token, you will need to connect again'}
+        title={effectiveReadOnly ? readOnlyTitle : 'Disconnect this shared platform service for every user'}
         aria-label={`Disconnect ${serverName}`}
       >
         {loading ? (

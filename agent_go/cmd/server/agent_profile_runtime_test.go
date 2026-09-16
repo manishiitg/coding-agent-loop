@@ -7,13 +7,31 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
+
+func TestAgentProfileSessionKeyTracksDefinitionAndSkillContent(t *testing.T) {
+	base := &resolvedAgentProfile{Definition: agentprofiles.Profile{ID: "work", Version: 1, Skills: []string{"work-mcp"}}}
+	key := agentProfileSessionKey(base, []*llmtypes.Skill{{Name: "work-mcp", Content: "select connected MCP servers"}})
+	if key == "" {
+		t.Fatal("profile key must not be empty")
+	}
+	changedDefinition := &resolvedAgentProfile{Definition: base.Definition}
+	changedDefinition.Definition.Tools = append(changedDefinition.Definition.Tools, agentprofiles.ToolBinding{ID: "update_project_mcp_server_selection"})
+	if got := agentProfileSessionKey(changedDefinition, []*llmtypes.Skill{{Name: "work-mcp", Content: "select connected MCP servers"}}); got == key {
+		t.Fatal("profile key did not change with tool definition")
+	}
+	if got := agentProfileSessionKey(base, []*llmtypes.Skill{{Name: "work-mcp", Content: "new instructions"}}); got == key {
+		t.Fatal("profile key did not change with skill content")
+	}
+}
 
 func TestResolveAgentProfileForQueryResolvesGlobalScopeWithoutFolderOrTitle(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
@@ -287,6 +305,12 @@ func TestResolveAgentProfileInjectsProjectScopedSecretsIntoNativeEnvironment(t *
 	}
 	const userID = "user-1"
 	const workspacePath = "Chats/Video Studio/projects/launch"
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/product.json": `{"schema_version":1,"product":"video-studio","capabilities":{"selected_secrets":["PEXELS_API_KEY"]}}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
 	if err := store.UpsertWorkflowSecret(context.Background(), userID, workspacePath, "PEXELS_API_KEY", encryptProfileSecretForTest(t, userID, "test-key")); err != nil {
 		t.Fatalf("store project secret: %v", err)
 	}

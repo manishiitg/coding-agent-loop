@@ -354,7 +354,7 @@ export const MicButton = forwardRef(function MicButton({
         className={`relative inline-flex h-7 w-7 items-center justify-center rounded-md transition-colors ${
           recording
             ? 'bg-red-100 text-red-700 ring-1 ring-red-300 dark:bg-red-500/15 dark:text-red-400 dark:ring-red-500/40'
-            : 'text-slate-500 hover:bg-slate-200/60 dark:text-slate-400 dark:hover:bg-slate-700/60'
+            : 'border border-input bg-background text-muted-foreground shadow-sm hover:bg-accent hover:text-accent-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring'
         } ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         {busy

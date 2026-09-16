@@ -59,6 +59,7 @@ describe('MainAgentTerminal sizing', () => {
       expect(terminalGrid?.style.minWidth).toBe(`${MAIN_AGENT_TERMINAL_MIN_WIDTH_PX}px`)
       expect(MAIN_AGENT_TERMINAL_MIN_WIDTH_PX).toBe(680)
       expect(host.querySelector('[data-testid="live-terminal"]')).not.toBeNull()
+      expect(getMainTerminal).toHaveBeenCalledWith('session-1', { content: 'history', lines: 10000 })
     } finally {
       await act(async () => root.unmount())
       host.remove()

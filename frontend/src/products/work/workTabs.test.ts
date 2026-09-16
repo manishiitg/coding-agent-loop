@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatTab } from '../../stores/useChatStore'
-import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs } from './workTabs'
+import { applyWorkProjectRuntimeSelection, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, resolveWorkSubmissionTab, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workConversationResumeKey, workTabDisplayName } from './workTabs'
 import { useChatStore } from '../../stores/useChatStore'
 
 function tab(overrides: Partial<ChatTab> & Pick<ChatTab, 'tabId'>): ChatTab {
@@ -41,6 +41,68 @@ describe('visibleWorkProjectTabs', () => {
     const current = tab({ tabId: 'current' })
     const other = tab({ tabId: 'other', metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2' } })
     expect(visibleWorkProjectTabs({ current, other }, 'project-1', null).map(item => item.tabId)).toEqual(['current'])
+  })
+})
+
+describe('workTabDisplayName', () => {
+  it('limits a tab label to three words and twenty characters', () => {
+    expect(workTabDisplayName('Browser resume test C — reply only with ACK-C.')).toBe('Browser resume test…')
+    expect(workTabDisplayName('One unusuallylongword title')).toBe('One unusuallylongwo…')
+  })
+
+  it('keeps short labels unchanged', () => {
+    expect(workTabDisplayName('Fix login')).toBe('Fix login')
+  })
+})
+
+describe('resolveWorkSubmissionTab', () => {
+  const builder = tab({
+    tabId: 'builder',
+    metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileBuilder: true },
+  })
+
+  it('moves a queued Builder send to the conversation opened by the first send', () => {
+    const conversation = tab({
+      tabId: 'conversation',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1:chat-1' },
+    })
+    expect(resolveWorkSubmissionTab(builder, conversation)?.tabId).toBe('conversation')
+  })
+
+  it('keeps the Builder when it is still active', () => {
+    expect(resolveWorkSubmissionTab(builder, builder)?.tabId).toBe('builder')
+  })
+
+  it('never redirects a send into another project', () => {
+    const otherProject = tab({
+      tabId: 'other',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-2', agentProfileConversationKey: 'project-2:chat-1' },
+    })
+    expect(resolveWorkSubmissionTab(builder, otherProject)?.tabId).toBe('builder')
+  })
+})
+
+describe('workConversationResumeKey', () => {
+  it('upgrades a retained legacy project-key tab to its own durable slot', () => {
+    const legacy = tab({
+      tabId: 'legacy',
+      sessionId: 'saved-session',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1' },
+    })
+    expect(workConversationResumeKey(legacy, 'project-1')).toBe('project-1:saved-session')
+  })
+
+  it('preserves a tab-specific logical key across deployments', () => {
+    const retained = tab({
+      tabId: 'retained',
+      sessionId: 'replacement-session',
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1', agentProfileConversationKey: 'project-1:chat-identity' },
+    })
+    expect(workConversationResumeKey(retained, 'project-1')).toBe('project-1:chat-identity')
+  })
+
+  it('does not manufacture a binding for an unsent tab', () => {
+    expect(workConversationResumeKey(tab({ tabId: 'empty', sessionId: null }), 'project-1')).toBeNull()
   })
 })
 

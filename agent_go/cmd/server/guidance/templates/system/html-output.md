@@ -16,20 +16,20 @@ Markdown is the default for human-readable step output — it renders richly in 
 
 ### The in-app workflow report is different from a standalone artifact
 
-`db/reports/index.html` is rendered by the Report tab, not opened as a file.
+HTML documents under `db/reports/` are rendered by the Report tab, not opened as files.
 The tab injects `window.report` (live data), mirrors the APP theme onto the
 document as `class="dark"` + `data-theme="dark"`, exposes the app palette as
 `hsl(var(--background))`-style CSS variables, auto-sizes the frame to the
 content, and owns scrolling. So for the workflow report, the standalone rules
 below change in these specific ways:
 
-| Standalone artifact (a step's `.html` output, a published page) | In-app workflow report (`db/reports/index.html`) |
+| Standalone artifact (a step's `.html` output, a published page) | In-app workflow report (`db/reports/*.html`) |
 |---|---|
 | Dark mode via `@media (prefers-color-scheme: dark)` — follows the OS | Dark mode via `:root.dark` / `[data-theme="dark"]` (or `hsl(var(--token))`); re-style on the `report:theme` event. `prefers-color-scheme` alone ignores the in-app toggle. |
 | Data baked into the file; `Generated: <date>` meta line | Data read live through `window.report.query` inside `window.report.ready(fn)`; no generated-at stamp, the numbers are current by construction |
 | `body { max-width: 960px; margin: 0 auto }` | Full width — the pane is the layout boundary; no fixed body/`html` height, no nested scroll container |
 | Sticky `<nav>` of `#anchors` | Same, or real tabs; `#anchor` clicks are intercepted and scrolled by the host |
-| Self-contained: no external `<link>`/`<script>` | Same — and `validate_report_html` fails on any external stylesheet/script URL |
+| Choose inline CSS/JS, version-pinned HTTPS dependencies, or both | Same. An opted-in `<html data-report-ui="daisyui">` gets the pinned daisyUI stylesheet from jsDelivr; any browser-compatible framework or library is supported. |
 
 Everything else in this doc (summary-first layout, semantic colour, tables,
 inline charts, the quality checklist) applies to both. For the report
@@ -38,8 +38,8 @@ paths — load `reporting-policy.md`.
 
 ### Non-negotiable rules
 
-**Self-contained — no external URLs.**
-Every `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. If you need a charting library, write the chart with vanilla JS or inline SVG — a 30-line draw loop is more reliable than any CDN dependency.
+**External libraries.**
+Choose the CSS and JavaScript stack that fits the report. Plain CSS, Tailwind, Bootstrap, daisyUI, any charting library, native SVG/canvas, and other browser-compatible approaches are all valid. Inline code and version-pinned HTTPS CDN dependencies are both supported. Use `preview_report` to prove the chosen stack loads in the report sandbox, and show a useful error or fallback if an external dependency fails. For compatibility: `data-report-ui="daisyui"` asks the host to inject the pinned daisyUI stylesheet, and daisyUI alone does not provide Tailwind utility classes. These examples are capabilities, not defaults.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same
@@ -356,7 +356,7 @@ The baseline dark values are too low-contrast for review badges. Use these inste
 
 ### Quality checklist — verify before writing the file
 
-- [ ] No external URLs in `<link>` or `<script src>` — all CSS/JS is inline
+- [ ] External `<link>`/`<script src>` dependencies, if any, use HTTPS and an exact pinned version
 - [ ] `@media (prefers-color-scheme: dark)` block present with **high-contrast** badge values
 - [ ] Summary box at the top with key numbers
 - [ ] **Blocker box** (red border, red background) is the first element inside the summary — if there is a top blocker
@@ -370,4 +370,4 @@ The baseline dark values are too low-contrast for review badges. Use these inste
 - [ ] Status fields use `.badge.pass` / `.badge.fail` / `.badge.warn` classes with high-contrast dark values
 - [ ] No raw JSON blobs visible as text — data embedded in JS variables
 - [ ] `<meta viewport>` present for responsive layout
-- [ ] File is self-contained: opening it with no network renders correctly
+- [ ] CDN-backed features have a readable loading/error or fallback state

@@ -54,28 +54,80 @@ type TracedEventLike = { type?: string; timestamp?: string; data?: unknown }
 function eventPromptText(event: TracedEventLike): string {
   const outer = event.data && typeof event.data === 'object' ? event.data as Record<string, unknown> : {}
   const inner = outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : {}
-  const content = inner.content ?? outer.content
+  const content = inner.content ?? inner.final_result ?? inner.result
+    ?? outer.content ?? outer.final_result ?? outer.result
   return typeof content === 'string' ? content.trim() : ''
 }
 
-// The resume_order of the history message that the trace's earliest
-// user_message event corresponds to, or undefined when the trace has no user
-// prompt or none of them matches a persisted message.
-function firstTracedUserPromptOrder(uiEvents: ReadonlyArray<TracedEventLike>, messages: ChatHistoryMessage[]): number | undefined {
-  const traced = uiEvents
-    .filter(event => event.type === 'user_message' && Number.isFinite(Date.parse(event.timestamp || '')))
-    .sort((a, b) => Date.parse(a.timestamp || '') - Date.parse(b.timestamp || ''))
-  for (const event of traced) {
-    const prompt = eventPromptText(event)
-    if (!prompt) continue
-    const match = messages.find(message => {
-      const role = getMessageRole(message)
-      return (role === 'human' || role === 'user') && getMessageText(message).trim() === prompt
-    })
-    const order = match ? Number(match.resume_order) : NaN
-    if (Number.isFinite(order)) return order
+function normalizedCarrierText(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase()
+}
+
+// Find the portion of durable history represented by the bounded UI trace.
+// The trace can end several turns before the conversation history does, so a
+// single start anchor is insufficient: newer durable turns must be placed
+// after the trace's end rather than spread back inside it.
+function tracedHistoryOrderBounds(
+  uiEvents: ReadonlyArray<TracedEventLike>,
+  messages: ChatHistoryMessage[],
+): { first: number; last: number } | undefined {
+  const historyOrders = new Map<string, number[]>()
+  for (const message of messages) {
+    const role = getMessageRole(message)
+    const carrierRole = role === 'human' || role === 'user'
+      ? 'user'
+      : role === 'ai' || role === 'assistant'
+        ? 'assistant'
+        : undefined
+    const order = Number(message.resume_order)
+    if (!carrierRole || !Number.isFinite(order)) continue
+    const rawText = getMessageText(message)
+    const visibleText = carrierRole === 'assistant' ? sanitizeProviderTranscriptContent(rawText) : rawText
+    const text = normalizedCarrierText(visibleText)
+    if (!text) continue
+    const key = `${carrierRole}:${text}`
+    historyOrders.set(key, [...(historyOrders.get(key) || []), order])
   }
-  return undefined
+
+  const matchedOrders: number[] = []
+  for (const event of uiEvents) {
+    if (!Number.isFinite(Date.parse(event.timestamp || ''))) continue
+    const carrierRole = event.type === 'user_message'
+      ? 'user'
+      : event.type === 'llm_generation_end' || event.type === 'unified_completion'
+        ? 'assistant'
+        : undefined
+    if (!carrierRole) continue
+    const text = normalizedCarrierText(eventPromptText(event))
+    if (!text) continue
+    const candidates = historyOrders.get(`${carrierRole}:${text}`) || []
+    // A repeated prompt normally refers to the newest occurrence retained by
+    // the bounded trace. Choosing its latest durable occurrence avoids
+    // anchoring a recent trace to an identically worded old turn.
+    if (candidates.length > 0) matchedOrders.push(Math.max(...candidates))
+  }
+  if (matchedOrders.length === 0) return undefined
+  const first = Math.min(...matchedOrders)
+  let last = Math.max(...matchedOrders)
+  // A retained trace often has the user prompt and tool activity but omits
+  // the assistant carrier. Include the rest of that durable turn up to the
+  // next user prompt; that next prompt is the first definitely post-trace
+  // message and must sort after every retained trace event.
+  const nextUserOrder = messages
+    .filter(message => {
+      const role = getMessageRole(message)
+      const order = Number(message.resume_order)
+      return (role === 'human' || role === 'user') && Number.isFinite(order) && order > last
+    })
+    .map(message => Number(message.resume_order))
+    .sort((a, b) => a - b)[0]
+  if (Number.isFinite(nextUserOrder)) {
+    const sameTurnOrders = messages
+      .map(message => Number(message.resume_order))
+      .filter(order => Number.isFinite(order) && order < nextUserOrder)
+    if (sameTurnOrders.length > 0) last = Math.max(last, ...sameTurnOrders)
+  }
+  return { first, last }
 }
 
 export function conversationToRestoredEvents(conversation: RestorableConversation): PollingEvent[] {
@@ -97,21 +149,30 @@ export function conversationToRestoredEvents(conversation: RestorableConversatio
   //
   // The trace is bounded and can start well after the conversation did (a
   // restart, or the persisted cap). Spreading every message across the trace
-  // put turns from before the trace inside it, above the tool calls and reply
-  // of the newest turn. Anchor on the first user prompt the trace still holds:
-  // messages before it get timestamps before the trace, the rest spread over it.
-  const traceAnchorOrder = firstTracedUserPromptOrder(conversation.ui_events || [], messages)
+  // put turns outside the trace inside it. Use both retained-history bounds:
+  // older messages sit before traceStart, matched messages span the trace, and
+  // later durable turns sit after traceEnd.
+  const traceOrderBounds = tracedHistoryOrderBounds(conversation.ui_events || [], messages)
   const restoredMessageTimestamp = (message: ChatHistoryMessage): string | undefined => {
     const order = Number(message.resume_order)
     if (!Number.isFinite(order) || traceStart === undefined || traceEnd === undefined || sourceMessageCount <= 0) {
       return undefined
     }
-    if (traceAnchorOrder !== undefined && order < traceAnchorOrder) {
-      return new Date(traceStart - ((traceAnchorOrder - order) * 1000)).toISOString()
+    if (traceOrderBounds) {
+      if (order < traceOrderBounds.first) {
+        return new Date(traceStart - ((traceOrderBounds.first - order) * 1000)).toISOString()
+      }
+      if (order > traceOrderBounds.last) {
+        return new Date(traceEnd + ((order - traceOrderBounds.last) * 1000)).toISOString()
+      }
+      if (traceOrderBounds.first === traceOrderBounds.last) {
+        return new Date(traceStart).toISOString()
+      }
+      const position = (order - traceOrderBounds.first) / (traceOrderBounds.last - traceOrderBounds.first)
+      return new Date(traceStart + ((traceEnd - traceStart) * position)).toISOString()
     }
-    const first = traceAnchorOrder ?? 0
-    const span = Math.max(1, sourceMessageCount - first + 1)
-    const position = Math.max(0, Math.min(1, (order - first + 1) / span))
+    const span = Math.max(1, sourceMessageCount + 1)
+    const position = Math.max(0, Math.min(1, (order + 1) / span))
     return new Date(traceStart + ((traceEnd - traceStart) * position)).toISOString()
   }
   // Page identity is durable across "Load earlier" requests. Without this,

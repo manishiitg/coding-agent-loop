@@ -41,6 +41,9 @@ const agentProfileConversationTitleLimit = 72
 // line; a chat with no message yet is "New chat".
 func conversationTitleFrom(session *ChatHistorySession, fallback string) string {
 	if session != nil {
+		if title := strings.TrimSpace(session.Title); title != "" {
+			return title
+		}
 		first := strings.TrimSpace(strings.SplitN(strings.TrimSpace(session.Query), "\n", 2)[0])
 		if first != "" {
 			if runes := []rune(first); len(runes) > agentProfileConversationTitleLimit {
@@ -59,8 +62,11 @@ func conversationTitleFrom(session *ChatHistorySession, fallback string) string 
 // and the registry each record them: with or without the per-user prefix.
 func normalizeConversationWorkspace(workspacePath string) string {
 	clean := strings.Trim(strings.TrimSpace(strings.ReplaceAll(workspacePath, "\\", "/")), "/")
-	if strings.HasPrefix(clean, "_users/") {
-		if rest := strings.SplitN(clean, "/", 3); len(rest) == 3 {
+	// Runtime history may store the user-relative path while the resolved
+	// project binding is absolute under the document root. Compare both from
+	// the stable _users/<id>/ boundary.
+	if index := strings.Index(clean, "_users/"); index >= 0 && (index == 0 || clean[index-1] == '/') {
+		if rest := strings.SplitN(clean[index:], "/", 3); len(rest) == 3 {
 			clean = rest[2]
 		}
 	}
@@ -76,8 +82,11 @@ func chatHistorySessionWorkspace(session ChatHistorySession) string {
 
 // chatHistorySessionsByID indexes the user's chat history for titling and
 // for finding chats the registry never listed.
-func chatHistorySessionsByID(userID string) map[string]ChatHistorySession {
-	sessions, err := ListChatHistorySessions(userID, 2000, 0, "")
+func chatHistorySessionsByID(userID, workspacePath string) map[string]ChatHistorySession {
+	// Work transcripts live inside their project rather than the user's legacy
+	// global chat_history directory. Scope the lookup to the resolved product
+	// workspace so resume and ownership checks see the same rows as Workshop.
+	sessions, err := ListChatHistorySessions(userID, 2000, 0, normalizeConversationWorkspace(workspacePath))
 	if err != nil {
 		return map[string]ChatHistorySession{}
 	}
@@ -92,7 +101,7 @@ func summarizeProductConversation(record ProductConversationRecord, session *Cha
 	summary := AgentProfileConversationSummary{
 		SessionID:      record.SessionID,
 		ConversationID: record.ConversationID,
-		Title:          conversationTitleFrom(session, ""),
+		Title:          conversationTitleFrom(session, record.Title),
 		CreatedAt:      record.CreatedAt,
 		UpdatedAt:      record.UpdatedAt,
 		Current:        current,
@@ -160,7 +169,7 @@ func (api *StreamingAPI) handleListAgentProfileConversations(w http.ResponseWrit
 		writeAgentProfileError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	sessions := chatHistorySessionsByID(userID)
+	sessions := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)
 	lookup := func(sessionID string) *ChatHistorySession {
 		if session, ok := sessions[sessionID]; ok {
 			return &session
@@ -221,14 +230,15 @@ func (api *StreamingAPI) handleSwitchAgentProfileConversation(w http.ResponseWri
 		writeAgentProfileError(w, http.StatusBadRequest, "session_id is required")
 		return
 	}
-	userID, slot, ok := api.agentProfileConversationSlot(w, r, input.ConversationKey)
+	conversationKey := agentProfileResumeConversationKey(strings.TrimSpace(mux.Vars(r)["id"]), input)
+	userID, slot, ok := api.agentProfileConversationSlot(w, r, conversationKey)
 	if !ok {
 		return
 	}
 	// A chat the registry never listed is accepted when chat_history shows it
 	// belongs to this slot's workspace.
 	verified := false
-	if session, found := chatHistorySessionsByID(userID)[strings.TrimSpace(input.SessionID)]; found {
+	if session, found := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)[strings.TrimSpace(input.SessionID)]; found {
 		verified = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(slot.binding.WorkspacePath)
 	}
 	conversation, err := defaultProductConversationRegistryStore().switchTo(r.Context(), userID, slot.profile, slot.binding, input.SessionID, verified)
@@ -282,7 +292,7 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 		}
 	}
 	if !owned {
-		if session, found := chatHistorySessionsByID(userID)[sessionID]; found {
+		if session, found := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)[sessionID]; found {
 			owned = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(slot.binding.WorkspacePath)
 		}
 	}

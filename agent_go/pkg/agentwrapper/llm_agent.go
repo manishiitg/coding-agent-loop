@@ -380,7 +380,8 @@ type LLMAgentConfig struct {
 	// This enables connection reuse in stateful MCP servers.
 	SessionID string
 
-	// User ID for per-user OAuth token isolation
+	// Optional MCP credential namespace. AgentWorks leaves this empty because
+	// MCP credentials are resolved from its shared platform configuration.
 	UserID string
 
 	// RuntimeOverrides allows runtime modification of MCP server configuration per-agent.
@@ -705,6 +706,25 @@ func (w *LLMAgentWrapper) AttachSkill(skill *llmtypes.Skill) error {
 	}
 	if skill == nil {
 		return errors.New("skill cannot be nil")
+	}
+	// Incremental assembly can discover the same skill through more than one
+	// configuration source. For example, Workflow Builder receives installed
+	// playbooks through both capabilities.selected_skills and
+	// installed_playbooks. The legacy registry was keyed by name; preserve that
+	// idempotent, last-write-wins behavior while assembling the immutable slice.
+	// mcpagent deliberately remains strict and rejects duplicates that reach its
+	// final definition boundary.
+	name := strings.TrimSpace(skill.Name)
+	if name != "" {
+		for i, existing := range w.definition.Skills {
+			if existing != nil && strings.TrimSpace(existing.Name) == name {
+				if w.logger != nil {
+					w.logger.Debug(fmt.Sprintf("Re-attached skill %q; replacing the earlier definition", name))
+				}
+				w.definition.Skills[i] = skill
+				return nil
+			}
+		}
 	}
 	w.definition.Skills = append(w.definition.Skills, skill)
 	return nil

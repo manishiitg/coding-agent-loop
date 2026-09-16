@@ -34,6 +34,7 @@ interface ExecutionLogsPopupProps {
   // refresh is clicked. Optional: the standalone (non-embedded) popup has no
   // parent-owned folder list to refresh.
   onRefreshRunFolders?: () => void | Promise<void>
+  headerAction?: React.ReactNode
 }
 
 const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
@@ -45,7 +46,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   runFolderInfos = [],
   startedAt,
   embedded = false,
-  onRefreshRunFolders
+  onRefreshRunFolders,
+  headerAction,
 }) => {
   const {
     runFolderOptions,
@@ -117,6 +119,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           loading={loading}
           loadLogs={loadLogs}
           onRefreshRunFolders={onRefreshRunFolders}
+          headerAction={headerAction}
         />
       }
     >

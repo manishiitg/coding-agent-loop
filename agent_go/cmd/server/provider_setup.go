@@ -55,7 +55,12 @@ var providerSetupCommands = map[string]map[string]providerSetupCommand{
 		"usage":        {command: "claude", args: []string{"--tools", ""}},
 	},
 	"codex-cli": {
-		"authenticate": {command: "codex", args: []string{"login"}},
+		// --device-auth prints a URL + code to authenticate from any device,
+		// rather than starting a local callback server on localhost:1455 and
+		// waiting for a browser redirect back to this same machine -- this
+		// process almost always runs on a remote/headless server with no
+		// local browser of its own, where the plain flow can never complete.
+		"authenticate": {command: "codex", args: []string{"login", "--device-auth"}},
 		"inspect":      {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
 		"usage":        {command: "codex", args: []string{"--sandbox", "read-only", "--ask-for-approval", "never"}},
 	},

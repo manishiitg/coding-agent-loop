@@ -57,11 +57,25 @@ func TestQueryRequestForAgentProfileChatUsesOnlyServerOwnedProfileConfiguration(
 	if query.SelectedFolder != "Chats" || query.AgentProfileContext.ProjectTitle != "Dominion" {
 		t.Fatalf("unexpected server-owned workspace binding: folder=%q context=%+v", query.SelectedFolder, query.AgentProfileContext)
 	}
-	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "" {
-		t.Fatalf("browser-controlled restore leaked into query: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
+	if query.RestoredConversationPath != "" || query.RestoredConversationSessionID != "session-1" {
+		t.Fatalf("server-owned resume identity missing or browser path leaked: path=%q session=%q", query.RestoredConversationPath, query.RestoredConversationSessionID)
 	}
 	if query.AgentMode != "multi-agent" || query.DisableLiveInputDelivery {
 		t.Fatalf("unexpected runner configuration: mode=%q disable_live_input=%v", query.AgentMode, query.DisableLiveInputDelivery)
+	}
+}
+
+func TestWorkResumeKeyIsDerivedFromProjectAndSavedChat(t *testing.T) {
+	input := AgentProfileConversationRequest{ResourceID: "project-1", SessionID: "saved-chat"}
+	if got := agentProfileResumeConversationKey("work", input); got != "project-1:saved-chat" {
+		t.Fatalf("resume key=%q", got)
+	}
+	input.ConversationKey = "existing:key"
+	if got := agentProfileResumeConversationKey("work", input); got != "existing:key" {
+		t.Fatalf("existing key was replaced: %q", got)
+	}
+	if got := agentProfileResumeConversationKey("video-studio", AgentProfileConversationRequest{ResourceID: "launch", SessionID: "saved-chat"}); got != "launch" {
+		t.Fatalf("non-Work project key=%q", got)
 	}
 }
 
@@ -209,6 +223,17 @@ func TestQueryRequestForAgentProfileChatRejectsUndeclaredChatExtras(t *testing.T
 	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
 	if err == nil {
 		t.Fatal("expected a fixed-purpose profile to reject user-selected MCP servers")
+	}
+}
+
+func TestQueryRequestForAgentProfileChatAcceptsNoServersSentinelOnFixedPurposeProfile(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"NO_SERVERS"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err != nil {
+		t.Fatalf("expected the NO_SERVERS sentinel to be accepted even when MCP selection is disabled, got %v", err)
 	}
 }
 

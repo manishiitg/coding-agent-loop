@@ -32,6 +32,10 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
   const workspacePath = decodeBase64Utf8(encodedPath);
   const isValidPath = workspacePath !== null && isSafeReportWorkspacePath(workspacePath);
   const isWrongPersonalAccount = Boolean(ownerUid && ownerUid !== currentUserId);
+  const requestedDocument = new URLSearchParams(window.location.search).get("document") || "db/reports/index.html";
+  const documentPath = /^db\/reports\/(?!.*(?:^|\/)\.\.(?:\/|$))[^\\]+\.html$/i.test(requestedDocument)
+    ? requestedDocument
+    : "db/reports/index.html";
 
   if (!isValidPath || isWrongPersonalAccount) {
     return (
@@ -39,7 +43,7 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
         <div className="w-full max-w-md rounded-lg border border-border bg-card p-6 text-center shadow-sm">
           <BarChart3 className="mx-auto mb-4 h-10 w-10 text-muted-foreground" />
           <h1 className="mb-2 text-lg font-semibold">{isWrongPersonalAccount ? "Dashboard unavailable" : "Invalid dashboard URL"}</h1>
-          <p className="mb-4 text-sm text-muted-foreground">{isWrongPersonalAccount ? "This Work dashboard belongs to a different signed-in account." : "The dashboard URL must include a valid encoded workflow or Work project path."}</p>
+          <p className="mb-4 text-sm text-muted-foreground">{isWrongPersonalAccount ? "This Crew dashboard belongs to a different signed-in account." : "The dashboard URL must include a valid encoded workflow or Crew project path."}</p>
           {onBack && (
             <button type="button" onClick={onBack} className="rounded-md border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted">
               Go back
@@ -52,7 +56,7 @@ export function ReportPage({ encodedPath, ownerUid, currentUserId, onBack }: Rep
 
   return (
     <div className="h-screen min-h-screen overflow-hidden bg-background text-foreground">
-      <ReportView workspacePath={workspacePath} onClose={onBack} />
+      <ReportView workspacePath={workspacePath} documentPath={documentPath} onClose={onBack} />
     </div>
   );
 }

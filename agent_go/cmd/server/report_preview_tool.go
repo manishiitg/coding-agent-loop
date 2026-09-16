@@ -13,7 +13,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
-// preview_report renders the workflow's db/reports/index.html in a headless
+// preview_report renders a workflow HTML document under db/reports/ in a headless
 // browser through the same host runtime the Report tab uses, and reports what
 // a reviewer would otherwise only learn by opening the tab: did the page
 // settle, did its script throw, which tabs exist, which "Loading…"
@@ -59,6 +59,10 @@ func (api *StreamingAPI) registerReportPreviewTool(registrar definitionToolRegis
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
+			"document_path": map[string]interface{}{
+				"type":        "string",
+				"description": "Report document under db/reports/ to preview. Defaults to db/reports/index.html.",
+			},
 			"theme": map[string]interface{}{
 				"type":        "string",
 				"enum":        []string{"dark", "light", "both"},
@@ -72,7 +76,7 @@ func (api *StreamingAPI) registerReportPreviewTool(registrar definitionToolRegis
 		},
 		"additionalProperties": false,
 	}
-	description := "Render db/reports/index.html in a headless browser exactly as the Report tab does and return the real outcome: settled/error state, the report's own script errors, failed data reads, tab labels, any 'Loading…' text left behind, page height, and screenshot paths under db/reports/preview/ per theme and width (open them with read_image). Run after validate_report_html passes; it is slower (~10-30s) and needs a browser."
+	description := "Render one HTML document under db/reports/ in a headless browser exactly as the Report tab does and return the real outcome: settled/error state, script errors, failed data reads, tab labels, stale loading text, page height, and screenshots. document_path defaults to db/reports/index.html. Run after validate_report_html passes; it is slower (~10-30s) and needs a browser."
 	return registrar.RegisterCustomToolWithTimeout(
 		"preview_report",
 		description,
@@ -129,6 +133,10 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 	if workspacePath == "" {
 		return "", fmt.Errorf("preview_report needs a workflow workspace")
 	}
+	documentPath, err := cleanReportDocumentPath(args["document_path"])
+	if err != nil {
+		return "", err
+	}
 	themes := reportPreviewChoices(args["theme"], []string{"dark", "light"})
 	widths := reportPreviewWidthChoices(args["width"])
 
@@ -136,9 +144,9 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 	if err != nil {
 		return "", fmt.Errorf("mint preview token: %w", err)
 	}
-	pageURL := fmt.Sprintf("%s%s?workspace=%s&token=%s&theme=%s&width=%d",
+	pageURL := fmt.Sprintf("%s%s?workspace=%s&token=%s&theme=%s&width=%d&document=%s",
 		strings.TrimRight(api.GetCodeExecAPIURL(), "/"), reportPreviewPagePath,
-		url.QueryEscape(workspacePath), url.QueryEscape(token), themes[0], reportPreviewTabletWidth)
+		url.QueryEscape(workspacePath), url.QueryEscape(token), themes[0], reportPreviewTabletWidth, url.QueryEscape(documentPath))
 
 	// Always headless and always its own session: the preview must never take
 	// over the user's CDP Chrome or a browser session the workflow is using.
@@ -213,6 +221,12 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 		if common.GetSessionShellConfig(sessionID) == nil {
 			prefix = workspacePath + "/"
 		}
+		screenshotDir := reportPreviewScreenshotDir
+		if documentPath != "db/reports/index.html" {
+			slug := strings.TrimSuffix(strings.TrimPrefix(documentPath, "db/reports/"), ".html")
+			slug = strings.NewReplacer("/", "-", " ", "-").Replace(slug)
+			screenshotDir += "/" + slug
+		}
 		for _, theme := range themes {
 			if _, err := eval(fmt.Sprintf("window.__reportPreview.setTheme(%q)", theme)); err != nil {
 				log.Printf("[REPORT_PREVIEW] set theme %s: %v", theme, err)
@@ -224,8 +238,8 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 				}
 				time.Sleep(400 * time.Millisecond)
 				name := fmt.Sprintf("%s-%s.png", theme, width)
-				destination := prefix + reportPreviewScreenshotDir + "/" + name
-				shot := reportPreviewScreenshot{Theme: theme, Width: px, Path: reportPreviewScreenshotDir + "/" + name}
+				destination := prefix + screenshotDir + "/" + name
+				shot := reportPreviewScreenshot{Theme: theme, Width: px, Path: screenshotDir + "/" + name}
 				if _, err := run("screenshot", destination, "--full"); err != nil {
 					// Retry without the full-page flag in case this CLI build rejects it.
 					if _, retryErr := run("screenshot", destination); retryErr != nil {
@@ -237,8 +251,9 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 		}
 	}
 
-	summary := reportPreviewSummary(snapshot, screenshots)
+	summary := reportPreviewSummary(snapshot, screenshots, documentPath)
 	result := map[string]interface{}{
+		"document_path":  documentPath,
 		"state":          snapshot.PreviewState,
 		"summary":        summary,
 		"title":          snapshot.Report.Title,
@@ -263,10 +278,26 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 	return string(out), nil
 }
 
-func reportPreviewSummary(s reportPreviewSnapshot, shots []reportPreviewScreenshot) string {
+func cleanReportDocumentPath(value interface{}) (string, error) {
+	raw := strings.TrimSpace(fmt.Sprint(value))
+	if raw == "" || raw == "<nil>" {
+		return "db/reports/index.html", nil
+	}
+	if raw != strings.ReplaceAll(raw, "\\", "/") || !strings.HasPrefix(raw, "db/reports/") || !strings.HasSuffix(strings.ToLower(raw), ".html") {
+		return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+	}
+	for _, part := range strings.Split(raw, "/") {
+		if part == "" || part == "." || part == ".." {
+			return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+		}
+	}
+	return raw, nil
+}
+
+func reportPreviewSummary(s reportPreviewSnapshot, shots []reportPreviewScreenshot, documentPath string) string {
 	switch s.PreviewState {
 	case "missing":
-		return "No db/reports/index.html exists for this workflow."
+		return fmt.Sprintf("No %s exists for this workspace.", documentPath)
 	case "failed":
 		return "The preview page itself could not load the report (see fetch_errors)."
 	case "loading":

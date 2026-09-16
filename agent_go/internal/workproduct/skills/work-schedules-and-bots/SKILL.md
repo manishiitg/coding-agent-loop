@@ -1,13 +1,13 @@
 ---
 name: work-schedules-and-bots
-description: Manage Work's message-only project schedules, authenticated webhook triggers, Slack or WhatsApp project-chat bots, and connected Gmail accounts. Use when the user asks for recurring work, event-driven work, a scheduled message, an API trigger, bot routing, email notifications, or reading Gmail in a Work project.
+description: Manage Crew's message-only project schedules, authenticated webhook triggers, Slack or WhatsApp project-chat bots, and connected Gmail accounts. Use when the user asks for recurring work, event-driven work, a scheduled message, an API trigger, bot routing, email notifications, or reading Gmail in a Crew project.
 ---
 
-# Work schedules and bots
+# Crew schedules and bots
 
 ## Project schedules
 
-- A Work schedule contains exactly one message sent to this project's Builder
+- A Crew schedule contains exactly one message sent to this project's Builder
   conversation. It is not an AgentWorks workflow, route, phase, or execution.
 - Use `list_project_schedules` before updating, deleting, or triggering. Use the
   exact returned schedule ID.
@@ -19,7 +19,7 @@ description: Manage Work's message-only project schedules, authenticated webhook
 
 ## Project webhook triggers
 
-- A Work webhook trigger contains one saved instruction. Each authenticated
+- A Crew webhook trigger contains one saved instruction. Each authenticated
   JSON delivery sends that instruction into this project's durable Builder
   conversation together with the workspace-relative payload file path.
 - Use `list_project_triggers` before updating or deleting a trigger. Use the
@@ -28,16 +28,16 @@ description: Manage Work's message-only project schedules, authenticated webhook
   and either `bearer` or `github` authentication. Return the generated endpoint
   and one-time secret immediately; the secret cannot be listed later.
 - Rotating a secret invalidates the old credential. Never write a trigger
-  secret or raw delivery payload into `product.json`, chat instructions, logs,
+  secret or raw delivery payload into `workflow.json`, chat instructions, logs,
   or source files.
-- Work triggers do not select or execute AgentWorks routes, steps, phases,
+- Crew triggers do not select or execute AgentWorks routes, steps, phases,
   Pulse, or workflow runs. Use an AgentWorks workflow webhook when those
   orchestration semantics are required.
 
 ## Project-chat bots
 
 Slack and WhatsApp bot connections use the shared AgentWorks connector
-infrastructure, but their route target is this Work project chat. Configuration
+infrastructure, but their route target is this Crew project chat. Configuration
 is in **Setup > Bots**. If no bot-management tool is available in the current
 turn, explain the exact UI location rather than pretending a route was created.
 Bot messages inherit this project's workspace boundary, selected skills, MCP
@@ -51,7 +51,7 @@ servers, and available secrets.
 - Before calling `google_workspace_cli`, use `list_skills` to check whether the
   upstream `gog` skills are installed. If they are missing, call
   `install_skill(source="https://github.com/openclaw/gogcli")`. Do this only
-  when Google Workspace work needs the CLI guidance; opening a Work project
+  when Google Workspace work needs the CLI guidance; opening a Crew project
   must not install external software or skills automatically.
 - Use `read_skill` to load `gog` and the relevant installed `gog-gmail`,
   `gog-drive`, `gog-sheets`, `gog-docs`, `gog-slides`, or `gog-calendar`

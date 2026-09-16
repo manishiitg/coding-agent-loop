@@ -1,9 +1,16 @@
-Design the workflow's reporting UI from the ground up. Load
-`read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"},{"name":"builder-reference","path":"references/html-output.md"}])`
-first and follow it. A workflow report is one complete HTML experience at
-`db/reports/index.html`; its own HTML chooses tabs, sections, sidebar, or a
-single scrolling layout. There is no `report_plan.json`, JSON layout, or
-platform-generated report navigation. Optional built-in metric widgets fit
+Design the workflow's reporting UI from the ground up. First load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`,
+then load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/html-output.md"}])`.
+Then load `read_skill(skills=[{"name":"ui-ux-pro-max"}])` and use its design
+intelligence where it helps the requested outcome. It advises visual and
+interaction decisions; it does not select a framework or override the report
+runtime contract.
+A workflow report consists of one or more complete HTML
+documents under `db/reports/`; `index.html` is the default and the shared top
+toolbar exposes additional documents. Use optional `views.json` only for view
+titles, ordering, and default selection—not as a widget/layout plan. Each
+document owns its internal sections. Optional built-in metric widgets fit
 inside the workflow-owned HTML.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
@@ -97,11 +104,17 @@ the tablet view sparse.
 3. Write the complete experience as `db/reports/index.html`. Include a
    meaningful `<title>` and accessible internal navigation when needed. Use
    `window.report` data helpers or `query` for live data, inline CSS/JS, responsive layout, clear
-   empty/error states, no external CDN, no fixed body height, and no nested
+   empty/error states, version-pinned HTTPS CDN dependencies only when useful,
+   no fixed body height, and no nested
    scrolling. Theme off the app, not the OS: style dark mode under
    `:root.dark` / `[data-theme="dark"]` (or use the injected
    `hsl(var(--background))`-style tokens) — `prefers-color-scheme` alone
    ignores the in-app light/dark toggle.
+   Choose the CSS, component, and charting stack that best fits the report;
+   plain CSS, Tailwind, Bootstrap, daisyUI, Chart.js, other browser libraries,
+   SVG, and canvas are all valid. Every CDN-backed feature needs a readable
+   fallback, and `preview_report` must verify the chosen stack actually loaded
+   in both themes and at all required widths.
 4. **Markdown belongs in the report as rendered prose, never as raw text.**
    A markdown file the workflow keeps under `db/` (a weekly summary, a
    strategy note, a generated brief) drops in with one call, themed to
@@ -147,13 +160,13 @@ the tablet view sparse.
    visibly, and only record tests when requested by the workflow/user. Ensure the
    recording is finalized before storing its durable path. This API serves
    existing media; it does not automatically record tests or attach their results.
-5. Call `validate_report_html` after editing; repair every error. It now
+5. Call `validate_report_html` for every document after editing; repair every error. It now
    also runs every literal `window.report.query` SQL against the live
    `db/db.sqlite`, checks that every referenced `db/` file exists, rejects
-   external stylesheet/script URLs, and warns when dark mode keys only off
+   broken local stylesheet/script references, and warns when dark mode keys only off
    the OS scheme. A query built from variables is reported as unchecked —
    prefer literal SQL so the validator can see it.
-6. Call `preview_report` after validation passes. It renders the report in a
+6. Call `preview_report` for every changed document after validation passes. It renders the report in a
    real headless browser through the same runtime the Report tab uses and
    reports whether it settled, its script/fetch errors, its tab labels, any
    `Loading…` text never replaced, and screenshots at tablet (primary), mobile,

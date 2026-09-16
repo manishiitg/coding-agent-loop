@@ -9,7 +9,7 @@ import (
 func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	api := &StreamingAPI{}
 	reg := &recordingRegistrar{}
-	if err := api.registerOpenWorkWorkspaceViewTool(reg, "work-chat", "Chats/Work/projects/demo"); err != nil {
+	if err := api.registerOpenWorkWorkspaceViewTool(reg, "user-1", "work-chat", "Chats/Work/projects/demo"); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
@@ -31,6 +31,24 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
 		t.Fatalf("workflow-only view was accepted: %s err=%v", out, err)
+	}
+}
+
+func TestWorkUIUsesPublicWorkspaceForUserScopedProductConversation(t *testing.T) {
+	for _, workspace := range []string{
+		"Chats/Work/projects/demo",
+		"_users/user-1/Chats/Work/projects/demo",
+	} {
+		t.Run(workspace, func(t *testing.T) {
+			api := &StreamingAPI{}
+			reg := &recordingRegistrar{}
+			if err := api.registerOpenWorkWorkspaceViewTool(reg, "user-1", "work-chat", workspace); err != nil {
+				t.Fatal(err)
+			}
+			if got, want := api.uiBroker().scope("work-chat"), "Chats/Work/projects/demo"; got != want {
+				t.Fatalf("UI workspace scope = %q, want %q", got, want)
+			}
+		})
 	}
 }
 

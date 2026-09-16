@@ -22,6 +22,7 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		Access: &WorkflowAccess{Owners: []string{"owner"}},
 	})
 	productPath := "_users/reader/Chats/Work/projects/banking/product.json"
+	runtimePath := "_users/reader/Chats/Work/projects/banking/workflow.json"
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		manifestPath("Workflow/hdfc-personal"): string(shared),
 		manifestPath("Workflow/private-bank"):  string(private),
@@ -59,10 +60,15 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
 	}
 	workspace.mu.Lock()
-	saved := workspace.files[productPath]
+	productSaved := workspace.files[productPath]
+	saved := workspace.files[runtimePath]
 	workspace.mu.Unlock()
-	if !strings.Contains(saved, `"custom": "keep"`) || !strings.Contains(saved, `"Workflow/hdfc-personal"`) {
-		t.Fatalf("product manifest was not preserved and updated: %s", saved)
+	var productMetadata map[string]interface{}
+	if json.Unmarshal([]byte(productSaved), &productMetadata) != nil || productMetadata["custom"] != "keep" || strings.Contains(productSaved, `Workflow/hdfc-personal`) {
+		t.Fatalf("product metadata was changed: %s", productSaved)
+	}
+	if !strings.Contains(saved, `"Workflow/hdfc-personal"`) || !strings.Contains(saved, `"selected_skills"`) {
+		t.Fatalf("workflow runtime manifest was not migrated and updated: %s", saved)
 	}
 	out, err = registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "personal"})
 	if err != nil || !strings.Contains(out, `"attached": true`) {
@@ -77,6 +83,39 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	}
 	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") {
 		t.Fatalf("detached workflow remained in active read guard: %+v", cfg)
+	}
+}
+
+func TestBuilderAccessibleWorkflowListUsesCurrentUserAccessWithoutCrewMutationTools(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"builder","username":"builder","products":[]},{"id":"owner","username":"owner","products":[]}]}`)
+	shared, _ := json.Marshal(WorkflowManifest{
+		ID: "shared", Label: "Shared workflow",
+		Access: &WorkflowAccess{Owners: []string{"owner"}, Readers: []string{"builder"}},
+	})
+	private, _ := json.Marshal(WorkflowManifest{
+		ID: "private", Label: "Private workflow",
+		Access: &WorkflowAccess{Owners: []string{"owner"}},
+	})
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		manifestPath("Workflow/shared"):  string(shared),
+		manifestPath("Workflow/private"): string(private),
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+
+	api := &StreamingAPI{}
+	registrar := &recordingRegistrar{}
+	if err := api.registerAccessibleWorkflowListTool(registrar, "builder", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(registrar.tools) != 1 {
+		t.Fatalf("builder discovery registered %d tools, want only list_accessible_workflows", len(registrar.tools))
+	}
+	out, err := registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{})
+	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/shared"`) || strings.Contains(out, "Private workflow") || strings.Contains(out, `"attached"`) {
+		t.Fatalf("builder discovery out=%s err=%v", out, err)
 	}
 }
 

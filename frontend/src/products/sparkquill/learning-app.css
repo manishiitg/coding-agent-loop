@@ -365,6 +365,10 @@
 /* Same fix as .fl-child-side-scroll: the viewed file already has its own
    padding, so this outer layer only needs to clear the toolbar buttons. */
 .fl-drawer-scroll { flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 16px; padding: 8px; }
+/* The live browser view manages its own internal scrolling (viewport +
+   tab strip); it needs to be a flex item that can actually grow, not the
+   drawer's own vertical scroll, or the video area collapses to 0 height. */
+.fl-browser-view { display: flex; flex: 1; min-height: 420px; margin: -8px; }
 .fl-context-card { padding: 18px; border: 1px solid #efd36f; border-radius: 18px; background: #fff8dc; }
 .fl-context-card dl { display: grid; gap: 9px; margin: 14px 0 0; }
 .fl-context-card dl div { padding: 11px 12px; border: 1px solid #efd985; border-radius: 12px; background: rgba(255, 255, 255, .65); }

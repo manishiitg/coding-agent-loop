@@ -205,43 +205,11 @@ export function WorkModelsPanel({
           workspacePath={workspacePath}
           message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
           onAsk={onAsk}
-          className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          iconOnly
+          className="inline-flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
         />
-        {canCheckUsage && usageSupported && (
-          <button
-            type="button"
-            onClick={() => void checkUsage()}
-            disabled={usageStarting || usageSession?.status === 'running'}
-            className="flex shrink-0 items-center gap-1.5 self-center rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:cursor-not-allowed disabled:opacity-50"
-          >
-            {usageStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
-            Check usage
-          </button>
-        )}
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
-        {usageSession && (
-          <GuidedProviderTerminal
-            session={usageSession}
-            onFinished={setUsageSession}
-            onClose={() => setUsageSession(null)}
-          />
-        )}
-        {usageError && (
-          <div className="mb-4 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300">
-            <p>{usageError}</p>
-            {usageConflict && (
-              <button
-                type="button"
-                onClick={() => void checkUsage(true)}
-                disabled={usageStarting}
-                className="mt-2 rounded-md border border-red-300 bg-background px-2.5 py-1.5 font-medium hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/50"
-              >
-                End existing usage check and retry
-              </button>
-            )}
-          </div>
-        )}
         <WorkflowLLMConfigurationPanel
           workspacePath={workspacePath}
           llmConfig={llmConfig}
@@ -279,6 +247,49 @@ export function WorkModelsPanel({
           )}
         </section>
         {hasStarted && <p className="mt-3 text-xs text-muted-foreground">Changing the coding agent or model relaunches this project's retained session on the next message while keeping the project chat history.</p>}
+        {canCheckUsage && usageSupported && (
+          <section className="mt-5 border-t border-border pt-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-sm font-medium text-foreground">Provider usage</h3>
+                <p className="mt-0.5 text-xs text-muted-foreground">View limits for the connected {selectedOption?.label || 'provider'} account.</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => void checkUsage()}
+                disabled={usageStarting || usageSession?.status === 'running'}
+                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {usageStarting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Gauge className="h-3.5 w-3.5" />}
+                Check usage
+              </button>
+            </div>
+            {usageSession && (
+              <div className="mt-3">
+                <GuidedProviderTerminal
+                  session={usageSession}
+                  onFinished={setUsageSession}
+                  onClose={() => setUsageSession(null)}
+                />
+              </div>
+            )}
+            {usageError && (
+              <div className="mt-3 rounded-lg border border-red-300 bg-red-50 px-3 py-2 text-xs text-red-700 dark:border-red-900 dark:bg-red-950/25 dark:text-red-300">
+                <p>{usageError}</p>
+                {usageConflict && (
+                  <button
+                    type="button"
+                    onClick={() => void checkUsage(true)}
+                    disabled={usageStarting}
+                    className="mt-2 rounded-md border border-red-300 bg-background px-2.5 py-1.5 font-medium hover:bg-red-100 disabled:opacity-50 dark:border-red-800 dark:hover:bg-red-950/50"
+                  >
+                    End existing usage check and retry
+                  </button>
+                )}
+              </div>
+            )}
+          </section>
+        )}
       </div>
     </section>
   )

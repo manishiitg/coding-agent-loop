@@ -58,13 +58,15 @@ import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
 import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
+import { resolveWorkSubmissionTab } from '../products/work/workTabs'
+import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
+import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
 const EMPTY_EVENTS: PollingEvent[] = []
 const AUTO_NOTIFICATION_PREFIX = '[AUTO-NOTIFICATION]'
 const ENABLE_LEGACY_FRONTEND_AUTO_NOTIFICATIONS = false
-const RESTORED_CONVERSATION_CONTEXT_MARKER = '\n\nPrevious workflow-builder conversation file:'
 const STALE_STREAMING_RECOVERY_GRACE_MS = 10000
 // Grace window after a resume marker appears. The normal product surface is an
 // event transcript, so we wait only for durable conversation events/SSE rather
@@ -176,11 +178,6 @@ function getUserMessageContent(event: PollingEvent): string {
   const innerData = agentEvent?.data as Record<string, unknown> | undefined
   const content = innerData?.content ?? agentEvent?.content
   return typeof content === 'string' ? content : ''
-}
-
-function getDisplaySafeUserMessageContent(content: string): string {
-  const markerIndex = content.indexOf(RESTORED_CONVERSATION_CONTEXT_MARKER)
-  return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
 }
 
 function createSubmissionErrorEvent(sessionId: string, error: unknown): PollingEvent {
@@ -467,6 +464,11 @@ interface ChatAreaProps {
   previousChatsWorkspacePath?: string
   // Product surfaces can reuse AgentWorks history without automation tabs.
   previousChatsRecentOnly?: boolean
+  // Product shells with an explicit history/workshop tab can show the scoped
+  // previous-chat browser independently of the active tab's session state.
+  // This avoids hiding history when a permanent launch tab retained a stale
+  // session id after an upgrade or browser restore.
+  forcePreviousChats?: boolean
   // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
   // resume handler (so the workflow-scoped history logic isn't duplicated here)
   // and passes the rendered node only when a fresh automation chat should show
@@ -526,7 +528,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
+  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, forcePreviousChats = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
   // Product mode is a complete shared surface, not just a simplified composer.
   // Products may still supply a renderer for domain-specific presentation, but
   // every new product gets the durable transcript and normalized error UI by
@@ -750,25 +752,38 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const tabEvents = useChatStore((state) =>
     activeSessionId ? state.tabEvents[activeSessionId] || EMPTY_EVENTS : EMPTY_EVENTS
   )
-  const productTranscriptHydratedRef = useRef<string | null>(null)
+  const formattedTranscriptHydratedRef = useRef<string | null>(null)
   useEffect(() => {
-    const workspacePath = activeTab?.metadata?.agentProfileWorkspace
+    if (activeEventViewMode !== 'formatted') return
+    const isVideoStudio = activeTab?.metadata?.agentProfileId === 'video-studio'
+    const isWorkflowChat = activeTab?.metadata?.mode === 'workflow'
+    if (!isVideoStudio && !isWorkflowChat) return
+
+    const workspacePath = activeTab?.metadata?.agentProfileWorkspace ||
+      (isWorkflowChat ? getActivePreset('workflow')?.selectedFolder?.filepath : undefined)
     if (
-      activeTab?.metadata?.agentProfileId !== 'video-studio' ||
       !activeSessionId ||
-      !workspacePath ||
-      productTranscriptHydratedRef.current === activeSessionId
+      (isVideoStudio && !workspacePath) ||
+      formattedTranscriptHydratedRef.current === activeSessionId
     ) return
-    productTranscriptHydratedRef.current = activeSessionId
+    formattedTranscriptHydratedRef.current = activeSessionId
     void hydrateTabEvents(activeSessionId, {
       workspacePath,
       fallbackToChatHistory: true,
       preferChatHistory: true,
+      includeUiEvents: true,
     }).catch((error) => {
-      productTranscriptHydratedRef.current = null
-      console.error('[SessionRestore] Video Studio transcript hydration failed:', error)
+      formattedTranscriptHydratedRef.current = null
+      console.error('[SessionRestore] Formatted transcript hydration failed:', error)
     })
-  }, [activeSessionId, activeTab?.metadata?.agentProfileId, activeTab?.metadata?.agentProfileWorkspace])
+  }, [
+    activeEventViewMode,
+    activeSessionId,
+    activeTab?.metadata?.agentProfileId,
+    activeTab?.metadata?.agentProfileWorkspace,
+    activeTab?.metadata?.mode,
+    getActivePreset,
+  ])
   const activeStreamingText = useChatStore((state) =>
     activeSessionId ? state.streamingText[activeSessionId] || '' : ''
   )
@@ -1895,6 +1910,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       preset => preset.id === presetState.activePresetIds.workflow,
     )?.selectedFolder?.filepath ?? ''
     const hasDecisionMutation = newEvents.some(event => decisionMutationNeedsRefresh(event, visibleWorkspace))
+    if (newEvents.some(projectSecretsNeedRefresh)) {
+      window.dispatchEvent(new CustomEvent(PROJECT_SECRETS_REFRESH_EVENT))
+    }
     if ((isCompletionLike || hasDecisionMutation) && selectedModeCategory === 'workflow' && isActivePresetTab) {
       window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT))
     }
@@ -2646,7 +2664,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       logger.warn('ChatArea', `Submission source tab ${options.sourceTabId} no longer exists`)
       return false
     }
-    const submissionTab = sourceTab ?? activeTab
+    // Rapid sends can still carry the permanent Work Builder's tab ID after
+    // the first send has opened its conversation. Follow the now-active Work
+    // conversation so every queued message reaches the same retained CLI
+    // session instead of creating one chat tab per message.
+    const globallyActiveTab = chatStore.activeTabId
+      ? chatStore.chatTabs[chatStore.activeTabId]
+      : undefined
+    const submissionTab = sourceTab
+      ? resolveWorkSubmissionTab(sourceTab, globallyActiveTab)
+      : activeTab
     const activeTabModeCategory =
       submissionTab?.metadata?.mode === 'workflow' || submissionTab?.metadata?.mode === 'multi-agent'
         ? submissionTab.metadata.mode
@@ -2908,8 +2935,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const queryBaseWithContext = fileContextForPrompt.length > 0
       ? `${query.trim()}\n\n📁 Files in context: ${fileContextForPrompt.map((file: { path: string }) => file.path).join(', ')}`
       : query.trim()
-    const displayQueryWithContext = queryBaseWithContext
-    const queryWithContext = `${displayQueryWithContext}${restoredConversationContext}`
+    // The agent receives file paths as request context; the chat timeline shows
+    // only the text the user entered.
+    const displayQueryWithContext = query.trim()
+    const queryWithContext = `${queryBaseWithContext}${restoredConversationContext}`
 
     if (restoredConversationUsesNative) {
       chatStore.setTabViewMode(currentTab.tabId, 'formatted')
@@ -3619,7 +3648,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     (selectedModeCategory === 'multi-agent' && multiAgentSurface === 'active')
   // A product-supplied content renderer owns the whole pane, so it is always
   // full height regardless of which transcript surface is active.
-  const shouldUseFullHeightContent = !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
+  const shouldUseFullHeightContent = forcePreviousChats || !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
 
   return (
     <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
@@ -3697,7 +3726,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             </div>
           )}
 
-        {EffectiveContentRenderer && selectedModeCategory !== 'workflow' ? (
+        {forcePreviousChats ? (
+          <PreviousChatHistoryPanel
+            workspacePath={previousChatsWorkspacePath}
+            recentOnly={previousChatsRecentOnly}
+            title="Previous chats"
+            actionLabel="Resume"
+            emptyText="No previous chats yet."
+            onSelectSession={handleResumePreviousChat}
+            fill
+            compact={previousChatsCompact}
+          />
+        ) : EffectiveContentRenderer && selectedModeCategory !== 'workflow' ? (
           <EffectiveContentRenderer
             events={transcriptEvents}
             isStreaming={activeTabBusy}

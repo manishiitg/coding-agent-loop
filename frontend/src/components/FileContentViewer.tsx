@@ -148,7 +148,7 @@ function PaneActionsMenu({ actions }: { actions: PaneAction[] }) {
  *     surfaces with no workspace pane (Video Studio). Behaves as the original
  *     full-screen viewer did, shortcuts included.
  */
-export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay' }) {
+export function FileContentViewerBody({ variant, headerAction }: { variant: 'pane' | 'overlay'; headerAction?: React.ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const {
     selectedFile,
@@ -675,6 +675,7 @@ export function FileContentViewerBody({ variant }: { variant: 'pane' | 'overlay'
             </TooltipProvider>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
+            {headerAction}
             {!isEditMode ? (
               <div className="flex items-center gap-0.5">
                 {canEdit && (

@@ -16,6 +16,7 @@ import {
   Film,
   Folder,
   FolderOpen,
+  Globe,
   HardDrive,
   Type,
   Image as ImageIcon,
@@ -71,6 +72,9 @@ import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { isSingleProductDeployment } from '../productSurfaceConfig'
+import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
+import WorkflowLiveBrowser from '../../components/workflow/WorkflowLiveBrowser'
+import { llmConfigService, type ProviderSetupSession } from '../../services/llm-config-api'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
 // NO allow-same-origin (adding that would let a srcDoc page's script escape
@@ -96,6 +100,12 @@ const ENGINE_PRESENTATION: Record<string, { name: string; blurb: string; order: 
 function pres(id: string, fallbackName: string) {
   return ENGINE_PRESENTATION[id] ?? { name: fallbackName, blurb: 'Available on this computer', order: 99, preferred: false }
 }
+
+// Engines whose sign-in the server can drive through an interactive terminal
+// session (see CodingProvidersPanel.tsx's GUIDED_SETUP_PROVIDERS) — the only
+// ones this screen can offer a "Sign in" button for instead of leaving a
+// parent stuck reading a plain-text setup hint.
+const GUIDED_SETUP_ENGINES = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 
 // Child profile options — edit here to adjust the setup form.
 // Targeting grades 6–12, with 4–5 also offered.
@@ -989,7 +999,7 @@ export default function LearningApp() {
     api.commands().then((c) => { if (alive) setQuickCommands(c) }).catch(() => {})
     return () => { alive = false }
   }, [])
-  useEffect(() => {
+  const refreshEngines = useCallback(() => {
     let cancelled = false
     setEnginesState('loading')
     api.engines()
@@ -1018,6 +1028,27 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setEnginesState('error') })
     return () => { cancelled = true }
   }, [setEngine, setEngines, setEnginesState])
+  useEffect(() => refreshEngines(), [refreshEngines])
+
+  // Terminal-based sign-in for the engine picker above: mirrors
+  // CodingProvidersPanel.tsx's guided setup, scoped to whichever engine the
+  // parent has selected on this screen.
+  const [guidedSession, setGuidedSession] = useState<ProviderSetupSession | null>(null)
+  const [guidedStarting, setGuidedStarting] = useState(false)
+  const [guidedError, setGuidedError] = useState<string | null>(null)
+  const startEngineSignIn = useCallback(async (engineId: string) => {
+    setGuidedStarting(true)
+    setGuidedError(null)
+    try {
+      const session = await llmConfigService.startProviderSetup(engineId, 'authenticate', 100, 24)
+      setGuidedSession(session)
+    } catch (setupError) {
+      const responseMessage = (setupError as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setGuidedError(responseMessage || (setupError instanceof Error ? setupError.message : 'Could not start sign-in'))
+    } finally {
+      setGuidedStarting(false)
+    }
+  }, [])
   const childName = useFamilyStore((s) => s.childName)
   const setChildName = useFamilyStore((s) => s.setChildName)
   const grade = useFamilyStore((s) => s.grade)
@@ -1135,7 +1166,7 @@ export default function LearningApp() {
   // child's activity chats with their cleanup. Its open state is a per-device
   // convenience remembered in the browser.
   const [chatsRailOpen, setChatsRailOpen] = useState<boolean>(() => {
-    try { return window.localStorage.getItem('sparkquill.chats-rail') !== 'closed' } catch { return true }
+    try { return window.localStorage.getItem('sparkquill.chats-rail') === 'open' } catch { return false }
   })
   const toggleChatsRail = () => {
     setChatsRailOpen((open) => {
@@ -2508,6 +2539,18 @@ export default function LearningApp() {
                 >
                   <RefreshCw size={15} />
                 </button>
+                {/* Watch Quill's browser live while it's checking a site (e.g.
+                    signing in to a school portal) — same viewer AgentWorks uses. */}
+                <button
+                  type="button"
+                  className={`fl-icon-btn fl-browser-btn${drawerTab === 'browser' ? ' is-active' : ''}`}
+                  aria-label="Watch live browser"
+                  aria-pressed={drawerTab === 'browser'}
+                  title="Watch live browser"
+                  onClick={() => setDrawerTab(drawerTab === 'browser' ? 'progress' : 'browser')}
+                >
+                  <Globe size={15} />
+                </button>
               </div>
             )}
 
@@ -2562,6 +2605,12 @@ export default function LearningApp() {
                     <iframe className="fl-map-frame" title="Progress report" sandbox="allow-scripts" srcDoc={withDiagramLib(progressHtml)} />
                   )}
                 </>
+              )}
+
+              {drawerTab === 'browser' && (
+                <div className="fl-browser-view">
+                  <WorkflowLiveBrowser workspacePath={FAMILY_WORKSPACE} scopeNoun="project" />
+                </div>
               )}
 
               {(drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') && viewerPath ? (
@@ -3195,13 +3244,18 @@ export default function LearningApp() {
                       {engines.map((item) => {
                         const status = engineStatus(item)
                         const active = engine === item.id
+                        const canSignIn = !status.ready && item.runtime_available !== false && GUIDED_SETUP_ENGINES.has(item.id)
                         return (
                           <button
                             key={item.id}
                             type="button"
                             className={`fl-settings-engine-card ${active ? 'is-active' : ''}`}
-                            disabled={!status.ready || savingEngine}
+                            disabled={(!status.ready && !canSignIn) || savingEngine}
                             onClick={() => {
+                              if (canSignIn) {
+                                void startEngineSignIn(item.id)
+                                return
+                              }
                               setEngine(item.id)
                               setSavingEngine(true)
                               api.selectEngine('parent', item.id).finally(() => { applyFamilyEngineToOpenTabs('parent', item.id); setSavingEngine(false) })
@@ -3211,12 +3265,23 @@ export default function LearningApp() {
                               <span className="fl-settings-engine-name">{pres(item.id, item.name).name}</span>
                               <span className="fl-settings-engine-blurb">{pres(item.id, item.name).blurb}</span>
                             </span>
-                            <span className={`fl-settings-engine-status ${status.ready ? 'is-ready' : ''}`}>{status.label}</span>
+                            <span className={`fl-settings-engine-status ${status.ready ? 'is-ready' : ''}`}>{canSignIn ? 'Sign in' : status.label}</span>
                             {active && <Check size={16} />}
                           </button>
                         )
                       })}
                     </div>
+                  )}
+                  {guidedError && <p className="fl-note" style={{ color: '#b91c1c' }}>{guidedError}</p>}
+                  {guidedSession && engines.some((item) => item.id === guidedSession.provider) && (
+                    <GuidedProviderTerminal
+                      session={guidedSession}
+                      onFinished={(finished) => {
+                        setGuidedSession(finished)
+                        refreshEngines()
+                      }}
+                      onClose={() => setGuidedSession(null)}
+                    />
                   )}
 
                   {modelInfo && modelInfo.models.length > 0 && (
@@ -3653,7 +3718,17 @@ export default function LearningApp() {
                       key={item.id}
                       type="button"
                       className={`engine-card ${engine === item.id ? 'is-selected' : ''} ${status.ready ? '' : 'is-unavailable'}`}
-                      onClick={() => { setEngine(item.id); setTestState('idle'); setTestMessage('') }}
+                      onClick={() => {
+                        setEngine(item.id)
+                        setTestState('idle')
+                        setTestMessage('')
+                        // Take the parent straight to sign-in on the first tap instead of
+                        // making them select the card, then find a separate button below.
+                        const alreadySigningIn = guidedSession?.status === 'running' && guidedSession.provider === item.id
+                        if (!status.ready && item.runtime_available !== false && GUIDED_SETUP_ENGINES.has(item.id) && !alreadySigningIn) {
+                          void startEngineSignIn(item.id)
+                        }
+                      }}
                     >
                       <span className="engine-icon"><Sparkles size={24} /></span>
                       <span className="engine-content">
@@ -3679,11 +3754,32 @@ export default function LearningApp() {
                     {testState === 'testing' ? 'Testing…' : testState === 'valid' ? 'Test passed ✓' : testState === 'invalid' ? 'Test failed — retry' : 'Test connection'}
                   </button>
                 )}
+                {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.runtime_available !== false && GUIDED_SETUP_ENGINES.has(selectedEngine.id) && (
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => void startEngineSignIn(selectedEngine.id)}
+                    disabled={guidedStarting || (guidedSession?.status === 'running' && guidedSession.provider === selectedEngine.id)}
+                  >
+                    {guidedStarting ? 'Opening sign-in…' : `Sign in to ${pres(selectedEngine.id, selectedEngine.name).name}`}
+                  </button>
+                )}
               </p>
               <button className="primary-button" onClick={persistEngineAndContinue} type="button" disabled={!selectedEngine || !engineStatus(selectedEngine).ready || saving}>Continue <ArrowRight size={18} /></button>
             </div>
             {testMessage && <p className={`engine-note ${testState === 'invalid' ? 'is-error' : ''}`}>{testMessage}</p>}
-            {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.setup_hint && (
+            {guidedError && <p className="engine-note is-error">{guidedError}</p>}
+            {guidedSession && selectedEngine && guidedSession.provider === selectedEngine.id && (
+              <GuidedProviderTerminal
+                session={guidedSession}
+                onFinished={(finished) => {
+                  setGuidedSession(finished)
+                  refreshEngines()
+                }}
+                onClose={() => setGuidedSession(null)}
+              />
+            )}
+            {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.setup_hint && (selectedEngine.runtime_available === false || !GUIDED_SETUP_ENGINES.has(selectedEngine.id)) && (
               <details className="engine-setup"><summary>Setup details</summary><p>{selectedEngine.setup_hint}</p></details>
             )}
           </section>

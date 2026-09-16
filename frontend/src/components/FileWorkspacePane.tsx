@@ -15,6 +15,7 @@ type FileWorkspacePaneProps = {
   showMinimizeShortcut?: boolean
   onClose: () => void
   testId?: string
+  headerAction?: ReactNode
 }
 
 /**
@@ -35,6 +36,7 @@ export function FileWorkspacePane({
   showMinimizeShortcut = true,
   onClose,
   testId,
+  headerAction,
 }: FileWorkspacePaneProps) {
   const showFileContent = useWorkspaceStore(state => state.showFileContent)
 
@@ -53,13 +55,15 @@ export function FileWorkspacePane({
           expandFirstLevelFolders={expandFirstLevelFolders}
           hideManagedEntriesByDefault={hideManagedEntriesByDefault}
           title={title}
+          headerAction={headerAction}
         />
       </div>
       {showFileContent && (
         <div className="min-h-0 flex-1">
-          <FileContentViewerBody variant="pane" />
+          <FileContentViewerBody variant="pane" headerAction={headerAction} />
         </div>
       )}
     </div>
   )
 }
+import type { ReactNode } from 'react'

@@ -1,29 +1,41 @@
 ---
 name: work-dashboard
-description: Create or update a Work project's visual Dashboard for tasks, notes, plans, status, research, project information, or any other content the user wants to manage visually.
+description: Create or update a Crew project's visual Dashboard for tasks, notes, plans, status, research, project information, or any other content the user wants to manage visually.
 ---
 
-# Work Dashboard
+# Crew Dashboard
 
 Use this skill when the user asks for a dashboard, board, tracker, visual home,
 or another project view intended to organize or manage information visually.
 
 ## Contract
 
-- The Dashboard entry document is `db/reports/index.html` in the current Work
-  project. Supporting files belong under `db/reports/` or `db/assets/`.
+- Dashboard documents are HTML files under `db/reports/`; `index.html` is the
+  backward-compatible default. Supporting assets belong under `db/assets/`.
+- For multiple top-toolbar views, create one HTML document per useful view.
+  The toolbar discovers them automatically. Optionally add `db/reports/views.json`
+  with `{"schema_version":1,"default":"overview","views":[{"id":"overview","title":"Overview","path":"db/reports/index.html","order":0}]}`
+  to control titles, order, and the default. Paths must remain under
+  `db/reports/` and end in `.html`.
 - This is a general project artifact, not an AgentWorks workflow report. Do not
   create a workflow, plan, phase, step, route, Pulse configuration, or managed
   workflow merely to provide a Dashboard. A project-owned managed database is
   optional and should be added only when the view needs durable structured data.
 - Inspect the existing `db/reports/` folder before changing it. Preserve useful
   content and the user's established organization and visual language.
-- Build one complete, responsive HTML experience. It may use tabs, boards,
-  lists, cards, timelines, calendars, notes, or other layouts appropriate to
-  the user's information.
-- Support both app themes using `:root.dark` or
-  `[data-theme="dark"]`. Avoid external dependencies unless the user requests
-  them or the project already uses them.
+- Build responsive documents. Use separate toolbar views for genuinely distinct
+  destinations and internal sections/tabs for closely related material.
+- Support both app themes using `:root.dark` or `[data-theme="dark"]`.
+- Choose any CSS/component approach that fits the report, including plain CSS,
+  Tailwind, Bootstrap, daisyUI, another framework, or a combination that works
+  in the browser. Version-pinned HTTPS CDN stylesheets and browser scripts are
+  supported. If using daisyUI, `<html data-report-ui="daisyui">` asks the host
+  to inject its pinned CSS; daisyUI alone does not include Tailwind utilities.
+  These are compatibility facts, not a preferred stack.
+- Choose any suitable charting approach, including Chart.js, another browser
+  library, SVG/canvas, or HTML/CSS. Match the complexity of the implementation
+  to the visualization, make it responsive and theme-aware, and show a readable
+  fallback when an external dependency fails.
 
 ## Project data and actions
 
@@ -46,19 +58,21 @@ or another project view intended to organize or manage information visually.
 
 ## Verification
 
-- Re-read changed files, run `validate_report_html`, and then use
-  `preview_report` when browser rendering is available.
+- Re-read changed files, run `validate_report_html` for every changed report
+  document, and then use `preview_report` for each when browser rendering is
+  available.
 - Verify responsive layout, light and dark themes, navigation, empty states,
   and any buttons or filters. Use the managed browser when it materially
   improves confidence.
-- When the user asks for a URL to this Dashboard, call `get_report_link` with
-  no arguments and present its returned `url` verbatim. It opens the full live
+- When the user asks for a URL to a Dashboard document, call `get_report_link`
+  with that document path (or omit it for the default) and present its returned
+  `url` verbatim. It opens the full live
   Dashboard runtime, not the restricted generic HTML file preview. The link is
-  private to the same signed-in Work account; it contains no credential and
+  private to the same signed-in Crew account; it contains no credential and
   does not grant access or publish the project publicly. Inspect `shareable`,
   `scope`, and `warning`; when `shareable` is false (including localhost and
   loopback deployments), describe it only as a same-machine preview and relay
   the warning instead of presenting it as shareable. It uses AgentWorks SSO and
   must not receive a second publish password/login gate; only a separately
   hosted public/static report uses publish visibility controls.
-- Tell the user the Dashboard is available from the Work **Dashboard** button.
+- Tell the user the Dashboard is available from the Crew **Dashboard** button.

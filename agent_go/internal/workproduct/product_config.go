@@ -25,11 +25,11 @@ func WorkManifest() (ProductManifest, error) {
 	productManifestOnce.Do(func() {
 		manifest, err := agentprofiles.LoadProductManifest(productConfigFiles, "product.yaml")
 		if err != nil {
-			productManifestErr = fmt.Errorf("Work %w", err)
+			productManifestErr = fmt.Errorf("Crew %w", err)
 			return
 		}
 		if manifest.Profile.ID != "work" || manifest.Profile.Scope != agentprofiles.ProfileScopeProject || manifest.UI.Surface != "work" {
-			productManifestErr = fmt.Errorf("invalid Work product manifest")
+			productManifestErr = fmt.Errorf("invalid Crew product manifest")
 			return
 		}
 		productManifest = manifest
@@ -41,7 +41,7 @@ func renderProductPrompt() string {
 	manifest := mustWorkManifest()
 	prompt, err := manifest.RenderPrompt(productConfigFiles, manifest.Profile, nil)
 	if err != nil {
-		panic(fmt.Errorf("render Work prompt: %w", err))
+		panic(fmt.Errorf("render Crew prompt: %w", err))
 	}
 	return prompt
 }

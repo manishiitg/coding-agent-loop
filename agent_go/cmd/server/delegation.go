@@ -701,10 +701,12 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		StreamingChunkSize: 1,
 		// No Timeout set — sub-agent lifetime is controlled by the parent context.
 		// Sub-agent mode uses the resolved values (from delegate call, template default, or auto-enable).
-		UseCodeExecutionMode:  useCodeExec,
-		APIKeys:               apiKeys,
-		SessionID:             subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
-		UserID:                subAgentUserID,    // Per-user OAuth token isolation
+		UseCodeExecutionMode: useCodeExec,
+		APIKeys:              apiKeys,
+		SessionID:            subAgentSessionID, // Reuse parent session's MCP connections via registry, unless browser isolation requested
+		// MCP credentials are platform-wide. Keep this empty so delegated agents
+		// preserve the shared token path from the merged MCP configuration.
+		UserID:                "",
 		CodingAgentWorkingDir: subAgentRuntimeDir,
 		// A delegated sub-agent is never steered mid-turn by a human — the same
 		// rationale step_based_workflow's applyWorkflowTransportToAgentConfig

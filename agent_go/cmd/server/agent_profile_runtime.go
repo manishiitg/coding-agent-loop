@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 type resolvedAgentProfile struct {
@@ -26,6 +31,47 @@ type resolvedAgentProfile struct {
 	// from client JSON, and every field of ProviderAPIKeys except
 	// ClaudeCodeOAuthToken is JSON-visible. nil when no profile is bound.
 	APIKeys *llm.ProviderAPIKeys
+}
+
+// agentProfileSessionKey identifies the immutable product definition projected
+// into a provider-native coding session. Native CLIs retain their original
+// system prompt, tools, and skill files when resumed, so a changed definition
+// must start a fresh native session even though the application conversation
+// history remains intact.
+func agentProfileSessionKey(profile *resolvedAgentProfile, attachedSkills []*llmtypes.Skill) string {
+	if profile == nil {
+		return ""
+	}
+	type skillFingerprint struct {
+		Name                   string               `json:"name"`
+		Description            string               `json:"description"`
+		Content                string               `json:"content"`
+		Paths                  []string             `json:"paths,omitempty"`
+		DisableModelInvocation bool                 `json:"disable_model_invocation,omitempty"`
+		Metadata               map[string]string    `json:"metadata,omitempty"`
+		SupportingFiles        []llmtypes.SkillFile `json:"supporting_files,omitempty"`
+	}
+	fingerprints := make([]skillFingerprint, 0, len(attachedSkills))
+	for _, skill := range attachedSkills {
+		if skill == nil {
+			continue
+		}
+		fingerprints = append(fingerprints, skillFingerprint{
+			Name: skill.Name, Description: skill.Description, Content: skill.Content,
+			Paths: skill.Paths, DisableModelInvocation: skill.DisableModelInvocation,
+			Metadata: skill.Metadata, SupportingFiles: skill.SupportingFiles,
+		})
+	}
+	sort.Slice(fingerprints, func(i, j int) bool { return fingerprints[i].Name < fingerprints[j].Name })
+	payload, err := json.Marshal(struct {
+		Definition agentprofiles.Profile `json:"definition"`
+		Skills     []skillFingerprint    `json:"skills,omitempty"`
+	}{Definition: profile.Definition, Skills: fingerprints})
+	if err != nil {
+		return fmt.Sprintf("%s@%d", profile.Definition.ID, profile.Definition.Version)
+	}
+	sum := sha256.Sum256(payload)
+	return "profile-sha256:" + hex.EncodeToString(sum[:])
 }
 
 // cleanAgentProfileWorkspace validates the client-supplied selected_folder for
@@ -111,7 +157,7 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 // isActiveWorkProjectWorkspace distinguishes an actual Work project from the
 // Work landing/root workspace. Project-scoped tools must be absent on the
 // landing chat: registering them there either fails immediately (share links,
-// schedules) or gives the model tools that cannot operate without product.json.
+// schedules) or gives the model tools that cannot operate without a project manifest.
 func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
 	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
 	const prefix = "Chats/Work/projects/"
@@ -317,29 +363,30 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		noGlobalSecrets := []string{}
 		req.SelectedGlobalSecrets = &noGlobalSecrets
 	} else if !isGlobalScope && api.chatStore != nil && userID != "" {
-		// A product project owns its workflow-scoped secrets. Attach their names
-		// automatically for every direct-chat turn so native coding-agent tools
-		// receive SECRET_<NAME> without the model ever seeing a value. User-wide
-		// secrets remain opt-in through the existing selected-secret mechanism;
-		// a project secret with the same name deliberately resolves to the
-		// project value. Skipped for a global-scoped profile: there is no
-		// single project secret bucket to attach, and req.DecryptedSecrets /
-		// req.SelectedGlobalSecrets are left exactly as the client sent them --
-		// identical to today's profile-less behavior.
-		stored, secretErr := api.chatStore.ListWorkflowSecrets(ctx, userID, workspacePath)
+		// Product runtime manifests use the same selected_secrets contract.
+		// Values stay in encrypted storage; only explicitly attached names enter
+		// the coding-agent environment. For an older product manifest, preserve
+		// the previous behavior once by attaching its existing project secrets.
+		selectedNames, initialized, secretErr := productSelectedSecrets(ctx, profile.ID, workspacePath)
 		if secretErr != nil {
-			log.Printf("[SECRETS] Failed to list product workspace secrets for %s (%s): %v", userID, workspacePath, secretErr)
+			log.Printf("[SECRETS] Failed to read product secret attachments for %s (%s): %v", userID, workspacePath, secretErr)
+		} else if !initialized {
+			stored, listErr := api.ensureSharedWorkflowSecrets(ctx, workspacePath, userID)
+			if listErr != nil {
+				log.Printf("[SECRETS] Failed to migrate product secret attachments for %s (%s): %v", userID, workspacePath, listErr)
+			} else {
+				for _, secret := range stored {
+					selectedNames = appendUniqueStrings(selectedNames, secret.Name)
+				}
+				if writeErr := updateProductSelectedSecrets(ctx, profile.ID, workspacePath, func([]string) []string { return selectedNames }); writeErr != nil {
+					log.Printf("[SECRETS] Failed to persist migrated product secret attachments for %s (%s): %v", userID, workspacePath, writeErr)
+				}
+			}
+		}
+		if len(selectedNames) > 0 {
+			req.DecryptedSecrets = api.loadSelectedSecrets(ctx, userID, workspacePath, selectedNames)
 		} else {
-			selectedNames := make([]string, 0, len(req.DecryptedSecrets)+len(stored))
-			for _, secret := range req.DecryptedSecrets {
-				selectedNames = appendUniqueStrings(selectedNames, secret.Name)
-			}
-			for _, secret := range stored {
-				selectedNames = appendUniqueStrings(selectedNames, secret.Name)
-			}
-			if len(selectedNames) > 0 {
-				req.DecryptedSecrets = api.loadSelectedSecrets(ctx, userID, workspacePath, selectedNames)
-			}
+			req.DecryptedSecrets = nil
 		}
 	}
 	browserRequirement := profile.Runtime.Capabilities.Browser
@@ -546,6 +593,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "mcp") {
+		if err := api.registerWorkMCPSelectionTool(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
 			return err
@@ -555,7 +607,7 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
 			gate.Declare(name)
 		}
-		if err := api.registerOpenWorkWorkspaceViewTool(registrar, sessionID, workspacePath); err != nil {
+		if err := api.registerOpenWorkWorkspaceViewTool(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}

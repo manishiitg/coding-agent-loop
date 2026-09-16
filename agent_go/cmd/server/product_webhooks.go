@@ -300,11 +300,28 @@ func (s *ProductScheduleService) findProductWebhook(ctx context.Context, id stri
 				if json.Unmarshal([]byte(raw), &manifest) != nil || manifest.Product != profile.ID {
 					continue
 				}
+				runtimePath := candidate
+				if strings.EqualFold(profile.ID, "work") {
+					runtimePath = projectRuntimeManifestPath(profile.ID, filepath.ToSlash(filepath.Dir(candidate)))
+					runtimeRaw, runtimeFound, runtimeErr := s.readFile(ctx, runtimePath)
+					if runtimeErr != nil {
+						continue
+					}
+					if runtimeFound {
+						var runtimeManifest productProjectManifest
+						if json.Unmarshal([]byte(runtimeRaw), &runtimeManifest) != nil {
+							continue
+						}
+						manifest.Triggers = runtimeManifest.Triggers
+					} else {
+						runtimePath = candidate
+					}
+				}
 				for _, trigger := range manifest.Triggers {
 					if trigger.ID != id {
 						continue
 					}
-					return &productWebhookMatch{UserID: userID, Profile: profile, Binding: productConversationBinding{WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: candidate}, Manifest: manifest, Trigger: trigger}, nil
+					return &productWebhookMatch{UserID: userID, Profile: profile, Binding: productConversationBinding{WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: runtimePath}, Manifest: manifest, Trigger: trigger}, nil
 				}
 			}
 		}

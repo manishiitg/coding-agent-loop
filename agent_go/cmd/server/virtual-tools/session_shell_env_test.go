@@ -1,6 +1,10 @@
 package virtualtools
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+)
 
 func TestSetSessionShellEnvReachesEveryLiveClientOfTheSession(t *testing.T) {
 	_, _ = CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv("u1", "sess-live", map[string]string{"SECRET_A": "1"})
@@ -35,6 +39,24 @@ func TestSetSessionShellEnvReachesEveryLiveClientOfTheSession(t *testing.T) {
 	}
 	if n := SetSessionShellEnv("", "SECRET_X", "1"); n != 0 {
 		t.Fatalf("empty session id must register nothing, got %d", n)
+	}
+}
+
+func TestReplaceSessionShellSecretsRemovesDeselectedValues(t *testing.T) {
+	client := workspace.NewClient("http://example.invalid", workspace.WithExtraEnv(map[string]string{"SECRET_OLD": "old"}))
+	registerSessionShellClient("sess-replace", client)
+	SetSessionShellEnv("sess-replace", "SECRET_OLD", "old")
+	if n := ReplaceSessionShellSecrets("sess-replace", map[string]string{"SECRET_NEW": "new"}); n != 1 {
+		t.Fatalf("updated clients = %d, want 1", n)
+	}
+	if _, ok := client.ExtraEnvValue("SECRET_OLD"); ok {
+		t.Fatal("deselected secret remained in retained client")
+	}
+	if value, ok := client.ExtraEnvValue("SECRET_NEW"); !ok || value != "new" {
+		t.Fatalf("replacement secret = %q, %v", value, ok)
+	}
+	if n := ReplaceSessionShellSecrets("sess-replace", map[string]string{"SECRET_NEW": "newer"}); n != 1 {
+		t.Fatalf("second replacement clients = %d, want 1", n)
 	}
 }
 

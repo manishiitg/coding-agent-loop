@@ -17,7 +17,7 @@ describe('Muse assistant updates', () => {
     const transcript = buildTranscriptItems(events)
     expect(transcript.map(item => item.kind === 'thinking' ? item.assistantUpdate : false)).toEqual([true, false, true, false])
     const clean = buildCleanConversationItems(events)
-    expect(clean.map(item => item.role)).toEqual(['assistant', 'reasoning', 'assistant', 'assistant'])
+    expect(clean.map(item => item.role)).toEqual(['progress', 'reasoning', 'progress', 'assistant'])
     expect(clean.map(item => item.content)).toEqual(['Checking the file.', 'Reasoning from another provider.', 'Found the issue.', 'Fixed.'])
   })
   it('does not append an intermediate delta to the previous final answer', () => {

@@ -24,6 +24,7 @@ import (
 // ChatHistorySession is the metadata returned by the list endpoint.
 type ChatHistorySession struct {
 	SessionID        string                      `json:"session_id"`
+	Title            string                      `json:"title,omitempty"`
 	AgentMode        string                      `json:"agent_mode"`
 	Runtime          *ChatHistoryAgentRuntime    `json:"runtime,omitempty"`
 	WorkshopMode     string                      `json:"workshop_mode,omitempty"`
@@ -55,6 +56,7 @@ type ChatHistorySession struct {
 // with its original runtime when that runtime supports native resume.
 type ChatHistoryAgentRuntime struct {
 	ChatPolicyKey      string                       `json:"chat_policy_key,omitempty"`
+	AgentProfileKey    string                       `json:"agent_profile_key,omitempty"`
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`
@@ -166,6 +168,60 @@ type restoredChatHistoryPersistTarget struct {
 	History          []llmtypes.MessageContent
 	Runtime          *ChatHistoryAgentRuntime
 	WorkshopMode     string
+}
+
+// resolvedResumeTarget is the single server-owned description of a saved chat
+// being resumed. Product routes resolve it once from the authenticated project
+// and carry it through the shared runner without asking later stages to find the
+// same conversation again from a path, workspace, or session id.
+type resolvedResumeTarget struct {
+	SessionID        string
+	WorkspacePath    string
+	ConversationPath string
+	History          []llmtypes.MessageContent
+	Runtime          *ChatHistoryAgentRuntime
+	WorkshopMode     string
+}
+
+func (target *resolvedResumeTarget) persistTarget() *restoredChatHistoryPersistTarget {
+	if target == nil {
+		return nil
+	}
+	return &restoredChatHistoryPersistTarget{
+		SessionID:        target.SessionID,
+		ConversationPath: target.ConversationPath,
+		History:          target.History,
+		Runtime:          target.Runtime,
+		WorkshopMode:     target.WorkshopMode,
+	}
+}
+
+func (target *resolvedResumeTarget) provider() string {
+	if target == nil || target.Runtime == nil {
+		return ""
+	}
+	provider := strings.ToLower(strings.TrimSpace(target.Runtime.Provider))
+	if provider == "" && target.Runtime.AgentSessionHandle != nil {
+		provider = strings.ToLower(strings.TrimSpace(target.Runtime.AgentSessionHandle.Provider.Provider))
+	}
+	return provider
+}
+
+func (target *resolvedResumeTarget) crossesProvider(currentProvider string) bool {
+	savedProvider := target.provider()
+	currentProvider = strings.ToLower(strings.TrimSpace(currentProvider))
+	return savedProvider != "" && currentProvider != "" && savedProvider != currentProvider
+}
+
+func (target *resolvedResumeTarget) canPersist(currentWorkshopMode string) bool {
+	if target == nil || strings.TrimSpace(target.SessionID) == "" || strings.TrimSpace(target.ConversationPath) == "" {
+		return false
+	}
+	restoredMode := target.WorkshopMode
+	if target.Runtime != nil {
+		restoredMode = firstNonEmptyTrimmed(target.Runtime.WorkshopMode, restoredMode)
+	}
+	return chatHistoryResumeModesCompatible(restoredMode, currentWorkshopMode)
 }
 
 const (
@@ -308,6 +364,16 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	if convPath == "" {
 		convPath = chatHistoryConversationPath(userID, sessionID, now)
 	}
+	// A user-defined title belongs to the durable conversation. Preserve it
+	// when a later turn rewrites the transcript from the in-memory history.
+	if existing, exists, readErr := readFileFromWorkspace(context.Background(), convPath); readErr == nil && exists {
+		var metadata struct {
+			Title string `json:"title"`
+		}
+		if json.Unmarshal([]byte(existing), &metadata) == nil && strings.TrimSpace(metadata.Title) != "" {
+			convData["title"] = strings.TrimSpace(metadata.Title)
+		}
+	}
 	// The in-memory event store only knows about turns since this process
 	// started. Writing it alone after a restart replaced the whole saved trace
 	// with the newest turn, so a reopened chat lost its tool calls and the
@@ -363,8 +429,12 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 	}
 
 	createdAt := now.Format(time.RFC3339)
-	if existing, ok := index.Entries[conversationPath]; ok && strings.TrimSpace(existing.Session.CreatedAt) != "" {
-		createdAt = existing.Session.CreatedAt
+	title := ""
+	if existing, ok := index.Entries[conversationPath]; ok {
+		if strings.TrimSpace(existing.Session.CreatedAt) != "" {
+			createdAt = existing.Session.CreatedAt
+		}
+		title = strings.TrimSpace(existing.Session.Title)
 	}
 	workshopMode := ""
 	if runtime != nil {
@@ -377,6 +447,7 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 	index.Entries[conversationPath] = chatHistoryIndexEntry{
 		Session: ChatHistorySession{
 			SessionID:        sessionID,
+			Title:            title,
 			AgentMode:        agentMode,
 			Runtime:          runtime,
 			WorkshopMode:     workshopMode,
@@ -730,6 +801,39 @@ func (api *StreamingAPI) rememberRestoredConversationPersistTarget(currentSessio
 		Runtime:          target.Runtime,
 		WorkshopMode:     target.WorkshopMode,
 	}
+}
+
+// restoreResolvedResumeTarget hydrates UI history and persistence from the
+// same target that will seed the provider-native continuation. It performs no
+// path or session lookup; product ownership was already established by the
+// authenticated profile route.
+func (api *StreamingAPI) restoreResolvedResumeTarget(currentSessionID string, target *resolvedResumeTarget, currentWorkshopMode string) bool {
+	if api == nil || target == nil || strings.TrimSpace(currentSessionID) == "" {
+		return false
+	}
+	restoredMode := target.WorkshopMode
+	if target.Runtime != nil {
+		restoredMode = firstNonEmptyTrimmed(target.Runtime.WorkshopMode, restoredMode)
+	}
+	if !chatHistoryResumeModesCompatible(restoredMode, currentWorkshopMode) {
+		return false
+	}
+
+	history := append([]llmtypes.MessageContent(nil), target.History...)
+	if len(history) > 0 {
+		api.conversationMux.Lock()
+		if _, exists := api.conversationHistory[currentSessionID]; !exists {
+			if api.conversationHistory == nil {
+				api.conversationHistory = make(map[string][]llmtypes.MessageContent)
+			}
+			api.conversationHistory[currentSessionID] = history
+		}
+		api.conversationMux.Unlock()
+	}
+	if persistTarget := target.persistTarget(); persistTarget != nil {
+		api.rememberRestoredConversationPersistTarget(currentSessionID, *persistTarget)
+	}
+	return len(history) > 0
 }
 
 func (api *StreamingAPI) rememberedRestoredConversationPersistTarget(currentSessionID string) (*restoredChatHistoryPersistTarget, bool) {
@@ -1828,19 +1932,34 @@ func chatHistorySchedulePrefixBeforeTimestamp(value string) string {
 }
 
 func workflowBuilderConversationFiles(workflowDir string) ([]string, error) {
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", "session-*-conversation.json"),
-		filepath.Join(workflowDir, "builder", "conversation", "*", "session-*-conversation.json"),
-	}
+	builderDir := filepath.Join(workflowDir, "builder")
 	out := make([]string, 0)
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, matches...)
+	legacyRootMatches, err := filepath.Glob(filepath.Join(builderDir, "session-*-conversation.json"))
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	out = append(out, legacyRootMatches...)
+	conversationDir := filepath.Join(builderDir, "conversation")
+	err = filepath.WalkDir(conversationDir, func(candidate string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "session-") && strings.HasSuffix(name, "-conversation.json") {
+			out = append(out, candidate)
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return out, nil
+	}
+	return out, err
 }
 
 func workflowRelativeConversationPath(workflowPath, workflowDir, convPath string) string {
@@ -1902,6 +2021,7 @@ func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, fil
 func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackSessionID, data string, fallbackUpdatedAt time.Time) (ChatHistorySession, bool) {
 	var raw struct {
 		SessionID    string                    `json:"session_id"`
+		Title        string                    `json:"title,omitempty"`
 		UserID       string                    `json:"user_id,omitempty"`
 		Username     string                    `json:"username,omitempty"`
 		AgentMode    string                    `json:"agent_mode"`
@@ -1970,6 +2090,7 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 
 	return ChatHistorySession{
 		SessionID:           raw.SessionID,
+		Title:               strings.TrimSpace(raw.Title),
 		AgentMode:           raw.AgentMode,
 		Runtime:             raw.Runtime,
 		WorkshopMode:        raw.Mode,
@@ -2386,6 +2507,89 @@ func FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath 
 		}
 	}
 	return "", false, nil
+}
+
+const maxChatHistoryTitleRunes = 120
+
+func normalizeChatHistoryTitle(title string) (string, error) {
+	title = strings.Join(strings.Fields(title), " ")
+	if title == "" {
+		return "", fmt.Errorf("title is required")
+	}
+	if len([]rune(title)) > maxChatHistoryTitleRunes {
+		return "", fmt.Errorf("title must be %d characters or fewer", maxChatHistoryTitleRunes)
+	}
+	return title, nil
+}
+
+// RenameChatHistorySession writes the title into both the transcript and its
+// listing index. The transcript remains authoritative if an older deployment
+// or an interrupted write leaves the index stale.
+func RenameChatHistorySession(userID, sessionID, workspacePath, title string) error {
+	if userID == "" {
+		userID = "default"
+	}
+	var err error
+	title, err = normalizeChatHistoryTitle(title)
+	if err != nil {
+		return err
+	}
+	conversationPath, found, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
+	if err != nil {
+		return err
+	}
+	if !found {
+		return fmt.Errorf("conversation not found")
+	}
+	raw, exists, err := readFileFromWorkspace(context.Background(), conversationPath)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return fmt.Errorf("conversation not found")
+	}
+	var record map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		return fmt.Errorf("decode conversation: %w", err)
+	}
+	record["title"] = title
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode conversation: %w", err)
+	}
+	if err := writeRawFileToWorkspace(context.Background(), conversationPath, string(encoded)); err != nil {
+		return err
+	}
+
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	if indexPath == "" {
+		return nil
+	}
+	mutex := chatHistoryIndexMutex(indexPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+	index := newChatHistoryIndex()
+	indexRaw, indexExists, err := readFileFromWorkspace(context.Background(), indexPath)
+	if err != nil || !indexExists {
+		return err
+	}
+	if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
+		return fmt.Errorf("decode %s: %w", indexPath, err)
+	}
+	index.normalize()
+	entry, ok := index.Entries[conversationPath]
+	if !ok {
+		return nil
+	}
+	entry.Session.Title = title
+	entry.SourceSize = int64(len(encoded))
+	index.Entries[conversationPath] = entry
+	index.UpdatedAt = time.Now().Format(time.RFC3339)
+	updatedIndex, err := json.MarshalIndent(index, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", indexPath, err)
+	}
+	return writeRawFileToWorkspace(context.Background(), indexPath, string(updatedIndex))
 }
 
 // cleanChatHistoryForPersistence removes hidden prompt context that the frontend
@@ -3018,29 +3222,26 @@ func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath st
 		return nil, false, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", fileName),
-		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
-	}
 
 	type candidate struct {
 		path    string
 		modTime time.Time
 	}
 	var latest *candidate
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, true, err
+	matches, err := workflowBuilderConversationFiles(workflowDir)
+	if err != nil {
+		return nil, true, err
+	}
+	for _, match := range matches {
+		if filepath.Base(match) != fileName {
+			continue
 		}
-		for _, match := range matches {
-			info, err := os.Stat(match)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
-				latest = &candidate{path: match, modTime: info.ModTime()}
-			}
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+			latest = &candidate{path: match, modTime: info.ModTime()}
 		}
 	}
 	if latest == nil {
@@ -3062,28 +3263,25 @@ func findWorkflowScopedChatHistoryConversationPath(sessionID, workspacePath stri
 
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
 	if workflowDir, ok := resolveLocalWorkflowDir(workspacePath); ok {
-		patterns := []string{
-			filepath.Join(workflowDir, "builder", fileName),
-			filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
-		}
 		type candidate struct {
 			path    string
 			modTime time.Time
 		}
 		var latest *candidate
-		for _, pattern := range patterns {
-			matches, err := filepath.Glob(pattern)
-			if err != nil {
-				return "", false, err
+		matches, err := workflowBuilderConversationFiles(workflowDir)
+		if err != nil {
+			return "", false, err
+		}
+		for _, match := range matches {
+			if filepath.Base(match) != fileName {
+				continue
 			}
-			for _, match := range matches {
-				info, err := os.Stat(match)
-				if err != nil || info.IsDir() {
-					continue
-				}
-				if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
-					latest = &candidate{path: match, modTime: info.ModTime()}
-				}
+			info, err := os.Stat(match)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+				latest = &candidate{path: match, modTime: info.ModTime()}
 			}
 		}
 		if latest != nil {
@@ -3168,34 +3366,31 @@ func deleteWorkspaceChatHistorySession(result ChatHistoryCleanupResult, userID, 
 		return result, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", fileName),
-		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
+	matches, err := workflowBuilderConversationFiles(workflowDir)
+	if err != nil {
+		return result, err
 	}
 	seen := map[string]bool{}
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
+	for _, convPath := range matches {
+		if filepath.Base(convPath) != fileName {
+			continue
+		}
+		if seen[convPath] {
+			continue
+		}
+		seen[convPath] = true
+		info, err := os.Stat(convPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if err := os.Remove(convPath); err != nil {
 			return result, err
 		}
-		for _, convPath := range matches {
-			if seen[convPath] {
-				continue
-			}
-			seen[convPath] = true
-			info, err := os.Stat(convPath)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if err := os.Remove(convPath); err != nil {
-				return result, err
-			}
-			result.DeletedCount++
-			result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
-			parentDir := filepath.Dir(convPath)
-			if filepath.Base(filepath.Dir(parentDir)) == "conversation" {
-				_ = os.Remove(parentDir)
-			}
+		result.DeletedCount++
+		result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
+		parentDir := filepath.Dir(convPath)
+		if filepath.Base(filepath.Dir(parentDir)) == "conversation" {
+			_ = os.Remove(parentDir)
 		}
 	}
 	if result.DeletedCount > 0 {
@@ -3462,6 +3657,18 @@ func parseChatHistoryCleanupTime(value string) (time.Time, bool) {
 // A session with no transcript yet is left alone: the first completed turn is
 // what establishes the record, and inventing a runtime-less one here would poison
 // the resume path the same way.
+func (api *StreamingAPI) persistLiveInputUserMessage(ctx context.Context, sessionID, message string) {
+	if api == nil {
+		return
+	}
+	userID := GetUserIDFromContext(ctx)
+	if api.internalLiveInputPersistenceHandler != nil {
+		api.internalLiveInputPersistenceHandler(userID, sessionID, message)
+		return
+	}
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, message)
+}
+
 func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, message string) {
 	message = strings.TrimSpace(message)
 	if api == nil || sessionID == "" || message == "" {

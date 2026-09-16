@@ -19,12 +19,18 @@ describe('workflowTabsNeedingHydration', () => {
     expect(result.map(t => t.tabId)).toEqual(['t1'])
   })
 
-  it('skips tabs that already hold events, and tabs without a session', () => {
+  it('rehydrates an interactive builder even when a capped volatile tail is non-empty', () => {
     const hydrated = tab('t2', 'schedule-cron--5227790a_2', { mode: 'workflow', isViewOnly: true, isScheduledRun: true })
     const blank = tab('t3', undefined, { mode: 'workflow', phaseId: 'workflow-builder' })
     const interactive = tab('t4', 'chat-interactive', { mode: 'workflow', phaseId: 'workflow-builder' })
     const result = workflowTabsNeedingHydration([hydrated, blank, interactive], getTabEvents)
     expect(result.map(t => t.tabId)).toEqual(['t4'])
+  })
+
+  it('keeps a non-empty read-only run while restoring an empty one', () => {
+    const empty = tab('t1', 'schedule-cron--d4007648_1', { mode: 'workflow', isViewOnly: true })
+    const populated = tab('t2', 'schedule-cron--5227790a_2', { mode: 'workflow', isViewOnly: true })
+    expect(workflowTabsNeedingHydration([empty, populated], getTabEvents).map(t => t.tabId)).toEqual(['t1'])
   })
 
   it('ignores non-workflow tabs', () => {

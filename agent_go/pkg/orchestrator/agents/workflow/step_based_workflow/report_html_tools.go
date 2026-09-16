@@ -32,7 +32,6 @@ var (
 	// resolves at runtime.
 	reportHTMLPathCallPattern = regexp.MustCompile(`window\.report\.(?:get|getText|getHtml|fileUrl|openFile)\(\s*['"]([^'"]+)['"]`)
 	reportHTMLPathAttrPattern = regexp.MustCompile(`(?i)\b(?:src|href)\s*=\s*['"]((?:db|knowledgebase|docs|planning|evaluation|costs|variables)/[^'"#?]+)['"]`)
-	reportHTMLExternalAsset   = regexp.MustCompile(`(?i)<(?:link|script)\b[^>]*\b(?:href|src)\s*=\s*['"]https?://`)
 )
 
 func reportHTMLDecodeLiteral(match []string) (sqlText string, dynamic bool) {
@@ -994,20 +993,22 @@ type reportJSUnit struct {
 	handler  bool
 }
 
-// validateReportJS checks the report's executable JavaScript: block shape
-// (closed, inline, unterminated), DOM-write targets and their ordering,
-// calls to undefined functions, unknown window.report methods, callback
-// references, and module syntax that cannot resolve in the sandbox.
+// validateReportJS checks the report's executable JavaScript: block shape,
+// DOM-write targets and their ordering, calls to undefined functions, unknown
+// window.report methods, and callback references. Library/loading choices are
+// advisory because preview_report is the authoritative browser check.
 func validateReportJS(content string, blocks []reportScriptBlock) (errors, warnings []string, scriptCount int) {
 	var units []reportJSUnit
+	hasExternalScript := false
 	for _, b := range blocks {
 		if !b.closed {
 			errors = append(errors, fmt.Sprintf("script block opened at line %d is never closed with </script>; the rest of the document is swallowed as code", reportLineNumber(content, b.openStart)))
 			continue
 		}
 		if b.hasSrc {
-			if lower := strings.ToLower(strings.TrimSpace(b.src)); !strings.HasPrefix(lower, "http") {
-				errors = append(errors, fmt.Sprintf("script src %q will not load (line %d); the report must be self-contained -- inline the JS", b.src, reportLineNumber(content, b.openStart)))
+			hasExternalScript = true
+			if lower := strings.ToLower(strings.TrimSpace(b.src)); !strings.HasPrefix(lower, "http") && !strings.HasPrefix(lower, "data:") {
+				warnings = append(warnings, fmt.Sprintf("script src %q (line %d) is not an absolute HTTPS/data URL; validate its resolution in preview_report", b.src, reportLineNumber(content, b.openStart)))
 			}
 			continue
 		}
@@ -1065,7 +1066,11 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 				continue
 			}
 			seenCall[call.name] = true
-			errors = append(errors, fmt.Sprintf("calls undefined function %q (line %d); define it in a <script> block, fix the spelling, or remove the call", call.name, line(u, call.paren)))
+			if hasExternalScript {
+				warnings = append(warnings, fmt.Sprintf("call to %q (line %d) is not defined inline and may be supplied by an external script; preview the report to verify the CDN library loaded", call.name, line(u, call.paren)))
+			} else {
+				errors = append(errors, fmt.Sprintf("calls undefined function %q (line %d); define it in a <script> block, fix the spelling, or remove the call", call.name, line(u, call.paren)))
+			}
 		}
 		for _, re := range []*regexp.Regexp{reportJSWindowReportCallPattern, reportJSBareReportCallPattern} {
 			for _, loc := range re.FindAllStringSubmatchIndex(u.stripped, -1) {
@@ -1084,7 +1089,11 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 					continue
 				}
 				seenCallback[name] = true
-				errors = append(errors, fmt.Sprintf("passes undefined function %q as a callback (line %d); define it or fix the spelling", name, line(u, loc[2])))
+				if hasExternalScript {
+					warnings = append(warnings, fmt.Sprintf("callback %q (line %d) is not defined inline and may be supplied by an external script; preview the report to verify the CDN library loaded", name, line(u, loc[2])))
+				} else {
+					errors = append(errors, fmt.Sprintf("passes undefined function %q as a callback (line %d); define it or fix the spelling", name, line(u, loc[2])))
+				}
 			}
 		}
 		for _, loc := range reportJSImportWordPattern.FindAllStringIndex(u.stripped, -1) {
@@ -1099,14 +1108,14 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 				continue // import.meta
 			}
 			seenModule["import"] = true
-			errors = append(errors, fmt.Sprintf("ES module import found (line %d); the report has no bundler or module resolution -- inline the code instead", line(u, loc[0])))
+			warnings = append(warnings, fmt.Sprintf("ES module import found (line %d); validate module resolution and CORS in preview_report", line(u, loc[0])))
 		}
 		for _, loc := range reportJSExportWordPattern.FindAllStringIndex(u.stripped, -1) {
 			if seenModule["export"] {
 				break
 			}
 			seenModule["export"] = true
-			errors = append(errors, fmt.Sprintf("ES module export found (line %d); the report has no bundler or module resolution -- inline the code instead", line(u, loc[0])))
+			warnings = append(warnings, fmt.Sprintf("ES module export found (line %d); validate module execution in preview_report", line(u, loc[0])))
 		}
 		for _, write := range reportDOMWrites(u.raw, u.stripped) {
 			offsets, ok := ids[write.id]
@@ -1141,8 +1150,8 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 }
 
 // registerHTMLReportTools exposes the deliberately small report contract. A
-// workflow owns one complete HTML reporting experience at db/reports/index.html;
-// there is no platform navigation or JSON layout/registration file.
+// a workflow owns HTML reporting documents under db/reports/. index.html is
+// the default, while the shared frontend toolbar handles document navigation.
 func registerHTMLReportTools(
 	mcpAgent DefinitionToolRegistrar,
 	workspacePath string,
@@ -1150,7 +1159,7 @@ func registerHTMLReportTools(
 	readFile func(context.Context, string) (string, error),
 	hooks ReportHTMLValidationHooks,
 ) error {
-	schema := `{"type":"object","properties":{},"additionalProperties":false}`
+	schema := `{"type":"object","properties":{"document_path":{"type":"string","description":"Report HTML path under db/reports/. Defaults to db/reports/index.html."}},"additionalProperties":false}`
 	params, err := parseSchemaForToolParameters(schema)
 	if err != nil {
 		return fmt.Errorf("parse validate_report_html schema: %w", err)
@@ -1158,11 +1167,21 @@ func registerHTMLReportTools(
 
 	mcpAgent.RegisterCustomTool(
 		"validate_report_html",
-		"Validate the workflow's complete db/reports/index.html reporting experience: document shape, scripted element ids, inline-script placement and ordering, calls to undefined functions and unknown window.report methods, every literal window.report.query SQL against the live db/db.sqlite, every referenced db/ path, external asset URLs, and the in-app theme hooks. The HTML owns its tabs, sections, sidebar, or scrolling layout; the platform adds no report navigation and there is no report_plan.json.",
+		"Validate one HTML report document under db/reports/: document shape, scripted element ids, inline-script placement and ordering, calls to undefined functions and unknown window.report methods, literal SQL against db/db.sqlite, referenced db/ paths, resolvable asset references, and app-theme hooks. HTTPS CDN stylesheets and scripts are allowed. document_path defaults to db/reports/index.html.",
 		params,
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			_ = args
-			const relativePath = "db/reports/index.html"
+			relativePath := "db/reports/index.html"
+			if raw, ok := args["document_path"].(string); ok && strings.TrimSpace(raw) != "" {
+				relativePath = strings.TrimSpace(raw)
+			}
+			if filepath.ToSlash(relativePath) != relativePath || !strings.HasPrefix(relativePath, "db/reports/") || !strings.HasSuffix(strings.ToLower(relativePath), ".html") {
+				return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+			}
+			for _, part := range strings.Split(relativePath, "/") {
+				if part == "" || part == "." || part == ".." {
+					return "", fmt.Errorf("document_path must be a canonical .html path under db/reports/")
+				}
+			}
 			content, err := readFile(ctx, filepath.ToSlash(filepath.Join(workspacePath, relativePath)))
 			if err != nil {
 				return "", fmt.Errorf("read %s: %w", relativePath, err)
@@ -1171,10 +1190,10 @@ func registerHTMLReportTools(
 			errors := make([]string, 0)
 			warnings := make([]string, 0)
 			if !strings.Contains(lower, "<html") {
-				errors = append(errors, "missing <html> root")
+				warnings = append(warnings, "missing explicit <html> root; the browser will synthesize one, but a complete document is easier to inspect")
 			}
 			if !strings.Contains(lower, "<body") {
-				errors = append(errors, "missing <body>")
+				warnings = append(warnings, "missing explicit <body>; the browser will synthesize one, but a complete document is easier to inspect")
 			}
 			title := ""
 			if start := strings.Index(lower, "<title"); start >= 0 {
@@ -1186,7 +1205,7 @@ func registerHTMLReportTools(
 				}
 			}
 			if title == "" {
-				errors = append(errors, "missing non-empty <title> for the workflow report")
+				warnings = append(warnings, "missing non-empty <title>; add one for toolbar naming and accessibility")
 			}
 			blocks := reportScriptBlocks(content)
 			jsErrors, jsWarnings, scriptCount := validateReportJS(content, blocks)
@@ -1201,10 +1220,10 @@ func registerHTMLReportTools(
 				}
 			}
 
-			// A <base> tag repoints every relative URL: the preview may work
-			// while the published offline copy breaks.
+			// A <base> tag is valid, but it changes every relative URL. Make the
+			// choice visible and leave runtime resolution to preview_report.
 			if loc := reportBaseTagPattern.FindStringIndex(content); loc != nil {
-				errors = append(errors, fmt.Sprintf("a <base> tag repoints relative URLs (line %d); the report must be self-contained -- drop the tag and inline the assets", reportLineNumber(content, loc[0])))
+				warnings = append(warnings, fmt.Sprintf("a <base> tag repoints relative URLs (line %d); verify all linked assets and navigation in preview_report", reportLineNumber(content, loc[0])))
 			}
 
 			// Subresources never resolve inside the sandboxed srcdoc report;
@@ -1224,16 +1243,10 @@ func registerHTMLReportTools(
 				}
 				tagLine := reportLineNumber(content, loc[0])
 				if strings.Contains(rel, "stylesheet") {
-					errors = append(errors, fmt.Sprintf("stylesheet link %q will not resolve (line %d); the report must be self-contained -- inline the CSS", href, tagLine))
+					warnings = append(warnings, fmt.Sprintf("stylesheet link %q is relative (line %d); verify that it resolves in preview_report", href, tagLine))
 				} else {
 					warnings = append(warnings, fmt.Sprintf("resource link %q is ignored inside the sandboxed report (line %d); drop the tag or inline the asset", href, tagLine))
 				}
-			}
-
-			// External assets never load: the Report tab renders the page from
-			// srcdoc in a sandbox, and published copies must work offline.
-			if reportHTMLExternalAsset.MatchString(content) {
-				errors = append(errors, "external stylesheet/script URL found (link href / script src to https://...); the report must be self-contained -- inline the CSS/JS, no CDN")
 			}
 
 			// Theme: the Report tab mirrors the APP theme onto the document as
@@ -1297,7 +1310,7 @@ func registerHTMLReportTools(
 					"path_check_enabled": hooks.FileExists != nil,
 				},
 				"next_step":     "Open the Report tab to verify layout and scrolling.",
-				"page_contract": "db/reports/index.html owns the complete reporting experience and its internal navigation.",
+				"page_contract": "Each db/reports/*.html document owns its internal layout; the shared toolbar selects documents.",
 			}
 			out, marshalErr := json.MarshalIndent(result, "", "  ")
 			if marshalErr != nil {

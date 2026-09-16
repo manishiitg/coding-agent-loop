@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { consumeSharedReturnPath, rememberSharedReturnPath, sharedLink, sharedReturnPath, SHARE_RETURN_KEY } from './sharedLinks'
+import { consumeSharedReturnPath, isShareableAppOrigin, rememberSharedReturnPath, sharedLink, sharedReportLink, sharedReturnPath, SHARE_RETURN_KEY } from './sharedLinks'
 
 describe('Shared file links', () => {
   beforeEach(() => {
@@ -26,6 +26,27 @@ describe('Shared file links', () => {
     expect(decoded).toBe(path)
     expect(url.searchParams.has('token')).toBe(false)
     expect(url.origin).toBe('http://127.0.0.1:18743')
+  })
+
+  it('links directly to one report document', () => {
+    const url = new URL(sharedReportLink(
+      'http://127.0.0.1:18743',
+      'Chats/Work/projects/demo',
+      'db/reports/investments.html',
+      'work-user',
+    ))
+    const decoded = new TextDecoder().decode(Uint8Array.from(atob(url.searchParams.get('path')!), c => c.charCodeAt(0)))
+    expect(url.pathname).toBe('/report')
+    expect(decoded).toBe('Chats/Work/projects/demo')
+    expect(url.searchParams.get('document')).toBe('db/reports/investments.html')
+    expect(url.searchParams.get('uid')).toBe('work-user')
+  })
+
+  it('does not present loopback previews as shareable deployments', () => {
+    expect(isShareableAppOrigin('http://127.0.0.1:51733')).toBe(false)
+    expect(isShareableAppOrigin('http://localhost:51733')).toBe(false)
+    expect(isShareableAppOrigin('http://app.localhost:51733')).toBe(false)
+    expect(isShareableAppOrigin('https://work.example.com')).toBe(true)
   })
   it('only restores internal asset pages after OAuth', () => {
     expect(sharedReturnPath('/file?path=YWJj')).toBe('/file?path=YWJj')

@@ -1,12 +1,12 @@
 [← Pulse platform issue index](../../pulse_platform_issue_register.md)
 
-# PLAT-178 — resume falls back to a stale conversation snapshot and silently drops everything the user did live after it, even though the full transcript still exists on disk
+# PLAT-178 — retained chat delivery and transcript recovery can leave the chat UI behind the terminal
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | unassigned |
-| Ticket state | `fixed` — recovery path implemented, live reverify pending |
-| Last synchronized | `2026-08-22` |
+| Assigned agent | Codex |
+| Ticket state | `implemented, deployed, and live-verified on Confida` |
+| Last synchronized | `2026-09-16` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
   confusing (the agent appears to "forget" recent work and asks the user to
@@ -143,12 +143,17 @@ to the substack workflow or to this one incident.
 
 ## Fix implemented
 
-Two independent gaps were identified; only the second was implemented in
-this pass (chosen as lower-risk and it recovers the loss after the fact
-regardless of how it opened — see "Not implemented" below):
+Four independent gaps were identified. All four are now implemented:
 
-1. ~~Close the live-input assistant-reply gap~~ — **not implemented**, see
-   below.
+1. **Persist every provider-confirmed live-delivery user message.** Both
+   `/api/query` retained delivery and `/api/live-input` now call the same
+   `persistLiveInputUserMessage` helper after the coding CLI confirms receipt.
+   This closes the 2026-09-16 Confida recurrence where session
+   `61247bd2-347b-4776-982f-e158e84f9ad6` delivered the user's message to Pi
+   and completed in the terminal, but the durable JSON stopped before the last
+   two turns. The helper is reached by durable `mcpagent`, cold retained-tmux,
+   and running-Agent delivery paths and keeps the authenticated internal user
+   ID when writing history.
 2. **Make the workflow-builder restore path read the native transcript**
    (finding #3/#4) — **implemented**. `restoreLatestBuilderConversation`
    (`workflow_builder_session_routes.go:215-`, the actual function that
@@ -180,17 +185,73 @@ regardless of how it opened — see "Not implemented" below):
    the workspace API being unreachable) is logged but never blocks the
    restore itself — the in-memory catch-up is still served.
 
-## Not implemented
+   The Pi branch now resolves its native transcript with
+   `picli.ReadNativeTranscriptFromWorkingDir(workingDir, nativeSessionID)`.
+   The earlier default-store lookup could not see transcripts inside the
+   session's isolated runtime directory, so completion synchronization retried
+   three times and found no completed reply even though the JSONL contained the
+   missing user message and full assistant answer.
 
-- **The live-input assistant-reply gap** (fix direction 1): closing this
-  would prevent the gap from ever opening, on top of direction 2 recovering
-  it after the fact. Not done in this pass — `/api/live-input` delivers
-  into a live tmux pane asynchronously with no synchronous return of the
-  CLI's reply, so capturing it would need either a lightweight polling
-  read-back or a streaming hook into the retained session, a larger change
-  than the read-only recovery path shipped here. Worth a follow-up once the
-  read-side fix has been live-verified to actually close the user-visible
-  symptom on its own.
+3. **Preserve Pi thinking blocks as retained-turn progress.** A second live
+   check on the same Confida session used the message “can you group them by
+   companies”. The terminal showed many narrated updates, including
+   “Identifying Session Clues” and “Mapping Company IDs”, while the chat showed
+   only “41 tool calls” until the final answer. Direct inspection of Pi's JSONL
+   proved those updates were `thinking` blocks paired with tool calls and empty
+   `text` blocks. Normal Pi streaming already maps `thinking_delta` to visible
+   assistant progress, but `ReadRetainedTurnProgressMessages` rebuilt progress
+   only from `text`, silently dropping the retained equivalent. The transcript
+   summary now keeps a separate `ProgressMessages` projection containing both
+   thinking and text blocks in order. The final-answer `Messages` projection is
+   unchanged, so thinking can never satisfy retained-turn completion or appear
+   as the final answer.
+
+4. **Always reconcile interactive workflow chats with durable history.** A
+   later reproduction in the same Confida session exposed a frontend-only
+   restore race after the backend fixes above had correctly persisted the
+   answer. The terminal contained the completed judge scorecard (`PASS`,
+   `0.95 / 1.0`, seven Langfuse scores and `judge_scorecard.md`) and the durable
+   `conversation_history` also contained that answer plus the next
+   `dont add into langfuse` exchange, while Chat stopped at the older
+   “workflow execution is currently running” response. The persisted
+   `ui_events` array was capped at 200 and ended before those durable turns.
+   Workflow restoration treated any non-empty volatile event array as fully
+   hydrated, so it never requested the authoritative conversation history.
+
+   Interactive workflow tabs now reconcile with durable history even when a
+   volatile event tail is present; `hydrateTabEvents` then deduplicates and
+   merges that live tail so tool/progress events remain visible. Entering
+   Formatted view also performs the same reconciliation, covering refreshes
+   that initially reopen in Terminal view. Read-only schedule tabs retain the
+   cheaper empty-only hydration rule.
+
+## Deployment and live verification
+
+- Deployed application revision
+  `912b9347e473d078f3c82b72c1bf10a9fd1ebedc` as Confida release
+  `confida-912b9347-20260916083842` on 2026-09-16. The release pipeline
+  reported the agent API healthy, the public endpoint returned HTTP 200, and
+  the `confida-agent`, `confida-gateway`, and `confida-workspace` user services
+  were active after activation.
+- Live browser verification after a hard reload restored the durable Chat
+  history rather than stopping at the stale capped UI-event tail. The UI
+  displayed the previously missing local-only Langfuse configuration reply
+  and the complete trace/business-context response. This confirms the deployed
+  Formatted-view hydration is reading and merging authoritative history.
+- The same reload also confirmed the bundled toolbar changes: Knowledgebase is
+  top-level, Costs is under Ops, and Playbooks is under Setup.
+- Provider-matrix verification covers every registered persistent live-input
+  CLI: Claude Code, Codex CLI, Cursor CLI, Pi CLI, and Muse. Shared user-message
+  persistence and frontend durable-history reconciliation are provider-neutral;
+  each provider has retained-progress/final-answer readers and a native
+  transcript recovery branch. Focused adapter, retained-session, and server
+  recovery suites passed across all three repositories on 2026-09-16. A
+  contract-derived regression now fails if a future persistent live-input CLI
+  is registered without declaring transcript reading or without being included
+  in native chat-history recovery.
+
+## Out of scope
+
 - Not investigating why the tmux pane died in this specific incident — the
   transcript's own last entry (`<local-command-stdout>Bye!</local-command-stdout>`)
   suggests an intentional `/bye`/exit rather than a crash, but the fix
@@ -207,6 +268,22 @@ session exchanging live-input messages then losing its tmux pane, checked
 against a real restore).
 
 - `go build ./...` clean.
+- 2026-09-16 regressions pass:
+  `TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux` proves a
+  confirmed `/api/query` retained delivery persists the exact authenticated
+  user/session/message tuple, and
+  `TestRefreshLatestBuilderConversationFromPiTranscript` proves recovery reads
+  the isolated working-directory transcript rather than ambient Pi storage.
+- `TestPiRetainedProgressPreservesMessagesAroundTools` now includes a real
+  thinking-only assistant record (`thinking` + tool call + empty text), proves
+  it is emitted exactly once as progress, and proves it never enters the
+  final-answer message stream. The shared retained-progress and completion
+  watcher suites also pass for all retained providers.
+- Frontend regression `workflowTabsNeedingHydration` proves an interactive
+  workflow-builder tab with a non-empty capped volatile tail still requests
+  durable history, while a populated read-only schedule remains untouched.
+  The focused session-restore/hydration suite passes (19 tests), along with
+  TypeScript compilation and focused ESLint.
 - New tests in `claude_native_transcript_sync_test.go`: working-directory
   slug encoding matches the real scheme; text extraction correctly keeps
   plain-string/`.text`-block content and drops `tool_use`/`tool_result`/

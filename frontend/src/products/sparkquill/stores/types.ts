@@ -1,7 +1,7 @@
 // Shared types used across LearningApp.tsx and the Zustand stores.
 
 export type Screen = 'engine' | 'child' | 'pin' | 'parent' | 'tutor'
-export type DrawerTab = 'assets' | 'progress' | 'files' | 'allfiles' | 'uploaded' | `pin:${string}`
+export type DrawerTab = 'assets' | 'progress' | 'files' | 'allfiles' | 'uploaded' | 'browser' | `pin:${string}`
 
 export type ApiEngine = {
   id: string

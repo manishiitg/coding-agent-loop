@@ -17,7 +17,7 @@ REMOTE_APP="/srv/confida"
 export GOMAXPROCS=4 GOFLAGS=-p=4 NODE_OPTIONS=--max-old-space-size=2048
 export PATH="/srv/confida/tools/node/bin:/srv/confida/tools/bin:$PATH"
 
-for command in git go gcc npm rsync python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in git go gcc npm python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 python3 "$SCRIPT_DIR/deployment_checks.py" preflight
 
 # Config overlay files are read from THIS checkout (i.e. from whatever is on
@@ -33,12 +33,18 @@ grep -Fq 'enabledProductSurfaces: ["agentworks", "work"]' "$SCRIPT_DIR/runtime-c
   exit 1
 }
 
-RELEASE_ID="confida-$(git -C "$REPO_ROOT" rev-parse --short HEAD)-$(date +%Y%m%d%H%M%S)"
+builder_revision="$(git -C "$REPO_ROOT" rev-parse HEAD)"
+test -n "$builder_revision"
+RELEASE_ID="confida-${builder_revision:0:8}-$(date +%Y%m%d%H%M%S)"
 REMOTE_RELEASE="$REMOTE_APP/releases/$RELEASE_ID"
 BUILD_DIR="$REMOTE_RELEASE"
+MIGRATION_STOPPED_AGENT=0
 mkdir -p "$BUILD_DIR/bin" "$BUILD_DIR/frontend" "$BUILD_DIR/configs"
 touch "$BUILD_DIR/.deploying"
 cleanup_build() {
+	if [[ "$MIGRATION_STOPPED_AGENT" == 1 ]]; then
+		systemctl --user restart confida-agent >/dev/null 2>&1 || true
+	fi
   if [[ "$(readlink -f "$REMOTE_APP/current")" != "$BUILD_DIR" ]]; then rm -rf "$BUILD_DIR"; fi
 }
 trap cleanup_build EXIT
@@ -49,9 +55,9 @@ trap cleanup_build EXIT
 DEPLOY_GOWORK="$BUILD_DIR/go.work"
 (cd "$BUILD_DIR" && go work init "$REPO_ROOT/agent_go" "$REPO_ROOT/workspace" "$WORKSPACE_ROOT/mcpagent" "$WORKSPACE_ROOT/multi-llm-provider-go")
 {
-  printf 'mcp-agent-builder-go=%s\n' "$(git -C "$REPO_ROOT" rev-parse HEAD)"
-  printf 'mcpagent=%s\n' "$(git -C "$WORKSPACE_ROOT/mcpagent" rev-parse HEAD)"
-  printf 'multi-llm-provider-go=%s\n' "$(git -C "$WORKSPACE_ROOT/multi-llm-provider-go" rev-parse HEAD)"
+	printf 'mcp-agent-builder-go=%s\n' "$builder_revision"
+	printf 'mcpagent=%s\n' "$(git -C "$WORKSPACE_ROOT/mcpagent" rev-parse HEAD)"
+	printf 'multi-llm-provider-go=%s\n' "$(git -C "$WORKSPACE_ROOT/multi-llm-provider-go" rev-parse HEAD)"
 } > "$BUILD_DIR/SOURCE_REVISIONS"
 
 echo "==> [$RELEASE_ID] Building binaries (native linux/amd64, on $(hostname))"
@@ -74,6 +80,9 @@ cp -R "$REPO_ROOT/frontend/dist/." "$BUILD_DIR/frontend/"
 cp "$REPO_ROOT/frontend/scripts/check-release-assets.mjs" "$BUILD_DIR/check-release-assets.mjs"
 cp "$REPO_ROOT/deploy/common/prune-releases.py" "$BUILD_DIR/prune-releases.py"
 cp "$SCRIPT_DIR/deployment_checks.py" "$BUILD_DIR/deployment_checks.py"
+mkdir -p "$BUILD_DIR/migrations"
+install -m 0755 "$REPO_ROOT/scripts/migrate_workflow_builder_chats.py" "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py"
+install -m 0644 "$SCRIPT_DIR/workflow-builder-chat-owners-v1.json" "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json"
 # The playbook API loads its catalog at runtime from AGENTWORKS_PLAYBOOKS_DIR.
 # Validate the source before packaging, copy the complete catalog into the
 # immutable release, then validate the packaged copy. Any missing or malformed
@@ -175,10 +184,36 @@ printf '%s\n' '[Service]' 'Environment=AGENT_BROWSER_CDP_ENABLED=false' > "$HOME
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_BROWSER_SESSION_PREFIX=confida' 'Environment=AGENTWORKS_BROWSER_STAGING_NAMESPACE=confida' > "$HOME/.config/systemd/user/confida-workspace.service.d/40-browser-isolation.conf"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES=' 'Environment=AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work' > "$HOME/.config/systemd/user/confida-workspace.service.d/60-product-access.conf"
 rm -f "$HOME/.config/systemd/user/confida-workspace.service.d/60-admin-only-products.conf"
+
+# One-time partition of old Workflow Builder chats. Run after `current` points
+# at code that understands the new nested layout, but before starting the new
+# agent, so no turn can rewrite a transcript while it moves. The marker lives
+# outside releases and makes all later deployments a no-op. The migration is
+# itself idempotent, so a deploy interrupted before marker creation can safely
+# retry it. This scans only data/docs/Workflow and cannot touch per-user Crew
+# projects under data/docs/_users/*/Chats/Work/projects.
+migration_state="$REMOTE_APP/state/migrations"
+migration_marker="$migration_state/workflow-builder-chats-v1.done"
+install -d -m 0700 "$migration_state"
+if [[ ! -f "$migration_marker" ]]; then
+	echo "==> [$RELEASE_ID] Migrating legacy Workflow Builder chats"
+	MIGRATION_STOPPED_AGENT=1
+	systemctl --user stop confida-agent
+	python3 "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py" \
+		--workspace-root "$REMOTE_APP/data/docs" \
+		--owner-map "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json" \
+		--apply
+	marker_tmp="$(mktemp "$migration_state/.workflow-builder-chats-v1.XXXXXX")"
+	printf 'release=%s\ncompleted_at=%s\n' "$RELEASE_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$marker_tmp"
+	chmod 0600 "$marker_tmp"
+	mv "$marker_tmp" "$migration_marker"
+fi
+
 systemctl --user daemon-reload
 systemctl --user restart confida-workspace
 sleep 2
 systemctl --user restart confida-agent
+MIGRATION_STOPPED_AGENT=0
 sleep 2
 systemctl --user restart confida-gateway
 sleep 2

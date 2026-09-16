@@ -22,6 +22,7 @@ import { SecretSelectionSection } from '../../components/secrets/SecretSelection
 import { AskAIButton } from '../../components/workflow/AskAIButton'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip'
 import { WorkspaceToolbarGroup } from '../../components/workspace/WorkspaceToolbarGroup'
+import { ReportDocumentSwitcher } from '../../components/workflow/ReportDocumentSwitcher'
 import { agentApi, workFolderApi } from '../../services/api'
 import type { PresetLLMConfig, WorkFolderGrant } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
@@ -60,11 +61,11 @@ function queueWorkMessage(tabId: string, message: string) {
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'database', label: 'Database', icon: Database },
+  { id: 'files', label: 'Files', icon: Files },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
-  { id: 'files', label: 'Files', icon: Files },
+  { id: 'database', label: 'Database', icon: Database },
 ]
 
 const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
@@ -92,7 +93,7 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
   return <Tooltip><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="bottom"><p>{label}</p></TooltipContent></Tooltip>
 }
 
-export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
+export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
   const [openGroup, setOpenGroup] = useState<'views' | 'setup'>(() => SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
@@ -104,9 +105,10 @@ export function WorkWorkspaceToolbar({ view, onViewChange, enabledPanels }: { vi
   return (
     <div data-tour="work-tools" className="ml-auto flex shrink-0 items-center gap-1">
       <TooltipProvider delayDuration={150}>
+        {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: dashboard, database, browser, costs, schedules and files">
-            <div className="inline-flex items-center gap-0.5">{visibleViews.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
+          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
+            <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
           <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
@@ -172,7 +174,7 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
   return (
     <div className="flex h-full min-h-0 flex-col overflow-y-auto p-4">
       <h2 className="text-sm font-semibold text-foreground">Attached folders</h2>
-      <p className="mt-1 text-xs text-muted-foreground">Give Work access to an existing server folder in addition to this project.</p>
+      <p className="mt-1 text-xs text-muted-foreground">Give Crew access to an existing server folder in addition to this project.</p>
       {roots.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Allowed roots: {roots.join(', ')}</p>}
       <div className="mt-4"><WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={onWorkflowContextPathsChange} /></div>
       <div className="mt-4 grid gap-2 rounded-lg border border-border p-3">
@@ -330,7 +332,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
 
   const toggleSkill = async (folderName: string) => {
@@ -351,6 +353,14 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
     }
   }
 
+  const updateSecretSelection = async (secrets: string[]) => {
+    try {
+      await onSelectedSecretsChange(secrets)
+    } catch (cause) {
+      useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not save project secret selection.', 'error')
+    }
+  }
+
   if (enabledPanels && !enabledPanels.has(view)) {
     return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">No workspace view is enabled for this product.</div>
   }
@@ -358,12 +368,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
+        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
         {view === 'mcp' && <WorkMCPPanel tabId={tabId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
         {view === 'secrets' && <div className="h-full overflow-y-auto p-4"><SecretSelectionSection
-          selectedSecrets={[]}
-          onSecretChange={() => undefined}
+          selectedSecrets={selectedSecrets}
+          onSecretChange={secrets => { void updateSecretSelection(secrets) }}
           workflowPath={workspacePath}
           workspaceNoun="project"
           workspaceSecretHeading="Project secrets"
@@ -371,7 +381,6 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
           workspaceSharingBadgeLabel="Project"
           showGlobalSecrets={false}
           showSharedSecrets={false}
-          workspaceSecretsAlwaysEnabled
           allowGlobalPromotion={false}
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
@@ -384,8 +393,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
-            documentPath="db/reports/index.html"
-            emptyDescription="Ask Work to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
+            emptyDescription="Ask Crew to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
             sendChatMessage={async (message) => ({ status: 'queued', ...queueWorkMessage(tabId, `From this project's dashboard:\n\n${message}`) })}
           />}
           {view === 'database' && <DatabaseView workspacePath={workspacePath} />}
@@ -402,8 +410,9 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             onClose={() => onViewChange('files')}
             headerAction={<AskAIButton
               workspacePath={workspacePath}
-              message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Work project; do not create workflow routes or workflow executions."
+              message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
               onAsk={message => { queueWorkMessage(tabId, message) }}
+              iconOnly
             />}
           />}
         </Suspense>

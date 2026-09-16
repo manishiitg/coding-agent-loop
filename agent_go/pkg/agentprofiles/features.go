@@ -118,11 +118,11 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Secret management is enabled. Read the attached `work-integrations` skill before managing secrets. Use dedicated secret tools, refer to credentials only by name, and never print or store secret values in project files.",
 	},
 	"mcp": {
-		Tools:           []string{"list_mcp_servers", "search_mcp_catalog", "install_mcp_server", "add_mcp_server", "remove_mcp_server", "get_mcp_server_logs", "trigger_mcp_discovery"},
-		Skills:          []string{"work-integrations"},
+		Tools:           []string{"list_mcp_servers", "search_mcp_catalog", "install_mcp_server", "add_mcp_server", "remove_mcp_server", "get_mcp_server_logs", "trigger_mcp_discovery", "update_project_mcp_server_selection"},
+		Skills:          []string{"work-mcp"},
 		UIPanels:        []string{"mcp"},
 		Capabilities:    map[string]CapabilityRequirement{"mcp_selection": CapabilityPreferred},
-		PromptExtension: "MCP integrations are enabled. Read the attached `work-integrations` skill before managing MCP servers. Distinguish account installation from project selection and use only connected, explicitly selected servers.",
+		PromptExtension: "MCP is enabled. Read the attached `work-mcp` skill before managing MCP servers. Distinguish platform connection setup from project selection and use only connected, explicitly selected servers.",
 	},
 	"skills": {
 		Tools:           []string{"list_skills", "search_skills", "install_skill", "import_skill", "uninstall_skill"},
@@ -185,9 +185,9 @@ var featureCatalog = map[string]featureDefinition{
 	"dashboard": {
 		Dependencies:    []string{"database", "files"},
 		Tools:           []string{"validate_report_html", "preview_report"},
-		Skills:          []string{"work-dashboard"},
+		Skills:          []string{"work-dashboard", "ui-ux-pro-max"},
 		UIPanels:        []string{"dashboard"},
-		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing a dashboard. Keep its presentation under db/reports/, use the managed data contract, validate it, and open it in the shared Dashboard viewer.",
+		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. Use the optional attached `ui-ux-pro-max` skill for design intelligence when it helps; it does not choose the framework or override the dashboard runtime contract. The dashboard may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. Reports may opt into the pinned daisyUI CDN stylesheet. Use the managed data contract and validate every changed view.",
 	},
 	"costs": {
 		UIPanels: []string{"costs"},
@@ -198,7 +198,7 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Background work is enabled. Read the attached `background-work` skill before delegating. Delegate only bounded independent tasks, rely on automatic completion notifications, and do not poll unless the user asks for status.",
 	},
 	"workspace-ui": {
-		Tools: []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"},
+		Tools:           []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"},
 		PromptExtension: "The interactive Work chat can present its right-side workspace views. Use open_workspace_view after creating or discussing something the user should inspect, and trust only an applied browser acknowledgement.",
 	},
 }

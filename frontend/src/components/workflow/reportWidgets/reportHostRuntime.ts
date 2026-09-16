@@ -10,6 +10,7 @@ import { getReportEvaluations, getReportCosts, renderReportEvaluations, renderRe
 import type { ReportCostOptions, ReportDataApi } from './reportEmbedContext'
 import { getReportGoalMetrics, renderReportGoalProgress } from './reportGoalProgress'
 import { REPORT_OPEN_ATTR, REPORT_SRC_ATTR } from './reportMarkdownLinks'
+import { reportDaisyUiHead } from './reportDaisyUi'
 
 export type ReportHostTheme = 'dark' | 'light'
 
@@ -110,17 +111,19 @@ export const REPORT_BOOTSTRAP = `<script>(function(){
 // falls back to prepending for a fragment without a full document shell.
 export function withReportBootstrap(html: string): string {
   if (html.includes('window.__reportQueuedCallbacks')) return html
+  const platformStyles = reportDaisyUiHead(html)
+  const bootstrap = platformStyles + REPORT_BOOTSTRAP
   const headOpen = html.match(/<head[^>]*>/i)
   if (headOpen?.index !== undefined) {
     const at = headOpen.index + headOpen[0].length
-    return html.slice(0, at) + REPORT_BOOTSTRAP + html.slice(at)
+    return html.slice(0, at) + bootstrap + html.slice(at)
   }
   const htmlOpen = html.match(/<html[^>]*>/i)
   if (htmlOpen?.index !== undefined) {
     const at = htmlOpen.index + htmlOpen[0].length
-    return html.slice(0, at) + REPORT_BOOTSTRAP + html.slice(at)
+    return html.slice(0, at) + bootstrap + html.slice(at)
   }
-  return REPORT_BOOTSTRAP + html
+  return bootstrap + html
 }
 
 // App theme tokens (HSL triplets) exposed to the HTML report as CSS variables so

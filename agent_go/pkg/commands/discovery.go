@@ -10,10 +10,17 @@ import (
 
 // DiscoverCommands discovers all user-defined commands in the workspace
 func DiscoverCommands(workspaceAPIURL string) ([]Command, error) {
+	return DiscoverCommandsAt(workspaceAPIURL, CustomCommandsSubPath)
+}
+
+// DiscoverCommandsAt discovers commands below a caller-resolved scope. The
+// server resolves that scope from the signed-in user/current workspace; command
+// storage itself never accepts a free-form root from the browser or model.
+func DiscoverCommandsAt(workspaceAPIURL, commandsPath string) ([]Command, error) {
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 
 	// List all folders in commands/custom/
-	entries, err := client.ListFiles(CustomCommandsSubPath)
+	entries, err := client.ListFiles(commandsPath)
 	if err != nil {
 		// If folder doesn't exist, return empty list
 		return []Command{}, nil
@@ -49,9 +56,16 @@ func DiscoverCommands(workspaceAPIURL string) ([]Command, error) {
 
 // GetCommand retrieves a specific command by folder name
 func GetCommand(workspaceAPIURL, folderName string) (*Command, error) {
+	return GetCommandAt(workspaceAPIURL, CustomCommandsSubPath, folderName)
+}
+
+func GetCommandAt(workspaceAPIURL, commandsPath, folderName string) (*Command, error) {
+	if err := validateFolderName(folderName); err != nil {
+		return nil, err
+	}
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 
-	cmdFilePath := path.Join(CustomCommandsSubPath, folderName, CommandFileName)
+	cmdFilePath := path.Join(commandsPath, folderName, CommandFileName)
 	content, err := client.ReadFile(cmdFilePath)
 	if err != nil {
 		return nil, fmt.Errorf("command not found: %w", err)
@@ -67,6 +81,13 @@ func GetCommand(workspaceAPIURL, folderName string) (*Command, error) {
 
 // CreateCommand creates a new command folder and writes COMMAND.md
 func CreateCommand(workspaceAPIURL, folderName, content string) (*Command, error) {
+	return CreateCommandAt(workspaceAPIURL, CustomCommandsSubPath, folderName, content)
+}
+
+func CreateCommandAt(workspaceAPIURL, commandsPath, folderName, content string) (*Command, error) {
+	if err := validateFolderName(folderName); err != nil {
+		return nil, err
+	}
 	// Validate content first
 	frontmatter, body, err := ValidateCommandContent(content)
 	if err != nil {
@@ -76,7 +97,10 @@ func CreateCommand(workspaceAPIURL, folderName, content string) (*Command, error
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 
 	// Create the folder
-	folderPath := path.Join(CustomCommandsSubPath, folderName)
+	folderPath := path.Join(commandsPath, folderName)
+	if _, err := GetCommandAt(workspaceAPIURL, commandsPath, folderName); err == nil {
+		return nil, fmt.Errorf("command %q already exists", folderName)
+	}
 	if err := client.CreateFolder(folderPath); err != nil {
 		return nil, fmt.Errorf("failed to create command folder: %w", err)
 	}
@@ -97,6 +121,13 @@ func CreateCommand(workspaceAPIURL, folderName, content string) (*Command, error
 
 // UpdateCommand updates a command's COMMAND.md content
 func UpdateCommand(workspaceAPIURL, folderName, content string) (*Command, error) {
+	return UpdateCommandAt(workspaceAPIURL, CustomCommandsSubPath, folderName, content)
+}
+
+func UpdateCommandAt(workspaceAPIURL, commandsPath, folderName, content string) (*Command, error) {
+	if err := validateFolderName(folderName); err != nil {
+		return nil, err
+	}
 	frontmatter, body, err := ValidateCommandContent(content)
 	if err != nil {
 		return nil, fmt.Errorf("invalid command content: %w", err)
@@ -104,7 +135,7 @@ func UpdateCommand(workspaceAPIURL, folderName, content string) (*Command, error
 
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 
-	cmdFilePath := path.Join(CustomCommandsSubPath, folderName, CommandFileName)
+	cmdFilePath := path.Join(commandsPath, folderName, CommandFileName)
 	if err := client.WriteFile(cmdFilePath, content); err != nil {
 		return nil, fmt.Errorf("failed to write command: %w", err)
 	}
@@ -119,13 +150,33 @@ func UpdateCommand(workspaceAPIURL, folderName, content string) (*Command, error
 
 // DeleteCommand deletes a command folder
 func DeleteCommand(workspaceAPIURL, folderName string) error {
+	return DeleteCommandAt(workspaceAPIURL, CustomCommandsSubPath, folderName)
+}
+
+func DeleteCommandAt(workspaceAPIURL, commandsPath, folderName string) error {
+	if err := validateFolderName(folderName); err != nil {
+		return err
+	}
 	client := skills.NewWorkspaceAPIClient(workspaceAPIURL)
 
-	folderPath := path.Join(CustomCommandsSubPath, folderName)
+	folderPath := path.Join(commandsPath, folderName)
 	if err := client.DeleteFolder(folderPath); err != nil {
 		return fmt.Errorf("failed to delete command: %w", err)
 	}
 
+	return nil
+}
+
+func validateFolderName(folderName string) error {
+	folderName = strings.TrimSpace(folderName)
+	if folderName == "" || folderName == "." || folderName == ".." || path.Base(folderName) != folderName {
+		return fmt.Errorf("invalid command folder name")
+	}
+	for _, c := range folderName {
+		if !isValidNameChar(c) {
+			return fmt.Errorf("command folder name contains invalid character %q", c)
+		}
+	}
 	return nil
 }
 

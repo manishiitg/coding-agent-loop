@@ -223,7 +223,16 @@ func landlockSystemWritePaths() []string {
 		"/dev/null", "/dev/zero", "/dev/full", "/dev/random", "/dev/urandom", "/dev/tty",
 	}
 	if profile := browserconfig.SharedProfile(); profile != "" {
-		paths = append(paths, profile)
+		// A user or workflow browser never actually writes to `profile` itself --
+		// HeadlessArgsForSession launches Chrome against `<profile>-users/<id>`
+		// or `<profile>-workflows/<id>` instead (see workspace/browserconfig/
+		// launch.go). Landlock rules don't cover sibling paths that merely share
+		// a string prefix, so granting only the bare `profile` path left every
+		// shared-profile Chrome launch unable to create its ProcessSingleton
+		// socket: "Chrome exited early ... Failed to create socket directory."
+		// Confirmed live on SparkQuill the moment AGENT_BROWSER_SHARED_PROFILE
+		// was first enabled.
+		paths = append(paths, profile, profile+"-users", profile+"-workflows")
 	}
 	return existingCanonicalPaths(paths)
 }

@@ -2,8 +2,13 @@ package server
 
 import (
 	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	llmtypes "github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 // "New chat" keeps the conversation it replaces; a product can make an earlier
@@ -97,5 +102,99 @@ func TestConversationTitleComesFromTheFirstMessage(t *testing.T) {
 	}
 	if got := normalizeConversationWorkspace("/_users/default/Chats/SparkQuill/"); got != "Chats/SparkQuill" {
 		t.Fatalf("normalized workspace = %q", got)
+	}
+	if got := normalizeConversationWorkspace("/data/video-studio/docs/_users/default/Chats/Work/projects/example"); got != "Chats/Work/projects/example" {
+		t.Fatalf("normalized absolute workspace = %q", got)
+	}
+}
+
+func TestResolveProductResumeTargetUsesOwnedWorkProjectOnce(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	conversationDir := filepath.Join(root, "_users", "alice", "Chats", "Work", "projects", "demo", "builder", "conversation", "2026-09-15")
+	if err := os.MkdirAll(conversationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conversationPath := filepath.Join(conversationDir, chatHistoryConversationFileName("saved-chat"))
+	if err := os.WriteFile(conversationPath, []byte(`{
+  "session_id": "saved-chat",
+  "workshop_mode": "workshop",
+  "conversation_history": [{"Role":"human","Parts":[{"Text":"remember this"}]}],
+  "runtime": {
+    "kind": "coding_agent",
+    "provider": "claude-code",
+    "transport": "tmux",
+    "external_session_id": "claude-native-saved",
+    "resume_supported": true
+  }
+}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	target, ok, err := resolveProductResumeTarget("alice", ProductConversationRecord{
+		SessionID:     "saved-chat",
+		WorkspacePath: "/data/docs/_users/alice/Chats/Work/projects/demo",
+	})
+	if err != nil || !ok || target == nil {
+		t.Fatalf("resolve target: ok=%v target=%#v err=%v", ok, target, err)
+	}
+	if target.SessionID != "saved-chat" || target.WorkspacePath != "Chats/Work/projects/demo" || target.provider() != "claude-code" {
+		t.Fatalf("unexpected target: %#v", target)
+	}
+	if !strings.Contains(target.ConversationPath, "Chats/Work/projects/demo/builder/conversation") || len(target.History) != 1 {
+		t.Fatalf("target lost path or history: %#v", target)
+	}
+
+}
+
+func TestResolvedResumeTargetHydratesAndKeepsOnePersistenceDestination(t *testing.T) {
+	history := []llmtypes.MessageContent{{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "saved question"}},
+	}}
+	target := &resolvedResumeTarget{
+		SessionID:        "saved-chat",
+		WorkspacePath:    "Chats/Work/projects/demo",
+		ConversationPath: "_users/alice/Chats/Work/projects/demo/builder/conversation/2026-09-15/session-saved-chat-conversation.json",
+		History:          history,
+		Runtime: &ChatHistoryAgentRuntime{
+			Kind:            "coding_agent",
+			Provider:        "claude-code",
+			WorkshopMode:    "workshop",
+			ResumeSupported: true,
+		},
+		WorkshopMode: "workshop",
+	}
+	api := &StreamingAPI{
+		conversationHistory:                map[string][]llmtypes.MessageContent{},
+		restoredConversationPersistTargets: map[string]restoredChatHistoryPersistTarget{},
+	}
+	if !api.restoreResolvedResumeTarget("saved-chat", target, "workshop") {
+		t.Fatal("resolved target did not hydrate its transcript")
+	}
+	if got := api.conversationHistory["saved-chat"]; len(got) != 1 {
+		t.Fatalf("hydrated history length=%d", len(got))
+	}
+	remembered, ok := api.rememberedRestoredConversationPersistTarget("saved-chat")
+	if !ok || remembered.ConversationPath != target.ConversationPath || remembered.SessionID != target.SessionID {
+		t.Fatalf("persistence destination changed: ok=%v target=%#v", ok, remembered)
+	}
+	if !target.crossesProvider("cursor-cli") || target.crossesProvider("claude-code") {
+		t.Fatalf("provider resume policy is wrong: saved=%q", target.provider())
+	}
+	if !target.canPersist("workshop") {
+		t.Fatal("cross-provider resume must preserve the AgentWorks conversation")
+	}
+}
+
+func TestResolvedResumeTargetCannotBeSuppliedByBrowserJSON(t *testing.T) {
+	req := QueryRequest{RestoredConversationSessionID: "saved-chat", resolvedResumeTarget: &resolvedResumeTarget{SessionID: "internal-only"}}
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "internal-only") || strings.Contains(string(data), "resolved_resume") {
+		t.Fatalf("internal resume target leaked into JSON: %s", data)
 	}
 }

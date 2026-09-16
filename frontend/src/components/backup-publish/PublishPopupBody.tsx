@@ -30,6 +30,7 @@ export interface PublishPopupProps {
   loadAccessSecret?: (secretName: string) => Promise<string>
   loadErrorMessage?: string
   showEnabledBadge?: boolean
+  headerAction?: React.ReactNode
 }
 
 const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
@@ -136,6 +137,7 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
   loadAccessSecret,
   loadErrorMessage = 'Failed to load publish status',
   showEnabledBadge = false,
+  headerAction,
 }) => {
   const [loading, setLoading] = useState(false)
   const [info, setInfo] = useState<WorkflowPublishInfoResponse | null>(null)
@@ -242,6 +244,7 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
             </div>
+            {headerAction}
           </div>
 
           {error && (

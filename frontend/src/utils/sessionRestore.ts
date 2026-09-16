@@ -274,7 +274,18 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
   const rawEvents = conversationToRestoredEvents(conversation)
   const events = restoreToolArgumentsFromConversation(rawEvents, conversation)
 
-  chatStore.setTabEvents(sessionId, events)
+  // Hydration is intentionally concurrent with the live event transport. A
+  // coding-CLI completion can arrive while the history request is in flight;
+  // replacing the tab with the response snapshot at that point erased the
+  // just-submitted user row, its tool activity, and the final answer, making
+  // Chat jump back to the preceding turn as soon as the agent finished.
+  // Re-read the store only after the durable response has been converted and
+  // merge anything that arrived during the request before the single replace.
+  const currentEvents = chatStore.getTabEvents(sessionId)
+  const currentTail = filterDuplicateTranscriptEvents(events, currentEvents)
+  const mergedEvents = currentTail.length > 0 ? [...events, ...currentTail] : events
+
+  chatStore.setTabEvents(sessionId, mergedEvents)
   // Restored conversation rows are synthesized from durable history, while
   // tabEventIndices is a cursor into the backend's volatile raw event store.
   // Those sequences are unrelated. Using history.length here can put the
@@ -293,7 +304,7 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
   )
   console.info(`${TAG} Hydrated persisted conversation`, {
     sessionId,
-    eventCount: events.length,
+    eventCount: mergedEvents.length,
     source: includeUiEvents ? 'conversation_history + persisted_ui_events' : 'conversation_history',
   })
 
@@ -302,7 +313,7 @@ async function hydrateTabEventsFromChatHistory(sessionId: string, workspacePath?
     hasRunningBackgroundAgents: false,
     isSyntheticTurn: false,
     canSteer: false,
-    restoredEvents: events,
+    restoredEvents: mergedEvents,
   }
 }
 

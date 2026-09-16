@@ -16,6 +16,7 @@ import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { AskAIButton } from '../AskAIButton'
+import { WorkspaceViewActions } from '../WorkspaceViewActions'
 import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
@@ -105,19 +106,27 @@ function ReportBody({ workspacePath }: { workspacePath: string | null }) {
       : undefined
   return (
     <div className="h-full min-h-0 relative">
-      {workspacePath && <ReportView workspacePath={workspacePath} focusTier={reportFocusTier} />}
+      {workspacePath && <ReportView
+        workspacePath={workspacePath}
+        focusTier={reportFocusTier}
+        headerAction={<AskAIButton workspacePath={workspacePath} message={getWorkspaceAskAIMessage('report')} iconOnly />}
+      />}
     </div>
   )
 }
 
-function FilesBody() {
+function FilesBody({ workspacePath }: { workspacePath: string | null }) {
   const lastCanvasView = useWorkflowStore(state => state.lastCanvasView)
   // Closing the tree returns to the last canvas view; openWorkspaceView
   // minimizes the file workspace for every view except Files itself.
   const handleCloseFiles = useCallback(() => {
     useWorkflowStore.getState().openWorkspaceView(lastCanvasView)
   }, [lastCanvasView])
-  return <FileWorkspacePane hideManagedEntriesByDefault onClose={handleCloseFiles} />
+  return <FileWorkspacePane
+    hideManagedEntriesByDefault
+    onClose={handleCloseFiles}
+    headerAction={<AskAIButton workspacePath={workspacePath} message={getWorkspaceAskAIMessage('files')} iconOnly />}
+  />
 }
 
 function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {
@@ -130,6 +139,16 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
   const closeInspector = useCallback(() => {
     useWorkflowStore.getState().setShowWorkspacePane(false)
   }, [])
+  const askAI = (view: InspectorViewId) => (
+    <AskAIButton workspacePath={workspacePath} message={getWorkspaceAskAIMessage(view)} iconOnly />
+  )
+  const refreshAndAskAI = (view: InspectorViewId) => (
+    <WorkspaceViewActions
+      workspacePath={workspacePath}
+      message={getWorkspaceAskAIMessage(view)}
+      onRefresh={() => useWorkflowStore.getState().refreshWorkspaceView()}
+    />
+  )
 
   // One explicit branch per inspector view. The `default` is a compile-time
   // exhaustiveness check: a view added to the registry without a branch here
@@ -145,6 +164,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workspacePath={workspacePath}
             runFolders={runFolderNames}
             selectedRunFolder={selectedRunFolder}
+            headerAction={askAI('costs')}
           />
         )
       case 'execution-logs':
@@ -158,18 +178,19 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             runFolders={runFolderNames}
             runFolderInfos={workspace.state?.run_folders || []}
             onRefreshRunFolders={refreshWorkspaceState}
+            headerAction={askAI('execution-logs')}
           />
         )
       case 'learnings':
-        return <LearningsView workspacePath={workspacePath} plan={plan} />
+        return <LearningsView workspacePath={workspacePath} plan={plan} headerAction={refreshAndAskAI('learnings')} />
       case 'knowledgebase':
-        return <KnowledgebaseView workspacePath={workspacePath} />
+        return <KnowledgebaseView workspacePath={workspacePath} headerAction={askAI('knowledgebase')} />
       case 'database':
-        return <DatabaseView workspacePath={workspacePath} />
+        return <DatabaseView workspacePath={workspacePath} headerAction={askAI('database')} />
       case 'evaluation':
         return (
           <div className="h-full overflow-y-auto">
-            <PulseEvalSummary workspacePath={workspacePath || ''} className="min-h-full rounded-none border-0" />
+            <PulseEvalSummary workspacePath={workspacePath || ''} className="min-h-full rounded-none border-0" headerAction={askAI('evaluation')} />
           </div>
         )
       case 'schedules':
@@ -178,10 +199,11 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             embedded
             workflowScope={{ presetQueryId: presetQueryId || undefined, workspacePath: workspacePath || undefined }}
             onClose={closeInspector}
+            headerAction={askAI('schedules')}
           />
         )
       case 'folders':
-        return <WorkflowFolderAccessView workspacePath={workspacePath} />
+        return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('folders')} />
       case 'pulse':
         return (
           <PulseView
@@ -200,16 +222,17 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             statusLoading={pulse.statusLoading}
             overview={pulse.overview}
             onRefresh={() => { void pulse.refresh() }}
+            headerAction={askAI('pulse')}
           />
         )
       case 'backup':
-        return <WorkflowBackupView workspacePath={workspacePath} />
+        return <WorkflowBackupView workspacePath={workspacePath} headerAction={askAI('backup')} />
       case 'publish':
-        return <WorkflowPublishView workspacePath={workspacePath} />
+        return <WorkflowPublishView workspacePath={workspacePath} headerAction={askAI('publish')} />
       case 'notify':
-        return <WorkflowNotificationView workspacePath={workspacePath} />
+        return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAI('notify')} />
       case 'access':
-        return <WorkflowAccessView workspacePath={workspacePath} />
+        return <WorkflowAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('access')} />
       case 'playbooks':
       case 'skills':
       case 'mcp':
@@ -623,7 +646,18 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     // screens still show in that mode, only the plan is skipped.
     body = (
       <ReactFlowProvider>
-        <WorkflowCanvasInner {...props} ref={flowRef} />
+        <WorkflowCanvasInner
+          {...props}
+          ref={flowRef}
+          assistantControl={workspacePath ? (
+            <AskAIButton
+              workspacePath={workspacePath}
+              message={getWorkspaceAskAIMessage('flow')}
+              iconOnly
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground"
+            />
+          ) : undefined}
+        />
       </ReactFlowProvider>
     )
   } else if (toolbarOnly) {
@@ -631,7 +665,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   } else if (kind === 'preview') {
     body = <ReportBody workspacePath={workspacePath} />
   } else if (kind === 'files') {
-    body = <FilesBody />
+    body = <FilesBody workspacePath={workspacePath} />
   } else {
     body = <InspectorBody workspacePath={workspacePath} presetQueryId={presetQueryId} />
   }
@@ -667,16 +701,6 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
           data-testid="tour-workflow-canvas-pane"
           className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 flex-col ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
         >
-          {workspacePath && !toolbarOnly && !embeddedPlanOnly && (
-            <div data-ui-view-assistant className="flex h-9 shrink-0 items-center justify-between gap-3 border-b border-border bg-background px-3">
-              <span className="truncate text-xs font-medium text-muted-foreground">{getWorkspaceView(effectiveView).label}</span>
-              <AskAIButton
-                workspacePath={workspacePath}
-                message={getWorkspaceAskAIMessage(effectiveView)}
-                className="flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-              />
-            </div>
-          )}
           <div className="min-h-0 flex-1">{body}</div>
           {!isInspectorKind && !toolbarOnly && <span hidden data-ui-view-mounted />}
         </div>

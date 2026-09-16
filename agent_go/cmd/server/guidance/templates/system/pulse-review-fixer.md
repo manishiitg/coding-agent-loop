@@ -576,7 +576,9 @@ and disposition each selected bundle before the next; the backend opens the
 durable fix-attempt record from the disposition you write, so there is nothing
 to declare before mutating.
 Before mutation capture targets, time, hashes/versions, and baseline. Load
-`read_skill(skills=[{"name":"builder-reference","path":"references/pulse-fixer-practices.md"},{"name":"builder-reference","path":"references/fix-verification.md"}])`;
+`read_skill(skills=[{"name":"builder-reference","path":"references/pulse-fixer-practices.md"}])`,
+then load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/fix-verification.md"}])`;
 follow the engineering-practices reference to diagnose and bundle the root cause,
 including its **Bounded backlog progress contract**, then the verification reference
 to establish proof. Maintain the exact remaining visible issue-ID list

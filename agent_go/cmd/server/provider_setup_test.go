@@ -281,7 +281,7 @@ func TestProviderSetupCanReplaceRunningSession(t *testing.T) {
 func TestProviderSetupAllowlistIncludesReviewedProviderActions(t *testing.T) {
 	want := map[string]providerSetupCommand{
 		"claude-code": {command: "claude", args: []string{"auth", "login"}},
-		"codex-cli":   {command: "codex", args: []string{"login"}},
+		"codex-cli":   {command: "codex", args: []string{"login", "--device-auth"}},
 		"cursor-cli":  {command: "cursor-agent", args: []string{"login"}},
 		"pi-cli":      {command: "pi"},
 		"muse-cli":    {command: "muse", args: []string{"login"}},

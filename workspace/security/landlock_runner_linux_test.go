@@ -118,3 +118,36 @@ func TestLandlockSystemReadPathsGrantAllOfEtcReadOnly(t *testing.T) {
 		}
 	}
 }
+
+// A shared browser profile is never launched against the bare configured
+// path -- HeadlessArgsForSession always uses a `<profile>-users/<id>` or
+// `<profile>-workflows/<id>` sibling instead. Landlock rules don't follow
+// sibling paths that merely share a string prefix, so the write baseline
+// must grant those siblings explicitly or Chrome can't create its
+// ProcessSingleton socket ("Failed to create socket directory"), confirmed
+// live the moment SparkQuill first enabled AGENT_BROWSER_SHARED_PROFILE.
+func TestLandlockSystemWritePathsCoverSharedProfileUserAndWorkflowSiblings(t *testing.T) {
+	base := t.TempDir()
+	profile := filepath.Join(base, "browser-profile")
+	for _, dir := range []string{profile, profile + "-users", profile + "-workflows"} {
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", profile)
+
+	want := []string{profile, profile + "-users", profile + "-workflows"}
+	got := landlockSystemWritePaths()
+	for _, w := range want {
+		found := false
+		for _, p := range got {
+			if p == w {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected %q in the Landlock write baseline, got %v", w, got)
+		}
+	}
+}

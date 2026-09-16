@@ -361,6 +361,9 @@ type StreamingAPI struct {
 	// internalRetainedTurnFinalResponseReader is the test seam for the read-only
 	// coding-CLI sidecar lookup used after a directly injected turn completes.
 	internalRetainedTurnFinalResponseReader func(llmproviders.Provider, string, time.Time) string
+	// internalLiveInputPersistenceHandler lets routing tests verify that every
+	// provider-confirmed live delivery is also written to durable chat history.
+	internalLiveInputPersistenceHandler func(userID, sessionID, message string)
 
 	// Note: Removed session management - fresh agents created per request
 
@@ -571,8 +574,9 @@ type StreamingAPI struct {
 	// that turn (so the new system prompt + tool list actually take effect on
 	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
-	lastWorkshopModeBySession map[string]string
-	lastChatPolicyBySession   map[string]string
+	lastWorkshopModeBySession    map[string]string
+	lastChatPolicyBySession      map[string]string
+	lastAgentProfileKeyBySession map[string]string
 
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
@@ -785,6 +789,9 @@ type QueryRequest struct {
 	// Previous persisted chat session to resume from when callers do not know
 	// the conversation JSON path (for example Slack/WhatsApp bot channels).
 	RestoredConversationSessionID string `json:"restored_conversation_session_id,omitempty"`
+	// resolvedResumeTarget is attached only by a trusted server-owned product
+	// route. It is never accepted from or serialized back to a browser.
+	resolvedResumeTarget *resolvedResumeTarget `json:"-"`
 
 	// Workflow phase chat: phase ID for running a phase as a conversational chat session
 	// When agent_mode is "workflow_phase", this specifies which phase to run (e.g., "planning", "plan-improvement")
@@ -1117,6 +1124,18 @@ func getBrowserMode(req QueryRequest) string {
 // into the standardized BrowserConfig used by BuildBrowserInstructions.
 func buildChatBrowserConfig(req QueryRequest) browserinstructions.BrowserConfig {
 	mode := getBrowserMode(req)
+	if mode == "auto" && !browser.CDPEnabled() {
+		// CDP can never resolve on this deployment (getCdpPorts already
+		// returns none, and validateRequestedCDPPorts already rejects an
+		// explicit cdp request) -- so "auto" mode's whole point, deciding
+		// between CDP and headless, has only one possible answer here.
+		// Skipping straight to headless drops the "call agent_browser status
+		// first, follow effective_mode" preamble and the phantom port-9222
+		// candidate that GetAutoBrowserInstructions/BuildBrowserRuntimeInstructions
+		// would otherwise always add, on every single turn, for a check that
+		// can never succeed.
+		mode = "headless"
+	}
 	ports := getCdpPorts(req)
 	if mode == "auto" {
 		ports = configuredCDPPortsForMode(mode, req.CdpPort, req.CdpPorts)
@@ -1916,6 +1935,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted:                  make(map[string]bool),
 		lastWorkshopModeBySession:              make(map[string]string),
 		lastChatPolicyBySession:                make(map[string]string),
+		lastAgentProfileKeyBySession:           make(map[string]string),
 		stoppedSessions:                        make(map[string]bool),
 		interruptedTurns:                       make(map[string]bool),
 	}
@@ -2186,15 +2206,15 @@ func runServer(cmd *cobra.Command, args []string) {
 	}).Methods("POST", "OPTIONS")
 
 	// MCP Config API routes (from mcp_config_routes.go)
-	apiRouter.HandleFunc("/mcp-config", api.handleGetMCPConfig).Methods("GET")
-	apiRouter.HandleFunc("/mcp-config", api.handleSaveMCPConfig).Methods("POST")
-	apiRouter.HandleFunc("/mcp-config/discover", api.handleDiscoverServers).Methods("POST")
-	apiRouter.HandleFunc("/mcp-config/status", api.handleGetMCPConfigStatus).Methods("GET")
-	apiRouter.HandleFunc("/mcp-config/logs", api.handleGetServerLogs).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config", requireAdmin(api.handleGetMCPConfig)).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config", requireAdmin(api.handleSaveMCPConfig)).Methods("POST")
+	apiRouter.HandleFunc("/mcp-config/discover", requireAdmin(api.handleDiscoverServers)).Methods("POST")
+	apiRouter.HandleFunc("/mcp-config/status", requireAdmin(api.handleGetMCPConfigStatus)).Methods("GET")
+	apiRouter.HandleFunc("/mcp-config/logs", requireAdmin(api.handleGetServerLogs)).Methods("GET")
 
 	// Connector connection state (from oauth_routes.go)
-	apiRouter.HandleFunc("/mcp/connect", api.handleConnectServer).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/mcp/disconnect", api.handleDisconnectServer).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/mcp/connect", requireAdmin(api.handleConnectServer)).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/mcp/disconnect", requireAdmin(api.handleDisconnectServer)).Methods("POST", "OPTIONS")
 
 	// Secrets encryption API routes (from secrets_routes.go)
 	apiRouter.HandleFunc("/secrets/encrypt", api.handleEncryptSecret).Methods("POST", "OPTIONS")
@@ -2231,10 +2251,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/delegation-tier-config", api.handleLoadDelegationTierConfig).Methods("GET", "OPTIONS")
 
 	// OAuth API routes (from oauth_routes.go)
-	apiRouter.HandleFunc("/oauth/start", api.handleOAuthStart).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/oauth/start", requireAdmin(api.handleOAuthStart)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/oauth/callback", api.handleOAuthCallback).Methods("GET")
 	apiRouter.HandleFunc("/oauth/status", api.handleOAuthStatus).Methods("GET")
-	apiRouter.HandleFunc("/oauth/logout", api.handleOAuthLogout).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/oauth/logout", requireAdmin(api.handleOAuthLogout)).Methods("POST", "OPTIONS")
 
 	// Observer APIs removed - events are now stored by sessionID, no observers needed
 
@@ -3341,6 +3361,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
+	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
+		req.resolvedResumeTarget = target
+	}
 	if err := validateRequestedCDPPorts(req); err != nil {
 		http.Error(w, "Invalid CDP configuration: "+err.Error(), http.StatusBadRequest)
 		return
@@ -3447,6 +3470,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		currentUserIsReadOnly = level == WorkflowAccessRead
 	}
+	var resolvedProfileSkills []*llmtypes.Skill
+	if resolvedProfile != nil {
+		identitySkillNames := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
+		resolvedProfileSkills = skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames)
+	}
+	api.conversationMux.Lock()
+	if api.lastAgentProfileKeyBySession == nil {
+		api.lastAgentProfileKeyBySession = make(map[string]string)
+	}
+	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
+	api.conversationMux.Unlock()
 	// Per-user workflow access: the list endpoint already hides workflows a
 	// user isn't allowed to see, but that's UX only -- a user who already
 	// knows a workflow's folder name could still open it directly. This is
@@ -3538,7 +3572,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// path below. Auto-notifications keep their synthetic-turn semantics and are
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
-	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
+	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 
@@ -5063,9 +5098,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// MCP session ID for stateful connection reuse.
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,
-			// User ID for per-user OAuth token isolation
-			// This ensures MCP servers with OAuth use user-specific token files
-			UserID: currentUserID,
+			// MCP OAuth is platform-wide. Keep this empty so mcpagent preserves
+			// the token path from the shared merged configuration instead of
+			// rewriting it beneath the interactive/scheduled user's ID.
+			UserID: "",
 		}
 
 		// Legacy manifests may still place built-in tool categories in
@@ -5226,6 +5262,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workspaceTools := workspaceRegistry.Tools
 			workspaceExecutors := workspaceRegistry.Executors
 			workspaceEnv = workspaceRegistry.Env
+			// A retained native coding session can keep an older MCP workspace
+			// client across turns. Refresh every live client from durable secret
+			// storage as each turn starts, so secrets saved before this process or
+			// before live mutation support was deployed become usable without a
+			// new chat.
+			virtualtools.ReplaceSessionShellSecrets(sessionID, chatAgentSecretEnv)
 			api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
 			toolCategories := workspaceRegistry.Categories
 			logfWithContext(queryLogCtx, "[USER_ID_DEBUGGING] Main agent workspace executors: created with explicit userID=%q sessionID=%q", currentUserID, sessionID)
@@ -5395,6 +5437,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workflowPhaseFolder,
 					!currentUserIsReadOnly,
 				)
+				protectOtherWorkflowBuilderChats(sessionID, workflowPhaseFolder, currentUserID)
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadWrite(sessionID, hostDownloadsBrowserMode(req)); hostDownloads != "" {
 					log.Printf("[WORKFLOW PHASE FOLDER GUARD] Added read-write CDP host Downloads: %s", hostDownloads)
 				}
@@ -5666,6 +5709,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[SKILL TOOLS] Registered multi-agent skill tools")
 			}
+			if isWorkflowBuilderPhase {
+				if err := api.registerAccessibleWorkflowListTool(llmAgent, currentUserID, nil); err != nil {
+					logfWithContext(queryLogCtx, "[WORKFLOW DISCOVERY] Failed to register accessible workflow listing: %v", err)
+					sendError(fmt.Sprintf("Failed to register workflow discovery tools: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[WORKFLOW DISCOVERY] Registered list_accessible_workflows for Builder")
+			}
 			if isWorkflowPhase {
 				if err := api.registerWorkflowLLMDiscoveryTools(llmAgent); err != nil {
 					logfWithContext(queryLogCtx, "[LLM TOOLS] Failed to register workflow LLM discovery tools: %v", err)
@@ -5695,14 +5746,47 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if resolvedProfile != nil {
 					secretWorkflowPath = req.SelectedFolder
 				}
-				if err := api.registerSecretManagementTools(llmAgent, currentUserID, secretWorkflowPath, "secret_tools", currentUserIsReadOnly, nil, nil); err != nil {
+				// Secret tools run inside the current agent turn. Push mutations into
+				// every live workspace client for this retained session so a Work
+				// agent can save a project secret and use it in its very next shell
+				// call. Later turns still reload project secrets from encrypted
+				// storage in resolveAgentProfileForQuery.
+				afterSecretUpsert := func(ctx context.Context, name, value string) error {
+					if resolvedProfile != nil && !isGlobalScopedProfile(resolvedProfile) && secretWorkflowPath != "" {
+						if err := updateProductSelectedSecrets(ctx, resolvedProfile.Definition.ID, secretWorkflowPath, func(current []string) []string {
+							return appendUniqueStrings(current, name)
+						}); err != nil {
+							return err
+						}
+					}
+					updated := virtualtools.SetSessionShellEnv(sessionID, "SECRET_"+name, value)
+					logfWithContext(queryLogCtx, "[SECRET TOOLS] Made SECRET_%s available to %d live shell client(s) for session %s", name, updated, sessionID)
+					return nil
+				}
+				afterSecretDelete := func(ctx context.Context, name string) error {
+					if resolvedProfile != nil && !isGlobalScopedProfile(resolvedProfile) && secretWorkflowPath != "" {
+						if err := updateProductSelectedSecrets(ctx, resolvedProfile.Definition.ID, secretWorkflowPath, func(current []string) []string {
+							return removeString(current, name)
+						}); err != nil {
+							return err
+						}
+					}
+					updated := virtualtools.DeleteSessionShellEnv(sessionID, "SECRET_"+name)
+					logfWithContext(queryLogCtx, "[SECRET TOOLS] Removed SECRET_%s from %d live shell client(s) for session %s", name, updated, sessionID)
+					return nil
+				}
+				if err := api.registerSecretManagementTools(llmAgent, currentUserID, secretWorkflowPath, "secret_tools", currentUserIsReadOnly, afterSecretUpsert, afterSecretDelete); err != nil {
 					logfWithContext(queryLogCtx, "[SECRET TOOLS] Failed to register multi-agent secret tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
+				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools with live session injection (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
 			}
 			if isAgentWorksChat {
+				if err := api.registerCustomCommandTools(llmAgent, currentUserID, ""); err != nil {
+					sendError(fmt.Sprintf("Failed to register custom command tools: %v", err), true)
+					return
+				}
 				// Generic AgentWorks chat can create workflows and inspect live
 				// workflow activity. Product-owned agents opt into their own tools.
 				if userAccessForClaims(GetUserFromContext(r.Context())).CanCreate {
@@ -5794,13 +5878,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if err := llmAgent.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder)); err != nil {
 					logfWithContext(queryLogCtx, "[SKILLS] Failed to configure installed-skill resolver: %v", err)
 				}
-				if attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames); len(attached) > 0 {
+				attached := resolvedProfileSkills
+				if resolvedProfile == nil {
+					attached = skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames)
+				}
+				if len(attached) > 0 {
 					attachedNames := make([]string, 0, len(attached))
 					for _, s := range attached {
 						_ = llmAgent.AttachSkill(s)
 						attachedNames = append(attachedNames, s.Name)
 					}
 					log.Printf("[SKILLS] Attached %d of %d skill(s): %v", len(attached), len(identitySkillNames), attachedNames)
+					if resolvedProfile != nil {
+						api.conversationMux.Lock()
+						api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, attached)
+						api.conversationMux.Unlock()
+					}
 				}
 			}
 
@@ -6436,9 +6529,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if modeChangeConversationPath == "" && len(preModeChangeSnapshot) > 0 {
-					modeChangeConversationPath = workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
+					modeChangeConversationPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
 					convData := map[string]interface{}{
 						"session_id":           sessionID,
+						"user_id":              currentUserID,
+						"username":             chatHistoryUsername(currentUserID, ""),
 						"phase_id":             workflowPhaseID,
 						"workshop_mode":        modeChangePrevMode,
 						"conversation_history": cleanChatHistoryForPersistence(preModeChangeSnapshot),
@@ -6493,12 +6588,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Replaying the UI transcript caused repeated restore cycles to grow a
 		// coding-agent prompt without bound.
 		if !modeChangedThisTurn {
-			api.restorePersistedConversationHistory(
-				sessionID,
-				currentUserID,
-				workflowPhaseFolder,
-				newWorkshopMode,
-			)
+			if target := req.resolvedResumeTarget; target != nil {
+				api.restoreResolvedResumeTarget(sessionID, target, newWorkshopMode)
+			} else {
+				api.restorePersistedConversationHistory(
+					sessionID,
+					currentUserID,
+					workflowPhaseFolder,
+					newWorkshopMode,
+				)
+			}
 		}
 
 		// Snapshot the UI history. Whether it becomes fallback agent context is
@@ -6566,23 +6665,34 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
 			restoredConversationSessionID := strings.TrimSpace(req.RestoredConversationSessionID)
+			restoredConversationWorkspace := strings.TrimSpace(workflowPhaseFolder)
+			if restoredConversationWorkspace == "" {
+				// Product-owned chats resolve SelectedFolder server-side. Work keeps
+				// its transcripts inside that project, so use the trusted project
+				// workspace when locating the native provider resume handle.
+				restoredConversationWorkspace = normalizeConversationWorkspace(req.SelectedFolder)
+			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
-			if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
+			if target := req.resolvedResumeTarget; target != nil {
+				restoredConversationPathForFallback = target.ConversationPath
+				restoredRuntime = target.Runtime
+				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
+			} else if runtime, ok, err := ReadChatHistoryRuntimeFromPath(currentUserID, restoredConversationPath); err != nil {
 				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime from %s: %v", restoredConversationPath, err)
 			} else if ok {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			if !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
-				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+			if req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
 					restoredRuntime = runtime
 					restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 				}
 				if restoredConversationPathForFallback == "" {
-					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, restoredConversationSessionID, workflowPhaseFolder); err != nil {
+					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to find restored conversation path for session %s: %v", restoredConversationSessionID, err)
 					} else if ok {
 						restoredConversationPathForFallback = path
@@ -6701,6 +6811,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					chatQuery = cleanedChatQuery
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Using native coding-agent resume; stripped restored conversation attach context from prompt")
 				}
+			} else if req.resolvedResumeTarget != nil && req.resolvedResumeTarget.crossesProvider(finalProvider) && restoredConversationPathForFallback != "" {
+				// Provider-native handles cannot cross CLI implementations. Keep the
+				// AgentWorks conversation stable and give the newly selected provider
+				// the trusted, project-owned transcript as read-only context.
+				chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				replayHistoryToAgent = false
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with trusted conversation context %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
 			} else if restoredConversationPathForFallback != "" {
 				// A conversation JSON is UI state. Never attach it as an ad-hoc
 				// prompt file: native resume is preferred, and an unavailable native
@@ -6889,25 +7006,40 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		persistConversationPath := ""
 		persistedHistoryForDisk := persistedHistory
 		var restoredPersistTarget *restoredChatHistoryPersistTarget
-		if target, ok, err := api.resolveRestoredCodingConversationPersistTarget(
-			currentUserID,
-			sessionID,
-			req.RestoredConversationPath,
-			req.RestoredConversationSessionID,
-			workflowPhaseFolder,
-			finalProvider,
-			newWorkshopMode,
-		); err != nil {
-			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", err)
-		} else if ok && target != nil {
-			restoredPersistTarget = target
-			persistSessionID = target.SessionID
-			persistConversationPath = target.ConversationPath
+		var resolvedTarget *restoredChatHistoryPersistTarget
+		var resolvedTargetOK bool
+		var resolvedTargetErr error
+		if req.resolvedResumeTarget != nil {
+			resolvedTarget = req.resolvedResumeTarget.persistTarget()
+			// Product resume keeps one AgentWorks conversation even when its CLI
+			// provider changes. The next save replaces the runtime metadata with the
+			// new provider's handle while preserving the original transcript path.
+			resolvedTargetOK = req.resolvedResumeTarget.canPersist(newWorkshopMode)
+			if resolvedTargetOK {
+				api.rememberRestoredConversationPersistTarget(sessionID, *resolvedTarget)
+			}
+		} else {
+			resolvedTarget, resolvedTargetOK, resolvedTargetErr = api.resolveRestoredCodingConversationPersistTarget(
+				currentUserID,
+				sessionID,
+				req.RestoredConversationPath,
+				req.RestoredConversationSessionID,
+				firstNonEmptyTrimmed(workflowPhaseFolder, normalizeConversationWorkspace(req.SelectedFolder)),
+				finalProvider,
+				newWorkshopMode,
+			)
+		}
+		if resolvedTargetErr != nil {
+			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to resolve restored coding-agent persistence target: %v", resolvedTargetErr)
+		} else if resolvedTargetOK && resolvedTarget != nil {
+			restoredPersistTarget = resolvedTarget
+			persistSessionID = resolvedTarget.SessionID
+			persistConversationPath = resolvedTarget.ConversationPath
 			// Also deliberately unbounded — and the merge makes it sharper: this
 			// combines the restored conversation with the current turn, so a
 			// bound here would trim the very history the user just reopened,
 			// permanently, on the first message they send into it.
-			persistedHistoryForDisk = mergeRestoredChatHistory(target.History, persistedHistory)
+			persistedHistoryForDisk = mergeRestoredChatHistory(resolvedTarget.History, persistedHistory)
 			logfWithContext(queryLogCtx, "[CHAT_HISTORY] Continuing restored coding-agent conversation current_session=%s persisted_session=%s path=%s merged_messages=%d",
 				sessionID, persistSessionID, persistConversationPath, len(persistedHistoryForDisk))
 		}
@@ -6971,7 +7103,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				logPath := persistConversationPath
 				if strings.TrimSpace(logPath) == "" {
-					logPath = workflowBuilderConversationLogPath(workflowPhaseFolder, persistSessionID, time.Now())
+					logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, persistSessionID, time.Now())
 				}
 				// Same guard as the shared persist path: a rebuild with fewer
 				// user turns than the file already holds is partial, and
@@ -7408,6 +7540,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 	api.conversationMux.RLock()
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
+	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
 	normalizeChatHistoryRuntime(runtime)
 
@@ -8082,7 +8215,7 @@ func (api *StreamingAPI) deliverRetainedMainTerminalInput(ctx context.Context, s
 	if api.internalRetainedTerminalInputHandler != nil {
 		return provider, true, api.internalRetainedTerminalInputHandler(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
 	}
-	return provider, true, llmproviders.SendCodingAgentLiveInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
+	return provider, true, llmproviders.SendCodingAgentRetainedInput(ctx, llmproviders.Provider(provider), modelID, sessionID, message)
 }
 
 func (api *StreamingAPI) recordRetainedTerminalLiveInput(sessionID, message, provider string, executionIDs ...string) string {
@@ -8198,6 +8331,13 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	}
 	if !chatHistoryResumeModesCompatible(runtime.WorkshopMode, currentWorkshopMode) {
 		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: restored mode=%s current mode=%s", sessionID, normalizeChatHistoryWorkshopMode(runtime.WorkshopMode), normalizeChatHistoryWorkshopMode(currentWorkshopMode))
+		return false
+	}
+	api.conversationMux.RLock()
+	currentProfileKey, profileKeyKnown := api.lastAgentProfileKeyBySession[sessionID]
+	api.conversationMux.RUnlock()
+	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: agent profile definition changed", sessionID)
 		return false
 	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
@@ -8820,6 +8960,32 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
+// agentProfileAllowsRetainedLiveInput prevents an idle provider-native session
+// from bypassing current product setup. An actively running foreground turn was
+// built by this process and can still be steered immediately; an idle retained
+// session must carry the same persisted profile fingerprint as this request.
+func (api *StreamingAPI) agentProfileAllowsRetainedLiveInput(userID, sessionID, workspacePath string, hasProfile bool) bool {
+	if api == nil || !hasProfile || api.hasActiveTurnCancel(sessionID) {
+		return true
+	}
+	api.conversationMux.RLock()
+	currentProfileKey, known := api.lastAgentProfileKeyBySession[sessionID]
+	api.conversationMux.RUnlock()
+	if !known || currentProfileKey == "" {
+		return false
+	}
+	runtime, ok, err := ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath)
+	if err != nil || !ok || runtime == nil {
+		log.Printf("[CHAT_HISTORY] Retained live input disabled for product session %s: current runtime fingerprint is unavailable", sessionID)
+		return false
+	}
+	if strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		log.Printf("[CHAT_HISTORY] Retained live input disabled for product session %s: agent profile definition changed", sessionID)
+		return false
+	}
+	return true
+}
+
 // agentSupportsLiveInputDelivery reports whether the retained agent is a coding
 // agent whose provider contract supports live input (tmux-transport CLIs). Only
 // these short-circuit a /api/query into CLI delivery; API/LLM agents fall through
@@ -8856,6 +9022,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 			provider := string(delivery.Provider)
 			api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
+			api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(QueryResponse{
 				QueryID: queryID, SessionID: sessionID,
@@ -8885,6 +9052,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 				return true
 			}
 			api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
+			api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 			w.Header().Set("Content-Type", "application/json")
 			_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility})
 			return true
@@ -8945,6 +9113,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		api.markRetainedMainCodingTurnRunning(sessionID, queryID)
 	}
 	api.recordLiveCodingAgentUserMessage(sessionID, message, provider, messageID, deliveryStatus)
+	api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 	log.Printf("[QUERY→LIVE] Delivered /api/query message to retained CLI for session %s status=%s: %.80s", sessionID, deliveryStatus, message)
 
 	w.Header().Set("Content-Type", "application/json")
@@ -9006,7 +9175,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 			messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider)
 			writeRetainedTerminalLiveInputResponseWithMessageID(w, sessionID, provider, messageID)
 			log.Printf("[LIVE INPUT] Delivered through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, req.Message)
-			api.appendLiveInputToPersistedChatHistory(GetUserIDFromContext(r.Context()), sessionID, req.Message)
+			api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 			return
 		} else {
 			tryColdRetainedFallback = false
@@ -9023,7 +9192,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 				return
 			}
 			writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, api)
-			api.appendLiveInputToPersistedChatHistory(GetUserIDFromContext(r.Context()), sessionID, req.Message)
+			api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 			return
 		}
 	}
@@ -9115,6 +9284,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		deliveryStatus = "queued_for_injection"
 	}
 	api.recordLiveCodingAgentUserMessage(sessionID, req.Message, provider, messageID, deliveryStatus)
+	api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 	if !hasActiveForegroundTurn {
 		executionID := "live-turn:" + messageID
 		api.trackConversationTurnStart(executionID, sessionID, QueryRequest{Query: req.Message, TriggeredBy: "interactive"})
@@ -10373,7 +10543,7 @@ func (api *StreamingAPI) buildSkillCallbacks() *todo_creation_human.SkillCallbac
 
 func skillSelectionHint(productID, skillNames string) string {
 	if strings.EqualFold(strings.TrimSpace(productID), "work") {
-		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in product.json.", skillNames)
+		return fmt.Sprintf("%s can be loaded immediately with read_skill. To attach it automatically on future Work turns, select it in Setup > Skills; Work persists that selection in workflow.json.", skillNames)
 	}
 	return fmt.Sprintf("Use update_workflow_config to add %s to the workflow's selected skills.", skillNames)
 }
@@ -10700,7 +10870,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		if disabled != nil && disabled(name) {
 			return nil
 		}
-		if name == "install_mcp_server" || name == "add_mcp_server" || name == "list_mcp_servers" || name == "trigger_mcp_discovery" {
+		if name == "install_mcp_server" || name == "add_mcp_server" || name == "edit_mcp_server" || name == "remove_mcp_server" || name == "list_mcp_servers" || name == "trigger_mcp_discovery" {
 			original := exec
 			exec = func(ctx context.Context, args map[string]interface{}) (string, error) {
 				userID, err := api.mcpToolUserID(ctx)
@@ -10708,6 +10878,9 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					return "", err
 				}
 				ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
+				if (name == "install_mcp_server" || name == "add_mcp_server" || name == "edit_mcp_server" || name == "remove_mcp_server") && !canManageGlobalSecrets(userID) {
+					return "Only a platform administrator can add, authenticate, edit, or remove shared MCP connections.", nil
+				}
 				return original(ctx, args)
 			}
 		}
@@ -10795,7 +10968,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"list_mcp_servers",
-		"List configured MCP servers: for each, whether it's a catalog server the user has actually installed/authorized (vs. just present in the catalog and not yet connected) or a user-defined custom server, and whether discovery has succeeded. Use search_mcp_catalog instead to find servers not yet configured at all.",
+		"List shared platform MCP servers: for each, whether an administrator has connected it for AgentWorks (versus merely present in the catalog), whether it is a custom platform server, and whether discovery succeeded. Connected credentials are reusable by Work, workflows, chats, and schedules. Use search_mcp_catalog for servers not yet configured.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -10832,7 +11005,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			if isMCPConfigLocked() {
 				sb.WriteString("Configuration mode: locked (read-only)\n\n")
 			} else {
-				sb.WriteString(fmt.Sprintf("User config path: `%s`\n\n", userConfigPath))
+				sb.WriteString(fmt.Sprintf("Platform MCP overlay path: `%s`\n\n", userConfigPath))
 			}
 
 			for _, name := range names {
@@ -10840,10 +11013,9 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				_, isBase := api.mcpConfig.MCPServers[name]
 
 				// "source" names where the definition comes from; a base
-				// catalog server also needs a separate authorized/installed
-				// signal, since being in the catalog does not mean the user
-				// ever connected it (searchable != installed).
-				source := "user-defined"
+				// catalog server also needs a separate platform connection
+				// signal (searchable does not mean connected).
+				source := "custom platform server"
 				switch {
 				case isBase && server.OAuth == nil:
 					source = "catalog, no sign-in required"
@@ -10861,7 +11033,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					case "error":
 						statusLabel = "discovery failed"
 					case "not_connected":
-						statusLabel = "sign-in required for this account"
+						statusLabel = "platform administrator sign-in required"
 					case "not_loaded", "":
 						statusLabel = "not yet discovered"
 					default:
@@ -10996,7 +11168,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"install_mcp_server",
-		"Platform-level install of an MCP server, from OUR CATALOG (found via search_mcp_catalog or list_mcp_servers) OR fresh from a URL (a search_mcp_catalog public registry hit, or any URL the user gives you) — distinct from add_mcp_server, which is for a server with no auth at all. This is tier 1 of a two-tier model: installing makes the server available account-wide; it still needs update_workflow_config(add_servers=[name]) to actually be usable in a specific workflow. For a fresh URL, this live-probes it the same way a human would evaluate any third-party integration before installing it — spec-compliant discovery (RFC 9728/8414 via a real 401), not a guess — so tell the user what was found before proceeding on anything unvetted (public registry hits). Outcomes: (1) no sign-in required — installs immediately. (2) needs an API key — pass api_key once the user has given you one. (3) needs OAuth with Dynamic Client Registration discoverable — starts the flow and returns an auth_url; give that URL to the user as a clickable link, the connection completes automatically once they authorize, no further tool call needed. (4) needs OAuth but no DCR was discoverable — tell the user plainly (it may still support CIMD or need a manually registered OAuth app); if they give you a client_id, pass it and call again. To reauthorize an existing OAuth connection, set reconnect=true and reuse its existing name; do not create a duplicate connector. Cannot complete an OAuth consent screen itself — it only starts the flow and hands back the link.",
+		"Administrator-only platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. Installation does not select the server: workflows use update_workflow_config(add_servers=[name]), while an active Work project uses update_project_mcp_server_selection(action=select, server=name). Before OAuth or API-key setup, explicitly tell the administrator that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11079,12 +11251,14 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					if serverConfig.OAuth != nil && !reconnect {
 						owned := serverConfig
 						oauthConfig := *owned.OAuth
-						oauthConfig.TokenFile = getUserTokenFilePath(GetUserIDFromContext(ctx), name)
+						if strings.TrimSpace(oauthConfig.TokenFile) == "" {
+							oauthConfig.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+						}
 						owned.OAuth = &oauthConfig
 						connected = hasOAuthTokenFile(owned)
 					}
 					if connected {
-						return fmt.Sprintf("%q is already installed for this account. Use update_workflow_config(add_servers=[%q]) to use it in this workflow. For OAuth reauthorization, call install_mcp_server with the same name and reconnect=true.", name, name), nil
+						return fmt.Sprintf("%q is already connected across AgentWorks. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project. For OAuth reauthorization, a platform administrator can call install_mcp_server with reconnect=true.", name, name, name), nil
 					}
 				}
 			}
@@ -11109,7 +11283,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 					api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 					notifyMCPViewRefresh()
-					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+					return fmt.Sprintf("Installed %q (no sign-in required). Discovery is running now. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project.", name, name, name), nil
 				}
 				// Needs OAuth. Build the config from what discovery found.
 				serverConfig.OAuth = &oauth.OAuthConfig{
@@ -11144,7 +11318,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				api.invalidateServerDiscovery(name, "Installed — discovering tools...")
 				api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 				notifyMCPViewRefresh()
-				return fmt.Sprintf("Installed %q. Discovery is running now; use update_workflow_config(add_servers=[%q]) to add it to this workflow.", name, name), nil
+				return fmt.Sprintf("Installed %q. Discovery is running now. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project.", name, name, name), nil
 			}
 
 			// OAuth: start the flow and hand back the URL for the user to open.
@@ -11169,7 +11343,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"add_mcp_server",
-		"Add a new user-defined MCP server configuration, then trigger discovery. This does not modify admin/base servers.",
+		"Administrator-only: add a shared platform MCP server configuration, then trigger discovery. Every AgentWorks product and user can reuse it; workflows still select servers explicitly.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11258,7 +11432,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			api.invalidateServerDiscovery(name, "Configuration saved — discovering tools...")
 			api.startServerDiscovery(GetUserIDFromContext(ctx), name)
 
-			return fmt.Sprintf("Saved user MCP server %q and started discovery. After discovery completes, select it with update_workflow_config(add_servers=[name]). The chat catalog refreshes on the next turn; no server restart is needed.", name), nil
+			return fmt.Sprintf("Saved user MCP server %q and started discovery. After discovery completes, select it with update_workflow_config(add_servers=[name]) in a workflow, or update_project_mcp_server_selection(action=select, server=name) in an active Work project. The chat catalog refreshes on the next turn; no server restart is needed.", name), nil
 		},
 	); err != nil {
 		return err
@@ -11266,7 +11440,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"edit_mcp_server",
-		"Edit an existing user-defined MCP server configuration, then trigger discovery. Base/admin servers cannot be edited from chat.",
+		"Administrator-only: edit an existing shared platform MCP server configuration, then trigger discovery. Base catalog servers cannot be edited from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11362,7 +11536,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"remove_mcp_server",
-		"Remove a user-defined MCP server configuration. Base/admin servers cannot be removed from chat.",
+		"Administrator-only: remove a shared platform MCP server configuration. This affects Work, AgentWorks chats, workflows, and schedules. Base catalog servers cannot be removed from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11485,19 +11659,20 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			if err != nil {
 				return "", err
 			}
-			userID := GetUserIDFromContext(ctx)
 			for name, server := range cfg.MCPServers {
 				if server.OAuth != nil {
 					oauthConfig := *server.OAuth
-					oauthConfig.TokenFile = getUserTokenFilePath(userID, name)
+					if strings.TrimSpace(oauthConfig.TokenFile) == "" {
+						oauthConfig.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+					}
 					server.OAuth = &oauthConfig
 					if hasOAuthTokenFile(server) {
-						api.startServerDiscovery(userID, name)
+						api.startServerDiscovery(platformMCPTokenUserID, name)
 					}
 				}
 			}
 			go api.triggerMCPDiscovery()
-			return "Triggered MCP discovery, including this account's authorized OAuth connections, in the background.", nil
+			return "Triggered discovery for the shared AgentWorks MCP connections in the background.", nil
 		},
 	); err != nil {
 		return err

@@ -24,7 +24,62 @@ func ChatHistoryRoutes(router *mux.Router, api *StreamingAPI) {
 	r.HandleFunc("/sessions/cleanup", cleanupChatHistoryHandler(api)).Methods("DELETE")
 	r.HandleFunc("/restored-terminal", startRestoredTerminalHandler(api)).Methods("POST", "OPTIONS")
 	r.HandleFunc("/sessions/{session_id}", getChatHistoryConversationHandler(api)).Methods("GET")
+	r.HandleFunc("/sessions/{session_id}", renameChatHistorySessionHandler(api)).Methods("PATCH")
 	r.HandleFunc("/sessions/{session_id}", deleteChatHistorySessionHandler(api)).Methods("DELETE")
+}
+
+type renameChatHistorySessionRequest struct {
+	Title         string `json:"title"`
+	WorkspacePath string `json:"workspace_path,omitempty"`
+}
+
+func renameChatHistorySessionHandler(api *StreamingAPI) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		userID := GetUserIDFromContext(r.Context())
+		if userID == "" {
+			userID = "default"
+		}
+		var req renameChatHistorySessionRequest
+		decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8*1024))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&req); err != nil {
+			http.Error(w, "invalid request body", http.StatusBadRequest)
+			return
+		}
+		title, err := normalizeChatHistoryTitle(req.Title)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		workspacePath := strings.TrimSpace(req.WorkspacePath)
+		_, workflowScoped, allowed := chatHistoryWorkspaceAccess(r, workspacePath)
+		if !allowed {
+			http.Error(w, "workflow access denied", http.StatusForbidden)
+			return
+		}
+		if workflowScoped {
+			data, readErr := ReadChatHistoryConversation(userID, mux.Vars(r)["session_id"], workspacePath)
+			if readErr != nil {
+				http.Error(w, "Session not found", http.StatusNotFound)
+				return
+			}
+			ownerID, _ := chatHistoryConversationIdentity(data)
+			if strings.TrimSpace(ownerID) != strings.TrimSpace(userID) {
+				http.Error(w, "only the chat author can rename it", http.StatusForbidden)
+				return
+			}
+		}
+		if err := RenameChatHistorySession(userID, mux.Vars(r)["session_id"], workspacePath, title); err != nil {
+			if strings.Contains(strings.ToLower(err.Error()), "not found") {
+				http.Error(w, "Session not found", http.StatusNotFound)
+				return
+			}
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "title": title})
+	}
 }
 
 type startRestoredTerminalRequest struct {
@@ -68,10 +123,8 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, "workflow access denied", http.StatusForbidden)
 			return
 		}
-		platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-
 		fetchLimit, fetchOffset := limit, offset
-		if workflowScoped && !platformAdmin {
+		if workflowScoped {
 			// Ownership is stored in transcript metadata, not the filename. Load
 			// the indexed set, filter it, and only then paginate so a user's own
 			// older chats are not pushed off their page by another user's newer ones.
@@ -82,11 +135,11 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if workflowScoped && !platformAdmin {
-			sessions = visibleChatHistorySessions(sessions, userID, platformAdmin)
+		if workflowScoped {
+			sessions = visibleChatHistorySessions(sessions, userID, false)
 			sessions = paginateChatHistorySessions(sessions, limit, offset)
 		}
-		decorateChatHistorySessions(sessions, userID, platformAdmin, workflowScoped)
+		decorateChatHistorySessions(sessions, userID, false, workflowScoped)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -96,9 +149,8 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 }
 
 // chatHistoryWorkspaceAccess keeps personal/product chat history private to
-// its per-user root. Workflow access admits the workspace, but only a platform
-// administrator can inspect another user's Builder history. Ownership governs
-// the workflow, not the privacy of each user's conversation.
+// its per-user root. Workflow access admits the workspace, but does not grant
+// access to another user's private Builder history.
 func chatHistoryWorkspaceAccess(r *http.Request, workspacePath string) (WorkflowAccessLevel, bool, bool) {
 	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
 	if !strings.HasPrefix(workspacePath, "Workflow/") {
@@ -113,12 +165,16 @@ func chatHistoryWorkspaceAccess(r *http.Request, workspacePath string) (Workflow
 }
 
 func chatHistoryVisibleTo(userID, viewerID string, platformAdmin bool) bool {
-	if platformAdmin {
-		return true
-	}
+	_ = platformAdmin // retained in the signature for compatibility with callers
 	userID = strings.TrimSpace(userID)
 	viewerID = strings.TrimSpace(viewerID)
-	return userID != "" && userID != "default" && viewerID != "" && userID == viewerID
+	if userID == "" || viewerID == "" || userID != viewerID {
+		return false
+	}
+	// "default" is the real authenticated owner of a local single-user
+	// installation. On a multi-user server it instead denotes unattributed
+	// legacy/system data and must never become visible to a signed-in user.
+	return userID != "default" || !IsMultiUserMode()
 }
 
 func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, platformAdmin bool) []ChatHistorySession {
@@ -132,6 +188,7 @@ func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, 
 }
 
 func decorateChatHistorySessions(sessions []ChatHistorySession, viewerID string, platformAdmin, workflowScoped bool) {
+	_ = platformAdmin
 	viewerID = strings.TrimSpace(viewerID)
 	for i := range sessions {
 		repairStaleChatHistoryAttribution(&sessions[i])
@@ -143,12 +200,8 @@ func decorateChatHistorySessions(sessions []ChatHistorySession, viewerID string,
 		}
 		ownerID := strings.TrimSpace(sessions[i].UserID)
 		isOwn := ownerID != "" && ownerID == viewerID
-		isLegacy := ownerID == "" || ownerID == "default"
-		// A platform administrator may inspect and delete another user's
-		// transcript, but continuing their provider-native session would cross
-		// the account boundary. Only legacy/system chats are resumable by admin.
-		sessions[i].CanResume = isOwn || (isLegacy && platformAdmin)
-		sessions[i].CanDelete = isOwn || platformAdmin
+		sessions[i].CanResume = isOwn
+		sessions[i].CanDelete = isOwn
 	}
 }
 
@@ -164,12 +217,7 @@ func chatHistoryConversationIdentity(data []byte) (userID, username string) {
 }
 
 func chatHistoryCanResume(userID, viewerID string, platformAdmin bool) bool {
-	userID = strings.TrimSpace(userID)
-	viewerID = strings.TrimSpace(viewerID)
-	if userID == "" || userID == "default" {
-		return platformAdmin
-	}
-	return viewerID != "" && userID == viewerID
+	return chatHistoryVisibleTo(userID, viewerID, platformAdmin)
 }
 
 func workflowPathFromBuilderConversation(conversationPath string) string {
@@ -243,8 +291,7 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 				}
 			}
 			ownerID, _ := chatHistoryConversationIdentity(conversation)
-			platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-			if !chatHistoryCanResume(ownerID, userID, platformAdmin) {
+			if !chatHistoryCanResume(ownerID, userID, false) {
 				http.Error(w, "another user's Builder chat is view-only", http.StatusForbidden)
 				return
 			}
@@ -638,14 +685,11 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		if workflowScoped {
 			ownerID, _ := chatHistoryConversationIdentity(data)
-			platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-			if !chatHistoryVisibleTo(ownerID, userID, platformAdmin) {
+			if !chatHistoryVisibleTo(ownerID, userID, false) {
 				http.Error(w, "Builder chat access denied", http.StatusForbidden)
 				return
 			}
-			// Platform admins may inspect another user's transcript, but only the
-			// author may continue its provider-native session.
-			if parsePositiveQueryInt(r, "resume_turns") > 0 && !chatHistoryCanResume(ownerID, userID, platformAdmin) {
+			if parsePositiveQueryInt(r, "resume_turns") > 0 && !chatHistoryCanResume(ownerID, userID, false) {
 				http.Error(w, "another user's Builder chat is view-only", http.StatusForbidden)
 				return
 			}

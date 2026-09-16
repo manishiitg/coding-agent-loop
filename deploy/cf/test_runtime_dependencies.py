@@ -94,6 +94,29 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
             activate,
         )
 
+    def test_workflow_chat_migration_is_packaged_and_runs_once_before_agent_restart(self) -> None:
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+
+        self.assertIn("migrate_workflow_builder_chats.py", activate)
+        self.assertIn("workflow-builder-chats-v1.done", activate)
+        self.assertIn('--workspace-root "$REMOTE_APP/data/docs"', activate)
+        self.assertIn("systemctl --user stop confida-agent", activate)
+        migration = activate.index('python3 "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py"')
+        restart = activate.index("systemctl --user restart confida-agent", migration)
+        self.assertLess(migration, restart)
+
+    def test_deploy_is_remote_git_only_without_local_source_sync(self) -> None:
+        deploy = (CF_DIR / "deploy-cf.sh").read_text()
+        bootstrap = (CF_DIR / "server-bootstrap-build.sh").read_text()
+        activate = (CF_DIR / "server-build-and-activate.sh").read_text()
+
+        self.assertNotIn("DEPLOY_SOURCE_MODE", deploy)
+        self.assertNotIn("rsync", deploy)
+        self.assertNotIn("DEPLOY_SOURCE_MODE", bootstrap)
+        self.assertNotIn("rsynced local working trees", bootstrap)
+        self.assertNotIn("source-revisions", activate)
+        self.assertIn('git -C "$REPO_ROOT" rev-parse HEAD', activate)
+
 
 if __name__ == "__main__":
     unittest.main()

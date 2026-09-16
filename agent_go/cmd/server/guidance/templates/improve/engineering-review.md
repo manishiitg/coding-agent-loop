@@ -9,7 +9,7 @@ a lightweight scan for critical technical evidence.{{end}}{{if .RunFolder}}
 
 Use `{{.RunFolder}}` as the primary retained run.{{end}}
 
-1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"},{"name":"workflow-commands","path":"references/ops-review.md"}])`.
+1. Load and apply `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"}])`, then load and apply `read_skill(skills=[{"name":"workflow-commands","path":"references/ops-review.md"}])`.
    Treat `ops-review.md` as the canonical guide to focused operations investigation.
    Its diagnostic checks are conditional on the selected question, not a
    mandatory whole-workflow checklist. This continuing Review command overrides only that reference's

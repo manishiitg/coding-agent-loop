@@ -1039,6 +1039,39 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
             margin-top: 0.25rem;
             margin-bottom: 0.25rem;
           }
+          /* Conversation answers need prose rhythm rather than the denser
+             operational typography used by reports and tool output. */
+          .conversation-markdown p,
+          .conversation-markdown li {
+            font-size: 0.9375rem;
+            line-height: 1.75rem;
+          }
+          .conversation-markdown p {
+            margin-bottom: 0.875rem;
+          }
+          .conversation-markdown ul,
+          .conversation-markdown ol {
+            margin-top: 0.625rem;
+            margin-bottom: 1rem;
+          }
+          .conversation-markdown li + li {
+            margin-top: 0.375rem;
+          }
+          .conversation-markdown :not(pre) > code {
+            padding: 0.06rem 0.22rem;
+            font-size: 0.82em;
+            font-weight: 450;
+            line-height: inherit;
+            color: rgb(55 91 124) !important;
+            background-color: rgb(15 23 42 / 0.055) !important;
+            border: 0 !important;
+            border-radius: 0.2rem !important;
+          }
+          .dark .conversation-markdown :not(pre) > code,
+          .dark-plus .conversation-markdown :not(pre) > code {
+            color: rgb(158 190 220) !important;
+            background-color: rgb(255 255 255 / 0.07) !important;
+          }
           /* Override prose table styles for dark theme */
           .markdown-content.prose table tbody tr {
             background-color: transparent !important;
@@ -1371,7 +1404,7 @@ export const ConversationMarkdownRenderer: React.FC<{ content: string; maxHeight
     style={{ maxHeight }}
   >
     <div className={`${framed ? 'p-3' : 'p-0'} min-w-0`}>
-      <MarkdownRenderer content={content} disablePathLinking={disablePathLinking} compactImages />
+      <MarkdownRenderer content={content} className="conversation-markdown" disablePathLinking={disablePathLinking} compactImages />
     </div>
   </div>
 ))

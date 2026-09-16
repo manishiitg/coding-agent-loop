@@ -24,6 +24,25 @@ apply there as-is — it's called out per item below where relevant.
 
 ## Checklist
 
+### Rootless Docker for Work builds
+
+Native Linux Work installations that offer Docker builds must use a daemon
+owned by the application service account. Never add that account to the
+host's `docker` group or expose `/var/run/docker.sock`; either grants effective
+root access to the host. Install and verify the shared contract with:
+
+```bash
+sudo deploy/common/install-rootless-docker.sh <service-user>
+deploy/common/install-rootless-docker.sh --check <service-user>
+```
+
+The check fails unless the user service is enabled and active, its Unix socket
+belongs to the service account, Docker reports `name=rootless`, its data root
+is inside the service home, and the account is absent from the privileged
+`docker` group. Set the workspace service's `DOCKER_HOST` to
+`unix:///run/user/%U/docker.sock`; `workspace/security/environment.go` accepts
+only that current-user socket and rejects host or TCP Docker endpoints.
+
 ### Release gate: report preview assets (every release)
 
 Build with `npm ci && npm run build` from `frontend/`. Do not substitute

@@ -1,5 +1,5 @@
-// HTML report viewer. A workflow owns one complete reporting experience at
-// db/reports/index.html. The HTML itself decides whether that experience uses
+// HTML report viewer. A workspace owns one or more reporting documents under
+// db/reports/. The shared toolbar selects the active document; each HTML file
 // tabs, sections, a sidebar, or a single scrolling page.
 
 import { memo, useCallback, useEffect, useMemo, useState } from 'react'
@@ -21,6 +21,7 @@ import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportM
 import { useReportChat } from './reportWidgets/useReportChat'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
+import { useSelectedReportDocument } from './reportDocuments'
 
 function debugReportView(event: string, detail?: Record<string, unknown>) {
   if (!import.meta.env.DEV) return
@@ -49,6 +50,7 @@ interface ReportViewProps {
   documentPath?: string
   emptyDescription?: string
   sendChatMessage?: ReportDataApi['sendChatMessage']
+  headerAction?: React.ReactNode
 }
 
 const normalizeSource = normalizeReportSource
@@ -152,7 +154,7 @@ async function loadReportDocument(workspacePath: string, documentPath = 'db/repo
   return { path, html, label: title || 'Dashboard' }
 }
 
-function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, emptyDescription, sendChatMessage }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, emptyDescription, sendChatMessage, headerAction }: ReportViewProps) {
   const [report, setReport] = useState<ReportDocument | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -166,6 +168,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
   const [previewPreference, setPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(workspacePath))
   const reportChat = useReportChat(workspacePath)
   const dataApi = useReportDataApi(workspacePath, sendChatMessage ?? reportChat.request)
+  const selectedDocumentPath = useSelectedReportDocument(workspacePath, documentPath)
 
   const refresh = useCallback(() => setRefreshNonce(value => value + 1), [])
   useEffect(() => {
@@ -183,14 +186,14 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
     let cancelled = false
     setLoading(true)
     setError(null)
-    void loadReportDocument(workspacePath, documentPath).then(next => {
+    void loadReportDocument(workspacePath, selectedDocumentPath).then(next => {
       if (cancelled) return
       setReport(next)
     }).catch(reason => {
       if (!cancelled) setError(reason instanceof Error ? reason.message : 'Failed to load report.')
     }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
-  }, [documentPath, refreshNonce, workspacePath])
+  }, [refreshNonce, selectedDocumentPath, workspacePath])
 
   useEffect(() => {
     debugReportView('mounted', { workspacePath })
@@ -205,6 +208,7 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
     <ReportEmbedProvider value={runtime}>
       <div className="relative flex h-full w-full flex-col overflow-hidden bg-background text-foreground">
         <div className="absolute right-3 top-3 z-20 flex gap-1">
+          {headerAction}
           <button type="button" onClick={refresh} aria-label="Refresh dashboard" title="Refresh dashboard" className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border bg-background/95 text-muted-foreground shadow-sm backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground">
             <RefreshCw className="h-3.5 w-3.5" />
           </button>

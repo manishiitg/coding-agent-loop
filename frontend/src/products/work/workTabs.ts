@@ -13,12 +13,70 @@ export type ProductEngineSelectionDetail = Partial<WorkRuntimeSelection> & {
   tabId?: string
 }
 
+const WORK_TAB_MAX_WORDS = 3
+const WORK_TAB_MAX_CHARACTERS = 20
+
+/** Keep Work's tab strip readable while preserving the full conversation title elsewhere. */
+export function workTabDisplayName(name: string): string {
+  const normalized = name.replace(/\s+/g, ' ').trim()
+  if (!normalized) return 'Chat'
+
+  const words = normalized.split(' ')
+  const shortenedByWords = words.length > WORK_TAB_MAX_WORDS
+  const candidate = words.slice(0, WORK_TAB_MAX_WORDS).join(' ')
+  if (!shortenedByWords && candidate.length <= WORK_TAB_MAX_CHARACTERS) return candidate
+
+  const visible = candidate.slice(0, WORK_TAB_MAX_CHARACTERS - 1).trimEnd()
+  return `${visible}…`
+}
+
 export function belongsToWorkProject(tab: ChatTab, projectId: string): boolean {
   return Boolean(tab.metadata?.agentProfileId === 'work' && (
     tab.metadata.agentProfileProjectId === projectId ||
     tab.metadata.agentProfileConversationKey === projectId ||
     tab.metadata.agentProfileConversationKey?.startsWith(`${projectId}:`)
   ))
+}
+
+/**
+ * Return the durable registry key for a retained Work chat.
+ *
+ * Early Work tabs used the project id itself as their conversation key. That
+ * key is also the permanent Builder slot, so after a server restart it can
+ * resolve to the project's newest conversation instead of the session shown
+ * in an already-open tab. Give every retained tab its own key, derived from
+ * the project and the tab's durable session id. Newer tab-specific keys remain
+ * unchanged because their logical identity must survive session replacement.
+ */
+export function workConversationResumeKey(tab: ChatTab, projectId: string): string | null {
+  const sessionId = tab.sessionId?.trim()
+  if (!sessionId) return null
+
+  const conversationKey = tab.metadata?.agentProfileConversationKey?.trim()
+  if (conversationKey?.startsWith(`${projectId}:`)) return conversationKey
+  return `${projectId}:${sessionId}`
+}
+
+/**
+ * A send can remain queued against Work's permanent Builder after the first
+ * message has already opened and activated its conversation tab. Route those
+ * stale submissions into that conversation. Without this handoff, every
+ * queued message sees the Builder again and creates another chat tab.
+ *
+ * Keeping the Builder active is intentional: it means the user returned to it
+ * and wants to start a separate conversation.
+ */
+export function resolveWorkSubmissionTab(
+  sourceTab: ChatTab | undefined,
+  activeTab: ChatTab | undefined,
+): ChatTab | undefined {
+  if (sourceTab?.metadata?.agentProfileBuilder !== true) return sourceTab
+  if (!activeTab || activeTab.tabId === sourceTab.tabId) return sourceTab
+  if (activeTab.metadata?.agentProfileBuilder === true) return sourceTab
+
+  const projectId = sourceTab.metadata.agentProfileProjectId
+  if (!projectId || !belongsToWorkProject(activeTab, projectId)) return sourceTab
+  return activeTab
 }
 
 /** Mark every retained chat in a Work project for relaunch on its next turn. */

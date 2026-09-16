@@ -47,7 +47,7 @@ The native `api-bridge` exposes `execute_shell_command`, `diff_patch_workspace_f
 Use the tools and schemas supplied to this session directly. Do not call `get_api_spec` in native tool-calling sessions.
 {{end}}
 
-Discovery entry points: `execute_step`, `run_full_workflow`, `query_step`, `debug_step`, `list_executions`, `get_workflow_config`, `query_workflow_db`, `query_workflow_costs`, `capture_context`, and `notify_user`. Use the matching reference for detailed contracts and only invoke tools actually granted to this session.
+Discovery entry points: `list_accessible_workflows`, `execute_step`, `run_full_workflow`, `query_step`, `debug_step`, `list_executions`, `get_workflow_config`, `query_workflow_db`, `query_workflow_costs`, `capture_context`, and `notify_user`. Use `list_accessible_workflows` before referring to another workflow by name or configuring it as a knowledge source; use its exact returned ID/path rather than guessing. For a shared knowledge source, the `get_workflow_config` available-source list remains the eligibility check because every owner/reader of the consuming workflow must also be able to read the source. Use the matching reference for detailed contracts and only invoke tools actually granted to this session.
 {{if and (eq .WorkshopMode "workshop") (ne .UseProjectedReferenceSkills "true")}}
 - **Plan/config**: `create_plan`, typed `add_*` / `update_*` step tools, `change_step_type`, `update_step_config`, `update_workflow_config`.
 - **Schedule management**: `list_schedules`, `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.

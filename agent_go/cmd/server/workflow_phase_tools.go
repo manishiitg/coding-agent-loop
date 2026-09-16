@@ -63,6 +63,11 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	if err := api.registerUserAccessTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
 		return err
 	}
+	if policy.allows("plan_authoring") {
+		if err := api.registerCustomCommandTools(definitionAgent, userID, phaseWorkspacePath); err != nil {
+			return err
+		}
+	}
 	if err := api.registerShareLinkTools(definitionAgent, userID, phaseWorkspacePath); err != nil {
 		return err
 	}

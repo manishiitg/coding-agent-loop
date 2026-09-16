@@ -1,5 +1,19 @@
 package server
 
+// canonicalizeDirectoryUserClaims replaces a provider/external identity ID in
+// an older JWT with the stable account ID from config/users.json. OAuth users
+// can first receive the provider's subject ID and later be linked by email to
+// a pre-provisioned password account. Every workspace path must use the
+// directory ID after that link; otherwise one person acquires two chat trees.
+func canonicalizeDirectoryUserClaims(claims *UserClaims) {
+	if claims == nil || !IsMultiUserMode() {
+		return
+	}
+	if rec := directoryUserForClaims(claims); rec != nil && rec.ID != "" {
+		claims.UserID = rec.ID
+	}
+}
+
 // directoryUserIsUnknown reports whether a still-valid token names an identity
 // the user directory has no record of, once a directory exists at all.
 //

@@ -5,6 +5,7 @@ import { isProviderTranscriptArtifact } from '../utils/restoredConversationFilte
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
+import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 
 function session(overrides: Partial<ChatHistorySession>): ChatHistorySession {
   return {
@@ -55,6 +56,15 @@ describe('chat history workshop mode', () => {
   it('treats mode-less legacy chats as Workshop', () => {
     const legacySession = session({})
     expect(chatHistoryWorkshopMode(legacySession)).toBe('workshop')
+  })
+})
+
+describe('chat history titles', () => {
+  it('prefers a user-defined name over the generated query title', () => {
+    expect(chatHistorySessionTitle(session({
+      title: 'GPT Live handoff',
+      query: 'check this file',
+    }))).toBe('GPT Live handoff')
   })
 })
 

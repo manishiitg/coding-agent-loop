@@ -1,4 +1,4 @@
-import { useEffect, useCallback, useRef, useMemo, useState } from 'react'
+import { useEffect, useCallback, useRef, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
@@ -50,6 +50,7 @@ interface WorkspaceProps {
   /** Hide platform-owned root files/folders until the user reveals them. */
   hideManagedEntriesByDefault?: boolean
   title?: string
+  headerAction?: ReactNode
 }
 
 type DownloadStatus = {
@@ -107,6 +108,7 @@ export default function Workspace({
   expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
   hideManagedEntriesByDefault = false,
   title = 'Workspace',
+  headerAction,
 }: WorkspaceProps) {
   // Get mode-specific file context and handlers
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
@@ -2029,6 +2031,7 @@ export default function Workspace({
               )}
             </div>
             <div className="flex items-center gap-2">
+              {headerAction}
               {/* Selection mode controls */}
               {isSelectionMode && (
                 <>

@@ -30,13 +30,12 @@ func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...st
 	common.SetSessionFolderGuard(sessionID, reads, cfg.WritePaths)
 }
 
-// registerWorkWorkflowReferenceTools lets the Work assistant discover the
-// same authorized workflow set as the AgentWorks picker and persist an exact
-// read-only reference in product.json. Names are never accepted for mutation:
-// the model must first list, disambiguate, and use the returned workspace path.
-func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definitionToolRegistrar, userID, sessionID, workspacePath string) error {
+// registerAccessibleWorkflowListTool gives product and Builder agents the same
+// authorization-aware workflow discovery surface as the AgentWorks picker.
+// attachedPaths is optional because only Crew persists workflow references.
+func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definitionToolRegistrar, userID string, attachedPaths func(context.Context) ([]string, error)) error {
 	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
-		return registrar.RegisterCustomTool(name, description, parameters, execute, "work_workflow_reference_tools")
+		return registrar.RegisterCustomTool(name, description, parameters, execute, "workflow_discovery_tools")
 	}
 	claims := &UserClaims{UserID: strings.TrimSpace(userID)}
 	if record := directoryUserFor(userID, "", ""); record != nil {
@@ -48,7 +47,7 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	if err := register("list_accessible_workflows", "Search AgentWorks workflows the current user may read. Use this before suggesting or attaching a workflow; an empty query lists all accessible workflows.", map[string]interface{}{
+	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read. Use this before referring to, suggesting, or attaching another workflow; an empty query lists all accessible workflows.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{"type": "string", "description": "Optional case-insensitive name, id, or path search."},
@@ -60,9 +59,12 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 			return "", err
 		}
 		visible := filterWorkflowManifestsForUser(claims, discovered)
-		attached, err := readWorkWorkflowReferences(ctx, workspacePath)
-		if err != nil {
-			return "", err
+		attached := []string{}
+		if attachedPaths != nil {
+			attached, err = attachedPaths(ctx)
+			if err != nil {
+				return "", err
+			}
 		}
 		attachedSet := make(map[string]bool, len(attached))
 		for _, path := range attached {
@@ -79,10 +81,14 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 			if query != "" && !strings.Contains(haystack, query) {
 				continue
 			}
-			items = append(items, map[string]interface{}{
+			item := map[string]interface{}{
 				"id": id, "label": label, "workspace_path": path,
-				"access": string(workflow.MyAccess), "attached": attachedSet[path],
-			})
+				"access": string(workflow.MyAccess),
+			}
+			if attachedPaths != nil {
+				item["attached"] = attachedSet[path]
+			}
+			items = append(items, item)
 		}
 		sort.Slice(items, func(i, j int) bool {
 			left := strings.ToLower(fmt.Sprint(items[i]["label"], "\n", items[i]["workspace_path"]))
@@ -91,8 +97,30 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		})
 		encoded, err := json.MarshalIndent(map[string]interface{}{"workflows": items}, "", "  ")
 		return string(encoded), err
+	})
+}
+
+// registerWorkWorkflowReferenceTools lets the Work assistant discover the
+// same authorized workflow set as the AgentWorks picker and persist an exact
+// read-only reference in workflow.json. Names are never accepted for mutation:
+// the model must first list, disambiguate, and use the returned workspace path.
+func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definitionToolRegistrar, userID, sessionID, workspacePath string) error {
+	if err := api.registerAccessibleWorkflowListTool(registrar, userID, func(ctx context.Context) ([]string, error) {
+		return readWorkWorkflowReferences(ctx, workspacePath)
 	}); err != nil {
 		return err
+	}
+	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
+		return registrar.RegisterCustomTool(name, description, parameters, execute, "work_workflow_reference_tools")
+	}
+	claims := &UserClaims{UserID: strings.TrimSpace(userID)}
+	if record := directoryUserFor(userID, "", ""); record != nil {
+		claims.Username = record.Username
+		claims.Email = record.Email
+	}
+	withClaims := func(ctx context.Context) context.Context {
+		copy := *claims
+		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
 	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow to this Work project as durable read-only context. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
@@ -163,44 +191,46 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 }
 
 func readWorkWorkflowReferences(ctx context.Context, workspacePath string) ([]string, error) {
-	raw, exists, err := readFileFromWorkspace(ctx, strings.TrimSuffix(strings.TrimSpace(workspacePath), "/")+"/product.json")
+	productRaw, productExists, err := readFileFromWorkspace(ctx, strings.TrimSuffix(strings.TrimSpace(workspacePath), "/")+"/product.json")
 	if err != nil {
 		return nil, err
 	}
-	if !exists {
+	if !productExists {
 		return nil, fmt.Errorf("Work product manifest does not exist")
+	}
+	var productManifest productProjectManifest
+	if err := json.Unmarshal([]byte(productRaw), &productManifest); err != nil {
+		return nil, fmt.Errorf("decode Work product manifest: %w", err)
+	}
+	if strings.TrimSpace(productManifest.Product) != "work" {
+		return nil, fmt.Errorf("workspace is not a Work project")
+	}
+	raw, _, err := readProjectRuntimeManifest(ctx, "work", workspacePath)
+	if err != nil {
+		return nil, err
 	}
 	var manifest productProjectManifest
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
-		return nil, fmt.Errorf("decode Work product manifest: %w", err)
+		return nil, fmt.Errorf("decode Work runtime manifest: %w", err)
 	}
-	if strings.TrimSpace(manifest.Product) != "work" {
-		return nil, fmt.Errorf("workspace is not a Work project")
-	}
-	return canonicalRuntimeSelection(manifest.Capabilities.WorkflowContextPaths), nil
+	return canonicalRuntimeSelection(firstNonEmptyStrings(manifest.WorkflowContextPaths, manifest.Capabilities.WorkflowContextPaths)), nil
 }
 
 func updateWorkWorkflowReferences(ctx context.Context, workspacePath string, mutate func([]string) ([]string, error)) ([]string, error) {
-	manifestPath := strings.TrimSuffix(strings.TrimSpace(workspacePath), "/") + "/product.json"
+	manifestPath := projectRuntimeManifestPath("work", workspacePath)
 	mutex := productConversationRegistryMutex(manifestPath)
 	mutex.Lock()
 	defer mutex.Unlock()
 
-	raw, exists, err := readFileFromWorkspace(ctx, manifestPath)
+	raw, _, err := ensureProjectRuntimeManifest(ctx, "work", workspacePath)
 	if err != nil {
 		return nil, err
-	}
-	if !exists {
-		return nil, fmt.Errorf("Work product manifest does not exist")
 	}
 	var typed productProjectManifest
 	if err := json.Unmarshal([]byte(raw), &typed); err != nil {
 		return nil, fmt.Errorf("decode Work product manifest: %w", err)
 	}
-	if strings.TrimSpace(typed.Product) != "work" {
-		return nil, fmt.Errorf("workspace is not a Work project")
-	}
-	next, err := mutate(canonicalRuntimeSelection(typed.Capabilities.WorkflowContextPaths))
+	next, err := mutate(canonicalRuntimeSelection(firstNonEmptyStrings(typed.WorkflowContextPaths, typed.Capabilities.WorkflowContextPaths)))
 	if err != nil {
 		return nil, err
 	}
@@ -210,12 +240,7 @@ func updateWorkWorkflowReferences(ctx context.Context, workspacePath string, mut
 	if err := json.Unmarshal([]byte(raw), &document); err != nil {
 		return nil, fmt.Errorf("decode Work product manifest fields: %w", err)
 	}
-	capabilities, _ := document["capabilities"].(map[string]interface{})
-	if capabilities == nil {
-		capabilities = map[string]interface{}{}
-		document["capabilities"] = capabilities
-	}
-	capabilities["workflow_context_paths"] = next
+	document["workflow_context_paths"] = next
 	document["updated_at"] = time.Now().UTC().Format(time.RFC3339Nano)
 	encoded, err := json.MarshalIndent(document, "", "  ")
 	if err != nil {

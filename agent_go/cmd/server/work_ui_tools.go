@@ -34,7 +34,13 @@ func registerWorkUIAllowed(req QueryRequest) bool {
 		!req.IsAutoNotification
 }
 
-func (api *StreamingAPI) registerOpenWorkWorkspaceViewTool(registrar definitionToolRegistrar, session, workspace string) error {
+func (api *StreamingAPI) registerOpenWorkWorkspaceViewTool(registrar definitionToolRegistrar, userID, session, workspace string) error {
+	// Product conversation records carry the physical per-user workspace path,
+	// while the Work surface identifies its DOM host with the public Chats/Work
+	// path returned by the workspace API. UI control is presentation-only, so
+	// bind it to that canonical browser identifier; filesystem tools continue to
+	// receive the user-scoped physical path.
+	workspace = canonicalChatHistoryWorkspacePath(userID, workspace)
 	if err := api.registerUIControlToolsForContract(registrar, session, workspace, workUIControlContract); err != nil {
 		return err
 	}

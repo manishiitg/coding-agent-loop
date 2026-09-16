@@ -175,10 +175,15 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 	if strings.TrimSpace(req.WorkspacePath) != "" {
 		// Reveal of a shared workflow secret: owners only. Readers can run the
 		// workflow with the value but never see it.
-		if !requireWorkflowOwner(w, r, req.WorkspacePath) {
+		workspacePath, err := secretWorkspacePathForRequest(r, req.WorkspacePath)
+		if err != nil {
+			http.Error(w, "Invalid workspace_path", http.StatusBadRequest)
 			return
 		}
-		aad, err := sharedWorkflowSecretAAD(req.WorkspacePath)
+		if !requireWorkflowOwner(w, r, workspacePath) {
+			return
+		}
+		aad, err := sharedWorkflowSecretAAD(workspacePath)
 		if err != nil {
 			http.Error(w, "Invalid workspace_path", http.StatusBadRequest)
 			return
@@ -240,6 +245,19 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 // Extracted from handleDecryptSecret for reuse by the bot secrets loader.
 func decryptSecretValue(encryptedBase64 string, userID string) (string, error) {
 	return decryptSecretValueWithAAD(encryptedBase64, []byte(userID))
+}
+
+// secretWorkspacePathForRequest maps the product-relative workspace path used
+// by the browser to the same private path used by the product runtime. Without
+// this normalization the live agent writes _users/<id>/Chats/... while the
+// setup pane reads a different, empty document keyed by Chats/....
+func secretWorkspacePathForRequest(r *http.Request, raw string) (string, error) {
+	userID := GetUserIDFromContext(r.Context())
+	clean, err := cleanAgentProfileWorkspace(raw, userID)
+	if err != nil {
+		return "", err
+	}
+	return agentProfileRuntimeWorkspace(userID, clean), nil
 }
 
 // storeSecretRequest is the request body for storing a user secret server-side
@@ -345,7 +363,12 @@ func (api *StreamingAPI) handleStoreWorkflowSecret(w http.ResponseWriter, r *htt
 		http.Error(w, "workspace_path, name, and encrypted_value are required", http.StatusBadRequest)
 		return
 	}
-	if !requireWorkflowOwner(w, r, req.WorkspacePath) {
+	workspacePath, err := secretWorkspacePathForRequest(r, req.WorkspacePath)
+	if err != nil {
+		http.Error(w, "Invalid workspace_path", http.StatusBadRequest)
+		return
+	}
+	if !requireWorkflowOwner(w, r, workspacePath) {
 		return
 	}
 
@@ -355,7 +378,7 @@ func (api *StreamingAPI) handleStoreWorkflowSecret(w http.ResponseWriter, r *htt
 		http.Error(w, "encrypted_value must be produced by /api/secrets/encrypt in this session", http.StatusBadRequest)
 		return
 	}
-	if err := api.upsertSharedWorkflowSecret(r.Context(), req.WorkspacePath, req.Name, plaintext); err != nil {
+	if err := api.upsertSharedWorkflowSecret(r.Context(), workspacePath, req.Name, plaintext); err != nil {
 		log.Printf("[SECRETS] Failed to store workflow secret: %v", err)
 		http.Error(w, "Failed to store workflow secret", http.StatusInternalServerError)
 		return
@@ -372,6 +395,12 @@ func (api *StreamingAPI) handleDeleteWorkflowSecret(w http.ResponseWriter, r *ht
 	workspacePath := r.URL.Query().Get("workspace_path")
 	if name == "" || workspacePath == "" {
 		http.Error(w, "Secret name and workspace_path are required", http.StatusBadRequest)
+		return
+	}
+	var err error
+	workspacePath, err = secretWorkspacePathForRequest(r, workspacePath)
+	if err != nil {
+		http.Error(w, "Invalid workspace_path", http.StatusBadRequest)
 		return
 	}
 	if !requireWorkflowOwner(w, r, workspacePath) {
@@ -398,6 +427,12 @@ func (api *StreamingAPI) handleListStoredWorkflowSecrets(w http.ResponseWriter, 
 	workspacePath := r.URL.Query().Get("workspace_path")
 	if workspacePath == "" {
 		http.Error(w, "workspace_path is required", http.StatusBadRequest)
+		return
+	}
+	var err error
+	workspacePath, err = secretWorkspacePathForRequest(r, workspacePath)
+	if err != nil {
+		http.Error(w, "Invalid workspace_path", http.StatusBadRequest)
 		return
 	}
 	level := currentUserWorkflowAccess(r, workspacePath)

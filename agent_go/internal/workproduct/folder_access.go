@@ -9,9 +9,9 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
-// FolderGrant is an owner-approved external folder attached to a Work
+// FolderGrant is an owner-approved external folder attached to a Crew
 // conversation. It reuses the shared grant shape; only the storage owner
-// differs (per-user Work file, not a workflow.json).
+// differs (per-user Crew file, not a workflow.json).
 type FolderGrant = workflowtypes.WorkflowFolderGrant
 
 // Access levels reuse the shared folder-access vocabulary.

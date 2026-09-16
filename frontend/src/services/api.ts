@@ -986,6 +986,14 @@ export const agentApi = {
     return response.data
   },
 
+  renameChatHistorySession: async (sessionId: string, title: string, workspacePath?: string): Promise<{ success: boolean; title: string }> => {
+    const response = await api.patch(`/api/chat-history/sessions/${sessionId}`, {
+      title,
+      ...(workspacePath ? { workspace_path: workspacePath } : {}),
+    })
+    return response.data
+  },
+
   startRestoredTerminal: async (request: StartRestoredTerminalRequest): Promise<StartRestoredTerminalResponse> => {
     const response = await api.post('/api/chat-history/restored-terminal', request, { timeout: 95000 })
     return response.data

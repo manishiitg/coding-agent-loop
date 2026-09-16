@@ -15,7 +15,7 @@
   release routing, and AgentWorks workflow chat/session bridges and P0 harness.
 - **Related:** [PLAT-103](plat-103.md) (retained final response),
   [PLAT-160](plat-160.md) (interactive tool completion),
-  [PLAT-178](../frontend-chat/plat-178.md)) (resume history),
+  [PLAT-178](../chat-reliability/plat-178.md)) (resume history),
   [PLAT-180](plat-180.md) (retained tool turn identity),
   [PLAT-268](../frontend-chat/plat-268.md)) (blank formatted chat), and
   [PLAT-296](../security-sandbox/plat-296.md)) (mode-specific private CLI runtimes).

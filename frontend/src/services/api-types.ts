@@ -239,6 +239,8 @@ export interface AgentProfileChatRequest {
 
 export interface AgentProfileConversationRequest {
   conversation_key?: string
+  /** Stable Work project id. Resume derives its tab key on the server. */
+  resource_id?: string
   /** An earlier conversation of the slot to make live again (…/conversation/switch). */
   session_id?: string
 }
@@ -1498,6 +1500,7 @@ export interface ChatHistoryPreviewMessage {
 
 export interface ChatHistorySession {
   session_id: string;
+  title?: string;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
   workshop_mode?: 'workshop' | 'run' | string;

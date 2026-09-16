@@ -320,6 +320,21 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 		if err := json.Unmarshal([]byte(raw), &manifest); err != nil || manifest.Product != profile.ID || strings.TrimSpace(manifest.ID) == "" {
 			continue
 		}
+		runtimePath := candidate
+		if strings.EqualFold(profile.ID, "work") {
+			runtimePath = projectRuntimeManifestPath(profile.ID, filepath.ToSlash(filepath.Dir(candidate)))
+			if runtimeRaw, runtimeFound, runtimeErr := s.readFile(ctx, runtimePath); runtimeErr != nil {
+				return nil, runtimeErr
+			} else if runtimeFound {
+				var runtimeManifest productProjectManifest
+				if err := json.Unmarshal([]byte(runtimeRaw), &runtimeManifest); err != nil {
+					return nil, fmt.Errorf("project %s runtime manifest: %w", manifest.ID, err)
+				}
+				manifest.Schedules = runtimeManifest.Schedules
+				manifest.Triggers = runtimeManifest.Triggers
+				manifest.Capabilities = runtimeManifest.Capabilities
+			}
+		}
 		if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
 			return nil, fmt.Errorf("project %s schedules: %w", manifest.ID, err)
 		}
@@ -327,7 +342,7 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 			job := productScheduleJob{
 				UserID: userID, Profile: profile, Schedule: sched,
 				ProjectID: manifest.ID, ProjectTitle: manifest.Title,
-				WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: candidate,
+				WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: runtimePath,
 			}
 			job.State = states[scheduleStateKey(job)]
 			jobs = append(jobs, job)
@@ -456,22 +471,72 @@ func (s *ProductScheduleService) projectManifest(ctx context.Context, userID, pr
 	if err != nil {
 		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
 	}
-	raw, found, err := s.readFile(ctx, binding.ManifestPath)
+	metadataRaw, found, err := s.readFile(ctx, binding.ManifestPath)
 	if err != nil || !found {
 		if err == nil {
 			err = fmt.Errorf("project manifest not found")
 		}
 		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
 	}
-	var manifest productProjectManifest
-	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+	var metadata productProjectManifest
+	if err := json.Unmarshal([]byte(metadataRaw), &metadata); err != nil {
 		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+	}
+	manifest := metadata
+	if strings.EqualFold(profileID, "work") {
+		runtimePath := projectRuntimeManifestPath(profileID, binding.WorkspacePath)
+		runtimeRaw, runtimeFound, runtimeErr := s.readFile(ctx, runtimePath)
+		if runtimeErr != nil {
+			return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, runtimeErr
+		}
+		if !runtimeFound {
+			legacy, conversionErr := workRuntimeManifestFromLegacy(metadataRaw)
+			if conversionErr != nil {
+				return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, conversionErr
+			}
+			encoded, conversionErr := json.MarshalIndent(legacy, "", "  ")
+			if conversionErr != nil {
+				return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, conversionErr
+			}
+			runtimeRaw = string(encoded) + "\n"
+			if conversionErr := s.writeFile(ctx, runtimePath, runtimeRaw); conversionErr != nil {
+				return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, conversionErr
+			}
+			var metadataDocument map[string]interface{}
+			if json.Unmarshal([]byte(metadataRaw), &metadataDocument) == nil {
+				for _, key := range []string{"capabilities", "schedules", "triggers", "workflow_context_paths"} {
+					delete(metadataDocument, key)
+				}
+				metadataDocument["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				if encodedMetadata, encodeErr := json.MarshalIndent(metadataDocument, "", "  "); encodeErr == nil {
+					_ = s.writeFile(ctx, binding.ManifestPath, string(encodedMetadata)+"\n")
+				}
+			}
+		}
+		var runtimeManifest productProjectManifest
+		if err := json.Unmarshal([]byte(runtimeRaw), &runtimeManifest); err != nil {
+			return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, err
+		}
+		manifest.Capabilities = runtimeManifest.Capabilities
+		manifest.Schedules = runtimeManifest.Schedules
+		manifest.Triggers = runtimeManifest.Triggers
+		binding.ManifestPath = runtimePath
 	}
 	return profile, binding, manifest, nil
 }
 
 func (s *ProductScheduleService) writeProjectManifest(ctx context.Context, binding productConversationBinding, manifest productProjectManifest) error {
 	manifest.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	if filepath.Base(filepath.FromSlash(binding.ManifestPath)) == "workflow.json" {
+		if strings.TrimSpace(manifest.Label) == "" {
+			manifest.Label = manifest.Title
+		}
+		manifest.Product = ""
+		manifest.Title = ""
+		manifest.Description = ""
+		manifest.SessionID = ""
+		manifest.Capabilities.WorkflowContextPaths = nil
+	}
 	data, err := json.MarshalIndent(manifest, "", "  ")
 	if err != nil {
 		return err

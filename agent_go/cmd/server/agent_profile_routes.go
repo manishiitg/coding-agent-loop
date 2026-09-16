@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/presentations"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 const maxAgentProfileRequestBytes = 2 << 20
@@ -44,15 +45,55 @@ type AgentProfileChatRequest struct {
 
 type AgentProfileConversationRequest struct {
 	ConversationKey string `json:"conversation_key,omitempty"`
+	// ResourceID lets Work resume with the stable project id plus the saved chat
+	// id. The server derives the tab-specific conversation key; the browser does
+	// not need to understand registry key construction.
+	ResourceID string `json:"resource_id,omitempty"`
 	// SessionID names an earlier conversation of the slot to make live again
 	// (POST …/conversation/switch); the other conversation routes ignore it.
 	SessionID string `json:"session_id,omitempty"`
+}
+
+func agentProfileResumeConversationKey(profileID string, input AgentProfileConversationRequest) string {
+	if key := strings.TrimSpace(input.ConversationKey); key != "" {
+		return key
+	}
+	resourceID := strings.TrimSpace(input.ResourceID)
+	if strings.EqualFold(strings.TrimSpace(profileID), "work") && resourceID != "" && strings.TrimSpace(input.SessionID) != "" {
+		return resourceID + ":" + strings.TrimSpace(input.SessionID)
+	}
+	return resourceID
 }
 
 type AgentProfileConversationResponse struct {
 	ConversationID  string `json:"conversation_id"`
 	ConversationKey string `json:"conversation_key"`
 	SessionID       string `json:"session_id"`
+}
+
+type resolvedResumeTargetContextKey struct{}
+
+func resolveProductResumeTarget(userID string, conversation ProductConversationRecord) (*resolvedResumeTarget, bool, error) {
+	workspacePath := normalizeConversationWorkspace(conversation.WorkspacePath)
+	// Local Work history lives below the authenticated user's project root.
+	// Rebuild that canonical owner prefix after normalizing absolute/runtime
+	// variants; the history reader can still fall back to legacy global chats.
+	lookupWorkspacePath := workspacePath
+	if workspacePath != "" {
+		lookupWorkspacePath = filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(userID), filepath.FromSlash(workspacePath)))
+	}
+	target, ok, err := readRestoredChatHistoryPersistTargetForSession(userID, conversation.SessionID, lookupWorkspacePath)
+	if err != nil || !ok || target == nil {
+		return nil, false, err
+	}
+	return &resolvedResumeTarget{
+		SessionID:        target.SessionID,
+		WorkspacePath:    workspacePath,
+		ConversationPath: target.ConversationPath,
+		History:          target.History,
+		Runtime:          target.Runtime,
+		WorkshopMode:     target.WorkshopMode,
+	}, true, nil
 }
 
 // AgentProfilePresentationDeleteRequest is deliberately narrow: the browser
@@ -63,6 +104,18 @@ type AgentProfileConversationResponse struct {
 type AgentProfilePresentationDeleteRequest struct {
 	ConversationKey string `json:"conversation_key"`
 	Kind            string `json:"kind"`
+}
+
+// hasSelectedServers reports whether the browser named a real MCP server
+// selection. ChatArea.tsx sends the mcpclient.NoServers sentinel
+// unconditionally for every profile-based chat tab, including ones whose
+// profile disables MCP selection entirely -- that sentinel means "explicitly
+// none", not a selection, and must not trip the capability check below.
+func hasSelectedServers(servers []string) bool {
+	if len(servers) == 0 {
+		return false
+	}
+	return !(len(servers) == 1 && servers[0] == mcpclient.NoServers)
 }
 
 func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentProfileChatRequest, conversation ProductConversationRecord) (QueryRequest, error) {
@@ -76,6 +129,13 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 		AgentProfileID:              profile.ID,
 		AgentProfileVersion:         profile.Version,
 		AgentProfileConversationKey: conversation.ConversationKey,
+		// The registry has already verified that this durable session belongs to
+		// the signed-in user and selected product resource. Carry that trusted
+		// identity into the shared runner so a reopened product chat can restore
+		// its provider-native session, or replay its bounded saved transcript when
+		// native resume is unavailable. The narrow product API still gives the
+		// browser no way to nominate an arbitrary restore path or session.
+		RestoredConversationSessionID: conversation.SessionID,
 		AgentProfileContext: agentprofiles.PromptContext{
 			ProjectTitle:         firstNonEmptyTrimmed(conversation.Title, profile.Name),
 			WorkspaceDescription: conversation.Description,
@@ -94,12 +154,12 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 				// query path. This also differs from legacy registry records that
 				// silently mounted every connected account MCP, forcing one clean
 				// CLI relaunch during migration.
-				req.EnabledServers = []string{"NO_SERVERS"}
+				req.EnabledServers = []string{mcpclient.NoServers}
 			}
 		} else {
 			req.EnabledServers = appendUniqueStrings(nil, input.EnabledServers...)
 		}
-	} else if len(input.EnabledServers) > 0 {
+	} else if hasSelectedServers(input.EnabledServers) {
 		return QueryRequest{}, fmt.Errorf("profile %q does not accept user-selected MCP servers", profile.ID)
 	}
 	if profile.Runtime.Capabilities.SkillSelection != "" && profile.Runtime.Capabilities.SkillSelection != agentprofiles.CapabilityDisabled {
@@ -119,7 +179,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	}
 	// Project schedules, bots and restored clients may not send a browser tab's
 	// engine fields. Reuse the same capabilities.llm_config stored in
-	// product.json that the Work UI uses, just as workflow turns resolve their
+	// workflow.json that the Work UI uses, just as AgentWorks turns resolve their
 	// runtime from workflow.json.
 	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig != nil {
 		builder := presetPrimaryLLMForChat(conversation.ProjectLLMConfig)
@@ -150,7 +210,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	}
 	// Projects created before capabilities.llm_config was introduced fall back
 	// to the conversation's last actual runtime, never the profile default. The
-	// Work UI backfills this value into product.json when the project is opened.
+	// Work UI backfills this value into workflow.json when the project is opened.
 	if strings.TrimSpace(input.Engine) == "" && conversation.ProjectLLMConfig == nil && strings.TrimSpace(conversation.Provider) != "" {
 		for _, option := range profile.Runtime.ProviderOptions {
 			if !strings.EqualFold(strings.TrimSpace(option.Provider), strings.TrimSpace(conversation.Provider)) {
@@ -435,6 +495,14 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
+	// Resolve the saved transcript, native provider handle, and persistence
+	// destination once. The shared runner receives this trusted target through
+	// context; it does not reconstruct product ownership from browser data.
+	resumeTarget, hasResumeTarget, err := resolveProductResumeTarget(productWorkspaceUserID(r.Context()), conversation)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, "resolve saved conversation: "+err.Error())
+		return
+	}
 	// Runtime changes keep the AgentWorks conversation identity but must close
 	// the retained coding CLI. Its provider/model flags are read only at launch;
 	// the shared runner relaunches it with the new project configuration below.
@@ -468,7 +536,11 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 	// durable workspace remains owned by DEFAULT_USER_ID. Keep that gateway
 	// identity out of the shared query path so the folder guard, project
 	// initializer, history and registry all address the same project files.
-	forwarded := r.Clone(productWorkspaceContext(r.Context()))
+	forwardedContext := productWorkspaceContext(r.Context())
+	if hasResumeTarget {
+		forwardedContext = context.WithValue(forwardedContext, resolvedResumeTargetContextKey{}, resumeTarget)
+	}
+	forwarded := r.Clone(forwardedContext)
 	forwarded.Body = io.NopCloser(bytes.NewReader(encoded))
 	forwarded.ContentLength = int64(len(encoded))
 	forwarded.Header = r.Header.Clone()
@@ -600,6 +672,7 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 		}
 	}
 	preferredSessionID := ""
+	preferredSessionVerifiedForWorkspace := false
 	if binding.AuthoritativeSessionID == "" {
 		candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))
 		if candidate != "" && api.canUseSessionIDForQuery(r, candidate) {
@@ -610,16 +683,52 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 			} else if found {
 				preferredSessionID = candidate
 			}
+			if session, found := chatHistorySessionsByID(userID, binding.WorkspacePath)[candidate]; found {
+				preferredSessionVerifiedForWorkspace = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(binding.WorkspacePath)
+			}
 		}
 	}
-	record, err := defaultProductConversationRegistryStore().resolveOrCreate(r.Context(), userID, profile, binding, preferredSessionID)
+	store := defaultProductConversationRegistryStore()
+	record, err := store.resolveOrCreate(r.Context(), userID, profile, binding, preferredSessionID)
 	if err != nil {
 		return ProductConversationRecord{}, err
+	}
+	// An open Work tab may survive a browser refresh and many backend
+	// deployments. Its authenticated X-Session-ID is the conversation the user
+	// can actually see. If a tab-specific registry slot drifted to another
+	// session, repair it on the send boundary before the agent launches. The
+	// candidate must already exist in this exact project workspace; a caller
+	// cannot use this to nominate an arbitrary or another user's session.
+	if shouldRebindWorkConversation(profile, binding, record, preferredSessionID, preferredSessionVerifiedForWorkspace) {
+		record, err = store.switchTo(r.Context(), userID, profile, binding, preferredSessionID, true)
+		if err != nil {
+			return ProductConversationRecord{}, fmt.Errorf("restore open Work conversation: %w", err)
+		}
 	}
 	if !api.canUseSessionIDForQuery(r, record.SessionID) {
 		return ProductConversationRecord{}, fmt.Errorf("product conversation session belongs to another user")
 	}
 	return record, nil
+}
+
+func shouldRebindWorkConversation(
+	profile agentprofiles.Profile,
+	binding productConversationBinding,
+	record ProductConversationRecord,
+	preferredSessionID string,
+	verifiedForWorkspace bool,
+) bool {
+	if !strings.EqualFold(strings.TrimSpace(profile.ID), "work") || !verifiedForWorkspace {
+		return false
+	}
+	// The base project key is the permanent Builder/current-project slot and is
+	// governed by product.json. Only tab-specific keys may follow an already-open
+	// browser tab back to its durable session.
+	if strings.TrimSpace(binding.ResourceID) == "" || strings.TrimSpace(binding.ConversationKey) == strings.TrimSpace(binding.ResourceID) {
+		return false
+	}
+	preferredSessionID = strings.TrimSpace(preferredSessionID)
+	return preferredSessionID != "" && preferredSessionID != strings.TrimSpace(record.SessionID)
 }
 
 // productWorkspaceUserID preserves true per-user isolation where it is

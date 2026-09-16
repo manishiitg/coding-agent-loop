@@ -1,5 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import { AlertCircle, Bell, Check, Loader2, Sparkles, Wrench } from 'lucide-react'
+import { Activity, AlertCircle, Bell, Check, Loader2, Sparkles, Wrench } from 'lucide-react'
 import type { PollingEvent } from '../services/api-types'
 import { buildCleanConversationItems, buildProductionActivityTurns } from '../utils/cleanConversation'
 import type { ProductionActivityItem, ProductionActivityTurn } from '../utils/cleanConversation'
@@ -41,6 +41,31 @@ function formatTokenCount(tokens: number): string {
 // (buildAutoNotificationMessage, agent_go/cmd/server/background_agents.go).
 function isFailedStepNotification(content: string): boolean {
   return /\bstatus=failed\b/i.test(content) || /(^|\n)\s*(- )?Result: Error:/i.test(content)
+}
+
+function ProgressUpdate({ content, isStreaming }: { content: string; isStreaming: boolean }) {
+  const [open, setOpen] = useState(isStreaming)
+
+  useEffect(() => {
+    setOpen(isStreaming)
+  }, [isStreaming])
+
+  return (
+    <details
+      className="w-full rounded-xl border border-dashed border-slate-300 bg-slate-50/70 px-4 py-3 text-slate-600 dark:border-slate-700 dark:bg-slate-900/45 dark:text-slate-300"
+      open={open}
+      onToggle={(event) => setOpen(event.currentTarget.open)}
+      data-testid="clean-progress-message"
+    >
+      <summary className="flex cursor-pointer list-none select-none items-center gap-2 text-[11px] font-semibold uppercase tracking-wide text-slate-500 dark:text-slate-400 [&::-webkit-details-marker]:hidden">
+        {isStreaming ? <Loader2 className="h-3.5 w-3.5 animate-spin text-violet-400" /> : <Activity className="h-3.5 w-3.5" />}
+        <span>Progress update</span>
+      </summary>
+      <div className="mt-2 border-l-2 border-slate-200 pl-3 text-sm leading-6 text-slate-600 dark:border-slate-700 dark:text-slate-300">
+        <ConversationMarkdownRenderer content={content} maxHeight="none" framed={false} />
+      </div>
+    </details>
+  )
 }
 
 // One turn's tool activity. Rendered per turn rather than once for the whole
@@ -158,6 +183,8 @@ export function CleanConversationSurface({
             <summary className="cursor-pointer select-none text-xs font-semibold text-violet-300">Thinking</summary>
             <p className="mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-slate-300">{item.content}</p>
           </details>
+        ) : item.role === 'progress' ? (
+          <ProgressUpdate key={item.id} content={item.content} isStreaming={isStreaming} />
         ) : item.role === 'notification' ? (
           // An automatic update the runtime delivered to the agent (a background
           // step finishing), not something the user typed or the agent said. It

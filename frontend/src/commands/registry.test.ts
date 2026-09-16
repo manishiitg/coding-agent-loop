@@ -166,6 +166,20 @@ describe('Pulse slash commands', () => {
     expect(promptBloat?.description.toLowerCase()).toContain('pulse review')
   })
 
+  it('reads review-code reference files one at a time', () => {
+    let submitted = ''
+    findCommand('review-code', 'workflow')?.execute({
+      beforeSlash: '',
+      onSubmit: (message: string) => { submitted = message },
+      workshopMode: 'workshop',
+      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
+    } as CommandContext)
+
+    expect(submitted).toContain('references/code-authoring.md')
+    expect(submitted).toContain('references/scripted.md')
+    expect(submitted).not.toContain('},{')
+  })
+
   it('runs backlog consolidation through typed Pulse lifecycle tools only', () => {
     const command = findCommand('pulse-merge', 'workflow')
     let submitted = ''
@@ -413,6 +427,26 @@ describe('Product commands are scoped to their own surface', () => {
       expect(findProductCommand('production', 'multi-agent')).toBeDefined()
       expect(findProductCommand('personal', 'multi-agent')).toBeUndefined()
       expect(findProductCommand('pulse-review', 'multi-agent')).toBeUndefined()
+    } finally {
+      setProductCommands([])
+      setUserCommands([])
+    }
+  })
+
+  it('merges scoped custom commands into a product without adding platform builtins', async () => {
+    const { findProductOrUserCommand, getProductAndUserCommands, setProductCommands, setUserCommands } = await import('./registry')
+    setUserCommands([{
+      command: 'personal', description: 'Project command', icon: null,
+      modes: ['multi-agent'], source: 'user', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    setProductCommands([{
+      command: 'production', description: 'Product command', icon: null,
+      modes: ['multi-agent'], source: 'product', execute: () => {},
+    } as unknown as import('./types').CommandDefinition])
+    try {
+      expect(getProductAndUserCommands('multi-agent').map(command => command.command)).toEqual(['production', 'personal'])
+      expect(findProductOrUserCommand('personal', 'multi-agent')).toBeDefined()
+      expect(findProductOrUserCommand('pulse-review', 'multi-agent')).toBeUndefined()
     } finally {
       setProductCommands([])
       setUserCommands([])

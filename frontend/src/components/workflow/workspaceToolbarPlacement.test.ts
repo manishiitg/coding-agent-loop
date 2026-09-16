@@ -7,16 +7,30 @@ describe('workflow Ask AI placement', () => {
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
 
     expect(toolbar).not.toContain('<AskAIButton')
-    expect(host).toContain('data-ui-view-assistant')
-    expect(host).toContain('getWorkspaceAskAIMessage(effectiveView)')
+    expect(host).not.toContain('data-ui-view-assistant')
+    expect(host).toContain('headerAction={askAI(')
+    expect(host).toContain('assistantControl={workspacePath ? (')
   })
 
-  it('keeps Views and Setup mutually exclusive', () => {
+  it('keeps frequent tools visible without a group label and uses mutually exclusive Ops and Setup popovers', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
-    expect(toolbar).toContain("open={openToolbarGroup === 'views'}")
-    expect(toolbar).toContain("open={openToolbarGroup === 'setup'}")
-    expect(toolbar).toContain("onToggle={() => setOpenToolbarGroup('views')}")
-    expect(toolbar).toContain("onToggle={() => setOpenToolbarGroup('setup')}")
+    expect(toolbar).not.toContain('label="Views"')
+    expect(toolbar).not.toContain('label="Tools"')
+    expect(toolbar).toContain("open={openToolbarMenu === 'ops'}")
+    expect(toolbar).toContain("open={openToolbarMenu === 'setup'}")
+    expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('ops')}")
+    expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('setup')}")
+    expect(toolbar).toContain('role="menu" aria-label={label}')
+  })
+
+  it('keeps report separate, Knowledgebase visible, Costs in Ops, and Playbooks in Setup', () => {
+    const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
+
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])")
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])")
+    expect(toolbar).toContain("playbooks: 'Playbooks'")
+    expect(toolbar).toContain('PRIMARY_TOOLBAR_VIEW_IDS.has(view.id)')
+    expect(toolbar.indexOf('<ReportDocumentSwitcher')).toBeLessThan(toolbar.indexOf('aria-label={pendingDecisionCount'))
   })
 })

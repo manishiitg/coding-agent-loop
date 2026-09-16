@@ -1,6 +1,8 @@
 package security
 
 import (
+	"fmt"
+	"os"
 	"strings"
 	"testing"
 )
@@ -78,6 +80,44 @@ func TestDockerEnvironmentUsesConfiguredBrowserExecutable(t *testing.T) {
 	if !foundAgentBrowser || !foundHyperFramesBrowser {
 		t.Fatalf("configured browser executable was not preserved for both runtimes: agent-browser=%v hyperframes=%v", foundAgentBrowser, foundHyperFramesBrowser)
 	}
+}
+
+func TestSafeEnvironmentAllowsOnlyCurrentUsersRootlessDockerSocket(t *testing.T) {
+	t.Setenv("NATIVE_WORKSPACE", "")
+	expected := fmt.Sprintf("unix:///run/user/%d/docker.sock", os.Getuid())
+	t.Setenv("DOCKER_HOST", expected)
+
+	if !environmentContains(BuildSafeEnvironment(), "DOCKER_HOST="+expected) {
+		t.Fatal("expected current user's rootless Docker socket to be preserved")
+	}
+
+	t.Setenv("DOCKER_HOST", "unix:///var/run/docker.sock")
+	if environmentHasPrefix(BuildSafeEnvironment(), "DOCKER_HOST=") {
+		t.Fatal("privileged host Docker socket leaked into workspace environment")
+	}
+
+	t.Setenv("DOCKER_HOST", "tcp://127.0.0.1:2375")
+	if environmentHasPrefix(BuildSafeEnvironment(), "DOCKER_HOST=") {
+		t.Fatal("arbitrary Docker endpoint leaked into workspace environment")
+	}
+}
+
+func environmentContains(env []string, target string) bool {
+	for _, entry := range env {
+		if entry == target {
+			return true
+		}
+	}
+	return false
+}
+
+func environmentHasPrefix(env []string, prefix string) bool {
+	for _, entry := range env {
+		if strings.HasPrefix(entry, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func pathInList(pathValue, target string) bool {

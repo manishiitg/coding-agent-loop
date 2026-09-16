@@ -1,14 +1,15 @@
 import { useCallback } from 'react'
 import type { ChatHistorySession } from '../services/api-types'
+import { agentApi } from '../services/api'
 import { useChatStore } from '../stores/useChatStore'
 import {
   chatHistoryConversationPath,
   chatHistoryRuntimeLabel,
-  chatHistorySessionTitle,
   chatHistorySupportsNativeResume,
   chatHistoryUsesTerminalRestore,
   chatHistoryWorkshopModeLabel,
 } from '../components/PreviousChatHistoryPanel'
+import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
 /**
@@ -28,12 +29,85 @@ import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 export function useResumePreviousChat() {
   return useCallback(async (session: ChatHistorySession) => {
     const chatStore = useChatStore.getState()
-    const targetTabId = chatStore.activeTabId || undefined
-    const targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
+    let targetTabId = chatStore.activeTabId || undefined
+    let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
 
     if (!targetTabId || targetTab?.metadata?.mode !== 'multi-agent' || !targetTab.metadata.agentProfileId) {
       useChatStore.getState().addToast('Open the product chat before resuming its history.', 'error')
       return
+    }
+
+    const profileId = targetTab.metadata.agentProfileId
+    let conversationKey = targetTab.metadata.agentProfileConversationKey
+    let resumeProjectId: string | undefined
+    let createResumedTab = false
+
+    // Work's permanent Workshop tab is a history/new-chat launch surface. A
+    // resume must open the selected durable conversation in its own chat tab;
+    // attaching it to Workshop makes old messages appear under the launcher,
+    // while the next submission still follows launcher semantics and silently
+    // creates a different conversation.
+    if (targetTab.metadata.agentProfileBuilder === true) {
+      const existing = Object.values(chatStore.chatTabs).find(tab =>
+        tab.metadata?.agentProfileBuilder !== true &&
+        tab.metadata?.agentProfileId === targetTab?.metadata?.agentProfileId &&
+        tab.metadata?.agentProfileProjectId === targetTab?.metadata?.agentProfileProjectId &&
+        tab.sessionId === session.session_id,
+      )
+      if (existing) {
+        targetTabId = existing.tabId
+        targetTab = existing
+        conversationKey = existing.metadata?.agentProfileConversationKey
+      } else {
+        // The browser sends only the project and selected chat identities. The
+        // server owns the registry key format and verifies project ownership.
+        resumeProjectId = targetTab.metadata.agentProfileProjectId
+          || targetTab.metadata.agentProfileConversationKey?.split(':', 1)[0]
+        conversationKey = undefined
+        createResumedTab = true
+      }
+    }
+
+    if (!conversationKey && !resumeProjectId) {
+      useChatStore.getState().addToast('This chat has no product conversation binding.', 'error')
+      return
+    }
+
+    // Resume is a server-owned identity change. Bind the selected historical
+    // session to this tab's product conversation before the tab can submit a
+    // message. That lets the shared runner find the saved native Claude/Cursor
+    // session and use its real resume mechanism instead of starting empty.
+    let resumedConversation
+    try {
+      resumedConversation = await agentApi.switchAgentProfileConversation(profileId, {
+        conversation_key: conversationKey,
+        resource_id: resumeProjectId,
+        session_id: session.session_id,
+      })
+    } catch (error) {
+      console.error('[ResumePreviousChat] Failed to bind product conversation', error)
+      useChatStore.getState().addToast('Could not resume this chat. Its saved conversation was kept unchanged.', 'error')
+      return
+    }
+
+    if (createResumedTab) {
+      const builderConfig = targetTab.config
+      const resumedTabId = await chatStore.createChatTab(chatHistorySessionTitle(session), {
+        ...targetTab.metadata,
+        agentProfileBuilder: false,
+        agentProfileConversationKey: resumedConversation.conversation_key,
+        agentProfileConversationId: resumedConversation.conversation_id,
+      }, resumedConversation.session_id)
+      if (builderConfig) chatStore.setTabConfig(resumedTabId, { ...builderConfig })
+      targetTabId = resumedTabId
+      targetTab = useChatStore.getState().chatTabs[resumedTabId]
+    } else {
+      chatStore.setTabMetadata(targetTabId, {
+        agentProfileConversationKey: resumedConversation.conversation_key,
+        agentProfileConversationId: resumedConversation.conversation_id,
+      })
+      chatStore.updateTabSessionId(targetTabId, resumedConversation.session_id)
+      targetTab = useChatStore.getState().chatTabs[targetTabId]
     }
 
     // Clear the current conversation before resuming a different one (or the
@@ -42,10 +116,10 @@ export function useResumePreviousChat() {
     // cheap no-op (just rotates the session id).
     const events = targetTab.sessionId ? useChatStore.getState().tabEvents[targetTab.sessionId] : undefined
     const hasContent = Array.isArray(events) && events.length > 0
-    if (targetTab.sessionId !== session.session_id && hasContent) {
+    if (targetTab?.sessionId !== session.session_id && hasContent) {
       chatStore.resetTabChat(targetTabId)
     }
-    chatStore.updateTabSessionId(targetTabId, session.session_id)
+    chatStore.updateTabSessionId(targetTabId, resumedConversation.session_id)
 
     const path = chatHistoryConversationPath(session)
     const title = chatHistorySessionTitle(session)
@@ -76,7 +150,7 @@ export function useResumePreviousChat() {
     if (useTerminalRestore || useNativeResume) {
       latestStore.setTabViewMode(targetTabId, 'tree')
       startRestoredTransportTerminal(
-        session.session_id,
+        resumedConversation.session_id,
         path,
         session.session_id,
         session.workspace_path || session.runtime?.workspace_path,

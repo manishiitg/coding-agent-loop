@@ -78,6 +78,67 @@ func TestProductConversationRegistrySeparatesUsersAndKeys(t *testing.T) {
 	}
 }
 
+func TestShouldRebindWorkConversationOnlyForVerifiedTabSpecificSession(t *testing.T) {
+	profile := agentprofiles.Profile{ID: "work"}
+	binding := productConversationBinding{
+		ConversationKey: "project-1:chat-1",
+		ResourceID:      "project-1",
+	}
+	record := ProductConversationRecord{SessionID: "registry-session"}
+
+	if !shouldRebindWorkConversation(profile, binding, record, "open-tab-session", true) {
+		t.Fatal("verified open Work tab should repair a drifted tab-specific registry slot")
+	}
+	if shouldRebindWorkConversation(profile, binding, record, "open-tab-session", false) {
+		t.Fatal("unverified session must never change the registry")
+	}
+	if shouldRebindWorkConversation(profile, productConversationBinding{
+		ConversationKey: "project-1",
+		ResourceID:      "project-1",
+	}, record, "open-tab-session", true) {
+		t.Fatal("the permanent Builder slot must remain governed by the project manifest")
+	}
+	if shouldRebindWorkConversation(agentprofiles.Profile{ID: "video-studio"}, binding, record, "open-tab-session", true) {
+		t.Fatal("the Work-specific compatibility repair must not affect other products")
+	}
+}
+
+func TestProductConversationRegistryBindsVerifiedHistoryToNewProjectChatKey(t *testing.T) {
+	store, _ := memoryProductConversationStore()
+	profile := routeTestProfile("work", true, "")
+	binding := productConversationBinding{
+		ConversationKey: "project-1:historical-session",
+		WorkspacePath:   "_users/user-1/Chats/Work/projects/project-1",
+		ResourceID:      "project-1",
+		Title:           "Project 1",
+	}
+
+	restored, err := store.switchTo(context.Background(), "user-1", profile, binding, "historical-session", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.SessionID != "historical-session" || restored.ConversationKey != binding.ConversationKey || restored.ConversationID == "" {
+		t.Fatalf("verified historical session was not bound directly: %+v", restored)
+	}
+	resolved, err := store.resolveOrCreate(context.Background(), "user-1", profile, binding, "different-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.SessionID != restored.SessionID || resolved.ConversationID != restored.ConversationID {
+		t.Fatalf("later resolve replaced restored identity: restored=%+v resolved=%+v", restored, resolved)
+	}
+}
+
+func TestProductConversationRegistryRejectsUnverifiedHistoryForNewKey(t *testing.T) {
+	store, _ := memoryProductConversationStore()
+	profile := routeTestProfile("work", true, "")
+	binding := productConversationBinding{ConversationKey: "project-1:browser-choice"}
+
+	if _, err := store.switchTo(context.Background(), "user-1", profile, binding, "untrusted-session", false); err == nil || !strings.Contains(err.Error(), "has not been opened") {
+		t.Fatalf("unverified session created a product conversation: %v", err)
+	}
+}
+
 func TestProductConversationRotationChangesProjectSessionAndKeepsNewBinding(t *testing.T) {
 	store, files := memoryProductConversationStore()
 	profile := routeTestProfile("video-studio", true, "")
@@ -211,12 +272,16 @@ func TestWorkProjectBindingUsesCreatedProjectFolder(t *testing.T) {
 	profile.Runtime.Conversation = agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject}
 
 	manifestPath := "_users/user-1/Chats/Work/projects/site/product.json"
+	runtimePath := "_users/user-1/Chats/Work/projects/site/workflow.json"
 	store := productProjectStore{
 		listPaths: func(context.Context, string) ([]string, bool, error) {
 			return []string{manifestPath}, true, nil
 		},
-		read: func(context.Context, string) (string, bool, error) {
-			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1","capabilities":{"workflow_context_paths":["Workflow/reference"],"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+		read: func(_ context.Context, path string) (string, bool, error) {
+			if path == runtimePath {
+				return `{"schema_version":1,"id":"task-1","label":"Task","workflow_context_paths":["Workflow/reference"],"capabilities":{"llm_config":{"schema_version":2,"mode":"explicit","builder_llm":{"provider":"muse-cli","model_id":"muse-spark-1.3-contributor"}}}}`, true, nil
+			}
+			return `{"schema_version":1,"product":"work","id":"task-1","title":"Task","session_id":"work:task-1"}`, true, nil
 		},
 	}
 	binding, err := resolveProductProjectBindingWithStore(context.Background(), "user-1", profile, "task-1", store)

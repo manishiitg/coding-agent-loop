@@ -23,7 +23,7 @@ import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../com
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
-import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
+import { belongsToWorkProject, markWorkProjectRuntimeDirty, preferredWorkProjectTabId, setWorkProjectRuntimeSelection, visibleWorkProjectTabs, workConversationResumeKey, workTabDisplayName, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
@@ -134,21 +134,21 @@ function useWorkSessions() {
 
   const updateLLMConfig = useCallback(async (projectId: string, selection: WorkRuntimeSelection) => {
     const project = sessions.find(item => item.id === projectId)
-    if (!project) throw new Error('This Work project is no longer available.')
+    if (!project) throw new Error('This Crew project is no longer available.')
     const llmConfig = workLLMConfigFromSelection({
       provider: selection.provider || selection.engine,
       modelId: selection.modelId,
       reasoningEffort: selection.reasoningEffort,
     })
-    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Work project model ${project.title}`)
+    const updated = await updateProductProjectLLMConfig(project, llmConfig, `Update Crew project model ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
 
-  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; workflowContextPaths?: string[] }) => {
+  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
-    if (!project) throw new Error('This Work project is no longer available.')
-    const updated = await updateProductProjectSelections(project, patch, `Update Work project integrations ${project.title}`)
+    if (!project) throw new Error('This Crew project is no longer available.')
+    const updated = await updateProductProjectSelections(project, patch, `Update Crew project integrations ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
   }, [sessions])
@@ -213,7 +213,7 @@ function useWorkChatTabs(
           tab => belongsToWorkProject(tab, session.id) && !tab.metadata?.agentProfileBuilder,
         )
 
-        // Migrate the original one-chat Work tabs into the project-scoped tab
+        // Migrate the original one-chat Crew tabs into the project-scoped tab
         // family without discarding their native CLI conversation.
         let legacyRuntime: WorkRuntimeSelection | null = null
         const orderedChats = [...chats].sort((left, right) => {
@@ -227,6 +227,25 @@ function useWorkChatTabs(
           chatStore.setTabMetadata(chat.tabId, { agentProfileMCPSelectionInitialized: true })
           const hasRuntimeBinding = Boolean(chat.metadata?.agentProfileEngine && chat.metadata.agentProfileModelID)
           if (!chat.sessionId) continue
+
+          // A browser tab can outlive many frontend and backend deployments.
+          // Reassert its durable session before the composer becomes ready;
+          // otherwise the server registry may resolve the key to a newer or
+          // empty conversation and the next message silently loses context.
+          // This also upgrades legacy tabs that shared the project's Builder
+          // key into one key per retained conversation.
+          const conversationKey = workConversationResumeKey(chat, session.id)
+          if (!conversationKey) continue
+          const resumed = await agentApi.switchAgentProfileConversation(WORK_PROFILE_ID, {
+            conversation_key: conversationKey,
+            session_id: chat.sessionId,
+          })
+          chatStore.setTabMetadata(chat.tabId, {
+            agentProfileConversationKey: resumed.conversation_key,
+            agentProfileConversationId: resumed.conversation_id,
+          })
+          chatStore.updateTabSessionId(chat.tabId, resumed.session_id)
+
           if ((chatStore.tabEvents[chat.sessionId]?.length ?? 0) === 0) {
             await hydrateTabEvents(chat.sessionId, {
               workspacePath: session.workspacePath,
@@ -246,11 +265,16 @@ function useWorkChatTabs(
             ...projectMetadata,
             ...selectedRuntimeMetadata,
             agentProfileBuilder: true,
+            agentProfileConversationKey: session.id,
           })
           builder = chatStore.getTab(builderId)
         }
         if (cancelled || !builder) return
-        chatStore.setTabMetadata(builder.tabId, { ...projectMetadata, ...selectedRuntimeMetadata })
+        chatStore.setTabMetadata(builder.tabId, {
+          ...projectMetadata,
+          ...selectedRuntimeMetadata,
+          agentProfileConversationKey: session.id,
+        })
         chatStore.setTabConfig(builder.tabId, { selectedServers: savedServers, selectedSkills: savedSkills })
         chatStore.setTabMetadata(builder.tabId, { agentProfileMCPSelectionInitialized: true })
 
@@ -265,7 +289,7 @@ function useWorkChatTabs(
         }
         setReady(true)
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not open Work.')
+        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not open Crew.')
       }
     }
     void prepare()
@@ -281,14 +305,53 @@ function useWorkChatTabs(
   return { tabId: ready ? activeProjectTab?.tabId ?? null : null, tabs: projectTabs, error }
 }
 
-function WorkChatTabs({ tabs, activeTabId }: { tabs: ReturnType<typeof useWorkChatTabs>['tabs']; activeTabId: string | null }) {
+function WorkChatTabs({
+  tabs,
+  activeTabId,
+  workshopOpen,
+  onWorkshopOpen,
+  onChatOpen,
+}: {
+  tabs: ReturnType<typeof useWorkChatTabs>['tabs']
+  activeTabId: string | null
+  workshopOpen: boolean
+  onWorkshopOpen: () => void
+  onChatOpen: () => void
+}) {
   const closeTab = useChatStore(state => state.closeTab)
+  const renameTab = useChatStore(state => state.renameTab)
+  const addToast = useChatStore(state => state.addToast)
   const close = useCallback((tabId: string) => {
     const nextId = activeTabId === tabId
       ? tabs.find(tab => tab.tabId !== tabId)?.tabId
       : undefined
     void closeTab(tabId, false).then(() => { if (nextId) activateTab(nextId) })
   }, [activeTabId, closeTab, tabs])
+
+  const rename = useCallback(async (tab: (typeof tabs)[number], requested: string): Promise<boolean> => {
+    if (!tab.sessionId) {
+      addToast('Send the first message before naming this chat.', 'info')
+      return false
+    }
+    const title = requested.replace(/\s+/g, ' ').trim()
+    if (!title) {
+      addToast('Enter a name for this chat.', 'info')
+      return false
+    }
+    try {
+      const response = await agentApi.renameChatHistorySession(
+        tab.sessionId,
+        title,
+        tab.metadata?.agentProfileWorkspace,
+      )
+      renameTab(tab.tabId, response.title)
+      addToast('Chat renamed', 'success')
+      return true
+    } catch {
+      addToast('Failed to rename chat', 'error')
+      return false
+    }
+  }, [addToast, renameTab, tabs])
 
   return (
     <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
@@ -297,12 +360,17 @@ function WorkChatTabs({ tabs, activeTabId }: { tabs: ReturnType<typeof useWorkCh
         return <AgentWorksChatTabItem
           key={tab.tabId}
           tab={tab}
-          isActive={tab.tabId === activeTabId}
+          isActive={builder ? workshopOpen : (!workshopOpen && tab.tabId === activeTabId)}
           canClose={!builder}
           isBlank={builder}
-          displayName={builder ? 'Builder' : (tab.name === 'Builder' ? 'Chat' : undefined)}
-          onTabClick={activateTab}
+          displayName={builder ? 'Workshop' : workTabDisplayName(tab.name === 'Builder' ? 'Chat' : tab.name)}
+          onTabClick={(tabId) => {
+            activateTab(tabId)
+            if (builder) onWorkshopOpen()
+            else onChatOpen()
+          }}
           onCloseTab={close}
+          onRenameTab={rename}
         />
       })}
     </div>
@@ -382,7 +450,7 @@ export function WorkSurface() {
   const { tabId, tabs, error: chatError } = useWorkChatTabs(selected, persistLegacyRuntime)
 
   // A browser reload loses transient tab metadata while the durable references
-  // remain in product.json. Force the first follow-up through the full profile
+  // remain in workflow.json. Force the first follow-up through the full profile
   // route so an old retained CLI cannot bypass the current read-only grants.
   useEffect(() => {
     if (selected?.id && workflowContextSignature) markWorkProjectRuntimeDirty(selected.id)
@@ -416,6 +484,7 @@ export function WorkSurface() {
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [chatOpen, setChatOpen] = useState(true)
+  const [workshopOpen, setWorkshopOpen] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
@@ -441,7 +510,7 @@ export function WorkSurface() {
     openView: openWorkPresentationView,
     isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
     labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
-    actorLabel: 'Work',
+    actorLabel: 'Crew',
   }), [openWorkPresentationView, workspaceView])
   useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)
 
@@ -587,6 +656,11 @@ export function WorkSurface() {
 
   const error = sessionsError || chatError
 
+  useEffect(() => {
+    const active = tabs.find(tab => tab.tabId === tabId)
+    if (active) setWorkshopOpen(active.metadata?.agentProfileBuilder === true)
+  }, [tabId, tabs])
+
   return (
     <div className="flex h-screen min-h-0 flex-col bg-background">
       <UpdateProgressToast />
@@ -612,17 +686,17 @@ export function WorkSurface() {
           ) : !selected ? (
             <div className="flex h-full items-center justify-center bg-gray-50 dark:bg-gray-900">
               {sessionsLoading || creating ? (
-                <span className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening Work…</span>
+                <span className="text-sm text-muted-foreground"><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening Crew…</span>
               ) : (
                 <div className="flex max-w-xl flex-col items-center px-6 text-center">
                   <div className="flex h-20 w-20 items-center justify-center rounded-full bg-gray-200 dark:bg-gray-700">
                     <span className="font-mono text-3xl font-semibold text-gray-600 dark:text-gray-200">&lt;&gt;</span>
                   </div>
                   <div className="mt-5">
-                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Work</p>
+                    <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">Crew</p>
                     <h2 className="mt-2 text-2xl font-semibold text-gray-900 dark:text-gray-100">Your AI workspace for any project</h2>
                     <p className="mx-auto mt-2 max-w-lg text-sm leading-6 text-muted-foreground">
-                      Create a persistent project and chat with an AI bot for everyday questions, research, coding, and ongoing work. It can use your project files, browser, terminal, MCP servers, and connected tools.
+                      Create a persistent crew member for everyday questions, research, coding, and ongoing work. It can use your project files, browser, terminal, MCP servers, and connected tools.
                     </p>
                     <div className="mt-5 grid grid-cols-1 gap-2 text-left text-xs text-muted-foreground sm:grid-cols-3">
                       <div className="rounded-lg border border-border bg-background/70 px-3 py-2.5">
@@ -681,8 +755,14 @@ export function WorkSurface() {
                 style={chatOpen && panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
               >
                 <WorkspaceTopToolbar className={`${chatOpen && panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
-                  {chatOpen && tabId ? <WorkChatTabs tabs={tabs} activeTabId={tabId} /> : <div className="min-w-0 flex-1" />}
-                  {panelOpen ? <WorkWorkspaceToolbar view={workspaceView} onViewChange={setWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
+                  {chatOpen && tabId ? <WorkChatTabs
+                    tabs={tabs}
+                    activeTabId={tabId}
+                    workshopOpen={workshopOpen}
+                    onWorkshopOpen={() => setWorkshopOpen(true)}
+                    onChatOpen={() => setWorkshopOpen(false)}
+                  /> : <div className="min-w-0 flex-1" />}
+                  {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={setWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 {chatOpen ? <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
                   {tabId ? (
@@ -693,6 +773,7 @@ export function WorkSurface() {
                           onNewChat={() => activateTab(tabs.find(tab => tab.metadata?.agentProfileBuilder)?.tabId ?? tabId)}
                           previousChatsWorkspacePath={selected.workspacePath}
                           previousChatsRecentOnly
+                          forcePreviousChats={workshopOpen}
                           composerPlaceholder="Describe what you want to build… (@ files, # automations)"
                           showCompactRuntimeLoading
                           showProductSteerAction
@@ -736,10 +817,12 @@ export function WorkSurface() {
                         onViewChange={setWorkspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
+                        selectedSecrets={selected.selectedSecrets}
                         workflowContextPaths={selected.workflowContextPaths}
                         onRuntimeChange={changeWorkRuntime}
                         onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                         onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
+                        onSelectedSecretsChange={secrets => updateSelections(selected.id, { selectedSecrets: secrets })}
                         onWorkflowContextPathsChange={async paths => {
                           await updateSelections(selected.id, { workflowContextPaths: paths })
                           markWorkProjectRuntimeDirty(selected.id)

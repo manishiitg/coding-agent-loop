@@ -5,7 +5,7 @@ Deploy from the application repository:
 ```sh
 python3 -m unittest discover -s deploy/cf -p 'test_*.py'
 bash -n deploy/cf/deploy-cf.sh deploy/cf/server-bootstrap-build.sh deploy/cf/server-build-and-activate.sh
-DEPLOY_SOURCE_MODE=remote-main DEPLOY_BRANCH=main bash deploy/cf/deploy-cf.sh
+DEPLOY_BRANCH=main bash deploy/cf/deploy-cf.sh
 ```
 
 The deploy scripts enforce the following checks. Any required check failure exits
@@ -30,6 +30,10 @@ nonzero; do not report success or bypass it. Confida alone is in scope: the
 - [ ] The source playbook catalog passes its schema/link validator; the complete
   catalog is copied into the immutable release and the packaged copy passes the
   same validator. A missing known manifest stops activation.
+- [ ] The versioned Workflow Builder chat migration runs once, with the agent
+  stopped, before the new agent starts. Its durable marker is stored at
+  `/srv/confida/state/migrations/workflow-builder-chats-v1.done`; it scans only
+  `/srv/confida/data/docs/Workflow` and never Crew projects under `_users/`.
 
 ## After activation, before success or release pruning
 

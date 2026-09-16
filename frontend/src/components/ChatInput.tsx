@@ -15,7 +15,7 @@ import FileSelectionDialog from './FileSelectionDialog'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import { CommandEditorDialog } from './commands/CommandEditorDialog'
 import { PulseReviewFocusDialog } from './commands/PulseReviewFocusDialog'
-import { findCommand, findProductCommand, findCommandAnyMode, getProductCommands, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
+import { findCommand, findProductCommand, findProductOrUserCommand, findCommandAnyMode, loadAndRegisterUserCommands, type CommandContext, type CommandDefinition } from '../commands'
 import { getCommandRevision, subscribeCommands } from '../commands/registry'
 import { commandsApi } from '../api/commands'
 import WorkflowSelectionDialog from './WorkflowSelectionDialog'
@@ -406,36 +406,26 @@ const QueuedAutoNotificationGroup: React.FC<{
 const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStatusIndicator({
   state,
   label,
-  activityLabel,
   showRunningSpinner = true,
 }: {
   state: 'running' | 'waiting' | 'ready'
   label: string
-  activityLabel: string
   showRunningSpinner?: boolean
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger asChild>
-        <div
-          className="flex h-7 max-w-[205px] items-center gap-1.5 px-1 font-mono text-[11px] text-muted-foreground"
-          role="status"
-          aria-label={`${label} — ${state}`}
-        >
-          {state === 'running' && showRunningSpinner ? (
-            <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
-          ) : state === 'waiting' ? (
-            <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
-          ) : (
-            <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
-          )}
-          <span className="truncate">{label}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="top">
-        <p>{label} — {activityLabel}</p>
-      </TooltipContent>
-    </Tooltip>
+    <div
+      className="flex h-7 items-center px-1 text-muted-foreground"
+      role="status"
+      aria-label={`${label} — ${state}`}
+    >
+      {state === 'running' && showRunningSpinner ? (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-lime-300" aria-hidden="true" />
+      ) : state === 'waiting' ? (
+        <span className="h-2 w-2 shrink-0 rounded-full bg-amber-400" aria-hidden="true" />
+      ) : (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-lime-300" aria-hidden="true" />
+      )}
+    </div>
   )
 })
 
@@ -569,7 +559,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // The revision makes the composer react when an owning surface loads or
   // clears its manifest commands.
   useSyncExternalStore(subscribeCommands, getCommandRevision)
-  const productCommandsAvailable = !isProductProfile || getProductCommands().length > 0
+  // A product with no shipped commands still needs the slash entry point so
+  // users can create and use project-scoped custom commands.
+  const productCommandsAvailable = true
   const chatHasTurns = useMemo(() => (activeTabEvents ?? []).some((e) => e.type === 'user_message'), [activeTabEvents])
   const profileSessionRuntime = useChatStore(state => activeTab?.sessionId
     ? state.activeSessionsCache.find(session => session.session_id === activeTab.sessionId)?.runtime
@@ -720,6 +712,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
 
   const inputText = localInputText
+  // Upload completion must merge its @file references into whatever the user
+  // has typed most recently, not the render snapshot from when the drop began.
+  const latestInputTextRef = useRef(inputText)
+  latestInputTextRef.current = inputText
   const inputOwnerTabIdRef = useRef(activeTabId)
 
   // Debounce ref for syncing to store
@@ -1099,6 +1095,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return isWorkflowMode && presetId ? state.getWorkflowById(presetId)?.workspace_path : undefined
   }) || activeWorkflowWorkspacePath || workflowPhaseWorkspacePath || workspaceActiveFolder
   const canWriteCommandWorkflow = useCanWriteWorkflow(commandWorkflowPath?.replace(/\/+$/, ''))
+  const customCommandWorkspacePath = agentProfileWorkspace || (isWorkflowMode ? commandWorkflowPath : undefined) || undefined
   
   // Get queued messages from tab config
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
@@ -2346,6 +2343,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const routeSubmit = useCallback(async (query: string) => {
     const trimmed = query?.trim() || ''
     if (!trimmed) return
+    if (isUploadingFiles) {
+      addToast('Wait for the file upload to finish before sending.', 'info')
+      return
+    }
 
     // A retained CLI is explicitly designed to receive input while busy, so it
     // continues into the live-delivery branch below. Structured workflow-step
@@ -2440,7 +2441,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
 
   // SparkQuill's voice auto-send: handleVoiceText already merged the
   // transcript into localInputText, but queryToSubmit (which also layers in
@@ -2582,9 +2583,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Look up and execute the command from the registry
     const cmd = isProductProfile
-      ? findProductCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
+      ? findProductOrUserCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
       : findCommand(command, commandModeCategory, getEffectiveWorkflowModes().workshopMode, canWriteCommandWorkflow)
-    if (!cmd && !isProductProfile && findCommandAnyMode(command)) {
+    if (!cmd && findCommandAnyMode(command)) {
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
@@ -2624,7 +2625,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const handleEditCommand = useCallback((cmd: CommandDefinition) => {
     setShowCommandDialog(false)
     // Fetch full command data from API to populate editor
-    commandsApi.getCommand(cmd.command).then(uc => {
+    commandsApi.getCommand(cmd.command, customCommandWorkspacePath).then(uc => {
       setEditingUserCommand({
         folder_name: uc.folder_name,
         frontmatter: uc.frontmatter,
@@ -2634,17 +2635,23 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }).catch(() => {
       addToast('Failed to load command for editing', 'error')
     })
-  }, [addToast])
+  }, [addToast, customCommandWorkspacePath])
 
   const handleDeleteCommand = useCallback(async (cmd: CommandDefinition) => {
     try {
-      await commandsApi.deleteCommand(cmd.command)
-      await loadAndRegisterUserCommands()
+      await commandsApi.deleteCommand(cmd.command, customCommandWorkspacePath)
+      await loadAndRegisterUserCommands(customCommandWorkspacePath)
       addToast(`Command /${cmd.command} deleted`, 'success')
     } catch {
       addToast('Failed to delete command', 'error')
     }
-  }, [addToast])
+  }, [addToast, customCommandWorkspacePath])
+
+  const handleCreateCommand = useCallback(() => {
+    setShowCommandDialog(false)
+    setEditingUserCommand(null)
+    setShowCommandEditor(true)
+  }, [])
 
   const handleCommandEditorClose = useCallback(() => {
     setShowCommandEditor(false)
@@ -2794,13 +2801,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
 
-      const refs = uploadedPaths.map(path => `@${path}`).join(' ')
-      const prefix = inputText.trim().length > 0 ? `${inputText} ` : ''
-      const newText = `${prefix}${refs} `
-      setLocalInputText(newText)
-      if (activeTabId) {
-        setTabConfig(activeTabId, { inputText: newText })
-      }
+      // fileContext is the attachment. Do not also insert a raw @path into the
+      // draft: that duplicates the file in the request and makes an upload by
+      // itself look like a standalone user message.
+      const latestInputText = latestInputTextRef.current
+      setLocalInputText(latestInputText)
+      if (activeTabId) setTabConfig(activeTabId, { inputText: latestInputText })
 
       const ws = useWorkspaceStore.getState()
       ws.fetchFiles(
@@ -2827,7 +2833,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     console.info('[CHAT_UPLOAD] upload completed', { uploadedCount: uploadedPaths.length, failureCount: failures.length })
 
     setIsUploadingFiles(false)
-  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, inputText, setTabConfig, addToast])
+  }, [activeTabId, isUploadingFiles, uploadTargetFolder, chatFileContext, setTabConfig, addToast])
 
   useEffect(() => {
     uploadFilesToChatRef.current = uploadFilesToChat
@@ -2984,7 +2990,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
   // Product follow-ups are queued while a structured turn is working, including
   // the short interval before the backend has attached the live session.
-  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected
+  const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isUploadingFiles
   
   // Memoized placeholder
   const placeholder = useMemo(() => {
@@ -3045,6 +3051,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const isBotRun = activeTab?.metadata?.isBotRun
     const jobName = activeTab?.metadata?.scheduledJobName
     const botPlatform = activeTab?.metadata?.botPlatform
+    const terminalTitle = `${terminalViewSelected ? 'Return to conversation' : 'Open live view'}${mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}`
     return (
       <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-1' : 'py-2'}`}>
         <div className="relative flex items-center justify-center gap-2 py-1 text-xs text-muted-foreground">
@@ -3069,7 +3076,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 )}
                 className="h-7 w-7 p-0"
                 aria-label={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
-                title={terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+                title={terminalTitle}
               >
                 <Terminal className="h-3.5 w-3.5" />
               </Button>
@@ -3080,9 +3087,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     )
   }
 
-  // Extracted so SparkQuill can place them on the opposite side of the
-  // composer from every other product (sparkQuillComposerLayout above) —
-  // one JSX definition each, rendered in whichever group applies.
+  // Shared controls are defined once and placed in the appropriate composer
+  // group. The mic always stays with the right-hand send actions.
   const micEl = voiceCapabilityEnabled && (
     <MicButton
       ref={micRef}
@@ -3320,7 +3326,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       {/* Input Form */}
       {/* The transcript above ends with its own margin; keep the band's top
           padding small so the last message and the composer read as one column. */}
-      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-2' : 'pt-1 pb-2'}`}>
+      <div data-tour="chat-input-area" data-testid="tour-chat-input-area" className={`${inputPadX} ${isProductSurface ? 'py-1.5' : 'pt-1 pb-2'}`}>
         <form onSubmit={handleSubmit} className={isProductSurface ? 'relative' : 'relative space-y-1'}>
           {/* The mic's banner (download progress, "Listening" with the live
               transcript) portals here, in normal flow directly above the
@@ -3330,7 +3336,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             // Keep the customer composer visually steady while events stream.
             // The former ring-4 plus catch-all `transition` made a harmless
             // focus hand-off look like a pulsing purple border on redraws.
-            ? 'space-y-0.5 rounded-2xl border border-border bg-card px-1.5 py-1 shadow-sm transition-colors duration-150 focus-within:border-ring'
+            ? 'space-y-0.5 rounded-2xl border border-border bg-card px-1.5 py-0.5 shadow-sm transition-colors duration-150 focus-within:border-ring'
             : 'space-y-1 rounded-xl border border-slate-700/80 bg-[#101513] p-1.5 shadow-sm transition focus-within:border-slate-500'}>
             {showLiveDelivery && liveMessageDelivery && (
               <div className={`flex min-w-0 items-center gap-1.5 text-[11px] ${liveDeliveryClass}`}>
@@ -3447,7 +3453,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                   <MainAgentRuntimeStatusIndicator
                     state={mainAgentRuntimeStatus.state}
                     label={mainAgentRuntimeStatus.label}
-                    activityLabel={mainAgentRuntimeStatus.activityLabel}
                     showRunningSpinner={!showCompactRuntimeLoading}
                   />
                 )}
@@ -3491,20 +3496,17 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       </Button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>{terminalViewSelected ? 'Return to conversation' : 'Open live view'}</p>
+                      <p>
+                        {terminalViewSelected ? 'Return to conversation' : 'Open live view'}
+                        {mainAgentRuntimeStatus?.label ? ` · ${mainAgentRuntimeStatus.label}` : ''}
+                      </p>
                     </TooltipContent>
                   </Tooltip>
                 )}
                 {/* Server and LLM Selection — hidden in workflow phase chat (servers come from preset) */}
                 {(
                   <div data-tour="chat-input-tools" data-testid="tour-chat-input-tools" className="flex items-center gap-2">
-                      {sparkQuillComposerLayout && (
-                        <>
-                          {attachmentEl}
-                          {sparkleEl}
-                        </>
-                      )}
-                      {!sparkQuillComposerLayout && micEl}
+                      {sparkleEl}
                       {showCompactRuntimeLoading && isTurnInFlight && (
                         <Tooltip>
                           <TooltipTrigger asChild>
@@ -3875,9 +3877,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     </div>
                   ) : (
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
-                      {!sparkQuillComposerLayout && sparkleEl}
-                      {!sparkQuillComposerLayout && attachmentEl}
-                      {sparkQuillComposerLayout && micEl}
+                      {attachmentEl}
+                      {micEl}
                       {/* Enter still sends/steers a follow-up while the primary
                           button stops the running session. */}
                       {showStopButton ? stopButton : (
@@ -3899,6 +3900,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                             <p>
                               {isViewOnly
                                 ? 'View only — cannot continue this conversation'
+                                : isUploadingFiles
+                                  ? 'Wait for the file upload to finish'
                                 : !inputText?.trim()
                                   ? 'Type a message to send'
                                   : isCdpDisconnected
@@ -3942,7 +3945,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         workshopMode={commandModeCategory === 'workflow' ? getEffectiveWorkflowModes().workshopMode : undefined}
         canWriteWorkflow={canWriteCommandWorkflow}
         agentProfileId={activeTab?.metadata?.agentProfileId}
-        {...(isProductSurface || (isWorkflowMode && !canWriteCommandWorkflow) ? {} : {
+        workspacePath={customCommandWorkspacePath}
+        {...(isWorkflowMode && !canWriteCommandWorkflow ? {} : {
+          onCreateCommand: handleCreateCommand,
           onEditCommand: handleEditCommand,
           onDeleteCommand: handleDeleteCommand,
         })}
@@ -3958,6 +3963,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         isOpen={showCommandEditor}
         onClose={handleCommandEditorClose}
         editingCommand={editingUserCommand}
+        workspacePath={customCommandWorkspacePath}
       />
 
       {/* File Selection Dialog */}

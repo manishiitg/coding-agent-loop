@@ -2928,26 +2928,46 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 		api.sessionWorkspaceMu.RUnlock()
 		persistedHistory := cleanChatHistoryForPersistence(finalHistory)
 		if hasFolderForSession && workflowPhaseFolder != "" && len(persistedHistory) > 0 {
+			requestUserID := ""
+			if hasReq && strings.TrimSpace(req.userID) != "" {
+				requestUserID = strings.TrimSpace(req.userID)
+			}
+			currentUserID := effectiveBuilderConversationOwner(requestUserID, "")
 			phaseID := ""
 			if hasReq {
 				phaseID = strings.TrimSpace(req.PhaseID)
 			}
-			logPath := workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
+			logPath := workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
 			var existing struct {
 				PhaseID      string                   `json:"phase_id"`
 				WorkshopMode string                   `json:"workshop_mode,omitempty"`
 				Runtime      *ChatHistoryAgentRuntime `json:"runtime,omitempty"`
+				UserID       string                   `json:"user_id,omitempty"`
+				Username     string                   `json:"username,omitempty"`
 			}
-			if existingContent, exists, err := readFileFromWorkspace(context.Background(), logPath); err == nil && exists {
+			existingPath := logPath
+			if _, exists, _ := readFileFromWorkspace(context.Background(), existingPath); !exists {
+				if legacyPath, found, findErr := findWorkflowScopedChatHistoryConversationPath(sessionID, workflowPhaseFolder); findErr == nil && found {
+					existingPath = legacyPath
+				}
+			}
+			if existingContent, exists, err := readFileFromWorkspace(context.Background(), existingPath); err == nil && exists {
 				if json.Unmarshal([]byte(existingContent), &existing) == nil {
 					if phaseID == "" {
 						phaseID = strings.TrimSpace(existing.PhaseID)
 					}
+					// A synthetic/background turn must never downgrade a real
+					// transcript owner to the legacy/system identity.
+					effectiveOwner := effectiveBuilderConversationOwner(requestUserID, existing.UserID)
+					if effectiveOwner != currentUserID {
+						currentUserID = effectiveOwner
+						logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
+					}
 				} else {
-					log.Printf("[BG AGENT] Failed to parse existing builder conversation metadata for %s", logPath)
+					log.Printf("[BG AGENT] Failed to parse existing builder conversation metadata for %s", existingPath)
 				}
 			} else if err != nil {
-				log.Printf("[BG AGENT] Failed to read existing builder conversation metadata for %s: %v", logPath, err)
+				log.Printf("[BG AGENT] Failed to read existing builder conversation metadata for %s: %v", existingPath, err)
 			}
 			if phaseID == "" {
 				phaseID = "workflow-builder"
@@ -2964,10 +2984,6 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 			}
 			if chatRuntime != nil && chatRuntime.WorkshopMode == "" && workshopMode != "" {
 				chatRuntime.WorkshopMode = workshopMode
-			}
-			currentUserID := "default"
-			if hasReq && strings.TrimSpace(req.userID) != "" {
-				currentUserID = strings.TrimSpace(req.userID)
 			}
 			restoredConversationPath := ""
 			restoredConversationSessionID := ""
@@ -3004,6 +3020,8 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 			}
 			convData := map[string]interface{}{
 				"session_id":           persistSessionID,
+				"user_id":              currentUserID,
+				"username":             chatHistoryUsername(currentUserID, existing.Username),
 				"phase_id":             phaseID,
 				"conversation_history": persistedHistoryForDisk,
 				"updated_at":           time.Now().Format(time.RFC3339),
@@ -3025,6 +3043,13 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 					log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
 				} else {
 					log.Printf("[BG AGENT] Persisted builder conversation after synthetic turn (%d messages) to %s", len(finalHistory), logPath)
+					agentMode := ""
+					if hasReq {
+						agentMode = req.AgentMode
+					}
+					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, agentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now()); err != nil {
+						log.Printf("[BG AGENT] Failed to update chat index for %s: %v", logPath, err)
+					}
 				}
 			}
 		}

@@ -15,6 +15,7 @@ export interface LogsHeaderProps {
   loading: boolean
   loadLogs: () => void
   onRefreshRunFolders?: () => void | Promise<void>
+  headerAction?: React.ReactNode
 }
 
 // Header content only; InspectorShell owns the row wrapper and the close X.
@@ -28,6 +29,7 @@ export function LogsHeader({
   loading,
   loadLogs,
   onRefreshRunFolders,
+  headerAction,
 }: LogsHeaderProps) {
   const timestampsByFolder = new Map(
     runFolderInfos.map(folder => [
@@ -111,7 +113,9 @@ export function LogsHeader({
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               </button>
+              {headerAction}
             </div>
           </div>
   )
 }
+import type React from 'react'

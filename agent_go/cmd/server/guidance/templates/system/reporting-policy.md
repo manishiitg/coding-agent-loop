@@ -1,19 +1,36 @@
 ## HTML-only reporting policy
 
-The Report tab renders one workflow-owned document: `db/reports/index.html`.
-That HTML owns the entire reporting experience and decides whether to use tabs,
-a sidebar, anchored sections, expandable panels, or one scrolling briefing.
-The platform does not manufacture navigation from filenames. There is no report
-plan, widget registry, JSON layout, platform-generated decision control, or report
-generation step.
+The Report tab renders workflow-owned HTML documents under `db/reports/`.
+`index.html` remains the default. Additional `.html` documents become views in
+the shared top toolbar. Auto-discovery uses each document's `<title>`; an optional
+`db/reports/views.json` can set stable IDs, titles, order, and default:
+`{"schema_version":1,"default":"overview","views":[{"id":"overview","title":"Overview","path":"db/reports/index.html","order":0}]}`.
+There is no report generation step or widget-layout registry.
 
 ### Page contract
 
-- Write one complete, self-contained `db/reports/index.html` document.
+- Write one or more complete `.html` documents under
+  `db/reports/`. Use separate documents for genuinely distinct destinations;
+  keep closely related sections inside one document.
 - Include a non-empty `<title>` and accessible internal navigation when the
   report has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
+- CSS and component-library choice belongs to the report author. HTTPS CDN
+  stylesheets and browser scripts are supported, including Tailwind's browser
+  build. Pin library versions rather than using floating `latest` URLs, and
+  use `preview_report` to prove the chosen stack works in the report sandbox.
+  Keep report-specific CSS/JS inline when that is the simpler choice.
+  daisyUI is CDN-only. To use it, inspect/install the official
+  `saadeghi/daisyui` skill, read it, add `data-report-ui="daisyui"` to the
+  document's `<html>` element, and include the pinned stylesheet
+  `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
+  that same CDN link for opted-in reports that omit it. Use inline CSS
+  for layout when Tailwind utilities are not loaded.
+- Choose any suitable charting approach: Chart.js, another browser library,
+  SVG/canvas, or HTML/CSS are all valid. Match the implementation to the
+  visualization, make it responsive and theme-aware, and render a readable
+  fallback when an external dependency fails to load.
 - Design for the default Tablet report pane first (~768px). Use one or two
   primary columns, responsive spacing/type, 44px minimum touch targets, no
   hover-only interactions, and tabs that wrap or scroll without clipping.
@@ -55,12 +72,13 @@ generation step.
   `[data-theme="dark"]` (or the injected `hsl(var(--token))` palette), with
   `report:theme` for live re-styling. `prefers-color-scheme` alone follows
   the viewer's OS and ignores the in-app toggle.
-- After editing, call `validate_report_html()`. Beyond the document shape it
+- After editing, call `validate_report_html` for every changed document. Beyond the document shape it
   runs every literal `window.report.query` SQL against the live
-  `db/db.sqlite`, confirms every referenced `db/` file exists, rejects
-  external stylesheet/script URLs, and warns on OS-only dark mode.
-- `validate_report_html()` is static and fast; it cannot tell you the page
-  actually renders. Call `preview_report()` after it passes, or whenever
+  `db/db.sqlite`, confirms every referenced `db/` file exists, checks local
+  stylesheet/script references, and warns on OS-only dark mode. HTTPS CDN
+  stylesheets and scripts are valid report dependencies.
+- `validate_report_html` is static and fast; it cannot tell you the page
+  actually renders. Call `preview_report` for each changed document after it passes, or whenever
   visual review is requested: it opens the report in a real headless browser
   through the same runtime the Report tab uses, waits for it to settle, and
   returns whether it errored, its script/data-fetch errors, its tab labels,

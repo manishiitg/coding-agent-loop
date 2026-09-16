@@ -136,11 +136,16 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 		t.Fatalf("register profile tools: %v", err)
 	}
 	foundIdentity := false
+	foundCustomCommands := false
 	foundFileLink := false
 	foundReportLink := false
+	foundMCPSelection := false
 	for _, name := range registrar.admitted {
 		if name == "set_work_identity" {
 			foundIdentity = true
+		}
+		if name == "manage_custom_commands" {
+			foundCustomCommands = true
 		}
 		if name == "get_file_link" {
 			foundFileLink = true
@@ -148,15 +153,24 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 		if name == "get_report_link" {
 			foundReportLink = true
 		}
+		if name == updateProjectMCPServerSelectionTool {
+			foundMCPSelection = true
+		}
 	}
 	if !foundIdentity {
 		t.Fatalf("admitted profile tools = %v, missing set_work_identity", registrar.admitted)
+	}
+	if !foundCustomCommands {
+		t.Fatalf("admitted profile tools = %v, missing manage_custom_commands", registrar.admitted)
 	}
 	if !foundFileLink {
 		t.Fatalf("admitted profile tools = %v, missing get_file_link", registrar.admitted)
 	}
 	if !foundReportLink {
 		t.Fatalf("admitted profile tools = %v, missing get_report_link", registrar.admitted)
+	}
+	if !foundMCPSelection {
+		t.Fatalf("admitted profile tools = %v, missing %s", registrar.admitted, updateProjectMCPServerSelectionTool)
 	}
 }
 

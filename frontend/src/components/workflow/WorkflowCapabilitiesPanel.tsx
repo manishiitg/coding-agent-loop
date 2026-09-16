@@ -1,6 +1,6 @@
 import { capabilitiesEqual, mergeRemoteCapabilities } from './workflowCapabilitiesSync'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle, RefreshCw, Save } from 'lucide-react'
+import { LoaderCircle, Save } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
 import PlaybooksPanel from '../playbooks/PlaybooksPanel'
@@ -12,10 +12,13 @@ import { agentApi, workflowManifestApi } from '../../services/api'
 import type { WorkflowCapabilities } from '../../services/api-types'
 import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { getWorkspaceView, type CapabilityViewId } from './workspaceViews'
 import { BrowserWorkspacePanel } from './BrowserWorkspacePanel'
 import type { BrowserAutomationMode } from '../BrowserAutomationSettings'
+import { WorkspaceViewActions } from './WorkspaceViewActions'
+import { getWorkspaceAskAIMessage } from './workspaceAskAI'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
 // panel only carries the per-section copy.
@@ -53,7 +56,9 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   mcp: {
     title: 'Workflow MCP',
     description: 'Select the MCP servers and tools this workflow may use.',
-    savesViaManifest: true,
+    // Selection changes persist immediately, so this long directory can use
+    // one uninterrupted scroll surface without a fixed Save footer.
+    savesViaManifest: false,
   },
   secrets: {
     title: 'Workflow secrets',
@@ -248,7 +253,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const save = useCallback(() => persist(capabilities), [capabilities, persist])
 
   return (
-    <section className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
+    <section className={`flex h-full min-h-0 w-full max-w-none flex-col bg-background ${section === 'mcp' ? 'overflow-y-auto' : ''}`}>
       {section !== 'browser' && <header className="flex shrink-0 items-start gap-3 border-b px-4 py-3">
         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
           <SectionIcon className="h-4 w-4" />
@@ -257,21 +262,20 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{copy.description}</p>
         </div>
-        {section === 'mcp' && (
-          <button
-            type="button"
-            onClick={handleRefreshServers}
-            disabled={refreshingServers}
-            aria-label="Refresh connected MCP servers"
-            title="Refresh connected MCP servers"
-            className="flex shrink-0 items-center self-center rounded-md border border-border p-1.5 text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary disabled:opacity-60"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${refreshingServers ? 'animate-spin' : ''}`} />
-          </button>
-        )}
+        <div className="self-center">
+          <WorkspaceViewActions
+            workspacePath={workspacePath}
+            message={getWorkspaceAskAIMessage(section)}
+            onRefresh={section === 'mcp'
+              ? handleRefreshServers
+              : () => useWorkflowStore.getState().refreshWorkspaceView()}
+            refreshing={section === 'mcp' && refreshingServers}
+            refreshLabel={section === 'mcp' ? 'Refresh connected MCP servers' : `Refresh ${copy.title}`}
+          />
+        </div>
       </header>}
 
-      <div className={`min-h-0 flex-1 p-4 ${section === 'browser' ? '!p-0 flex flex-col overflow-hidden relative' : view.managesOwnScroll ? 'flex flex-col overflow-hidden' : 'overflow-y-auto'}`}>
+      <div className={`p-4 ${section === 'browser' ? 'min-h-0 flex-1 !p-0 flex flex-col overflow-hidden relative' : section === 'mcp' ? 'shrink-0' : view.managesOwnScroll ? 'min-h-0 flex-1 flex flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto'}`}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
             <LoaderCircle className="h-4 w-4 animate-spin" /> Loading workflow settings…
@@ -298,28 +302,37 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
               </div>
             )}
             {section === 'mcp' && (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <div className="shrink-0 overflow-y-auto">
+              <div>
+                <div>
                   <ToolSelectionSection
                     availableServers={availableServers}
                     selectedServers={capabilities.selected_servers}
                     selectedTools={capabilities.selected_tools}
-                    onServerChange={(selected_servers) => setCapabilities(current => ({ ...current, selected_servers }))}
-                    onToolChange={(selected_tools) => setCapabilities(current => ({ ...current, selected_tools }))}
+                    onServerChange={(selected_servers) => {
+                      const next = { ...capabilities, selected_servers }
+                      setCapabilities(next)
+                      void persist(next)
+                    }}
+                    onToolChange={(selected_tools) => {
+                      const next = { ...capabilities, selected_tools }
+                      setCapabilities(next)
+                      void persist(next)
+                    }}
                     agentMode="workflow"
                     hideHeader
                     showSelectedOnly
                     disabled={!canWriteWorkflow}
                   />
                 </div>
-                <div className="mt-3 flex min-h-0 flex-1 flex-col border-t border-border pt-3">
-                  <div className="shrink-0 text-sm font-medium text-muted-foreground">
+                <div className="mt-3 border-t border-border pt-3">
+                  <div className="text-sm font-medium text-muted-foreground">
                     Connect a new MCP server
                   </div>
-                  <div className="mt-3 min-h-0 flex-1">
+                  <div className="mt-3">
                     <ConnectorsBrowser
                       compact
                       workspacePath={workspacePath}
+                      manageOwnScroll={false}
                     />
                   </div>
                 </div>
@@ -368,6 +381,14 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                 dirty={dirty}
                 saving={saving}
                 onSave={() => void save()}
+                assistantControl={
+                  <WorkspaceViewActions
+                    workspacePath={workspacePath}
+                    message={getWorkspaceAskAIMessage('browser')}
+                    onRefresh={() => useWorkflowStore.getState().refreshWorkspaceView()}
+                    refreshLabel="Refresh Browser"
+                  />
+                }
               />
             )}
             {section === 'llm' && (

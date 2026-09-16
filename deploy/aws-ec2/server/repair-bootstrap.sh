@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 export DEBIAN_FRONTEND=noninteractive
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 
 rm -f /etc/apt/sources.list.d/docker.list
 apt-get update
@@ -15,6 +16,7 @@ apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin do
 systemctl enable --now docker
 npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest
 id -u video-studio >/dev/null 2>&1 || useradd --system --create-home --home-dir /var/lib/video-studio --shell /usr/sbin/nologin video-studio
+bash "$script_dir/../../common/install-rootless-docker.sh" video-studio
 runuser -u video-studio -- env HOME=/var/lib/video-studio npx --yes hyperframes@0.8.6 browser ensure
 test -x "$(runuser -u video-studio -- env HOME=/var/lib/video-studio npx --yes hyperframes@0.8.6 browser path | tail -n 1)"
 command -v agent-browser

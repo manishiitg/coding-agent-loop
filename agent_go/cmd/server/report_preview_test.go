@@ -133,6 +133,26 @@ func TestReportPreviewChoices(t *testing.T) {
 	}
 }
 
+func TestCleanReportDocumentPath(t *testing.T) {
+	t.Parallel()
+	for input, want := range map[interface{}]string{
+		nil:                         "db/reports/index.html",
+		"":                          "db/reports/index.html",
+		"db/reports/tasks.html":     "db/reports/tasks.html",
+		"db/reports/finance/q.html": "db/reports/finance/q.html",
+	} {
+		got, err := cleanReportDocumentPath(input)
+		if err != nil || got != want {
+			t.Fatalf("cleanReportDocumentPath(%v) = %q, %v; want %q", input, got, err, want)
+		}
+	}
+	for _, input := range []string{"reports/x.html", "db/reports/../x.html", "db/reports/x.json", "/db/reports/x.html"} {
+		if _, err := cleanReportDocumentPath(input); err == nil {
+			t.Fatalf("expected %q to be rejected", input)
+		}
+	}
+}
+
 func TestReportPreviewWidthsDefaultTabletFirstAndPreserveLegacyBoth(t *testing.T) {
 	t.Parallel()
 	if got := reportPreviewWidthChoices(nil); !reflect.DeepEqual(got, []string{"tablet", "mobile", "desktop"}) {
@@ -230,7 +250,7 @@ func TestParseBrowserEvalOutputRejectsFailedEnvelope(t *testing.T) {
 func TestReportPreviewSummaryNeverCallsUnknownStateClean(t *testing.T) {
 	t.Parallel()
 	snapshot := reportPreviewSnapshot{PreviewState: `{"success":true,"data":{"result":"failed"}}`}
-	got := reportPreviewSummary(snapshot, nil)
+	got := reportPreviewSummary(snapshot, nil, "db/reports/index.html")
 	if strings.Contains(got, "Rendered cleanly") || !strings.Contains(got, "not verified") {
 		t.Fatalf("unknown state summary = %q", got)
 	}

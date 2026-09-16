@@ -66,8 +66,8 @@ type ToolStatus struct {
 	ToolsEnabled  int                    `json:"toolsEnabled"`
 	FunctionNames []string               `json:"function_names"`
 	Tools         []mcpclient.ToolDetail `json:"tools,omitempty"` // Only populated for detailed requests
-	// Connection ownership — "connected" (the user added this server) or
-	// "available" (it is in the catalog but the user has not connected it).
+	// Platform connection state — "connected" (an administrator connected this
+	// server for AgentWorks) or "available" (catalog only).
 	// Distinct from Status, which reports whether the server is reachable.
 	Connection string `json:"connection"`
 	// OAuth requirement, read from config rather than probed. A server needs
@@ -125,11 +125,7 @@ func classifyConnectionFailure(serverName string, srvCfg mcpclient.MCPServerConf
 
 // discoverServerToolsDetailed connects to a specific MCP server and returns detailed tool information using mcpcache
 func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, serverName string) (*ToolStatus, error) {
-	userID, _ := ctx.Value(discoveryUserKey{}).(string)
-	if userID == "" {
-		userID = GetUserIDFromContext(ctx)
-	}
-	key := fmt.Sprintf("%p:%s:%s", api, userID, serverName)
+	key := fmt.Sprintf("%p:%s:%s", api, platformMCPTokenUserID, serverName)
 	lock, _ := discoveryLocks.LoadOrStore(key, &sync.Mutex{})
 	mutex := lock.(*sync.Mutex)
 	mutex.Lock()
@@ -163,12 +159,13 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 	}
 	api.appendServerLog(serverName, "info", fmt.Sprintf("Connecting to server (protocol: %s)...", protocol))
 
-	// Resolve OAuth credentials before cache lookup; the token path is part of
-	// the configuration-aware cache key. Do not fall back to another user's token.
+	// Resolve the shared platform OAuth credential before cache lookup.
 	if srvCfg.OAuth != nil {
-		oauthCfg := *srvCfg.OAuth
-		oauthCfg.TokenFile = getUserTokenFilePath(userID, serverName)
-		srvCfg.OAuth = &oauthCfg
+		if strings.TrimSpace(srvCfg.OAuth.TokenFile) == "" {
+			oauthCfg := *srvCfg.OAuth
+			oauthCfg.TokenFile = getUserTokenFilePath(platformMCPTokenUserID, serverName)
+			srvCfg.OAuth = &oauthCfg
+		}
 		cfg.MCPServers[serverName] = srvCfg
 	}
 	// Discovery only needs metadata. The runtime connection helper deliberately
@@ -291,7 +288,7 @@ func (api *StreamingAPI) discoverServerToolsDetailed(ctx context.Context, server
 
 // handleGetTools handles GET requests to retrieve all tools
 func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) {
-	// Get user ID from context for per-user OAuth status
+	// Retain caller identity for audit; connection status is platform-wide.
 	userID := GetUserIDFromContext(r.Context())
 
 	// Return cached results immediately if available
@@ -329,12 +326,12 @@ func (api *StreamingAPI) handleGetTools(w http.ResponseWriter, r *http.Request) 
 	overlay := api.loadOverlayServerNames()
 
 	// Create comprehensive results showing ALL configured servers
-	// Apply per-user OAuth status to each result
+	// Apply shared platform connection status to each result.
 	allResults := make([]ToolStatus, 0, len(cfg.MCPServers))
 	for serverName, serverConfig := range cfg.MCPServers {
 		connection := connectionState(serverName, serverConfig, overlay, userID)
 		if cachedStatus, exists := cachedMap[serverName]; exists && serverConfig.OAuth == nil {
-			// Use cached result but apply user-specific OAuth status
+			// Use cached result and apply platform connection state.
 			userStatus := api.getToolStatusForUser(cachedStatus, userID)
 			userStatus.Connection = connection
 			allResults = append(allResults, userStatus)
@@ -370,7 +367,7 @@ func (api *StreamingAPI) handleGetToolDetail(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Get user ID from context for per-user OAuth status
+	// Retain caller identity for audit; discovery uses the shared connection.
 	userID := GetUserIDFromContext(r.Context())
 
 	// If no cached detailed results, fetch them and cache
@@ -644,19 +641,21 @@ func (api *StreamingAPI) loadOverlayServerNames() map[string]bool {
 	return names
 }
 
-// connectionState answers "is this server mine?" — distinct from Status, which
-// answers "is it working?". A server is connected when it is in the overlay and,
-// if it uses OAuth, this user has a credential on disk. The token is looked up
-// at the per-user path rather than the one in config, which is only the same
-// file for the default user.
+// connectionState answers "is this server connected to the platform?" —
+// distinct from Status, which answers "is it working?".
 func connectionState(name string, cfg mcpclient.MCPServerConfig, overlay map[string]bool, userID string) string {
+	_ = userID
 	if !overlay[name] {
 		return connectionAvailable
 	}
 	if cfg.OAuth == nil {
 		return connectionConnected // no credential needed
 	}
-	if _, err := os.Stat(expandPath(getUserTokenFilePath(userID, name))); err != nil {
+	tokenFile := cfg.OAuth.TokenFile
+	if strings.TrimSpace(tokenFile) == "" {
+		tokenFile = getUserTokenFilePath(platformMCPTokenUserID, name)
+	}
+	if _, err := os.Stat(expandPath(tokenFile)); err != nil {
 		return connectionAvailable
 	}
 	return connectionConnected
@@ -843,14 +842,23 @@ func (api *StreamingAPI) stopPeriodicRefresh() {
 	}
 }
 
-// getToolStatusForUser returns tool status with user-specific OAuth status
-// Optimized: Only checks token file existence (fast) - avoids config reload and HTTP requests
+// getToolStatusForUser returns the shared platform OAuth status.
 func (api *StreamingAPI) getToolStatusForUser(status ToolStatus, userID string) ToolStatus {
-	// If the status already shows OAuth is required, check if this user has authenticated
+	_ = userID
 	if status.RequiresOAuth {
-		// Fast path: just check if token file exists
-		userTokenFile := getUserTokenFilePath(userID, status.Server)
-		expandedPath := expandPath(userTokenFile)
+		cfg, err := api.loadMergedConfig()
+		if err != nil {
+			return status
+		}
+		serverCfg, err := cfg.GetServer(status.Server)
+		if err != nil || serverCfg.OAuth == nil {
+			return status
+		}
+		tokenFile := serverCfg.OAuth.TokenFile
+		if strings.TrimSpace(tokenFile) == "" {
+			tokenFile = getUserTokenFilePath(platformMCPTokenUserID, status.Server)
+		}
+		expandedPath := expandPath(tokenFile)
 		if _, err := os.Stat(expandedPath); err == nil {
 			// User has authenticated - clear the OAuth required flag
 			status.RequiresOAuth = false

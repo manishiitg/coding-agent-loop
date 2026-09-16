@@ -128,3 +128,33 @@ boundary. Before unmount, a pending debounced draft is flushed to its owning
 tab, so switching cannot lose the draft or carry it into the next composer.
 AgentWorks' workflow chat host uses the same tab-keyed boundary and the same
 shared draft-flush safeguard.
+
+## 2026-09-16 resumed-tab transcript regression
+
+Opening the saved `gptlive1` chat exposed a second regression in another open
+Crew tab. A later message in `faceexpression` reached the correct application
+session, Claude completed it, and the server emitted both the transcript chunk
+and structured completion. The raw terminal showed the full turn, while the
+formatted conversation stopped at the preceding answer.
+
+Two frontend lifecycle choices combined to cause the loss:
+
+1. The tab-isolation follow-up above keyed the entire `ChatArea`. Resuming or
+   switching a chat therefore unmounted the observer that owns every open
+   session's SSE connections and foreground catch-up loops. Composer isolation
+   only requires a hard boundary around `ChatInput`; the session observer must
+   remain mounted across tab switches.
+2. `hydrateTabEvents` painted durable history as soon as that request resolved,
+   then projected the same history a second time when the live event request
+   completed. The first projection marked the optimistic user row as restored;
+   the second projection intentionally discards previously restored trace. If
+   the live window was empty or delayed, the second paint erased the new user
+   row and answer from Chat even though the provider terminal retained them.
+
+The correction keys only the shared `ChatInput`, preserving per-tab draft,
+paste, upload and submit state without restarting `ChatArea`. Durable history
+and the live window are now reconciled once, so a stale history response cannot
+temporarily mark and then discard the current retained turn. A regression test
+resolves history before an empty live window and verifies that the optimistic
+retained message remains present through the final commit. The focused suite
+passes 30 tests and TypeScript compilation passes.

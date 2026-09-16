@@ -41,7 +41,7 @@ import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore
 
 describe('hydrateTabEvents restored chat fallback', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mocks.getTabEvents.mockReturnValue([])
   })
 
@@ -221,6 +221,51 @@ describe('hydrateTabEvents restored chat fallback', () => {
         expect.objectContaining({ id: 'new-live-completion', type: 'unified_completion' }),
       ]),
     )
+  })
+
+  it('does not replace a live retained turn with an eager stale-history paint', async () => {
+    let resolveHistory!: (value: unknown) => void
+    let resolveEvents!: (value: unknown) => void
+    const storedEvents: Array<Record<string, unknown>> = [{
+      id: 'optimistic-retained-user',
+      type: 'user_message',
+      timestamp: '2026-09-16T13:06:45Z',
+      data: { data: { content: 'what do you do this delegation' } },
+    }]
+    mocks.getTabEvents.mockImplementation(() => storedEvents)
+    mocks.setTabEvents.mockImplementation((_sessionId, events) => {
+      storedEvents.splice(0, storedEvents.length, ...events)
+    })
+    mocks.getChatHistoryResumeConversation.mockReturnValue(new Promise(resolve => { resolveHistory = resolve }))
+    mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveEvents = resolve }))
+
+    const hydration = hydrateTabEvents('retained-resume-race', { workspacePath: '/workspace/work' })
+    resolveHistory({
+      session_id: 'retained-resume-race',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'older question' }] },
+        { Role: 'ai', Parts: [{ Text: 'older answer' }] },
+      ],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // History resolving first must not overwrite the optimistic message while
+    // the live event window is still loading. A second projection treats the
+    // first projection as restored trace and would otherwise discard this row.
+    expect(storedEvents.some(event => event.id === 'optimistic-retained-user')).toBe(true)
+
+    resolveEvents({
+      events: [],
+      session_status: 'completed',
+      last_processed_index: 328,
+      has_more: false,
+    })
+    await hydration
+
+    expect(storedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'optimistic-retained-user', type: 'user_message' }),
+    ]))
   })
 
   it('does not append a live completion that durable history already restored', async () => {
@@ -460,8 +505,11 @@ describe('hydrateTabEvents restored chat fallback', () => {
 })
 
 describe('lazy history hydration', () => {
-  beforeEach(() => vi.clearAllMocks())
-  it('shows recent history before live status finishes and keeps the older-page cursor', async () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocks.getTabEvents.mockReturnValue([])
+  })
+  it('reconciles recent history and live status once while keeping the older-page cursor', async () => {
     let resolveLive!: (value: unknown) => void
     mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveLive = resolve }))
     mocks.getChatHistoryResumeConversation.mockResolvedValue({
@@ -473,7 +521,9 @@ describe('lazy history hydration', () => {
       history_pagination: { has_more: true, next_offset: 20 },
     })
     const restoring = hydrateTabEvents('paged', { workspacePath: 'Workflow/test' })
-    await vi.waitFor(() => expect(mocks.setTabEvents).toHaveBeenCalled())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.setTabEvents).not.toHaveBeenCalled()
     expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith('paged', 'Workflow/test', 20, 0, true)
     resolveLive({ events: [{ id: 'live', type: 'conversation_end' }], session_status: 'completed', has_more: false })
     await restoring

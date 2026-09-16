@@ -393,15 +393,6 @@ export async function hydrateTabEvents(
     options.workspacePath,
     options.includeUiEvents,
   )
-  // Durable history is usually faster and must not wait behind a slow runtime
-  // status call. Paint it as soon as it arrives, then project once more through
-  // the same ordering boundary when the current live window is available.
-  // The base promise is awaited below, so this side effect deliberately swallows
-  // only its duplicate rejection path.
-  void conversationPromise.then(conversation => {
-    if (conversation) hydrateTabEventsFromConversation(sessionId, conversation)
-  }).catch(() => undefined)
-
   const [eventsOutcome, conversation] = await Promise.all([eventsPromise, conversationPromise])
 
   if (!eventsOutcome.ok) {

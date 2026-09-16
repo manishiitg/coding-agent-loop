@@ -32,9 +32,31 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 			userID := GetUserIDFromContext(r.Context())
 			expected := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(userID, "", workspace) + "--browser")
 			if userID != "" && item["browser_session"] == expected {
-				item["label"] = "Workflow browser"
 				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
-				if manifest != nil && level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
+				if manifest != nil {
+					// A real Workflow/ folder: its own capabilities.browser_mode
+					// setting can disable browser access even though a session
+					// exists, so it gates visibility here too.
+					item["label"] = "Workflow browser"
+					if level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
+						result = append(result, item)
+					}
+				} else if !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace) {
+					// No workflow manifest at this path: a fixed-workspace
+					// product session (SparkQuill, Dominion, ...), not a
+					// Workflow/ folder -- there is no browser_mode toggle to
+					// check. WorkflowBrowserSessionNamespace hashes the
+					// workspace path ONLY when it's non-empty (deliberately,
+					// so a real Workflow's authorized users share one
+					// browser) -- it does NOT fold in userID the way it does
+					// for the empty-path case, so the identity match above is
+					// NOT itself proof this user owns this workspace path.
+					// Outside multi-user mode there is exactly one account on
+					// the whole deployment (every fixed-workspace product
+					// today), so that's moot; in multi-user mode, require the
+					// same ownership check the non-shared branch below already
+					// trusts before exposing anything.
+					item["label"] = "Persistent browser"
 					result = append(result, item)
 				}
 			}
@@ -51,6 +73,23 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i]["browser_session"] < result[j]["browser_session"] })
 	return result
+}
+
+// userOwnsActiveSessionAtWorkspace reports whether userID owns a currently
+// tracked chat session whose workspace matches workspace, the same ownership
+// signal the non-shared discovery branch above already relies on.
+func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace string) bool {
+	if userID == "" {
+		return false
+	}
+	api.activeSessionsMux.RLock()
+	defer api.activeSessionsMux.RUnlock()
+	for _, owner := range api.activeSessions {
+		if owner != nil && strings.TrimRight(owner.WorkspacePath, "/") == workspace && owner.UserID == userID {
+			return true
+		}
+	}
+	return false
 }
 
 func (api *StreamingAPI) handleLiveBrowserSessions(w http.ResponseWriter, r *http.Request) {

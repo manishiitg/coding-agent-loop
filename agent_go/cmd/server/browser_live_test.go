@@ -260,3 +260,79 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 		}
 	}
 }
+
+// Fixed-workspace products (SparkQuill, Dominion, ...) have no workflow.json
+// at their workspace path, so workflowAccessForWorkspacePath always returns a
+// nil manifest for them. Confirmed live: this made every SparkQuill managed-
+// browser session invisible to /api/browser/live/sessions, since the discovery
+// code previously required a non-nil manifest with capabilities.browser_mode
+// set before showing a user-scoped shared-profile session at all.
+//
+// Outside multi-user mode (every fixed-workspace product deployment today:
+// one account per deployment) the fix trusts the deterministic session
+// identity alone, matching how the deployment already has exactly one user.
+func TestUserBrowserDiscoveryShowsFixedWorkspaceProductSessionInSingleUserMode(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+	api := &StreamingAPI{}
+	session := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("default", "", "Chats/SparkQuill") + "--browser")
+	browser.GetSessionTracker().Touch(session, "default-chat", "default-chat")
+	defer browser.GetSessionTracker().Remove(session)
+
+	r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "default"}))
+	items := api.liveBrowserSessions(r)
+	if len(items) != 1 || items[0]["browser_session"] != session {
+		t.Fatalf("expected the single-user session to be visible, got %v", items)
+	}
+}
+
+// WorkflowBrowserSessionNamespace hashes the workspace path ONLY when it's
+// non-empty (by design, so a real Workflow's authorized users share one
+// browser) -- it does not fold in userID the way it does for the empty-path
+// case. In multi-user mode, a matching session identity is therefore NOT
+// itself proof of ownership, and must not be trusted alone.
+func TestUserBrowserDiscoveryHidesFixedWorkspaceProductSessionWithoutTrackedOwnershipInMultiUserMode(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]},{"id":"bob","username":"bob","can_create":true,"products":[]}]}`)
+	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+	api := &StreamingAPI{activeSessions: make(map[string]*ActiveSessionInfo)}
+	// Both alice and bob hash to the identical identity here -- workspace-only
+	// hashing -- so neither is trusted without a tracked owning session.
+	aliceSession := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("alice", "", "Chats/SparkQuill") + "--browser")
+	browser.GetSessionTracker().Touch(aliceSession, "alice-chat", "alice-chat")
+	defer browser.GetSessionTracker().Remove(aliceSession)
+
+	for _, user := range []string{"alice", "bob"} {
+		r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
+		if items := api.liveBrowserSessions(r); len(items) != 0 {
+			t.Fatalf("%s: expected no session without tracked ownership, got %v", user, items)
+		}
+	}
+
+	// Once alice's chat is actually tracked as owning this workspace, she (and
+	// only she) sees the session.
+	api.activeSessions["alice-chat"] = &ActiveSessionInfo{SessionID: "alice-chat", UserID: "alice", WorkspacePath: "Chats/SparkQuill"}
+
+	r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
+	if items := api.liveBrowserSessions(r); len(items) != 1 || items[0]["browser_session"] != aliceSession {
+		t.Fatalf("expected alice to see her own tracked fixed-workspace session, got %v", items)
+	}
+
+	r = httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "bob"}))
+	if items := api.liveBrowserSessions(r); len(items) != 0 {
+		t.Fatalf("expected bob not to see alice's tracked fixed-workspace session, got %v", items)
+	}
+}

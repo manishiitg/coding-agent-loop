@@ -16,6 +16,7 @@ import {
   Film,
   Folder,
   FolderOpen,
+  Globe,
   HardDrive,
   Type,
   Image as ImageIcon,
@@ -72,6 +73,7 @@ import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRen
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { isSingleProductDeployment } from '../productSurfaceConfig'
 import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
+import WorkflowLiveBrowser from '../../components/workflow/WorkflowLiveBrowser'
 import { llmConfigService, type ProviderSetupSession } from '../../services/llm-config-api'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
@@ -2537,6 +2539,18 @@ export default function LearningApp() {
                 >
                   <RefreshCw size={15} />
                 </button>
+                {/* Watch Quill's browser live while it's checking a site (e.g.
+                    signing in to a school portal) — same viewer AgentWorks uses. */}
+                <button
+                  type="button"
+                  className={`fl-icon-btn fl-browser-btn${drawerTab === 'browser' ? ' is-active' : ''}`}
+                  aria-label="Watch live browser"
+                  aria-pressed={drawerTab === 'browser'}
+                  title="Watch live browser"
+                  onClick={() => setDrawerTab(drawerTab === 'browser' ? 'progress' : 'browser')}
+                >
+                  <Globe size={15} />
+                </button>
               </div>
             )}
 
@@ -2591,6 +2605,12 @@ export default function LearningApp() {
                     <iframe className="fl-map-frame" title="Progress report" sandbox="allow-scripts" srcDoc={withDiagramLib(progressHtml)} />
                   )}
                 </>
+              )}
+
+              {drawerTab === 'browser' && (
+                <div className="fl-browser-view">
+                  <WorkflowLiveBrowser workspacePath={FAMILY_WORKSPACE} scopeNoun="project" />
+                </div>
               )}
 
               {(drawerTab === 'files' || drawerTab === 'allfiles' || drawerTab === 'uploaded') && viewerPath ? (

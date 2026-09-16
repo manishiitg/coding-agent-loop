@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `fix in progress; production regression confirmed` |
+| Ticket state | `implemented and deployed; reload/rebind live-verified, context-dependent follow-up matrix remains` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -31,6 +31,20 @@ context.
 
 Legacy Work tabs make this worse because they used the project id itself as the
 conversation key, the same key as the permanent Builder launch surface.
+
+The production transcript supplied direct evidence: after 191 messages in the
+same visible chat, the 2026-09-16 follow-up was answered with “I don't have
+prior context … this looks like the start of a new session.”
+
+## Fix
+
+Released in `b4beba011` (`Preserve Work chat resume across deployments`). Work
+project preparation now blocks readiness while it rebinds every retained tab's
+saved session, and upgrades legacy project keys to tab-specific keys. The
+profile query boundary also compares each authenticated `X-Session-ID` with the
+tab-specific registry record and switches back to the verified project session
+when they drift. This backend guard covers tabs that remain open while a new
+release is deployed.
 
 ## Required contract
 
@@ -59,3 +73,15 @@ conversation key, the same key as the permanent Builder launch surface.
   with Builder or with one another.
 - Verify an unverifiable saved session blocks readiness with an explicit error
   instead of accepting a context-free turn.
+
+## Verification
+
+- Focused frontend tests: 33 passed, covering Work key migration, tab-store
+  hydration and profile submission payloads.
+- Focused server tests passed, including the verified Work-only rebind guard.
+- Production release `b4beba0-20260916081750` deployed successfully; public
+  health and frontend returned 200.
+- Browser verification reopened the affected 191-message chat and then reloaded
+  the page. The same named tab and full transcript remained active after the
+  reload. No message was sent into the user's production chat during this
+  verification, so the multi-tab context-dependent follow-up matrix remains.

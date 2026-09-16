@@ -248,11 +248,56 @@ still worked most of the time — so the *happy path* recovered fine, and only
 the fallback, the one case that matters most, was silently broken the entire
 time the namespace has been in use.
 
-**Fix**: `sessionDirs()` now checks
-`$XDG_RUNTIME_DIR/agent-browser/namespaces/$AGENT_BROWSER_NAMESPACE/run/`
-first when `AGENT_BROWSER_NAMESPACE` is set, before falling back to the two
-original locations. Added `TestSessionDirsPrefersNamespacedRuntimeDirWhenSet`
-and `TestSessionDirsFallsBackWithoutNamespace`.
+**Fix**: `sessionDirs()` now checks both
+`$XDG_RUNTIME_DIR/agent-browser/namespaces/$AGENT_BROWSER_NAMESPACE/run/` and
+`/tmp/.agent-browser/namespaces/$AGENT_BROWSER_NAMESPACE/run/` when
+`AGENT_BROWSER_NAMESPACE` is set (the second is what the real, Landlock-
+sandboxed production path actually uses — verified empirically, see Follow-up
+3), before falling back to the two original flat locations. Added
+`TestSessionDirsChecksBothNamespacedLocationsWhenSet` and
+`TestSessionDirsFallsBackWithoutNamespace`.
+
+## Follow-up 5: the remaining crash frequency was the shared system Chrome
+
+With the recovery mechanism actually working (Follow-up 4), the remaining
+open problem was frequency, not recoverability: real usage on 2026-09-16 hit
+6 separate crash-and-recover cycles inside about one minute, each costing
+~10 seconds. One attempt fully opened, was recorded alive, and crashed again
+4 seconds later. Crash dumps collected all day were consistently `--type=renderer`
+processes (never the main browser), running under
+`/opt/google/chrome/chrome` — the system-wide, apt-managed Chrome shared by
+every product and account on this host, version 152.0.7977.82.
+
+Tested a dedicated **Chrome for Testing** build instead (Google's own
+automation-focused stable channel, downloaded from
+`https://googlechromelabs.github.io/chrome-for-testing/`, distinct from the
+consumer channel apt tracks) — version 153.0.8010.47 at time of testing.
+Roughly ten open/snapshot round trips through the exact real code path
+(`/api/execute`, Landlock-sandboxed, same as production), against both a
+trivial page and a heavy real page (Wikipedia), produced at most one
+ambiguous crash dump, versus the near-continuous crash loop just observed
+with the system Chrome.
+
+**Fix**: installed Chrome for Testing 153.0.8010.47 to
+`/srv/sparkquill/tools/chrome/chrome-linux64-153.0.8010.47/`, symlinked as
+`/srv/sparkquill/tools/chrome/current/chrome`, and set
+`AGENT_BROWSER_EXECUTABLE_PATH=/srv/sparkquill/tools/chrome/current/chrome`
+in `/srv/sparkquill/.env`. `agent-browser` and its own Landlock read-path
+grant (`landlockSystemReadPaths()` already auto-grants the directory named by
+this exact env var) both already supported this — no code change needed, an
+infra/config change only. `/srv/sparkquill/tools` and `.env` both survive
+redeploys untouched (the deploy pipeline only ever rewrites `.env`'s `PATH=`
+line), so this persists automatically going forward on this host. Not yet
+formalized into `deploy/rootless-linux/` as a repeatable install step for a
+fresh bootstrap on a new host — a reasonable follow-up, not done yet.
+
+Root cause for *why* the shared system Chrome specifically was crash-prone
+is still unconfirmed (plausible candidates: version-specific bug in
+152.0.7977.82, background update/telemetry services the consumer channel
+runs that Chrome for Testing omits, or simply drift from being the shared
+binary that every account on this multi-tenant host launches against). Not
+pursued further since the practical fix (use a pinned, isolated,
+automation-focused build) resolves it regardless of the exact mechanism.
 
 ## Related
 

@@ -336,3 +336,36 @@ func TestUserBrowserDiscoveryHidesFixedWorkspaceProductSessionWithoutTrackedOwne
 		t.Fatalf("expected bob not to see alice's tracked fixed-workspace session, got %v", items)
 	}
 }
+
+// canControlLiveBrowser is the "take control" gate; it must apply the exact
+// same fixed-workspace-product fallback liveBrowserSessions does, or nobody
+// could ever take control of a SparkQuill/Dominion live browser (manifest is
+// always nil for them) even after they became visible in the session list.
+func TestCanControlLiveBrowserAppliesSameFixedWorkspaceFallbackAsDiscovery(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	workspace := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	t.Run("single user mode trusts the account", func(t *testing.T) {
+		api := &StreamingAPI{}
+		if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "default"}, "Chats/SparkQuill") {
+			t.Fatal("expected control to be granted outside multi-user mode")
+		}
+	})
+
+	t.Run("multi user mode requires tracked ownership", func(t *testing.T) {
+		t.Setenv("MULTI_USER_MODE", "true")
+		withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]}]}`)
+		api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{}}
+		if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, "Chats/SparkQuill") {
+			t.Fatal("expected control denied without a tracked owning session")
+		}
+		api.activeSessions["alice-chat"] = &ActiveSessionInfo{SessionID: "alice-chat", UserID: "alice", WorkspacePath: "Chats/SparkQuill"}
+		if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, "Chats/SparkQuill") {
+			t.Fatal("expected control granted once alice owns a tracked session at this workspace")
+		}
+	})
+}

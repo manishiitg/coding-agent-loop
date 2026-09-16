@@ -92,6 +92,26 @@ func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace stri
 	return false
 }
 
+// canControlLiveBrowser decides whether claims may take manual control of the
+// live browser at workspace. Split out from handleLiveBrowserStream's closure
+// so it's directly unit-testable without the websocket harness.
+func (api *StreamingAPI) canControlLiveBrowser(ctx context.Context, claims *UserClaims, workspace string) bool {
+	level, manifest := workflowAccessForWorkspacePath(ctx, claims, workspace)
+	if manifest != nil {
+		return level == WorkflowAccessOwner || level == WorkflowAccessWrite
+	}
+	// No workflow.json at this path: a fixed-workspace product session
+	// (SparkQuill, Dominion, ...), not a Workflow/ folder. Mirror
+	// liveBrowserSessions' same fallback -- without it, nobody could ever
+	// take control of one of these live browsers, since manifest is always
+	// nil for them.
+	userID := ""
+	if claims != nil {
+		userID = claims.UserID
+	}
+	return !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace)
+}
+
 func (api *StreamingAPI) handleLiveBrowserSessions(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{"sessions": api.liveBrowserSessions(r)})
@@ -207,8 +227,8 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 		if !currentUserCanWriteWorkflows(r) {
 			return false
 		}
-		level, manifest := workflowAccessForWorkspacePath(ctx, GetUserFromContext(r.Context()), r.URL.Query().Get("workspace_path"))
-		return manifest != nil && (level == WorkflowAccessOwner || level == WorkflowAccessWrite)
+		workspace := strings.TrimRight(strings.TrimSpace(r.URL.Query().Get("workspace_path")), "/")
+		return api.canControlLiveBrowser(ctx, GetUserFromContext(r.Context()), workspace)
 	}
 	_ = send(map[string]interface{}{"type": "viewer_control", "controlling": false})
 	for {

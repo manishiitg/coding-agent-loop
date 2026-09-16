@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented and deployed; reload/rebind live-verified, context-dependent follow-up matrix remains` |
+| Ticket state | `implemented, deployed, and production live-verified` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -245,3 +245,18 @@ reconciliations for roughly fifteen seconds after completion, even when an
 earlier pass recovered progress. The existing occurrence-count deduplication
 makes those follow-up reads idempotent while ensuring the delayed final is
 published to Chat and the session reaches its ready state.
+
+### Production verification
+
+- Commit `2f387fa37` (`Keep reconciling delayed CLI final replies`) was pushed
+  to `main` and deployed in release `2f387fa-20260916174454`.
+- In session `c7d58080-0058-4f6f-a394-feea651f405b`, Terminal completed with
+  “Done. Local output is now just one line…” while formatted Chat initially
+  stopped at the preceding progress row. Transcript reconciliation then
+  published the omitted final, Chat displayed the complete answer, and the
+  session changed from running to ready.
+- Production `/api/health` reported `healthy`, an idle drain, and all agent,
+  workspace, and gateway services remained active after the release swap.
+- Focused native-transcript recovery and live-publication tests pass. The
+  full server suite retains its unrelated existing Claude model-discovery
+  expectation failure.

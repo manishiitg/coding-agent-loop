@@ -226,3 +226,12 @@ occurrence counts across durable history and existing main-agent events prevent
 duplicate rows, including repeated sync attempts and replies that already
 arrived through the normal live stream. This provider-neutral backstop applies
 to Claude Code, Codex, Cursor, Pi, and Muse native transcript recovery.
+
+Production verification of the first release exposed the restart variant: the
+durable conversation was already current, so reconciliation returned early
+while the restored UI-event trace still lacked several final replies. An
+unchanged reconciliation now compares the recent canonical conversation tail
+with the live EventStore and republishes only missing assistant rows. This makes
+refresh and deployment recovery repair answers that were persisted before the
+new server process started, as well as answers recovered during the current
+process.

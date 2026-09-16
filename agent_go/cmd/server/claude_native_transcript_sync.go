@@ -137,6 +137,18 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	}
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(ctx, conversationPath, string(raw), current)
 	if builderConversationHistoriesEqual(refreshed.ConversationHistory, current.ConversationHistory) && refreshed.UpdatedAt == current.UpdatedAt {
+		// A restart can restore an older UI-event trace even though the durable
+		// conversation is already complete. Repair the recent live window from
+		// that canonical history as well; otherwise refresh keeps omitting final
+		// replies that transcript catch-up persisted before the restart.
+		api.publishNativeTranscriptRecoveredAssistantMessages(
+			sessionID,
+			nil,
+			recentBuilderConversationMessages(current.ConversationHistory, 50),
+		)
+		// Keep changed=false so the completion scheduler still performs its
+		// short retries. A pre-flush attempt may repair older live rows while the
+		// current provider answer has not reached the native transcript yet.
 		return false, true
 	}
 
@@ -185,15 +197,16 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 // transcript chunk used by normal CLI streaming. This deliberately is not a
 // second completion event: a completion would settle the next queued retained
 // turn when several user messages were submitted together.
-func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) {
+func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) int {
 	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
-		return
+		return 0
 	}
 
 	currentCounts := assistantMessageCounts(current)
 	eventCounts := liveAssistantMessageCounts(api.eventStore.GetAllEventsRaw(sessionID))
 	refreshedCounts := make(map[string]int)
 	now := time.Now()
+	published := 0
 	for index, message := range refreshed {
 		if !builderConversationRoleIsAssistant(message.Role) {
 			continue
@@ -236,8 +249,28 @@ func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessi
 			Data:            agentEvent,
 		})
 		eventCounts[key]++
+		published++
 		log.Printf("[CHAT_HISTORY] Published recovered native assistant reply to live chat session=%s history_index=%d chars=%d", sessionID, index, len(text))
 	}
+	return published
+}
+
+func recentBuilderConversationMessages(messages []builderConversationMessage, limit int) []builderConversationMessage {
+	if limit <= 0 {
+		return nil
+	}
+	start := len(messages)
+	seen := 0
+	for start > 0 && seen < limit {
+		start--
+		message := messages[start]
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if builderConversationMessageText(message) == "" || (role != "human" && role != "user" && !builderConversationRoleIsAssistant(role)) {
+			continue
+		}
+		seen++
+	}
+	return messages[start:]
 }
 
 func builderConversationRoleIsAssistant(role string) bool {

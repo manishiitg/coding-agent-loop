@@ -317,6 +317,17 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	if got := len(eventStore.GetAllEventsRaw(sessionID)); got != 1 {
 		t.Fatalf("second sync published duplicate live reply: %d events", got)
 	}
+
+	// Simulate a backend restart restoring an older UI trace: durable history is
+	// already current, but the live EventStore no longer contains the answer.
+	eventStore.RemoveSession(sessionID)
+	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
+		t.Fatalf("restart repair changed/supported = %v/%v, want false/true", changed, supported)
+	}
+	restoredEvents := eventStore.GetAllEventsRaw(sessionID)
+	if len(restoredEvents) != 1 || !storeevents.IsTranscriptMessage(restoredEvents[0]) {
+		t.Fatalf("restart repair events = %+v, want one transcript message", restoredEvents)
+	}
 }
 
 func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsAlreadyVisibleReply(t *testing.T) {

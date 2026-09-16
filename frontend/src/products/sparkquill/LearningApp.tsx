@@ -71,6 +71,8 @@ import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { isSingleProductDeployment } from '../productSurfaceConfig'
+import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
+import { llmConfigService, type ProviderSetupSession } from '../../services/llm-config-api'
 
 // The child/file viewer iframe is deliberately sandbox="allow-scripts" with
 // NO allow-same-origin (adding that would let a srcDoc page's script escape
@@ -96,6 +98,12 @@ const ENGINE_PRESENTATION: Record<string, { name: string; blurb: string; order: 
 function pres(id: string, fallbackName: string) {
   return ENGINE_PRESENTATION[id] ?? { name: fallbackName, blurb: 'Available on this computer', order: 99, preferred: false }
 }
+
+// Engines whose sign-in the server can drive through an interactive terminal
+// session (see CodingProvidersPanel.tsx's GUIDED_SETUP_PROVIDERS) — the only
+// ones this screen can offer a "Sign in" button for instead of leaving a
+// parent stuck reading a plain-text setup hint.
+const GUIDED_SETUP_ENGINES = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 
 // Child profile options — edit here to adjust the setup form.
 // Targeting grades 6–12, with 4–5 also offered.
@@ -989,7 +997,7 @@ export default function LearningApp() {
     api.commands().then((c) => { if (alive) setQuickCommands(c) }).catch(() => {})
     return () => { alive = false }
   }, [])
-  useEffect(() => {
+  const refreshEngines = useCallback(() => {
     let cancelled = false
     setEnginesState('loading')
     api.engines()
@@ -1018,6 +1026,27 @@ export default function LearningApp() {
       .catch(() => { if (!cancelled) setEnginesState('error') })
     return () => { cancelled = true }
   }, [setEngine, setEngines, setEnginesState])
+  useEffect(() => refreshEngines(), [refreshEngines])
+
+  // Terminal-based sign-in for the engine picker above: mirrors
+  // CodingProvidersPanel.tsx's guided setup, scoped to whichever engine the
+  // parent has selected on this screen.
+  const [guidedSession, setGuidedSession] = useState<ProviderSetupSession | null>(null)
+  const [guidedStarting, setGuidedStarting] = useState(false)
+  const [guidedError, setGuidedError] = useState<string | null>(null)
+  const startEngineSignIn = useCallback(async (engineId: string) => {
+    setGuidedStarting(true)
+    setGuidedError(null)
+    try {
+      const session = await llmConfigService.startProviderSetup(engineId, 'authenticate', 100, 24)
+      setGuidedSession(session)
+    } catch (setupError) {
+      const responseMessage = (setupError as { response?: { data?: { error?: string } } })?.response?.data?.error
+      setGuidedError(responseMessage || (setupError instanceof Error ? setupError.message : 'Could not start sign-in'))
+    } finally {
+      setGuidedStarting(false)
+    }
+  }, [])
   const childName = useFamilyStore((s) => s.childName)
   const setChildName = useFamilyStore((s) => s.setChildName)
   const grade = useFamilyStore((s) => s.grade)
@@ -3679,11 +3708,32 @@ export default function LearningApp() {
                     {testState === 'testing' ? 'Testing…' : testState === 'valid' ? 'Test passed ✓' : testState === 'invalid' ? 'Test failed — retry' : 'Test connection'}
                   </button>
                 )}
+                {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.runtime_available !== false && GUIDED_SETUP_ENGINES.has(selectedEngine.id) && (
+                  <button
+                    type="button"
+                    className="linklike"
+                    onClick={() => void startEngineSignIn(selectedEngine.id)}
+                    disabled={guidedStarting || (guidedSession?.status === 'running' && guidedSession.provider === selectedEngine.id)}
+                  >
+                    {guidedStarting ? 'Opening sign-in…' : `Sign in to ${pres(selectedEngine.id, selectedEngine.name).name}`}
+                  </button>
+                )}
               </p>
               <button className="primary-button" onClick={persistEngineAndContinue} type="button" disabled={!selectedEngine || !engineStatus(selectedEngine).ready || saving}>Continue <ArrowRight size={18} /></button>
             </div>
             {testMessage && <p className={`engine-note ${testState === 'invalid' ? 'is-error' : ''}`}>{testMessage}</p>}
-            {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.setup_hint && (
+            {guidedError && <p className="engine-note is-error">{guidedError}</p>}
+            {guidedSession && selectedEngine && guidedSession.provider === selectedEngine.id && (
+              <GuidedProviderTerminal
+                session={guidedSession}
+                onFinished={(finished) => {
+                  setGuidedSession(finished)
+                  refreshEngines()
+                }}
+                onClose={() => setGuidedSession(null)}
+              />
+            )}
+            {selectedEngine && !engineStatus(selectedEngine).ready && selectedEngine.setup_hint && (selectedEngine.runtime_available === false || !GUIDED_SETUP_ENGINES.has(selectedEngine.id)) && (
               <details className="engine-setup"><summary>Setup details</summary><p>{selectedEngine.setup_hint}</p></details>
             )}
           </section>

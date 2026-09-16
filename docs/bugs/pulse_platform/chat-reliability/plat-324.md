@@ -126,3 +126,5 @@ paste, picker, upload and submit closures could briefly retain the preceding
 tab during a rapid switch. Crew now remounts the chat/composer at each tab
 boundary. Before unmount, a pending debounced draft is flushed to its owning
 tab, so switching cannot lose the draft or carry it into the next composer.
+AgentWorks' workflow chat host uses the same tab-keyed boundary and the same
+shared draft-flush safeguard.

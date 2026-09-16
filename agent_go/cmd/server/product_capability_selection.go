@@ -82,8 +82,32 @@ func ensureProjectRuntimeManifest(ctx context.Context, profileID, workspacePath 
 	if found {
 		return raw, manifestPath, nil
 	}
+	// Fixed-workspace products (SparkQuill, Dominion, ...) never run a "create
+	// project" step that would leave a manifest behind, so one must be created
+	// here on first use -- unlike Work, there is no legacy product.json to
+	// migrate from. Without this, every read/write of selected_secrets or
+	// selected_servers for such a profile failed with "product manifest not
+	// found" forever, silently: a secret saved via set_user_secret was stored
+	// but never attached to the conversation, so it never reached the agent's
+	// environment (confirmed live: SparkQuill's agent_browser tool could not
+	// see a parent-saved portal password).
 	if !strings.EqualFold(strings.TrimSpace(profileID), "work") {
-		return "", manifestPath, fmt.Errorf("product manifest not found")
+		manifest := map[string]interface{}{
+			"schema_version": 1,
+			"id":             profileID,
+			"capabilities":   map[string]interface{}{},
+			"created_at":     time.Now().UTC().Format(time.RFC3339),
+			"updated_at":     time.Now().UTC().Format(time.RFC3339),
+		}
+		encoded, err := json.MarshalIndent(manifest, "", "  ")
+		if err != nil {
+			return "", manifestPath, err
+		}
+		raw = string(encoded) + "\n"
+		if err := writeFileToWorkspace(ctx, manifestPath, raw); err != nil {
+			return "", manifestPath, err
+		}
+		return raw, manifestPath, nil
 	}
 	legacyRaw, legacyFound, err := readFileFromWorkspace(ctx, filepath.ToSlash(filepath.Join(workspacePath, "product.json")))
 	if err != nil || !legacyFound {
@@ -125,11 +149,18 @@ func ensureProjectRuntimeManifest(ctx context.Context, profileID, workspacePath 
 // fall back to product.json until the first mutation creates workflow.json.
 func productSelectedSecrets(ctx context.Context, profileID, workspacePath string) ([]string, bool, error) {
 	raw, found, err := readProjectRuntimeManifest(ctx, profileID, workspacePath)
-	if err != nil || !found {
-		if err == nil {
-			err = fmt.Errorf("product manifest not found")
-		}
+	if err != nil {
 		return nil, false, err
+	}
+	if !found {
+		// No manifest yet is the same as "selected_secrets never initialized",
+		// not a hard failure: the caller's not-yet-initialized fallback
+		// migrates any already-stored secrets and persists them, which creates
+		// the manifest (see ensureProjectRuntimeManifest). Treating this as an
+		// error instead left every fixed-workspace product (SparkQuill,
+		// Dominion, ...) permanently unable to attach secrets, since nothing
+		// ever creates this file for them ahead of time.
+		return nil, false, nil
 	}
 	var manifest map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
@@ -197,11 +228,13 @@ func updateProductSelectedSecrets(ctx context.Context, profileID, workspacePath 
 // project state, distinct from the platform-wide connection overlay.
 func productSelectedServers(ctx context.Context, profileID, workspacePath string) ([]string, bool, error) {
 	raw, found, err := readProjectRuntimeManifest(ctx, profileID, workspacePath)
-	if err != nil || !found {
-		if err == nil {
-			err = fmt.Errorf("product manifest not found")
-		}
+	if err != nil {
 		return nil, false, err
+	}
+	if !found {
+		// See the matching comment in productSelectedSecrets: no manifest yet
+		// means "never initialized", not an error.
+		return nil, false, nil
 	}
 	var manifest map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {

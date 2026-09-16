@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
 // Rows shaped exactly like a real Codex 0.147 rollout: session_meta,
@@ -153,6 +155,22 @@ func TestNativeTranscriptSyncSupportedProvider(t *testing.T) {
 	for provider, want := range map[string]bool{"claude-code": true, "codex-cli": true, "Codex-CLI": true, "cursor-cli": true, "pi-cli": true, "muse-cli": true, "Muse-CLI": true, "gemini-cli": false, "": false} {
 		if got := nativeTranscriptSyncSupportedProvider(provider); got != want {
 			t.Fatalf("provider %q supported = %v, want %v", provider, got, want)
+		}
+	}
+
+	// Keep chat-history recovery aligned with the provider registry. A newly
+	// registered persistent CLI must not gain retained live input without also
+	// gaining a readable transcript and a native catch-up branch; otherwise it
+	// can reproduce PLAT-178 even while every older provider remains green.
+	for _, contract := range llmproviders.CodingAgentProviderContracts() {
+		if !contract.UsesPersistentSession || !contract.SupportsLiveInput {
+			continue
+		}
+		if !contract.AdapterReadsTranscript {
+			t.Errorf("persistent live-input provider %q does not declare transcript reading", contract.Provider)
+		}
+		if !nativeTranscriptSyncSupportedProvider(string(contract.Provider)) {
+			t.Errorf("persistent live-input provider %q is missing native chat-history recovery", contract.Provider)
 		}
 	}
 }

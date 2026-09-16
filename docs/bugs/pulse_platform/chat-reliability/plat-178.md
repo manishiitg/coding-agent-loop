@@ -240,6 +240,15 @@ Four independent gaps were identified. All four are now implemented:
   Formatted-view hydration is reading and merging authoritative history.
 - The same reload also confirmed the bundled toolbar changes: Knowledgebase is
   top-level, Costs is under Ops, and Playbooks is under Setup.
+- Provider-matrix verification covers every registered persistent live-input
+  CLI: Claude Code, Codex CLI, Cursor CLI, Pi CLI, and Muse. Shared user-message
+  persistence and frontend durable-history reconciliation are provider-neutral;
+  each provider has retained-progress/final-answer readers and a native
+  transcript recovery branch. Focused adapter, retained-session, and server
+  recovery suites passed across all three repositories on 2026-09-16. A
+  contract-derived regression now fails if a future persistent live-input CLI
+  is registered without declaring transcript reading or without being included
+  in native chat-history recovery.
 
 ## Out of scope
 

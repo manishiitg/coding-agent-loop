@@ -176,3 +176,30 @@ read, path resolution and index update. The resume HTTP path passes its
 authenticated owner through the same function. Regression coverage uses a
 non-default user and `_users/<id>/Chats/Work/projects/<project>` transcript,
 verifying both the resumed human append and native assistant reconciliation.
+
+## 2026-09-16 consecutive-message completion regression
+
+Production reproduction in the `ci/cd` Work chat isolated the remaining
+multiple-message failure. The user submitted a second message nine seconds
+after the first, while Claude was still answering. Both messages reached the
+same Claude session, and the native transcript contains complete assistant
+answers to both. The application event stream stopped after the first answer,
+however, leaving the second answer visible only in Terminal. Chat rendered an
+empty Agent row followed by a misplaced `Previous conversation` divider.
+
+The retained-turn lifecycle stored later execution ids as aliases of the
+currently running turn. The first completion therefore marked every accepted
+message complete, canceled the terminal observer, and removed the session's
+tracking state. This assumption is invalid for coding CLIs: input submitted
+while busy is queued as a distinct provider turn with its own completion.
+Additionally, the warm MCP session's event bridge can close after the first
+answer even though the retained CLI immediately continues with queued input.
+
+Retained executions are now kept in submission order. One structured
+completion settles only the active execution; if another accepted message is
+pending, it becomes the active execution, the session remains busy, and a new
+retained-terminal observer follows that response through its own completion.
+Provider failure still fails the active and pending executions together.
+Regression coverage submits two retained messages before the first completion
+and verifies that the first completion promotes the second, reattaches an
+observer, and does not settle the session until the second completion arrives.

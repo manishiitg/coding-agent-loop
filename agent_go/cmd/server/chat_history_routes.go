@@ -702,7 +702,7 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		// last full-turn snapshot. Best-effort: unsupported providers and
 		// missing transcripts leave the record untouched.
 		if parsePositiveQueryInt(r, "resume_turns") > 0 && strings.TrimSpace(workspacePath) != "" {
-			api.syncWorkflowBuilderConversationFromNativeTranscript(r.Context(), sessionID, workspacePath)
+			api.syncWorkflowBuilderConversationFromNativeTranscript(r.Context(), userID, sessionID, workspacePath)
 			if refreshed, refreshErr := ReadChatHistoryConversation(userID, sessionID, workspacePath); refreshErr == nil {
 				data = refreshed
 			}

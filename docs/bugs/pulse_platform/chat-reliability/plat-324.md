@@ -158,3 +158,21 @@ temporarily mark and then discard the current retained turn. A regression test
 resolves history before an empty live window and verifies that the optimistic
 retained message remains present through the final commit. The focused suite
 passes 30 tests and TypeScript compilation passes.
+
+Production read-only verification after that frontend release showed the
+already completed turn still disappeared after a server restart. The retained
+Claude conversation was intact, but its Work transcript had never been updated.
+Production logs showed both `LIVE INPUT` and `RETAINED_TURN` for the correct
+session with no intervening `CHAT_HISTORY` write.
+
+The retained persistence code had two project-scope errors. The live-input
+writer searched global history because it omitted the Work workspace path, and
+the completion-time native transcript reconciler hardcoded the legacy
+`default` owner even when the active session belonged to another user. Both
+lookups therefore missed the project-owned file without reporting a delivery
+failure. Live-input persistence now uses the session's resolved workspace, and
+native reconciliation carries the authenticated session owner through its
+read, path resolution and index update. The resume HTTP path passes its
+authenticated owner through the same function. Regression coverage uses a
+non-default user and `_users/<id>/Chats/Work/projects/<project>` transcript,
+verifying both the resumed human append and native assistant reconciliation.

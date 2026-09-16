@@ -299,6 +299,102 @@ binary that every account on this multi-tenant host launches against). Not
 pursued further since the practical fix (use a pinned, isolated,
 automation-focused build) resolves it regardless of the exact mechanism.
 
+## Follow-up 6: crash-dump analysis, alternatives evaluated, resource caps, and a new working theory
+
+Chrome for Testing reduced crash frequency but did not eliminate it. This
+round covers: what the crash dumps actually show, three alternative engines/
+binaries evaluated and rejected, a real box-wide fix applied (per-account
+resource caps), and the current best theory for what's left.
+
+**Crash-dump analysis.** Installed a Python minidump parser
+(`pip install minidump`) and read the exception record directly out of
+several `.dmp` files from real failures. Consistent finding across every
+dump checked: `EXCEPTION_SIGTRAP` (4 of 5) or `EXCEPTION_SIGIOT`/`SIGABRT`
+(1 of 5) — never `SIGSEGV`. Both are how Chrome's own internal `CHECK()`/
+assertion-failure code deliberately terminates the process; neither is
+consistent with memory corruption or an external kill. No kernel-level
+segfault or OOM-kill log entries exist for any of today's crashes —
+Chrome's own crashpad handler intercepts the signal before the kernel's
+default handling would log anything, which is also why `dmesg`/`apport`
+show nothing. Could not get the actual `CHECK failed: ...` message text
+(no debug symbols available for this build), so the *specific* assertion
+is still unidentified — only that it's Chrome's own code stopping itself,
+not something external.
+
+**Landlock ruled out via direct A/B test.** Ran the same sustained
+interaction (20 full open+snapshot cycles each, real navigation confirmed
+throughout) both inside the Landlock sandbox (`/api/execute`, the real
+production path) and outside it (interactive shell). Zero crashes in
+either condition. If Landlock were the trigger, the sandboxed run should
+have crashed and the unsandboxed one shouldn't have; they behaved
+identically.
+
+**Three alternatives evaluated, all rejected for this use case:**
+- **`chrome-headless-shell`** (Chrome for Testing's minimal headless-only
+  binary, no separate renderer subprocess for the `top-chrome-webui`
+  component several crashes were specifically from) — stable, but a real
+  compatibility bug with `agent-browser`: `open` reports success with the
+  correct title/URL, but the browser is actually stuck at `about:blank`
+  underneath, confirmed even with a fresh profile and confirmed independent
+  of `--single-process`. video-studio's own production use of
+  `chrome-headless-shell` goes through a *different* tool (`hyperframes`),
+  never validated against `agent-browser`.
+- **Lightpanda** (`agent-browser --engine lightpanda`) — explicitly
+  "Profiles are not supported with Lightpanda," a hard blocker for the
+  persistent-login requirement, plus the same reports-success-but-stuck-at-
+  about:blank bug as chrome-headless-shell. Running Lightpanda standalone
+  (`lightpanda serve`) and connecting via `agent-browser --cdp <port>`
+  bypasses both problems and worked cleanly — confirmed twice with a full
+  real login flow (open → fill username → fill password → click submit →
+  land on authenticated page) against a public test site — but would need
+  real design work for persistence (Lightpanda's cookie-jar file
+  import/export instead of Chrome's profile-folder model), not a config
+  change. Not built.
+- **`agent-browser install`** (the tool's own official installer) — installs
+  the exact same Chrome for Testing build (153.0.8010.47) we already
+  installed manually. Confirms there's no better pinned version the tooling
+  itself knows about.
+- **`/snap/bin/chromium` and `/usr/bin/chromium-browser`** — both fail
+  immediately with a snap confinement error unrelated to Chrome itself
+  (`cannot use invalid home directory "/srv/sparkquill"`); this service
+  account's `$HOME` doesn't satisfy snap's sandboxing expectations. Dead
+  end, not a real option on this host.
+
+**Real, applied fix: per-account resource caps.** Independent of the crash
+investigation, found this Hetzner host silently oversubscribed: three
+unrelated tenant processes (`node`/Solntic, `newjoin+`, `pythonai`) were each
+pinned at 80–100% CPU continuously for days (one for 94 days), and system
+swap sat at 21GB/32GB in use. Killed the worst offenders live, then applied
+a structural fix so it can't recur: systemd slice resource control per
+account (`/etc/systemd/system/user-<uid>.slice.d/resource-limits.conf`,
+applied both persistently and live via `systemctl set-property`) —
+`CPUQuota=200%` + `MemoryMax=8G` hard caps on 9 unrelated tenant accounts,
+`CPUWeight=300` priority (no cap) on `sparkquill`/`confida`/`dominion`.
+Verified enforcement at the kernel cgroup level (`cpu.max` reads
+`200000 100000`, exactly 2 cores) and under synthetic load (4 processes each
+demanding 100% CPU inside an equivalently-capped throwaway scope measured at
+~52% each, ~208% combined, vs. ~400% uncapped). This is a real fix for a
+real problem, but a live A/B test afterward (checked `sparkquill`'s own
+cgroup pressure: `cpu.pressure full avg10=0.00`, zero) confirmed it is *not*
+what's causing the remaining Chrome crashes — a burst of real failures
+happened immediately after, with the box confirmed under zero resource
+pressure at the time.
+
+**Current best theory, untested**: the evening's failures crashed within
+1–2 seconds of every single launch, on every site tried (not just
+Veracross — Wikipedia, BBC, NASA, Python.org, Internet Archive all hit the
+identical failure), which rules out anything page-specific. Combined with
+zero resource pressure and Landlock/sandbox already ruled out, the
+remaining candidate is the *profile itself*: `user-37a8eec1ce19687d--browser`
+has survived 50+ crash-and-restart cycles over one day. It's plausible some
+internal Chrome state file in it (preferences, cache, session storage) is
+now corrupted in a way that trips the same `CHECK()` on every launch
+regardless of target page. Proposed next step, **not yet done**: back up
+(not delete) that profile and let the next real attempt start against a
+completely fresh one. Cost: Myra's saved Veracross session state, if any
+survived today's crash cycles, would be lost — a real tradeoff, deferred
+pending a decision rather than acted on unilaterally.
+
 ## Related
 
 Earlier rounds of the same investigation (documented only in chat, not yet

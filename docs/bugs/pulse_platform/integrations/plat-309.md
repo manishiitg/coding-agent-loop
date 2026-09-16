@@ -15,6 +15,14 @@ External services can invoke saved workflow routes through authenticated POST we
 
 Accepted deliveries return 202 with run identity and execute asynchronously. Persistent delivery IDs deduplicate retries. Busy/unavailable execution returns 503 for sender retry: this release does not implement an automatic durable replay queue. Other provider-specific signature/challenge formats require adapters.
 
+The original same-trigger collision lock also serialized independent webhook
+deliveries even though each delivery already had an isolated `iteration-N-hook`
+folder. The trigger now accepts up to four deliveries concurrently. Each lane
+has its own in-memory runtime key and durable lease keyed by delivery run ID;
+the fifth request receives the existing 503 plus `Retry-After: 30`. Reusing the
+same delivery ID remains idempotent, so sender retry stays simple and no queue
+or replay worker was added.
+
 Builder chat creates/configures triggers. Webhooks sits beside Schedules in the toolbar; the manual Add API trigger form was removed. URLs remain copyable, and run history/activity distinguish webhook versus scheduled/manual origin. Plan displays schedule/webhook cards and saved route highlighting; Triggers focuses the cards reliably in a narrow split view.
 
 Validation: focused trigger/layout/toolbar contract tests and production build passed. RTS gateway deployment, Webhooks placement, absent creation form, and all six rts-latency schedule cards in view were verified. External provider end-to-end acceptance is not claimed. See [API triggers](../../../workflow/api-triggers.md) for response/authentication details.

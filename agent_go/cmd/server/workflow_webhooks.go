@@ -24,7 +24,10 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 )
 
-const maxWebhookBodyBytes = 1024 * 1024
+const (
+	maxWebhookBodyBytes   = 1024 * 1024
+	maxWebhookConcurrency = 4
+)
 
 // The plaintext secret is returned only on creation/rotation. Ciphertext uses
 // the existing server secrets key, bound to this workflow and trigger.

@@ -48,6 +48,19 @@ func TestValidateHTMLReportRequiresTheSingleWorkflowDocument(t *testing.T) {
 	}
 }
 
+func TestValidateHTMLReportTreatsDocumentShapeAsGuidance(t *testing.T) {
+	t.Parallel()
+	result := validateReport(t, `<div>Useful fragment</div>`, ReportHTMLValidationHooks{})
+	if !strings.Contains(result, `"valid": true`) {
+		t.Fatalf("browser-tolerated document shape should not block the report: %s", result)
+	}
+	for _, want := range []string{`missing explicit \u003chtml\u003e`, `missing explicit \u003cbody\u003e`, `missing non-empty \u003ctitle\u003e`} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected guidance %q: %s", want, result)
+		}
+	}
+}
+
 func TestValidateHTMLReportAcceptsAnotherReportDocument(t *testing.T) {
 	t.Parallel()
 	agent := newWorkshopDefinitionDraft()
@@ -374,7 +387,7 @@ if (window.report && typeof window.report.ready === 'function') {
 	}
 }
 
-func TestValidateHTMLReportRejectsModuleSyntaxAndExternalScripts(t *testing.T) {
+func TestValidateHTMLReportWarnsForModuleSyntaxAndRelativeScripts(t *testing.T) {
 	t.Parallel()
 	html := `<!doctype html><html><head><title>Modules</title>
 <script src="report.js"></script>
@@ -385,8 +398,8 @@ document.getElementById('a').textContent = fmt(x);
 </script></body></html>`
 	result := validateReport(t, html, ReportHTMLValidationHooks{})
 	for _, want := range []string{
-		`"valid": false`,
-		`will not load (line 2)`,
+		`"valid": true`,
+		`validate its resolution in preview_report`,
 		`ES module import found`,
 		`ES module export found`,
 	} {
@@ -396,7 +409,7 @@ document.getElementById('a').textContent = fmt(x);
 	}
 }
 
-func TestValidateHTMLReportRejectsContentAfterHtmlAndBase(t *testing.T) {
+func TestValidateHTMLReportRejectsContentAfterHTMLAndWarnsForBase(t *testing.T) {
 	t.Parallel()
 	trailing := `<!doctype html><html><head><title>Trailing</title></head><body><div id="a"></div><script>function late(){ document.getElementById('a').textContent = 'x'; } late();</script></body></html><script>late();</script>`
 	result := validateReport(t, trailing, ReportHTMLValidationHooks{})
@@ -405,8 +418,8 @@ func TestValidateHTMLReportRejectsContentAfterHtmlAndBase(t *testing.T) {
 	}
 	withBase := `<!doctype html><html><head><title>Base</title><base href="https://cdn.example.com/"></head><body>x</body></html>`
 	result = validateReport(t, withBase, ReportHTMLValidationHooks{})
-	if !strings.Contains(result, `"valid": false`) || !strings.Contains(result, "repoints relative URLs") {
-		t.Fatalf("expected a <base> error: %s", result)
+	if !strings.Contains(result, `"valid": true`) || !strings.Contains(result, "repoints relative URLs") {
+		t.Fatalf("expected a <base> warning: %s", result)
 	}
 }
 
@@ -414,8 +427,8 @@ func TestValidateHTMLReportChecksLinkTags(t *testing.T) {
 	t.Parallel()
 	stylesheet := `<!doctype html><html><head><title>Links</title><link rel="stylesheet" href="app.css"></head><body>x</body></html>`
 	result := validateReport(t, stylesheet, ReportHTMLValidationHooks{})
-	if !strings.Contains(result, `"valid": false`) || !strings.Contains(result, `will not resolve (line 1)`) {
-		t.Fatalf("expected a stylesheet error: %s", result)
+	if !strings.Contains(result, `"valid": true`) || !strings.Contains(result, `verify that it resolves in preview_report`) {
+		t.Fatalf("expected a stylesheet warning: %s", result)
 	}
 	icon := `<!doctype html><html><head><title>Icon</title><link rel="icon" href="icon.png"></head><body>x</body></html>`
 	result = validateReport(t, icon, ReportHTMLValidationHooks{})

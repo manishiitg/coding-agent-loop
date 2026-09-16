@@ -26,13 +26,13 @@ or another project view intended to organize or manage information visually.
 - Build responsive documents. Use separate toolbar views for genuinely distinct
   destinations and internal sections/tabs for closely related material.
 - Support both app themes using `:root.dark` or `[data-theme="dark"]`.
-- daisyUI is CDN-only for reports. When it will help, first inspect installed
-  skills; install the official `saadeghi/daisyui` skill with `install_skill`
-  only if missing, then read it. Opt in with `<html data-report-ui="daisyui">`
-  and include `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. Use
-  daisyUI component classes and inline CSS for layout. Never add daisyUI as a
-  project package or use the Tailwind browser build.
-- Prefer Chart.js from a version-pinned HTTPS CDN for meaningful time-series,
+- Choose the CSS/component framework that best fits the report. Version-pinned
+  HTTPS CDN stylesheets and browser scripts are supported, including Tailwind's
+  browser build. daisyUI is a convenient default for standard components: opt
+  in with `<html data-report-ui="daisyui">`; the host injects its pinned CSS.
+  daisyUI does not include Tailwind utility classes, so either load Tailwind or
+  provide the layout/typography CSS those components need.
+- Chart.js is a good default for meaningful time-series,
   comparison, distribution, and composition charts. Use a small HTML/CSS
   visual only when it is genuinely simpler than a chart library. Configure
   Chart.js responsively, give its container an intentional height, match its

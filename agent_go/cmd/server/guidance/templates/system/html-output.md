@@ -39,7 +39,7 @@ paths — load `reporting-policy.md`.
 ### Non-negotiable rules
 
 **External libraries.**
-Prefer inline report-specific CSS and JavaScript. HTTPS CDN stylesheets and scripts are allowed when a maintained library materially improves the report; pin an exact version rather than using `latest`, keep dependencies minimal, and show a useful error or fallback if one fails to load. daisyUI can be enabled with `data-report-ui="daisyui"`; the host injects the pinned stylesheet when it is omitted. Chart.js and similar browser libraries may be loaded from a version-pinned HTTPS CDN URL.
+Choose the CSS and JavaScript stack that fits the report. Inline code and version-pinned HTTPS CDN dependencies are both supported, including Tailwind's browser build. Use `preview_report` to prove the chosen libraries load in the report sandbox, and show a useful error or fallback if one fails. daisyUI can be enabled with `data-report-ui="daisyui"`; the host injects the pinned stylesheet when it is omitted. daisyUI alone does not provide Tailwind utility classes. Chart.js and similar browser libraries may be loaded from a version-pinned HTTPS CDN URL.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same

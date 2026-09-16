@@ -16,14 +16,17 @@ There is no report generation step or widget-layout registry.
   report has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
-- HTTPS CDN stylesheets and scripts are supported. Pin library versions rather
-  than using floating `latest` URLs, and keep report-specific CSS/JS inline.
+- CSS and component-library choice belongs to the report author. HTTPS CDN
+  stylesheets and browser scripts are supported, including Tailwind's browser
+  build. Pin library versions rather than using floating `latest` URLs, and
+  use `preview_report` to prove the chosen stack works in the report sandbox.
+  Keep report-specific CSS/JS inline when that is the simpler choice.
   daisyUI is CDN-only. To use it, inspect/install the official
   `saadeghi/daisyui` skill, read it, add `data-report-ui="daisyui"` to the
   document's `<html>` element, and include the pinned stylesheet
   `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
   that same CDN link for opted-in reports that omit it. Use inline CSS
-  for layout; never add package setup or the Tailwind browser build.
+  for layout when Tailwind utilities are not loaded.
 - Prefer Chart.js from a version-pinned HTTPS CDN for meaningful time-series,
   comparison, distribution, and composition charts. Use lightweight HTML/CSS
   for a single progress bar or similarly simple visual. Make Chart.js

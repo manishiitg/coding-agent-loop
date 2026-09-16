@@ -993,10 +993,10 @@ type reportJSUnit struct {
 	handler  bool
 }
 
-// validateReportJS checks the report's executable JavaScript: block shape
-// (closed, inline, unterminated), DOM-write targets and their ordering,
-// calls to undefined functions, unknown window.report methods, callback
-// references, and module syntax that cannot resolve in the sandbox.
+// validateReportJS checks the report's executable JavaScript: block shape,
+// DOM-write targets and their ordering, calls to undefined functions, unknown
+// window.report methods, and callback references. Library/loading choices are
+// advisory because preview_report is the authoritative browser check.
 func validateReportJS(content string, blocks []reportScriptBlock) (errors, warnings []string, scriptCount int) {
 	var units []reportJSUnit
 	hasExternalScript := false
@@ -1006,10 +1006,9 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 			continue
 		}
 		if b.hasSrc {
-			if lower := strings.ToLower(strings.TrimSpace(b.src)); !strings.HasPrefix(lower, "http") {
-				errors = append(errors, fmt.Sprintf("script src %q will not load (line %d); the report must be self-contained -- inline the JS", b.src, reportLineNumber(content, b.openStart)))
-			} else {
-				hasExternalScript = true
+			hasExternalScript = true
+			if lower := strings.ToLower(strings.TrimSpace(b.src)); !strings.HasPrefix(lower, "http") && !strings.HasPrefix(lower, "data:") {
+				warnings = append(warnings, fmt.Sprintf("script src %q (line %d) is not an absolute HTTPS/data URL; validate its resolution in preview_report", b.src, reportLineNumber(content, b.openStart)))
 			}
 			continue
 		}
@@ -1109,14 +1108,14 @@ func validateReportJS(content string, blocks []reportScriptBlock) (errors, warni
 				continue // import.meta
 			}
 			seenModule["import"] = true
-			errors = append(errors, fmt.Sprintf("ES module import found (line %d); the report has no bundler or module resolution -- inline the code instead", line(u, loc[0])))
+			warnings = append(warnings, fmt.Sprintf("ES module import found (line %d); validate module resolution and CORS in preview_report", line(u, loc[0])))
 		}
 		for _, loc := range reportJSExportWordPattern.FindAllStringIndex(u.stripped, -1) {
 			if seenModule["export"] {
 				break
 			}
 			seenModule["export"] = true
-			errors = append(errors, fmt.Sprintf("ES module export found (line %d); the report has no bundler or module resolution -- inline the code instead", line(u, loc[0])))
+			warnings = append(warnings, fmt.Sprintf("ES module export found (line %d); validate module execution in preview_report", line(u, loc[0])))
 		}
 		for _, write := range reportDOMWrites(u.raw, u.stripped) {
 			offsets, ok := ids[write.id]
@@ -1191,10 +1190,10 @@ func registerHTMLReportTools(
 			errors := make([]string, 0)
 			warnings := make([]string, 0)
 			if !strings.Contains(lower, "<html") {
-				errors = append(errors, "missing <html> root")
+				warnings = append(warnings, "missing explicit <html> root; the browser will synthesize one, but a complete document is easier to inspect")
 			}
 			if !strings.Contains(lower, "<body") {
-				errors = append(errors, "missing <body>")
+				warnings = append(warnings, "missing explicit <body>; the browser will synthesize one, but a complete document is easier to inspect")
 			}
 			title := ""
 			if start := strings.Index(lower, "<title"); start >= 0 {
@@ -1206,7 +1205,7 @@ func registerHTMLReportTools(
 				}
 			}
 			if title == "" {
-				errors = append(errors, "missing non-empty <title> for the workflow report")
+				warnings = append(warnings, "missing non-empty <title>; add one for toolbar naming and accessibility")
 			}
 			blocks := reportScriptBlocks(content)
 			jsErrors, jsWarnings, scriptCount := validateReportJS(content, blocks)
@@ -1221,10 +1220,10 @@ func registerHTMLReportTools(
 				}
 			}
 
-			// A <base> tag repoints every relative URL: the preview may work
-			// while the published offline copy breaks.
+			// A <base> tag is valid, but it changes every relative URL. Make the
+			// choice visible and leave runtime resolution to preview_report.
 			if loc := reportBaseTagPattern.FindStringIndex(content); loc != nil {
-				errors = append(errors, fmt.Sprintf("a <base> tag repoints relative URLs (line %d); the report must be self-contained -- drop the tag and inline the assets", reportLineNumber(content, loc[0])))
+				warnings = append(warnings, fmt.Sprintf("a <base> tag repoints relative URLs (line %d); verify all linked assets and navigation in preview_report", reportLineNumber(content, loc[0])))
 			}
 
 			// Subresources never resolve inside the sandboxed srcdoc report;
@@ -1244,7 +1243,7 @@ func registerHTMLReportTools(
 				}
 				tagLine := reportLineNumber(content, loc[0])
 				if strings.Contains(rel, "stylesheet") {
-					errors = append(errors, fmt.Sprintf("stylesheet link %q will not resolve (line %d); the report must be self-contained -- inline the CSS", href, tagLine))
+					warnings = append(warnings, fmt.Sprintf("stylesheet link %q is relative (line %d); verify that it resolves in preview_report", href, tagLine))
 				} else {
 					warnings = append(warnings, fmt.Sprintf("resource link %q is ignored inside the sandboxed report (line %d); drop the tag or inline the asset", href, tagLine))
 				}

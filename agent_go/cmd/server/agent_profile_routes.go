@@ -672,6 +672,7 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 		}
 	}
 	preferredSessionID := ""
+	preferredSessionVerifiedForWorkspace := false
 	if binding.AuthoritativeSessionID == "" {
 		candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))
 		if candidate != "" && api.canUseSessionIDForQuery(r, candidate) {
@@ -682,16 +683,52 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 			} else if found {
 				preferredSessionID = candidate
 			}
+			if session, found := chatHistorySessionsByID(userID, binding.WorkspacePath)[candidate]; found {
+				preferredSessionVerifiedForWorkspace = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(binding.WorkspacePath)
+			}
 		}
 	}
-	record, err := defaultProductConversationRegistryStore().resolveOrCreate(r.Context(), userID, profile, binding, preferredSessionID)
+	store := defaultProductConversationRegistryStore()
+	record, err := store.resolveOrCreate(r.Context(), userID, profile, binding, preferredSessionID)
 	if err != nil {
 		return ProductConversationRecord{}, err
+	}
+	// An open Work tab may survive a browser refresh and many backend
+	// deployments. Its authenticated X-Session-ID is the conversation the user
+	// can actually see. If a tab-specific registry slot drifted to another
+	// session, repair it on the send boundary before the agent launches. The
+	// candidate must already exist in this exact project workspace; a caller
+	// cannot use this to nominate an arbitrary or another user's session.
+	if shouldRebindWorkConversation(profile, binding, record, preferredSessionID, preferredSessionVerifiedForWorkspace) {
+		record, err = store.switchTo(r.Context(), userID, profile, binding, preferredSessionID, true)
+		if err != nil {
+			return ProductConversationRecord{}, fmt.Errorf("restore open Work conversation: %w", err)
+		}
 	}
 	if !api.canUseSessionIDForQuery(r, record.SessionID) {
 		return ProductConversationRecord{}, fmt.Errorf("product conversation session belongs to another user")
 	}
 	return record, nil
+}
+
+func shouldRebindWorkConversation(
+	profile agentprofiles.Profile,
+	binding productConversationBinding,
+	record ProductConversationRecord,
+	preferredSessionID string,
+	verifiedForWorkspace bool,
+) bool {
+	if !strings.EqualFold(strings.TrimSpace(profile.ID), "work") || !verifiedForWorkspace {
+		return false
+	}
+	// The base project key is the permanent Builder/current-project slot and is
+	// governed by product.json. Only tab-specific keys may follow an already-open
+	// browser tab back to its durable session.
+	if strings.TrimSpace(binding.ResourceID) == "" || strings.TrimSpace(binding.ConversationKey) == strings.TrimSpace(binding.ResourceID) {
+		return false
+	}
+	preferredSessionID = strings.TrimSpace(preferredSessionID)
+	return preferredSessionID != "" && preferredSessionID != strings.TrimSpace(record.SessionID)
 }
 
 // productWorkspaceUserID preserves true per-user isolation where it is

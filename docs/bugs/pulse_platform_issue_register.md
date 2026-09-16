@@ -9,7 +9,7 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
-## Chat reliability — PLAT-178 and PLAT-323
+## Chat reliability — PLAT-178, PLAT-323 and PLAT-324
 
 [PLAT-178](pulse_platform/chat-reliability/plat-178.md) owns durable live-input
 message persistence and native-transcript recovery when the chat UI falls behind
@@ -17,6 +17,10 @@ the coding terminal. [PLAT-323](pulse_platform/chat-reliability/plat-323.md) own
 workflow-local, per-user Builder chat storage, access isolation and the one-time
 legacy migration. Together they define the Chat Reliability category; purely
 visual chat defects remain under frontend-chat.
+[PLAT-324](pulse_platform/chat-reliability/plat-324.md) owns Work/Crew tab
+continuity across browser reloads, backend restarts and deployments: an
+already-open tab must rebind its saved application session before its next
+message can reach a provider conversation.
 
 ## Persistent managed browser ownership — PLAT-322
 

@@ -39,6 +39,25 @@ export function belongsToWorkProject(tab: ChatTab, projectId: string): boolean {
 }
 
 /**
+ * Return the durable registry key for a retained Work chat.
+ *
+ * Early Work tabs used the project id itself as their conversation key. That
+ * key is also the permanent Builder slot, so after a server restart it can
+ * resolve to the project's newest conversation instead of the session shown
+ * in an already-open tab. Give every retained tab its own key, derived from
+ * the project and the tab's durable session id. Newer tab-specific keys remain
+ * unchanged because their logical identity must survive session replacement.
+ */
+export function workConversationResumeKey(tab: ChatTab, projectId: string): string | null {
+  const sessionId = tab.sessionId?.trim()
+  if (!sessionId) return null
+
+  const conversationKey = tab.metadata?.agentProfileConversationKey?.trim()
+  if (conversationKey?.startsWith(`${projectId}:`)) return conversationKey
+  return `${projectId}:${sessionId}`
+}
+
+/**
  * A send can remain queued against Work's permanent Builder after the first
  * message has already opened and activated its conversation tab. Route those
  * stale submissions into that conversation. Without this handoff, every

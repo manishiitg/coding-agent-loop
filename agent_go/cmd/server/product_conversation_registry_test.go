@@ -78,6 +78,31 @@ func TestProductConversationRegistrySeparatesUsersAndKeys(t *testing.T) {
 	}
 }
 
+func TestShouldRebindWorkConversationOnlyForVerifiedTabSpecificSession(t *testing.T) {
+	profile := agentprofiles.Profile{ID: "work"}
+	binding := productConversationBinding{
+		ConversationKey: "project-1:chat-1",
+		ResourceID:      "project-1",
+	}
+	record := ProductConversationRecord{SessionID: "registry-session"}
+
+	if !shouldRebindWorkConversation(profile, binding, record, "open-tab-session", true) {
+		t.Fatal("verified open Work tab should repair a drifted tab-specific registry slot")
+	}
+	if shouldRebindWorkConversation(profile, binding, record, "open-tab-session", false) {
+		t.Fatal("unverified session must never change the registry")
+	}
+	if shouldRebindWorkConversation(profile, productConversationBinding{
+		ConversationKey: "project-1",
+		ResourceID:      "project-1",
+	}, record, "open-tab-session", true) {
+		t.Fatal("the permanent Builder slot must remain governed by the project manifest")
+	}
+	if shouldRebindWorkConversation(agentprofiles.Profile{ID: "video-studio"}, binding, record, "open-tab-session", true) {
+		t.Fatal("the Work-specific compatibility repair must not affect other products")
+	}
+}
+
 func TestProductConversationRegistryBindsVerifiedHistoryToNewProjectChatKey(t *testing.T) {
 	store, _ := memoryProductConversationStore()
 	profile := routeTestProfile("work", true, "")

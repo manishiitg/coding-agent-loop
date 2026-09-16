@@ -1144,6 +1144,44 @@ if [ "$WITH_FRONTEND" = true ]; then
     echo "✅ Electron log file truncated: $ELECTRON_LOG_PATH"
 fi
 
+# Workflow Builder chats historically lived directly under conversation/<date>.
+# A local installation has one authenticated owner ("default"), so claim those
+# files for that owner before startup. The migration is idempotent and only
+# scans the legacy date folders; production deployment runs the same script
+# separately with an explicit multi-user owner map.
+run_local_builder_chat_migration() {
+    local migration_script="${SCRIPT_DIR}/../scripts/migrate_workflow_builder_chats.py"
+    local repo_workspace_docs="${SCRIPT_DIR}/../workspace-docs"
+    local migration_workspace_root=""
+
+    if [ -n "$WORKSPACE_DOCS_PATH_FROM_SHELL" ]; then
+        migration_workspace_root="$WORKSPACE_DOCS_PATH_FROM_SHELL"
+    elif [ -d "$repo_workspace_docs" ] && [ -n "$(ls -A "$repo_workspace_docs" 2>/dev/null)" ]; then
+        migration_workspace_root="$repo_workspace_docs"
+    elif [ -n "${WORKSPACE_DOCS_PATH:-}" ] && [ -d "$WORKSPACE_DOCS_PATH" ]; then
+        migration_workspace_root="$WORKSPACE_DOCS_PATH"
+    fi
+
+    if [ -z "$migration_workspace_root" ] || [ ! -d "$migration_workspace_root/Workflow" ]; then
+        echo "ℹ️  No local legacy Workflow Builder chats to migrate"
+        return 0
+    fi
+    migration_workspace_root="$(cd "$migration_workspace_root" && pwd)"
+    echo "🔄 Checking local Workflow Builder chat migration..."
+    if ! python3 "$migration_script" \
+        --workspace-root "$migration_workspace_root" \
+        --default-owner-id "${DEFAULT_USER_ID:-default}" \
+        --default-owner-username "Local user" \
+        --apply >> "$LOG_PATH" 2>&1; then
+        echo "❌ Local Workflow Builder chat migration failed. Check: $LOG_PATH"
+        tail -20 "$LOG_PATH"
+        return 1
+    fi
+    echo "✅ Local Workflow Builder chat migration complete"
+}
+
+run_local_builder_chat_migration || exit 1
+
 # Log rotation cap (used by background daemon)
 LOG_ROTATE_LINES=500000
 

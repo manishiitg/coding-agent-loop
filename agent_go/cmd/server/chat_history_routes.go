@@ -168,7 +168,13 @@ func chatHistoryVisibleTo(userID, viewerID string, platformAdmin bool) bool {
 	_ = platformAdmin // retained in the signature for compatibility with callers
 	userID = strings.TrimSpace(userID)
 	viewerID = strings.TrimSpace(viewerID)
-	return userID != "" && userID != "default" && viewerID != "" && userID == viewerID
+	if userID == "" || viewerID == "" || userID != viewerID {
+		return false
+	}
+	// "default" is the real authenticated owner of a local single-user
+	// installation. On a multi-user server it instead denotes unattributed
+	// legacy/system data and must never become visible to a signed-in user.
+	return userID != "default" || !IsMultiUserMode()
 }
 
 func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, platformAdmin bool) []ChatHistorySession {
@@ -211,13 +217,7 @@ func chatHistoryConversationIdentity(data []byte) (userID, username string) {
 }
 
 func chatHistoryCanResume(userID, viewerID string, platformAdmin bool) bool {
-	_ = platformAdmin
-	userID = strings.TrimSpace(userID)
-	viewerID = strings.TrimSpace(viewerID)
-	if userID == "" || userID == "default" {
-		return false
-	}
-	return viewerID != "" && userID == viewerID
+	return chatHistoryVisibleTo(userID, viewerID, platformAdmin)
 }
 
 func workflowPathFromBuilderConversation(conversationPath string) string {

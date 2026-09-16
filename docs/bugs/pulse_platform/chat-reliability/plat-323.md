@@ -33,6 +33,11 @@
    supplied, avoiding both cross-user disclosure and misleading ownership.
 5. Work/Crew product storage is unaffected: the migration scans workflow
    Builder paths only and does not rewrite Crew or `_users` product data.
+6. The native single-user launcher is a deliberate exception to legacy
+   quarantine: its authenticated owner is `default`, so
+   `run_server_with_logging.sh` idempotently claims legacy Builder chats into
+   `users/default` before startup. Multi-user deployments still require an
+   explicit owner map and continue to quarantine ambiguous records.
 
 ## One-time migration
 

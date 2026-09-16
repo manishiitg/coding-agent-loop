@@ -39,6 +39,7 @@ func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) 
 }
 
 func TestVisibleSharedBuilderHistoryIsPrivateEvenForPlatformAdmin(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
 	sessions := []ChatHistorySession{
 		{SessionID: "mine", UserID: "member-1"},
 		{SessionID: "theirs", UserID: "member-2"},
@@ -60,6 +61,27 @@ func TestVisibleSharedBuilderHistoryIsPrivateEvenForPlatformAdmin(t *testing.T) 
 	adminView := visibleChatHistorySessions(sessions, "admin-1", true)
 	if len(adminView) != 0 {
 		t.Fatalf("admin saw %d other-user chats, want none", len(adminView))
+	}
+}
+
+func TestVisibleSharedBuilderHistoryAllowsDefaultOwnerInSingleUserMode(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	sessions := []ChatHistorySession{
+		{SessionID: "local", UserID: "default"},
+		{SessionID: "other", UserID: "member-2"},
+	}
+
+	visible := visibleChatHistorySessions(sessions, "default", false)
+	if len(visible) != 1 || visible[0].SessionID != "local" {
+		t.Fatalf("single-user view = %#v, want local default-owner chat", visible)
+	}
+	if !chatHistoryCanResume("default", "default", false) {
+		t.Fatal("single-user default owner must be able to resume its chat")
+	}
+
+	t.Setenv("MULTI_USER_MODE", "true")
+	if chatHistoryCanResume("default", "default", false) {
+		t.Fatal("multi-user legacy/default chat must not be resumable")
 	}
 }
 

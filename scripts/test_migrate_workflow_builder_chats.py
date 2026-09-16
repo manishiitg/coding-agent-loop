@@ -65,6 +65,37 @@ class WorkflowBuilderChatMigrationTest(unittest.TestCase):
             record = json.loads(destination.read_text(encoding="utf-8"))
             self.assertEqual(record["username"], "System / legacy")
 
+    def test_single_user_default_owner_claims_unowned_and_legacy_default_chats(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            conversation = root / "Workflow" / "demo" / "builder" / "conversation"
+            unowned = conversation / "2026-09-15" / "session-unowned-conversation.json"
+            legacy_default = conversation / "2026-09-16" / "session-default-conversation.json"
+            unowned.parent.mkdir(parents=True)
+            legacy_default.parent.mkdir(parents=True)
+            unowned.write_text(json.dumps({"session_id": "unowned"}), encoding="utf-8")
+            legacy_default.write_text(
+                json.dumps({"session_id": "default", "user_id": "default", "username": "System / legacy"}),
+                encoding="utf-8",
+            )
+
+            planned, changed = migration.migrate(root, {}, True, "default", "Local user")
+
+            self.assertEqual((planned, changed), (2, 2))
+            for source in (unowned, legacy_default):
+                destination = conversation / "users" / "default" / source.parent.name / source.name
+                record = json.loads(destination.read_text(encoding="utf-8"))
+                self.assertEqual(record["user_id"], "default")
+                self.assertEqual(record["username"], "Local user")
+                self.assertFalse(source.exists())
+
+    def test_default_owner_id_must_be_path_safe(self):
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / "Workflow").mkdir()
+            with self.assertRaises(ValueError):
+                migration.migrate(root, {}, False, "../escape", "Local user")
+
     def test_work_and_crew_project_chats_are_out_of_scope(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

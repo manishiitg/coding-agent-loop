@@ -3,6 +3,8 @@
 
 Dry-run is the default. Use --apply after reviewing the plan. Ambiguous chats
 are moved to conversation/system; provide --owner-map to repair known owners.
+Single-user installations may instead pass --default-owner-id so unattributed
+legacy chats are assigned to that installation's sole authenticated user.
 
 Owner map format:
   {"<session-id>": {"user_id": "<id>", "username": "<display name>"}}
@@ -79,7 +81,18 @@ def index_owner(index: dict[str, Any], relative_path: str, session_id: str) -> t
     return "", ""
 
 
-def migrate(workspace_root: Path, owner_map: dict[str, dict[str, str]], apply: bool) -> tuple[int, int]:
+def migrate(
+    workspace_root: Path,
+    owner_map: dict[str, dict[str, str]],
+    apply: bool,
+    default_owner_id: str = "",
+    default_owner_username: str = "",
+) -> tuple[int, int]:
+    default_owner_id = default_owner_id.strip()
+    default_owner_username = default_owner_username.strip()
+    if default_owner_id and not SAFE_USER_ID.fullmatch(default_owner_id):
+        raise ValueError(f"invalid default owner id: {default_owner_id!r}")
+
     planned = changed = 0
     workflow_root = workspace_root / "Workflow"
     if not workflow_root.is_dir():
@@ -117,8 +130,12 @@ def migrate(workspace_root: Path, owner_map: dict[str, dict[str, str]], apply: b
                 if not user_id:
                     user_id, index_username = index_owner(index, source_rel, session_id)
                     username = username or index_username
+                if not user_id and default_owner_id:
+                    user_id = default_owner_id
+                    username = default_owner_username
 
-                if user_id and user_id != "default" and SAFE_USER_ID.fullmatch(user_id):
+                explicitly_owned_default = user_id == default_owner_id and bool(default_owner_id)
+                if user_id and (user_id != "default" or explicitly_owned_default) and SAFE_USER_ID.fullmatch(user_id):
                     destination = conversation_root / "users" / user_id / date_dir.name / source.name
                     record["user_id"] = user_id
                     if username:
@@ -181,11 +198,19 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--workspace-root", type=Path, default=Path(os.environ.get("WORKSPACE_DOCS_PATH", "workspace-docs")))
     parser.add_argument("--owner-map", type=Path)
+    parser.add_argument("--default-owner-id", default="", help="assign otherwise-unowned chats to this single-user owner")
+    parser.add_argument("--default-owner-username", default="", help="display name used with --default-owner-id")
     parser.add_argument("--apply", action="store_true", help="perform the migration (default is dry-run)")
     args = parser.parse_args()
 
     try:
-        planned, changed = migrate(args.workspace_root.resolve(), load_owner_map(args.owner_map), args.apply)
+        planned, changed = migrate(
+            args.workspace_root.resolve(),
+            load_owner_map(args.owner_map),
+            args.apply,
+            args.default_owner_id,
+            args.default_owner_username,
+        )
     except Exception as exc:  # keep operator output concise and non-destructive
         print(f"ERROR: {exc}", file=sys.stderr)
         return 1

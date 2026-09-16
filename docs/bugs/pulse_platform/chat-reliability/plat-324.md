@@ -235,3 +235,13 @@ with the live EventStore and republishes only missing assistant rows. This makes
 refresh and deployment recovery repair answers that were persisted before the
 new server process started, as well as answers recovered during the current
 process.
+
+Live verification then exposed a final timing race in the same Cursor path.
+The reconciliation scheduler stopped as soon as any transcript change was
+observed, even when that change contained only progress, and its three retries
+ended about two seconds after completion. Cursor can flush the final assistant
+message later than that. The scheduler now continues a bounded series of
+reconciliations for roughly fifteen seconds after completion, even when an
+earlier pass recovered progress. The existing occurrence-count deduplication
+makes those follow-up reads idempotent while ensuring the delayed final is
+published to Chat and the session reaches its ready state.

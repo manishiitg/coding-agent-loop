@@ -55,8 +55,10 @@ type claudeTranscriptContentBlock struct {
 // scheduleWorkflowBuilderNativeTranscriptSync closes the persistence gap for
 // retained live-input turns. The turn-completion observer must stay fast, so
 // transcript I/O runs off-path and is coalesced per session. Claude normally
-// flushes its JSONL before it signals completion; the short retries cover the
-// small race where the completion event wins that flush.
+// usually flushes its native transcript before it signals completion. Cursor
+// can acknowledge completion first and flush the final assistant message a few
+// seconds later, so keep reconciling for a bounded window even when an earlier
+// attempt recovered progress messages.
 func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID string) {
 	if api == nil || strings.TrimSpace(sessionID) == "" {
 		return
@@ -100,15 +102,18 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 			api.nativeTranscriptSyncMu.Unlock()
 		}()
 
-		for attempt, delay := range []time.Duration{0, 300 * time.Millisecond, time.Second} {
+		delays := []time.Duration{0, 300 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+		for attempt, delay := range delays {
 			if delay > 0 {
 				time.Sleep(delay)
 			}
 			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
-			if changed || !supported {
+			if !supported {
 				return
 			}
-			log.Printf("[CHAT_HISTORY] Native transcript sync found no completed assistant reply yet; retrying session=%s attempt=%d", sessionID, attempt+1)
+			if attempt+1 < len(delays) {
+				log.Printf("[CHAT_HISTORY] Native transcript sync reconciliation complete; scheduling follow-up session=%s attempt=%d changed=%t", sessionID, attempt+1, changed)
+			}
 		}
 	}()
 }

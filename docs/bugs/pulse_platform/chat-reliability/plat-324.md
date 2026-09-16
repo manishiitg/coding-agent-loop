@@ -203,3 +203,6 @@ Provider failure still fails the active and pending executions together.
 Regression coverage submits two retained messages before the first completion
 and verifies that the first completion promotes the second, reattaches an
 observer, and does not settle the session until the second completion arrives.
+The formatted chat also suppresses the `conversation_resumed` lifecycle marker;
+older pages remain available through the transcript's existing top pagination
+control, without a misleading divider below the newest restored answer.

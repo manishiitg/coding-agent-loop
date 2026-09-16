@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `follow-up reconciliation refactor implemented and tested locally; not deployed` |
+| Ticket state | `follow-up reconciliation refactor deployed to Confida; fresh-client turn verification pending` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
@@ -320,7 +320,7 @@ appending it.
 
 ## Follow-up reconciliation refactor
 
-Implemented locally on 2026-09-16; not yet deployed:
+Implemented and deployed on 2026-09-16:
 
 - `hydrateTabEventsFromConversation` is now the single ordering boundary for
   persisted UI events, raw events already received through SSE, and the current
@@ -344,8 +344,13 @@ Implemented locally on 2026-09-16; not yet deployed:
 
 Verification: 53 focused restore/conversation tests pass, TypeScript project
 compilation passes, focused ESLint passes, and `git diff --check` is clean.
-Live Confida verification remains pending because this follow-up has not been
-deployed.
+Commit `84a102b2c4de39c1472d3ad7eda686c281257df9` was pushed to `main` and
+deployed as Confida release `confida-84a102b2-20260916134610`. The deployment
+pipeline passed release-asset and bundle-budget checks; `confida-agent`,
+`confida-gateway`, and `confida-workspace` were active; internal agent health
+and the public endpoint returned 200; workspace health was `healthy` with the
+Landlock sandbox available. A hard-refreshed fresh retained turn remains the
+final user-visible verification.
 
 ## Out of scope
 
@@ -361,8 +366,8 @@ deployed.
 ## Verification
 
 The original PLAT-178 repair completed build, unit, deployment-health, and live
-hard-reload verification. The follow-up reconciliation refactor above is only
-locally verified and still requires deployment plus a fresh retained-turn
+hard-reload verification. The follow-up reconciliation refactor above is now
+deployed and healthy; it still requires a hard-refreshed fresh retained-turn
 check before this recurrence can be closed.
 
 - `go build ./...` clean.

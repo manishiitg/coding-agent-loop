@@ -296,15 +296,18 @@ func providerModelIDs(provider string) []string {
 func claudeCodeCapabilityModels() []string {
 	ids := providerModelIDs("claude-code")
 	if len(ids) == 0 {
+		// Mirrors claudecode.knownClaudeCodeModels (multi-llm-provider-go) as a
+		// safety net if that metadata source is ever unavailable. Keep in sync
+		// with it -- this fallback going stale is exactly what happened when
+		// the 4.x model family was retired in favor of Claude 5 (this list
+		// still named claude-opus-4-8/4-7/4-6 and claude-sonnet-4-6 for
+		// months after they stopped being offered).
 		return []string{
 			"claude-code",
 			"claude-fable-5-1",
 			"claude-opus-5",
-			"claude-opus-4-8",
-			"claude-opus-4-7",
-			"claude-opus-4-6",
 			"claude-sonnet-5",
-			"claude-sonnet-4-6",
+			"claude-haiku-4-5-20251001",
 		}
 	}
 	return ids

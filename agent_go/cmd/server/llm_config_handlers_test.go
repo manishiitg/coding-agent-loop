@@ -59,22 +59,25 @@ func TestLLMDiscoveryHTTPShowsCursorLoginRequired(t *testing.T) {
 
 func TestClaudeCodeDiscoveryOptionsIncludeManualNewModels(t *testing.T) {
 	options := discoveryModelOptions("claude-code")
-	if !containsLLMCapabilityString(options, "claude-fable-5-1") {
-		t.Fatalf("claude-code options = %v, want claude-fable-5-1", options)
-	}
-	if !containsLLMCapabilityString(options, "claude-opus-5") {
-		t.Fatalf("claude-code options = %v, want claude-opus-5", options)
-	}
-	for _, modelID := range []string{"claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6"} {
+	// Claude 5 family (current, from claudecode.GetAllClaudeCodeModels in
+	// multi-llm-provider-go) -- the 4.x models this test asserted before
+	// (claude-opus-4-8/4-7/4-6, claude-sonnet-4-6) were retired and are no
+	// longer offered; keep this list in sync with that source, not the
+	// other way around.
+	for _, modelID := range []string{
+		"claude-fable-5-1",
+		"claude-opus-5",
+		"claude-sonnet-5",
+		"claude-haiku-4-5-20251001",
+	} {
 		if !containsLLMCapabilityString(options, modelID) {
 			t.Fatalf("claude-code options = %v, want %s", options, modelID)
 		}
 	}
-	if !containsLLMCapabilityString(options, "claude-sonnet-5") {
-		t.Fatalf("claude-code options = %v, want claude-sonnet-5", options)
-	}
-	if !containsLLMCapabilityString(options, "claude-sonnet-4-6") {
-		t.Fatalf("claude-code options = %v, want claude-sonnet-4-6", options)
+	for _, modelID := range []string{"claude-opus-4-8", "claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6"} {
+		if containsLLMCapabilityString(options, modelID) {
+			t.Fatalf("claude-code options = %v, want retired model %s absent", options, modelID)
+		}
 	}
 	if !containsLLMCapabilityString(options, "high") {
 		t.Fatalf("claude-code options = %v, want tier aliases preserved", options)

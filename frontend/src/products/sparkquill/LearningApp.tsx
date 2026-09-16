@@ -3682,7 +3682,17 @@ export default function LearningApp() {
                       key={item.id}
                       type="button"
                       className={`engine-card ${engine === item.id ? 'is-selected' : ''} ${status.ready ? '' : 'is-unavailable'}`}
-                      onClick={() => { setEngine(item.id); setTestState('idle'); setTestMessage('') }}
+                      onClick={() => {
+                        setEngine(item.id)
+                        setTestState('idle')
+                        setTestMessage('')
+                        // Take the parent straight to sign-in on the first tap instead of
+                        // making them select the card, then find a separate button below.
+                        const alreadySigningIn = guidedSession?.status === 'running' && guidedSession.provider === item.id
+                        if (!status.ready && item.runtime_available !== false && GUIDED_SETUP_ENGINES.has(item.id) && !alreadySigningIn) {
+                          void startEngineSignIn(item.id)
+                        }
+                      }}
                     >
                       <span className="engine-icon"><Sparkles size={24} /></span>
                       <span className="engine-content">

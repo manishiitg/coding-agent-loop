@@ -4,8 +4,8 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | unassigned |
-| Ticket state | `implementation complete; Confida deploy/live reverify pending` |
+| Assigned agent | Codex |
+| Ticket state | `implementation complete; Confida deployment in progress` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
@@ -143,7 +143,7 @@ to the substack workflow or to this one incident.
 
 ## Fix implemented
 
-Three independent gaps were identified. All three are now implemented:
+Four independent gaps were identified. All four are now implemented:
 
 1. **Persist every provider-confirmed live-delivery user message.** Both
    `/api/query` retained delivery and `/api/live-input` now call the same
@@ -206,10 +206,31 @@ Three independent gaps were identified. All three are now implemented:
    unchanged, so thinking can never satisfy retained-turn completion or appear
    as the final answer.
 
+4. **Always reconcile interactive workflow chats with durable history.** A
+   later reproduction in the same Confida session exposed a frontend-only
+   restore race after the backend fixes above had correctly persisted the
+   answer. The terminal contained the completed judge scorecard (`PASS`,
+   `0.95 / 1.0`, seven Langfuse scores and `judge_scorecard.md`) and the durable
+   `conversation_history` also contained that answer plus the next
+   `dont add into langfuse` exchange, while Chat stopped at the older
+   “workflow execution is currently running” response. The persisted
+   `ui_events` array was capped at 200 and ended before those durable turns.
+   Workflow restoration treated any non-empty volatile event array as fully
+   hydrated, so it never requested the authoritative conversation history.
+
+   Interactive workflow tabs now reconcile with durable history even when a
+   volatile event tail is present; `hydrateTabEvents` then deduplicates and
+   merges that live tail so tool/progress events remain visible. Entering
+   Formatted view also performs the same reconciliation, covering refreshes
+   that initially reopen in Terminal view. Read-only schedule tabs retain the
+   cheaper empty-only hydration rule.
+
 ## Still pending
 
-- Deploy to Confida and reproduce a retained Pi turn end-to-end, verifying the
-  user message and final answer both survive refresh and resume.
+- Deploy to Confida and verify session
+  `61247bd2-347b-4776-982f-e158e84f9ad6` restores the completed scorecard and
+  following exchange in Formatted view after a refresh and after switching
+  from Terminal view.
 - Not investigating why the tmux pane died in this specific incident — the
   transcript's own last entry (`<local-command-stdout>Bye!</local-command-stdout>`)
   suggests an intentional `/bye`/exit rather than a crash, but the fix
@@ -237,6 +258,11 @@ against a real restore).
   it is emitted exactly once as progress, and proves it never enters the
   final-answer message stream. The shared retained-progress and completion
   watcher suites also pass for all retained providers.
+- Frontend regression `workflowTabsNeedingHydration` proves an interactive
+  workflow-builder tab with a non-empty capped volatile tail still requests
+  durable history, while a populated read-only schedule remains untouched.
+  The focused session-restore/hydration suite passes (19 tests), along with
+  TypeScript compilation and focused ESLint.
 - New tests in `claude_native_transcript_sync_test.go`: working-directory
   slug encoding matches the real scheme; text extraction correctly keeps
   plain-string/`.text`-block content and drops `tool_use`/`tool_result`/

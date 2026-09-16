@@ -752,25 +752,38 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const tabEvents = useChatStore((state) =>
     activeSessionId ? state.tabEvents[activeSessionId] || EMPTY_EVENTS : EMPTY_EVENTS
   )
-  const productTranscriptHydratedRef = useRef<string | null>(null)
+  const formattedTranscriptHydratedRef = useRef<string | null>(null)
   useEffect(() => {
-    const workspacePath = activeTab?.metadata?.agentProfileWorkspace
+    if (activeEventViewMode !== 'formatted') return
+    const isVideoStudio = activeTab?.metadata?.agentProfileId === 'video-studio'
+    const isWorkflowChat = activeTab?.metadata?.mode === 'workflow'
+    if (!isVideoStudio && !isWorkflowChat) return
+
+    const workspacePath = activeTab?.metadata?.agentProfileWorkspace ||
+      (isWorkflowChat ? getActivePreset('workflow')?.selectedFolder?.filepath : undefined)
     if (
-      activeTab?.metadata?.agentProfileId !== 'video-studio' ||
       !activeSessionId ||
-      !workspacePath ||
-      productTranscriptHydratedRef.current === activeSessionId
+      (isVideoStudio && !workspacePath) ||
+      formattedTranscriptHydratedRef.current === activeSessionId
     ) return
-    productTranscriptHydratedRef.current = activeSessionId
+    formattedTranscriptHydratedRef.current = activeSessionId
     void hydrateTabEvents(activeSessionId, {
       workspacePath,
       fallbackToChatHistory: true,
       preferChatHistory: true,
+      includeUiEvents: true,
     }).catch((error) => {
-      productTranscriptHydratedRef.current = null
-      console.error('[SessionRestore] Video Studio transcript hydration failed:', error)
+      formattedTranscriptHydratedRef.current = null
+      console.error('[SessionRestore] Formatted transcript hydration failed:', error)
     })
-  }, [activeSessionId, activeTab?.metadata?.agentProfileId, activeTab?.metadata?.agentProfileWorkspace])
+  }, [
+    activeEventViewMode,
+    activeSessionId,
+    activeTab?.metadata?.agentProfileId,
+    activeTab?.metadata?.agentProfileWorkspace,
+    activeTab?.metadata?.mode,
+    getActivePreset,
+  ])
   const activeStreamingText = useChatStore((state) =>
     activeSessionId ? state.streamingText[activeSessionId] || '' : ''
   )

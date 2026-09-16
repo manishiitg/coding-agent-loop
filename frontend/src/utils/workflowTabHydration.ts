@@ -14,15 +14,19 @@ export function isReadOnlyWorkflowRunTab(tab: Pick<ChatTab, 'metadata'>): boolea
 }
 
 /**
- * The persisted workflow tabs whose event buffer is empty and therefore need
- * their transcript pulled back after a page load or preset switch.
+ * The persisted workflow tabs whose durable transcript must be pulled back
+ * after a page load or preset switch.
  *
- * Workflow events live only in the backend's in-memory store and in the
- * durable conversation file, never in localStorage, so every persisted tab
- * comes back empty. Read-only scheduled/bot run tabs are deliberately
- * INCLUDED: they used to be filtered out, which left a finished run's tab on
- * "Restoring previous session..." forever after the backend restarted (its
- * in-memory events gone, its on-disk transcript never asked for).
+ * An interactive builder tab is always included, even when it already has
+ * events. The backend event store is a bounded transport cache, so its
+ * non-empty tail can end before newer messages that native-transcript sync has
+ * already written to durable conversation history. Treating "has any event"
+ * as "fully hydrated" made refresh restore a stale answer and omit the newest
+ * user/final turns.
+ *
+ * Read-only scheduled/bot run tabs are included only when empty: they used to
+ * be filtered out entirely, which left a finished run's tab on "Restoring
+ * previous session..." forever after the backend restarted.
  */
 export function workflowTabsNeedingHydration<T extends HydratableTab>(
   tabs: T[],
@@ -31,7 +35,7 @@ export function workflowTabsNeedingHydration<T extends HydratableTab>(
   return tabs.filter(tab =>
     tab.metadata?.mode === 'workflow' &&
     !!tab.sessionId &&
-    getTabEvents(tab.sessionId).length === 0,
+    (tab.metadata?.isViewOnly !== true || getTabEvents(tab.sessionId).length === 0),
   )
 }
 

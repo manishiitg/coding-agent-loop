@@ -821,8 +821,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   const workflowHydrationsInFlight = useRef(new Map<string, Promise<void>>())
   const rehydrateWorkflowTabs = useCallback(async (tabs: ChatTab[], currentWorkspacePath?: string | null) => {
-    const tabsToHydrate = tabs.filter(tab =>
-      tab.sessionId && useChatStore.getState().getTabEvents(tab.sessionId).length === 0
+    // Interactive builder tabs must reconcile against durable history even
+    // when the volatile EventStore already supplied a non-empty tail. That
+    // tail is capped and can stop before transcript-synced final messages.
+    const tabsToHydrate = workflowTabsNeedingHydration(
+      tabs,
+      sessionId => useChatStore.getState().getTabEvents(sessionId),
     )
     if (tabsToHydrate.length === 0) return 0
 

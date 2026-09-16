@@ -6,7 +6,6 @@ import {
   ShieldCheck,
   Activity,
   BellRing,
-  BookMarked,
   CalendarClock,
   ChevronDown,
   Gauge,
@@ -35,9 +34,10 @@ import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'playbooks', 'flow', 'costs', 'files', 'browser', 'schedules', 'execution-logs'])
-const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['learnings', 'knowledgebase', 'database', 'evaluation', 'backup', 'publish', 'notify'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])
+const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
+  playbooks: 'Playbooks',
   skills: 'Skills',
   secrets: 'Secrets',
   mcp: 'MCP servers',
@@ -210,7 +210,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => PRIMARY_TOOLBAR_VIEW_IDS.has(view.id) && view.id !== 'report')
   const operationsWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => OPERATIONS_TOOLBAR_VIEW_IDS.has(view.id))
   const capabilityViewDefinitions = useMemo(
-    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'playbooks'),
+    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
     [],
   )
 
@@ -520,20 +520,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </TooltipTrigger>
                   <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
                 </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => openWorkspaceView('playbooks')}
-                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'playbooks' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label="Playbooks"
-                      aria-pressed={activeWorkspaceView === 'playbooks'}
-                    >
-                      <BookMarked className="h-3.5 w-3.5" />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>Playbooks</p></TooltipContent>
-                </Tooltip>
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
                   const active = view === activeWorkspaceView
                   const viewButton = (
@@ -579,7 +565,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Ops"
             open={openToolbarMenu === 'ops'}
             onToggle={() => toggleToolbarMenu('ops')}
-            title="Operations: learnings, knowledge, data, evaluation, backup, publish and notifications"
+            title="Operations: costs, learnings, data, evaluation, backup, publish and notifications"
           >
             {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
               return <ToolbarPopoverItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openFromToolbarMenu(view)} />
@@ -598,7 +584,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openToolbarMenu === 'setup'}
             onToggle={() => toggleToolbarMenu('setup')}
-            title="Setup: skills, secrets, MCP servers, LLM, bots, folders and access"
+            title="Setup: playbooks, skills, secrets, MCP servers, LLM, bots, folders and access"
           >
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
               const active = workflowWorkspaceView === id

@@ -927,6 +927,56 @@ func TestWorkflowScheduleListExposesWorkshopMode(t *testing.T) {
 	}
 }
 
+func TestWorkflowScheduleListExposesEffectiveWebhookConcurrency(t *testing.T) {
+	workspacePath := "Workflow/webhook-concurrency"
+	manifest := &WorkflowManifest{
+		SchemaVersion: WorkflowManifestSchemaVersion,
+		ID:            "webhook-concurrency",
+		Label:         "Webhook concurrency",
+		Schedules: []WorkflowSchedule{{
+			ID:              "review-hook",
+			Name:            "Review hook",
+			ScheduleType:    "webhook",
+			Timezone:        "UTC",
+			Enabled:         true,
+			Mode:            "workshop",
+			WorkshopMode:    "run",
+			CollisionPolicy: "skip",
+			ConcurrencyMode: "sequential",
+		}},
+	}
+	manifestJSON, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": string(manifestJSON),
+	}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+
+	out, err := (&StreamingAPI{}).buildSchedulerCallbacks().ListSchedules(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatalf("ListSchedules() error = %v", err)
+	}
+	for _, want := range []string{
+		"- **Type**: webhook",
+		"- **Delivery concurrency**: parallel, up to 4 active deliveries (server-enforced)",
+		"- **Overflow policy**: retryable busy response (HTTP 503 with Retry-After)",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("webhook schedule list missing %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "- **Concurrency mode**: sequential") || strings.Contains(out, "- **Collision policy**: skip") {
+		t.Fatalf("webhook schedule list exposed inapplicable schedule policy:\n%s", out)
+	}
+	response := buildJobResponse(workspacePath, manifest, manifest.Schedules[0], ScheduleRuntimeState{}, WorkflowScheduleMissedStatus{})
+	if response.MaxConcurrency != maxWebhookConcurrency || response.ConcurrencyMode != "" || response.CollisionPolicy != "" {
+		t.Fatalf("webhook API policy = max %d, concurrency %q, collision %q", response.MaxConcurrency, response.ConcurrencyMode, response.CollisionPolicy)
+	}
+}
+
 // TestUpdateScheduleClearsMessagesOnlyWhenExplicitlySet pins PLAT-097:
 // update_schedule(messages=[]) or update_schedule(messages=null) must clear a
 // schedule's messages back to the route-based default, and omitting the field

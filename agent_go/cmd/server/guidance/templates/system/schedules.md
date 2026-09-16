@@ -4,7 +4,7 @@ For the operational cheat sheet on creating / editing / deleting schedules
 (cron syntax and workshop run payload shape), see this section.
 
 - **Tools**: `list_schedules`, `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
-- To view existing schedules, call `list_schedules`; it includes schedule IDs, type, mode, workshop mode, cron/calendar shape, timezone, enabled state, groups, and recent runtime state. `get_workflow_config` also includes a Schedules section when you are already inspecting broader workflow settings.
+- To view existing schedules, call `list_schedules`; it includes schedule IDs, type, mode, workshop mode, cron/calendar shape, timezone, enabled state, groups, recent runtime state, and the server-enforced delivery concurrency for webhook triggers. `get_workflow_config` also includes a Schedules section when you are already inspecting broader workflow settings.
 - **Entry shape**:
   ```
   { "id": "...", "name": "...", "description": "...",

@@ -101,6 +101,7 @@ type workflowWebhookResponse struct {
 	Path             string                          `json:"path"`
 	RouteSelections  map[string]string               `json:"route_selections"`
 	GroupNames       []string                        `json:"group_names"`
+	MaxConcurrency   int                             `json:"max_concurrency"`
 	Secret           string                          `json:"secret,omitempty"`
 }
 
@@ -158,7 +159,7 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 	if s.Webhook != nil {
 		authMode = s.Webhook.AuthMode
 	}
-	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames}
+	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames, MaxConcurrency: maxWebhookConcurrency}
 	if s.Webhook != nil {
 		out.StepID = s.Webhook.StepID
 		out.InputMode = s.Webhook.InputMode

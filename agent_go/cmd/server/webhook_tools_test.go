@@ -47,6 +47,9 @@ func TestBuilderWebhookToolCreatesAndTestsSignedPing(t *testing.T) {
 	if created.InputMode != "envelope" || len(created.AllowedVariables) != 1 {
 		t.Fatal("builder configuration lost")
 	}
+	if created.MaxConcurrency != maxWebhookConcurrency {
+		t.Fatalf("max concurrency = %d, want %d", created.MaxConcurrency, maxWebhookConcurrency)
+	}
 	store, err := schedulerstate.Open(filepath.Join(t.TempDir(), "state.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -64,7 +67,7 @@ func TestBuilderWebhookToolCreatesAndTestsSignedPing(t *testing.T) {
 		t.Fatalf("builder status: %s %v", status, err)
 	}
 	output, err = tool.exec(context.Background(), map[string]interface{}{"action": "list"})
-	if err != nil || strings.Contains(output, created.Secret) {
+	if err != nil || strings.Contains(output, created.Secret) || !strings.Contains(output, `"max_concurrency":4`) {
 		t.Fatal("list exposed secret or failed")
 	}
 	mappedOutput, mappedErr := tool.exec(context.Background(), map[string]interface{}{

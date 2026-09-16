@@ -10086,14 +10086,19 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if len(sched.RouteSelections) > 0 {
 					sb.WriteString(fmt.Sprintf("- **Route selections**: %v\n", sched.RouteSelections))
 				}
-				if strings.TrimSpace(sched.CollisionPolicy) != "" {
-					sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
+				if scheduleType == "webhook" {
+					sb.WriteString(fmt.Sprintf("- **Delivery concurrency**: parallel, up to %d active deliveries (server-enforced)\n", maxWebhookConcurrency))
+					sb.WriteString("- **Overflow policy**: retryable busy response (HTTP 503 with Retry-After)\n")
+				} else {
+					if strings.TrimSpace(sched.CollisionPolicy) != "" {
+						sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
+					}
+					concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
+					if concurrencyMode == "" {
+						concurrencyMode = "sequential"
+					}
+					sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
 				}
-				concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
-				if concurrencyMode == "" {
-					concurrencyMode = "sequential"
-				}
-				sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
 				if sched.MaxStartDelayMinutes > 0 {
 					sb.WriteString(fmt.Sprintf("- **Maximum start delay**: %d minutes\n", sched.MaxStartDelayMinutes))
 				}

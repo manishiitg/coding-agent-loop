@@ -1164,7 +1164,7 @@ export default function LearningApp() {
   // child's activity chats with their cleanup. Its open state is a per-device
   // convenience remembered in the browser.
   const [chatsRailOpen, setChatsRailOpen] = useState<boolean>(() => {
-    try { return window.localStorage.getItem('sparkquill.chats-rail') !== 'closed' } catch { return true }
+    try { return window.localStorage.getItem('sparkquill.chats-rail') === 'open' } catch { return false }
   })
   const toggleChatsRail = () => {
     setChatsRailOpen((open) => {
@@ -3224,13 +3224,18 @@ export default function LearningApp() {
                       {engines.map((item) => {
                         const status = engineStatus(item)
                         const active = engine === item.id
+                        const canSignIn = !status.ready && item.runtime_available !== false && GUIDED_SETUP_ENGINES.has(item.id)
                         return (
                           <button
                             key={item.id}
                             type="button"
                             className={`fl-settings-engine-card ${active ? 'is-active' : ''}`}
-                            disabled={!status.ready || savingEngine}
+                            disabled={(!status.ready && !canSignIn) || savingEngine}
                             onClick={() => {
+                              if (canSignIn) {
+                                void startEngineSignIn(item.id)
+                                return
+                              }
                               setEngine(item.id)
                               setSavingEngine(true)
                               api.selectEngine('parent', item.id).finally(() => { applyFamilyEngineToOpenTabs('parent', item.id); setSavingEngine(false) })
@@ -3240,12 +3245,23 @@ export default function LearningApp() {
                               <span className="fl-settings-engine-name">{pres(item.id, item.name).name}</span>
                               <span className="fl-settings-engine-blurb">{pres(item.id, item.name).blurb}</span>
                             </span>
-                            <span className={`fl-settings-engine-status ${status.ready ? 'is-ready' : ''}`}>{status.label}</span>
+                            <span className={`fl-settings-engine-status ${status.ready ? 'is-ready' : ''}`}>{canSignIn ? 'Sign in' : status.label}</span>
                             {active && <Check size={16} />}
                           </button>
                         )
                       })}
                     </div>
+                  )}
+                  {guidedError && <p className="fl-note" style={{ color: '#b91c1c' }}>{guidedError}</p>}
+                  {guidedSession && engines.some((item) => item.id === guidedSession.provider) && (
+                    <GuidedProviderTerminal
+                      session={guidedSession}
+                      onFinished={(finished) => {
+                        setGuidedSession(finished)
+                        refreshEngines()
+                      }}
+                      onClose={() => setGuidedSession(null)}
+                    />
                   )}
 
                   {modelInfo && modelInfo.models.length > 0 && (

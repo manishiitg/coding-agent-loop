@@ -211,6 +211,49 @@ untracked PID), and the age of any Singleton lock files present. This is
 diagnostic only — no behavior change — added specifically so the next
 occurrence has hard evidence instead of another round of inference.
 
+## Follow-up 4: the diagnostics immediately found the real bug
+
+The new `[BROWSER_DIAG]` logging paid off on the very next real attempt.
+Right before a `snapshot` that then failed, it logged:
+
+```
+daemonPID=0 daemonAlive=false chromePID=0 chromeAlive=false
+lockFiles=[SingletonLock(age=28s),SingletonSocket(age=28s),SingletonCookie(age=28s)]
+```
+
+`daemonPID=0` means the code never found a `.pid` file at all — not "found
+one and it's dead," but never found one to check, despite Chrome having
+opened successfully 28 seconds earlier and the lock files proving it was
+genuinely running.
+
+`sessionDirs()` (used by `captureChromePID`, `removeSessionFiles`, and
+`killSessionRuntime`'s force-kill fallback) only ever checked
+`$HOME/.agent-browser` and `/tmp/.agent-browser`. But `AGENT_BROWSER_NAMESPACE`
+— set on every fixed-workspace product with a persistent shared profile,
+specifically to isolate daemon sockets/state from other products sharing the
+same host — moves agent-browser's actual bookkeeping to
+`$XDG_RUNTIME_DIR/agent-browser/namespaces/$NAMESPACE/run/`. Confirmed
+directly on the server: that's exactly where the real `.pid`/`.chrome-pid`
+files live; neither of the two locations this code checked has ever had
+anything in them since the namespace was introduced.
+
+Practical effect: `captureChromePID` could never find a daemon PID to read
+Chrome's PID from, so it never recorded one. `killSessionRuntime`'s
+force-kill fallback (steps 2-4 — the path specifically meant to catch an
+already-hung or already-crashed daemon that can't gracefully close itself)
+silently found nothing to kill, every time, on every namespaced deployment.
+This went unnoticed because `gracefulCloseSession` (which shells out to
+agent-browser's own `close` command, resolving its own namespace correctly)
+still worked most of the time — so the *happy path* recovered fine, and only
+the fallback, the one case that matters most, was silently broken the entire
+time the namespace has been in use.
+
+**Fix**: `sessionDirs()` now checks
+`$XDG_RUNTIME_DIR/agent-browser/namespaces/$AGENT_BROWSER_NAMESPACE/run/`
+first when `AGENT_BROWSER_NAMESPACE` is set, before falling back to the two
+original locations. Added `TestSessionDirsPrefersNamespacedRuntimeDirWhenSet`
+and `TestSessionDirsFallsBackWithoutNamespace`.
+
 ## Related
 
 Earlier rounds of the same investigation (documented only in chat, not yet

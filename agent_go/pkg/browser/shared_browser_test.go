@@ -73,6 +73,32 @@ func TestRemoveStaleChromeSingletonLockNoopWithoutSharedProfile(t *testing.T) {
 	removeStaleChromeSingletonLock("user-0123456789abcdef--browser")
 }
 
+func TestSessionDirsPrefersNamespacedRuntimeDirWhenSet(t *testing.T) {
+	runtimeDir := t.TempDir()
+	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
+	t.Setenv("AGENT_BROWSER_NAMESPACE", "sparkquill")
+
+	dirs := sessionDirs()
+	if len(dirs) == 0 {
+		t.Fatal("expected at least one session dir")
+	}
+	want := filepath.Join(runtimeDir, "agent-browser", "namespaces", "sparkquill", "run")
+	if dirs[0] != want {
+		t.Fatalf("expected namespaced runtime dir first, got %v", dirs)
+	}
+}
+
+func TestSessionDirsFallsBackWithoutNamespace(t *testing.T) {
+	t.Setenv("XDG_RUNTIME_DIR", t.TempDir())
+	t.Setenv("AGENT_BROWSER_NAMESPACE", "")
+
+	for _, dir := range sessionDirs() {
+		if strings.Contains(dir, "namespaces") {
+			t.Fatalf("did not expect a namespaced dir without AGENT_BROWSER_NAMESPACE set: %v", dir)
+		}
+	}
+}
+
 func TestSharedBrowserMapsWorkflowsToSameRuntime(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")

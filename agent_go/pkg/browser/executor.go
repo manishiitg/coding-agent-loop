@@ -1692,9 +1692,35 @@ func isCDPRuntimeStartupError(err error) bool {
 }
 
 // sessionDirs returns the directories where agent-browser stores session files.
+// sessionDirs returns every directory that might hold agent-browser's own
+// per-session bookkeeping files (.pid, .chrome-pid, .sock, ...), in the same
+// order agent-browser itself would resolve them.
+//
+// When AGENT_BROWSER_NAMESPACE is set (every fixed-workspace product with a
+// persistent shared profile sets this, to isolate daemon sockets/state from
+// other products on the same shared host -- see browserconfig.SharedProfile),
+// agent-browser puts these files under
+// $XDG_RUNTIME_DIR/agent-browser/namespaces/$NAMESPACE/run/, not under
+// $HOME/.agent-browser or /tmp/.agent-browser. Before this fix, this function
+// never checked the namespaced location at all: captureChromePID could never
+// find a daemon PID to read, so it never recorded Chrome's PID; and
+// killSessionRuntime's force-kill fallback (steps 2-4, the path specifically
+// meant to catch an already-hung or already-crashed daemon that can't
+// gracefully close itself) silently found nothing to kill every single time,
+// on every namespaced deployment, since the namespace was introduced.
+// gracefulCloseSession still worked (it shells out to agent-browser's own
+// `close` command, which resolves its own namespace correctly), which is
+// exactly why this went unnoticed: the happy path recovered fine, and only
+// the fallback -- the one case that matters most, a daemon too dead to close
+// itself -- was silently broken.
 func sessionDirs() []string {
-	homeDir, _ := os.UserHomeDir()
 	dirs := []string{}
+	if ns := strings.TrimSpace(os.Getenv("AGENT_BROWSER_NAMESPACE")); ns != "" {
+		if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+			dirs = append(dirs, filepath.Join(runtimeDir, "agent-browser", "namespaces", ns, "run"))
+		}
+	}
+	homeDir, _ := os.UserHomeDir()
 	if homeDir != "" {
 		dirs = append(dirs, filepath.Join(homeDir, ".agent-browser"))
 	}

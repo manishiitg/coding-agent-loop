@@ -166,6 +166,20 @@ describe('Pulse slash commands', () => {
     expect(promptBloat?.description.toLowerCase()).toContain('pulse review')
   })
 
+  it('reads review-code reference files one at a time', () => {
+    let submitted = ''
+    findCommand('review-code', 'workflow')?.execute({
+      beforeSlash: '',
+      onSubmit: (message: string) => { submitted = message },
+      workshopMode: 'workshop',
+      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
+    } as CommandContext)
+
+    expect(submitted).toContain('references/code-authoring.md')
+    expect(submitted).toContain('references/scripted.md')
+    expect(submitted).not.toContain('},{')
+  })
+
   it('runs backlog consolidation through typed Pulse lifecycle tools only', () => {
     const command = findCommand('pulse-merge', 'workflow')
     let submitted = ''

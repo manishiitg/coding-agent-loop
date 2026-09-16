@@ -1,6 +1,8 @@
-Design the workflow's reporting UI from the ground up. Load
-`read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"},{"name":"builder-reference","path":"references/html-output.md"}])`
-first and follow it. A workflow report consists of one or more complete HTML
+Design the workflow's reporting UI from the ground up. First load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`,
+then load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/html-output.md"}])`.
+A workflow report consists of one or more complete HTML
 documents under `db/reports/`; `index.html` is the default and the shared top
 toolbar exposes additional documents. Use optional `views.json` only for view
 titles, ordering, and default selection—not as a widget/layout plan. Each

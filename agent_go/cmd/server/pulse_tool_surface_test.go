@@ -472,6 +472,9 @@ func TestSchedulerPulsePromptsNameNoRemovedTool(t *testing.T) {
 		t.Fatal("no scheduler Pulse prompts were collected")
 	}
 	for label, prompt := range prompts {
+		if strings.Contains(prompt, "read_skill") && strings.Contains(prompt, "},{") {
+			t.Errorf("scheduler prompt %q batches multiple read_skill files; issue one call per file", label)
+		}
 		for _, removed := range pulseRemovedToolNames {
 			if strings.Contains(prompt, removed) {
 				t.Errorf("scheduler prompt %q still instructs agents to call removed tool %q", label, removed)

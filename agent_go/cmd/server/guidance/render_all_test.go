@@ -1604,6 +1604,39 @@ func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 	}
 }
 
+// read_skill deliberately accepts one file per call so large references cannot
+// be combined into a result that the coding CLI truncates. Keep generated
+// guidance aligned with that schema: a prompt that batches items guarantees a
+// recoverable but noisy tool failure before the agent can do useful work.
+func TestNoTemplateBatchesReadSkillFiles(t *testing.T) {
+	visited := 0
+	err := fs.WalkDir(templatesFS, "templates", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		body, readErr := templatesFS.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		visited++
+		for lineNumber, line := range strings.Split(string(body), "\n") {
+			if strings.Contains(line, "read_skill") && strings.Contains(line, "},{") {
+				t.Errorf("%s:%d batches multiple read_skill files; issue one call per file", path, lineNumber+1)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded templates: %v", err)
+	}
+	if visited == 0 {
+		t.Fatal("no templates were walked; the embed pattern or path changed")
+	}
+}
+
 // review-improve-log, its migration doc, and its skeleton were all
 // builder/improve.html guidance. improve.html itself was fully retired
 // (Pulse's own DB-backed findings and the SQLite Pulse popup replaced it);

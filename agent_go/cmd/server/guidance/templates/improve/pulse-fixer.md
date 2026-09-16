@@ -14,7 +14,7 @@ promote an observation or bypass evidence.{{end}}{{if .RunFolder}}
 Use `{{.RunFolder}}` as the primary retained run when it is relevant to the
 selected issue's proof boundary.{{end}}
 
-1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-fixer-practices.md"},{"name":"builder-reference","path":"references/fix-verification.md"}])`.
+1. Load and apply `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-fixer-practices.md"}])`, then load and apply `read_skill(skills=[{"name":"builder-reference","path":"references/fix-verification.md"}])`.
 2. Use `pulse_run_id="current"`. Call
    `list_approved_fixer_decisions(workspace_path=<this workflow>)` exactly once
    before ordinary queue selection. Each returned candidate is an **explicit

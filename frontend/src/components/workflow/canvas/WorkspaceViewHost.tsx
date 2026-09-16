@@ -612,6 +612,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     focusStep: (stepId: string) => {
       flowRef.current?.focusStep(stepId)
     },
+    resyncViewport: () => {
+      flowRef.current?.resyncViewport()
+    },
   }), [kind, sharedRefresh, plan])
 
   const data = useMemo<WorkspaceViewData>(() => ({

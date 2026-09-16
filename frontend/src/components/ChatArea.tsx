@@ -834,6 +834,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // live buffer; they are not durable conversation records.
       if (isStreamingEventType(event.type)) return false
 
+      // Resume markers are lifecycle metadata, not chat rows. The transcript
+      // already exposes older durable pages through its top pagination control;
+      // rendering a marker at its event timestamp puts "Previous conversation"
+      // below the newest restored answer after a refresh.
+      if (event.type === 'conversation_resumed') return false
+
       // Auto-notifications deliberately pass through and are compacted by the
       // transcript according to the shared visibility contract.
 

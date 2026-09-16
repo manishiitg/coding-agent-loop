@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	agentevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/pathidentity"
+
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // claudeNativeTranscriptRuntime is the minimal subset of a persisted builder
@@ -170,7 +174,133 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}
+	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current.ConversationHistory, refreshed.ConversationHistory)
 	return true, true
+}
+
+// publishNativeTranscriptRecoveredAssistantMessages closes the live-display
+// half of transcript recovery. Persisting a provider-native reply makes it
+// visible after refresh, but an already-open Chat only observes EventStore.
+// Publish each recovered assistant message as the same whole-message
+// transcript chunk used by normal CLI streaming. This deliberately is not a
+// second completion event: a completion would settle the next queued retained
+// turn when several user messages were submitted together.
+func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) {
+	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+
+	currentCounts := assistantMessageCounts(current)
+	eventCounts := liveAssistantMessageCounts(api.eventStore.GetAllEventsRaw(sessionID))
+	refreshedCounts := make(map[string]int)
+	now := time.Now()
+	for index, message := range refreshed {
+		if !builderConversationRoleIsAssistant(message.Role) {
+			continue
+		}
+		text := builderConversationMessageText(message)
+		key := normalizedAssistantMessageText(text)
+		if key == "" {
+			continue
+		}
+		refreshedCounts[key]++
+		ordinal := refreshedCounts[key]
+		if ordinal <= currentCounts[key] || ordinal <= eventCounts[key] {
+			continue
+		}
+
+		chunk := &agentevents.StreamingChunkEvent{
+			BaseEventData: agentevents.BaseEventData{
+				Timestamp: now,
+				SessionID: sessionID,
+				Component: "coding_agent",
+				Metadata: map[string]interface{}{
+					"source":         "native_transcript_sync",
+					"recovered_live": true,
+				},
+			},
+			Content:    text,
+			ChunkIndex: index,
+			Source:     agentevents.StreamingChunkSourceTranscript,
+		}
+		agentEvent := agentevents.NewAgentEvent(chunk)
+		agentEvent.SessionID = sessionID
+		agentEvent.Component = "coding_agent"
+		api.eventStore.AddEvent(sessionID, storeevents.Event{
+			ID:              fmt.Sprintf("native-transcript-sync-%s-%d", sessionID, index),
+			Type:            string(agentevents.StreamingChunk),
+			Timestamp:       now,
+			SessionID:       sessionID,
+			ExecutionKind:   "main_agent",
+			TerminalOwnerID: "main:" + sessionID,
+			Data:            agentEvent,
+		})
+		eventCounts[key]++
+		log.Printf("[CHAT_HISTORY] Published recovered native assistant reply to live chat session=%s history_index=%d chars=%d", sessionID, index, len(text))
+	}
+}
+
+func builderConversationRoleIsAssistant(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "ai", "assistant":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedAssistantMessageText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func assistantMessageCounts(messages []builderConversationMessage) map[string]int {
+	counts := make(map[string]int)
+	for _, message := range messages {
+		if !builderConversationRoleIsAssistant(message.Role) {
+			continue
+		}
+		if key := normalizedAssistantMessageText(builderConversationMessageText(message)); key != "" {
+			counts[key]++
+		}
+	}
+	return counts
+}
+
+func liveAssistantMessageCounts(events []storeevents.Event) map[string]int {
+	counts := make(map[string]int)
+	for _, event := range events {
+		if event.ExecutionKind != "" && event.ExecutionKind != "main_agent" {
+			continue
+		}
+		payload := eventPayloadMap(event)
+		if len(payload) == 0 {
+			continue
+		}
+		var text string
+		switch event.Type {
+		case "streaming_chunk":
+			if source, _ := payload["source"].(string); !strings.EqualFold(strings.TrimSpace(source), agentevents.StreamingChunkSourceTranscript) {
+				continue
+			}
+			text, _ = payload["content"].(string)
+		case "llm_generation_end":
+			text, _ = payload["content"].(string)
+			if strings.TrimSpace(text) == "" {
+				text, _ = payload["result"].(string)
+			}
+		case "unified_completion", "conversation_end":
+			text, _ = payload["final_result"].(string)
+			if strings.TrimSpace(text) == "" {
+				text, _ = payload["result"].(string)
+			}
+		default:
+			continue
+		}
+		if key := normalizedAssistantMessageText(text); key != "" {
+			counts[key]++
+		}
+	}
+	return counts
 }
 
 // findWorkflowBuilderConversationPathForSession normally resolves through the

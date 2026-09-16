@@ -1088,6 +1088,32 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     : !workspacePaneVisible
       ? 'hidden'
       : `min-h-0 min-w-0 w-full col-start-1 row-start-2 md:w-auto md:col-start-2 md:row-start-2 ${focusedPane === 'chat' ? 'hidden md:block' : ''} ${isWorkspaceViewActive ? 'md:border-l md:border-border' : ''}`
+  // Below md, canvasPaneClassName above toggles this pane between `hidden`
+  // (display:none) and visible as focusedPane changes. Two things inside it
+  // size themselves from their own element-level ResizeObserver rather than
+  // from this pane's own layout: a report's auto-height iframe
+  // (HtmlWidgetFrame's HtmlReportFrame, observing elements inside its own
+  // document) and React Flow's plan canvas (observing its wrapper). Chromium
+  // suspends a display:none iframe's rendering, and neither observer
+  // reliably resumes with an accurate reading once it's un-hidden — the
+  // report's outer scroll container gets stuck at a stale (often zero)
+  // height, and the canvas renders blank at its last size. Both listen for
+  // this window resize and force a fresh measurement instead of trusting
+  // their observer to catch up on its own (HtmlWidgetFrame.tsx; WorkflowCanvas's
+  // resyncViewport).
+  const workspacePaneHiddenByFocus = workspacePaneVisible && focusedPane === 'chat'
+  const previousWorkspacePaneHiddenByFocus = useRef(workspacePaneHiddenByFocus)
+  useEffect(() => {
+    if (previousWorkspacePaneHiddenByFocus.current && !workspacePaneHiddenByFocus) {
+      const id = window.setTimeout(() => {
+        window.dispatchEvent(new Event('resize'))
+        canvasRef.current?.resyncViewport()
+      }, 50)
+      previousWorkspacePaneHiddenByFocus.current = workspacePaneHiddenByFocus
+      return () => window.clearTimeout(id)
+    }
+    previousWorkspacePaneHiddenByFocus.current = workspacePaneHiddenByFocus
+  }, [workspacePaneHiddenByFocus])
 
   // Load execution_defaults from workflow.json when workspace changes
   useEffect(() => {

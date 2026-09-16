@@ -17,14 +17,27 @@ applyRuntimeBranding(window.__APP_RUNTIME_CONFIG__ as Parameters<typeof applyRun
 // so capabilities can't be left empty by frontend-faster-than-backend startup timing.
 void useCapabilitiesStore.getState().fetchCapabilities()
 
+// "ResizeObserver loop completed with undelivered notifications." is a
+// Chromium-only diagnostic, not a real failure: it fires whenever a
+// ResizeObserver callback itself triggers another layout change within the
+// same frame, which this app's canvas/report views (heavy ResizeObserver
+// users) hit routinely. Left uncaptured it drowns out genuine crashes in
+// both the console and main.log — this session lost real time grepping
+// thousands of these lines out by hand to find one actual ReferenceError.
+function isBenignRendererError(message: string): boolean {
+  return message.includes('ResizeObserver loop completed with undelivered notifications')
+}
+
 // Capture uncaught renderer errors so a blank screen always leaves a trace in
 // the Electron main log (<userData>/logs/main.log) — DevTools is often
 // impossible to open at the moment the window blanks out.
 function reportRendererError(kind: string, detail: unknown) {
   try {
+    const message = detail instanceof Error ? detail.message : String(detail)
+    if (isBenignRendererError(message)) return
     const payload = {
       kind,
-      message: detail instanceof Error ? detail.message : String(detail),
+      message,
       stack: detail instanceof Error ? detail.stack : undefined,
       url: window.location.href,
       time: new Date().toISOString(),

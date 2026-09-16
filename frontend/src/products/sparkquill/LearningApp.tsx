@@ -2609,7 +2609,7 @@ export default function LearningApp() {
 
               {drawerTab === 'browser' && (
                 <div className="fl-browser-view">
-                  <WorkflowLiveBrowser workspacePath={FAMILY_WORKSPACE} scopeNoun="project" />
+                  <WorkflowLiveBrowser workspacePath={FAMILY_WORKSPACE} scopeNoun="project" minimal />
                 </div>
               )}
 

@@ -20,7 +20,7 @@ function testBrowserLabel(browser: BrowserSession): string {
 
 type BrowserTab = { tabId: string; title: string; url: string; active: boolean }
 
-export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow' }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project' }) {
+export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun = 'workflow', minimal = false }: { workspacePath: string | null; toolbar?: ReactNode; scopeNoun?: 'workflow' | 'project'; minimal?: boolean }) {
   const [sessions, setSessions] = useState<BrowserSession[]>([])
   const [session, setSession] = useState('')
   const [selection, setSelection] = useState('')
@@ -114,6 +114,9 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     setLastPlaywrightFrame(null)
     try { selectedBrowser.current = sessionStorage.getItem(`browser-selection:${workspacePath}`) || '' }
     catch { selectedBrowser.current = '' }
+    // Minimal mode (SparkQuill: agent_browser only, no Playwright fixture)
+    // never follows Playwright, even a selection stored by a prior session.
+    if (minimal && selectedBrowser.current === PLAYWRIGHT_BROWSER) selectedBrowser.current = ''
     setSelection(selectedBrowser.current)
     let polling = false
     const poll = async () => {
@@ -135,7 +138,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         }
         // Follow tests as they start, including when the always-present shared
         // browser was selected by default. An explicit browser choice wins.
-        if (!choice && tests.length) choice = PLAYWRIGHT_BROWSER
+        if (!minimal && !choice && tests.length) choice = PLAYWRIGHT_BROWSER
         selectedBrowser.current = choice
         setSelection(choice)
         setSession(current => choice === PLAYWRIGHT_BROWSER
@@ -148,7 +151,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     void poll()
     const timer = window.setInterval(() => { void poll() }, 1000)
     return () => { cancelled = true; controller.abort(); window.clearInterval(timer) }
-  }, [scopeNoun, workspacePath])
+  }, [scopeNoun, workspacePath, minimal])
 
   useEffect(() => {
     pendingTab.current = ''
@@ -287,25 +290,27 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
       <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
-        <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingPlaywright ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
-          {!selection && !session && <option value="" disabled>No managed browser</option>}
-          <option value={PLAYWRIGHT_BROWSER}>{followingPlaywright ? followLabel : 'Follow latest test'}</option>
-          {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
-        </select>
+        {!minimal && (
+          <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingPlaywright ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+            {!selection && !session && <option value="" disabled>No managed browser</option>}
+            <option value={PLAYWRIGHT_BROWSER}>{followingPlaywright ? followLabel : 'Follow latest test'}</option>
+            {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
+          </select>
+        )}
         <div className="ml-auto flex gap-2">
           {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
-          {session && canControl && (
+          {!minimal && session && canControl && (
             <button type="button" disabled={recordingBusy} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
               {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
               {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
             </button>
           )}
-          {replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
+          {!minimal && replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
           {toolbar}
         </div>
       </div>
-      {!recording.recording && recording.directory && recording.directory !== dismissedRecording && (
+      {!minimal && !recording.recording && recording.directory && recording.directory !== dismissedRecording && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />
           <span className="min-w-0 flex-1 font-medium" title={recording.directory}>{recording.validation === 'failed' || recording.errors?.length ? 'Recording incomplete — check details' : 'Recording saved'}</span>
@@ -324,7 +329,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           </div>
         </div>
       )}
-      {(readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
+      {!minimal && (readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
       {currentBrowser?.recording_error && <p className="px-3 py-2 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
       {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
@@ -332,8 +337,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
       </div>}
       {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className="absolute inset-0 flex items-center justify-center overflow-hidden">
         <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
-      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright && !minimal ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
+      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )
 }

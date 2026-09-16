@@ -32,6 +32,11 @@ or another project view intended to organize or manage information visually.
   and include `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. Use
   daisyUI component classes and inline CSS for layout. Never add daisyUI as a
   project package or use the Tailwind browser build.
+- Prefer Chart.js from a version-pinned HTTPS CDN for meaningful time-series,
+  comparison, distribution, and composition charts. Use a small HTML/CSS
+  visual only when it is genuinely simpler than a chart library. Configure
+  Chart.js responsively, give its container an intentional height, match its
+  colors to the app theme, and show a readable fallback when the CDN fails.
 
 ## Project data and actions
 

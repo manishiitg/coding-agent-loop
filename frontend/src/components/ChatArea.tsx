@@ -3890,6 +3890,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           from it -- there's no separate "New Chat" action that reveals this. */}
       {!hideInput && (
         <ChatInput
+          // The composer owns tab-local draft, paste, upload and submit state.
+          // Remount only this boundary when switching chats. Remounting the
+          // whole ChatArea also tears down every shared SSE subscription and
+          // foreground catch-up loop, which can drop another tab's completion
+          // while a resumed chat is opening.
+          key={targetTabId ?? 'inactive-chat-input'}
           onSubmit={(query, options) => submitQueryWithQuery(query, undefined, options)}
           onStopStreaming={stopStreaming}
           onNewChat={() => void handleNewChat(targetTabId ?? undefined)}

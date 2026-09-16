@@ -78,10 +78,6 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
 
   return (
     <ChatArea
-      // AgentWorks tabs must not share React-local composer state. Drafts live
-      // in the tab store; remounting here gives paste/upload/submit callbacks
-      // the same hard tab boundary as Crew.
-      key={workflowTabId ?? 'inactive-workflow-chat'}
       ref={ref}
       onNewChat={onNewChat}
       hideHeader={hideHeader}

@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implementation complete; Confida deployment in progress` |
+| Ticket state | `implemented, deployed, and live-verified on Confida` |
 | Last synchronized | `2026-09-16` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
@@ -225,12 +225,24 @@ Four independent gaps were identified. All four are now implemented:
    that initially reopen in Terminal view. Read-only schedule tabs retain the
    cheaper empty-only hydration rule.
 
-## Still pending
+## Deployment and live verification
 
-- Deploy to Confida and verify session
-  `61247bd2-347b-4776-982f-e158e84f9ad6` restores the completed scorecard and
-  following exchange in Formatted view after a refresh and after switching
-  from Terminal view.
+- Deployed application revision
+  `912b9347e473d078f3c82b72c1bf10a9fd1ebedc` as Confida release
+  `confida-912b9347-20260916083842` on 2026-09-16. The release pipeline
+  reported the agent API healthy, the public endpoint returned HTTP 200, and
+  the `confida-agent`, `confida-gateway`, and `confida-workspace` user services
+  were active after activation.
+- Live browser verification after a hard reload restored the durable Chat
+  history rather than stopping at the stale capped UI-event tail. The UI
+  displayed the previously missing local-only Langfuse configuration reply
+  and the complete trace/business-context response. This confirms the deployed
+  Formatted-view hydration is reading and merging authoritative history.
+- The same reload also confirmed the bundled toolbar changes: Knowledgebase is
+  top-level, Costs is under Ops, and Playbooks is under Setup.
+
+## Out of scope
+
 - Not investigating why the tmux pane died in this specific incident — the
   transcript's own last entry (`<local-command-stdout>Bye!</local-command-stdout>`)
   suggests an intentional `/bye`/exit rather than a crash, but the fix

@@ -98,7 +98,8 @@ the tablet view sparse.
 3. Write the complete experience as `db/reports/index.html`. Include a
    meaningful `<title>` and accessible internal navigation when needed. Use
    `window.report` data helpers or `query` for live data, inline CSS/JS, responsive layout, clear
-   empty/error states, no external CDN, no fixed body height, and no nested
+   empty/error states, version-pinned HTTPS CDN dependencies only when useful,
+   no fixed body height, and no nested
    scrolling. Theme off the app, not the OS: style dark mode under
    `:root.dark` / `[data-theme="dark"]` (or use the injected
    `hsl(var(--background))`-style tokens) — `prefers-color-scheme` alone
@@ -151,7 +152,7 @@ the tablet view sparse.
 5. Call `validate_report_html` for every document after editing; repair every error. It now
    also runs every literal `window.report.query` SQL against the live
    `db/db.sqlite`, checks that every referenced `db/` file exists, rejects
-   external stylesheet/script URLs, and warns when dark mode keys only off
+   broken local stylesheet/script references, and warns when dark mode keys only off
    the OS scheme. A query built from variables is reported as unchecked —
    prefer literal SQL so the validator can see it.
 6. Call `preview_report` for every changed document after validation passes. It renders the report in a

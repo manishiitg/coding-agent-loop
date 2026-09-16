@@ -142,7 +142,7 @@ func TestValidateHTMLReportChecksSQLPassedThroughALocalWrapper(t *testing.T) {
 	}
 }
 
-func TestValidateHTMLReportChecksReferencedFilesAndExternalAssets(t *testing.T) {
+func TestValidateHTMLReportChecksReferencedFilesAndAllowsExternalAssets(t *testing.T) {
 	t.Parallel()
 	html := `<!doctype html><html><head><title>Assets</title>
 <link rel="stylesheet" href="https://cdn.example.com/x.css">
@@ -160,7 +160,6 @@ func TestValidateHTMLReportChecksReferencedFilesAndExternalAssets(t *testing.T) 
 		`"valid": false`,
 		`referenced file \"db/notes/summary.md\" does not exist`,
 		`referenced file \"db/reports/proof.pdf\" does not exist`,
-		"external stylesheet/script URL found",
 		`"referenced_paths": 3`,
 	} {
 		if !strings.Contains(result, want) {
@@ -169,6 +168,21 @@ func TestValidateHTMLReportChecksReferencedFilesAndExternalAssets(t *testing.T) 
 	}
 	if strings.Contains(result, `\"db/assets/logo.png\" does not exist`) {
 		t.Fatalf("existing asset must not be reported: %s", result)
+	}
+}
+
+func TestValidateHTMLReportAllowsHTTPSCDNStylesAndScripts(t *testing.T) {
+	t.Parallel()
+	html := `<!doctype html><html data-report-ui="daisyui"><head><title>CDN report</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+</head><body><canvas id="chart"></canvas><script>new Chart(document.getElementById('chart'), {type: 'bar', data: {labels: [], datasets: []}})</script></body></html>`
+	result := validateReport(t, html, ReportHTMLValidationHooks{})
+	if !strings.Contains(result, `"valid": true`) {
+		t.Fatalf("expected HTTPS CDN assets to validate: %s", result)
+	}
+	if !strings.Contains(result, `may be supplied by an external script`) {
+		t.Fatalf("expected external library globals to be reported as unchecked: %s", result)
 	}
 }
 

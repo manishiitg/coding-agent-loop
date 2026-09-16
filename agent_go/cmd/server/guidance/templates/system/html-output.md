@@ -29,7 +29,7 @@ below change in these specific ways:
 | Data baked into the file; `Generated: <date>` meta line | Data read live through `window.report.query` inside `window.report.ready(fn)`; no generated-at stamp, the numbers are current by construction |
 | `body { max-width: 960px; margin: 0 auto }` | Full width — the pane is the layout boundary; no fixed body/`html` height, no nested scroll container |
 | Sticky `<nav>` of `#anchors` | Same, or real tabs; `#anchor` clicks are intercepted and scrolled by the host |
-| Self-contained: no external `<link>`/`<script>` | Same, except an opted-in `<html data-report-ui="daisyui">` may load the pinned daisyUI stylesheet from jsDelivr; never add a Tailwind browser script. |
+| Prefer inline CSS/JS; pin any HTTPS CDN dependency to an exact version | Same. An opted-in `<html data-report-ui="daisyui">` gets the pinned daisyUI stylesheet from jsDelivr; Chart.js and other version-pinned HTTPS CDN libraries are also supported. |
 
 Everything else in this doc (summary-first layout, semantic colour, tables,
 inline charts, the quality checklist) applies to both. For the report
@@ -38,8 +38,8 @@ paths — load `reporting-policy.md`.
 
 ### Non-negotiable rules
 
-**Self-contained — no external URLs.**
-Every report-owned `<style>`, font, icon, and script must be inlined. External CDN links (`<link href="https://...">`, `<script src="https://...">`) break when the file is opened offline or shared. Use `<style>` blocks and `<script>` blocks only. The sole component-library exception is the pinned daisyUI stylesheet `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`, enabled with `data-report-ui="daisyui"`; use inline CSS for layout. If you need charts, use the platform-supported chart guidance or inline SVG, never another CDN dependency.
+**External libraries.**
+Prefer inline report-specific CSS and JavaScript. HTTPS CDN stylesheets and scripts are allowed when a maintained library materially improves the report; pin an exact version rather than using `latest`, keep dependencies minimal, and show a useful error or fallback if one fails to load. daisyUI can be enabled with `data-report-ui="daisyui"`; the host injects the pinned stylesheet when it is omitted. Chart.js and similar browser libraries may be loaded from a version-pinned HTTPS CDN URL.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same
@@ -356,7 +356,7 @@ The baseline dark values are too low-contrast for review badges. Use these inste
 
 ### Quality checklist — verify before writing the file
 
-- [ ] No external URLs in `<link>` or `<script src>` — all CSS/JS is inline
+- [ ] External `<link>`/`<script src>` dependencies, if any, use HTTPS and an exact pinned version
 - [ ] `@media (prefers-color-scheme: dark)` block present with **high-contrast** badge values
 - [ ] Summary box at the top with key numbers
 - [ ] **Blocker box** (red border, red background) is the first element inside the summary — if there is a top blocker
@@ -370,4 +370,4 @@ The baseline dark values are too low-contrast for review badges. Use these inste
 - [ ] Status fields use `.badge.pass` / `.badge.fail` / `.badge.warn` classes with high-contrast dark values
 - [ ] No raw JSON blobs visible as text — data embedded in JS variables
 - [ ] `<meta viewport>` present for responsive layout
-- [ ] File is self-contained: opening it with no network renders correctly
+- [ ] CDN-backed features have a readable loading/error or fallback state

@@ -9,18 +9,20 @@ There is no report generation step or widget-layout registry.
 
 ### Page contract
 
-- Write one or more complete, self-contained `.html` documents under
+- Write one or more complete `.html` documents under
   `db/reports/`. Use separate documents for genuinely distinct destinations;
   keep closely related sections inside one document.
 - Include a non-empty `<title>` and accessible internal navigation when the
   report has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
-- daisyUI is CDN-only. To use it, inspect/install the official
+- HTTPS CDN stylesheets and scripts are supported. Pin library versions rather
+  than using floating `latest` URLs, and keep report-specific CSS/JS inline.
+  daisyUI is CDN-only. To use it, inspect/install the official
   `saadeghi/daisyui` skill, read it, add `data-report-ui="daisyui"` to the
   document's `<html>` element, and include the pinned stylesheet
   `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
-  that same CDN link for older opted-in reports that omit it. Use inline CSS
+  that same CDN link for opted-in reports that omit it. Use inline CSS
   for layout; never add package setup or the Tailwind browser build.
 - Design for the default Tablet report pane first (~768px). Use one or two
   primary columns, responsive spacing/type, 44px minimum touch targets, no
@@ -65,8 +67,9 @@ There is no report generation step or widget-layout registry.
   the viewer's OS and ignores the in-app toggle.
 - After editing, call `validate_report_html` for every changed document. Beyond the document shape it
   runs every literal `window.report.query` SQL against the live
-  `db/db.sqlite`, confirms every referenced `db/` file exists, rejects
-  external stylesheet/script URLs, and warns on OS-only dark mode.
+  `db/db.sqlite`, confirms every referenced `db/` file exists, checks local
+  stylesheet/script references, and warns on OS-only dark mode. HTTPS CDN
+  stylesheets and scripts are valid report dependencies.
 - `validate_report_html` is static and fast; it cannot tell you the page
   actually renders. Call `preview_report` for each changed document after it passes, or whenever
   visual review is requested: it opens the report in a real headless browser

@@ -468,6 +468,10 @@ EOF
     # @xterm/xterm) it installs only the missing/changed packages. This avoids
     # the Vite "Failed to resolve import" failure after a dependency was added,
     # without ever reinstalling everything.
+    # Dev launches also pass --force below. npm can leave Vite's generated
+    # dependency metadata internally consistent while a referenced chunk is
+    # missing after a pull; forced optimization rebuilds that cache before the
+    # browser can request an obsolete chunk.
     echo "📦 Ensuring frontend dependencies (npm install)..."
     (
         cd "$FRONTEND_DIR" || exit 1
@@ -504,9 +508,9 @@ EOF
         if [ "$FRONTEND_BUILD_MODE" = true ]; then
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run preview -- --host \"$FRONTEND_BIND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
         elif [ -n "$FRONTEND_HOST" ]; then
-            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort --force" >> "$FRONTEND_LOG_PATH" 2>&1 &
         else
-            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort --force" >> "$FRONTEND_LOG_PATH" 2>&1 &
         fi
     else
         (
@@ -514,9 +518,9 @@ EOF
             if [ "$FRONTEND_BUILD_MODE" = true ]; then
                 exec npm run preview -- --host "$FRONTEND_BIND_HOST" --port "$FRONTEND_PORT" --strictPort
             elif [ -n "$FRONTEND_HOST" ]; then
-                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
+                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort --force
             else
-                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort --force
             fi
         ) >> "$FRONTEND_LOG_PATH" 2>&1 &
     fi
@@ -1535,9 +1539,9 @@ start_frontend_dev() {
         if [ "$FRONTEND_BUILD_MODE" = true ]; then
             nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run preview -- --host \"$FRONTEND_BIND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
         elif [ -n "$FRONTEND_HOST" ]; then
-            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --host \"$FRONTEND_HOST\" --port \"$FRONTEND_PORT\" --strictPort --force" >> "$FRONTEND_LOG_PATH" 2>&1 &
         else
-            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort" >> "$FRONTEND_LOG_PATH" 2>&1 &
+            nohup bash -lc "cd \"$FRONTEND_DIR\" && exec npm run dev -- --port \"$FRONTEND_PORT\" --strictPort --force" >> "$FRONTEND_LOG_PATH" 2>&1 &
         fi
     else
         (
@@ -1545,9 +1549,9 @@ start_frontend_dev() {
             if [ "$FRONTEND_BUILD_MODE" = true ]; then
                 exec npm run preview -- --host "$FRONTEND_BIND_HOST" --port "$FRONTEND_PORT" --strictPort
             elif [ -n "$FRONTEND_HOST" ]; then
-                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort
+                exec npm run dev -- --host "$FRONTEND_HOST" --port "$FRONTEND_PORT" --strictPort --force
             else
-                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort
+                exec npm run dev -- --port "$FRONTEND_PORT" --strictPort --force
             fi
         ) >> "$FRONTEND_LOG_PATH" 2>&1 &
     fi

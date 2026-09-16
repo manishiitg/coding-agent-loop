@@ -1104,6 +1104,40 @@ func TestListWorkProjectChatHistoryResolvesOwnedProjectStorage(t *testing.T) {
 	}
 }
 
+func TestAppendLiveInputUsesOwnedWorkProjectConversation(t *testing.T) {
+	const (
+		userID        = "alice"
+		workspacePath = "_users/alice/Chats/Work/projects/demo-12345678"
+		sessionID     = "product-chat-live-input"
+	)
+	conversationPath := workspacePath + "/builder/conversation/2026-09-16/" + chatHistoryConversationFileName(sessionID)
+	conversation := `{
+  "session_id": "product-chat-live-input",
+  "agent_mode": "multi-agent",
+  "conversation_history": [{"Role":"human","Parts":[{"Text":"original question"}]}],
+  "runtime": {"provider":"claude-code","workspace_path":"_users/alice/Chats/Work/projects/demo-12345678"},
+  "user_id": "alice",
+  "updated_at": "2026-09-16T05:00:00Z"
+}`
+	workspace := &mockWorkspaceAPI{files: map[string]string{conversationPath: conversation}}
+	workspaceServer := httptest.NewServer(workspace)
+	defer workspaceServer.Close()
+	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
+
+	api := &StreamingAPI{}
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, "resumed follow-up")
+
+	var record struct {
+		ConversationHistory []llmtypes.MessageContent `json:"conversation_history"`
+	}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &record); err != nil {
+		t.Fatalf("decode Work conversation: %v", err)
+	}
+	if len(record.ConversationHistory) != 2 || len(record.ConversationHistory[1].Parts) != 1 || chatHistoryPartText(record.ConversationHistory[1].Parts[0]) != "resumed follow-up" {
+		t.Fatalf("persisted Work history = %#v, want resumed follow-up appended", record.ConversationHistory)
+	}
+}
+
 func TestWorkProjectChatHistoryConversationPathUsesProjectBuilderFolder(t *testing.T) {
 	timestamp := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 

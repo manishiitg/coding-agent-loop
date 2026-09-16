@@ -63,6 +63,20 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 	if workspacePath == "" {
 		return
 	}
+	userID := ""
+	if api.eventStore != nil {
+		userID = strings.TrimSpace(api.eventStore.GetSessionOwner(sessionID))
+	}
+	if userID == "" {
+		api.activeSessionsMux.RLock()
+		if session := api.activeSessions[sessionID]; session != nil {
+			userID = strings.TrimSpace(session.UserID)
+		}
+		api.activeSessionsMux.RUnlock()
+	}
+	if userID == "" {
+		userID = "default"
+	}
 
 	api.nativeTranscriptSyncMu.Lock()
 	if api.nativeTranscriptSyncInFlight == nil {
@@ -86,7 +100,7 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 			if delay > 0 {
 				time.Sleep(delay)
 			}
-			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), sessionID, workspacePath)
+			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
 			if changed || !supported {
 				return
 			}
@@ -100,12 +114,15 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 // The returned supported value is false for providers without a transcript
 // reader (see nativeTranscriptSyncSupportedProvider), avoiding needless
 // retries for formats this package cannot parse.
-func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx context.Context, sessionID, workspacePath string) (changed, supported bool) {
-	raw, err := ReadChatHistoryConversation("default", sessionID, workspacePath)
+func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx context.Context, userID, sessionID, workspacePath string) (changed, supported bool) {
+	if strings.TrimSpace(userID) == "" {
+		userID = "default"
+	}
+	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(raw) == 0 || !claudeNativeTranscriptSyncSupported(raw) {
 		return false, false
 	}
-	conversationPath, found, err := findWorkflowBuilderConversationPathForSession(ctx, sessionID, workspacePath)
+	conversationPath, found, err := findWorkflowBuilderConversationPathForSession(ctx, userID, sessionID, workspacePath)
 	if err != nil || !found || strings.TrimSpace(conversationPath) == "" {
 		return false, true
 	}
@@ -122,7 +139,7 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	// refreshLatest... writes the full record while preserving runtime and other
 	// opaque fields. Re-read that canonical result before rebuilding the index.
 	// If the write failed, do not advertise a transcript we did not persist.
-	persistedRaw, err := ReadChatHistoryConversation("default", sessionID, workspacePath)
+	persistedRaw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(persistedRaw) == 0 {
 		return false, true
 	}
@@ -160,8 +177,11 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 // history index. The folder-list fallback covers a newly written transcript
 // before that index exists (and remote workspace deployments without the local
 // directory fast path).
-func findWorkflowBuilderConversationPathForSession(ctx context.Context, sessionID, workspacePath string) (string, bool, error) {
-	if path, found, err := FindChatHistoryConversationPathForSession("default", sessionID, workspacePath); err != nil || found {
+func findWorkflowBuilderConversationPathForSession(ctx context.Context, userID, sessionID, workspacePath string) (string, bool, error) {
+	if strings.TrimSpace(userID) == "" {
+		userID = "default"
+	}
+	if path, found, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath); err != nil || found {
 		return path, found, err
 	}
 	listing, exists, err := listWorkspaceFolder(ctx, strings.Trim(strings.TrimSpace(workspacePath), "/")+"/builder/conversation", 5)

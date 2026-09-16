@@ -239,7 +239,8 @@ func TestRefreshLatestBuilderConversationFromNativeTranscriptNoOpsWithoutClaudeC
 func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationAndIndex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	const workspacePath = "Workflow/salesoutreach"
+	const userID = "alice"
+	const workspacePath = "_users/alice/Chats/Work/projects/salesoutreach"
 	const sessionID = "retained-live-input"
 	const nativeSessionID = "native-retained-live-input"
 	workingDir := filepath.Join(home, "workspace-docs", "Workflow", "salesoutreach")
@@ -255,6 +256,7 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	conversationPath := workspacePath + "/builder/conversation/2026-08-30/session-" + sessionID + "-conversation.json"
 	record := map[string]interface{}{
 		"session_id": sessionID,
+		"user_id":    userID,
 		"agent_mode": "workflow_phase",
 		"updated_at": "2026-08-30T05:00:00Z",
 		"conversation_history": []map[string]interface{}{
@@ -279,7 +281,7 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
 
 	api := &StreamingAPI{}
-	changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), sessionID, workspacePath)
+	changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
 	if !supported || !changed {
 		t.Fatalf("sync changed/supported = %v/%v, want true/true", changed, supported)
 	}

@@ -3611,10 +3611,14 @@ func (api *StreamingAPI) persistLiveInputUserMessage(ctx context.Context, sessio
 		api.internalLiveInputPersistenceHandler(userID, sessionID, message)
 		return
 	}
-	api.appendLiveInputToPersistedChatHistory(userID, sessionID, message)
+	workspacePath := ""
+	api.sessionWorkspaceMu.RLock()
+	workspacePath = strings.TrimSpace(api.sessionWorkspaceFolders[sessionID])
+	api.sessionWorkspaceMu.RUnlock()
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, message)
 }
 
-func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, message string) {
+func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, message string) {
 	message = strings.TrimSpace(message)
 	if api == nil || sessionID == "" || message == "" {
 		return
@@ -3624,13 +3628,16 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	}
 	logCtx := newServerLogContext("", "", "", userID, "", sessionID)
 
-	raw, err := ReadChatHistoryConversation(userID, sessionID, "")
+	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
 		// No transcript for this session yet, or it is unreadable. Either way there
 		// is nothing to safely append to.
 		return
 	}
-	conversationPath, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, "")
+	conversationPath, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
+	if strings.TrimSpace(workspacePath) != "" && (err != nil || !ok || strings.TrimSpace(conversationPath) == "") {
+		conversationPath, ok, err = findWorkflowBuilderConversationPathForSession(context.Background(), userID, sessionID, workspacePath)
+	}
 	if err != nil || !ok || strings.TrimSpace(conversationPath) == "" {
 		return
 	}

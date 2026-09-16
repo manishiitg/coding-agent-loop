@@ -206,3 +206,23 @@ observer, and does not settle the session until the second completion arrives.
 The formatted chat also suppresses the `conversation_resumed` lifecycle marker;
 older pages remain available through the transcript's existing top pagination
 control, without a misleading divider below the newest restored answer.
+
+## 2026-09-16 Cursor live-publication regression
+
+The `rts-pr-reviweer` Cursor session produced the complete “Here are the
+links” answer in Cursor's native SQLite transcript and Terminal. Native
+transcript catch-up subsequently merged it into the durable Work conversation,
+so a refresh restored the answer, but the already-open formatted Chat remained
+blank. Production logs showed several Cursor completions with
+`final_response_missing` followed by successful native transcript merges.
+
+The catch-up path previously updated only the conversation file and its index.
+It now also publishes each newly recovered assistant message to the session's
+live EventStore using the existing whole-message transcript event contract.
+Recovered messages therefore appear immediately in an open Chat and remain
+available through SSE backfill, while the event is deliberately not a second
+completion signal that could settle the next queued turn. Exact assistant-text
+occurrence counts across durable history and existing main-agent events prevent
+duplicate rows, including repeated sync attempts and replies that already
+arrived through the normal live stream. This provider-neutral backstop applies
+to Claude Code, Codex, Cursor, Pi, and Muse native transcript recovery.

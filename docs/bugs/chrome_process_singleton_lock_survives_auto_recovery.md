@@ -2,11 +2,12 @@
 
 ## Status
 
-Fixed in code (2026-09-16), not yet deployed. Found and root-caused live on
-SparkQuill's Hetzner production deployment (`sparkquill.agentworkshq.com`,
-persistent shared Chrome profile). Change is in `agent_go/pkg/browser/executor.go`
-and `workspace/browserconfig/launch.go`; not yet built, committed, or shipped to
-the server.
+Deployed 2026-09-16 to SparkQuill's Hetzner production deployment
+(`sparkquill.agentworkshq.com`, persistent shared Chrome profile), where this
+was found and root-caused live. The original fix (clearing the lock files,
+matching `ProcessSingleton` in `isDeadSession`) was not sufficient on its
+own — see **Follow-up: the single retry can still lose the race** below,
+fixed and deployed the same day.
 
 ## Symptom
 
@@ -90,13 +91,35 @@ returns `""` when there's no shared profile configured).
 
 ## Verification status
 
-Build is clean (`go build ./pkg/browser/... ./cmd/server/...` in `agent_go`,
-`go build ./...` in `workspace`). **Not yet**: unit test, commit, push,
-rebuild server binaries, deploy, or confirmed against a real crash-and-recover
-cycle. Per an explicit commitment made during this investigation, verification
-must not be done against the family's real live browser session identity
-(`user-37a8eec1ce19687d--browser`) on the production server — needs a
-synthetic session or a controlled kill-and-relaunch test instead.
+Deployed to production via `deploy/rootless-linux/deploy.sh sparkquill` and
+confirmed present in the running binary (`strings` matched the new log line).
+
+## Follow-up: the single retry can still lose the race
+
+The morning of the same day this shipped, a parent reported the family's
+*real* login session still hit the identical `ProcessSingleton` error on
+every attempt. Reading `agent.log` showed the fix firing correctly —
+`isDeadSession` matched, `removeStaleChromeSingletonLock` removed the lock
+files, the 2-second pause elapsed — and the **retry itself** still failed
+with the exact same error, all within about 4 seconds end to end.
+
+Reproducing by hand (same profile path, same session name, via the
+`agent-browser` CLI directly, minutes later) succeeded immediately on the
+first attempt. That rules out a permanently broken profile — the profile and
+the lock-clearing logic are both fine — and points at a timing race instead:
+`killSessionRuntime` fires `SIGKILL` at the daemon and Chrome's process group
+but never confirms they have actually exited before the fixed 2-second sleep
+starts counting down. The existing sleep's own comment already names this
+general class of problem ("the killed process hasn't fully released its
+pages yet") — 2 seconds just isn't always enough, especially on this shared
+box with several other products' browser automation and thousands of leftover
+Chrome temp files under `/tmp` from unrelated accounts.
+
+**Fix**: if the retry *itself* still fails with `ProcessSingleton` (not just
+the original error), run the same kill+cleanup sequence again and retry once
+more after a longer, 5-second pause, in `agent_go/pkg/browser/executor.go`.
+Bounded at one extra attempt — this treats a same-error-twice retry as a
+timing problem worth one more try, not as a reason to loop indefinitely.
 
 ## Related
 

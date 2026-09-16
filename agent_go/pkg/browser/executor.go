@@ -1075,6 +1075,26 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			if err == nil && isOpenCommand {
 				captureChromePID(session)
 			}
+			// A ProcessSingleton failure on the retry itself (not just the
+			// original error) means 2s wasn't enough for the OS to finish
+			// tearing down the just-killed Chrome/daemon before this profile's
+			// singleton files were recreated -- confirmed live on SparkQuill:
+			// the automatic retry failed with the identical error, but a
+			// manual retry moments later against the same profile succeeded
+			// immediately. One bounded extra attempt with a longer pause
+			// covers that timing gap instead of surfacing a transient race as
+			// a hard failure the user has to retry by hand.
+			if err != nil && strings.Contains(err.Error(), "ProcessSingleton") {
+				log.Printf("[BROWSER] Retry for %q still hit ProcessSingleton, giving the OS more time and trying once more", session)
+				killSessionRuntime(session)
+				removeSessionFiles(session)
+				removeStaleChromeSingletonLock(session)
+				time.Sleep(5 * time.Second)
+				output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
+				if err == nil && isOpenCommand {
+					captureChromePID(session)
+				}
+			}
 		}
 	}
 

@@ -86,6 +86,39 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	}
 }
 
+func TestBuilderAccessibleWorkflowListUsesCurrentUserAccessWithoutCrewMutationTools(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"builder","username":"builder","products":[]},{"id":"owner","username":"owner","products":[]}]}`)
+	shared, _ := json.Marshal(WorkflowManifest{
+		ID: "shared", Label: "Shared workflow",
+		Access: &WorkflowAccess{Owners: []string{"owner"}, Readers: []string{"builder"}},
+	})
+	private, _ := json.Marshal(WorkflowManifest{
+		ID: "private", Label: "Private workflow",
+		Access: &WorkflowAccess{Owners: []string{"owner"}},
+	})
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		manifestPath("Workflow/shared"):  string(shared),
+		manifestPath("Workflow/private"): string(private),
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+
+	api := &StreamingAPI{}
+	registrar := &recordingRegistrar{}
+	if err := api.registerAccessibleWorkflowListTool(registrar, "builder", nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(registrar.tools) != 1 {
+		t.Fatalf("builder discovery registered %d tools, want only list_accessible_workflows", len(registrar.tools))
+	}
+	out, err := registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{})
+	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/shared"`) || strings.Contains(out, "Private workflow") || strings.Contains(out, `"attached"`) {
+		t.Fatalf("builder discovery out=%s err=%v", out, err)
+	}
+}
+
 func containsWorkReferencePath(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {

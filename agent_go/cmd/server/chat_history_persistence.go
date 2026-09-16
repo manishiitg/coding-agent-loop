@@ -50,6 +50,7 @@ type ChatHistorySession struct {
 // with its original runtime when that runtime supports native resume.
 type ChatHistoryAgentRuntime struct {
 	ChatPolicyKey      string                       `json:"chat_policy_key,omitempty"`
+	AgentProfileKey    string                       `json:"agent_profile_key,omitempty"`
 	Kind               string                       `json:"kind,omitempty"`
 	Provider           string                       `json:"provider,omitempty"`
 	ModelID            string                       `json:"model_id,omitempty"`
@@ -1842,19 +1843,34 @@ func chatHistorySchedulePrefixBeforeTimestamp(value string) string {
 }
 
 func workflowBuilderConversationFiles(workflowDir string) ([]string, error) {
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", "session-*-conversation.json"),
-		filepath.Join(workflowDir, "builder", "conversation", "*", "session-*-conversation.json"),
-	}
+	builderDir := filepath.Join(workflowDir, "builder")
 	out := make([]string, 0)
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, err
-		}
-		out = append(out, matches...)
+	legacyRootMatches, err := filepath.Glob(filepath.Join(builderDir, "session-*-conversation.json"))
+	if err != nil {
+		return nil, err
 	}
-	return out, nil
+	out = append(out, legacyRootMatches...)
+	conversationDir := filepath.Join(builderDir, "conversation")
+	err = filepath.WalkDir(conversationDir, func(candidate string, entry os.DirEntry, err error) error {
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		name := entry.Name()
+		if strings.HasPrefix(name, "session-") && strings.HasSuffix(name, "-conversation.json") {
+			out = append(out, candidate)
+		}
+		return nil
+	})
+	if os.IsNotExist(err) {
+		return out, nil
+	}
+	return out, err
 }
 
 func workflowRelativeConversationPath(workflowPath, workflowDir, convPath string) string {
@@ -3097,29 +3113,26 @@ func readWorkflowScopedChatHistoryConversationDirect(sessionID, workspacePath st
 		return nil, false, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", fileName),
-		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
-	}
 
 	type candidate struct {
 		path    string
 		modTime time.Time
 	}
 	var latest *candidate
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
-			return nil, true, err
+	matches, err := workflowBuilderConversationFiles(workflowDir)
+	if err != nil {
+		return nil, true, err
+	}
+	for _, match := range matches {
+		if filepath.Base(match) != fileName {
+			continue
 		}
-		for _, match := range matches {
-			info, err := os.Stat(match)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
-				latest = &candidate{path: match, modTime: info.ModTime()}
-			}
+		info, err := os.Stat(match)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+			latest = &candidate{path: match, modTime: info.ModTime()}
 		}
 	}
 	if latest == nil {
@@ -3141,28 +3154,25 @@ func findWorkflowScopedChatHistoryConversationPath(sessionID, workspacePath stri
 
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
 	if workflowDir, ok := resolveLocalWorkflowDir(workspacePath); ok {
-		patterns := []string{
-			filepath.Join(workflowDir, "builder", fileName),
-			filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
-		}
 		type candidate struct {
 			path    string
 			modTime time.Time
 		}
 		var latest *candidate
-		for _, pattern := range patterns {
-			matches, err := filepath.Glob(pattern)
-			if err != nil {
-				return "", false, err
+		matches, err := workflowBuilderConversationFiles(workflowDir)
+		if err != nil {
+			return "", false, err
+		}
+		for _, match := range matches {
+			if filepath.Base(match) != fileName {
+				continue
 			}
-			for _, match := range matches {
-				info, err := os.Stat(match)
-				if err != nil || info.IsDir() {
-					continue
-				}
-				if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
-					latest = &candidate{path: match, modTime: info.ModTime()}
-				}
+			info, err := os.Stat(match)
+			if err != nil || info.IsDir() {
+				continue
+			}
+			if latest == nil || info.ModTime().After(latest.modTime) || (info.ModTime().Equal(latest.modTime) && match > latest.path) {
+				latest = &candidate{path: match, modTime: info.ModTime()}
 			}
 		}
 		if latest != nil {
@@ -3247,34 +3257,31 @@ func deleteWorkspaceChatHistorySession(result ChatHistoryCleanupResult, userID, 
 		return result, nil
 	}
 	fileName := fmt.Sprintf("session-%s-conversation.json", sessionID)
-	patterns := []string{
-		filepath.Join(workflowDir, "builder", fileName),
-		filepath.Join(workflowDir, "builder", "conversation", "*", fileName),
+	matches, err := workflowBuilderConversationFiles(workflowDir)
+	if err != nil {
+		return result, err
 	}
 	seen := map[string]bool{}
-	for _, pattern := range patterns {
-		matches, err := filepath.Glob(pattern)
-		if err != nil {
+	for _, convPath := range matches {
+		if filepath.Base(convPath) != fileName {
+			continue
+		}
+		if seen[convPath] {
+			continue
+		}
+		seen[convPath] = true
+		info, err := os.Stat(convPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		if err := os.Remove(convPath); err != nil {
 			return result, err
 		}
-		for _, convPath := range matches {
-			if seen[convPath] {
-				continue
-			}
-			seen[convPath] = true
-			info, err := os.Stat(convPath)
-			if err != nil || info.IsDir() {
-				continue
-			}
-			if err := os.Remove(convPath); err != nil {
-				return result, err
-			}
-			result.DeletedCount++
-			result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
-			parentDir := filepath.Dir(convPath)
-			if filepath.Base(filepath.Dir(parentDir)) == "conversation" {
-				_ = os.Remove(parentDir)
-			}
+		result.DeletedCount++
+		result.DeletedPaths = append(result.DeletedPaths, workflowRelativeConversationPath(workspacePath, workflowDir, convPath))
+		parentDir := filepath.Dir(convPath)
+		if filepath.Base(filepath.Dir(parentDir)) == "conversation" {
+			_ = os.Remove(parentDir)
 		}
 	}
 	if result.DeletedCount > 0 {

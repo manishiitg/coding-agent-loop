@@ -139,9 +139,15 @@ func TestChatPolicyReconnectPreservesCompatibleHistory(t *testing.T) {
 			}
 		})
 	}
-	api := &StreamingAPI{lastChatPolicyBySession: map[string]string{"chat": "current"}}
+	api := &StreamingAPI{
+		lastChatPolicyBySession:      map[string]string{"chat": "current"},
+		lastAgentProfileKeyBySession: map[string]string{"chat": "profile-sha256:current"},
+	}
 	runtime := api.captureChatHistoryAgentRuntime("chat", "cursor-cli", "test-model", "Workflow/test", nil)
 	if runtime.ChatPolicyKey != "current" {
 		t.Fatal("native runtime did not persist its policy fingerprint")
+	}
+	if runtime.AgentProfileKey != "profile-sha256:current" {
+		t.Fatal("native runtime did not persist its agent profile fingerprint")
 	}
 }

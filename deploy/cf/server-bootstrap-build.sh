@@ -34,22 +34,15 @@ PY
 fi
 
 BRANCH="$(cat "$JOB/branch")"
+test -f "$JOB/repos" || { echo "Missing repository manifest" >&2; exit 1; }
 mkdir -p "$JOB/source"
-if [[ -f "$JOB/repos" ]]; then
-  index=0
-  for repo in mcp-agent-builder-go mcpagent multi-llm-provider-go; do
-    index=$((index+1))
-    url="$(sed -n "${index}p" "$JOB/repos")"
-    echo "Cloning $repo/$BRANCH on $(hostname)"
-    GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 --single-branch --branch "$BRANCH" "$url" "$JOB/source/$repo"
-  done
-else
-  # DEPLOY_SOURCE_MODE=local: the caller already rsynced local working trees
-  # into "$JOB/source/<repo>" -- fast iteration only, never a release to keep.
-  echo "Using rsynced local working trees as source (DEPLOY_SOURCE_MODE=local)"
-  for repo in mcp-agent-builder-go mcpagent multi-llm-provider-go; do
-    test -d "$JOB/source/$repo" || { echo "Expected rsynced source at $JOB/source/$repo" >&2; exit 1; }
-  done
-fi
+index=0
+for repo in mcp-agent-builder-go mcpagent multi-llm-provider-go; do
+  index=$((index+1))
+  url="$(sed -n "${index}p" "$JOB/repos")"
+  test -n "$url" || { echo "Missing repository URL for $repo" >&2; exit 1; }
+  echo "Cloning $repo/$BRANCH on $(hostname)"
+  GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 --single-branch --branch "$BRANCH" "$url" "$JOB/source/$repo"
+done
 
 bash "$JOB/source/mcp-agent-builder-go/deploy/cf/server-build-and-activate.sh" "$JOB/source"

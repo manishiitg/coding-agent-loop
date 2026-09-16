@@ -2,10 +2,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -14,6 +18,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 type resolvedAgentProfile struct {
@@ -26,6 +31,47 @@ type resolvedAgentProfile struct {
 	// from client JSON, and every field of ProviderAPIKeys except
 	// ClaudeCodeOAuthToken is JSON-visible. nil when no profile is bound.
 	APIKeys *llm.ProviderAPIKeys
+}
+
+// agentProfileSessionKey identifies the immutable product definition projected
+// into a provider-native coding session. Native CLIs retain their original
+// system prompt, tools, and skill files when resumed, so a changed definition
+// must start a fresh native session even though the application conversation
+// history remains intact.
+func agentProfileSessionKey(profile *resolvedAgentProfile, attachedSkills []*llmtypes.Skill) string {
+	if profile == nil {
+		return ""
+	}
+	type skillFingerprint struct {
+		Name                   string               `json:"name"`
+		Description            string               `json:"description"`
+		Content                string               `json:"content"`
+		Paths                  []string             `json:"paths,omitempty"`
+		DisableModelInvocation bool                 `json:"disable_model_invocation,omitempty"`
+		Metadata               map[string]string    `json:"metadata,omitempty"`
+		SupportingFiles        []llmtypes.SkillFile `json:"supporting_files,omitempty"`
+	}
+	fingerprints := make([]skillFingerprint, 0, len(attachedSkills))
+	for _, skill := range attachedSkills {
+		if skill == nil {
+			continue
+		}
+		fingerprints = append(fingerprints, skillFingerprint{
+			Name: skill.Name, Description: skill.Description, Content: skill.Content,
+			Paths: skill.Paths, DisableModelInvocation: skill.DisableModelInvocation,
+			Metadata: skill.Metadata, SupportingFiles: skill.SupportingFiles,
+		})
+	}
+	sort.Slice(fingerprints, func(i, j int) bool { return fingerprints[i].Name < fingerprints[j].Name })
+	payload, err := json.Marshal(struct {
+		Definition agentprofiles.Profile `json:"definition"`
+		Skills     []skillFingerprint    `json:"skills,omitempty"`
+	}{Definition: profile.Definition, Skills: fingerprints})
+	if err != nil {
+		return fmt.Sprintf("%s@%d", profile.Definition.ID, profile.Definition.Version)
+	}
+	sum := sha256.Sum256(payload)
+	return "profile-sha256:" + hex.EncodeToString(sum[:])
 }
 
 // cleanAgentProfileWorkspace validates the client-supplied selected_folder for

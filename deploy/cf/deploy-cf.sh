@@ -31,13 +31,10 @@ set -euo pipefail
 # Source of truth: like RTS, this builds ONLY from a fresh, depth-1 clone of
 # each repo's `main` branch on the git remote -- not whatever happens to be
 # sitting in the local working tree (uncommitted or untracked files, or a
-# dirty sibling checkout, can never enter a release). Set
-# DEPLOY_SOURCE_MODE=local to instead rsync the local working trees to the
-# server and build those -- fast iteration only, never for a release you
-# intend to keep.
+# dirty sibling checkout, can never enter a release).
 #
 # Usage: ./deploy-cf.sh
-# Env overrides: HOST_IP, SSH_PORT, SSH_KEY_PATH, DEPLOY_SOURCE_MODE, DEPLOY_BRANCH
+# Env overrides: HOST_IP, SSH_PORT, SSH_KEY_PATH, DEPLOY_BRANCH
 
 HOST_IP="${HOST_IP:-116.202.210.102}"
 SSH_PORT="${SSH_PORT:-2299}"
@@ -47,29 +44,24 @@ REMOTE_TOOLS="$REMOTE_APP/tools"
 REMOTE_NODE_VERSION="24.21.0"
 REMOTE_NODE_SHA256="fd8e59d5a511510f6a298afb548f18c7d2b1be404d8b4a27d94fbe49f56cb2d6"
 REMOTE_RUNTIME_PATH="$REMOTE_TOOLS/node/bin:$REMOTE_TOOLS/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
-DEPLOY_SOURCE_MODE="${DEPLOY_SOURCE_MODE:-remote-main}"
 DEPLOY_BRANCH="${DEPLOY_BRANCH:-main}"
 
 LOCAL_SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 LOCAL_REPO_ROOT="$(cd "$LOCAL_SCRIPT_DIR/../.." && pwd)"     # mcp-agent-builder-go (local checkout)
 LOCAL_WORKSPACE_ROOT="$(cd "$LOCAL_REPO_ROOT/.." && pwd)"    # sibling repos (mcpagent, ...)
 
-[[ "$DEPLOY_SOURCE_MODE" == "remote-main" || "$DEPLOY_SOURCE_MODE" == "local" ]] || {
-  echo "DEPLOY_SOURCE_MODE must be remote-main or local" >&2
-  exit 1
-}
 test -d "$LOCAL_WORKSPACE_ROOT/mcpagent/.git" || { echo "Expected sibling checkout: $LOCAL_WORKSPACE_ROOT/mcpagent" >&2; exit 1; }
 test -d "$LOCAL_WORKSPACE_ROOT/multi-llm-provider-go/.git" || { echo "Expected sibling checkout: $LOCAL_WORKSPACE_ROOT/multi-llm-provider-go" >&2; exit 1; }
 
 # The triggering machine no longer builds anything, so it no longer needs
 # go/node/npm -- only enough to talk to git remotes and to the server.
-for cmd in git rsync ssh; do
+for cmd in git scp ssh; do
   command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 1; }
 done
 
 SSH_OPTS=(-p "$SSH_PORT" -i "$SSH_KEY_PATH" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 SSH=(ssh "${SSH_OPTS[@]}" "confida@$HOST_IP")
-RSYNC_SSH="ssh ${SSH_OPTS[*]}"
+SCP=(scp -P "$SSH_PORT" -i "$SSH_KEY_PATH" -o BatchMode=yes -o ConnectTimeout=10 -o StrictHostKeyChecking=accept-new)
 
 # Fail before dependency installation or release changes. Read only the named
 # setting; never source or print the deployment environment (it holds secrets).
@@ -171,27 +163,13 @@ to_https_url() {
   printf '%s\n' "$url"
 }
 
-if [[ "$DEPLOY_SOURCE_MODE" == "remote-main" ]]; then
-  echo "==> Resolving git remotes for $DEPLOY_BRANCH (mcp-agent-builder-go, mcpagent, multi-llm-provider-go)"
-  {
-    to_https_url "$(git -C "$LOCAL_REPO_ROOT" remote get-url origin)"
-    to_https_url "$(git -C "$LOCAL_WORKSPACE_ROOT/mcpagent" remote get-url origin)"
-    to_https_url "$(git -C "$LOCAL_WORKSPACE_ROOT/multi-llm-provider-go" remote get-url origin)"
-  } > "$STAGING/repos"
-  rsync -az -e "$RSYNC_SSH" "$STAGING/" "confida@$HOST_IP:$REMOTE_JOB/"
-else
-  echo "==> WARNING: shipping local working trees to the server (DEPLOY_SOURCE_MODE=local) -- not for a release you intend to keep"
-  rsync -az -e "$RSYNC_SSH" "$STAGING/" "confida@$HOST_IP:$REMOTE_JOB/"
-  "${SSH[@]}" "mkdir -p '$REMOTE_JOB/source'"
-  for repo in mcp-agent-builder-go mcpagent multi-llm-provider-go; do
-    case "$repo" in
-      mcp-agent-builder-go) local_dir="$LOCAL_REPO_ROOT" ;;
-      *) local_dir="$LOCAL_WORKSPACE_ROOT/$repo" ;;
-    esac
-    "${SSH[@]}" "mkdir -p '$REMOTE_JOB/source/$repo'"
-    rsync -az --filter=':- .gitignore' --exclude .git -e "$RSYNC_SSH" "$local_dir/" "confida@$HOST_IP:$REMOTE_JOB/source/$repo/"
-  done
-fi
+echo "==> Resolving git remotes for $DEPLOY_BRANCH (mcp-agent-builder-go, mcpagent, multi-llm-provider-go)"
+{
+  to_https_url "$(git -C "$LOCAL_REPO_ROOT" remote get-url origin)"
+  to_https_url "$(git -C "$LOCAL_WORKSPACE_ROOT/mcpagent" remote get-url origin)"
+  to_https_url "$(git -C "$LOCAL_WORKSPACE_ROOT/multi-llm-provider-go" remote get-url origin)"
+} > "$STAGING/repos"
+"${SCP[@]}" "$STAGING/bootstrap-build.sh" "$STAGING/branch" "$STAGING/repos" "confida@$HOST_IP:$REMOTE_JOB/"
 
 echo "==> Building on confida@$HOST_IP: cloning/using $DEPLOY_BRANCH and building natively"
 # Throttled well below the box's 16 cores / 62G RAM (confirmed 2026-09-11):

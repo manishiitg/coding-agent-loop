@@ -137,8 +137,12 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 			return false, true
 		}
 	}
+	ownerID := stringFromRecord(persistedRecord, "user_id")
+	if strings.TrimSpace(ownerID) == "" {
+		ownerID = "default"
+	}
 	if err := updatePersistedChatHistoryIndex(
-		"default",
+		ownerID,
 		sessionID,
 		stringFromRecord(persistedRecord, "agent_mode"),
 		persistedHistory,
@@ -160,7 +164,7 @@ func findWorkflowBuilderConversationPathForSession(ctx context.Context, sessionI
 	if path, found, err := FindChatHistoryConversationPathForSession("default", sessionID, workspacePath); err != nil || found {
 		return path, found, err
 	}
-	listing, exists, err := listWorkspaceFolder(ctx, strings.Trim(strings.TrimSpace(workspacePath), "/")+"/builder/conversation", 3)
+	listing, exists, err := listWorkspaceFolder(ctx, strings.Trim(strings.TrimSpace(workspacePath), "/")+"/builder/conversation", 5)
 	if err != nil || !exists {
 		return "", false, err
 	}

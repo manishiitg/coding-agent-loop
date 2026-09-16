@@ -33,12 +33,12 @@ func TestDecorateSharedBuilderHistoryShowsAuthorAndProtectsResume(t *testing.T) 
 	}
 
 	decorateChatHistorySessions(sessions, "admin-1", true, true)
-	if sessions[1].CanResume || !sessions[1].CanDelete || !sessions[2].CanResume {
-		t.Fatalf("platform admin policy not applied: other=%#v legacy=%#v", sessions[1], sessions[2])
+	if sessions[1].CanResume || sessions[1].CanDelete || sessions[2].CanResume || sessions[2].CanDelete {
+		t.Fatalf("platform admin must not inherit private chat access: other=%#v legacy=%#v", sessions[1], sessions[2])
 	}
 }
 
-func TestVisibleSharedBuilderHistoryIsAdminWideButWorkflowOwnerPrivate(t *testing.T) {
+func TestVisibleSharedBuilderHistoryIsPrivateEvenForPlatformAdmin(t *testing.T) {
 	sessions := []ChatHistorySession{
 		{SessionID: "mine", UserID: "member-1"},
 		{SessionID: "theirs", UserID: "member-2"},
@@ -58,8 +58,8 @@ func TestVisibleSharedBuilderHistoryIsAdminWideButWorkflowOwnerPrivate(t *testin
 		t.Fatalf("workflow owner saw %d other-user chats, want none", len(workflowOwnerView))
 	}
 	adminView := visibleChatHistorySessions(sessions, "admin-1", true)
-	if len(adminView) != len(sessions) {
-		t.Fatalf("admin view count = %d, want %d", len(adminView), len(sessions))
+	if len(adminView) != 0 {
+		t.Fatalf("admin saw %d other-user chats, want none", len(adminView))
 	}
 }
 

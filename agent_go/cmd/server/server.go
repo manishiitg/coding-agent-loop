@@ -571,8 +571,9 @@ type StreamingAPI struct {
 	// that turn (so the new system prompt + tool list actually take effect on
 	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
-	lastWorkshopModeBySession map[string]string
-	lastChatPolicyBySession   map[string]string
+	lastWorkshopModeBySession    map[string]string
+	lastChatPolicyBySession      map[string]string
+	lastAgentProfileKeyBySession map[string]string
 
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
@@ -1914,6 +1915,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		completionLoopStarted:                  make(map[string]bool),
 		lastWorkshopModeBySession:              make(map[string]string),
 		lastChatPolicyBySession:                make(map[string]string),
+		lastAgentProfileKeyBySession:           make(map[string]string),
 		stoppedSessions:                        make(map[string]bool),
 		interruptedTurns:                       make(map[string]bool),
 	}
@@ -3440,6 +3442,17 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	var resolvedProfileSkills []*llmtypes.Skill
+	if resolvedProfile != nil {
+		identitySkillNames := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
+		resolvedProfileSkills = skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames)
+	}
+	api.conversationMux.Lock()
+	if api.lastAgentProfileKeyBySession == nil {
+		api.lastAgentProfileKeyBySession = make(map[string]string)
+	}
+	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
+	api.conversationMux.Unlock()
 	// Per-user workflow access: the list endpoint already hides workflows a
 	// user isn't allowed to see, but that's UX only -- a user who already
 	// knows a workflow's folder name could still open it directly. This is
@@ -3529,7 +3542,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// path below. Auto-notifications keep their synthetic-turn semantics and are
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
-	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
+	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 
@@ -5396,6 +5410,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					workflowPhaseFolder,
 					!currentUserIsReadOnly,
 				)
+				protectOtherWorkflowBuilderChats(sessionID, workflowPhaseFolder, currentUserID)
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadWrite(sessionID, hostDownloadsBrowserMode(req)); hostDownloads != "" {
 					log.Printf("[WORKFLOW PHASE FOLDER GUARD] Added read-write CDP host Downloads: %s", hostDownloads)
 				}
@@ -5667,6 +5682,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				logfWithContext(queryLogCtx, "[SKILL TOOLS] Registered multi-agent skill tools")
 			}
+			if isWorkflowBuilderPhase {
+				if err := api.registerAccessibleWorkflowListTool(llmAgent, currentUserID, nil); err != nil {
+					logfWithContext(queryLogCtx, "[WORKFLOW DISCOVERY] Failed to register accessible workflow listing: %v", err)
+					sendError(fmt.Sprintf("Failed to register workflow discovery tools: %v", err), true)
+					return
+				}
+				logfWithContext(queryLogCtx, "[WORKFLOW DISCOVERY] Registered list_accessible_workflows for Builder")
+			}
 			if isWorkflowPhase {
 				if err := api.registerWorkflowLLMDiscoveryTools(llmAgent); err != nil {
 					logfWithContext(queryLogCtx, "[LLM TOOLS] Failed to register workflow LLM discovery tools: %v", err)
@@ -5828,13 +5851,22 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if err := llmAgent.SetInstalledSkillResolver(installedSkillResolver(req.SelectedFolder)); err != nil {
 					logfWithContext(queryLogCtx, "[SKILLS] Failed to configure installed-skill resolver: %v", err)
 				}
-				if attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames); len(attached) > 0 {
+				attached := resolvedProfileSkills
+				if resolvedProfile == nil {
+					attached = skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, identitySkillNames)
+				}
+				if len(attached) > 0 {
 					attachedNames := make([]string, 0, len(attached))
 					for _, s := range attached {
 						_ = llmAgent.AttachSkill(s)
 						attachedNames = append(attachedNames, s.Name)
 					}
 					log.Printf("[SKILLS] Attached %d of %d skill(s): %v", len(attached), len(identitySkillNames), attachedNames)
+					if resolvedProfile != nil {
+						api.conversationMux.Lock()
+						api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, attached)
+						api.conversationMux.Unlock()
+					}
 				}
 			}
 
@@ -6470,9 +6502,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if modeChangeConversationPath == "" && len(preModeChangeSnapshot) > 0 {
-					modeChangeConversationPath = workflowBuilderConversationLogPath(workflowPhaseFolder, sessionID, time.Now())
+					modeChangeConversationPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, sessionID, time.Now())
 					convData := map[string]interface{}{
 						"session_id":           sessionID,
+						"user_id":              currentUserID,
+						"username":             chatHistoryUsername(currentUserID, ""),
 						"phase_id":             workflowPhaseID,
 						"workshop_mode":        modeChangePrevMode,
 						"conversation_history": cleanChatHistoryForPersistence(preModeChangeSnapshot),
@@ -7039,7 +7073,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
 				logPath := persistConversationPath
 				if strings.TrimSpace(logPath) == "" {
-					logPath = workflowBuilderConversationLogPath(workflowPhaseFolder, persistSessionID, time.Now())
+					logPath = workflowBuilderOwnedConversationLogPath(workflowPhaseFolder, currentUserID, persistSessionID, time.Now())
 				}
 				// Same guard as the shared persist path: a rebuild with fewer
 				// user turns than the file already holds is partial, and
@@ -7459,6 +7493,7 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	}
 	api.conversationMux.RLock()
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
+	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
 	normalizeChatHistoryRuntime(runtime)
 
@@ -8251,6 +8286,13 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: restored mode=%s current mode=%s", sessionID, normalizeChatHistoryWorkshopMode(runtime.WorkshopMode), normalizeChatHistoryWorkshopMode(currentWorkshopMode))
 		return false
 	}
+	api.conversationMux.RLock()
+	currentProfileKey, profileKeyKnown := api.lastAgentProfileKeyBySession[sessionID]
+	api.conversationMux.RUnlock()
+	if profileKeyKnown && strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		log.Printf("[CHAT_HISTORY] Skipping native coding-agent resume for session %s: agent profile definition changed", sessionID)
+		return false
+	}
 	externalSessionID := strings.TrimSpace(runtime.ExternalSessionID)
 	projectDirID := strings.TrimSpace(runtime.ProjectDirID)
 	currentOwnerSessionID := ""
@@ -8869,6 +8911,32 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(response)
+}
+
+// agentProfileAllowsRetainedLiveInput prevents an idle provider-native session
+// from bypassing current product setup. An actively running foreground turn was
+// built by this process and can still be steered immediately; an idle retained
+// session must carry the same persisted profile fingerprint as this request.
+func (api *StreamingAPI) agentProfileAllowsRetainedLiveInput(userID, sessionID, workspacePath string, hasProfile bool) bool {
+	if api == nil || !hasProfile || api.hasActiveTurnCancel(sessionID) {
+		return true
+	}
+	api.conversationMux.RLock()
+	currentProfileKey, known := api.lastAgentProfileKeyBySession[sessionID]
+	api.conversationMux.RUnlock()
+	if !known || currentProfileKey == "" {
+		return false
+	}
+	runtime, ok, err := ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath)
+	if err != nil || !ok || runtime == nil {
+		log.Printf("[CHAT_HISTORY] Retained live input disabled for product session %s: current runtime fingerprint is unavailable", sessionID)
+		return false
+	}
+	if strings.TrimSpace(runtime.AgentProfileKey) != currentProfileKey {
+		log.Printf("[CHAT_HISTORY] Retained live input disabled for product session %s: agent profile definition changed", sessionID)
+		return false
+	}
+	return true
 }
 
 // agentSupportsLiveInputDelivery reports whether the retained agent is a coding

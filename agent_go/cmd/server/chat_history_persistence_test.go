@@ -2446,6 +2446,87 @@ func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsProviderMismatch(t
 	}
 }
 
+func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsChangedAgentProfile(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "pi-cli",
+		ExternalSessionID: "stale-pi-session",
+		ResumeSupported:   true,
+		AgentProfileKey:   "profile-sha256:old",
+	}
+
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("changed agent profile must skip native resume")
+	}
+	if handle := mcpagent.SnapshotAgentSession(agent); handle != nil && handle.Provider.NativeSessionID != "" {
+		t.Fatalf("unexpected native session ID = %q", handle.Provider.NativeSessionID)
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsLegacyRuntimeForProfile(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "pi-cli",
+		ExternalSessionID: "legacy-pi-session",
+		ResumeSupported:   true,
+	}
+
+	if api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("profile-backed chat must not resume a legacy runtime without a profile key")
+	}
+}
+
+func TestSeedCodingAgentRuntimeFromRestoredConversationAcceptsMatchingAgentProfile(t *testing.T) {
+	t.Setenv("AGENTWORKS_ISOLATE_WORKFLOW_CLI", "false")
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"new-ui-session": "profile-sha256:current"}}
+	agent := &mcpagent.Agent{}
+	runtime := &ChatHistoryAgentRuntime{
+		Kind:              "coding_agent",
+		Provider:          "pi-cli",
+		ExternalSessionID: "current-pi-session",
+		ResumeSupported:   true,
+		AgentProfileKey:   "profile-sha256:current",
+	}
+
+	if !api.seedCodingAgentRuntimeFromRestoredConversation("new-ui-session", "pi-cli", "", runtime, agent) {
+		t.Fatal("matching agent profile should preserve native resume")
+	}
+}
+
+func TestAgentProfileAllowsRetainedLiveInputRequiresMatchingPersistedKey(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspace := "_users/user-1/Chats/Work/projects/demo"
+	conversationDir := filepath.Join(root, filepath.FromSlash(workspace), "builder", "conversation", "2026-09-15")
+	if err := os.MkdirAll(conversationDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conversationPath := filepath.Join(conversationDir, "session-product-chat-conversation.json")
+	writeRuntime := func(key string) {
+		t.Helper()
+		payload := fmt.Sprintf(`{"session_id":"product-chat","runtime":{"kind":"coding_agent","provider":"pi-cli","resume_supported":true,"external_session_id":"native","agent_profile_key":%q}}`, key)
+		if err := os.WriteFile(conversationPath, []byte(payload), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"product-chat": "profile-sha256:current"}}
+	writeRuntime("profile-sha256:old")
+	if api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
+		t.Fatal("stale product runtime must not accept retained live input")
+	}
+	writeRuntime("profile-sha256:current")
+	if !api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
+		t.Fatal("matching product runtime should accept retained live input")
+	}
+}
+
 func TestSeedCodingAgentRuntimeFromRestoredConversationRejectsWorkshopModeMismatch(t *testing.T) {
 	api := &StreamingAPI{}
 	agent := &mcpagent.Agent{}

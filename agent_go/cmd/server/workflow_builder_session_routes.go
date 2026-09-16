@@ -37,7 +37,7 @@ type workflowBuilderSessionResponse struct {
 }
 
 type builderConversationLog struct {
-	SessionID           string                       `json:"session_id"`
+	SessionID string `json:"session_id"`
 	// UserID makes the workflow-scoped builder transcript private to the
 	// account that created it. The workflow itself can be shared read-only;
 	// that must never imply permission to restore another reader/owner's chat.
@@ -220,6 +220,38 @@ func workflowBuilderConversationLogPath(workspacePath, sessionID string, timesta
 	))
 }
 
+// workflowBuilderOwnedConversationLogPath keeps Builder transcripts inside the
+// workflow (so native coding CLIs can continue them by path) while separating
+// each account's private history. The legacy helper above remains for reading
+// and migrating pre-partitioned transcripts.
+func workflowBuilderOwnedConversationLogPath(workspacePath, userID, sessionID string, timestamp time.Time) string {
+	if timestamp.IsZero() {
+		timestamp = time.Now()
+	}
+	cleanWorkspacePath := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	return filepath.ToSlash(filepath.Join(
+		cleanWorkspacePath,
+		"builder",
+		"conversation",
+		"users",
+		sanitizeUserIDForPath(userID),
+		timestamp.Format(workflowBuilderConversationDateLayout),
+		fmt.Sprintf("session-%s-conversation.json", sessionID),
+	))
+}
+
+func effectiveBuilderConversationOwner(requestUserID, existingUserID string) string {
+	requestUserID = strings.TrimSpace(requestUserID)
+	existingUserID = strings.TrimSpace(existingUserID)
+	if requestUserID != "" && requestUserID != "default" {
+		return requestUserID
+	}
+	if existingUserID != "" && existingUserID != "default" {
+		return existingUserID
+	}
+	return "default"
+}
+
 func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, presetQueryID, workspacePath string) (*workflowBuilderSessionResponse, error) {
 	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
 	if workspacePath == "" {
@@ -230,7 +262,7 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 
 	paths := []string{}
 	conversationFolder := workspacePath + "/builder/conversation"
-	if listing, exists, err := listWorkspaceFolder(ctx, conversationFolder, 3); err != nil {
+	if listing, exists, err := listWorkspaceFolder(ctx, conversationFolder, 5); err != nil {
 		return nil, err
 	} else if exists {
 		collectWorkspaceFilePaths(listing, &paths)
@@ -358,13 +390,28 @@ func isWorkflowBuilderConversationLogPath(workspacePath, candidatePath string) b
 	}
 	relative := strings.TrimPrefix(candidatePath, newPrefix)
 	parts := strings.Split(relative, "/")
-	if len(parts) != 2 {
-		return false
+	// Legacy: conversation/YYYY-MM-DD/session-....json
+	if len(parts) == 2 {
+		if _, err := time.Parse(workflowBuilderConversationDateLayout, parts[0]); err != nil {
+			return false
+		}
+		return strings.HasPrefix(parts[1], "session-")
 	}
-	if _, err := time.Parse(workflowBuilderConversationDateLayout, parts[0]); err != nil {
-		return false
+	// Private: conversation/users/<user-id>/YYYY-MM-DD/session-....json
+	// Genuine unowned/system records: conversation/system/YYYY-MM-DD/session-....json
+	if len(parts) == 4 && parts[0] == "users" && sanitizeUserIDForPath(parts[1]) == parts[1] {
+		if _, err := time.Parse(workflowBuilderConversationDateLayout, parts[2]); err != nil {
+			return false
+		}
+		return strings.HasPrefix(parts[3], "session-")
 	}
-	return strings.HasPrefix(parts[1], "session-")
+	if len(parts) == 3 && parts[0] == "system" {
+		if _, err := time.Parse(workflowBuilderConversationDateLayout, parts[1]); err != nil {
+			return false
+		}
+		return strings.HasPrefix(parts[2], "session-")
+	}
+	return false
 }
 
 func (api *StreamingAPI) restoreLatestWorkflowStepSummary(ctx context.Context, workspacePath string) (*restoredStepSummary, error) {

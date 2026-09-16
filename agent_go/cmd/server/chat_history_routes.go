@@ -123,10 +123,8 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, "workflow access denied", http.StatusForbidden)
 			return
 		}
-		platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-
 		fetchLimit, fetchOffset := limit, offset
-		if workflowScoped && !platformAdmin {
+		if workflowScoped {
 			// Ownership is stored in transcript metadata, not the filename. Load
 			// the indexed set, filter it, and only then paginate so a user's own
 			// older chats are not pushed off their page by another user's newer ones.
@@ -137,11 +135,11 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if workflowScoped && !platformAdmin {
-			sessions = visibleChatHistorySessions(sessions, userID, platformAdmin)
+		if workflowScoped {
+			sessions = visibleChatHistorySessions(sessions, userID, false)
 			sessions = paginateChatHistorySessions(sessions, limit, offset)
 		}
-		decorateChatHistorySessions(sessions, userID, platformAdmin, workflowScoped)
+		decorateChatHistorySessions(sessions, userID, false, workflowScoped)
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -151,9 +149,8 @@ func listChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 }
 
 // chatHistoryWorkspaceAccess keeps personal/product chat history private to
-// its per-user root. Workflow access admits the workspace, but only a platform
-// administrator can inspect another user's Builder history. Ownership governs
-// the workflow, not the privacy of each user's conversation.
+// its per-user root. Workflow access admits the workspace, but does not grant
+// access to another user's private Builder history.
 func chatHistoryWorkspaceAccess(r *http.Request, workspacePath string) (WorkflowAccessLevel, bool, bool) {
 	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
 	if !strings.HasPrefix(workspacePath, "Workflow/") {
@@ -168,9 +165,7 @@ func chatHistoryWorkspaceAccess(r *http.Request, workspacePath string) (Workflow
 }
 
 func chatHistoryVisibleTo(userID, viewerID string, platformAdmin bool) bool {
-	if platformAdmin {
-		return true
-	}
+	_ = platformAdmin // retained in the signature for compatibility with callers
 	userID = strings.TrimSpace(userID)
 	viewerID = strings.TrimSpace(viewerID)
 	return userID != "" && userID != "default" && viewerID != "" && userID == viewerID
@@ -187,6 +182,7 @@ func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, 
 }
 
 func decorateChatHistorySessions(sessions []ChatHistorySession, viewerID string, platformAdmin, workflowScoped bool) {
+	_ = platformAdmin
 	viewerID = strings.TrimSpace(viewerID)
 	for i := range sessions {
 		repairStaleChatHistoryAttribution(&sessions[i])
@@ -198,12 +194,8 @@ func decorateChatHistorySessions(sessions []ChatHistorySession, viewerID string,
 		}
 		ownerID := strings.TrimSpace(sessions[i].UserID)
 		isOwn := ownerID != "" && ownerID == viewerID
-		isLegacy := ownerID == "" || ownerID == "default"
-		// A platform administrator may inspect and delete another user's
-		// transcript, but continuing their provider-native session would cross
-		// the account boundary. Only legacy/system chats are resumable by admin.
-		sessions[i].CanResume = isOwn || (isLegacy && platformAdmin)
-		sessions[i].CanDelete = isOwn || platformAdmin
+		sessions[i].CanResume = isOwn
+		sessions[i].CanDelete = isOwn
 	}
 }
 
@@ -219,10 +211,11 @@ func chatHistoryConversationIdentity(data []byte) (userID, username string) {
 }
 
 func chatHistoryCanResume(userID, viewerID string, platformAdmin bool) bool {
+	_ = platformAdmin
 	userID = strings.TrimSpace(userID)
 	viewerID = strings.TrimSpace(viewerID)
 	if userID == "" || userID == "default" {
-		return platformAdmin
+		return false
 	}
 	return viewerID != "" && userID == viewerID
 }
@@ -298,8 +291,7 @@ func startRestoredTerminalHandler(api *StreamingAPI) http.HandlerFunc {
 				}
 			}
 			ownerID, _ := chatHistoryConversationIdentity(conversation)
-			platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-			if !chatHistoryCanResume(ownerID, userID, platformAdmin) {
+			if !chatHistoryCanResume(ownerID, userID, false) {
 				http.Error(w, "another user's Builder chat is view-only", http.StatusForbidden)
 				return
 			}
@@ -693,14 +685,11 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		if workflowScoped {
 			ownerID, _ := chatHistoryConversationIdentity(data)
-			platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-			if !chatHistoryVisibleTo(ownerID, userID, platformAdmin) {
+			if !chatHistoryVisibleTo(ownerID, userID, false) {
 				http.Error(w, "Builder chat access denied", http.StatusForbidden)
 				return
 			}
-			// Platform admins may inspect another user's transcript, but only the
-			// author may continue its provider-native session.
-			if parsePositiveQueryInt(r, "resume_turns") > 0 && !chatHistoryCanResume(ownerID, userID, platformAdmin) {
+			if parsePositiveQueryInt(r, "resume_turns") > 0 && !chatHistoryCanResume(ownerID, userID, false) {
 				http.Error(w, "another user's Builder chat is view-only", http.StatusForbidden)
 				return
 			}

@@ -46,6 +46,14 @@ tab-specific registry record and switches back to the verified project session
 when they drift. This backend guard covers tabs that remain open while a new
 release is deployed.
 
+Custom chat titles also became visually detached from resumed conversations.
+The title remained in the transcript and the older dated index row, but a
+next-day resume created a newer index row with an empty title. Recent chats
+then preferred that newer row and fell back to the latest user message. Chat
+titles now follow the durable session id across dated files; listing repairs
+already-stale rows, saving inherits the session title, and renaming updates
+every indexed copy of the session.
+
 ## Required contract
 
 1. An open Work chat tab can survive any number of frontend refreshes and
@@ -79,6 +87,8 @@ release is deployed.
 - Focused frontend tests: 33 passed, covering Work key migration, tab-store
   hydration and profile submission payloads.
 - Focused server tests passed, including the verified Work-only rebind guard.
+- Chat-history regression tests cover title inheritance across dated resume
+  paths and self-repair of existing untitled index rows.
 - Production release `b4beba0-20260916081750` deployed successfully; public
   health and frontend returned 200.
 - Browser verification reopened the affected 191-message chat and then reloaded

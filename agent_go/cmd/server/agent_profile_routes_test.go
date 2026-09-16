@@ -226,6 +226,17 @@ func TestQueryRequestForAgentProfileChatRejectsUndeclaredChatExtras(t *testing.T
 	}
 }
 
+func TestQueryRequestForAgentProfileChatAcceptsNoServersSentinelOnFixedPurposeProfile(t *testing.T) {
+	profile := routeTestProfile("dominion", true, "")
+	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{
+		Message:        "hello",
+		EnabledServers: []string{"NO_SERVERS"},
+	}, ProductConversationRecord{SessionID: "session-1", WorkspacePath: "Chats"})
+	if err != nil {
+		t.Fatalf("expected the NO_SERVERS sentinel to be accepted even when MCP selection is disabled, got %v", err)
+	}
+}
+
 func TestQueryRequestForAgentProfileChatRejectsUndeclaredWorkflowReferences(t *testing.T) {
 	profile := routeTestProfile("dominion", true, "")
 	_, err := queryRequestForAgentProfileChat(profile, AgentProfileChatRequest{

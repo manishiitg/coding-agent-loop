@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/presentations"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 const maxAgentProfileRequestBytes = 2 << 20
@@ -105,6 +106,18 @@ type AgentProfilePresentationDeleteRequest struct {
 	Kind            string `json:"kind"`
 }
 
+// hasSelectedServers reports whether the browser named a real MCP server
+// selection. ChatArea.tsx sends the mcpclient.NoServers sentinel
+// unconditionally for every profile-based chat tab, including ones whose
+// profile disables MCP selection entirely -- that sentinel means "explicitly
+// none", not a selection, and must not trip the capability check below.
+func hasSelectedServers(servers []string) bool {
+	if len(servers) == 0 {
+		return false
+	}
+	return !(len(servers) == 1 && servers[0] == mcpclient.NoServers)
+}
+
 func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentProfileChatRequest, conversation ProductConversationRecord) (QueryRequest, error) {
 	if strings.TrimSpace(conversation.SessionID) == "" || strings.TrimSpace(conversation.WorkspacePath) == "" {
 		return QueryRequest{}, fmt.Errorf("product conversation has no runtime binding")
@@ -141,12 +154,12 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 				// query path. This also differs from legacy registry records that
 				// silently mounted every connected account MCP, forcing one clean
 				// CLI relaunch during migration.
-				req.EnabledServers = []string{"NO_SERVERS"}
+				req.EnabledServers = []string{mcpclient.NoServers}
 			}
 		} else {
 			req.EnabledServers = appendUniqueStrings(nil, input.EnabledServers...)
 		}
-	} else if len(input.EnabledServers) > 0 {
+	} else if hasSelectedServers(input.EnabledServers) {
 		return QueryRequest{}, fmt.Errorf("profile %q does not accept user-selected MCP servers", profile.ID)
 	}
 	if profile.Runtime.Capabilities.SkillSelection != "" && profile.Runtime.Capabilities.SkillSelection != agentprofiles.CapabilityDisabled {

@@ -95,3 +95,36 @@ every indexed copy of the session.
   the page. The same named tab and full transcript remained active after the
   reload. No message was sent into the user's production chat during this
   verification, so the multi-tab context-dependent follow-up matrix remains.
+
+## 2026-09-16 multiline paste follow-up
+
+Three concurrently open Work tabs were reported as cross-wiring a pasted
+message. Production request and provider logs disproved cross-tab routing: the
+paste was delivered to the selected `faceexpression` application session, while
+`prodissue` was independently executing in its own session. The actual failure
+was below the Work tab boundary. Claude Code converts bracketed multiline and
+large pastes into an attachment asynchronously, and the retained-input adapter
+pressed Enter before that conversion settled. Claude therefore received an
+empty turn while the paste remained in its editor.
+
+The provider fix is `multi-llm-provider-go` commit `8e97d8c` (`Wait for Claude
+multiline paste before submit`). Multiline or large retained input now waits for
+the Claude prompt/attachment to settle before Enter. A settlement failure is
+returned to the caller instead of being reported as successful delivery; short
+single-line steering keeps the immediate path. Focused and full Claude adapter
+tests pass. Cursor and Pi already wait for a visible draft before submit, Muse
+waits for and expands its pasted-content attachment, and Codex verifies the
+rollout/prompt transition with resubmission; their relevant adapter suites pass.
+Production release `8623c20-20260916120839` deployed successfully and public
+health returned healthy. A non-destructive live multiline send remains to be
+verified.
+
+The same incident also exposed a frontend isolation weakness even though the
+captured request was routed correctly: Crew reused one mounted `ChatArea` and
+`ChatInput` while changing its `tabId`. Drafts lived durably per tab, but local
+paste, picker, upload and submit closures could briefly retain the preceding
+tab during a rapid switch. Crew now remounts the chat/composer at each tab
+boundary. Before unmount, a pending debounced draft is flushed to its owning
+tab, so switching cannot lose the draft or carry it into the next composer.
+AgentWorks' workflow chat host uses the same tab-keyed boundary and the same
+shared draft-flush safeguard.

@@ -768,6 +768,11 @@ export function WorkSurface() {
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
+                          // A Crew tab owns its composer. Remount at the tab
+                          // boundary so React-local draft, paste, picker, upload,
+                          // and submit closures can never survive into another
+                          // conversation during a rapid tab switch.
+                          key={tabId}
                           tabId={tabId}
                           compact
                           onNewChat={() => activateTab(tabs.find(tab => tab.metadata?.agentProfileBuilder)?.tabId ?? tabId)}

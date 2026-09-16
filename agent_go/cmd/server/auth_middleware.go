@@ -218,6 +218,11 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// A linked OAuth identity and its password account are one account.
+		// Canonicalize before any authorization or workspace lookup so an older
+		// provider-subject JWT cannot create a second per-user chat tree.
+		canonicalizeDirectoryUserClaims(claims)
+
 		// A disabled account is refused even with a still-valid token, so an
 		// admin switching someone off takes effect now, not at token expiry.
 		if directoryUserIsDisabled(claims) {

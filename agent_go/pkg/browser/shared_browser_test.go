@@ -73,18 +73,25 @@ func TestRemoveStaleChromeSingletonLockNoopWithoutSharedProfile(t *testing.T) {
 	removeStaleChromeSingletonLock("user-0123456789abcdef--browser")
 }
 
-func TestSessionDirsPrefersNamespacedRuntimeDirWhenSet(t *testing.T) {
+func TestSessionDirsChecksBothNamespacedLocationsWhenSet(t *testing.T) {
 	runtimeDir := t.TempDir()
 	t.Setenv("XDG_RUNTIME_DIR", runtimeDir)
 	t.Setenv("AGENT_BROWSER_NAMESPACE", "sparkquill")
 
 	dirs := sessionDirs()
-	if len(dirs) == 0 {
-		t.Fatal("expected at least one session dir")
+	if len(dirs) < 2 {
+		t.Fatalf("expected at least two namespaced candidate dirs, got %v", dirs)
 	}
-	want := filepath.Join(runtimeDir, "agent-browser", "namespaces", "sparkquill", "run")
-	if dirs[0] != want {
-		t.Fatalf("expected namespaced runtime dir first, got %v", dirs)
+	wantXDG := filepath.Join(runtimeDir, "agent-browser", "namespaces", "sparkquill", "run")
+	wantTmp := filepath.Join("/tmp/.agent-browser", "namespaces", "sparkquill", "run")
+	if dirs[0] != wantXDG {
+		t.Fatalf("expected XDG runtime dir first, got %v", dirs)
+	}
+	if dirs[1] != wantTmp {
+		// This is the location that actually matters in production: the
+		// Landlock-sandboxed subprocess that really spawns agent-browser
+		// doesn't see XDG_RUNTIME_DIR even though the parent service does.
+		t.Fatalf("expected /tmp namespaced fallback second (this is where production actually writes), got %v", dirs)
 	}
 }
 

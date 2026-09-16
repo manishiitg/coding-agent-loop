@@ -26,17 +26,16 @@ or another project view intended to organize or manage information visually.
 - Build responsive documents. Use separate toolbar views for genuinely distinct
   destinations and internal sections/tabs for closely related material.
 - Support both app themes using `:root.dark` or `[data-theme="dark"]`.
-- Choose the CSS/component framework that best fits the report. Version-pinned
-  HTTPS CDN stylesheets and browser scripts are supported, including Tailwind's
-  browser build. daisyUI is a convenient default for standard components: opt
-  in with `<html data-report-ui="daisyui">`; the host injects its pinned CSS.
-  daisyUI does not include Tailwind utility classes, so either load Tailwind or
-  provide the layout/typography CSS those components need.
-- Chart.js is a good default for meaningful time-series,
-  comparison, distribution, and composition charts. Use a small HTML/CSS
-  visual only when it is genuinely simpler than a chart library. Configure
-  Chart.js responsively, give its container an intentional height, match its
-  colors to the app theme, and show a readable fallback when the CDN fails.
+- Choose any CSS/component approach that fits the report, including plain CSS,
+  Tailwind, Bootstrap, daisyUI, another framework, or a combination that works
+  in the browser. Version-pinned HTTPS CDN stylesheets and browser scripts are
+  supported. If using daisyUI, `<html data-report-ui="daisyui">` asks the host
+  to inject its pinned CSS; daisyUI alone does not include Tailwind utilities.
+  These are compatibility facts, not a preferred stack.
+- Choose any suitable charting approach, including Chart.js, another browser
+  library, SVG/canvas, or HTML/CSS. Match the complexity of the implementation
+  to the visualization, make it responsive and theme-aware, and show a readable
+  fallback when an external dependency fails.
 
 ## Project data and actions
 

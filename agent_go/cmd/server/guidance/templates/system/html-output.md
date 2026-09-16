@@ -29,7 +29,7 @@ below change in these specific ways:
 | Data baked into the file; `Generated: <date>` meta line | Data read live through `window.report.query` inside `window.report.ready(fn)`; no generated-at stamp, the numbers are current by construction |
 | `body { max-width: 960px; margin: 0 auto }` | Full width — the pane is the layout boundary; no fixed body/`html` height, no nested scroll container |
 | Sticky `<nav>` of `#anchors` | Same, or real tabs; `#anchor` clicks are intercepted and scrolled by the host |
-| Prefer inline CSS/JS; pin any HTTPS CDN dependency to an exact version | Same. An opted-in `<html data-report-ui="daisyui">` gets the pinned daisyUI stylesheet from jsDelivr; Chart.js and other version-pinned HTTPS CDN libraries are also supported. |
+| Choose inline CSS/JS, version-pinned HTTPS dependencies, or both | Same. An opted-in `<html data-report-ui="daisyui">` gets the pinned daisyUI stylesheet from jsDelivr; any browser-compatible framework or library is supported. |
 
 Everything else in this doc (summary-first layout, semantic colour, tables,
 inline charts, the quality checklist) applies to both. For the report
@@ -39,7 +39,7 @@ paths — load `reporting-policy.md`.
 ### Non-negotiable rules
 
 **External libraries.**
-Choose the CSS and JavaScript stack that fits the report. Inline code and version-pinned HTTPS CDN dependencies are both supported, including Tailwind's browser build. Use `preview_report` to prove the chosen libraries load in the report sandbox, and show a useful error or fallback if one fails. daisyUI can be enabled with `data-report-ui="daisyui"`; the host injects the pinned stylesheet when it is omitted. daisyUI alone does not provide Tailwind utility classes. Chart.js and similar browser libraries may be loaded from a version-pinned HTTPS CDN URL.
+Choose the CSS and JavaScript stack that fits the report. Plain CSS, Tailwind, Bootstrap, daisyUI, any charting library, native SVG/canvas, and other browser-compatible approaches are all valid. Inline code and version-pinned HTTPS CDN dependencies are both supported. Use `preview_report` to prove the chosen stack loads in the report sandbox, and show a useful error or fallback if an external dependency fails. For compatibility: `data-report-ui="daisyui"` asks the host to inject the pinned daisyUI stylesheet, and daisyUI alone does not provide Tailwind utility classes. These examples are capabilities, not defaults.
 
 **Dark-mode styles.**
 For a standalone artifact, always include (an in-app report keys the same

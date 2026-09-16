@@ -27,11 +27,10 @@ There is no report generation step or widget-layout registry.
   `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
   that same CDN link for opted-in reports that omit it. Use inline CSS
   for layout when Tailwind utilities are not loaded.
-- Prefer Chart.js from a version-pinned HTTPS CDN for meaningful time-series,
-  comparison, distribution, and composition charts. Use lightweight HTML/CSS
-  for a single progress bar or similarly simple visual. Make Chart.js
-  responsive, give the canvas container an intentional height, use app-theme
-  colors, and render a readable fallback if the library fails to load.
+- Choose any suitable charting approach: Chart.js, another browser library,
+  SVG/canvas, or HTML/CSS are all valid. Match the implementation to the
+  visualization, make it responsive and theme-aware, and render a readable
+  fallback when an external dependency fails to load.
 - Design for the default Tablet report pane first (~768px). Use one or two
   primary columns, responsive spacing/type, 44px minimum touch targets, no
   hover-only interactions, and tabs that wrap or scroll without clipping.

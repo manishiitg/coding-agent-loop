@@ -104,11 +104,11 @@ the tablet view sparse.
    `:root.dark` / `[data-theme="dark"]` (or use the injected
    `hsl(var(--background))`-style tokens) — `prefers-color-scheme` alone
    ignores the in-app light/dark toggle.
-   Prefer daisyUI for standard cards, alerts, badges, controls, and tables.
-   Prefer version-pinned Chart.js for meaningful charts; keep one-value bars
-   and similarly simple visuals in HTML/CSS. Every CDN-backed feature needs a
-   readable fallback, and `preview_report` must verify the library actually
-   loaded in both themes and at all required widths.
+   Choose the CSS, component, and charting stack that best fits the report;
+   plain CSS, Tailwind, Bootstrap, daisyUI, Chart.js, other browser libraries,
+   SVG, and canvas are all valid. Every CDN-backed feature needs a readable
+   fallback, and `preview_report` must verify the chosen stack actually loaded
+   in both themes and at all required widths.
 4. **Markdown belongs in the report as rendered prose, never as raw text.**
    A markdown file the workflow keeps under `db/` (a weekly summary, a
    strategy note, a generated brief) drops in with one call, themed to

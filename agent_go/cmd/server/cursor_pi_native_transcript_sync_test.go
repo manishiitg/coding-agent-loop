@@ -2,6 +2,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -37,10 +39,10 @@ func TestBuilderConversationMessagesFromLLMTypesKeepsTextTurnsOnly(t *testing.T)
 // Same failure as the Codex case, on pi: the record was last saved after
 // one full turn, then the chat continued through retained live input.
 func TestRefreshLatestBuilderConversationFromPiTranscript(t *testing.T) {
-	sessionsDir := t.TempDir()
-	t.Setenv("PI_CODING_AGENT_SESSION_DIR", sessionsDir)
+	workingDir := t.TempDir()
 	const nativeSessionID = "mlp-pi-f47fd4180d3db2c1"
-	dir := filepath.Join(sessionsDir, "--tmp-ws--")
+	sum := sha256.Sum256([]byte(nativeSessionID))
+	dir := filepath.Join(workingDir, ".pi", "agentworks", "session-"+hex.EncodeToString(sum[:12]), "agent", "sessions", "--tmp-ws--")
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -78,7 +80,7 @@ func TestRefreshLatestBuilderConversationFromPiTranscript(t *testing.T) {
 			"external_session_id": nativeSessionID,
 			"agent_session_handle": map[string]interface{}{
 				"provider": map[string]interface{}{
-					"provider": "pi-cli", "native_session_id": nativeSessionID, "working_dir": "/tmp/ws",
+					"provider": "pi-cli", "native_session_id": nativeSessionID, "working_dir": workingDir,
 				},
 			},
 		},

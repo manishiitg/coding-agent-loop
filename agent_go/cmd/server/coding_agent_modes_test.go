@@ -764,6 +764,7 @@ func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) 
 	const terminalID = sessionID + ":main:" + sessionID
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
 	terminalStore := terminals.NewStore()
+	var persistedUserID, persistedSessionID, persistedMessage string
 	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
 		time.Now(),
 		sessionID,
@@ -792,6 +793,9 @@ func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) 
 			}
 			return nil
 		},
+		internalLiveInputPersistenceHandler: func(userID, ownerSessionID, message string) {
+			persistedUserID, persistedSessionID, persistedMessage = userID, ownerSessionID, message
+		},
 	}
 	store.SetEventAddedCallback(func(ownerSessionID string, event internalevents.Event) {
 		terminalStore.HandleEventWithChange(ownerSessionID, event)
@@ -799,6 +803,7 @@ func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) 
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	req = req.WithContext(context.WithValue(req.Context(), UserContextKey, &UserClaims{UserID: "user-a"}))
 	rr := httptest.NewRecorder()
 	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "continue the retained turn", "query_retained_follow_up") {
 		t.Fatalf("settled retained tmux did not accept follow-up: status=%d body=%s", rr.Code, rr.Body.String())
@@ -816,6 +821,9 @@ func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) 
 	}
 	if got := api.activeSessions[sessionID].Status; got != "running" {
 		t.Fatalf("session status = %q, want running after confirmed follow-up delivery", got)
+	}
+	if persistedUserID != "user-a" || persistedSessionID != sessionID || persistedMessage != "continue the retained turn" {
+		t.Fatalf("persisted live input = user=%q session=%q message=%q", persistedUserID, persistedSessionID, persistedMessage)
 	}
 }
 

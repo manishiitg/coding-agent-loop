@@ -56,6 +56,42 @@ describe('buildCleanConversationItems', () => {
     ])
   })
 
+  it('keeps intermediate transcript updates visually distinct from the final answer', () => {
+    const items = buildCleanConversationItems([
+      event('user', 'user_message', { content: 'Compare prod and staging' }),
+      event('progress', 'llm_generation_end', {
+        content: 'Checking the last seven days in both environments.',
+        restored_intermediate_update: true,
+      }),
+      event('done', 'unified_completion', { final_result: 'Prod has 72 sessions and staging has 45.' }),
+    ])
+
+    expect(items.map((item) => `${item.role}:${item.content}`)).toEqual([
+      'user:Compare prod and staging',
+      'progress:Checking the last seven days in both environments.',
+      'assistant:Prod has 72 sessions and staging has 45.',
+    ])
+    expect(items[1]).toEqual(expect.objectContaining({ assistantUpdate: true }))
+    expect(items[2]).not.toHaveProperty('assistantUpdate')
+  })
+
+  it('renders structured provider narration as progress, not a final assistant answer', () => {
+    const items = buildCleanConversationItems([
+      event('update', 'conversation_thinking', {
+        thinking: 'I am checking the latest production totals.',
+        metadata: { presentation: 'assistant_update' },
+      }),
+    ])
+
+    expect(items).toEqual([
+      expect.objectContaining({
+        role: 'progress',
+        content: 'I am checking the latest production totals.',
+        assistantUpdate: true,
+      }),
+    ])
+  })
+
   it('keeps structured reasoning separate from the final answer', () => {
     const items = buildCleanConversationItems([
       event('user', 'user_message', { content: 'Create the teaser' }),

@@ -174,7 +174,7 @@ plat-174.md	step-execution
 plat-175.md	step-execution
 plat-176.md	scheduler-runs
 plat-177.md	coding-agent-bridge
-plat-178.md	frontend-chat
+plat-178.md	chat-reliability
 plat-179.md	coding-agent-bridge
 plat-180.md	coding-agent-bridge
 plat-182.md	scheduler-runs
@@ -317,3 +317,4 @@ plat-319.md	integrations
 plat-320.md	scheduler-runs
 plat-321.md	scheduler-runs
 plat-322.md	browser-automation
+plat-323.md	chat-reliability

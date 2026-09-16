@@ -11,7 +11,7 @@ import { pairToolCalls, isAssistantUpdate } from './terminalEventTranscript'
 
 export type ConversationItem = {
   id: string
-  role: 'user' | 'assistant' | 'reasoning' | 'error' | 'notification'
+  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification'
   content: string
   timestamp?: string
   assistantUpdate?: boolean
@@ -172,7 +172,7 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
       // before it rather than opening another one.
       const previous = items.at(-1)
       const assistantUpdate = isAssistantUpdate(event)
-      const role = assistantUpdate ? 'assistant' : 'reasoning'
+      const role = assistantUpdate ? 'progress' : 'reasoning'
       if (payload.is_delta === true && previous?.role === role && !!previous.assistantUpdate === assistantUpdate) {
         items[items.length - 1] = { ...previous, content: appendStreamingText(previous.content, content, true) }
         continue
@@ -187,16 +187,38 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
     // replies after refresh, not just the user's prompts.
     if (event.type === 'llm_generation_end' || event.type === 'unified_completion' || event.type === 'conversation_end') {
       const content = humanReadableAgentResult(firstText(payload.content, payload.final_result, payload.result))
+			const isIntermediateUpdate = payload.restored_intermediate_update === true
 			const rawError = firstText(payload.error, asRecord(payload.error)?.message)
 			const failureText = rawError || (looksLikeProductChatFailure(content) ? content : '')
 			if (failureText) {
 				pushUnique(productFailureItem(event, payload, failureText))
 				completedAssistantAwaitingUsage = undefined
-			} else if (content && content !== lastAssistantContent) {
-				const assistantItem = { id: event.id, role: 'assistant' as const, content, timestamp: event.timestamp }
+			} else if (content && (isIntermediateUpdate || content !== lastAssistantContent)) {
+				if (!isIntermediateUpdate) {
+          // Coding CLIs commonly emit the final prose once as a transcript
+          // chunk and again as unified_completion. The chunk is progress only
+          // until the completion proves it is final; replace that progress row
+          // instead of showing the same answer twice in two visual styles.
+          for (let index = items.length - 1; index >= 0; index -= 1) {
+            if (items[index].role === 'user') break
+            if (items[index].role === 'progress' && items[index].content === content) {
+              items.splice(index, 1)
+              break
+            }
+          }
+        }
+				const assistantItem: ConversationItem = {
+          id: event.id,
+          role: isIntermediateUpdate ? 'progress' : 'assistant',
+          content,
+          timestamp: event.timestamp,
+          ...(isIntermediateUpdate ? { assistantUpdate: true } : {}),
+        }
 				pushUnique(assistantItem)
-        completedAssistantAwaitingUsage = assistantItem
-        lastAssistantContent = content
+        if (!isIntermediateUpdate) {
+          completedAssistantAwaitingUsage = assistantItem
+          lastAssistantContent = content
+        }
       }
       continue
     }

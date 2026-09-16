@@ -3548,6 +3548,18 @@ func parseChatHistoryCleanupTime(value string) (time.Time, bool) {
 // A session with no transcript yet is left alone: the first completed turn is
 // what establishes the record, and inventing a runtime-less one here would poison
 // the resume path the same way.
+func (api *StreamingAPI) persistLiveInputUserMessage(ctx context.Context, sessionID, message string) {
+	if api == nil {
+		return
+	}
+	userID := GetUserIDFromContext(ctx)
+	if api.internalLiveInputPersistenceHandler != nil {
+		api.internalLiveInputPersistenceHandler(userID, sessionID, message)
+		return
+	}
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, message)
+}
+
 func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, message string) {
 	message = strings.TrimSpace(message)
 	if api == nil || sessionID == "" || message == "" {

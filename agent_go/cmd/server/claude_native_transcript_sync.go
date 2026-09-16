@@ -274,10 +274,10 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		}
 		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
 	case "pi-cli":
-		if nativeSessionID == "" {
+		if nativeSessionID == "" || workingDir == "" {
 			return nil, time.Time{}, "", false, nil
 		}
-		transcript, found, err := picli.ReadNativeTranscript(nativeSessionID)
+		transcript, found, err := picli.ReadNativeTranscriptFromWorkingDir(workingDir, nativeSessionID)
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}

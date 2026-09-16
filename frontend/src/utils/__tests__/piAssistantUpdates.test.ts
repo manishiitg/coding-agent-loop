@@ -19,7 +19,7 @@ describe('Pi assistant updates', () => {
     expect(transcript.map(item => item.kind === 'thinking' ? item.assistantUpdate : false)).toEqual([true, false])
 
     const clean = buildCleanConversationItems(events)
-    expect(clean.map(item => item.role)).toEqual(['assistant', 'assistant'])
+    expect(clean.map(item => item.role)).toEqual(['progress', 'assistant'])
     expect(clean.map(item => item.content)).toEqual([
       'Checking the latest webhook delivery.',
       'The webhook is arriving.',

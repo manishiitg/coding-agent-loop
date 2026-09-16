@@ -985,8 +985,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			clearCDPTabSelectionsForPort(cdpPort)
 			clearCDPExclusiveFeaturesForPort(cdpPort)
 		} else {
-			killSessionRuntime(session)
-			removeSessionFiles(session)
+			killSessionRuntimeFully(session)
 		}
 		if isHeadless {
 			tracker.Remove(session)
@@ -994,6 +993,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return `{"success":true,"message":"session reset — ready for fresh open"}`, nil
 	}
 
+	if isHeadless && session != SharedSessionName && !isBrowserOpenCommand(command) {
+		// Baseline reading for whatever command is about to run against an
+		// already-open session, so a "dead session" failure a moment later can
+		// be compared against what was actually alive right before the attempt.
+		logPreKillDiagnostics(session)
+	}
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
@@ -1036,6 +1041,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 		if canRecover {
 			log.Printf("[BROWSER] Dead session detected for %q (%v), killing stale runtime and retrying", session, err)
+			logPreKillDiagnostics(session)
 			killSessionRuntimeFully(session)
 			if isCdpMode {
 				clearCDPActiveTabForPort(cdpPort)
@@ -1083,6 +1089,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			// a hard failure the user has to retry by hand.
 			if err != nil && strings.Contains(err.Error(), "ProcessSingleton") {
 				log.Printf("[BROWSER] Retry for %q still hit ProcessSingleton, giving the OS more time and trying once more", session)
+				logPreKillDiagnostics(session)
 				killSessionRuntimeFully(session)
 				time.Sleep(5 * time.Second)
 				output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
@@ -1744,6 +1751,70 @@ func killChromePID(chromePID int, session string) {
 	} else {
 		log.Printf("[BROWSER] Killed Chrome process group PGID=%d for session %q", chromePID, session)
 	}
+}
+
+// logPreKillDiagnostics captures the exact state we're about to destroy,
+// right before killSessionRuntimeFully runs, so a live incident can show
+// whether Chrome was actually already dead or whether recovery is about to
+// kill a session that was still working fine. Added while chasing a
+// recurring SparkQuill failure where `open` succeeds but the very next
+// command (`snapshot`) immediately reports the session dead -- this answers
+// the open question of whether that's a real Chrome crash or a false
+// positive from whatever decides the session needs a fresh launch.
+func logPreKillDiagnostics(session string) {
+	var daemonPID, chromePID int
+	var daemonAlive, chromeAlive bool
+	for _, dir := range sessionDirs() {
+		if daemonPID == 0 {
+			if b, err := os.ReadFile(filepath.Join(dir, session+".pid")); err == nil {
+				if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 {
+					daemonPID = p
+					daemonAlive = isProcessAlive(p)
+				}
+			}
+		}
+		if chromePID == 0 {
+			if b, err := os.ReadFile(filepath.Join(dir, session+".chrome-pid")); err == nil {
+				if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 {
+					chromePID = p
+					chromeAlive = isProcessAlive(p)
+				}
+			}
+		}
+	}
+
+	lockState := "no-shared-profile"
+	if profile := ProfilePathForSession(session); profile != "" {
+		var present []string
+		for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+			path := filepath.Join(profile, name)
+			if info, err := os.Lstat(path); err == nil {
+				age := time.Since(info.ModTime()).Round(time.Millisecond)
+				present = append(present, fmt.Sprintf("%s(age=%s)", name, age))
+			}
+		}
+		if len(present) == 0 {
+			lockState = "none-present"
+		} else {
+			lockState = strings.Join(present, ",")
+		}
+	}
+
+	// Independent of the stored PID files above, which can go stale if the
+	// daemon respawned Chrome under a new PID (a known race — see the
+	// comment on killSessionRuntime's step 2). This catches that case.
+	liveMatches := "?"
+	if out, err := runCommand("pgrep", "-af", session); err == nil {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if strings.TrimSpace(out) == "" {
+			liveMatches = "none"
+		} else {
+			liveMatches = strconv.Itoa(len(lines))
+		}
+	}
+
+	log.Printf("[BROWSER_DIAG] state snapshot for %q: daemonPID=%d daemonAlive=%v chromePID=%d chromeAlive=%v lockFiles=[%s] liveProcessesMatchingSession=%s",
+		session, daemonPID, daemonAlive, chromePID, chromeAlive, lockState, liveMatches)
 }
 
 // killSessionRuntime closes the agent-browser session and kills all associated

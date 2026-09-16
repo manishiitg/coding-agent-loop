@@ -172,6 +172,45 @@ together — and replaced every `killSessionRuntime` + `removeSessionFiles`
 pair across all six call sites with it, so a future call site can't
 reintroduce this by only doing two of the three steps.
 
+## Follow-up 3: a seventh call site, and the failure that's still open
+
+Deployed follow-up 2, then the exact same shape recurred within the hour:
+`open` succeeds, the very next command (`snapshot`) reports the session
+dead seconds later. This one wasn't explained by any of the sites above —
+no idle reap, no deploy, nothing in between. Auditing the same grep more
+carefully (it should have been exhaustive the first time and wasn't) found
+a **seventh** site: the `reset` command handler in `executor.go` — the
+command whose own doc comment says "use this when open/close keep
+failing," i.e. the manual recovery path — had the identical gap. Fixed the
+same way.
+
+Two other explanations were tried and ruled out for this specific
+open-then-snapshot-fails shape:
+
+- **Old vs. new headless Chrome.** `agent-browser` hardcodes
+  `--headless=new`, which spins up an internal "top-chrome-webui" renderer
+  that isn't present in the older, simpler headless implementation, and
+  every crash dump collected all day is a renderer crash. Tried appending
+  `--headless=old` to our own `--args` (Chrome normally takes the last
+  value for a repeated switch) hoping to override it. It didn't take —
+  the `top-chrome-webui` renderer still spawned, confirming Chrome doesn't
+  apply last-wins semantics to this particular switch. Not pursued further;
+  we don't control agent-browser's own flag construction to fix this
+  properly.
+- Resource contention and the Landlock sandbox were already ruled out in
+  Follow-up 2.
+
+**What's still genuinely unresolved**: why the very first non-open command
+against a browser that just opened successfully seconds earlier can report
+the session dead. Added `logPreKillDiagnostics` (logged as
+`[BROWSER_DIAG]`), called both right before any recovery kill and as a
+baseline right before every non-open command runs against an already-open
+session. It records whether the daemon and Chrome's stored PIDs are still
+alive, a broader `pgrep` scan (in case the daemon respawned Chrome under an
+untracked PID), and the age of any Singleton lock files present. This is
+diagnostic only — no behavior change — added specifically so the next
+occurrence has hard evidence instead of another round of inference.
+
 ## Related
 
 Earlier rounds of the same investigation (documented only in chat, not yet

@@ -8,6 +8,126 @@ import { useCanWriteWorkflow } from "../../hooks/useCanWriteWorkflow";
 import { BookOpen, LockKeyhole } from "lucide-react";
 import { WORKFLOW_KNOWLEDGE_SOURCES_REFRESH_EVENT } from "./workflowEvents";
 
+/** Grantor-side control: which other workflow IDs may write into THIS
+ * workflow's knowledgebase/notes/. A consumer's "write" knowledgebase_source
+ * does nothing until its workflow ID appears here. */
+function KBWriteGrants({
+  workspacePath,
+  canWrite,
+}: {
+  workspacePath: string;
+  canWrite: boolean;
+}) {
+  const [loading, setLoading] = useState(true);
+  const [grants, setGrants] = useState<string[]>([]);
+  const [newID, setNewID] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError("");
+    try {
+      const result = await workflowManifestApi.getWorkflowManifest(workspacePath);
+      setGrants(result.manifest.access?.allowed_kb_writers || []);
+    } catch (e) {
+      setError(sourceError(e, "Unable to load KB write grants"));
+    } finally {
+      setLoading(false);
+    }
+  }, [workspacePath]);
+  useEffect(() => {
+    void load();
+  }, [load]);
+  const save = async (next: string[]) => {
+    setBusy(true);
+    setError("");
+    try {
+      await workflowManifestApi.updateWorkflowManifest({
+        workspace_path: workspacePath,
+        kb_write_grants: next,
+      });
+      setGrants(next);
+      setNewID("");
+    } catch (e) {
+      setError(sourceError(e, "Unable to update KB write grants"));
+    } finally {
+      setBusy(false);
+    }
+  };
+  if (!canWrite) return null;
+  return (
+    <div className="space-y-2 rounded-lg border border-dashed p-3">
+      <h4 className="text-sm font-semibold">
+        KB write grants (this workflow's own knowledgebase)
+      </h4>
+      <p className="text-muted-foreground">
+        Workflow IDs permitted to write into this workflow's
+        knowledgebase/notes/ via their own read-write attachment. Does not
+        affect read sharing.
+      </p>
+      {loading && (
+        <p role="status" className="text-muted-foreground">
+          Loading…
+        </p>
+      )}
+      {!loading && grants.length === 0 && (
+        <p className="text-muted-foreground">No external write access granted.</p>
+      )}
+      {grants.length > 0 && (
+        <ul className="flex flex-wrap gap-1.5">
+          {grants.map((id) => (
+            <li
+              key={id}
+              className="inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5"
+            >
+              <span className="font-mono">{id}</span>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void save(grants.filter((g) => g !== id))}
+                aria-label={`Revoke write access for ${id}`}
+                className="text-muted-foreground hover:text-foreground"
+              >
+                ×
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="flex flex-wrap items-end gap-2"
+        onSubmit={(e) => {
+          e.preventDefault();
+          const id = newID.trim();
+          if (id && !grants.includes(id)) void save([...grants, id]);
+        }}
+      >
+        <label className="grid gap-1">
+          Workflow ID
+          <input
+            value={newID}
+            onChange={(e) => setNewID(e.target.value)}
+            placeholder="workflow-id"
+            className="rounded border bg-background p-1.5"
+          />
+        </label>
+        <button
+          type="submit"
+          disabled={busy || !newID.trim()}
+          className="rounded border px-2 py-1.5 disabled:opacity-50"
+        >
+          Grant
+        </button>
+      </form>
+      {error && (
+        <p role="alert" className="text-destructive">
+          {error}
+        </p>
+      )}
+    </div>
+  );
+}
+
 function sourceError(error: unknown, fallback: string) {
   const body = (error as { response?: { data?: unknown } })?.response?.data;
   return typeof body === "string" && body.trim()
@@ -41,6 +161,7 @@ export function KnowledgebaseSources({
   const [editing, setEditing] = useState(false);
   const [sourceID, setSourceID] = useState("");
   const [alias, setAlias] = useState("");
+  const [accessLevel, setAccessLevel] = useState<"read" | "write">("read");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
@@ -142,6 +263,7 @@ export function KnowledgebaseSources({
       setEditing(false);
       setAlias("");
       setSourceID("");
+      setAccessLevel("read");
     } catch (e) {
       setError(sourceError(e, "Unable to update knowledge sources"));
     } finally {
@@ -187,8 +309,10 @@ export function KnowledgebaseSources({
           </div>
           <p className="text-muted-foreground">
             Read context and notes from other workflows. Source updates are
-            available directly; contributions stay in this workflow’s local
-            knowledge base.
+            available directly. A read-write attachment can also contribute
+            to the source's notes/ once the source grants this workflow
+            write access — see “KB write grants” below to grant it the
+            other way.
           </p>
           {loading && (
             <p role="status" className="text-muted-foreground">
@@ -216,7 +340,7 @@ export function KnowledgebaseSources({
                     </span>
                     <span className="inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] text-muted-foreground">
                       <LockKeyhole aria-hidden="true" className="h-3 w-3" />
-                      Read only
+                      {source.access === "write" ? "Read-write (notes/)" : "Read only"}
                     </span>
                   </div>
                   <div className="text-muted-foreground">
@@ -280,8 +404,9 @@ export function KnowledgebaseSources({
           {sources.length > 0 && (
             <p className="text-[11px] text-muted-foreground">
               Available sources can be read by the builder and reviewers, and by
-              steps with knowledge-base read access. Shared attachments grant no
-              write access.
+              steps with knowledge-base read access. A read-write source is
+              additionally writable in its notes/ folder by steps with
+              knowledge-base write access, once granted.
             </p>
           )}
         </>
@@ -302,14 +427,20 @@ export function KnowledgebaseSources({
               {sources.map((source) => (
                 <option key={source.alias} value={source.alias}>
                   {source.label || source.alias} ({source.alias}) ·{" "}
-                  {source.available ? "Read only" : "Unavailable"}
+                  {source.available
+                    ? source.access === "write"
+                      ? "Read-write"
+                      : "Read only"
+                    : "Unavailable"}
                 </option>
               ))}
             </select>
           </div>
           <p className="text-muted-foreground">
             {selected
-              ? `Viewing shared knowledge from ${sources.find((s) => s.alias === selected)?.label || selected}. Read only; maintained in the source workflow.`
+              ? sources.find((s) => s.alias === selected)?.access === "write"
+                ? `Viewing shared knowledge from ${sources.find((s) => s.alias === selected)?.label || selected}. This workflow may also contribute to its notes/.`
+                : `Viewing shared knowledge from ${sources.find((s) => s.alias === selected)?.label || selected}. Read only; maintained in the source workflow.`
               : "Viewing this workflow’s local knowledge."}
           </p>
           <p className="text-[11px] text-muted-foreground">
@@ -331,7 +462,7 @@ export function KnowledgebaseSources({
             e.preventDefault();
             void save([
               ...refs,
-              { workflow_id: sourceID, alias, access: "read" },
+              { workflow_id: sourceID, alias, access: accessLevel },
             ]);
           }}
         >
@@ -363,20 +494,46 @@ export function KnowledgebaseSources({
               className="rounded border bg-background p-1.5"
             />
           </label>
+          <label className="grid gap-1">
+            Access
+            <select
+              value={accessLevel}
+              onChange={(e) =>
+                setAccessLevel(e.target.value as "read" | "write")
+              }
+              className="rounded border bg-background p-1.5"
+            >
+              <option value="read">Read only</option>
+              <option value="write">Read-write (notes/ only)</option>
+            </select>
+          </label>
           <button
             disabled={busy || !sourceID || !alias}
             className="rounded border px-2 py-1.5 disabled:opacity-50"
           >
-            Attach read-only
+            {accessLevel === "write" ? "Attach read-write" : "Attach read-only"}
           </button>
           <button
             type="button"
-            onClick={() => setEditing(false)}
+            onClick={() => {
+              setEditing(false);
+              setAccessLevel("read");
+            }}
             className="px-2 py-1.5"
           >
             Cancel
           </button>
+          {accessLevel === "write" && (
+            <p className="basis-full text-[11px] text-muted-foreground">
+              Takes effect only once the source workflow's owner grants this
+              workflow's ID in its own KB write grants — otherwise this
+              source resolves as unavailable.
+            </p>
+          )}
         </form>
+      )}
+      {variant === "folders" && (
+        <KBWriteGrants workspacePath={workspacePath} canWrite={canWrite} />
       )}
       {error && (
         <div className="flex flex-wrap items-center gap-2">

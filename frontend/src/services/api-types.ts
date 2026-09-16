@@ -3197,7 +3197,7 @@ export interface WorkflowManifest {
   ownership: WorkflowOwnership
   schedules: WorkflowScheduleEntry[]
   /** Who owns and who may read this workflow (workflow_access.go). */
-  access?: { owners: string[]; readers: string[] }
+  access?: { owners: string[]; readers: string[]; allowed_kb_writers?: string[] }
   created_at?: string
   updated_at?: string
   run_retention_count?: number
@@ -3366,6 +3366,9 @@ export interface UpdateWorkflowManifestRequest {
   pulse_notification_gmail_connection_ids?: string[]
   notification_instructions?: string
   knowledgebase_sources?: KnowledgebaseSource[]
+  /** Replaces the complete list of other workflow IDs allowed to write into
+   * THIS workflow's knowledgebase/notes/ via their own "write" source. */
+  kb_write_grants?: string[]
   folder_access?: WorkflowFolderGrant[]
   folder_access_requests?: WorkflowFolderAccessRequest[]
   workflow_context_paths?: string[]
@@ -3466,7 +3469,10 @@ export interface OrgDashboardNotification {
 export interface KnowledgebaseSource {
   workflow_id: string
   alias: string
-  access: 'read'
+  /** "write" implies read too and is confined to the source's notes/ folder;
+   * it only takes effect once the source workflow grants this workflow's ID
+   * in its own kb_write_grants (update_workflow_config). */
+  access: 'read' | 'write'
 }
 export interface KnowledgebaseSourceStatus extends KnowledgebaseSource {
   label?: string

@@ -151,6 +151,54 @@ func TestKBSourcesActualShellReadOnlyAndDetach(t *testing.T) {
 	}
 }
 
+func TestKBSourcesWriteGrantAppliesToAllThreeFolderGuards(t *testing.T) {
+	root, ws, kb := kbSessionFixture(t)
+	notesPath := filepath.Join(kb, "notes")
+	m := map[string]interface{}{"id": "consumer", "created_by": "owner", "knowledgebase_sources": []workflowtypes.KnowledgebaseSource{{WorkflowID: "source", Alias: "rts", Access: "write"}}}
+	raw, _ := json.Marshal(m)
+	if err := os.WriteFile(filepath.Join(root, ws, "workflow.json"), raw, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	hcpo := newAgentFactoryTestOrchestrator(t)
+	hcpo.SetWorkspacePath(ws)
+	hcpo.selectedRunFolder = "iteration-0/default"
+
+	// Source has not granted "consumer" write access yet: no write path.
+	_, writes := hcpo.setupExecutionFolderGuard("step-1", "collect", KBAccessReadWrite, LearningsAccessNone, DBAccessRead, nil)
+	if containsString(writes, notesPath) {
+		t.Fatal("external notes/ writable before grant", writes)
+	}
+
+	// Grant it.
+	if err := os.WriteFile(filepath.Join(root, "Workflow/source/workflow.json"), []byte(`{"id":"source","created_by":"owner","access":{"allowed_kb_writers":["consumer"]}}`), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, writes = hcpo.setupExecutionFolderGuard("step-1", "collect", KBAccessReadWrite, LearningsAccessNone, DBAccessRead, nil)
+	if !containsString(writes, notesPath) {
+		t.Fatal("execution folder guard did not grant external write source", writes)
+	}
+	// The step's own kbAccess still gates it -- read-only step access must not
+	// pick up the external write source either.
+	_, writes = hcpo.setupExecutionFolderGuard("step-1", "collect", KBAccessRead, LearningsAccessNone, DBAccessRead, nil)
+	if containsString(writes, notesPath) {
+		t.Fatal("read-only step kbAccess still received external write source", writes)
+	}
+
+	writeStepConfig := &AgentConfigs{KnowledgebaseAccess: KBAccessReadWrite}
+	_, writes = hcpo.setupMessageSequenceFolderGuard("step-2", "collect2", writeStepConfig, MessageSequenceWriteAccess{DB: true, Knowledgebase: true})
+	if !containsString(writes, notesPath) {
+		t.Fatal("message sequence folder guard did not grant external write source", writes)
+	}
+
+	step := &OrchestratorPlanStep{CommonStepFields: CommonStepFields{ID: "step-3"}, AgentConfigs: writeStepConfig}
+	_, writes = hcpo.setupOrchestratorFolderGuard(step)
+	if !containsString(writes, notesPath) {
+		t.Fatal("orchestrator folder guard did not grant external write source", writes)
+	}
+}
+
 func TestKBSourcesBuilderPromptAndExecutionScope(t *testing.T) {
 	root, ws, kb := kbSessionFixture(t)
 	saveKBSources(t, root, ws, true, false)

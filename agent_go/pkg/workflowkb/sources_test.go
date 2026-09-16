@@ -28,6 +28,10 @@ func ref(id, alias string) workflowtypes.KnowledgebaseSource {
 	return workflowtypes.KnowledgebaseSource{WorkflowID: id, Alias: alias, Access: "read"}
 }
 
+func refWrite(id, alias string) workflowtypes.KnowledgebaseSource {
+	return workflowtypes.KnowledgebaseSource{WorkflowID: id, Alias: alias, Access: "write"}
+}
+
 func TestSourcesLiveReadsMultipleDirectSourcesAndMove(t *testing.T) {
 	root := t.TempDir()
 	a := fixture(t, root, "consumer", "a", "owner", []workflowtypes.KnowledgebaseSource{ref("b", "rts"), ref("c", "security")})
@@ -93,6 +97,45 @@ func TestSourcesOwnershipRevocationAndMissing(t *testing.T) {
 	sources, err = Resolve(root, a, nil)
 	if err != nil || sources[0].Available || sources[0].Reason == "" {
 		t.Fatal("missing source not surfaced", err)
+	}
+}
+
+func TestSourcesWriteAccessRequiresExplicitGrant(t *testing.T) {
+	root := t.TempDir()
+	a := fixture(t, root, "consumer", "a", "alice", []workflowtypes.KnowledgebaseSource{refWrite("b", "rts")})
+	fixture(t, root, "rts", "b", "bob", nil)
+
+	// No access block at all on the source: legacy AudienceCanRead treats
+	// this as account-visible, but write must never inherit that laxity.
+	sources, err := Resolve(root, a, nil)
+	if err != nil || sources[0].Available {
+		t.Fatal("write granted with no source access block", sources, err)
+	}
+
+	// Source lists alice as a reader (read-audience overlap satisfied) but
+	// does not name "a" in allowed_kb_writers: still no write.
+	raw := []byte(`{"id":"b","access":{"owners":["bob"],"readers":["alice"]}}`)
+	os.WriteFile(filepath.Join(root, "Workflow/rts/workflow.json"), raw, 0644)
+	sources, err = Resolve(root, a, nil)
+	if err != nil || sources[0].Available {
+		t.Fatal("write granted without allowed_kb_writers entry", sources, err)
+	}
+
+	// Source explicitly allowlists "a": write is now granted.
+	raw = []byte(`{"id":"b","access":{"owners":["bob"],"readers":["alice"],"allowed_kb_writers":["a"]}}`)
+	os.WriteFile(filepath.Join(root, "Workflow/rts/workflow.json"), raw, 0644)
+	sources, err = Resolve(root, a, nil)
+	if err != nil || !sources[0].Available {
+		t.Fatal("explicit write grant denied", sources, err)
+	}
+
+	// Revoking the allowlist entry revokes write even though audience
+	// overlap (and therefore read) is still intact.
+	raw = []byte(`{"id":"b","access":{"owners":["bob"],"readers":["alice"]}}`)
+	os.WriteFile(filepath.Join(root, "Workflow/rts/workflow.json"), raw, 0644)
+	sources, err = Resolve(root, a, nil)
+	if err != nil || sources[0].Available {
+		t.Fatal("write access survived allowlist revocation", sources, err)
 	}
 }
 

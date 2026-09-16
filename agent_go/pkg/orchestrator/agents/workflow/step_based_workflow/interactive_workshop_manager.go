@@ -4584,6 +4584,21 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					sb.WriteString(fmt.Sprintf("- %s: %s\n", source.WorkflowID, source.Label))
 				}
 			}
+			if content, err := ctrl.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
+				var manifest struct {
+					Access *struct {
+						AllowedKBWriters []string `json:"allowed_kb_writers"`
+					} `json:"access"`
+				}
+				if json.Unmarshal([]byte(content), &manifest) == nil {
+					sb.WriteString("\n### KB write grants (this workflow's own knowledgebase)\n")
+					if manifest.Access == nil || len(manifest.Access.AllowedKBWriters) == 0 {
+						sb.WriteString("No other workflow may write into this workflow's knowledgebase/notes/. Grant with update_workflow_config(kb_write_grants=[...]).\n")
+					} else {
+						sb.WriteString(fmt.Sprintf("Permitted writers: %s. Change with update_workflow_config(kb_write_grants=[...]).\n", strings.Join(manifest.Access.AllowedKBWriters, ", ")))
+					}
+				}
+			}
 
 			// --- MCP Servers ---
 			sb.WriteString("### Selected MCP Servers\n")
@@ -4977,8 +4992,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			"type": "object",
 			"properties": map[string]interface{}{
 				"knowledgebase_sources": map[string]interface{}{
-					"type": "array", "maxItems": 20, "description": "Replace the complete read-only shared KB source list. Use stable workflow IDs and unique lowercase aliases. Empty list detaches all. Sources must be on this host and readable by every owner/reader of this workflow. Inspect workflow.json via shell or workflow discovery for IDs; never use guessed paths. Builder, eligible steps and reviewers get WORKFLOW_KB_<ALIAS> shell access.",
-					"items": map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{"workflow_id": map[string]interface{}{"type": "string"}, "alias": map[string]interface{}{"type": "string"}, "access": map[string]interface{}{"type": "string", "enum": []string{"read"}}}, "required": []string{"workflow_id", "alias", "access"}}},
+					"type": "array", "maxItems": 20, "description": "Replace the complete shared KB source list this workflow attaches. Use stable workflow IDs and unique lowercase aliases. Empty list detaches all. A \"read\" source only needs the source to be readable by every owner/reader of this workflow. A \"write\" source ALSO requires the source workflow's own owner to have explicitly named this workflow's ID in ITS kb_write_grants -- set that from the source workflow's own config, not from here; a write source that isn't explicitly granted resolves as unavailable. \"write\" implies read too (see notes/_index.json before contributing). Inspect workflow.json via shell or workflow discovery for IDs; never use guessed paths. Builder, eligible steps and reviewers get WORKFLOW_KB_<ALIAS> shell access; write access is additionally scoped to steps whose own knowledgebase write access is granted, and confined to the source's notes/ folder only.",
+					"items": map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{"workflow_id": map[string]interface{}{"type": "string"}, "alias": map[string]interface{}{"type": "string"}, "access": map[string]interface{}{"type": "string", "enum": []string{"read", "write"}}}, "required": []string{"workflow_id", "alias", "access"}}},
+
+				"kb_write_grants": map[string]interface{}{
+					"type": "array", "maxItems": 50, "description": "Replace the complete list of other workflows' IDs permitted to write into THIS workflow's knowledgebase/notes/ via their own \"write\" knowledgebase_source. This is the consent step a consumer workflow's write source depends on -- granting here does nothing until the named workflow actually attaches this workflow with access:\"write\". Empty list revokes all external write access. Does not affect read sharing, which is governed by ordinary owner/reader overlap, not this list.",
+					"items": map[string]interface{}{"type": "string"}},
 
 				"add_servers": map[string]interface{}{
 					"type":        "array",
@@ -6251,8 +6270,58 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				sb.WriteString("\n" + workflowKnowledgebaseSourcesPrompt(iwm.controller.GetWorkspacePath()) + "\n")
 			}
 
+			if raw, provided := args["kb_write_grants"]; provided {
+				if raw == nil {
+					return "", fmt.Errorf("kb_write_grants must be an array; use [] to revoke all")
+				}
+				encoded, err := json.Marshal(raw)
+				if err != nil {
+					return "", err
+				}
+				var grants []string
+				if err = json.Unmarshal(encoded, &grants); err != nil {
+					return "", err
+				}
+				if grants == nil {
+					grants = []string{}
+				}
+				for _, id := range grants {
+					if strings.TrimSpace(id) == "" {
+						return "", fmt.Errorf("kb_write_grants entries must be non-empty workflow IDs")
+					}
+				}
+				content, err := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json")
+				if err != nil {
+					return "", err
+				}
+				var manifest map[string]interface{}
+				if err = json.Unmarshal([]byte(content), &manifest); err != nil {
+					return "", err
+				}
+				access, _ := manifest["access"].(map[string]interface{})
+				if access == nil {
+					access = map[string]interface{}{}
+				}
+				access["allowed_kb_writers"] = grants
+				manifest["access"] = access
+				manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+				updated, err := json.MarshalIndent(manifest, "", "  ")
+				if err != nil {
+					return "", err
+				}
+				if err = iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+					return "", err
+				}
+				anyChanged = true
+				if len(grants) == 0 {
+					sb.WriteString("\n### KB write grants\nRevoked all external write access to this workflow's knowledgebase/notes/.\n")
+				} else {
+					sb.WriteString(fmt.Sprintf("\n### KB write grants\nWorkflows permitted to write into this workflow's knowledgebase/notes/: %s\n", strings.Join(grants, ", ")))
+				}
+			}
+
 			if !anyChanged {
-				return "No changes applied. Provide at least one of: knowledgebase_sources, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, pulse_disabled_review_modules, advisor_specialization_approval_input_id.", nil
+				return "No changes applied. Provide at least one of: knowledgebase_sources, kb_write_grants, add_servers, remove_servers, add_tools, remove_tools, add_skills, remove_skills, add_secrets, remove_secrets, run_notification_instructions, pulse_notification_instructions, run_notification_channels, pulse_notification_channels, slack_webhook_secret_name, browser_mode, cdp_ports, run_retention_count, pulse_disabled_review_modules, advisor_specialization_approval_input_id.", nil
 			}
 
 			// Persist config changes to workflow.json manifest (file-backed)

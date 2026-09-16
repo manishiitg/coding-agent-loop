@@ -20,8 +20,9 @@ type Manifest struct {
 	Label     string `json:"label"`
 	CreatedBy string `json:"created_by"`
 	Access    *struct {
-		Owners  []string `json:"owners"`
-		Readers []string `json:"readers"`
+		Owners           []string `json:"owners"`
+		Readers          []string `json:"readers"`
+		AllowedKBWriters []string `json:"allowed_kb_writers"`
 	} `json:"access"`
 	Sources []workflowtypes.KnowledgebaseSource `json:"knowledgebase_sources"`
 }
@@ -108,6 +109,28 @@ func AudienceCanRead(consumer, source Manifest) bool {
 	return true
 }
 
+// AudienceCanWrite requires everything AudienceCanRead requires (the
+// consumer's full audience must already be allowed to read the source) PLUS
+// an explicit opt-in from the source: the consumer's workflow ID must be
+// named in source.Access.AllowedKBWriters. Audience overlap alone is not
+// consent to mutate another workflow's KB -- unlike the legacy "no owners
+// recorded" case in AudienceCanRead, a source with no access block, or one
+// that has not named this consumer, grants no write access at all.
+func AudienceCanWrite(consumer, source Manifest) bool {
+	if !AudienceCanRead(consumer, source) {
+		return false
+	}
+	if source.Access == nil || strings.TrimSpace(consumer.ID) == "" {
+		return false
+	}
+	for _, id := range source.Access.AllowedKBWriters {
+		if id == consumer.ID {
+			return true
+		}
+	}
+	return false
+}
+
 // Discover is a host-local ID registry over workflow manifests. Workflow folder
 // names may change; duplicate IDs fail resolution instead of selecting one.
 func Discover(root string) (map[string][]string, error) {
@@ -168,7 +191,18 @@ func Resolve(root, workspace string, sources []workflowtypes.KnowledgebaseSource
 			continue
 		}
 		source, err := ReadManifest(root, paths[0])
-		if err != nil || !AudienceCanRead(consumer, source) {
+		if err != nil {
+			item.Reason = "Source knowledge is not readable by every member of this workflow"
+			result = append(result, item)
+			continue
+		}
+		if ref.Access == "write" {
+			if !AudienceCanWrite(consumer, source) {
+				item.Reason = "Source workflow has not granted this workflow write access to its knowledgebase"
+				result = append(result, item)
+				continue
+			}
+		} else if !AudienceCanRead(consumer, source) {
 			item.Reason = "Source knowledge is not readable by every member of this workflow"
 			result = append(result, item)
 			continue

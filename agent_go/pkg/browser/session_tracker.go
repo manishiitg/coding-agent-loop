@@ -114,8 +114,7 @@ func reapIdleSessions(idleTimeout time.Duration) {
 			release()
 			continue
 		}
-		killSessionRuntime(session)
-		removeSessionFiles(session)
+		killSessionRuntimeFully(session)
 		tracker.Remove(session)
 		release()
 		log.Printf("[BROWSER_REAPER] Reaped idle session %q", session)

@@ -594,8 +594,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 					return
 				}
 				log.Printf("[BROWSER_TRACKER] Auto-evicting session %q to free slot for %q", evictSession, session)
-				killSessionRuntime(evictSession)
-				removeSessionFiles(evictSession)
+				killSessionRuntimeFully(evictSession)
 				tracker.Remove(evictSession)
 			}
 
@@ -1037,9 +1036,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 		if canRecover {
 			log.Printf("[BROWSER] Dead session detected for %q (%v), killing stale runtime and retrying", session, err)
-			killSessionRuntime(session)
-			removeSessionFiles(session)
-			removeStaleChromeSingletonLock(session)
+			killSessionRuntimeFully(session)
 			if isCdpMode {
 				clearCDPActiveTabForPort(cdpPort)
 				clearCDPExclusiveFeaturesForPort(cdpPort)
@@ -1086,9 +1083,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			// a hard failure the user has to retry by hand.
 			if err != nil && strings.Contains(err.Error(), "ProcessSingleton") {
 				log.Printf("[BROWSER] Retry for %q still hit ProcessSingleton, giving the OS more time and trying once more", session)
-				killSessionRuntime(session)
-				removeSessionFiles(session)
-				removeStaleChromeSingletonLock(session)
+				killSessionRuntimeFully(session)
 				time.Sleep(5 * time.Second)
 				output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 				if err == nil && isOpenCommand {
@@ -1938,6 +1933,27 @@ func runCommand(name string, args ...string) (string, error) {
 	cmd := execCmd(name, args...)
 	out, err := cmd.Output()
 	return string(out), err
+}
+
+// killSessionRuntimeFully is the complete teardown sequence for a session
+// whose runtime is being stopped: kill the daemon/Chrome processes, remove
+// agent-browser's own bookkeeping files, and clear any stale Chrome
+// ProcessSingleton lock left in the profile directory.
+//
+// Use this instead of calling killSessionRuntime/removeSessionFiles directly.
+// Before this helper existed, three separate call sites each reimplemented
+// the first two steps but not the third -- the idle reaper, auto-eviction
+// (freeing a session slot for a new open), and KillAllTrackedSessions (every
+// server SIGTERM, i.e. every deploy). Confirmed live on SparkQuill: any one
+// of those killing a session with an active Chrome left its SingletonLock/
+// SingletonSocket/SingletonCookie behind, and the next launch attempt against
+// that persistent profile -- sometimes tens of minutes later, on the very
+// first try -- failed with "Failed to create a ProcessSingleton for your
+// profile directory" even though nothing was actually still running.
+func killSessionRuntimeFully(session string) {
+	killSessionRuntime(session)
+	removeSessionFiles(session)
+	removeStaleChromeSingletonLock(session)
 }
 
 // removeSessionFiles removes agent-browser session state files (.pid, .sock, etc.)

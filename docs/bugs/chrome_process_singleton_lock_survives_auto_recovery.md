@@ -121,6 +121,57 @@ more after a longer, 5-second pause, in `agent_go/pkg/browser/executor.go`.
 Bounded at one extra attempt — this treats a same-error-twice retry as a
 timing problem worth one more try, not as a reason to loop indefinitely.
 
+## Follow-up 2: three other kill sites had the exact same gap
+
+Same day, still live. A later failure on the family's real session showed a
+different shape: the very *first* `open` attempt (not a retry) failed with
+`ProcessSingleton`, and — tellingly — the recovery path's own lock-removal
+step found nothing to remove (no "Removed stale Chrome singleton lock" log
+line), meaning the profile wasn't stale from a crash this time.
+
+Two investigative steps ruled out the leading alternative theories before
+finding the real cause:
+
+- **Resource contention on the shared host.** The box had three unrelated,
+  long-running tenant processes each pinned near 100% CPU for days (one for
+  94 days straight). All three were killed. The failure still reproduced
+  immediately afterward — contention wasn't sufficient to explain it, though
+  it may still be a contributing factor under heavier load.
+- **The Landlock sandbox that `execute_shell_command` runs under** (the
+  `agent_browser` tool doesn't launch Chrome directly — it shells out through
+  `sparkquill-workspace`'s sandboxed `/api/execute`, a different code path
+  than a plain interactive shell). A live A/B test — identical command,
+  identical clean profile state, only the sandbox present or absent —
+  reproduced the failure sandboxed and succeeded unsandboxed. That looked
+  like a smoking gun, but it didn't survive a cleaner retest: with the
+  profile and process state genuinely verified clean beforehand (no leftover
+  daemon from earlier manual testing), and even with the exact `FolderGuard`
+  the real session sends, the sandboxed path succeeded too. The earlier
+  "sandboxed fails" result was contaminated by the investigator's own
+  leftover test process still holding the profile lock — a repeat, mid
+  investigation, of the exact class of bug being investigated.
+
+The real cause: `killSessionRuntime` + `removeSessionFiles` (kill the
+process, clean agent-browser's own bookkeeping) is called at **six** sites in
+`pkg/browser`, and the original fix above only added the singleton-lock
+cleanup to two of them (the crash-recovery path in `HandleAgentBrowser`).
+Three other sites had the identical gap and were never touched:
+
+- `session_tracker.go`'s idle-session reaper (fires every 2 minutes, closes
+  sessions idle >15 minutes) — the family's session was reaped this way 27
+  minutes before the failure above.
+- `executor.go`'s per-agent auto-eviction (frees a session slot for a new
+  `open` when a limit is hit).
+- `cleanup.go`'s `KillAllTrackedSessions`, which runs on every server
+  `SIGTERM` — **every deploy**. Any deploy that landed while a browser
+  session was tracked could leave a stale lock behind.
+
+**Fix**: added `killSessionRuntimeFully(session)` — kill, remove
+agent-browser's files, remove Chrome's stale lock, all three, always
+together — and replaced every `killSessionRuntime` + `removeSessionFiles`
+pair across all six call sites with it, so a future call site can't
+reintroduce this by only doing two of the three steps.
+
 ## Related
 
 Earlier rounds of the same investigation (documented only in chat, not yet

@@ -20,7 +20,9 @@ visual chat defects remain under frontend-chat.
 [PLAT-324](pulse_platform/chat-reliability/plat-324.md) owns Work/Crew tab
 continuity across browser reloads, backend restarts and deployments: an
 already-open tab must rebind its saved application session before its next
-message can reach a provider conversation.
+message can reach a provider conversation. Its latest deployed correction also
+prevents a stale second hydration from removing a Cursor final that was already
+visible in the live chat timeline.
 
 ## Persistent managed browser ownership — PLAT-322
 
@@ -64,8 +66,11 @@ email symptom remains unverified. Slack release verification pending.
 ## Builder webhook creation and Plan loading follow-ups
 
 [PLAT-309](pulse_platform/integrations/plat-309.md) now records the missing Builder registrar,
-authenticated testing tool and webhook skill. [PLAT-318](pulse_platform/frontend-chat/plat-318.md)
-tracks concurrent Plan loading and stale-result isolation. Deployed to RTS as `3a37a1c75`.
+authenticated testing tool and webhook skill, plus the deployed four-delivery
+server limit and its read-only `max_concurrency` projection. [PLAT-318](pulse_platform/frontend-chat/plat-318.md)
+tracks concurrent Plan loading and stale-result isolation. The latest webhook
+concurrency/introspection releases are `1e87e01-20260916183335` and
+`bdcbb00-20260916184549`.
 
 ## Builder user management and Pulse/picker follow-ups
 

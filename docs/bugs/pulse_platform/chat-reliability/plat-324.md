@@ -6,7 +6,8 @@
 |---|---|
 | Assigned agent | Codex |
 | Ticket state | `implemented, deployed, and production live-verified` |
-| Last synchronized | `2026-09-16` |
+| Last synchronized | `2026-09-17` |
+| Latest regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
   fresh agent conversation. The visible transcript remained in the tab, but the
@@ -280,3 +281,13 @@ second live window empty, and verifies that the Cursor completion remains.
 - Focused native-transcript recovery and live-publication tests pass. The
   full server suite retains its unrelated existing Claude model-discovery
   expectation failure.
+- Commit `1e87e0186` (`Keep live CLI finals across stale hydration`) was pushed
+  to `main` and deployed in RTS release `1e87e01-20260916183335`.
+- The frontend regression suite performs two stale-history hydrations, with an
+  empty live window on the second pass, and verifies that the stable-ID Cursor
+  final remains visible. All 19 focused session-restore/product-fallback tests
+  and TypeScript compilation passed.
+- The release activated after draining the active turn without interruption.
+  The public health endpoint then reported `healthy`, zero active sessions and
+  an idle drain. The later `bdcbb00-20260916184549` release also contains this
+  correction.

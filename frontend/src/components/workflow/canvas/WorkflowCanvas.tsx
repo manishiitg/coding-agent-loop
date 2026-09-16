@@ -2590,6 +2590,21 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 Build Plan
               </button>
             )}
+            <button
+              type="button"
+              onClick={() => void (async () => {
+                if (isRefreshingPlan) return
+                setIsRefreshingPlan(true)
+                try { await loadPlanRefresh() } finally { setIsRefreshingPlan(false) }
+              })()}
+              disabled={isRefreshingPlan}
+              className="inline-flex h-[42px] items-center gap-1.5 rounded-lg border border-border bg-background/95 px-4 text-sm font-medium text-foreground shadow-sm hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+              aria-label="Check again for a plan"
+              title="Check again for a plan"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isRefreshingPlan ? 'animate-spin' : ''}`} />
+              Refresh
+            </button>
             </div>
           </div>
       </div>

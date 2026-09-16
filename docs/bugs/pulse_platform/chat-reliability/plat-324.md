@@ -118,3 +118,11 @@ rollout/prompt transition with resubmission; their relevant adapter suites pass.
 Production release `8623c20-20260916120839` deployed successfully and public
 health returned healthy. A non-destructive live multiline send remains to be
 verified.
+
+The same incident also exposed a frontend isolation weakness even though the
+captured request was routed correctly: Crew reused one mounted `ChatArea` and
+`ChatInput` while changing its `tabId`. Drafts lived durably per tab, but local
+paste, picker, upload and submit closures could briefly retain the preceding
+tab during a rapid switch. Crew now remounts the chat/composer at each tab
+boundary. Before unmount, a pending debounced draft is flushed to its owning
+tab, so switching cannot lose the draft or carry it into the next composer.

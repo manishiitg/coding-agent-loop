@@ -721,6 +721,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const writeComposerText = useCallback((text: string, patch: Partial<ChatTabConfig> = {}) => {
     if (syncToStoreTimeoutRef.current) clearTimeout(syncToStoreTimeoutRef.current)
     syncToStoreTimeoutRef.current = null
+    latestInputTextRef.current = text
     setLocalInputText(text)
     const nextFiles = patch.fileContext ?? reconcileFileReferences(inputText, text, chatFileContext)
     const removedRestoredConversation = tabConfig?.restoredConversationPath && chatFileContext.some(file => file.path === tabConfig.restoredConversationPath) && !nextFiles.some(file => file.path === tabConfig.restoredConversationPath)
@@ -759,11 +760,13 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
       }
       inputOwnerTabIdRef.current = activeTabId
+      latestInputTextRef.current = storedInputText
       setLocalInputText(storedInputText)
       return
     }
     // Only sync if store value differs and we're not in the middle of typing
     if (storedInputText !== localInputText && !syncToStoreTimeoutRef.current) {
+      latestInputTextRef.current = storedInputText
       setLocalInputText(storedInputText)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -774,6 +777,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return () => {
       if (syncToStoreTimeoutRef.current) {
         clearTimeout(syncToStoreTimeoutRef.current)
+        const ownerTabId = inputOwnerTabIdRef.current
+        if (ownerTabId) {
+          useChatStore.getState().setTabConfig(ownerTabId, { inputText: latestInputTextRef.current })
+        }
       }
     }
   }, [])
@@ -1879,6 +1886,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // (React re-renders Stop→Send mid-click, causing the browser to dispatch submit on the new button)
 
   const clearInputState = useCallback(() => {
+    latestInputTextRef.current = ''
     setLocalInputText('')
     if (syncToStoreTimeoutRef.current) {
       clearTimeout(syncToStoreTimeoutRef.current)
@@ -2032,6 +2040,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const pastedAttachmentsChanged = nextPastedAttachments.length !== chatPastedAttachments.length
 
     // Update local state immediately for fast UI response
+    latestInputTextRef.current = newValue
     setLocalInputText(newValue)
 
     if (syncToStoreTimeoutRef.current) {

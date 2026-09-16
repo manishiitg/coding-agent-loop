@@ -22,6 +22,9 @@ func TestChatDefinitions(t *testing.T) {
 	if ChatDefinitionKey("builder") == ChatDefinitionKey("run") {
 		t.Fatal("mode definitions must differ")
 	}
+	if !containsChatSkill(ChatSkills("builder"), "ui-ux-pro-max") || containsChatSkill(ChatSkills("run"), "ui-ux-pro-max") {
+		t.Fatal("UI/UX Pro Max must be available to Builder only")
+	}
 	for _, mode := range []string{"builder", "run"} {
 		prompt := ChatPromptTemplate(mode)
 		for _, want := range []string{
@@ -44,4 +47,13 @@ func TestChatDefinitions(t *testing.T) {
 			t.Fatalf("accepted skills %v", names)
 		}
 	}
+}
+
+func containsChatSkill(skills []string, want string) bool {
+	for _, skill := range skills {
+		if skill == want {
+			return true
+		}
+	}
+	return false
 }

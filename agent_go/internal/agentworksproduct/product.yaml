@@ -68,7 +68,7 @@ chat:
     prompt:
       file: prompts/builder.md
       includes: [prompts/workflow-shared.md]
-    skills: [system-tools, builder-reference, workflow-commands]
+    skills: [system-tools, builder-reference, workflow-commands, ui-ux-pro-max]
   run:
     prompt:
       file: prompts/run.md

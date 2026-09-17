@@ -223,7 +223,7 @@ func TestSlackPrincipalRevalidationSeparatesResourceOwnerAndAuditActor(t *testin
 		t.Fatal(err)
 	}
 	principal := GetUserFromContext(first)
-	if principal.UserID != "alice" || principal.ExecutionPrincipal.ID == "alice" || principal.ExecutionPrincipal.Access != WorkflowAccessOwner {
+	if principal.UserID != "alice" || principal.ExecutionPrincipal.ID == "alice" || principal.ExecutionPrincipal.Access != WorkflowAccessRead {
 		t.Fatalf("principal=%+v", principal)
 	}
 	req.BotUserID = "sender-b"

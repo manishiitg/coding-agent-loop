@@ -27,7 +27,7 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   browser: "Help me configure browser access for this workflow. Ask which sites, accounts, and browser tasks it needs to handle.",
   llm: "Help me choose or configure the LLMs for this workflow. Explain the current setup and ask about quality, speed, and cost requirements.",
   email: "Help me connect or configure Gmail, default recipients, and email access settings.",
-  bots: "Load builder-reference/references/slack-bot-routing.md and help me connect Slack or WhatsApp to this workflow. Inspect current settings, explain the connection and route setup, and ask which channel and bot grant I need. Never request tokens in chat.",
+  bots: "Load builder-reference/references/slack-bot-routing.md and help me connect Slack or WhatsApp to this workflow. Inspect current settings, explain the connection and route setup, and ask which channel I need; use run mode without asking for a grant. Never request tokens in chat.",
   folders: "Help me attach a folder to this workflow. Ask which folder it needs, why, and whether access should be read-only or writable.",
 } satisfies Record<WorkspaceViewId, string>
 

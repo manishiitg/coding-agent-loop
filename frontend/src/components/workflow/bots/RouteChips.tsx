@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { ChevronDown, Loader2, MessageSquare, Phone, PlayCircle, Trash2, Wrench } from 'lucide-react'
+import { ChevronDown, Loader2, MessageSquare, Phone, PlayCircle, Trash2 } from 'lucide-react'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import { routeId, type WorkflowRoute } from './types'
 import type { WorkflowBots } from './useWorkflowBots'
@@ -16,13 +16,9 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
   const expanded = expandedChip === id
   const saving = routeSaving === id
   const channelLabel = route.kind === 'slack' ? route.key : `@${route.key}`
-  const mode = route.kind === 'slack' && route.workshop_mode === 'workshop' ? 'workshop' : 'run'
   const Icon = route.kind === 'slack' ? MessageSquare : Phone
   const platformLabel = route.kind === 'slack' ? 'Slack' : 'WhatsApp'
-  const setMode = (next: 'run' | 'workshop') => {
-    if (route.kind !== 'slack' || next === mode) return
-    void updateRoute(route, { workshop_mode: next })
-  }
+
 
   return (
     <div className="min-w-0 rounded-md border border-border bg-background p-2 shadow-sm">
@@ -50,28 +46,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
           </button>
         )}
       </div>
-      <div className="mt-2 grid grid-cols-2 rounded-md border border-border bg-muted/30 p-0.5">
-        <button
-          type="button"
-          onClick={() => setMode('run')}
-          disabled={readOnly || saving || route.kind === 'whatsapp'}
-          className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${mode === 'run' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-          title={route.kind === 'whatsapp' ? 'WhatsApp routes use Run mode.' : 'Run mode'}
-        >
-          <PlayCircle className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Run</span>
-        </button>
-        <button
-          type="button"
-          onClick={() => setMode('workshop')}
-          disabled={readOnly || saving || route.kind === 'whatsapp'}
-          className={`inline-flex h-7 min-w-0 items-center justify-center gap-1 rounded px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-70 ${mode === 'workshop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-          title={route.kind === 'whatsapp' ? 'Build mode is available for Slack routes.' : 'Build mode'}
-        >
-          <Wrench className="h-3.5 w-3.5 shrink-0" />
-          <span className="truncate">Build</span>
-        </button>
-      </div>
+      <div className="mt-2 flex items-center gap-1 text-xs text-muted-foreground"><PlayCircle className="h-3.5 w-3.5" />Run</div>
       <button
         type="button"
         onClick={() => setExpandedChip(expanded ? null : id)}
@@ -83,7 +58,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       </button>
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">This grant authorizes the bot route. Slack senders do not change its permissions.</span>
+          <span className="text-muted-foreground">The bot can run existing work. Slack users cannot change the workflow.</span>
           {route.kind === 'slack' && (
             <label className="w-full text-muted-foreground">
               Blocked email addresses

@@ -25,7 +25,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
       workspacePath={workspacePath}
       onAsk={onAsk}
       label={scopeNoun === 'project' ? 'Ask Crew to set up Slack' : 'Ask Builder to set up Slack'}
-      message={`Read builder-reference/references/slack-bot-routing.md, inspect get_slack_bot_settings, and help me set up the Slack bot and channel routes for this ${scopeNoun}. Guide me through app creation and credentials in the settings UI without requesting tokens in chat. Use the existing scoped tools to create the route once the channel ID and bot grant are clear. Everyone in the channel is allowed by default; ask about blocked emails only if I need exclusions.`}
+      message={`Read builder-reference/references/slack-bot-routing.md, inspect get_slack_bot_settings, and help me set up the Slack bot and channel routes for this ${scopeNoun}. Guide me through app creation and credentials in the settings UI without requesting tokens in chat. Use the existing scoped tools to create the route once the channel ID is clear; use run mode without asking for a grant. Everyone in the channel is allowed by default; ask about blocked emails only if I need exclusions.`}
     />
   )
 

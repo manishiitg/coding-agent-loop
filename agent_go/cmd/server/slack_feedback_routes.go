@@ -99,8 +99,8 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 		if existing, ok := out[channelID]; ok && !sameSlackRouteDestination(existing, route) {
 			return nil, fmt.Errorf("Slack channel %s is already routed", channelID)
 		}
-		route.BotGrant = services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
-		route.WorkshopMode = services.WorkshopModeForBotGrant(route.BotGrant)
+		route.BotGrant = "run"
+		route.WorkshopMode = "run"
 		route.SendFullDetails = true
 		out[channelID] = route
 	}

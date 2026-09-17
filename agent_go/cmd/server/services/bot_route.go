@@ -26,7 +26,10 @@ func ResolveChannelRoute(encoded, channelID string) *ChannelRoute {
 		if !workflow && !profile {
 			return nil
 		}
-		route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
+		route.WorkshopMode = "run"
+		if route.BotGrant == "owner" {
+			route.BotGrant = "run"
+		}
 		return &route
 	}
 	return nil

@@ -269,10 +269,10 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 		}
 
 		if name != "remove_slack_bot_route" {
-			properties["bot_grant"] = map[string]interface{}{"type": "string", "enum": []string{"run", "owner"}}
-			required = append(required, "bot_grant")
+			properties["bot_grant"] = map[string]interface{}{"type": "string", "enum": []string{"run"}}
+			// Run is the default; Builder must not ask users to choose a grant.
 		}
-		if err := register(name, "Manage only this workflow/project's Slack route. Requires an authenticated interactive owner. run/owner authorizes the bot, never the Slack sender. Read get_slack_bot_settings before and after. Slack-origin sessions cannot change grants.", properties, required, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if err := register(name, "Manage only this workflow/project's Slack route. Requires an authenticated interactive owner. Routes use run authority only; do not ask for a grant. Read get_slack_bot_settings before and after. Slack-origin sessions cannot change grants.", properties, required, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			active, _ := api.getActiveSession(session)
 			if active != nil && (active.BotPlatform != "" || strings.HasPrefix(active.TriggeredBy, "bot:")) {
 				return "", fmt.Errorf("bot-origin sessions cannot manage grants")
@@ -299,7 +299,7 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 					return "", err
 				}
 			}
-			if err := api.mutateSlackRoute(ctx, target, name, stringFromRequestMap(args, "channel_id"), stringFromRequestMap(args, "bot_grant")); err != nil {
+			if err := api.mutateSlackRoute(ctx, target, name, stringFromRequestMap(args, "channel_id"), "run"); err != nil {
 				return "", err
 			}
 			return `{"success":true}`, nil

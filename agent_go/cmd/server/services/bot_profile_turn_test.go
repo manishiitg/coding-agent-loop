@@ -175,7 +175,7 @@ func TestSlackProfileRouteUsesConfiguredWorkspaceOwner(t *testing.T) {
 		if got.sessionID != "conv-work-acme" || got.userID != "owner-1" {
 			t.Fatalf("started session = %q userID=%q, want conv-work-acme owner-1", got.sessionID, got.userID)
 		}
-		if got.req["bot_platform"] != "slack" || got.req["bot_route_grant"] != "owner" {
+		if got.req["bot_platform"] != "slack" || got.req["bot_route_grant"] != "run" {
 			t.Fatalf("request bot metadata = %#v", got.req)
 		}
 	case <-time.After(5 * time.Second):

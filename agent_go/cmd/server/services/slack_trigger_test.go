@@ -49,9 +49,9 @@ func TestSlackTriggerMatchesTrustedSourcesOnly(t *testing.T) {
 		t.Fatal("human listener accepted bot")
 	}
 }
-func TestSlackRouteDecoderPreservesProfileGrant(t *testing.T) {
+func TestSlackRouteDecoderRestrictsLegacyOwnerToRun(t *testing.T) {
 	route := ResolveChannelRoute(`{"C123":{"profile_id":"work","conversation_key":"acme","workspace_path":"Chats/Work/projects/acme","workspace_user_id":"alice","bot_grant":"owner"}}`, "C123")
-	if route == nil || route.WorkflowID != "" || route.ProfileID != "work" || route.BotGrant != "owner" || route.WorkspaceUserID != "alice" {
+	if route == nil || route.WorkflowID != "" || route.ProfileID != "work" || route.BotGrant != "run" || route.WorkspaceUserID != "alice" {
 		t.Fatalf("route=%+v", route)
 	}
 	if ResolveChannelRoute(`{"C123":{"workflow_id":"w","profile_id":"work","conversation_key":"acme","workspace_path":"Workflow/w"}}`, "C123") != nil {

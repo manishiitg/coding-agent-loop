@@ -668,15 +668,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       const current = slackOriginal.channel_routing?.[route.key]
       if (!current) return
       const nextRoute: BotRoute = { ...current }
-      if ('workshop_mode' in patch) {
-        if (patch.workshop_mode === 'workshop') {
-          nextRoute.workshop_mode = 'workshop'
-          nextRoute.bot_grant = 'owner'
-        } else {
-          nextRoute.workshop_mode = 'run'
-          nextRoute.bot_grant = 'run'
-        }
-      }
+      nextRoute.workshop_mode = 'run'
+      nextRoute.bot_grant = 'run'
       if ('blocked_emails' in patch) nextRoute.blocked_emails = patch.blocked_emails
     if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
       await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [route.key]: nextRoute })

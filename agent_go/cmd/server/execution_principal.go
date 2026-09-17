@@ -45,6 +45,8 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 	if route.BotGrant != "run" && route.BotGrant != "owner" {
 		return ctx, fmt.Errorf("Slack bot route has no explicit grant; save it in Setup > Bots")
 	}
+	route.BotGrant = "run"
+	route.WorkshopMode = "run"
 	if !claims.SlackTrustedApp && !services.SlackRouteAllowsEmail(route, req.BotUserEmail) {
 		return ctx, fmt.Errorf("Slack email is blocked or unverifiable")
 	}
@@ -56,9 +58,6 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 		return ctx, fmt.Errorf("query does not match the bot route target")
 	}
 	principal := &ExecutionPrincipal{Kind: "bot_route", ID: services.BotPrincipalIDForRoute("slack", route), Target: route, Access: WorkflowAccessRead, AuditActor: req.BotUserID}
-	if route.BotGrant == "owner" {
-		principal.Access = WorkflowAccessOwner
-	}
 	copy := *claims
 	copy.BotRouteGrant = route.BotGrant
 	if route.ProfileID != "" {

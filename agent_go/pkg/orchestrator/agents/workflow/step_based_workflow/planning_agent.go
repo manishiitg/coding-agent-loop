@@ -4369,6 +4369,79 @@ func prepareMessageSequenceUpdateTarget(plan *PlanningResponse, stepConfigs []St
 	}
 }
 
+// descriptionSizeRelativeMultiplier and descriptionSizeAbsoluteFloor gate
+// stepDescriptionSizeNudge's plan-relative check; descriptionSizeGrowthThreshold
+// gates its single-edit-growth check. A nudge that fired unconditionally
+// would itself be the same prompt-bloat problem one level up.
+//
+// A fixed global size (originally 8000) doesn't hold across workflows: real
+// data checked 2026-09-17 across four plans found linkedin's own MEDIAN step
+// description already at 7,151 chars (18 steps) while testing's was 731 (11
+// steps) -- a global floor would nag constantly on one and stay silent on a
+// real outlier in the other. Comparing against this plan's own median
+// instead is self-calibrating. The floor keeps a small workflow (like
+// testing) from tripping on relative size alone when every step is still
+// objectively tiny.
+const (
+	descriptionSizeRelativeMultiplier = 2.5
+	descriptionSizeAbsoluteFloor      = 5000
+	descriptionSizeGrowthThreshold    = 1000
+)
+
+// planMedianOtherStepDescriptionLen returns the median description length
+// across this plan's other steps (excluding excludeStepID), 0 if none have a
+// description. Used as stepDescriptionSizeNudge's per-plan baseline.
+func planMedianOtherStepDescriptionLen(steps []PlanStepInterface, excludeStepID string) int {
+	var lens []int
+	for _, step := range steps {
+		if step == nil || step.GetID() == excludeStepID {
+			continue
+		}
+		if l := len(step.GetDescription()); l > 0 {
+			lens = append(lens, l)
+		}
+	}
+	if len(lens) == 0 {
+		return 0
+	}
+	sort.Ints(lens)
+	mid := len(lens) / 2
+	if len(lens)%2 == 0 {
+		return (lens[mid-1] + lens[mid]) / 2
+	}
+	return lens[mid]
+}
+
+// stepDescriptionSizeNudge returns a pointed reminder to route durable
+// technique into a skill instead of the step description, appended to
+// add/update_message_sequence_step's response when the description is well
+// above this plan's own normal (descriptionSizeRelativeMultiplier times
+// planMedian, floored at descriptionSizeAbsoluteFloor so a small workflow's
+// relative size alone doesn't trip it) or grew significantly in this one
+// edit (descriptionSizeGrowthThreshold) -- growth alone catches a sudden
+// large edit even mid-plan; the relative check catches slow accumulation
+// across many small edits that each look harmless individually.
+//
+// Traced live (2026-09-17, sales-outreach's step-research-and-draft-outreach,
+// plan median 4,335 chars): four separate owner-approved fixes for "emails
+// read as AI-generated" each patched the description directly (2,951 ->
+// 22,784 chars, 5.3x this plan's own median, over 5 weeks) instead of being
+// promoted to a skill once proven -- nothing signaled the cost of that
+// choice at edit time, and a Plan Drift Review that ran specifically against
+// this step 20 minutes after the last edit still did not close the loop
+// back to a fix. This is the signal that was missing.
+func stepDescriptionSizeNudge(before, after, planMedian int) string {
+	grew := after - before
+	relativeThreshold := int(float64(planMedian) * descriptionSizeRelativeMultiplier)
+	if relativeThreshold < descriptionSizeAbsoluteFloor {
+		relativeThreshold = descriptionSizeAbsoluteFloor
+	}
+	if after < relativeThreshold && grew < descriptionSizeGrowthThreshold {
+		return ""
+	}
+	return fmt.Sprintf("\n\nDescription is now %d characters (+%d this edit; this plan's other steps have a median of %d). Description should stay WHAT to achieve -- the outcome, business rules, and binding constraints. HOW to do it (technique, phrasing rules, proven methods) belongs in a skill. Before finalizing: check learnings/_global/SKILL.md's index and attached skills for an existing topic covering this -- reference it instead of restating it if found. If this is new durable technique with no existing topic, add learnings/_global/references/<topic>.md (named for the subject, not this step) and a one-line index entry, rather than growing this description.", after, grew, planMedian)
+}
+
 func createUpdateMessageSequenceStepExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
 		reason, err := requireReason(args)
@@ -4397,6 +4470,12 @@ func createUpdateMessageSequenceStepExecutor(workspacePath string, logger logger
 		upgradedLegacyRegular, err := prepareMessageSequenceUpdateTarget(plan, stepConfigs, partialUpdate.ExistingStepID)
 		if err != nil {
 			return "", err
+		}
+		descriptionBeforeLen := 0
+		if _, descriptionProvided := args["description"]; descriptionProvided {
+			if existingStep, _, _ := findStepByID(plan.Steps, partialUpdate.ExistingStepID); existingStep != nil {
+				descriptionBeforeLen = len(existingStep.GetDescription())
+			}
 		}
 
 		fieldChanges := make([]PlanFieldChange, 0)
@@ -4445,8 +4524,13 @@ func createUpdateMessageSequenceStepExecutor(workspacePath string, logger logger
 		if upgradedLegacyRegular {
 			upgradeNotice = " and upgraded its saved legacy regular type to message_sequence"
 		}
+		sizeNudge := ""
+		if _, descriptionProvided := args["description"]; descriptionProvided && updatedStep != nil {
+			planMedian := planMedianOtherStepDescriptionLen(plan.Steps, partialUpdate.ExistingStepID)
+			sizeNudge = stepDescriptionSizeNudge(descriptionBeforeLen, len(updatedStep.GetDescription()), planMedian)
+		}
 		logger.Info(fmt.Sprintf("✅ Updated message_sequence step '%s' in plan%s", partialUpdate.ExistingStepID, upgradeNotice))
-		return fmt.Sprintf("Successfully updated message_sequence step '%s' in the plan%s%s", partialUpdate.ExistingStepID, upgradeNotice, dependentReviewNotice), nil
+		return fmt.Sprintf("Successfully updated message_sequence step '%s' in the plan%s%s%s", partialUpdate.ExistingStepID, upgradeNotice, dependentReviewNotice, sizeNudge), nil
 	}
 }
 
@@ -4828,6 +4912,11 @@ func createUpdateOrchestratorStepExecutor(workspacePath string, logger loggerv2.
 		for _, regularStep := range collectRegularPlanSteps(orchestratorStep) {
 			existingRegularRouteIDs[regularStep.ID] = true
 		}
+		descriptionBeforeLen := 0
+		_, descriptionProvided := args["description"]
+		if descriptionProvided {
+			descriptionBeforeLen = len(existingStep.GetDescription())
+		}
 
 		// Track changes for changelog
 		fieldChanges := make([]PlanFieldChange, 0)
@@ -4885,8 +4974,13 @@ func createUpdateOrchestratorStepExecutor(workspacePath string, logger loggerv2.
 
 		_ = orchestratorStep // Suppress unused variable warning
 		dependentReviewNotice := handlePlanStepDependentArtifactReview(ctx, workspacePath, partialUpdate.ExistingStepID, fieldChanges, readFile, writeFile, logger)
+		sizeNudge := ""
+		if descriptionProvided {
+			planMedian := planMedianOtherStepDescriptionLen(plan.Steps, partialUpdate.ExistingStepID)
+			sizeNudge = stepDescriptionSizeNudge(descriptionBeforeLen, len(updatedOrchestratorStep.GetDescription()), planMedian)
+		}
 		logger.Info(fmt.Sprintf("✅ Updated todo task step '%s' in plan", partialUpdate.ExistingStepID))
-		return fmt.Sprintf("Successfully updated todo task step '%s' in the plan%s", partialUpdate.ExistingStepID, dependentReviewNotice), nil
+		return fmt.Sprintf("Successfully updated todo task step '%s' in the plan%s%s", partialUpdate.ExistingStepID, dependentReviewNotice, sizeNudge), nil
 	}
 }
 
@@ -5849,6 +5943,10 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		setupNotice := buildAddedStepArtifactSetupNotice(typedStep.GetID(), stepType)
 		if scriptedRegularCount > 0 {
 			setupNotice += fmt.Sprintf("\n\nConfigured %d new scripted execution boundary/boundaries (regular plan type, code execution on). Author and test each code/<step-id>/main.py (code_layout_version=1; legacy: learnings/<step-id>/main.py) before production use.", scriptedRegularCount)
+		}
+		if stepType == "message_sequence" || stepType == "orchestrator" || stepType == "todo_task" {
+			planMedian := planMedianOtherStepDescriptionLen(oldPlan.Steps, typedStep.GetID())
+			setupNotice += stepDescriptionSizeNudge(0, len(typedStep.GetDescription()), planMedian)
 		}
 
 		logger.Info(fmt.Sprintf("✅ Added %s step '%s' (ID: %s) to plan", displayStepType, typedStep.GetTitle(), typedStep.GetID()))

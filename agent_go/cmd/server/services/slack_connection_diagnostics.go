@@ -50,9 +50,9 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	} else {
 		add("Bot token", "passed", "Authenticated with Slack")
 		if scopes == nil {
-			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read and chat:write under OAuth & Permissions.")
+			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read, chat:write, and reactions:write under OAuth & Permissions.")
 		} else {
-			for _, scope := range []string{"app_mentions:read", "chat:write"} {
+			for _, scope := range []string{"app_mentions:read", "chat:write", "reactions:write"} {
 				if scopes[scope] {
 					add(scope, "passed", "Permission granted to the installed bot token")
 				} else {

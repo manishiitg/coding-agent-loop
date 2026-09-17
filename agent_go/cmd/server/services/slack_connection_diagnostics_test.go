@@ -20,7 +20,8 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 		success                          bool
 		missing                          string
 	}{
-		{name: "granted", scopes: "app_mentions:read, chat:write", header: true, success: true},
+		{name: "granted", scopes: "app_mentions:read, chat:write, reactions:write", header: true, success: true},
+		{name: "missing reactions", scopes: "app_mentions:read,chat:write", header: true, missing: "reactions:write"},
 		{name: "missing mentions", scopes: "chat:write", header: true, missing: "app_mentions:read"},
 		{name: "missing replies", scopes: "app_mentions:read", header: true, missing: "chat:write"},
 		{name: "no scope header", success: true},

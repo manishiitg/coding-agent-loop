@@ -791,3 +791,9 @@ adapter discarded a supplied target. The contract and adapter now preserve the
 section target, so Crew can open the Webhooks section after creating or
 discussing a project trigger and wait for the browser acknowledgment just as
 AgentWorks does.
+
+The schedule identity correction shipped in `33d7507a8`; the complete schedule
+and webhook-view parity change shipped in `00d63a3ef` and was deployed to RTS
+as `00d63a3-20260917145523`. The active source revision and release symlink,
+agent/workspace/gateway services, local agent/workspace health, and public
+agent health were verified after the final swap.

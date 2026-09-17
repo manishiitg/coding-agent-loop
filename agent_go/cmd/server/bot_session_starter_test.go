@@ -123,6 +123,8 @@ func TestNormalizeSlackChannelRoutingDefaultsNewRoutesToRun(t *testing.T) {
 // Muse delivery while the conversation is running. The terminal delivery
 // boundary is stubbed; no real user chat is messaged.
 func TestBotFollowUpReachesRetainedMuseThroughQueryP0(t *testing.T) {
+	workspace, _ := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	t.Setenv("TRACING_PROVIDER", "noop")
 	const sessionID = "bot-steer-query-p0"
 	const userID = "bot-steer-owner"

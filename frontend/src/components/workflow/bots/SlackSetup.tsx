@@ -37,11 +37,11 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
           <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="text-sm font-medium text-foreground">Enable Slack app</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Connect the two-way Slack bot for @mentions, threads, and human replies</p>
+                <h3 className="text-sm font-medium text-foreground">Enable Slack bot</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">Start and continue agent sessions through @mentions, threads, and channel triggers</p>
               </div>
               <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={slackConfig.enabled} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, enabled: e.target.checked })} className="sr-only peer" />
+                <input type="checkbox" checked={slackConfig.enabled && !!slackConfig.bot_mode} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, enabled: e.target.checked, bot_mode: e.target.checked })} className="sr-only peer" />
                 <div className={toggleClass}></div>
               </label>
             </div>
@@ -52,22 +52,8 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
             add their email addresses under that channel’s Options → Blocked email addresses.
           </p>
 
-          {slackConfig.enabled && (
+          {slackConfig.enabled && slackConfig.bot_mode && (
             <>
-              {/* Bot Mode */}
-              <Card className="p-4">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-medium text-foreground">Bot Mode (@mention)</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack.</p>
-                  </div>
-                  <label className="relative inline-flex items-center cursor-pointer">
-                    <input type="checkbox" checked={slackConfig.bot_mode || false} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, bot_mode: e.target.checked })} className="sr-only peer" />
-                    <div className={toggleClass}></div>
-                  </label>
-                </div>
-              </Card>
-
               <Card className="p-4 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
                 <details>
                   <summary className="cursor-pointer text-sm font-semibold text-blue-800 dark:text-blue-200 select-none">

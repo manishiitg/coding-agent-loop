@@ -782,7 +782,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       const request: SlackConfigRequest = {
         enabled: slackConfig.enabled, bot_token: slackConfig.bot_token || '',
         app_token: slackConfig.app_token || '', channel_id: slackConfig.channel_id || '',
-        bot_mode: slackConfig.bot_mode || false,
+        bot_mode: slackConfig.enabled,
         channel_routing: slackOriginal.channel_routing || {},
       }
       await agentApi.updateSlackFeedbackConfig(request)

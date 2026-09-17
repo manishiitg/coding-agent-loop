@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -234,6 +233,9 @@ func copyChatHistoryConversationIfNeeded(sourcePath, destinationPath string) err
 	if sourcePath == "" || destinationPath == "" || sourcePath == destinationPath {
 		return nil
 	}
+	lock := chatConversationMutex(destinationPath)
+	lock.Lock()
+	defer lock.Unlock()
 	if _, exists, err := readFileFromWorkspace(context.Background(), destinationPath); err != nil {
 		return err
 	} else if exists {
@@ -281,16 +283,58 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	if convPath == "" {
 		convPath = chatHistoryConversationPath(userID, sessionID, now)
 	}
+	lock := chatConversationMutex(convPath)
+	lock.Lock()
+	defer lock.Unlock()
 	// A user-defined title belongs to the durable conversation. Preserve it
 	// when a later turn rewrites the transcript from the in-memory history.
-	if existing, exists, readErr := readFileFromWorkspace(context.Background(), convPath); readErr == nil && exists {
-		var metadata struct {
-			Title string `json:"title"`
+	if existing, exists, readErr := readFileFromWorkspace(context.Background(), convPath); readErr != nil {
+		logfWithContext(logCtx, "[CHAT_HISTORY] Refusing overwrite after failed read %s: %v", convPath, readErr)
+		return
+	} else if exists {
+		var previous map[string]interface{}
+		var previousConv, incomingConv builderConversationLog
+		incoming, _ := json.Marshal(convData)
+		if json.Unmarshal([]byte(existing), &previous) != nil || json.Unmarshal([]byte(existing), &previousConv) != nil || json.Unmarshal(incoming, &incomingConv) != nil {
+			return
 		}
-		if json.Unmarshal([]byte(existing), &metadata) == nil && strings.TrimSpace(metadata.Title) != "" {
-			convData["title"] = strings.TrimSpace(metadata.Title)
+		if owner := stringFromRecord(previous, "user_id"); owner != "" && owner != userID {
+			return
+		}
+		merged := mergeBuilderConversationRecordHistory(convData, incomingConv.ConversationHistory, previousConv.ConversationHistory)
+		// Recovery-only rows may include tool calls that the readable builder
+		// projection omits. Restore their complete canonical raw entries.
+		if original, ok := builderConversationRawHistory(previous); ok && len(original) == len(previousConv.ConversationHistory) {
+			byKey := make(map[string][]json.RawMessage)
+			for i, message := range previousConv.ConversationHistory {
+				key := builderConversationMessageKey(message)
+				byKey[key] = append(byKey[key], original[i])
+			}
+			for i, raw := range merged {
+				var message builderConversationMessage
+				if json.Unmarshal(raw, &message) != nil {
+					continue
+				}
+				key := builderConversationMessageKey(message)
+				if entries := byKey[key]; len(entries) > 0 {
+					merged[i] = entries[0]
+					byKey[key] = entries[1:]
+				}
+			}
+		}
+		encoded, err := json.Marshal(merged)
+		if err != nil || json.Unmarshal(encoded, &persistedHistory) != nil {
+			return
+		}
+		convData["conversation_history"] = persistedHistory
+		// Preserve metadata unknown to this writer, including pending submissions.
+		for key, value := range previous {
+			if _, exists := convData[key]; !exists {
+				convData[key] = value
+			}
 		}
 	}
+
 	// The in-memory event store only knows about turns since this process
 	// started. Writing it alone after a restart replaced the whole saved trace
 	// with the newest turn, so a reopened chat lost its tool calls and the
@@ -300,6 +344,7 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 		convData["ui_events"] = uiEvents
 	}
 
+	advanceChatConversationRevision(convData)
 	convJSON, err := json.MarshalIndent(convData, "", "  ")
 	if err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to marshal conversation for %s: %v", sessionID, err)
@@ -2481,6 +2526,9 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 	if !found {
 		return fmt.Errorf("conversation not found")
 	}
+	lock := chatConversationMutex(conversationPath)
+	lock.Lock()
+	defer lock.Unlock()
 	raw, exists, err := readFileFromWorkspace(context.Background(), conversationPath)
 	if err != nil {
 		return err
@@ -2493,6 +2541,7 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return fmt.Errorf("decode conversation: %w", err)
 	}
 	record["title"] = title
+	advanceChatConversationRevision(record)
 	encoded, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encode conversation: %w", err)
@@ -3628,12 +3677,6 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	}
 	logCtx := newServerLogContext("", "", "", userID, "", sessionID)
 
-	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
-	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
-		// No transcript for this session yet, or it is unreadable. Either way there
-		// is nothing to safely append to.
-		return
-	}
 	conversationPath, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
 	if strings.TrimSpace(workspacePath) != "" && (err != nil || !ok || strings.TrimSpace(conversationPath) == "") {
 		conversationPath, ok, err = findWorkflowBuilderConversationPathForSession(context.Background(), userID, sessionID, workspacePath)
@@ -3642,12 +3685,30 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 		return
 	}
 
+	lock := chatConversationMutex(conversationPath)
+	lock.Lock()
+	defer lock.Unlock()
+	content, exists, readErr := readFileFromWorkspace(context.Background(), conversationPath)
+	if readErr != nil || !exists {
+		return
+	}
+	raw := []byte(content)
+
 	// Decode into a generic map so every field this function does not understand —
 	// agent_mode, runtime, ui_events, terminal_snapshots — survives the rewrite
 	// byte-for-byte.
 	var record map[string]interface{}
 	if err := json.Unmarshal(raw, &record); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot decode %s: %v", conversationPath, err)
+		return
+	}
+
+	owner := strings.TrimSpace(stringFromRecord(record, "user_id"))
+	if owner == "" {
+		owner = "default"
+	}
+	persistedSession := strings.TrimSpace(stringFromRecord(record, "session_id"))
+	if owner != userID || (persistedSession != "" && persistedSession != sessionID) {
 		return
 	}
 
@@ -3671,6 +3732,7 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	record["conversation_history"] = history
 	record["updated_at"] = time.Now().Format(time.RFC3339)
 
+	advanceChatConversationRevision(record)
 	encoded, err := json.MarshalIndent(record, "", "  ")
 	if err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot marshal %s: %v", conversationPath, err)

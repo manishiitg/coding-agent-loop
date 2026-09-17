@@ -249,10 +249,10 @@ describe('useChatStore hydration bootstrap', () => {
     expect(Object.keys(chatStore.useChatStore.getState().chatTabs)).toHaveLength(1)
   })
 
-  it('restores the existing persisted chat-store envelope', async () => {
+  it('restores the existing owner-scoped chat-store envelope', async () => {
     const storage = createMemoryStorage()
     const createdAt = Date.now()
-    storage.setItem('chat-store', JSON.stringify({
+    storage.setItem('chat-store:owner:anonymous', JSON.stringify({
       state: {
         chatTabs: {
           'legacy-tab': {
@@ -302,4 +302,112 @@ describe('useChatStore hydration bootstrap', () => {
       metadata: { mode: 'workflow', presetQueryId: 'existing-workflow' },
     })
   })
+  it('retains separate layouts and drafts for two users with multiple tabs', async () => {
+    const { useChatStore, switchChatAccount } = await import('./useChatStore')
+    const { captureChatIdentity, isChatIdentityCurrent } = await import('../utils/chatIdentity')
+    switchChatAccount('alice')
+    const aliceOne = await useChatStore.getState().createChatTab('Alice one', { mode: 'workflow', presetQueryId: 'alice-one' }, 'alice-one')
+    const aliceTwo = await useChatStore.getState().createChatTab('Alice two', { mode: 'workflow', presetQueryId: 'alice-two' }, 'alice-two')
+    useChatStore.getState().setTabConfig(aliceOne, { inputText: 'Alice private draft', isQueueProcessing: true, queuedSubmission: { id: 'retry-1', messages: ['queued'], sessionId: 'alice-one' } })
+    const identity = captureChatIdentity()
+    switchChatAccount('bob')
+    expect(isChatIdentityCurrent(identity)).toBe(false)
+    expect(Object.keys(useChatStore.getState().chatTabs)).toHaveLength(0)
+    const bobOne = await useChatStore.getState().createChatTab('Bob one', { mode: 'workflow', presetQueryId: 'bob-one' }, 'bob-one')
+    await useChatStore.getState().createChatTab('Bob two', { mode: 'workflow', presetQueryId: 'bob-two' }, 'bob-two')
+    useChatStore.getState().setTabConfig(bobOne, { inputText: 'Bob private draft' })
+    switchChatAccount('alice')
+    expect(Object.keys(useChatStore.getState().chatTabs).sort()).toEqual([aliceOne, aliceTwo].sort())
+    expect(useChatStore.getState().getTabConfig(aliceOne)?.inputText).toBe('Alice private draft')
+    expect(useChatStore.getState().getTabConfig(aliceOne)?.isQueueProcessing).toBe(false)
+    expect(useChatStore.getState().getTabConfig(aliceOne)?.queuedSubmission?.id).toBe('retry-1')
+    expect(JSON.stringify(useChatStore.getState().chatTabs)).not.toContain('Bob private draft')
+    switchChatAccount('bob')
+    expect(Object.keys(useChatStore.getState().chatTabs)).toHaveLength(2)
+    expect(useChatStore.getState().getTabConfig(bobOne)?.inputText).toBe('Bob private draft')
+  })
+
+  it('ignores the unowned legacy cache and gives drafts a store-owned revision', async () => {
+    localStorage.setItem('chat-store', JSON.stringify({ state: { chatTabs: { leaked: { name: 'Legacy private draft' } }, activeTabId: 'leaked' }, version: 0 }))
+    const { useChatStore } = await import('./useChatStore')
+    expect(useChatStore.getState().chatTabs).toEqual({})
+    const tab = await useChatStore.getState().createChatTab('Draft', { mode: 'workflow' }, 'draft')
+    useChatStore.getState().setTabConfig(tab, { inputText: 'first' })
+    const submittedRevision = useChatStore.getState().getTabConfig(tab)?.composerRevision
+    useChatStore.getState().setTabConfig(tab, { inputText: 'new instance edited' })
+    expect(useChatStore.getState().getTabConfig(tab)?.composerRevision).toBe((submittedRevision ?? 0) + 1)
+    useChatStore.getState().setTabConfig(tab, { inputText: 'new instance edited' })
+    expect(useChatStore.getState().getTabConfig(tab)?.composerRevision).toBe((submittedRevision ?? 0) + 1)
+  })
+
+  it('migrates deployment-era tabs only after the persisted owner is verified', async () => {
+    localStorage.setItem('auth-storage', JSON.stringify({ state: { user: { id: 'alice' }, isAuthenticated: true }, version: 0 }))
+    localStorage.setItem('chat-store', JSON.stringify({ state: {
+      chatTabs: { retained: { tabId: 'retained', name: 'Retained conversation', sessionId: 'alice-history', config: { inputText: 'unsent draft' } } },
+      activeTabId: 'retained',
+    }, version: 0 }))
+    const { useChatStore, migrateLegacyChatStateForVerifiedAccount } = await import('./useChatStore')
+    expect(useChatStore.getState().chatTabs).toEqual({})
+    expect(migrateLegacyChatStateForVerifiedAccount('bob')).toBe(false)
+    expect(useChatStore.getState().chatTabs).toEqual({})
+    expect(migrateLegacyChatStateForVerifiedAccount('alice')).toBe(true)
+    expect(useChatStore.getState().activeTabId).toBe('retained')
+    expect(useChatStore.getState().chatTabs.retained.config.inputText).toBe('unsent draft')
+    expect(localStorage.getItem('chat-store')).toBeNull()
+    expect(localStorage.getItem('chat-store:owner:user:alice')).toContain('alice-history')
+  })
+
+  it('can retain anonymous legacy layouts after single-user mode is verified', async () => {
+    localStorage.setItem('chat-store', JSON.stringify({ state: {
+      chatTabs: { local: { tabId: 'local', sessionId: 'local-chat', name: 'Local conversation' } }, activeTabId: 'local',
+    }, version: 0 }))
+    const { useChatStore, migrateLegacyChatStateForVerifiedAccount } = await import('./useChatStore')
+    expect(useChatStore.getState().chatTabs).toEqual({})
+    expect(migrateLegacyChatStateForVerifiedAccount(null)).toBe(true)
+    expect(useChatStore.getState().activeTabId).toBe('local')
+  })
+
+  it('does not undo new tabs or another account while a close awaits session stop', async () => {
+    const { useChatStore, switchChatAccount } = await import('./useChatStore')
+    const { agentApi } = await import('../services/api')
+    let resolveStop!: () => void
+    vi.spyOn(agentApi, 'stopSession').mockImplementation(() => new Promise(resolve => { resolveStop = () => resolve({} as never) }))
+    switchChatAccount('alice')
+    const closing = await useChatStore.getState().createChatTab('Closing', { mode: 'workflow', presetQueryId: 'closing' }, 'closing-session')
+    useChatStore.getState().setTabStreaming(closing, true)
+    const pending = useChatStore.getState().closeTab(closing)
+    const newTab = await useChatStore.getState().createChatTab('New', { mode: 'workflow', presetQueryId: 'new' }, 'new-session')
+    resolveStop()
+    await pending
+    expect(useChatStore.getState().chatTabs[newTab]).toBeDefined()
+    useChatStore.getState().setTabStreaming(newTab, true)
+    const oldAccountClose = useChatStore.getState().closeTab(newTab)
+    switchChatAccount('bob')
+    const bobTab = await useChatStore.getState().createChatTab('Bob', { mode: 'workflow' }, 'bob-session')
+    resolveStop()
+    await oldAccountClose
+    expect(Object.keys(useChatStore.getState().chatTabs)).toEqual([bobTab])
+  })
+
+  it('discards old-account monitor responses without clearing the new account request', async () => {
+    const { useChatStore, switchChatAccount } = await import('./useChatStore')
+    const { agentApi } = await import('../services/api')
+    let resolveOld!: () => void
+    let resolveNew!: () => void
+    const fetch = vi.spyOn(agentApi, 'getHeaderSummary')
+      .mockImplementationOnce(() => new Promise(resolve => { resolveOld = () => resolve({ active_sessions: [{ session_id: 'alice-private' }] } as never) }))
+      .mockImplementationOnce(() => new Promise(resolve => { resolveNew = () => resolve({ active_sessions: [{ session_id: 'bob-private' }] } as never) }))
+    switchChatAccount('alice')
+    const old = useChatStore.getState().getActiveSessions(true)
+    switchChatAccount('bob')
+    const current = useChatStore.getState().getActiveSessions(true)
+    resolveOld()
+    expect(await old).toEqual([])
+    const shared = useChatStore.getState().getActiveSessions(true)
+    expect(fetch).toHaveBeenCalledTimes(2)
+    resolveNew()
+    await Promise.all([current, shared])
+    expect(useChatStore.getState().activeSessionsCache.map(session => session.session_id)).toEqual(['bob-private'])
+  })
+
 })

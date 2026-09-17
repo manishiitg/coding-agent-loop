@@ -1,7 +1,31 @@
 console.log('Cache bust: 2026-02-08-150000');
 import axios from 'axios'
+import { assertChatIdentityCurrent, captureChatIdentity } from '../utils/chatIdentity'
 import { createRequestCoalescer } from './requestCoalescer'
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
+
+declare module 'axios' {
+  interface AxiosRequestConfig { chatIdentityGeneration?: number }
+}
+
+export interface ChatRequestContext {
+  submissionId?: string
+  continuation?: boolean
+  identity?: number
+}
+
+function chatRequestConfig(sessionId?: string, context: ChatRequestContext = {}) {
+  const generation = context.identity ?? captureChatIdentity()
+  assertChatIdentityCurrent(generation)
+  return {
+    chatIdentityGeneration: generation,
+    headers: {
+      ...(sessionId ? { 'X-Session-ID': sessionId } : {}),
+      'Idempotency-Key': context.submissionId || crypto.randomUUID(),
+      ...(context.continuation ? { 'X-Conversation-Continuation': 'true' } : {}),
+    },
+  }
+}
 import { useChatStore } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
 import { getActiveWorkspaceProfile, useWorkspaceConnectionStore } from '../stores/useWorkspaceConnectionStore'
@@ -556,6 +580,7 @@ export function clearAuthToken(): void {
 // --- Axios request interceptor to inject session ID and auth token ---
 // Only adds session ID if not already provided in headers
 api.interceptors.request.use((config) => {
+  if (config.chatIdentityGeneration !== undefined) assertChatIdentityCurrent(config.chatIdentityGeneration)
   config.baseURL = getApiBaseUrl()
   config.headers = config.headers || {}
 
@@ -571,7 +596,7 @@ api.interceptors.request.use((config) => {
   }
 
   return markRequestStart(config)
-})
+}, error => { throw error }, { synchronous: true })
 
 // --- Axios response interceptor to handle 401 errors ---
 // Only clear the auth token when the *token itself* is rejected as expired/invalid.
@@ -604,8 +629,9 @@ api.interceptors.response.use(
     if (axios.isAxiosError(error)) {
       recordResponseTiming(error.config as TimedRequestConfig, error.response?.status ?? 'error', error.response?.data)
     }
+    if (error.config?.headers?.Authorization && error.config.headers.Authorization !== `Bearer ${getAuthToken()}`) return Promise.reject(error)
     if (redirectOnGatewayAuthenticationRequired(error)) return Promise.reject(error)
-    if (is401DueToBadToken(error)) {
+    if (is401DueToBadToken(error) && error.config?.headers?.Authorization === `Bearer ${getAuthToken()}`) {
       clearAuthToken()
     }
     try {
@@ -651,7 +677,7 @@ workspaceApi.interceptors.request.use((config) => {
   }
 
   return markRequestStart(config)
-})
+}, error => { throw error }, { synchronous: true })
 
 workspaceApi.interceptors.response.use(
   (response) => {
@@ -662,8 +688,9 @@ workspaceApi.interceptors.response.use(
     if (axios.isAxiosError(error)) {
       recordResponseTiming(error.config as TimedRequestConfig, error.response?.status ?? 'error', error.response?.data)
     }
+    if (error.config?.headers?.Authorization && error.config.headers.Authorization !== `Bearer ${getAuthToken()}`) return Promise.reject(error)
     if (redirectOnGatewayAuthenticationRequired(error)) return Promise.reject(error)
-    if (is401DueToBadToken(error)) {
+    if (is401DueToBadToken(error) && error.config?.headers?.Authorization === `Bearer ${getAuthToken()}`) {
       clearAuthToken()
     }
     try {
@@ -1033,15 +1060,10 @@ export const agentApi = {
   },
 
   // Start a new agent query
-  startQuery: async (request: AgentQueryRequest, sessionId?: string): Promise<AgentQueryResponse> => {
-    // Create headers with session ID if provided
-    const headers: Record<string, string> = {}
-    if (sessionId) {
-      headers['X-Session-ID'] = sessionId
-      console.log(`[API] Starting query with session ID: ${sessionId}`)
-    }
-
-    const response = await api.post('/api/query', request, { headers })
+  startQuery: async (request: AgentQueryRequest, sessionId?: string, context?: ChatRequestContext): Promise<AgentQueryResponse> => {
+    const config = chatRequestConfig(sessionId, context)
+    const response = await api.post('/api/query', request, config)
+    assertChatIdentityCurrent(config.chatIdentityGeneration)
     return response.data
   },
 
@@ -1051,14 +1073,15 @@ export const agentApi = {
     profileId: string,
     request: AgentProfileChatRequest,
     sessionId?: string,
+    context?: ChatRequestContext,
   ): Promise<AgentQueryResponse> => {
-    const headers: Record<string, string> = {}
-    if (sessionId) headers['X-Session-ID'] = sessionId
+    const config = chatRequestConfig(sessionId, context)
     const response = await api.post(
       `/api/agent-profiles/${encodeURIComponent(profileId)}/query`,
       request,
-      { headers },
+      config,
     )
+    assertChatIdentityCurrent(config.chatIdentityGeneration)
     return response.data
   },
 
@@ -1317,7 +1340,7 @@ export const agentApi = {
   },
 
   // Live input - deliver a user message to a live coding-agent session.
-  sendLiveInput: async (sessionId: string, message: string): Promise<{
+  sendLiveInput: async (sessionId: string, message: string, context?: ChatRequestContext): Promise<{
     success: boolean
     message?: string
     delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
@@ -1325,9 +1348,9 @@ export const agentApi = {
     message_id?: string
     query_id?: string
   }> => {
-    const response = await api.post(`/api/sessions/${sessionId}/live-input`, { message }, {
-      headers: { 'X-Session-ID': sessionId }
-    })
+    const config = chatRequestConfig(sessionId, context)
+    const response = await api.post(`/api/sessions/${sessionId}/live-input`, { message }, config)
+    assertChatIdentityCurrent(config.chatIdentityGeneration)
     return response.data
   },
 
@@ -2680,7 +2703,8 @@ export const authApi = {
 
   // Logout
   logout: async (): Promise<void> => {
-    await api.post('/api/auth/logout')
+    const token = getAuthToken()
+    await api.post('/api/auth/logout', undefined, { headers: { Authorization: token ? `Bearer ${token}` : '' } })
   },
 
   // Get current user info

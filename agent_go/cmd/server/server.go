@@ -364,6 +364,7 @@ type StreamingAPI struct {
 	// internalLiveInputPersistenceHandler lets routing tests verify that every
 	// provider-confirmed live delivery is also written to durable chat history.
 	internalLiveInputPersistenceHandler func(userID, sessionID, message string)
+	internalChatSubmissionStore         *chatSubmissionStore
 
 	// Note: Removed session management - fresh agents created per request
 
@@ -531,6 +532,7 @@ type StreamingAPI struct {
 	// for live coding-CLI turns. Guarded separately so transcript I/O never
 	// blocks the terminal/event observer.
 	nativeTranscriptSyncInFlight map[string]bool
+	nativeTranscriptSyncPending  map[string]bool
 	nativeTranscriptSyncMu       sync.Mutex
 
 	// Pending completions queue — background agent IDs that finished while session was busy
@@ -1423,7 +1425,8 @@ type LLMGuidanceResponse struct {
 // CLI transports this can target the retained tmux-backed agent; otherwise the
 // backend may start the next turn.
 type LiveInputRequest struct {
-	Message string `json:"message"`
+	Message      string `json:"message"`
+	SubmissionID string `json:"submission_id,omitempty"`
 }
 
 type LiveInputResponse struct {
@@ -1949,6 +1952,8 @@ func runServer(cmd *cobra.Command, args []string) {
 	// transcript has the result and the real runtime; this lets the event store
 	// ask for them (PLAT-141).
 	api.installToolResultRecovery()
+	stopNativeTranscriptRecovery := api.resumePendingNativeTranscriptRecovery()
+	defer stopNativeTranscriptRecovery()
 
 	// BG-001: Wire the onDropped callback so a full notification channel re-queues
 	// the completion instead of silently losing it permanently.
@@ -2318,6 +2323,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
 
 	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/chat/submissions/{submission_id}", api.handleChatSubmissionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
 	// Context Summarization API routes
@@ -2748,6 +2754,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// with capture/poll commands and make shutdown hang.
 	fmt.Println("⏹️ Canceling active agent work...")
 	cancelStart := time.Now()
+	stopNativeTranscriptRecovery()
 	api.cancelActiveWorkForShutdown()
 	fmt.Printf("✅ Active agent work canceled (%s)\n", time.Since(cancelStart).Round(time.Millisecond))
 
@@ -3142,7 +3149,7 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation")
 
 		if r.Method == "OPTIONS" {
 			if origin != "" && !originAllowed {
@@ -3548,6 +3555,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Convert server array to comma-separated string for agent compatibility
 		serverList = strings.Join(selectedServers, ",")
+	}
+
+	if !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) {
+		var finishSubmission func()
+		var accepted bool
+		w, r, finishSubmission, accepted = api.beginChatSubmission(w, r, sessionID, req.SelectedFolder, req.Query)
+		if !accepted {
+			return
+		}
+		defer finishSubmission()
 	}
 
 	// SINGLE-ENTRY ROUTING (tmux-transport coding-agent input): the frontend no
@@ -6531,7 +6548,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 					if convJSON, err := json.MarshalIndent(convData, "", "  "); err != nil {
 						logfWithContext(queryLogCtx, "[WORKSHOP_MODE] Failed to marshal previous conversation snapshot: %v", err)
-					} else if err := writeRawFileToWorkspace(context.Background(), modeChangeConversationPath, string(convJSON)); err != nil {
+					} else if err := persistRawConversationSnapshot(context.Background(), modeChangeConversationPath, string(convJSON)); err != nil {
 						logfWithContext(queryLogCtx, "[WORKSHOP_MODE] Failed to write previous conversation snapshot to %s: %v", modeChangeConversationPath, err)
 					}
 				}
@@ -7097,7 +7114,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// writing it destroys the fuller record.
 				if lossy, existingTurns, nextTurns := conversationOverwriteWouldLoseTurns(context.Background(), logPath, persistedHistoryForDisk); lossy {
 					refuseConversationOverwrite(logPath, existingTurns, nextTurns)
-				} else if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
+				} else if err := persistRawConversationSnapshot(context.Background(), logPath, string(convJSON)); err != nil {
 					log.Printf("[BUILDER LOG] Failed to write conversation log: %v", err)
 				} else {
 					log.Printf("[BUILDER LOG] Saved conversation log (%d messages) to %s", len(finalHistory), logPath)
@@ -9027,7 +9044,9 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		delivery, err := retainedSession.Send(sessionInputCtx, message)
 		sessionInputCancel()
 		if err != nil {
-			log.Printf("[QUERY->LIVE] Durable session delivery failed for session %s: %v; trying retained-terminal recovery before rebuilding", sessionID, err)
+			log.Printf("[QUERY->LIVE] Delivery uncertain for session %s: %v", sessionID, err)
+			writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+			return true
 		} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 			provider := string(delivery.Provider)
 			api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
@@ -9044,7 +9063,10 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		} else {
 			// Queueing is an accepted non-tmux submission. It is not evidence that
 			// the durable session is broken, so do not bypass mcpagent via tmux.
-			tryColdRetainedFallback = false
+			// Send accepted a non-CLI queue entry. Do not inject it again.
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.Status), "provider": string(delivery.Provider)})
+			return true
 		}
 	}
 	if tryColdRetainedFallback {
@@ -9057,7 +9079,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		fallbackCancel()
 		if handled {
 			if err != nil {
-				api.writeLiveInputUnavailable(w, sessionID, retainedProvider, err.Error())
+				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
 			}
 			api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
@@ -9093,15 +9115,16 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
 	})
 	if err != nil {
-		// Delivery genuinely failed (e.g. the pane vanished between lookup and
-		// send). Don't error the request — fall back to the normal new-turn path so
-		// the message still lands (re-launch + materialize).
-		log.Printf("[QUERY→LIVE] Live delivery failed for session %s, falling back to new turn: %v", sessionID, err)
-		return false
+		// Transport errors do not prove the CLI did not receive the input.
+		// Keep the accepted submission uncertain instead of dispatching twice.
+		log.Printf("[QUERY→LIVE] Delivery uncertain for session %s: %v", sessionID, err)
+		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+		return true
 	}
 	if delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
-		log.Printf("[QUERY→LIVE] Provider did not confirm CLI submission for session %s status=%s; falling back to new turn", sessionID, delivery.DeliveryStatus)
-		return false
+		log.Printf("[QUERY→LIVE] Provider did not confirm CLI submission for session %s status=%s", sessionID, delivery.DeliveryStatus)
+		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+		return true
 	}
 
 	messageID := newSteerMessageID()
@@ -9170,6 +9193,32 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 
+	if req.SubmissionID != "" && r.Header.Get("Idempotency-Key") == "" {
+		r.Header.Set("Idempotency-Key", req.SubmissionID)
+	}
+	api.sessionWorkspaceMu.RLock()
+	submissionProject, projectKnown := api.sessionWorkspaceFolders[sessionID]
+	api.sessionWorkspaceMu.RUnlock()
+	if !projectKnown {
+		api.lastQueryMu.RLock()
+		previousQuery, known := api.lastQueryRequests[sessionID]
+		api.lastQueryMu.RUnlock()
+		if known {
+			submissionProject = previousQuery.SelectedFolder
+			projectKnown = true
+		}
+	}
+	if !projectKnown {
+		r = r.WithContext(context.WithValue(r.Context(), chatSubmissionUnknownProjectKey{}, true))
+	}
+	var finishSubmission func()
+	var accepted bool
+	w, r, finishSubmission, accepted = api.beginChatSubmission(w, r, sessionID, submissionProject, req.Message)
+	if !accepted {
+		return
+	}
+	defer finishSubmission()
+
 	// One durable mcpagent Session owns warm delivery across transports and
 	// remains addressable after the wrapped Go turn has completed.
 	tryColdRetainedFallback := true
@@ -9178,7 +9227,9 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		delivery, err := retainedSession.Send(sessionInputCtx, req.Message)
 		sessionInputCancel()
 		if err != nil {
-			log.Printf("[LIVE INPUT] Durable session delivery failed for session %s: %v; trying retained-terminal recovery before rebuilding", sessionID, err)
+			log.Printf("[LIVE INPUT] Delivery uncertain for session %s: %v", sessionID, err)
+			writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+			return
 		} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 			provider := string(delivery.Provider)
 			messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider)
@@ -9187,7 +9238,9 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 			api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
 			return
 		} else {
-			tryColdRetainedFallback = false
+			w.Header().Set("Content-Type", "application/json")
+			_ = json.NewEncoder(w).Encode(LiveInputResponse{Success: true, Message: "User message accepted by provider session", DeliveryStatus: string(delivery.Status), Provider: string(delivery.Provider)})
+			return
 		}
 	}
 	if tryColdRetainedFallback {
@@ -9197,7 +9250,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		fallbackCancel()
 		if handled {
 			if err != nil {
-				api.writeLiveInputUnavailable(w, sessionID, retainedProvider, err.Error())
+				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return
 			}
 			writeRetainedTerminalLiveInputResponse(w, sessionID, req.Message, retainedProvider, api)
@@ -9268,18 +9321,12 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	})
 	if err != nil {
 		log.Printf("[LIVE INPUT] Live input unavailable for provider %s session %s: %v", mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider, sessionID, err)
-		if !hasActiveForegroundTurn && api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
-			return
-		}
-		api.writeLiveInputUnavailable(w, sessionID, string(mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider), err.Error())
+		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 		return
 	}
 	if agentSupportsLiveInputDelivery(runningAgent) && delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
 		log.Printf("[LIVE INPUT] Provider did not confirm CLI submission for session %s status=%s", sessionID, delivery.DeliveryStatus)
-		if !hasActiveForegroundTurn && api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, runningAgent) {
-			return
-		}
-		api.writeLiveInputUnavailable(w, sessionID, string(mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider), "Live input was not confirmed by the coding CLI")
+		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 		return
 	}
 

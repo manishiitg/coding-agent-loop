@@ -1,5 +1,24 @@
 import { describe, expect, it } from 'vitest'
-import { workflowTriggerLabel, isExternalReadOnlyWorkflowSession, isInternalChildSession, isScheduledSession } from './workflowSessionKinds'
+import { workflowTriggerLabel, isExternalReadOnlyWorkflowSession, isInternalChildSession, isScheduledSession, shouldDiscoverWorkflowChatTab } from './workflowSessionKinds'
+
+describe('background run tab discovery', () => {
+  it.each([
+    { sessionId: 'schedule-cron--daily_123' },
+    { sessionId: 'schedule-webhook--hook_123', triggeredBy: 'cron' },
+    { sessionId: 'opaque-session', triggeredBy: 'webhook' },
+    { sessionId: 'opaque-session', triggeredBy: 'cron' },
+    { sessionId: 'schedule-manual--daily_123' },
+    { sessionId: 'bot-slack-123' },
+  ])('does not create a tab for discovered activity: %o', identity => {
+    expect(shouldDiscoverWorkflowChatTab(identity, false)).toBe(false)
+    // Explicitly opened (including restored) tabs keep receiving updates.
+    expect(shouldDiscoverWorkflowChatTab(identity, true)).toBe(true)
+  })
+
+  it('still discovers interactive chat sessions', () => {
+    expect(shouldDiscoverWorkflowChatTab({ sessionId: 'chat-1', triggeredBy: 'user' }, false)).toBe(true)
+  })
+})
 
 describe('isExternalReadOnlyWorkflowSession', () => {
   it.each([

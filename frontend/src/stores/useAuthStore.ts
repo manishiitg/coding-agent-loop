@@ -4,7 +4,10 @@ import { persist } from 'zustand/middleware'
 import { authApi, getAuthToken, setAuthToken, clearAuthToken } from '../services/api'
 import type { AuthUser, AuthProvider } from '../services/api'
 import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
-import { useChatStore } from './useChatStore'
+import { switchChatAccount, migrateLegacyChatStateForVerifiedAccount } from './useChatStore'
+import { invalidateChatIdentity } from '../utils/chatIdentity'
+
+let authOperation = 0
 
 // Key for storing OAuth state in sessionStorage
 const OAUTH_STATE_KEY = 'oauth_state'
@@ -87,6 +90,7 @@ export const useAuthStore = create<AuthState>()(
         checkAuthMode: async () => {
           try {
             const response = await authApi.getAuthMode()
+            if (!response.multi_user_mode) migrateLegacyChatStateForVerifiedAccount(null)
             set({
               isMultiUserMode: response.multi_user_mode,
               isMultiUserModeChecked: true,
@@ -94,24 +98,25 @@ export const useAuthStore = create<AuthState>()(
             })
           } catch (error) {
             console.error('[AUTH] Failed to check auth mode:', error)
-            // Default to single-user mode if we can't reach the server
+            // An unreachable mode endpoint is not evidence of a single-user server.
             set({
-              isMultiUserMode: false,
+              isMultiUserMode: true,
               isMultiUserModeChecked: true,
-              providers: []
+              providers: [],
+              error: 'Cannot verify server authentication mode. Please retry.',
             })
           }
         },
 
         // Login action for credentials-based providers
         login: async (username: string, password: string, provider?: string) => {
+          const operation = ++authOperation
           set({ isLoading: true, error: null })
           try {
             const response = await authApi.login(username, password, provider)
-            // The browser-local chat store was historically scoped only by
-            // workspace. Drop it before switching identities so a user who
-            // signs in after someone else cannot inherit their tabs/messages.
-            useChatStore.getState().discardChatStateForAccountChange()
+            if (operation !== authOperation) return
+            migrateLegacyChatStateForVerifiedAccount(response.user.id)
+            switchChatAccount(response.user.id)
             setAuthToken(response.token)
             set({
               user: response.user,
@@ -120,6 +125,7 @@ export const useAuthStore = create<AuthState>()(
               error: null
             })
           } catch (error: unknown) {
+            if (operation !== authOperation) return
             const message = error instanceof Error ? error.message : 'Login failed'
             set({ isLoading: false, error: message })
             throw error
@@ -151,6 +157,7 @@ export const useAuthStore = create<AuthState>()(
 
         // Handle OAuth callback - exchange code for app JWT
         handleOAuthCallback: async (code: string, state: string) => {
+          const operation = ++authOperation
           set({ isLoading: true, error: null })
           try {
             // Verify state matches what we stored
@@ -160,6 +167,9 @@ export const useAuthStore = create<AuthState>()(
             }
 
             const response = await authApi.handleOAuthCallback(code, state)
+            if (operation !== authOperation) return
+            migrateLegacyChatStateForVerifiedAccount(response.user.id)
+            switchChatAccount(response.user.id)
             setAuthToken(response.token)
             set({
               user: response.user,
@@ -168,6 +178,7 @@ export const useAuthStore = create<AuthState>()(
               error: null
             })
           } catch (error: unknown) {
+            if (operation !== authOperation) return
             const message = error instanceof Error ? error.message : 'OAuth callback failed'
             set({ isLoading: false, error: message })
             throw error
@@ -176,26 +187,24 @@ export const useAuthStore = create<AuthState>()(
 
         // Logout action
         logout: async () => {
-          // Forget only local UI state. Do not stop sessions: they can belong
-          // to this account and must continue safely after logout.
-          useChatStore.getState().discardChatStateForAccountChange()
-          try {
-            await authApi.logout()
-          } catch (error) {
-            console.error('[AUTH] Logout error:', error)
-          }
+          ++authOperation
+          // Start revocation with the old token, then invalidate local identity
+          // immediately. A slow logout must never clear a later login's token.
+          const revocation = authApi.logout()
+          invalidateChatIdentity()
+          switchChatAccount(null)
           clearAuthToken()
-          set({
-            user: null,
-            isAuthenticated: false,
-            error: null
-          })
+          set({ user: null, isAuthenticated: false, isLoading: false, error: null })
+          try { await revocation }
+          catch (error) { console.error('[AUTH] Logout error:', error) }
         },
 
         // Check current authentication status
         checkAuth: async () => {
+          const operation = ++authOperation
           const token = getAuthToken()
           if (!token) {
+            switchChatAccount(null)
             set({ user: null, isAuthenticated: false })
             return
           }
@@ -203,13 +212,18 @@ export const useAuthStore = create<AuthState>()(
           set({ isLoading: true })
           try {
             const user = await authApi.getCurrentUser()
+            if (operation !== authOperation) return
+            migrateLegacyChatStateForVerifiedAccount(user.id)
+            switchChatAccount(user.id)
             set({
               user,
               isAuthenticated: true,
               isLoading: false
             })
           } catch (error) {
+            if (operation !== authOperation) return
             console.error('[AUTH] Auth check failed:', error)
+            switchChatAccount(null)
             clearAuthToken()
             set({
               user: null,
@@ -232,3 +246,21 @@ export const useAuthStore = create<AuthState>()(
       }
     )
 )
+
+// Account changes in another window require a fresh authenticated bootstrap.
+// Reload also drops old component callbacks and prevents any stale auth-store
+// write from publishing the previous user back into shared localStorage.
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', event => {
+    if (event.key !== getWorkspaceScopedStorageKey('auth-storage')) return
+    let nextOwner: string | null = null
+    try {
+      const saved = event.newValue ? JSON.parse(event.newValue).state : null
+      nextOwner = saved?.isAuthenticated ? saved.user?.id ?? null : null
+    } catch { /* Invalid auth state is handled by the fresh bootstrap. */ }
+    if (nextOwner === (useAuthStore.getState().user?.id ?? null)) return
+    invalidateChatIdentity()
+    switchChatAccount(null)
+    window.location.reload()
+  })
+}

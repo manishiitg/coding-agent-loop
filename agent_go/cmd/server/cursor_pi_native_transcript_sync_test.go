@@ -91,6 +91,7 @@ func TestRefreshLatestBuilderConversationFromPiTranscript(t *testing.T) {
 	}
 
 	api := &StreamingAPI{}
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/x/builder/conversation/2026-09-02/session-builder-session-conversation.json", string(rawContent))
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/x/builder/conversation/2026-09-02/session-builder-session-conversation.json", string(rawContent), conv)
 
 	if len(refreshed.ConversationHistory) != 4 {
@@ -162,6 +163,7 @@ func TestRefreshLatestBuilderConversationFromMuseTranscript(t *testing.T) {
 	}
 
 	api := &StreamingAPI{}
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/x/builder/conversation/2026-09-11/session-builder-session-conversation.json", string(rawContent))
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/x/builder/conversation/2026-09-11/session-builder-session-conversation.json", string(rawContent), conv)
 
 	if len(refreshed.ConversationHistory) != 4 {

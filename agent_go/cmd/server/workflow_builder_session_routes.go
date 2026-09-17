@@ -20,6 +20,7 @@ const restoredBuilderStepSummaryLimit = 1600
 const workflowBuilderConversationDateLayout = "2006-01-02"
 
 type workflowBuilderSessionResponse struct {
+	Revision           uint64            `json:"revision,omitempty"`
 	Success            bool              `json:"success"`
 	Source             string            `json:"source"`
 	SessionID          string            `json:"session_id,omitempty"`
@@ -37,6 +38,7 @@ type workflowBuilderSessionResponse struct {
 }
 
 type builderConversationLog struct {
+	Revision  uint64 `json:"revision,omitempty"`
 	SessionID string `json:"session_id"`
 	// UserID makes the workflow-scoped builder transcript private to the
 	// account that created it. The workflow itself can be shared read-only;
@@ -358,6 +360,7 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 		WorkflowName:       workflowNameFromWorkspacePath(workspacePath),
 		UpdatedAt:          updatedAt,
 		ConversationPath:   latest.path,
+		Revision:           latest.log.Revision,
 		Events:             rawEvents,
 		Total:              len(rawEvents),
 		LastProcessedIndex: len(rawEvents) - 1,

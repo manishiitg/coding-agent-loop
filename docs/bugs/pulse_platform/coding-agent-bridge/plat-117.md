@@ -347,3 +347,11 @@ placeholder would reopen the race in the *early*-completion direction — ending
 turns before their work is done, which is worse than ending them late. This is
 turn-lifecycle code on every scheduled run and deserves its own change with its
 own tests, not a same-session addition to the fix that was already verified.
+
+## 2026-09-17 — Notification delivery ownership integration
+
+The [PLAT-106 notification-ownership follow-up](../frontend-chat/plat-106.md#notification-ownership-follow-up--2026-09-17) protects the same background-agent registry and completion paths: registration cannot re-home an owned execution, and foreign-session ownership or a known foreign tracked parent excludes a completion from the destination's notification batch/live steer.
+
+Ownership checks must not be interpreted as a redesign of notification liveness. This follow-up does not implement the continuation-placeholder proposal or remove the completion-notified hold described later in this ticket. Legitimate same-session completion/retry and progress-mirror behavior must remain intact; the focused background/notification and conversation-turn tests passed. Live verification remains a separate requirement.
+
+Follow-up status: **implemented and tested locally; not deployed; runtime re-verification pending**. PLAT-106 remains the canonical implementation/test record. This note does not close the original ticket or change its assigned agent.

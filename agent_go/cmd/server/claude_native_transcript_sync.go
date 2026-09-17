@@ -81,41 +81,65 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 		api.activeSessionsMux.RUnlock()
 	}
 	if userID == "" {
-		userID = "default"
+		log.Printf("[CHAT_HISTORY] Refusing native recovery without session owner session=%s", sessionID)
+		return
 	}
 
+	api.scheduleOwnedNativeTranscriptSync(userID, sessionID, workspacePath)
+}
+
+func (api *StreamingAPI) scheduleOwnedNativeTranscriptSync(userID, sessionID, workspacePath string) {
+	if err := persistNativeTranscriptRecoveryDemand(nativeTranscriptRecoveryDemand{UserID: userID, SessionID: sessionID, WorkspacePath: workspacePath, RequestedAt: time.Now().UTC(), State: "unresolved"}); err != nil {
+		log.Printf("[CHAT_HISTORY] Native recovery demand could not be persisted session=%s: %v", sessionID, err)
+	}
+
+	syncKey := nativeTranscriptRecoveryKey(userID, sessionID, workspacePath)
 	api.nativeTranscriptSyncMu.Lock()
 	if api.nativeTranscriptSyncInFlight == nil {
 		api.nativeTranscriptSyncInFlight = make(map[string]bool)
 	}
-	if api.nativeTranscriptSyncInFlight[sessionID] {
+	if api.nativeTranscriptSyncPending == nil {
+		api.nativeTranscriptSyncPending = make(map[string]bool)
+	}
+	api.nativeTranscriptSyncPending[syncKey] = true
+	if api.nativeTranscriptSyncInFlight[syncKey] {
 		api.nativeTranscriptSyncMu.Unlock()
 		return
 	}
-	api.nativeTranscriptSyncInFlight[sessionID] = true
+	api.nativeTranscriptSyncInFlight[syncKey] = true
 	api.nativeTranscriptSyncMu.Unlock()
 
-	go func() {
-		defer func() {
-			api.nativeTranscriptSyncMu.Lock()
-			delete(api.nativeTranscriptSyncInFlight, sessionID)
-			api.nativeTranscriptSyncMu.Unlock()
-		}()
-
+	go api.runNativeTranscriptSyncWorker(syncKey, func() {
 		delays := []time.Duration{0, 300 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
-		for attempt, delay := range delays {
+		for _, delay := range delays {
 			if delay > 0 {
 				time.Sleep(delay)
 			}
-			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
+			_, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
 			if !supported {
-				return
-			}
-			if attempt+1 < len(delays) {
-				log.Printf("[CHAT_HISTORY] Native transcript sync reconciliation complete; scheduling follow-up session=%s attempt=%d changed=%t", sessionID, attempt+1, changed)
+				break
 			}
 		}
-	}()
+	})
+}
+
+func (api *StreamingAPI) runNativeTranscriptSyncWorker(sessionID string, reconcileWindow func()) {
+	for {
+		api.nativeTranscriptSyncMu.Lock()
+		api.nativeTranscriptSyncPending[sessionID] = false
+		api.nativeTranscriptSyncMu.Unlock()
+		reconcileWindow()
+		// The demand check and relinquishing worker ownership are atomic.
+		api.nativeTranscriptSyncMu.Lock()
+		if api.nativeTranscriptSyncPending[sessionID] {
+			api.nativeTranscriptSyncMu.Unlock()
+			continue
+		}
+		delete(api.nativeTranscriptSyncPending, sessionID)
+		delete(api.nativeTranscriptSyncInFlight, sessionID)
+		api.nativeTranscriptSyncMu.Unlock()
+		return
+	}
 }
 
 // syncWorkflowBuilderConversationFromNativeTranscript reconciles one existing
@@ -125,10 +149,27 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 // retries for formats this package cannot parse.
 func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx context.Context, userID, sessionID, workspacePath string) (changed, supported bool) {
 	if strings.TrimSpace(userID) == "" {
-		userID = "default"
+		return false, false
 	}
 	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
-	if err != nil || len(raw) == 0 || !claudeNativeTranscriptSyncSupported(raw) {
+	if err != nil || len(raw) == 0 || !json.Valid(raw) {
+		return false, true
+	}
+	if !claudeNativeTranscriptSyncSupported(raw) {
+		return false, false
+	}
+	var ownership struct {
+		UserID    string `json:"user_id"`
+		SessionID string `json:"session_id"`
+	}
+	if json.Unmarshal(raw, &ownership) != nil {
+		return false, true
+	}
+	owner := strings.TrimSpace(ownership.UserID)
+	if owner == "" {
+		owner = "default"
+	}
+	if owner != userID || (ownership.SessionID != "" && ownership.SessionID != sessionID) {
 		return false, false
 	}
 	conversationPath, found, err := findWorkflowBuilderConversationPathForSession(ctx, userID, sessionID, workspacePath)
@@ -146,8 +187,8 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 		// conversation is already complete. Repair the recent live window from
 		// that canonical history as well; otherwise refresh keeps omitting final
 		// replies that transcript catch-up persisted before the restart.
-		api.publishNativeTranscriptRecoveredAssistantMessages(
-			sessionID,
+		api.publishOwnedNativeTranscriptRecoveredAssistantMessages(
+			userID, sessionID,
 			nil,
 			recentBuilderConversationMessages(current.ConversationHistory, 50),
 		)
@@ -177,7 +218,10 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	}
 	ownerID := stringFromRecord(persistedRecord, "user_id")
 	if strings.TrimSpace(ownerID) == "" {
-		ownerID = "default"
+		ownerID = userID
+	}
+	if ownerID != userID {
+		return false, false
 	}
 	if err := updatePersistedChatHistoryIndex(
 		ownerID,
@@ -191,7 +235,7 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}
-	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current.ConversationHistory, refreshed.ConversationHistory)
+	api.publishOwnedNativeTranscriptRecoveredAssistantMessages(userID, sessionID, current.ConversationHistory, refreshed.ConversationHistory)
 	return true, true
 }
 
@@ -493,6 +537,32 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 // successful catch-up is also persisted back to path so later reads of the
 // same file -- not just this one restore response -- see it too.
 func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ctx context.Context, path, rawContent string, conv builderConversationLog) builderConversationLog {
+	lock := chatConversationMutex(path)
+	lock.Lock()
+	defer lock.Unlock()
+	// Callers may have read before a concurrent live append finished. Re-read
+	// inside the same critical section that protects the eventual replacement.
+	latest, exists, readErr := readFileFromWorkspace(ctx, path)
+	if readErr != nil || !exists {
+		return conv
+	}
+	var latestConv builderConversationLog
+	if json.Unmarshal([]byte(latest), &latestConv) != nil {
+		return conv
+	}
+	// The caller authorized the original identity. Do not substitute a record
+	// that changed owners/sessions between that read and this writer lock.
+	originalOwner, latestOwner := strings.TrimSpace(conv.UserID), strings.TrimSpace(latestConv.UserID)
+	if originalOwner == "" {
+		originalOwner = "default"
+	}
+	if latestOwner == "" {
+		latestOwner = "default"
+	}
+	if (conv.SessionID != "" && latestConv.SessionID != conv.SessionID) || latestOwner != originalOwner {
+		return conv
+	}
+	rawContent, conv = latest, latestConv
 	var record map[string]interface{}
 	if err := json.Unmarshal([]byte(rawContent), &record); err != nil {
 		return conv
@@ -537,6 +607,7 @@ func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ct
 		return conv
 	}
 
+	originalConv := conv
 	persistedHistory := conv.ConversationHistory
 	originalHistory := persistedHistory
 	if end := trimNativeTranscriptStaleTail(persistedHistory, nativeMessages); end < len(persistedHistory) {
@@ -581,13 +652,18 @@ func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ct
 	// every time a retained live turn finishes.
 	record["conversation_history"] = mergeBuilderConversationRecordHistory(record, persistedHistory, nativeMessages)
 	record["updated_at"] = conv.UpdatedAt
-	if encoded, err := json.MarshalIndent(record, "", "  "); err == nil {
-		if err := writeRawFileToWorkspace(ctx, path, string(encoded)); err != nil {
-			log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) from %s but failed to persist to %s: %v", len(merged)-previousCount, transcriptPath, path, err)
-		} else {
-			log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) into %s from %s (native transcript through %s)",
-				len(merged)-previousCount, path, transcriptPath, maxTimestamp.Format(time.RFC3339))
-		}
+	advanceChatConversationRevision(record)
+	conv.Revision = record["revision"].(uint64)
+	encoded, err := json.MarshalIndent(record, "", "  ")
+	if err != nil {
+		return originalConv
+	}
+	if err := writeRawFileToWorkspace(ctx, path, string(encoded)); err != nil {
+		log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) from %s but failed to persist to %s: %v", len(merged)-previousCount, transcriptPath, path, err)
+		return originalConv
+	} else {
+		log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) into %s from %s (native transcript through %s)",
+			len(merged)-previousCount, path, transcriptPath, maxTimestamp.Format(time.RFC3339))
 	}
 
 	return conv
@@ -891,4 +967,13 @@ func extractClaudeTranscriptText(content json.RawMessage) string {
 		}
 	}
 	return strings.TrimSpace(strings.Join(parts, "\n\n"))
+}
+
+// Startup recovery may run before a browser restores a session. Persist its
+// history, but publish live events only to an already registered matching owner.
+func (api *StreamingAPI) publishOwnedNativeTranscriptRecoveredAssistantMessages(owner, session string, current, refreshed []builderConversationMessage) int {
+	if api == nil || api.eventStore == nil || owner == "" || api.eventStore.GetSessionOwner(session) != owner {
+		return 0
+	}
+	return api.publishNativeTranscriptRecoveredAssistantMessages(session, current, refreshed)
 }

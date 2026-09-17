@@ -136,7 +136,7 @@ export function buildQueryRequestPayload(params: {
   let enableContextEditing: boolean | undefined = undefined
   if (selectedModeCategory === 'workflow') {
     const presetStore = useGlobalPresetStore.getState()
-    const presetId = presetStore.activePresetIds.workflow
+    const presetId = workflowPresetId || currentTab?.metadata?.presetQueryId
     const preset = presetId
       ? presetStore.workflowPresets.find(p => p.id === presetId)
       : null

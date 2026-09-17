@@ -581,6 +581,21 @@ func (r *BackgroundAgentRegistry) NextID(name string) string {
 
 // Register adds a background agent to the registry
 func (r *BackgroundAgentRegistry) Register(sessionID string, agent *BackgroundAgent) {
+	if agent == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	// The caller may omit the owner on older launch paths, but must never
+	// re-home an execution already bound to a schedule or another chat.
+	agent.mu.Lock()
+	if agent.SessionID == "" {
+		agent.SessionID = sessionID
+	}
+	owner := agent.SessionID
+	agent.mu.Unlock()
+	if owner != sessionID {
+		log.Printf("[BG AGENT] Refusing registration of %s in session %s: owned by %s", agent.ID, sessionID, owner)
+		return
+	}
 	r.mu.Lock()
 	if r.agents[sessionID] == nil {
 		r.agents[sessionID] = make(map[string]*BackgroundAgent)
@@ -1847,10 +1862,13 @@ func (api *StreamingAPI) processBatchedBackgroundAgentStartsLocked(sessionID str
 		if agent == nil {
 			continue
 		}
+		snap := agent.GetSnapshot()
+		if !api.backgroundNotificationOwnedBySession(sessionID, snap) {
+			continue
+		}
 		if !agent.MarkStartNotified() {
 			continue
 		}
-		snap := agent.GetSnapshot()
 		if isTerminalBackgroundAgentStatus(snap.Status) {
 			agent.mu.Lock()
 			agent.startNotified = false
@@ -2024,6 +2042,9 @@ func (api *StreamingAPI) filterSupersededCompletions(sessionID string, agentIDs 
 			continue
 		}
 		snap := agent.GetSnapshot()
+		if !api.backgroundNotificationOwnedBySession(sessionID, snap) {
+			continue
+		}
 		key := completionSupersessionKey(snap)
 		if key == "" {
 			filtered = append(filtered, agentID)
@@ -2235,6 +2256,26 @@ func buildWorkshopActionHint(workshopMode string, isLockCode bool, lockCodeConse
 			streakHint
 	}
 	return ""
+}
+
+// backgroundNotificationOwnedBySession keeps notification delivery tied to the
+// launch session, never the selected chat or a shared workflow/workspace. A
+// completed parent is still a valid owner after the user starts another turn.
+func (api *StreamingAPI) backgroundNotificationOwnedBySession(sessionID string, snap BackgroundAgentSnapshot) bool {
+	if snap.SessionID != sessionID {
+		return false
+	}
+	parentID := strings.TrimSpace(snap.ParentExecutionID)
+	if strings.HasPrefix(parentID, "session:") {
+		return parentID == "session:"+sessionID
+	}
+	api.trackedWorkflowExecutionsMux.RLock()
+	parent := api.trackedWorkflowExecutions[parentID]
+	valid := parent == nil || parent.SessionID == sessionID
+	api.trackedWorkflowExecutionsMux.RUnlock()
+	// Older execution records can lack a tracked parent. Their registry owner
+	// remains authoritative; a known foreign parent must never be overridden.
+	return valid
 }
 
 // processBackgroundAgentCompletion injects a synthetic message and triggers a new main agent turn
@@ -2516,6 +2557,9 @@ func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID strin
 	}
 
 	snap := agent.GetSnapshot()
+	if !api.backgroundNotificationOwnedBySession(sessionID, snap) {
+		return true // handled by refusing delivery; do not queue it into this chat
+	}
 	if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
 		return false
 	}
@@ -3039,7 +3083,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 				convData["ui_events"] = uiEvents
 			}
 			if convJSON, err := json.MarshalIndent(convData, "", "  "); err == nil {
-				if err := writeRawFileToWorkspace(context.Background(), logPath, string(convJSON)); err != nil {
+				if err := persistRawConversationSnapshot(context.Background(), logPath, string(convJSON)); err != nil {
 					log.Printf("[BG AGENT] Failed to persist builder conversation after synthetic turn: %v", err)
 				} else {
 					log.Printf("[BG AGENT] Persisted builder conversation after synthetic turn (%d messages) to %s", len(finalHistory), logPath)

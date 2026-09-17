@@ -671,10 +671,14 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 			return ProductConversationRecord{}, fmt.Errorf("initialize product database: %w", err)
 		}
 	}
+	candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))
+	continuation := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Conversation-Continuation")), "true")
+	if candidate != "" && !api.canUseSessionIDForQuery(r, candidate) {
+		return ProductConversationRecord{}, fmt.Errorf("requested product conversation belongs to another user")
+	}
 	preferredSessionID := ""
 	preferredSessionVerifiedForWorkspace := false
 	if binding.AuthoritativeSessionID == "" {
-		candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))
 		if candidate != "" && api.canUseSessionIDForQuery(r, candidate) {
 			if active, ok := api.getActiveSession(candidate); ok && sessionVisibleTo(active.UserID, GetUserFromContext(r.Context())) {
 				preferredSessionID = candidate
@@ -687,6 +691,21 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 				preferredSessionVerifiedForWorkspace = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(binding.WorkspacePath)
 			}
 		}
+	}
+	if preferredSessionID != "" {
+		continuation = true
+		if !preferredSessionVerifiedForWorkspace {
+			api.sessionWorkspaceMu.RLock()
+			activeWorkspace := api.sessionWorkspaceFolders[candidate]
+			api.sessionWorkspaceMu.RUnlock()
+			preferredSessionVerifiedForWorkspace = activeWorkspace != "" && normalizeConversationWorkspace(activeWorkspace) == normalizeConversationWorkspace(binding.WorkspacePath)
+		}
+		if strings.EqualFold(profile.ID, "work") && !preferredSessionVerifiedForWorkspace {
+			return ProductConversationRecord{}, fmt.Errorf("conversation continuity conflict: requested session is not verified in this project")
+		}
+	}
+	if continuation && candidate == "" {
+		return ProductConversationRecord{}, fmt.Errorf("continuation requires an explicit session ID")
 	}
 	store := defaultProductConversationRegistryStore()
 	record, err := store.resolveOrCreate(r.Context(), userID, profile, binding, preferredSessionID)
@@ -704,6 +723,9 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 		if err != nil {
 			return ProductConversationRecord{}, fmt.Errorf("restore open Work conversation: %w", err)
 		}
+	}
+	if err := validateProductConversationContinuation(continuation, candidate, record.SessionID); err != nil {
+		return ProductConversationRecord{}, err
 	}
 	if !api.canUseSessionIDForQuery(r, record.SessionID) {
 		return ProductConversationRecord{}, fmt.Errorf("product conversation session belongs to another user")
@@ -844,4 +866,13 @@ func writeAgentProfileJSON(w http.ResponseWriter, status int, value interface{})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// Fresh browser tabs may carry provisional IDs. An acknowledged continuation
+// must never silently receive a different registry conversation.
+func validateProductConversationContinuation(continuation bool, requested, resolved string) error {
+	if continuation && (strings.TrimSpace(requested) == "" || strings.TrimSpace(requested) != strings.TrimSpace(resolved)) {
+		return fmt.Errorf("conversation continuity conflict: requested session could not be verified in this workspace; reload or recover the original chat")
+	}
+	return nil
 }

@@ -167,3 +167,11 @@ The Hetzner agent's report that `preview_report` remained loading was investigat
 Local repair builds into the running server's static directory and copies the asset to the package-test and frontend distribution locations. Rebuild changed the running server's runtime response to 200 JavaScript without restarting it. The source page handler now reports an explicit failed state/503 when the runtime is missing, covered by a regression test; that backend change requires the next server rebuild/restart. The later `12479bdaf` commit only added a frontend test dependency among the preview-related paths and did not cause this mismatch.
 
 The actual Hetzner report was captured successfully through the in-app browser. The opt-in headless E2E attempt stopped with `workspace execution authorization required`; full `preview_report` success is therefore not claimed. Retry from an authorized normal workflow session. This does not implement PLAT-293's report action proposal.
+
+## 2026-09-17 — Notification delivery ownership integration
+
+The [PLAT-106 notification-ownership follow-up](plat-106.md#notification-ownership-follow-up--2026-09-17) also affects the shared queued-message drain used by report-to-chat dispatch. Once the report helper selects an interactive target and queues a request, delayed submission now retains that target's tab/session even if the user selects another chat. Closed/reused tabs cannot redirect the pending message; a rejected submission restores it only to its original queue.
+
+The five new queue-effect tests cover target selection changes, closure/reuse, rejection, and replacement-session isolation. They do not constitute a report-dialog or iframe end-to-end test. Report authorization, confirmation, deduplication, and the unresolved iframe-isolation work remain under this ticket with their existing status. Live report acceptance should queue a confirmed request in Chat A, select Chat B before delivery, and verify the request runs only in A.
+
+Follow-up status: **implemented and tested locally; not deployed; runtime re-verification pending**. PLAT-106 remains the canonical implementation/test record. This note does not close the original ticket or change its assigned agent.

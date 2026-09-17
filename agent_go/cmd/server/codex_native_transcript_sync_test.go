@@ -136,6 +136,7 @@ func TestRefreshLatestBuilderConversationFromCodexRollout(t *testing.T) {
 	}
 
 	api := &StreamingAPI{}
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/social-media/builder/conversation/2026-09-01/session-b445627b-conversation.json", string(rawContent))
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/social-media/builder/conversation/2026-09-01/session-b445627b-conversation.json", string(rawContent), conv)
 
 	if len(refreshed.ConversationHistory) != 4 {

@@ -129,3 +129,11 @@ algorithms.
 full workflow or other workshop background execution from this ticket's exact
 query root. PLAT-095 defines the canonical lifecycle and waiter; PLAT-100 makes
 all workshop descendants participate in that lifecycle.
+
+## 2026-09-17 — Notification delivery ownership integration
+
+The [PLAT-106 notification-ownership follow-up](../frontend-chat/plat-106.md#notification-ownership-follow-up--2026-09-17) adds a delivery boundary to this ticket's exact query-rooted lifecycle: a completion must stay in its initiating session, and a known tracked parent in another session cannot authorize delivery. The currently selected chat, shared workflow, or newest human turn is not a replacement owner.
+
+A completed original query remains a valid notification parent when the user asks another question in the same chat. Scheduled continuations still return to their schedule session and must retain the original query tree. The focused conversation-turn/steered-continuation tests passed alongside the new ownership tests. This does not replace the lifecycle waiter or establish live scheduler verification.
+
+Follow-up status: **implemented and tested locally; not deployed; runtime re-verification pending**. PLAT-106 remains the canonical implementation/test record. This note does not close the original ticket or change its assigned agent.

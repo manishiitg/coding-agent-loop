@@ -17,7 +17,7 @@ import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
 import { logger } from '../../utils/logger'
 import { startRestoredTransportTerminal } from '../../utils/restoredTerminal'
-import { isExternalReadOnlyWorkflowSession, isInternalChildSession, isScheduledSession } from '../../utils/workflowSessionKinds'
+import { isInternalChildSession, isScheduledSession, shouldDiscoverWorkflowChatTab } from '../../utils/workflowSessionKinds'
 import { activeWorkflowTabIdForPreset } from '../../utils/workflowTabOwnership'
 import { activateTab } from '../../utils/activateTab'
 import {
@@ -194,21 +194,6 @@ function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
     status === 'idle' ||
     entry.needs_user_input === true
   )
-}
-
-function isExternalReadOnlyWorkflowEntry(entry: RunningWorkflowInfo): boolean {
-  return isExternalReadOnlyWorkflowSession({
-    sessionId: entry.session_id,
-    triggeredBy: entry.triggered_by,
-  })
-}
-
-function isExternalReadOnlyActiveWorkflowSession(session: ActiveSessionInfo): boolean {
-  return isExternalReadOnlyWorkflowSession({
-    sessionId: session.session_id,
-    triggeredBy: session.triggered_by,
-    botPlatform: session.bot_platform,
-  })
 }
 
 function runningWorkflowBelongsToPreset(
@@ -1394,7 +1379,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           (s.agent_mode === 'workflow' || s.agent_mode === 'workflow_phase')
         )
 
-        // 2. Skip DB session restore — only active (running) sessions should auto-create tabs.
+        // 2. Skip DB session restore — only interactive running sessions may
+        // auto-create tabs. Background runs require an explicitly opened tab.
         //    Old completed sessions from DB were creating unwanted tabs every time you
         //    open a workflow. Workflow builder conversations are saved to workspace files,
         //    not restored from DB sessions.
@@ -1449,10 +1435,17 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             sessionId: registryRunning.session_id,
             triggeredBy: registryRunning.triggered_by,
           }))
-          if (
-            (isExternalReadOnlyActiveWorkflowSession(s) && !scheduledSession) ||
-            (registryRunning && isExternalReadOnlyWorkflowEntry(registryRunning) && !scheduledSession)
-          ) {
+          const hasOpenTab = Object.values(useChatStore.getState().chatTabs).some(tab =>
+            tab.sessionId === s.session_id && tab.metadata?.presetQueryId === activePresetId
+          )
+          if (!shouldDiscoverWorkflowChatTab({
+            sessionId: s.session_id,
+            triggeredBy: s.triggered_by,
+            botPlatform: s.bot_platform,
+          }, hasOpenTab) || (registryRunning && !shouldDiscoverWorkflowChatTab({
+            sessionId: registryRunning.session_id,
+            triggeredBy: registryRunning.triggered_by,
+          }, hasOpenTab))) {
             continue
           }
           let belongsToPreset = isLiveWorkflowSessionForPreset(s, activePresetId, workspacePath)
@@ -1494,10 +1487,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             sessionId: running.session_id,
             triggeredBy: running.triggered_by,
           })
-          // Scheduled jobs are first-class parallel workflow tabs. Bots remain
-          // external-only, but skipping schedules here made a workflow boot
-          // open a blank Builder tab while the live schedule was invisible.
-          if (isExternalReadOnlyWorkflowEntry(running) && !scheduledSession) continue
+          // Registry-only discoveries follow the same opt-in rule as the
+          // active-session cache; the monitor exposes runs without chat tabs.
+          if (!shouldDiscoverWorkflowChatTab({
+            sessionId: running.session_id,
+            triggeredBy: running.triggered_by,
+          }, Object.values(useChatStore.getState().chatTabs).some(tab =>
+            tab.sessionId === running.session_id && tab.metadata?.presetQueryId === activePresetId
+          ))) continue
           const belongsToPreset = runningWorkflowBelongsToPreset(running, activePresetId, workspacePath)
           if (!belongsToPreset) continue
           queuedSessionIds.add(running.session_id)
@@ -1772,6 +1769,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const projectedRunningWorkflows = runningFromActiveSessions
           .filter(item => item.session_id && isRunningWorkflowEntry(item))
           .filter(item => runningWorkflowBelongsToPreset(item, activePresetId, workspacePath))
+          .filter(item => shouldDiscoverWorkflowChatTab({
+            sessionId: item.session_id,
+            triggeredBy: item.triggered_by,
+          }, Object.values(useChatStore.getState().chatTabs).some(tab =>
+            tab.sessionId === item.session_id && tab.metadata?.presetQueryId === activePresetId
+          )))
           .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())
           .flatMap(running => {
             const projection = workflowRuntimeTabProjection(running, activePresetId)

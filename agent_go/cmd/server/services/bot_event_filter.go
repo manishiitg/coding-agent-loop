@@ -44,6 +44,8 @@ type BotEventFilter struct {
 	appBaseURL string // public app URL for shareable links (e.g., "https://app.example.com")
 	userID     string // workspace user ID for shareable links (e.g., "default")
 
+	progressMu          sync.Mutex // serialize progress sends with terminal cleanup
+	progressMessageID   string
 	mu                  sync.Mutex
 	delegationNames     map[string]string // correlationID -> instruction (sub-agent name)
 	startedAgents       map[string]bool   // correlationID/name keys already announced as started
@@ -113,6 +115,7 @@ func (f *BotEventFilter) SetSendFullDetails(enabled bool) {
 // Without this, sessionDone latches on the first turn and later turns fire
 // no onSessionDone — the parent can then be canceled mid-reply.
 func (f *BotEventFilter) ResetForNewTurn() {
+	f.clearProgressMessage("Request finished.")
 	f.mu.Lock()
 	f.sessionDone = false
 	f.sessionFailed = false
@@ -204,6 +207,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 	ch, unsubscribe := subscriber.SubscribeBot(sessionID)
 	defer func() {
 		log.Printf("[BOT_FILTER] Start: exiting event loop for session %s", sessionID)
+		f.clearProgressMessage("Request stopped.")
 		unsubscribe()
 	}()
 
@@ -236,7 +240,7 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 				time.Since(lastEventTime) < 60*time.Second &&
 				time.Since(lastSendTime) > 20*time.Second {
 				msg := f.buildHeartbeatMessage(activity, toolCount, pendingDel, heartbeatCount)
-				f.sendMessage(ctx, msg)
+				f.sendProgressMessage(ctx, msg)
 				lastSendTime = time.Now()
 			}
 			// Escalate interval: 30s → 60s → 90s (then stay at 90s)
@@ -679,6 +683,7 @@ func (f *BotEventFilter) setBlocking(eventType, requestID string) {
 	cb := f.onBlockingEvent
 	f.mu.Unlock()
 
+	f.clearProgressMessage("Waiting for your reply.")
 	log.Printf("[BOT_FILTER] Blocking event: %s request_id=%s", eventType, requestID)
 	if cb != nil {
 		cb(eventType, requestID)
@@ -715,6 +720,7 @@ func (f *BotEventFilter) checkSessionDone(eventType string) {
 		log.Printf("[BOT_FILTER] %s: no completion event yet", eventType)
 		return
 	}
+	f.clearProgressMessage("Request finished.")
 	log.Printf("[BOT_FILTER] %s: session done", eventType)
 	if cb != nil {
 		cb()
@@ -1520,4 +1526,55 @@ func (f *BotEventFilter) buildShareableURL(filePath string) string {
 		url += "&uid=" + f.userID
 	}
 	return url
+}
+
+// Slack progress is temporary UI, not conversation history. Other connectors
+// need no deletion API; use this optional capability only for Slack.
+type botProgressMessageDeleter interface {
+	DeleteMessage(context.Context, ThreadID, string) error
+}
+
+func (f *BotEventFilter) sendProgressMessage(ctx context.Context, text string) {
+	f.progressMu.Lock()
+	defer f.progressMu.Unlock()
+	f.mu.Lock()
+	inactive := f.sessionDone || f.awaitingInput
+	f.mu.Unlock()
+	if inactive || f.connector == nil {
+		return
+	}
+	if f.progressMessageID != "" {
+		if err := f.connector.UpdateMessage(ctx, f.threadID, f.progressMessageID, text); err != nil {
+			log.Printf("[BOT_FILTER] Failed to update progress message: %v", err)
+		}
+		return
+	}
+	id, err := f.connector.SendThreadMessage(ctx, f.threadID, text)
+	if err != nil {
+		log.Printf("[BOT_FILTER] Failed to send progress message: %v", err)
+		return
+	}
+	f.progressMessageID = id
+}
+
+func (f *BotEventFilter) clearProgressMessage(fallback string) {
+	f.progressMu.Lock()
+	defer f.progressMu.Unlock()
+	id := f.progressMessageID
+	if id == "" || f.connector == nil {
+		return
+	}
+	f.progressMessageID = ""
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if deleter, ok := f.connector.(botProgressMessageDeleter); ok && strings.EqualFold(f.threadID.Platform, "slack") {
+		if err := deleter.DeleteMessage(ctx, f.threadID, id); err == nil {
+			return
+		} else {
+			log.Printf("[BOT_FILTER] Failed to remove progress message: %v", err)
+		}
+	}
+	if err := f.connector.UpdateMessage(ctx, f.threadID, id, fallback); err != nil {
+		log.Printf("[BOT_FILTER] Failed to finalize progress message: %v", err)
+	}
 }

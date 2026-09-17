@@ -1847,3 +1847,15 @@ func (s *SlackService) PostRouteMessage(ctx context.Context, channel, thread, me
 
 // UserEmailForRoute resolves the authenticated Slack actor for exclusions.
 func (s *SlackService) UserEmailForRoute(user string) string { return s.resolveUserEmail(user) }
+
+// DeleteMessage removes a temporary bot-owned status message.
+func (s *SlackService) DeleteMessage(ctx context.Context, threadID ThreadID, messageID string) error {
+	if s.client == nil {
+		return fmt.Errorf("slack client not initialized")
+	}
+	_, _, err := s.client.DeleteMessageContext(ctx, threadID.ChannelID, messageID)
+	if err != nil && err.Error() == "message_not_found" {
+		return nil
+	}
+	return err
+}

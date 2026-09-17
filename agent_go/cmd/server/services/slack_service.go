@@ -1249,7 +1249,7 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 // --- BotConnector interface implementation ---
 
 func (s *SlackService) Capabilities() ChannelCapabilities {
-	return ChannelCapabilities{Threads: true, MessageEdits: true, StreamingReplies: true, Reactions: true, MessageDeletion: true, ProgressUpdates: true, WorkflowProgress: true}
+	return ChannelCapabilities{ChannelHistory: true, Threads: true, MessageEdits: true, StreamingReplies: true, Reactions: true, MessageDeletion: true, ProgressUpdates: true, WorkflowProgress: true}
 }
 
 // StartListening starts the bot listener (Socket Mode is already started separately)

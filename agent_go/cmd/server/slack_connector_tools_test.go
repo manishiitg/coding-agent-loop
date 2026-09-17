@@ -87,6 +87,35 @@ func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
 	if !found || route.WorkflowID != "example" || route.BotGrant != "run" || len(route.BlockedEmails) != 0 {
 		t.Fatalf("unexpected persisted route: %+v", routes)
 	}
+	workspace.files["Workflow/example/planning/plan.json"] = `{"steps":[{"type":"regular","id":"analyze","title":"Analyze","description":"Analyze the event"}]}`
+	workspace.files["Workflow/example/variables/variables.json"] = `{"variables":[],"groups":[{"name":"default"}]}`
+	update := reg.tools["update_slack_bot_route_permission"]
+	operatorCtx, err := resolve(ctx, "update_slack_bot_route_permission")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trigger := map[string]interface{}{"type": "trusted_app", "bot_id": "BSENTRY", "group_names": []string{"default"}, "step_id": "analyze", "context": map[string]interface{}{"limit": 10, "lookback_minutes": 30}}
+	if _, err = update.exec(operatorCtx, map[string]interface{}{"channel_id": "C0BTUQW85L1", "trigger": trigger}); err != nil {
+		t.Fatal(err)
+	}
+	_, routes, err = api.slackRoutes(context.Background())
+	if err != nil || routes["C0BTUQW85L1"].Trigger == nil {
+		t.Fatal("update did not save trigger", err)
+	}
+	if _, err = update.exec(operatorCtx, map[string]interface{}{"channel_id": "C0BTUQW85L1"}); err != nil {
+		t.Fatal(err)
+	}
+	_, routes, err = api.slackRoutes(context.Background())
+	if err != nil || routes["C0BTUQW85L1"].Trigger == nil {
+		t.Fatal("omission removed trigger")
+	}
+	if _, err = update.exec(operatorCtx, map[string]interface{}{"channel_id": "C0BTUQW85L1", "trigger": nil}); err != nil {
+		t.Fatal(err)
+	}
+	_, routes, err = api.slackRoutes(context.Background())
+	if err != nil || routes["C0BTUQW85L1"].Trigger != nil {
+		t.Fatal("null did not clear trigger")
+	}
 	api.botExecutionSessions.Store("builder-alice", botExecutionSession{})
 	if _, err := resolve(ctx, "create_slack_bot_route"); err == nil {
 		t.Fatal("bot-bound bridge recovered owner authority")

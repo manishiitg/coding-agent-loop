@@ -47,11 +47,11 @@ func TestProgressCleanupUsesCapabilitiesRatherThanPlatform(t *testing.T) {
 
 func TestProductionChannelCapabilities(t *testing.T) {
 	slack := (&SlackService{}).Capabilities()
-	if !slack.Threads || !slack.Reactions || !slack.StreamingReplies || !slack.MessageEdits || !slack.MessageDeletion || !slack.ProgressUpdates || !slack.WorkflowProgress {
+	if !slack.ChannelHistory || !slack.Threads || !slack.Reactions || !slack.StreamingReplies || !slack.MessageEdits || !slack.MessageDeletion || !slack.ProgressUpdates || !slack.WorkflowProgress {
 		t.Fatal("Slack lost a supported feature")
 	}
 	for _, caps := range []ChannelCapabilities{(&WhatsAppService{}).Capabilities(), (&WhatsAppServiceManager{}).Capabilities()} {
-		if caps.Threads || caps.StreamingReplies || caps.ProgressUpdates || caps.MessageEdits || caps.MessageDeletion || caps.Reactions || !caps.WorkflowProgress {
+		if caps.ChannelHistory || caps.Threads || caps.StreamingReplies || caps.ProgressUpdates || caps.MessageEdits || caps.MessageDeletion || caps.Reactions || !caps.WorkflowProgress {
 			t.Fatal("WhatsApp advertised unsupported features")
 		}
 	}

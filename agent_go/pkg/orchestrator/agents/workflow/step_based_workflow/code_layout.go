@@ -77,6 +77,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) codeRuntimeEnv(env map[string]string)
 		env = map[string]string{}
 	}
 	delete(env, "WORKFLOW_TRIGGER_INPUT_FILE")
+	delete(env, "WORKFLOW_TRIGGER_CONTEXT_FILE")
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.TriggerContextFile != "" {
+		env["WORKFLOW_TRIGGER_CONTEXT_FILE"] = filepath.Join(GetPromptDocsRoot(), opts.TriggerContextFile)
+	}
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
 		env["WORKFLOW_TRIGGER_INPUT_FILE"] = filepath.Join(GetPromptDocsRoot(), opts.WebhookInputFile)
 	}

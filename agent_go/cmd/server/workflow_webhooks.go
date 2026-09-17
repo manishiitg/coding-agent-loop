@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtrigger"
 	"io"
 	"mime"
 	"net/http"
@@ -40,20 +41,10 @@ type WorkflowWebhookConfig struct {
 	EncryptedSecret  string                          `json:"encrypted_secret"`
 }
 
-type WorkflowWebhookValueMapping struct {
-	Source  string            `json:"source"`
-	Values  map[string]string `json:"values"`
-	Default string            `json:"default,omitempty"`
-}
+type WorkflowWebhookValueMapping = workflowtrigger.ValueMapping
 
-// WorkflowWebhookPayloadMappings turns trusted configuration plus untrusted raw
-// event fields into bounded execution choices. Routes is keyed by routing/branch
-// step ID; its mapped values are route IDs belonging to that exact step.
-type WorkflowWebhookPayloadMappings struct {
-	Group  *WorkflowWebhookValueMapping           `json:"group,omitempty"`
-	Routes map[string]WorkflowWebhookValueMapping `json:"routes,omitempty"`
-	Step   *WorkflowWebhookValueMapping           `json:"step,omitempty"`
-}
+// Reused by webhooks and channel-trigger sources.
+type WorkflowWebhookPayloadMappings = workflowtrigger.PayloadMappings
 
 type WorkflowWebhookDelivery struct {
 	Group           string            `json:"group,omitempty"`

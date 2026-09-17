@@ -2,19 +2,25 @@ package services
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtrigger"
 	"github.com/slack-go/slack/slackevents"
 	"strings"
 )
 
 // SlackTrigger is configured by the route owner, never by message payloads.
 type SlackTrigger struct {
-	Type            string            `json:"type"` // human_message or trusted_app
-	AppID           string            `json:"app_id,omitempty"`
-	BotID           string            `json:"bot_id,omitempty"`
-	Contains        string            `json:"contains,omitempty"`
-	RouteSelections map[string]string `json:"route_selections,omitempty"`
-	StepID          string            `json:"step_id,omitempty"`
-	GroupNames      []string          `json:"group_names,omitempty"`
+	Match           *workflowtrigger.Match           `json:"match,omitempty"`
+	PayloadMappings *workflowtrigger.PayloadMappings `json:"payload_mappings,omitempty"`
+	Context         *SlackTriggerContext             `json:"context,omitempty"`
+	Type            string                           `json:"type"` // human_message or trusted_app
+	AppID           string                           `json:"app_id,omitempty"`
+	BotID           string                           `json:"bot_id,omitempty"`
+	Contains        string                           `json:"contains,omitempty"`
+	RouteSelections map[string]string                `json:"route_selections,omitempty"`
+	StepID          string                           `json:"step_id,omitempty"`
+	GroupNames      []string                         `json:"group_names,omitempty"`
 }
 type SlackTriggerHandler func(context.Context, string, *slackevents.MessageEvent) error
 
@@ -48,5 +54,26 @@ func SlackTriggerMatches(trigger *SlackTrigger, event *slackevents.MessageEvent,
 	default:
 		return false
 	}
-	return trigger.Contains == "" || strings.Contains(event.Text, trigger.Contains)
+	if trigger.Contains != "" && !strings.Contains(event.Text, trigger.Contains) {
+		return false
+	}
+	payload, err := json.Marshal(event)
+	return err == nil && trigger.Match.Matches(payload)
+}
+
+// Context is restricted to the triggering channel and excludes later messages.
+type SlackTriggerContext struct {
+	Limit           int  `json:"limit"`
+	LookbackMinutes int  `json:"lookback_minutes"`
+	IncludeThreads  bool `json:"include_threads,omitempty"`
+}
+
+func (c *SlackTriggerContext) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if c.Limit < 1 || c.Limit > 100 || c.LookbackMinutes < 1 || c.LookbackMinutes > 1440 {
+		return fmt.Errorf("Slack context requires limit 1–100 and lookback_minutes 1–1440")
+	}
+	return nil
 }

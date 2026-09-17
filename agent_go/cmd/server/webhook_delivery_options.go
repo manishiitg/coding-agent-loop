@@ -5,9 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtrigger"
 	"regexp"
 	"slices"
-	"strconv"
 	"strings"
 )
 
@@ -66,39 +66,9 @@ func resolveWebhookDeliveryOptions(s WorkflowSchedule, input *WorkflowWebhookDel
 }
 
 func webhookMappingValue(payload json.RawMessage, mapping WorkflowWebhookValueMapping) (string, error) {
-	var root interface{}
-	decoder := json.NewDecoder(bytes.NewReader(payload))
-	decoder.UseNumber()
-	if err := decoder.Decode(&root); err != nil {
-		return "", fmt.Errorf("cannot read payload mapping source %q", mapping.Source)
-	}
-	path := strings.TrimSpace(mapping.Source)
-	path = strings.TrimPrefix(path, "$.")
-	path = strings.TrimPrefix(path, ".")
-	if path == "" {
-		return "", fmt.Errorf("payload mapping source is required")
-	}
-	current := root
-	for _, segment := range strings.Split(path, ".") {
-		object, ok := current.(map[string]interface{})
-		if !ok {
-			return "", fmt.Errorf("payload mapping source %q was not found", mapping.Source)
-		}
-		current, ok = object[segment]
-		if !ok {
-			return "", fmt.Errorf("payload mapping source %q was not found", mapping.Source)
-		}
-	}
-	var sourceValue string
-	switch value := current.(type) {
-	case string:
-		sourceValue = value
-	case json.Number:
-		sourceValue = value.String()
-	case bool:
-		sourceValue = strconv.FormatBool(value)
-	default:
-		return "", fmt.Errorf("payload mapping source %q must be a string, number, or boolean", mapping.Source)
+	sourceValue, err := workflowtrigger.Scalar(payload, mapping.Source)
+	if err != nil {
+		return "", err
 	}
 	if selected, ok := mapping.Values[sourceValue]; ok && strings.TrimSpace(selected) != "" {
 		return strings.TrimSpace(selected), nil

@@ -49,10 +49,14 @@ func TestWebhookInputFileReachesScriptEnvironmentAndSandbox(t *testing.T) {
 	base.SetWorkspacePath("Workflow/testing")
 	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base, selectedRunFolder: "iteration-0/prod"}
 	inputFile := "Workflow/testing/webhooks/deliveries/run.json"
-	controller.SetExecutionOptions(&ExecutionOptions{WebhookInputFile: inputFile})
+	controller.SetExecutionOptions(&ExecutionOptions{WebhookInputFile: inputFile, TriggerContextFile: "Workflow/testing/context.json"})
+	contextFile := "Workflow/testing/context.json"
 	readPaths, writePaths := controller.setupExecutionFolderGuard("step-1", "work", KBAccessNone, LearningsAccessNone, "none", nil)
 	if !slices.Contains(readPaths, inputFile) || slices.Contains(writePaths, inputFile) {
 		t.Fatalf("delivery grants: read=%v write=%v", readPaths, writePaths)
+	}
+	if !slices.Contains(readPaths, contextFile) || slices.Contains(writePaths, contextFile) {
+		t.Fatal("context must be read-only")
 	}
 	env := controller.codeRuntimeEnv(map[string]string{"WORKFLOW_TRIGGER_INPUT_FILE": "stale"})
 	if env["WORKFLOW_TRIGGER_INPUT_FILE"] != filepath.Join(GetPromptDocsRoot(), inputFile) {
@@ -61,15 +65,18 @@ func TestWebhookInputFileReachesScriptEnvironmentAndSandbox(t *testing.T) {
 	if stepRuntimeEnv(env)["WORKFLOW_TRIGGER_INPUT_FILE"] == "" {
 		t.Fatal("agent shell filters trigger input")
 	}
+	if env["WORKFLOW_TRIGGER_CONTEXT_FILE"] != filepath.Join(GetPromptDocsRoot(), contextFile) || stepRuntimeEnv(env)["WORKFLOW_TRIGGER_CONTEXT_FILE"] == "" {
+		t.Fatal("context missing from step environment")
+	}
 	controller.SetExecutionOptions(nil)
 	if _, exists := controller.codeRuntimeEnv(env)["WORKFLOW_TRIGGER_INPUT_FILE"]; exists {
 		t.Fatal("delivery leaked into a later ordinary run")
 	}
 	var parsed ExecutionOptions
-	if err = json.Unmarshal([]byte(`{"WebhookInputFile":"evil","webhook_input_file":"evil"}`), &parsed); err != nil {
+	if err = json.Unmarshal([]byte(`{"WebhookInputFile":"evil","webhook_input_file":"evil","TriggerContextFile":"evil","trigger_context_file":"evil"}`), &parsed); err != nil {
 		t.Fatal(err)
 	}
-	if parsed.WebhookInputFile != "" {
+	if parsed.WebhookInputFile != "" || parsed.TriggerContextFile != "" {
 		t.Fatal("public JSON can inject internal input path")
 	}
 }

@@ -57,7 +57,7 @@ func (api *StreamingAPI) slackRoutes(ctx context.Context) (*chathistory.BotConne
 	return cfg, routes, nil
 }
 
-func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRoute, operation, channel, grant string) error {
+func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRoute, operation, channel, grant string, triggerProvided ...bool) error {
 	slackRouteMutationMu.Lock()
 	defer slackRouteMutationMu.Unlock()
 	channel = strings.TrimSpace(channel)
@@ -98,6 +98,9 @@ func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRou
 		}
 		if target.BlockedEmails != nil {
 			existing.BlockedEmails = target.BlockedEmails
+		}
+		if target.Trigger != nil || len(triggerProvided) > 0 && triggerProvided[0] {
+			existing.Trigger = target.Trigger
 		}
 		existing.BotGrant = grant
 		routes[channel] = existing
@@ -257,10 +260,15 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 			properties["blocked_emails"] = map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Emails excluded from this channel route. Empty array clears exclusions."}
 		}
 		required := []string{"channel_id"}
-		if name == "create_slack_bot_route" {
-			properties["trigger"] = map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"type"}, "properties": map[string]interface{}{
+		if name != "remove_slack_bot_route" {
+			properties["trigger"] = map[string]interface{}{"type": []string{"object", "null"}, "additionalProperties": false, "required": []string{"type"}, "properties": map[string]interface{}{
 				"type":   map[string]interface{}{"type": "string", "enum": []string{"human_message", "trusted_app"}},
 				"app_id": map[string]interface{}{"type": "string"}, "bot_id": map[string]interface{}{"type": "string"}, "contains": map[string]interface{}{"type": "string"},
+				"match":            slackTriggerMatchSchema(),
+				"payload_mappings": webhookPayloadMappingsSchema(),
+				"context": map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"limit", "lookback_minutes"}, "properties": map[string]interface{}{
+					"limit": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 100}, "lookback_minutes": map[string]interface{}{"type": "integer", "minimum": 1, "maximum": 1440}, "include_threads": map[string]interface{}{"type": "boolean"},
+				}},
 				"step_id": map[string]interface{}{"type": "string"}, "route_selections": map[string]interface{}{"type": "object", "additionalProperties": map[string]interface{}{"type": "string"}}, "group_names": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}},
 			}}
 		}
@@ -269,7 +277,7 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 			properties["bot_grant"] = map[string]interface{}{"type": "string", "enum": []string{"run"}}
 			// Run is the default; Builder must not ask users to choose a grant.
 		}
-		if err := register(name, "Manage only this workflow/project's Slack route. Requires an authenticated interactive owner. Routes use run authority only; do not ask for a grant. Read get_slack_bot_settings before and after. Slack-origin sessions cannot change grants.", properties, required, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if err := register(name, "Manage only this workflow/project's Slack route. Requires an authenticated interactive owner. Routes use run authority only; do not ask for a grant. Configure trigger on create/update: trusted app/bot source, rich JSON match, shared payload_mappings, and bounded same-channel context. trigger=null clears automation on update. Read get_slack_bot_settings before and after. Slack-origin sessions cannot change grants.", properties, required, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			active, _ := api.getActiveSession(session)
 			if active != nil && (active.BotPlatform != "" || strings.HasPrefix(active.TriggeredBy, "bot:")) {
 				return "", fmt.Errorf("bot-origin sessions cannot manage grants")
@@ -287,7 +295,8 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 					return "", err
 				}
 			}
-			if name == "create_slack_bot_route" && args["trigger"] != nil {
+			_, triggerProvided := args["trigger"]
+			if triggerProvided {
 				raw, err := json.Marshal(args["trigger"])
 				if err != nil {
 					return "", err
@@ -296,7 +305,7 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 					return "", err
 				}
 			}
-			if err := api.mutateSlackRoute(ctx, target, name, stringFromRequestMap(args, "channel_id"), "run"); err != nil {
+			if err := api.mutateSlackRoute(ctx, target, name, stringFromRequestMap(args, "channel_id"), "run", triggerProvided); err != nil {
 				return "", err
 			}
 			return `{"success":true}`, nil
@@ -305,4 +314,13 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 		}
 	}
 	return nil
+}
+
+func slackTriggerMatchSchema() map[string]interface{} {
+	condition := map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"source", "operator", "value"}, "properties": map[string]interface{}{
+		"source":   map[string]interface{}{"type": "string", "maxLength": 256, "description": "Fixed dotted path in normalized Slack event JSON, e.g. text or message.attachments.0.title"},
+		"operator": map[string]interface{}{"type": "string", "enum": []string{"equals", "contains"}}, "value": map[string]interface{}{"type": "string", "maxLength": 4096}, "case_insensitive": map[string]interface{}{"type": "boolean"},
+	}}
+	list := map[string]interface{}{"type": "array", "items": condition, "maxItems": 20}
+	return map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{"all": list, "any": list}, "description": "All conditions must match, plus at least one any condition when supplied. Maximum 20 conditions total."}
 }

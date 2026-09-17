@@ -38,10 +38,11 @@ type StepProgress struct {
 // ExecutionOptions carries the execution details that remain meaningful after a
 // run is selected. Full workflow runs always use the current run slot.
 type ExecutionOptions struct {
-	WebhookStepID     string            `json:"-"` // Saved direct webhook step; resolved against the loaded plan.
-	WebhookVariables  map[string]string `json:"-"`
-	WebhookInputFile  string            `json:"-"`                             // Internal API delivery file; cannot be supplied by tool JSON.
-	SelectedRunFolder string            `json:"selected_run_folder,omitempty"` // Current run slot (iteration-0) for full workflow runs
+	TriggerContextFile string            `json:"-"` // Server-owned, read-only channel context for this invocation.
+	WebhookStepID      string            `json:"-"` // Saved direct webhook step; resolved against the loaded plan.
+	WebhookVariables   map[string]string `json:"-"`
+	WebhookInputFile   string            `json:"-"`                             // Internal API delivery file; cannot be supplied by tool JSON.
+	SelectedRunFolder  string            `json:"selected_run_folder,omitempty"` // Current run slot (iteration-0) for full workflow runs
 	// Trusted scheduled-run identity. These fields are server-owned and never
 	// decoded from public tool/API JSON.
 	RunKind           string    `json:"-"`

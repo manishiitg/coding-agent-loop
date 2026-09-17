@@ -334,6 +334,7 @@ type MessageFormatter interface {
 // ChannelCapabilities declares presentation features without coupling shared
 // session handling to platform names. Zero values opt out of each feature.
 type ChannelCapabilities struct {
+	ChannelHistory   bool
 	Threads          bool
 	MessageEdits     bool
 	StreamingReplies bool

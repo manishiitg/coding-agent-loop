@@ -543,6 +543,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		}
 	}
 
+	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.TriggerContextFile != "" {
+		readPaths = append(readPaths, opts.TriggerContextFile)
+	}
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
 		readPaths = append(readPaths, opts.WebhookInputFile)
 	}
@@ -1008,6 +1011,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) configureSubAgentSessionGuard(session
 	common.SetSessionFolderGuard(sessionID, readPaths, writePaths)
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
 		readOnlyPaths = append(readOnlyPaths, opts.WebhookInputFile)
+		if opts.TriggerContextFile != "" {
+			readOnlyPaths = append(readOnlyPaths, opts.TriggerContextFile)
+		}
 	}
 	configureWorkflowFolderAccessSession(sessionID, hcpo.GetWorkspacePath(), readOnlyPaths, folderEnv)
 	hcpo.grantSessionCDPHostDownloadsReadWrite(sessionID)

@@ -25,3 +25,5 @@ To add Discord or Telegram:
 3. Integrate that channel's authenticated route/settings adapter. Capabilities describe presentation, not authorization; preserve target-scoped Run grants and account/route checks.
 4. Wire any builder tools and guidance through the existing product.yaml policies.
 5. Test actual transport behavior and authorization. The capability tests exercise Discord, Telegram, and an arbitrary channel name using mock transports; they do not constitute live connectors.
+
+`ChannelHistory` advertises an optional `ChannelHistoryReader` interface. The caller authorizes the source channel; the adapter enforces a bounded time/message/byte budget. Slack supports it. WhatsApp currently does not. History attachment JSON stays opaque to the shared interface.

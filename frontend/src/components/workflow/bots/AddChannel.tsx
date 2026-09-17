@@ -13,7 +13,7 @@ type ChannelRowBots = Pick<WorkflowBots,
   | 'routeSaving' | 'myRoutes' | 'addError' | 'setAddError'
 >
 
-export function ChannelRow({ bots, kind, manageRoutes = false, showSettings = true }: { bots: ChannelRowBots; kind: ChannelKind; manageRoutes?: boolean; showSettings?: boolean }) {
+export function ChannelRow({ bots, kind, manageRoutes = false }: { bots: ChannelRowBots; kind: ChannelKind; manageRoutes?: boolean }) {
   const {
     readOnly, workflowId, setSetup,
     slackReady, waReady, slackStatusLabel, waStatusLabel, slackLoading, slackOriginal, waStatus, waError,
@@ -45,7 +45,7 @@ export function ChannelRow({ bots, kind, manageRoutes = false, showSettings = tr
           {statusLabel}
         </span>
         <span className="flex-1" />
-        {showSettings && <button
+        <button
           type="button"
           onClick={() => setSetup(kind)}
           className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
@@ -53,7 +53,7 @@ export function ChannelRow({ bots, kind, manageRoutes = false, showSettings = tr
         >
           Open
           <ChevronRight className="h-3.5 w-3.5" />
-        </button>}
+        </button>
       </div>
       {manageRoutes && ready && workflowId && (
         <div className="mt-2 flex items-center gap-2">

@@ -842,3 +842,9 @@ without creating automatic chat tabs. Other dedicated product surfaces remain
 outside this shared shell. Backend session ownership remains the authenticated
 user boundary; frontend navigation uses stable project and conversation
 identity.
+
+The shared AgentWorks/Crew navigation shipped in `30235d0aa` and was deployed
+to RTS as `30235d0-20260917180009`. The production build, focused frontend
+regressions, release asset checks, idle drain, active release symlink, all three
+services, and public health passed. Browser acceptance of cross-surface
+`Ctrl+K` and activity-pill navigation remains pending.

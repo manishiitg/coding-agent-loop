@@ -781,3 +781,13 @@ Crew now supplies the stable project ID as the schedule scope, and the shared
 schedule matcher checks that identity before falling back to preset or path
 matching. This follows the AgentWorks identity-based model and keeps schedules
 isolated correctly when multiple users or projects have similar paths.
+
+Crew already shared AgentWorks' acknowledged workspace-view tool family and
+implemented project-scoped webhook triggers, including authenticated delivery,
+one-time secrets, idempotency, and the combined Schedules/Webhooks panel. One
+presentation gap remained: Crew's UI-control contract advertised the Schedules
+shell without its `schedules` and `webhooks` section targets, and the Crew
+adapter discarded a supplied target. The contract and adapter now preserve the
+section target, so Crew can open the Webhooks section after creating or
+discussing a project trigger and wait for the browser acknowledgment just as
+AgentWorks does.

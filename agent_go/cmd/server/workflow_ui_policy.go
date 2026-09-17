@@ -31,6 +31,17 @@ func workflowUICallerAllowed(phase, session string, req QueryRequest, active *Ac
 
 func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolRegistrar, phase, session, workspace string, req QueryRequest, readOnly bool) error {
 	active, _ := api.getActiveSession(session)
+	if phase == workflowtypes.WorkflowStatusWorkflowBuilder && req.AgentProfileID == "" {
+		mode := "workshop"
+		if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
+			mode = req.ExecutionOptions.WorkshopMode
+		}
+		policy := resolveWorkflowChatPolicy(mode, session, req, active, readOnly)
+		if err := api.registerSlackBotTools(registrar, session, workspace, "", policy.Origin == "interactive" && !readOnly && mode == "workshop"); err != nil {
+			return err
+		}
+	}
+
 	if !workflowUICallerAllowed(phase, session, req, active) {
 		// Invalidates any old lease if the same session changes role. The new
 		// definition has none of the six UI tools; no bindings can revive it.

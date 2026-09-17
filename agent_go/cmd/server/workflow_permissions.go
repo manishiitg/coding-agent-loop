@@ -149,6 +149,9 @@ func normalizeWorkflowPermissionKey(raw string) string {
 }
 
 func workflowAccessForClaims(claims *UserClaims) WorkflowAccessLevel {
+	if level, ok := workflowAccessForBotRouteClaims(claims, nil); ok {
+		return level
+	}
 	if claims == nil {
 		if loadWorkflowPermissionConfig().configured {
 			return WorkflowAccessWrite

@@ -490,36 +490,12 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	query, err := queryRequestForAgentProfileChat(profile, input, conversation)
+	query, err := prepareProductConversationTurn(r.Context(), productWorkspaceUserID(r.Context()), profile, input, conversation)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
 	}
-	// Resolve the saved transcript, native provider handle, and persistence
-	// destination once. The shared runner receives this trusted target through
-	// context; it does not reconstruct product ownership from browser data.
-	resumeTarget, hasResumeTarget, err := resolveProductResumeTarget(productWorkspaceUserID(r.Context()), conversation)
-	if err != nil {
-		writeAgentProfileError(w, http.StatusInternalServerError, "resolve saved conversation: "+err.Error())
-		return
-	}
-	// Runtime changes keep the AgentWorks conversation identity but must close
-	// the retained coding CLI. Its provider/model flags are read only at launch;
-	// the shared runner relaunches it with the new project configuration below.
-	if strings.TrimSpace(query.Provider) != "" {
-		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
-			r.Context(), productWorkspaceUserID(r.Context()), profile, conversation.ConversationKey,
-			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
-			query.WorkflowContextPaths,
-		)
-		if err != nil {
-			writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
-			return
-		}
-		if restartNeeded {
-			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "product chat: coding agent, model, MCP or skill configuration changed")
-		}
-	}
+
 	encoded, err := json.Marshal(query)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusInternalServerError, "encode profile chat request")
@@ -537,8 +513,8 @@ func (api *StreamingAPI) handleAgentProfileChatQuery(w http.ResponseWriter, r *h
 	// identity out of the shared query path so the folder guard, project
 	// initializer, history and registry all address the same project files.
 	forwardedContext := productWorkspaceContext(r.Context())
-	if hasResumeTarget {
-		forwardedContext = context.WithValue(forwardedContext, resolvedResumeTargetContextKey{}, resumeTarget)
+	if query.resolvedResumeTarget != nil {
+		forwardedContext = context.WithValue(forwardedContext, resolvedResumeTargetContextKey{}, query.resolvedResumeTarget)
 	}
 	forwarded := r.Clone(forwardedContext)
 	forwarded.Body = io.NopCloser(bytes.NewReader(encoded))
@@ -644,20 +620,15 @@ func (api *StreamingAPI) handleRotateAgentProfileConversation(w http.ResponseWri
 	})
 }
 
-func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profile agentprofiles.Profile, requestedKey string) (ProductConversationRecord, error) {
-	userID := productWorkspaceUserID(r.Context())
-	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, requestedKey)
-	if err != nil {
-		return ProductConversationRecord{}, err
-	}
+func initializeProductConversationWorkspace(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding) error {
 	client := workspace.NewClient(getWorkspaceAPIURL(), workspace.WithUserID(userID))
 	// Work projects have a conventional source-code home. Creating it here is
 	// idempotent and also upgrades projects created before the convention was
 	// introduced. The frontend creates it eagerly so it is visible immediately;
 	// this server-side guard keeps non-UI callers consistent.
 	if profile.ID == "work" {
-		if err := client.CreateFolder(r.Context(), filepath.ToSlash(filepath.Join(binding.WorkspacePath, "code"))); err != nil {
-			return ProductConversationRecord{}, fmt.Errorf("initialize product code folder: %w", err)
+		if err := client.CreateFolder(ctx, filepath.ToSlash(filepath.Join(binding.WorkspacePath, "code"))); err != nil {
+			return fmt.Errorf("initialize product code folder: %w", err)
 		}
 	}
 	// Database is a product feature, so its physical managed SQLite location is
@@ -665,12 +636,25 @@ func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profil
 	// the trusted server-to-workspace channel when a project is first opened;
 	// repeat calls are idempotent and older projects are upgraded automatically.
 	if agentprofiles.HasFeature(profile, "database") {
-		if _, err := client.InitializeWorkflowDB(r.Context(), workspace.InitializeWorkflowDBParams{
+		if _, err := client.InitializeWorkflowDB(ctx, workspace.InitializeWorkflowDBParams{
 			DBPath: filepath.ToSlash(filepath.Join(binding.WorkspacePath, "db", "db.sqlite")),
 		}); err != nil {
-			return ProductConversationRecord{}, fmt.Errorf("initialize product database: %w", err)
+			return fmt.Errorf("initialize product database: %w", err)
 		}
 	}
+	return nil
+}
+
+func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profile agentprofiles.Profile, requestedKey string) (ProductConversationRecord, error) {
+	userID := productWorkspaceUserID(r.Context())
+	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, requestedKey)
+	if err != nil {
+		return ProductConversationRecord{}, err
+	}
+	if err := initializeProductConversationWorkspace(r.Context(), userID, profile, binding); err != nil {
+		return ProductConversationRecord{}, err
+	}
+
 	candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))
 	continuation := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Conversation-Continuation")), "true")
 	if candidate != "" && !api.canUseSessionIDForQuery(r, candidate) {
@@ -866,6 +850,33 @@ func writeAgentProfileJSON(w http.ResponseWriter, status int, value interface{})
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
+}
+
+// prepareProductConversationTurn is shared by every product-chat adapter. It
+// owns history/native restoration and runtime rebinding, so connector turns
+// pick up the same migrations as web turns.
+func prepareProductConversationTurn(ctx context.Context, userID string, profile agentprofiles.Profile, input AgentProfileChatRequest, conversation ProductConversationRecord) (QueryRequest, error) {
+	query, err := queryRequestForAgentProfileChat(profile, input, conversation)
+	if err != nil {
+		return QueryRequest{}, err
+	}
+	target, found, err := resolveProductResumeTarget(userID, conversation)
+	if err != nil {
+		return QueryRequest{}, fmt.Errorf("resolve saved conversation: %w", err)
+	}
+	if found {
+		query.resolvedResumeTarget = target
+	}
+	if strings.TrimSpace(query.Provider) != "" {
+		_, restart, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(ctx, userID, profile, conversation.ConversationKey, query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills, query.WorkflowContextPaths)
+		if err != nil {
+			return QueryRequest{}, err
+		}
+		if restart {
+			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "product chat: runtime configuration changed")
+		}
+	}
+	return query, nil
 }
 
 // Fresh browser tabs may carry provisional IDs. An acknowledged continuation

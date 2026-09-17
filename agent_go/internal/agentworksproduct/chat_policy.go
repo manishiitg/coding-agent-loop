@@ -17,8 +17,12 @@ func ChatCapabilities(mode, origin string, readOnly bool) map[string]bool {
 		}
 		return false
 	}
+	originCapabilities := p.Origins[origin]
+	if mode == "builder" && origin == "bot" {
+		originCapabilities = p.Modes["builder"]
+	}
 	for _, capability := range p.Modes[mode] {
-		if contains(p.Origins[origin], capability) && (!readOnly || contains(p.ReadOnly, capability)) {
+		if contains(originCapabilities, capability) && (!readOnly || contains(p.ReadOnly, capability)) {
 			result[capability] = true
 		}
 	}

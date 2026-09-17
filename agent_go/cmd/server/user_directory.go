@@ -362,6 +362,9 @@ func accessForRecord(rec *UserRecord) UserAccess {
 // is an admin of their own installation; a multi-user identity without a
 // record is Unknown and keeps today's env-driven behavior.
 func userAccessForClaims(claims *UserClaims) UserAccess {
+	if claims != nil && claims.Provider == "bot_route" {
+		return UserAccess{Known: true, ProductsRestricted: true, Products: []string{claims.BotRouteProfileID}}
+	}
 	if rec := directoryUserForClaims(claims); rec != nil {
 		return accessForRecord(rec)
 	}

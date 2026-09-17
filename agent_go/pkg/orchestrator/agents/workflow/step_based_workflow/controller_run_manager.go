@@ -21,13 +21,13 @@ const (
 // the number of archives retained for both the workflow and evaluation trees.
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCurrentRun(ctx context.Context, workspacePath string) (string, error) {
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
-		if !regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(opts.SelectedRunFolder) {
+		if !regexp.MustCompile(`^iteration-[0-9]+-(?:hook|slack-[a-f0-9]+)$`).MatchString(opts.SelectedRunFolder) {
 			return "", fmt.Errorf("invalid webhook run folder")
 		}
 		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
 	}
-	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.RunKind == "schedule" {
-		if !regexp.MustCompile(`^iteration-[0-9]+-sched$`).MatchString(opts.SelectedRunFolder) || opts.ScheduleRunID == "" || opts.ScheduleID == "" {
+	if opts := hcpo.GetExecutionOptions(); opts != nil && (opts.RunKind == "schedule" || opts.RunKind == "slack") {
+		if !regexp.MustCompile(`^iteration-[0-9]+-(?:sched|slack-[a-f0-9]+)$`).MatchString(opts.SelectedRunFolder) || opts.ScheduleRunID == "" || opts.ScheduleID == "" {
 			return "", fmt.Errorf("invalid scheduled run binding")
 		}
 		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
@@ -149,7 +149,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIterationAcross(ctx cont
 	// Builder archives, webhook runs, and scheduled runs share one numeric
 	// namespace. Counting all three prevents iteration-12 from being allocated
 	// after iteration-12-sched (or -hook) already exists.
-	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched))?$`)
+	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched|slack-[a-f0-9]+))?$`)
 	for _, p := range paths {
 		folders, err := hcpo.listRunFolders(ctx, p)
 		if err != nil {
@@ -225,7 +225,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIteration(ctx context.Co
 	}
 
 	maxIter := 0
-	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched))?$`)
+	re := regexp.MustCompile(`^iteration-(\d+)(?:-(?:hook|sched|slack-[a-f0-9]+))?$`)
 	for _, folder := range existingFolders {
 		matches := re.FindStringSubmatch(folder)
 		if len(matches) > 1 {

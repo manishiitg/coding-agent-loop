@@ -113,6 +113,9 @@ func userAllowedProduct(claims *UserClaims, product string) bool {
 	if product == "" || claims == nil {
 		return true
 	}
+	if claims.Provider == "bot_route" {
+		return claims.BotRouteProfileID != "" && strings.EqualFold(product, claims.BotRouteProfileID)
+	}
 	if adminOnlyProduct(product) && !userAccessForClaims(claims).Admin {
 		return false
 	}

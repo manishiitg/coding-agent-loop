@@ -204,7 +204,7 @@ func removeExpiredFoldersFromRunIndex(root *os.Root, removed map[string]bool) er
 	if err := json.Unmarshal(raw, &index); err != nil {
 		return err
 	}
-	for _, field := range []string{"retained_iterations", "scheduled_iterations", "webhook_iterations"} {
+	for _, field := range []string{"retained_iterations", "scheduled_iterations", "webhook_iterations", "slack_iterations"} {
 		values, ok := index[field].([]interface{})
 		if !ok {
 			continue

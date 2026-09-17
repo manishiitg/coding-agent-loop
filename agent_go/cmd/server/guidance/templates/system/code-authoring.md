@@ -162,3 +162,6 @@ quoting is the bug, not the logic — move the text out of the code.
 - Do NOT make HTML copies of Markdown stores (`soul.md`, learnings, KB) — those stay Markdown and are read as Markdown.
 
 Before writing a `.html` output file, call `read_skill(skills=[{"name":"builder-reference","path":"references/html-output.md"}])` — it has the full layout baseline, dark-mode styles, inline chart pattern, and quality checklist.
+
+
+For Slack messages and cross-step thread continuation, load `read_skill(skills=[{"name":"builder-reference","path":"references/slack-bot-routing.md"}])`. Use the backend-owned `send_slack_message` tool through this bridge with `MCP_AUTH`, a stable idempotency key, and an opaque `thread_ref`. Persist the reference as declared context output and pass it through a downstream context dependency. Never expose bot/app tokens to workflow code.

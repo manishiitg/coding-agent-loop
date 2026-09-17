@@ -617,7 +617,7 @@ export default function Workspace({
 
     runFolders
       .map(folder => folder.name)
-      .filter(name => /^iteration-\d+(?:-hook)?$/.test(name))
+      .filter(name => /^iteration-\d+(?:-(?:hook|sched|slack-[a-f0-9]+))?$/.test(name))
       .forEach(iter => discovered.add(iter))
 
     return Array.from(discovered).sort((a, b) => {

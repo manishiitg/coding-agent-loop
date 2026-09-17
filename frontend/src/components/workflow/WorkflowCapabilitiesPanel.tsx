@@ -82,7 +82,7 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   },
   bots: {
     title: 'Workflow bots',
-    description: 'Slack channels and WhatsApp slugs this workflow answers on. Connections are shared by all workflows.',
+    description: 'Slack and WhatsApp slugs this workflow answers on. Connections are shared by all workflows.',
     savesViaManifest: false,
   },
 }

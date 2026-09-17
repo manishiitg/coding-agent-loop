@@ -28,7 +28,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
           className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
-          Back to channels
+          Back to bots
         </button>
         <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
           {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
@@ -42,17 +42,17 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
 
   // ── Main view ─────────────────────────────────────────────────────────────
 
-  return (
-    <div className="space-y-4">
-      {/* This workflow/project answers on */}
-      <div className="rounded-lg border border-border bg-muted/20 p-3">
-        <div className="mb-1.5 text-sm font-medium text-muted-foreground">This {scopeNoun} answers on</div>
-        {!workflowId ? (
+    return (
+      <div className="space-y-4">
+        {/* This workflow/project answers on */}
+        <div className="rounded-lg border border-border bg-muted/20 p-3">
+          <div className="mb-1.5 text-sm font-medium text-muted-foreground">This {scopeNoun} answers on</div>
+          {!workflowId ? (
           <p className="text-xs text-muted-foreground">This panel needs an active {scopeNoun}.</p>
         ) : myRoutes.length === 0 ? (
-          <p className="text-xs text-muted-foreground">No channels yet — add one below.</p>
+          <p className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">No bot routes yet. Add one below.</p>
         ) : (
-          <div className="flex flex-wrap gap-1.5">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
+          <div className="grid max-h-96 gap-2 overflow-y-auto sm:grid-cols-2">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
         )}
         {routeError && (
           <p className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
@@ -66,9 +66,9 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
         )}
       </div>
 
-      {/* Add a channel */}
+      {/* Add a bot route */}
       <div>
-        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Add a channel</div>
+        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Add a bot route</div>
         <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
           <ChannelRow bots={bots} kind="slack" />
           <ChannelRow bots={bots} kind="whatsapp" />

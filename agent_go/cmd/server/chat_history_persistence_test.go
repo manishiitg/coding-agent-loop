@@ -1437,7 +1437,7 @@ func TestUpdatePersistedChatHistoryIndexCarriesTitleAcrossDatedPaths(t *testing.
 		Role:  llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "check again"}},
 	}}
-	if err := updatePersistedChatHistoryIndex("default", "resumed-chat", "workflow", history, nil, newPath, 123, time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)); err != nil {
+	if err := updatePersistedChatHistoryIndex("default", "resumed-chat", "workflow", history, nil, newPath, 123, time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC), nil); err != nil {
 		t.Fatalf("update index: %v", err)
 	}
 

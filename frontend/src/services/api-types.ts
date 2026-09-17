@@ -905,17 +905,35 @@ export interface CompactContextResponse {
 
 // ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
+export interface SlackRouteTrigger {
+  type: 'human_message' | 'trusted_app'
+  app_id?: string
+  bot_id?: string
+  contains?: string
+  route_selections?: Record<string, string>
+  step_id?: string
+  group_names?: string[]
+}
+
 export interface ChannelRoute {
+  blocked_emails?: string[]
+  trigger?: SlackRouteTrigger
   workflow_id?: string
   workspace_path: string
   profile_id?: string
   conversation_key?: string
   profile_label?: string
-  // Override the manifest's workshop_mode for this channel. Empty = use manifest.
+  // Server-owned product workspace owner for profile routes.
+  workspace_user_id?: string
+  // Explicit route grant. "owner" maps to Builder/Workshop authority; "run" is read-only/runtime.
+  bot_grant?: 'owner' | 'run'
+  // Compatibility mode field derived from bot_grant.
   workshop_mode?: 'workshop' | 'run'
   // Opt in to detailed workflow runtime messages in the bot channel.
   send_full_details?: boolean
 }
+
+export type BotRoute = ChannelRoute
 
 // Shape of GET/PUT /api/whatsapp/routing entries. Same idea as ChannelRoute
 // but workshop_mode is an untyped string on this endpoint.
@@ -925,6 +943,7 @@ export interface WhatsAppRoute {
   profile_id?: string
   conversation_key?: string
   profile_label?: string
+  bot_grant?: string
   workshop_mode?: string
   send_full_details?: boolean
 }
@@ -983,7 +1002,7 @@ export interface SlackConfig {
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   channel_id?: string
   bot_mode?: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, ChannelRoute>  // Maps Slack channel IDs to ChannelRoute
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackConfigRequest {
@@ -992,7 +1011,7 @@ export interface SlackConfigRequest {
   app_token: string  // App-level token (xapp-...) for Socket Mode
   channel_id: string
   bot_mode: boolean  // Enable @mention bot mode
-  channel_routing?: Record<string, ChannelRoute>  // Maps Slack channel IDs to ChannelRoute
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackConfigResponse {
@@ -1001,6 +1020,7 @@ export interface SlackConfigResponse {
   app_token?: string  // Masked in GET
   channel_id?: string
   bot_mode?: boolean
+  channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
 export interface SlackTestResponse {
@@ -1509,6 +1529,12 @@ export interface ChatHistorySession {
   can_delete?: boolean;
   workspace_path?: string;
   conversation_path?: string;
+  bot_platform?: string;
+  bot_channel_id?: string;
+  bot_thread_ts?: string;
+  bot_user_id?: string;
+  bot_user_name?: string;
+  bot_user_email?: string;
   created_at?: string;
   updated_at?: string;
   message_count?: number;

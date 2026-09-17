@@ -27,6 +27,7 @@ type workflowRunIndex struct {
 	BuilderRetainedIterations []string `json:"builder_retained_iterations,omitempty"`
 	ScheduledIterations       []string `json:"scheduled_iterations,omitempty"`
 	WebhookIterations         []string `json:"webhook_iterations,omitempty"`
+	SlackIterations           []string `json:"slack_iterations,omitempty"`
 	LastTransition            string   `json:"last_transition"`
 	FullRunPolicy             string   `json:"full_run_policy"`
 	PartialGroupRunPolicy     string   `json:"partial_group_policy"`
@@ -34,7 +35,7 @@ type workflowRunIndex struct {
 }
 
 var runIndexWriteLocks sync.Map
-var indexedIterationFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)(?:-(hook|sched))?$`)
+var indexedIterationFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)(?:-(hook|sched|slack-[a-f0-9]+))?$`)
 
 func runIndexWriteLock(workspacePath string) *sync.Mutex {
 	lock, _ := runIndexWriteLocks.LoadOrStore(filepath.Clean(workspacePath), &sync.Mutex{})
@@ -162,7 +163,9 @@ func categorizedIterationNames(folders []string) (all, builder, scheduled, webho
 			case "hook":
 				webhook = append(webhook, folder)
 			default:
-				builder = append(builder, folder)
+				if !strings.HasPrefix(match[2], "slack-") {
+					builder = append(builder, folder)
+				}
 			}
 		}
 	}
@@ -191,6 +194,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeRunIndex(ctx context.Context, tr
 		return fmt.Errorf("list run folders for provenance index: %w", err)
 	}
 	retained, builderRetained, scheduled, webhooks := categorizedIterationNames(folders)
+	var slack []string
+	for _, folder := range retained {
+		if strings.Contains(folder, "-slack-") {
+			slack = append(slack, folder)
+		}
+	}
 	index := workflowRunIndex{
 		Version:                   runIndexVersion,
 		ActiveIteration:           currentWorkflowRunFolder,
@@ -199,6 +208,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) writeRunIndex(ctx context.Context, tr
 		BuilderRetainedIterations: builderRetained,
 		ScheduledIterations:       scheduled,
 		WebhookIterations:         webhooks,
+		SlackIterations:           slack,
 		LastTransition:            strings.TrimSpace(transition),
 		FullRunPolicy:             "rotate_iteration_0_to_next_available_iteration",
 		PartialGroupRunPolicy:     "reuse_iteration_0",

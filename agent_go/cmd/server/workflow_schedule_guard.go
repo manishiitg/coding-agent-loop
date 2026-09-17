@@ -31,6 +31,16 @@ func (api *StreamingAPI) scheduleCollisionCheck(workspacePath, sessionID, trigge
 		return nil
 	}
 	return func(ctx context.Context, operation string, args map[string]interface{}) error {
+		if binding, ok := api.botExecutionForSession(sessionID); ok {
+			validated, err := api.revalidateExecutionPrincipal(context.WithValue(ctx, UserContextKey, binding.Claims), binding.Request)
+			if err != nil {
+				return err
+			}
+			if GetUserFromContext(validated).BotRouteGrant != binding.Claims.BotRouteGrant {
+				return fmt.Errorf("bot grant changed; start a new turn before executing more tools")
+			}
+		}
+
 		if api.scheduler == nil {
 			return nil
 		}

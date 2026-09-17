@@ -6,21 +6,20 @@ import (
 )
 
 // A successful transcription (even an empty one — a silent clip) is never
-// treated as a setup problem; any other failure logs and falls back to the
-// generic file description rather than asking the parent to install
-// anything they already have.
+// treated as a setup problem. Missing setup and real STT failures remain
+// distinct so the connector can answer directly without invoking the agent.
 func TestVoiceTranscriptionOutcome(t *testing.T) {
-	if text, setup := voiceTranscriptionOutcome("  Hi, checking in.  ", nil); text != "Hi, checking in." || setup {
-		t.Fatalf("successful transcription = (%q, %v)", text, setup)
+	if text, setup, failed := voiceTranscriptionOutcome("  Hi, checking in.  ", nil); text != "Hi, checking in." || setup || failed {
+		t.Fatalf("successful transcription = (%q, %v, %v)", text, setup, failed)
 	}
-	if text, setup := voiceTranscriptionOutcome("", nil); text != "" || setup {
-		t.Fatalf("silent clip = (%q, %v), want no setup flag", text, setup)
+	if text, setup, failed := voiceTranscriptionOutcome("", nil); text != "" || setup || failed {
+		t.Fatalf("silent clip = (%q, %v, %v), want no error flags", text, setup, failed)
 	}
-	if text, setup := voiceTranscriptionOutcome("", ErrVoiceNotInstalled); text != "" || !setup {
-		t.Fatalf("not-installed error = (%q, %v), want setupNeeded", text, setup)
+	if text, setup, failed := voiceTranscriptionOutcome("", ErrVoiceNotInstalled); text != "" || !setup || failed {
+		t.Fatalf("not-installed error = (%q, %v, %v), want setupNeeded", text, setup, failed)
 	}
-	if text, setup := voiceTranscriptionOutcome("", errors.New("decode failed")); text != "" || setup {
-		t.Fatalf("a genuine transcription failure = (%q, %v), want no setup flag", text, setup)
+	if text, setup, failed := voiceTranscriptionOutcome("", errors.New("decode failed")); text != "" || setup || !failed {
+		t.Fatalf("a genuine transcription failure = (%q, %v, %v), want failed", text, setup, failed)
 	}
 }
 
@@ -44,7 +43,15 @@ func TestWhatsappMessageTextForMedia(t *testing.T) {
 	}
 
 	setupNeeded := &whatsappDownloadedMedia{Kind: "audio", VoiceSetupNeeded: true}
-	if got := whatsappMessageTextForMedia("", setupNeeded); got == "" {
-		t.Fatal("a voice note needing setup produced no text at all — the note would be silently dropped")
+	if got := whatsappMessageTextForMedia("", setupNeeded); got != "" {
+		t.Fatalf("voice note needing setup leaked into agent text: %q", got)
+	}
+
+	failed := &whatsappDownloadedMedia{Kind: "audio", VoiceTranscriptionFailed: true, FilePath: "inbox/note.oga"}
+	if got := whatsappMessageTextForMedia("", failed); got != "" {
+		t.Fatalf("failed voice note leaked into agent text: %q", got)
+	}
+	if got := whatsappMessageTextForMedia("caption must not bypass STT", failed); got != "" {
+		t.Fatalf("failed voice note caption bypassed STT failure: %q", got)
 	}
 }

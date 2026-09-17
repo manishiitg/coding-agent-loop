@@ -119,8 +119,8 @@ export interface FamilyApi {
   browserStatus(): Promise<{ cli_installed: boolean }>
 
   // ---- connectors & pulse --------------------------------------------------
-  whatsappStatus(): Promise<WhatsAppStatus>
-  whatsappPairImageUrl(nonce: number): string
+  whatsappStatus(opts?: { addAnother?: boolean }): Promise<WhatsAppStatus>
+  whatsappPairImageUrl(nonce: number, addAnother?: boolean): string
   whatsappUnpair(jid: string): Promise<void>
   whatsappVoice(enabled: boolean): Promise<WhatsAppVoiceTranscription>
   pulseConfig(): Promise<PulseConfig>

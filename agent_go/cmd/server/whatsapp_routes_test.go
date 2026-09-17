@@ -31,9 +31,9 @@ func TestShouldPrepareNextPairingDevice(t *testing.T) {
 			want:          false,
 		},
 		{
-			name:          "paired primary with no extra slot yet prepares one (the SparkQuill add-another-parent moment)",
+			name:          "ordinary status polling after pairing does not create another phone",
 			primaryPaired: true,
-			want:          true,
+			want:          false,
 		},
 		{
 			name:          "paired primary with an existing unpaired extra slot advertises it, does not create another",
@@ -45,13 +45,13 @@ func TestShouldPrepareNextPairingDevice(t *testing.T) {
 			want: false,
 		},
 		{
-			name:          "paired primary where every extra slot is already paired prepares a fresh one",
+			name:          "paired primary where every extra slot is paired stays read-only without an explicit request",
 			primaryPaired: true,
 			devices: []services.WhatsAppDevice{
 				{Slot: "", Paired: true},
 				{Slot: "phone-2", Paired: true},
 			},
-			want: true,
+			want: false,
 		},
 		{
 			name:             "explicit device=next still wins even with an existing unpaired extra slot",

@@ -216,3 +216,23 @@ it('distinguishes repeated fixture names by run and keeps the same name for repl
   expect(selector.selectedOptions[0].textContent).toBe('auth_login_gate · 11111111 · Replay')
   expect(selector.title).toBe('auth_login_gate · 11111111 · Replay')
 })
+
+it('allows tall page resizing only after control and maps clicks to the new viewport', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { root, host } = await mountBrowser()
+  await act(async () => { root.render(<WorkflowLiveBrowser workspacePath="Workflow/test" minimal />) })
+  const size = host.querySelector('select[aria-label="Browser page size"]') as HTMLSelectElement
+  expect(size.disabled).toBe(true)
+  const ws = FakeSocket.instances.at(-1)!
+  await act(async () => { ws.onmessage?.({data: JSON.stringify({type:'viewer_control', controlling:true})}) })
+  expect(size.disabled).toBe(false)
+  await act(async () => { size.value='900x1200'; size.dispatchEvent(new Event('change',{bubbles:true})) })
+  expect(ws.send).toHaveBeenCalledWith(JSON.stringify({type:'resize_viewport',width:900,height:1200}))
+  await act(async () => { ws.onmessage?.({data:JSON.stringify({type:'frame',data:'/9j/',metadata:{deviceWidth:900,deviceHeight:1200}})}) })
+  const image = host.querySelector('img')!
+  image.getBoundingClientRect = () => ({left:10,top:20,width:450,height:600} as DOMRect)
+  await act(async () => { image.dispatchEvent(new MouseEvent('mousedown',{bubbles:true,clientX:235,clientY:320})) })
+  expect(JSON.parse(ws.send.mock.calls.at(-1)![0])).toMatchObject({type:'input_mouse',x:450,y:600})
+  await act(async () => { ws.onmessage?.({data: JSON.stringify({type:'viewer_control', controlling:false})}) })
+  expect(size.disabled).toBe(true)
+})

@@ -77,7 +77,7 @@ type WhatsAppService struct {
 	// pairing's owner; consulted after the workflow slugs. nil: none.
 	profileRouter ProfileRouterFunc
 	// voiceTranscriber turns a downloaded voice note into text on-device.
-	// nil: voice notes fall back to the generic media-upload description.
+	// nil: voice notes receive a direct setup error and never reach the agent.
 	voiceTranscriber VoiceTranscriberFunc
 
 	routingMu sync.RWMutex
@@ -393,6 +393,10 @@ type whatsappDownloadedMedia struct {
 	// ErrVoiceNotInstalled) — a one-time thing, so the parent gets asked to
 	// set it up rather than the note just silently arriving as a bare file.
 	VoiceSetupNeeded bool
+	// VoiceTranscriptionFailed keeps decoder/recognizer failures inside the
+	// deterministic WhatsApp ingestion path. Audio is never handed to the
+	// agent as a generic attachment and retried with ad-hoc shell tooling.
+	VoiceTranscriptionFailed bool
 }
 
 // openMetaStore opens the lightweight metadata connection and ensures the
@@ -977,14 +981,6 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 		}
 		fileName = fmt.Sprintf("whatsapp-%s-%s%s", media.Kind, stableID, ext)
 	}
-	if strings.TrimSpace(folderPath) == "" {
-		folderPath = whatsappUserChatUploadFolder(owner.UserID)
-	}
-	wsClient := workspace.NewClient(workspaceAPIURL(), workspace.WithUserID(owner.UserID))
-	filePath, err := wsClient.UploadBinary(ctx, folderPath, fileName, media.Data)
-	if err != nil {
-		return nil, fmt.Errorf("upload %s to workspace: %w", media.Kind, err)
-	}
 	mimeType := media.MimeType
 	if mimeType == "" {
 		mimeType = "application/octet-stream"
@@ -992,7 +988,6 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 	result := &whatsappDownloadedMedia{
 		Kind:      media.Kind,
 		FileName:  fileName,
-		FilePath:  filePath,
 		MimeType:  mimeType,
 		Caption:   media.Caption,
 		SizeBytes: len(media.Data),
@@ -1001,24 +996,26 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 		w.mu.RLock()
 		transcriber := w.voiceTranscriber
 		w.mu.RUnlock()
-		if transcriber != nil {
-			// The just-uploaded workspace copy, not the transport's temp
-			// download — media.Data was already written to disk once for
-			// the upload; decoding needs a real path, and the workspace
-			// client doesn't hand one back for a remote store, so decode
-			// from a local temp file instead of re-fetching.
+		if transcriber == nil {
+			result.VoiceSetupNeeded = true
+		} else {
+			// Voice notes are a connector concern, not agent attachments.
+			// Decode the downloaded bytes from a private temporary file and
+			// return only text; never upload the recording to the workspace.
 			tmp, err := os.CreateTemp("", "wa-voice-*"+extensionForWhatsAppMedia(mimeType, media.Ext))
 			if err != nil {
+				result.VoiceTranscriptionFailed = true
 				log.Printf("[WHATSAPP] voice note temp file: %v", err)
 			} else {
 				tmpPath := tmp.Name()
 				writeErr := os.WriteFile(tmpPath, media.Data, 0o600)
 				tmp.Close()
 				if writeErr != nil {
+					result.VoiceTranscriptionFailed = true
 					log.Printf("[WHATSAPP] voice note temp write: %v", writeErr)
 				} else {
 					text, transcribeErr := transcriber(ctx, tmpPath)
-					result.Transcript, result.VoiceSetupNeeded = voiceTranscriptionOutcome(text, transcribeErr)
+					result.Transcript, result.VoiceSetupNeeded, result.VoiceTranscriptionFailed = voiceTranscriptionOutcome(text, transcribeErr)
 					if transcribeErr != nil && !result.VoiceSetupNeeded {
 						log.Printf("[WHATSAPP] voice note transcription failed: %v", transcribeErr)
 					}
@@ -1026,7 +1023,18 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 				os.Remove(tmpPath)
 			}
 		}
+		return result, nil
 	}
+
+	if strings.TrimSpace(folderPath) == "" {
+		folderPath = whatsappUserChatUploadFolder(owner.UserID)
+	}
+	wsClient := workspace.NewClient(workspaceAPIURL(), workspace.WithUserID(owner.UserID))
+	filePath, err := wsClient.UploadBinary(ctx, folderPath, fileName, media.Data)
+	if err != nil {
+		return nil, fmt.Errorf("upload %s to workspace: %w", media.Kind, err)
+	}
+	result.FilePath = filePath
 	return result, nil
 }
 
@@ -1034,22 +1042,30 @@ func (w *WhatsAppService) downloadIncomingMedia(ctx context.Context, msg *whatsa
 // downloadIncomingMedia records on whatsappDownloadedMedia: a transcript
 // text can be sent immediately even if empty (a silent clip stays a
 // no-op transcript, not an error); ErrVoiceNotInstalled asks the parent to
-// set voice up; any other failure just logs and falls back to the generic
-// file description, same as before this feature existed.
-func voiceTranscriptionOutcome(text string, err error) (transcript string, setupNeeded bool) {
+// set voice up; any other failure is reported by the connector and never
+// forwarded to the agent as a generic audio attachment.
+func voiceTranscriptionOutcome(text string, err error) (transcript string, setupNeeded, failed bool) {
 	if err != nil {
-		return "", errors.Is(err, ErrVoiceNotInstalled)
+		setupNeeded = errors.Is(err, ErrVoiceNotInstalled)
+		return "", setupNeeded, !setupNeeded
 	}
-	return strings.TrimSpace(text), false
+	return strings.TrimSpace(text), false, false
 }
 
 // whatsappMessageTextForMedia is the effective message text HandleMessage
 // hands to the agent: a transcribed voice note reads exactly like a typed
 // message (merged with anything the sender also typed above it) — the chat
-// never learns it arrived as audio. Anything else keeps the generic
-// file-attachment description.
+// never learns it arrived as audio. Audio without a transcript is kept out
+// of agent context; HandleMessage responds to that condition directly.
+// Other media keeps the generic file-attachment description.
 func whatsappMessageTextForMedia(text string, media *whatsappDownloadedMedia) string {
-	if media == nil || media.Transcript == "" {
+	if media == nil {
+		return appendWhatsAppMediaContext(text, media)
+	}
+	if media.Kind == "audio" && media.Transcript == "" {
+		return ""
+	}
+	if media.Transcript == "" {
 		return appendWhatsAppMediaContext(text, media)
 	}
 	if trimmed := strings.TrimSpace(text); trimmed != "" {
@@ -2287,10 +2303,11 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	text := msg.Text
 
 	// The router populates Route both for an explicit @slug and for a slug
-	// remembered by ActiveSlugStore. If neither exists, stop here and offer
-	// the configured routes. In particular, do not let an unrouted WhatsApp
-	// message become a generic Builder turn with an implicit LLM default.
-	if msg.Route == nil {
+	// remembered by ActiveSlugStore. A product pairing may instead declare a
+	// default profile (SparkQuill's parent chat); that is an explicit product
+	// destination too and is resolved by botProfileTurn below. Only a pairing
+	// with neither kind of destination should stop and offer workflow slugs.
+	if msg.Route == nil && owner.DefaultProfileID == "" {
 		if stale := w.activeSlug(chatJID); stale != "" {
 			w.clearActiveSlug(chatJID)
 			log.Printf("[WHATSAPP] Cleared unavailable active route @%s for chat=%s user=%s", stale, chatJID, owner.UserID)
@@ -2335,6 +2352,21 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, "🎙️ Voice notes need a one-time setup first — open SparkQuill on your computer and check Settings → Voice, then send this again."); err != nil {
 			log.Printf("[WHATSAPP] Failed to send voice-setup notice: %v", err)
 		}
+		return
+	}
+	if media != nil && media.VoiceTranscriptionFailed {
+		msg.React("⚠️")
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, "I couldn't transcribe that voice note. Please record it again or send the message as text."); err != nil {
+			log.Printf("[WHATSAPP] Failed to send voice-transcription error: %v", err)
+		}
+		return
+	}
+	if media != nil && media.Kind == "audio" && media.Transcript == "" {
+		msg.React("⚠️")
+		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, "I couldn't hear any speech in that voice note. Please record it again or send the message as text."); err != nil {
+			log.Printf("[WHATSAPP] Failed to send empty voice-note notice: %v", err)
+		}
+		return
 	}
 	if media != nil && media.Transcript != "" {
 		// Echoed back immediately (ahead of however long the agent's own

@@ -73,5 +73,12 @@ func browserSocketDirs() []string {
 	if socketDir := os.Getenv("AGENT_BROWSER_SOCKET_DIR"); socketDir != "" {
 		dirs = append([]string{socketDir}, dirs...)
 	}
+	if namespace := strings.TrimSpace(os.Getenv("AGENT_BROWSER_NAMESPACE")); namespace != "" {
+		namespaced := make([]string, 0, len(dirs))
+		for _, dir := range dirs {
+			namespaced = append(namespaced, filepath.Join(dir, "namespaces", namespace, "run"))
+		}
+		dirs = append(namespaced, dirs...)
+	}
 	return dirs
 }

@@ -285,9 +285,13 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     send({ type: 'input_keyboard', eventType, key: event.key, code: event.code, text: eventType === 'keyDown' && event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey ? event.key : '', windowsVirtualKeyCode: event.keyCode, modifiers })
   }
 
+  const browserTabs = (tabs.length > 0 && <div className="live-browser-tabs flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
+        {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
+      </div>)
+
   return (
-    <section className="flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label={`Live ${scopeNoun} browser`}>
-      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+    <section className="live-browser flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label={`Live ${scopeNoun} browser`}>
+      <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
         {!minimal && (
@@ -297,7 +301,8 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
             {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
           </select>
         )}
-        <div className="ml-auto flex gap-2">
+        {minimal && browserTabs}
+        <div className="live-browser-actions ml-auto flex gap-2">
           {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
           {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
           {!minimal && session && canControl && (
@@ -307,6 +312,11 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
             </button>
           )}
           {!minimal && replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
+          {minimal && connected && canControl && <select aria-label="Browser page size" title={controlling ? 'Resize the actual browser page' : 'Take control to change page size'} disabled={!controlling} defaultValue="" onChange={event => { const [width, height] = event.target.value.split('x').map(Number); send({ type: 'resize_viewport', width, height }); event.target.value = '' }}>
+            <option value="" disabled>Page size</option>
+            <option value="900x1200">Tall · 900 × 1200</option>
+            <option value="1280x800">Wide · 1280 × 800</option>
+          </select>}
           {toolbar}
         </div>
       </div>
@@ -332,13 +342,12 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
       {!minimal && (readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-2 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
       {currentBrowser?.recording_error && <p className="px-3 py-2 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
       {error && <p className="p-3 text-xs text-destructive" role="alert">{error}</p>}
-      {tabs.length > 0 && <div className="flex shrink-0 gap-1 overflow-x-auto border-b border-border px-2 py-1" aria-label="Browser tabs">
-        {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
-      </div>}
-      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="relative min-h-0 flex-1 bg-muted/20"><div className="absolute inset-0 flex items-center justify-center overflow-hidden">
+      {!minimal && browserTabs}
+
+      {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="live-browser-viewport relative min-h-0 flex-1 bg-muted/20"><div className="live-browser-frame absolute inset-0 flex items-center justify-center overflow-hidden">
         <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
       </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright && !minimal ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
-      <p className="shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
+      <p className="live-browser-footer shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )
 }

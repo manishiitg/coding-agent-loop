@@ -63,6 +63,13 @@ func TestLiveBrowserStreamWatchControlAndDisconnect(t *testing.T) {
 			http.Error(w, "auth", 401)
 			return
 		}
+		if r.URL.Path == "/api/execute" {
+			var request map[string]interface{}
+			json.NewDecoder(r.Body).Decode(&request)
+			received <- request
+			json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]interface{}{"stdout": "ok", "exit_code": 0}})
+			return
+		}
 		conn, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
 		if err != nil {
 			return
@@ -112,6 +119,7 @@ func TestLiveBrowserStreamWatchControlAndDisconnect(t *testing.T) {
 	}
 	readType("viewer_control")
 	conn.WriteJSON(map[string]interface{}{"type": "input_mouse", "eventType": "mousePressed", "x": 10, "y": 10})
+	conn.WriteJSON(map[string]interface{}{"type": "resize_viewport", "width": 900, "height": 1200})
 	conn.WriteJSON(map[string]string{"type": "ping"})
 	readType("pong")
 	select {
@@ -122,6 +130,31 @@ func TestLiveBrowserStreamWatchControlAndDisconnect(t *testing.T) {
 	conn.WriteJSON(map[string]string{"type": "take_control"})
 	if readType("viewer_control")["controlling"] != true {
 		t.Fatal("control not acquired")
+	}
+	conn.WriteJSON(map[string]interface{}{"type": "resize_viewport", "width": 900, "height": 1200})
+	select {
+	case value := <-received:
+		command, _ := value["command"].(string)
+		if !strings.Contains(command, "viewport") || !strings.Contains(command, "1200") {
+			t.Fatalf("unexpected resize command: %v", value)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("resize not executed")
+	}
+	conn.WriteJSON(map[string]interface{}{"type": "resize_viewport", "width": 900, "height": 99999})
+	var rejected map[string]interface{}
+	for {
+		if err := conn.ReadJSON(&rejected); err != nil {
+			t.Fatal(err)
+		}
+		if rejected["type"] == "viewer_error" {
+			break
+		}
+	}
+	select {
+	case value := <-received:
+		t.Fatalf("invalid resize executed: %v", value)
+	default:
 	}
 	if release, ok := browser.TryTakeBrowserControl(session); ok {
 		release()
@@ -237,6 +270,11 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 	defer workspace.Close()
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{}
+	// A product browser belonging to a workflow owner must not be exposed as
+	// that workflow's browser, even though the owner may access both.
+	productBrowser := common.PrefixBrowserSessionID(common.BrowserSessionNamespace("alice", "") + "--browser")
+	browser.GetSessionTracker().Touch(productBrowser, "product-chat", "product-chat")
+	defer browser.GetSessionTracker().Remove(productBrowser)
 	for _, user := range []string{"alice", "bob", "outsider"} {
 		name := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check") + "--browser")
 		browser.GetSessionTracker().Touch(name, "old-chat", "old-chat")
@@ -257,6 +295,30 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 		}
 		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check")+"--browser") {
 			t.Fatalf("%s: %v", user, items)
+		}
+	}
+}
+
+func TestProductBrowserDiscoveryUsesActualUserBinding(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	workspace := httptest.NewServer(http.NotFoundHandler())
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+	api := &StreamingAPI{}
+	common.BindSessionBrowserIsolation("live-product-binding-test", "default")
+	name := common.ResolveBrowserSessionID("live-product-binding-test", "default")
+	browser.GetSessionTracker().Touch(name, "live-product-binding-test", "live-product-binding-test")
+	defer browser.GetSessionTracker().Remove(name)
+	for _, user := range []string{"default", "other-user"} {
+		r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
+		items := api.liveBrowserSessions(r)
+		if user == "default" {
+			if len(items) != 1 || items[0]["browser_session"] != name {
+				t.Fatalf("product browser missing: %v", items)
+			}
+		} else if len(items) != 0 {
+			t.Fatalf("another user's browser was exposed: %v", items)
 		}
 	}
 }

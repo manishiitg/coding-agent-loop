@@ -1128,6 +1128,7 @@ export default function LearningApp() {
   const [waStatus, setWaStatus] = useState<{ accounts: { jid: string; connected: boolean }[]; pairing: { qr_available: boolean; qr_expires_at?: string }; voice_transcription?: { enabled: boolean; installed: boolean; installing: boolean; model_size_mb: number; available: boolean; error?: string } } | null>(null)
   const [voiceToggling, setVoiceToggling] = useState(false)
   const [waQrNonce, setWaQrNonce] = useState(0)
+  const [waAddingPhone, setWaAddingPhone] = useState(false)
   const [unpairingJid, setUnpairingJid] = useState<string | null>(null)
   const [browserStatus, setBrowserStatus] = useState<{ cli_installed: boolean } | null>(null)
   const [browserCopied, setBrowserCopied] = useState(false)
@@ -1642,18 +1643,19 @@ export default function LearningApp() {
     if (!waOpen || connectorSection !== 'whatsapp') return
     let cancelled = false
     const poll = () => {
-      api.whatsappStatus()
+      api.whatsappStatus(waAddingPhone ? { addAnother: true } : undefined)
         .then((d) => {
           if (cancelled) return
           setWaStatus(d)
-          setWaQrNonce((n) => n + 1) // there's always a pairing slot open for one more phone
+          if (waAddingPhone && d.accounts.length > 1) setWaAddingPhone(false)
+          setWaQrNonce((n) => n + 1)
         })
         .catch(() => {})
     }
     poll()
     const id = window.setInterval(poll, 3000)
     return () => { cancelled = true; window.clearInterval(id) }
-  }, [waOpen, connectorSection])
+  }, [waOpen, connectorSection, waAddingPhone])
 
   // Browser connector — just a one-time CLI-install check; whether a CDP
   // Chrome is actually reachable is decided by agent-browser itself per call.
@@ -3146,19 +3148,26 @@ export default function LearningApp() {
                             )}
                           </>
                         )}
-                        <div className="fl-wa-add-another">
-                          <p className="fl-note">
-                            {(waStatus?.accounts?.length ?? 0) > 0
-                              ? 'Add another parent — scan with a different phone:'
-                              : 'Scan this code with WhatsApp on your phone:'} <strong>Settings → Linked Devices → Link a Device.</strong>
-                          </p>
-                          {waStatus?.pairing?.qr_available ? (
-                            <img className="fl-wa-qr" src={api.whatsappPairImageUrl(waQrNonce)} alt="WhatsApp pairing QR code" />
-                          ) : (
-                            <div className="fl-wa-qr is-loading">Preparing QR…</div>
-                          )}
-                          <p className="fl-note">The code refreshes automatically every 30 seconds until scanned.</p>
-                        </div>
+                        {(waStatus?.accounts?.length ?? 0) === 0 || waAddingPhone ? (
+                          <div className="fl-wa-add-another">
+                            <p className="fl-note">
+                              {waAddingPhone
+                                ? 'Add another parent — scan with a different phone:'
+                                : 'Scan this code with WhatsApp on your phone:'} <strong>Settings → Linked Devices → Link a Device.</strong>
+                            </p>
+                            {waStatus?.pairing?.qr_available ? (
+                              <img className="fl-wa-qr" src={api.whatsappPairImageUrl(waQrNonce, waAddingPhone)} alt="WhatsApp pairing QR code" />
+                            ) : (
+                              <div className="fl-wa-qr is-loading">Preparing QR…</div>
+                            )}
+                            <p className="fl-note">The code refreshes automatically every 30 seconds until scanned.</p>
+                            {waAddingPhone && <button type="button" className="fl-ghost-btn" onClick={() => setWaAddingPhone(false)}>Cancel</button>}
+                          </div>
+                        ) : (
+                          <div className="fl-wa-add-another">
+                            <button type="button" className="fl-ghost-btn" onClick={() => setWaAddingPhone(true)}>Add another parent</button>
+                          </div>
+                        )}
                       </div>
                     ) : (
                       <div className="fl-connector-card">

@@ -65,7 +65,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
               ) : routes.length === 0 ? (
                 <p className="text-xs text-muted-foreground">No routes yet.</p>
               ) : (
-                <div className="grid max-h-96 gap-2 overflow-y-auto sm:grid-cols-2">
+                <div className="grid gap-2">
                   {routes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}
                 </div>
               )}

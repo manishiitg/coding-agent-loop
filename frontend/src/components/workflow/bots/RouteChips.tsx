@@ -58,7 +58,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       </button>
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">The bot can run existing work. Slack users cannot change the workflow.</span>
+          <span className="text-muted-foreground">The bot can run existing work. Channel members cannot change the workflow.</span>
           {route.kind === 'slack' && (
             <label className="w-full text-muted-foreground">
               Blocked email addresses
@@ -67,16 +67,23 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
               <span className="mt-1 block">When exclusions exist, Slack must provide a verified email. Removing all exclusions allows everyone in the channel.</span>
             </label>
           )}
-          <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
-            <input
-              type="checkbox"
-              checked={!!route.send_full_details}
-              disabled={readOnly || saving}
-              onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
-              className="h-3.5 w-3.5"
-            />
-            Send full details
-          </label>
+          {route.kind === 'slack' ? (
+            <p className="w-full text-muted-foreground">Slack shows workflow progress, step updates, and the final reply in the conversation thread.</p>
+          ) : (
+            <div className="w-full space-y-1">
+              <label className="flex items-center gap-1.5 text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={!!route.send_full_details}
+                  disabled={readOnly || saving}
+                  onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
+                  className="h-3.5 w-3.5"
+                />
+                Show workflow progress
+              </label>
+              <p className="text-muted-foreground">Include workflow progress and step updates alongside replies, requests for input, and errors.</p>
+            </div>
+          )}
         </div>
       )}
     </div>

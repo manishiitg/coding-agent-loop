@@ -7,7 +7,7 @@
 | Assigned agent | Codex |
 | Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `4e2d78b89` — cold workflow recovery and provisional-session live-input guard |
+| Latest regression fix | `b90b02639` deployed — duplicate snapshots, notification suppression and responsive history filters; report queue race follow-up in progress |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -464,3 +464,29 @@ The Recent/Schedules/Bots/Webhooks filter header now uses panel-width container
 queries: labels disappear at 560px and counts at 320px, with icon tooltips and
 accessible button names retained. Chrome computed-style checks at 700/530/300px,
 five existing filter tests and TypeScript passed.
+
+
+2026-09-17 report/human-decision 409 follow-up: production recorded a successful
+/api/query delivery at 08:05:04 UTC, immediately followed by a conflicting
+/live-input attempt for the same session. The durable receipt confirms the
+Strategic Review question was delivered; its original project was empty while
+the live-input path resolved Workflow/rtslatency. The server correctly rejected
+the second use of the same submission ID with different project metadata.
+
+The ChatInput live queue effect bypassed the shared queue controller: when the
+idle worker started streaming before its response settled, the effect could
+remove and resubmit the same still-pending message. It now uses
+sendQueuedChatMessage, sharing the worker's lock and durable receipt, retaining
+entries until acceptance, respecting queue errors, and delivering separate human
+actions separately. Both human-decision questions and generated report buttons
+use sendWorkflowMessageToChat; neither entry point is removed or disabled.
+
+Validation: 43 tests passed across queue ownership, human-decision context,
+shared report dispatch, dashboard request IDs and live routing; TypeScript
+passed. Added race cases for both entry points and preservation of later actions.
+Live authenticated acceptance still needs the user's test.
+
+The preceding duplicate-history/responsive release is now live on RTS as
+4ad83b2-20260917080551 (includes b90b02639). Agent, workspace and gateway services
+are active and local API health is healthy. Existing duplicate history remains
+preserved; the fixes prevent the identified new duplicates.

@@ -12,7 +12,7 @@ vi.mock('../stores/useGlobalPresetStore', () => ({ useGlobalPresetStore: { getSt
 vi.mock('../stores/useWorkflowStore', () => ({ useWorkflowStore: { getState: () => mocks.workflow } }))
 vi.mock('./workflowNavigation', () => ({ selectWorkflowPreset: mocks.select }))
 vi.mock('./activateTab', () => ({ activateTab: mocks.activate }))
-import { sendWorkflowMessageToChat } from './reportHumanInputChat'
+import { sendWorkflowMessageToChat, sendReportHumanInputQuestionToChat } from './reportHumanInputChat'
 
 function chat(tabId: string, extra = {}) {
   return { tabId, isStreaming: false, metadata: { mode: 'workflow', presetQueryId: 'one' }, ...extra }
@@ -74,4 +74,19 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(mocks.chat.setTabConfig).not.toHaveBeenCalled()
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
   })
+  it('routes a human decision question through the same queue with its decision context', async () => {
+    mocks.chat.chatTabs.existing = chat('existing', { isStreaming: true })
+    await sendReportHumanInputQuestionToChat({
+      workspacePath: 'Workflow/one', userQuestion: 'Why this option?',
+      input: { id: 'decision-42', question: 'Approve release?', options: [], source: 'pulse' } as any,
+    })
+    const patch = mocks.chat.setTabConfig.mock.calls[0][1]
+    expect(patch.queuedMessages).toHaveLength(2)
+    expect(patch.queuedMessages[0]).toBe('earlier request')
+    expect(patch.queuedMessages[1]).toContain('Decision ID: decision-42')
+    expect(patch.queuedMessages[1]).toContain('Why this option?')
+    expect(patch.queuedMessages[1]).toContain('Do not submit, dismiss, or mark the decision handled yet')
+    expect(patch).not.toHaveProperty('inputText')
+  })
+
 })

@@ -64,11 +64,11 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	}
 	if err := testAppToken(ctx, config.AppToken); err != nil {
 		result.Success = false
-		add("Socket Mode token", "failed", err.Error())
+		add("Socket Mode token", "failed", err.Error()+" In the same Slack app, open Socket Mode and turn on Enable Socket Mode. Then refresh Event Subscriptions; leave Request URL empty.")
 	} else {
 		add("Socket Mode token", "passed", "App token can open a Socket Mode connection")
 	}
-	add("Event subscriptions", "manual", "In Slack app settings, enable Event Subscriptions and subscribe to app_mention. Bot/app tokens cannot read these settings.")
+	add("Event subscriptions", "manual", "In the same Slack app, first turn on Enable Socket Mode, then refresh Event Subscriptions, enable events, add app_mention under Subscribe to bot events, and click Save Changes. Leave Request URL empty: Socket Mode does not need one. If Save Changes is disabled and a Request URL is shown, check that Socket Mode is enabled in this app. Bot/app tokens cannot read these settings.")
 	add("Mention delivery", "manual", "Invite the bot to the channel and send an @mention to verify incoming events.")
 	if result.Success {
 		result.Message = "Tokens and required permissions verified. Mention delivery still needs verification."

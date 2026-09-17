@@ -88,6 +88,11 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 			if checks["Event subscriptions"].Status != "manual" || checks["Mention delivery"].Status != "manual" {
 				t.Fatal("token check incorrectly verified incoming events")
 			}
+			for _, instruction := range []string{"Enable Socket Mode", "Request URL empty", "Save Changes", "same Slack app"} {
+				if !strings.Contains(checks["Event subscriptions"].Message, instruction) {
+					t.Fatalf("event setup omitted %q", instruction)
+				}
+			}
 			raw, _ := json.Marshal(result)
 			for _, secret := range []string{"xoxb-test-secret", "xapp-test-secret", "sensitive-ticket"} {
 				if strings.Contains(string(raw), secret) {

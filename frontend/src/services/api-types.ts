@@ -905,7 +905,18 @@ export interface CompactContextResponse {
 
 // ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
 // so the bot can read the workflow manifest (e.g. workshop_mode) without scanning all workspaces.
+export interface SlackRouteTrigger {
+  type: 'human_message' | 'trusted_app'
+  app_id?: string
+  bot_id?: string
+  contains?: string
+  route_selections?: Record<string, string>
+  step_id?: string
+  group_names?: string[]
+}
+
 export interface ChannelRoute {
+  trigger?: SlackRouteTrigger
   workflow_id?: string
   workspace_path: string
   profile_id?: string

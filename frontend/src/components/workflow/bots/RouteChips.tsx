@@ -81,7 +81,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       </button>
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">Access follows the routed user's workflow permission.</span>
+          <span className="text-muted-foreground">This grant authorizes the bot route. Slack senders do not change its permissions.</span>
           <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
             <input
               type="checkbox"

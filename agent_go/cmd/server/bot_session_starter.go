@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -43,7 +44,7 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 	platform, _ := reqMap["bot_platform"].(string)
 	grant, _ := reqMap["bot_route_grant"].(string)
 	grant = services.NormalizeBotRouteGrant(grant, "")
-	if strings.TrimSpace(platform) == "" || grant == "" {
+	if strings.TrimSpace(platform) != "slack" || stringFromRequestMap(reqMap, "bot_route_grant") == "" {
 		return
 	}
 	claims.Provider = "bot_route"
@@ -173,8 +174,13 @@ func (api *StreamingAPI) startSessionInternal(
 	userID string,
 	eventCallback func(event *events.AgentEvent),
 ) error {
+	if failure, ok := reqMap["_bot_prepare_error"].(string); ok {
+		return fmt.Errorf("prepare conversation: %s", failure)
+	}
 	// Marshal the request map to JSON
-	body, err := json.Marshal(reqMap)
+	wireRequest := maps.Clone(reqMap)
+	delete(wireRequest, "_trusted_resume_target")
+	body, err := json.Marshal(wireRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal query request: %w", err)
 	}
@@ -185,6 +191,9 @@ func (api *StreamingAPI) startSessionInternal(
 		return fmt.Errorf("failed to create internal request: %w", err)
 	}
 	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID, reqMap))
+	if target, ok := reqMap["_trusted_resume_target"].(*resolvedResumeTarget); ok {
+		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), resolvedResumeTargetContextKey{}, target))
+	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -226,7 +235,13 @@ func (api *StreamingAPI) startSessionInternal(
 	if strings.TrimSpace(queryResp.QueryID) == "" {
 		return fmt.Errorf("handleQuery did not return a query execution id")
 	}
-	return api.waitForConversationTurnTree(ctx, sessionID, queryResp.QueryID, schedulerWorkshopMaxInactivity)
+	err = api.waitForConversationTurnTree(ctx, sessionID, queryResp.QueryID, schedulerWorkshopMaxInactivity)
+	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+		if pruneErr := api.pruneSlackRuns(execution.Request.SelectedFolder); pruneErr != nil {
+			log.Printf("[SLACK_RETENTION] %v", pruneErr)
+		}
+	}
+	return err
 }
 
 // sendFollowUpInternal injects a follow-up message into an existing session.
@@ -241,7 +256,12 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	sessionID string,
 	userID string,
 ) error {
-	body, err := json.Marshal(reqMap)
+	if failure, ok := reqMap["_bot_prepare_error"].(string); ok {
+		return fmt.Errorf("prepare conversation: %s", failure)
+	}
+	wireRequest := maps.Clone(reqMap)
+	delete(wireRequest, "_trusted_resume_target")
+	body, err := json.Marshal(wireRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal follow-up request: %w", err)
 	}
@@ -251,6 +271,9 @@ func (api *StreamingAPI) sendFollowUpInternal(
 		return fmt.Errorf("failed to create follow-up request: %w", err)
 	}
 	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID, reqMap))
+	if target, ok := reqMap["_trusted_resume_target"].(*resolvedResumeTarget); ok {
+		httpReq = httpReq.WithContext(context.WithValue(httpReq.Context(), resolvedResumeTargetContextKey{}, target))
+	}
 
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("X-Session-ID", sessionID)
@@ -269,8 +292,47 @@ func (api *StreamingAPI) sendFollowUpInternal(
 		return fmt.Errorf("follow-up failed: status %d: %s", resp.StatusCode, string(respBody))
 	}
 
+	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+		var result QueryResponse
+		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.QueryID != "" {
+			go func() {
+				_ = api.waitForConversationTurnTree(context.Background(), sessionID, result.QueryID, schedulerWorkshopMaxInactivity)
+				if err := api.pruneSlackRuns(execution.Request.SelectedFolder); err != nil {
+					log.Printf("[SLACK_RETENTION] %v", err)
+				}
+			}()
+		}
+	}
+
 	if isScheduledSession(sessionID) {
 		scheduleLogfWithContext(newServerLogContext("", "", "", userID, "", sessionID), "[BOT_SESSION] Follow-up injected into session %s", sessionID)
 	}
 	return nil
+}
+
+// botWorkflowTurn is the workflow adapter to the application-owned request
+// builder. Connector code supplies only normalized text, target and thread.
+func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, route services.ChannelRoute, thread services.ThreadID) (map[string]interface{}, error) {
+	manifest, found, err := ReadWorkflowManifest(ctx, route.WorkspacePath)
+	if err != nil {
+		return nil, err
+	}
+	if !found || manifest.ID != route.WorkflowID {
+		return nil, fmt.Errorf("workflow route target is unavailable")
+	}
+	if api.scheduler == nil {
+		return nil, fmt.Errorf("shared conversation builder unavailable")
+	}
+	principalID := services.BotPrincipalIDForRoute(thread.Platform, route)
+	req := api.scheduler.buildWorkshopRequest(ctx, &ScheduleContext{WorkspacePath: route.WorkspacePath, WorkflowID: route.WorkflowID, WorkflowLabel: manifest.Label, OwnerUserID: principalID, Capabilities: manifest.Capabilities, Schedule: WorkflowSchedule{Name: manifest.Label}, TriggerSource: "bot:" + thread.Platform})
+	req["query"] = query
+	req["bot_platform"] = thread.Platform
+	req["bot_channel_id"] = thread.ChannelID
+	req["bot_thread_ts"] = thread.ThreadTS
+	req["bot_route_grant"] = route.BotGrant
+	req["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
+	req["execution_options"].(map[string]interface{})["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
+	req["bot_send_full_details"] = route.SendFullDetails
+	delete(req, "disable_live_input_delivery")
+	return req, nil
 }

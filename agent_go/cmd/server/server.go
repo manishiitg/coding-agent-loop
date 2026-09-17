@@ -337,6 +337,10 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
+	postSlackMessage func(context.Context, string, string, string) (string, error) // test seam; production uses SlackService
+
+	botExecutionSessions sync.Map // session -> trusted connector request context
+
 	playwrightLive      playwrightLiveRegistry
 	accessTokenSessions accessTokenSessionRegistry
 	uiControlOnce       sync.Once
@@ -1750,6 +1754,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Initialize Slack service. Notification delivery is registered through
 	// BotConversationManager.RegisterConnector when Slack bot mode is enabled.
+	configureSlackCredentialCodec()
 	slackSvc, err := services.InitSlackService()
 	if err != nil {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
@@ -2498,6 +2503,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	// has extra default-profile routing below, but Slack profile routes need
 	// this handler even when WhatsApp is disabled.
 	botManager.SetProfileTurnFunc(api.botProfileTurn)
+	botManager.SetWorkflowTurnFunc(api.botWorkflowTurn)
+	virtualtools.SetSlackMessageHandler(api.sendSlackMessageFromTool)
+	if slackSvc != nil {
+		slackSvc.SetTriggerHandler(api.dispatchSlackTrigger)
+	}
 	if api.whatsappManager != nil {
 		WhatsAppRoutes(router, api.whatsappManager, api.whatsappDefaultProfileResolver)
 		// Unrouted WhatsApp messages on a pairing with a default product
@@ -3366,6 +3376,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
+	principalContext, principalErr := api.revalidateExecutionPrincipal(r.Context(), req)
+	if principalErr != nil {
+		http.Error(w, principalErr.Error(), http.StatusForbidden)
+		return
+	}
+	r = r.WithContext(principalContext)
+	if err := api.bindSlackInvocation(r.Context(), &req, r.Header.Get("X-Session-ID")); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
 		req.resolvedResumeTarget = target
 	}
@@ -3468,13 +3488,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	if level, ok := botRouteProfileAccessForRequest(GetUserFromContext(r.Context()), req); ok {
-		if level == WorkflowAccessNone {
-			http.Error(w, "You don't have access to this profile route", http.StatusForbidden)
-			return
-		}
-		currentUserIsReadOnly = level == WorkflowAccessRead
+	access, accessErr := conversationTargetAccess(r.Context(), req)
+	if accessErr != nil {
+		http.Error(w, accessErr.Error(), http.StatusForbidden)
+		return
 	}
+	currentUserIsReadOnly = access == WorkflowAccessRead
+
 	var resolvedProfileSkills []*llmtypes.Skill
 	if resolvedProfile != nil {
 		identitySkillNames := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
@@ -3486,29 +3506,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
 	api.conversationMux.Unlock()
-	// Per-user workflow access: the list endpoint already hides workflows a
-	// user isn't allowed to see, but that's UX only -- a user who already
-	// knows a workflow's folder name could still open it directly. This is
-	// the actual security boundary. Only the generic (profile-less)
-	// AgentWorks chat path opens a workflow this way; product surfaces like
-	// Dominion never point SelectedFolder at "Workflow/" themselves.
-	if strings.HasPrefix(req.SelectedFolder, "Workflow/") {
-		if manifest, exists, manifestErr := ReadWorkflowManifest(r.Context(), req.SelectedFolder); manifestErr == nil && exists {
-			claims := GetUserFromContext(r.Context())
-			level := workflowAccessForManifest(claims, manifest)
-			if !userAllowedWorkflowID(claims, manifest.ID) || level == WorkflowAccessNone {
-				http.Error(w, "You don't have access to this workflow", http.StatusForbidden)
-				return
-			}
-			// Shared read-only: the same PLAT-262 session a read-only
-			// account gets, but decided per workflow (workflow_access.go).
-			if level == WorkflowAccessRead {
-				currentUserIsReadOnly = true
-			} else if claims != nil && claims.Provider == "bot_route" {
-				currentUserIsReadOnly = false
-			}
-		}
-	}
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
@@ -5300,6 +5297,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// workflow_layout.json must go through typed plan-mod tools that serialize
 			// full structs, not raw writes.
 			var fileContextBlockedWriteFolders []string
+			if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, workflowPhaseFolder+"/runs/iteration-0/", workflowPhaseFolder+"/evaluation/runs/iteration-0/")
+			}
 			// PLAT-262: a read-only identity gets none of the whole-workflow write
 			// grant below — effectiveWorkflowPhaseFolderForWrites stays "" for them,
 			// which workflowPhaseWriteFolders() below treats as "no workflow write
@@ -9991,9 +9991,24 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if invocation, ok := api.webhookInvocations.Load(sessionID); ok {
 		cfg.WebhookInvocation = invocation.(*todo_creation_human.WebhookInvocation)
 	}
-	if invocation, ok := api.scheduleInvocations.Load(sessionID); ok {
-		cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+	for ancestor, visited := sessionID, map[string]bool{}; ancestor != "" && !visited[ancestor]; {
+		visited[ancestor] = true
+		if invocation, ok := api.scheduleInvocations.Load(ancestor); ok {
+			cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+			cfg.RunFolder = cfg.ScheduleInvocation.RunFolder
+			break
+		}
+		if parent := virtualtools.GetParentChat(ancestor); parent != nil && parent.SessionID != ancestor {
+			ancestor = parent.SessionID
+			continue
+		}
+		active, ok := api.getActiveSession(ancestor)
+		if !ok {
+			break
+		}
+		ancestor = active.ParentSessionID
 	}
+
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()

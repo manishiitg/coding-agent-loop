@@ -7,8 +7,10 @@ import (
 	"log"
 	"net/http"
 	"path/filepath"
+	"reflect"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
@@ -47,6 +49,9 @@ type SlackTestResponse struct {
 	TestID  string `json:"test_id,omitempty"` // Unique ID for polling test replies
 }
 
+// Serializes route read/validate/write transactions shared by the UI and tools.
+var slackRouteMutationMu sync.Mutex
+
 var slackChannelIDPattern = regexp.MustCompile(`^[CDG][A-Z0-9]{2,}$`)
 
 func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]ChannelRoute, error) {
@@ -64,8 +69,11 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 		route.WorkspaceUserID = strings.TrimSpace(route.WorkspaceUserID)
 		hasWorkflowRoute := route.WorkflowID != "" && route.WorkspacePath != ""
 		hasProfileRoute := route.ProfileID != "" && route.ConversationKey != "" && route.WorkspacePath != ""
-		if channelID == "" || (!hasWorkflowRoute && !hasProfileRoute) {
-			continue
+		if channelID == "" || hasWorkflowRoute == hasProfileRoute || (route.WorkflowID != "" && route.ProfileID != "") {
+			return nil, fmt.Errorf("Slack route %q requires exactly one complete workflow or profile destination", rawChannelID)
+		}
+		if route.BotGrant != "" && route.BotGrant != "run" && route.BotGrant != "owner" {
+			return nil, fmt.Errorf("Slack route %q requires a run or owner bot_grant", rawChannelID)
 		}
 		if !slackChannelIDPattern.MatchString(channelID) {
 			return nil, fmt.Errorf("Slack route key %q is not a channel ID; use the channel ID from Slack, for example C1234567890", rawChannelID)
@@ -97,13 +105,24 @@ func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAP
 		old, existed := current[channelID]
 		newGrant := services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 		oldGrant := services.NormalizeBotRouteGrant(old.BotGrant, old.WorkshopMode)
-		needsOwner := !existed || !sameSlackRouteDestination(old, route) || newGrant != oldGrant
+		needsOwner := !existed || !sameSlackRouteDestination(old, route) || newGrant != oldGrant || !reflect.DeepEqual(old.Trigger, route.Trigger)
+		// Resource ownership is server authored, never editable through a route payload.
+		route.WorkspaceUserID = old.WorkspaceUserID
+		next[channelID] = route
+		if existed && !sameSlackRouteDestination(old, route) {
+			if _, err := requireSlackRouteDestinationOwner(ctx, api, old); err != nil {
+				return err
+			}
+		}
 		if !needsOwner && strings.TrimSpace(route.WorkspaceUserID) == "" {
 			route.WorkspaceUserID = strings.TrimSpace(old.WorkspaceUserID)
 			next[channelID] = route
 		}
 		if !needsOwner && (strings.TrimSpace(route.ProfileID) == "" || strings.TrimSpace(route.WorkspaceUserID) != "") {
 			continue
+		}
+		if err := validateSlackTrigger(ctx, route); err != nil {
+			return err
 		}
 		ownerID, err := requireSlackRouteDestinationOwner(ctx, api, route)
 		if err != nil {
@@ -134,6 +153,10 @@ func slackRouteHasDestination(route ChannelRoute) bool {
 }
 
 func requireSlackRouteDestinationOwner(ctx context.Context, api *StreamingAPI, route ChannelRoute) (string, error) {
+	claims := GetUserFromContext(ctx)
+	if claims == nil || claims.UserID == "" || claims.Provider == "bot_route" || !userAccessForClaims(claims).CanEdit {
+		return "", fmt.Errorf("an authenticated interactive owner is required to manage bot grants")
+	}
 	if strings.TrimSpace(route.WorkflowID) != "" {
 		return "", requireSlackRouteWorkflowOwner(ctx, route)
 	}
@@ -224,6 +247,8 @@ func SlackFeedbackRoutes(router *mux.Router, api *StreamingAPI) {
 // on first use. The service reads its config from the filesystem now, so no
 // database handle is required.
 func ensureSlackService() (*services.SlackService, error) {
+	configureSlackCredentialCodec()
+
 	slackService := services.GetSlackService()
 	if slackService != nil {
 		return slackService, nil
@@ -301,6 +326,9 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
+		slackRouteMutationMu.Lock()
+		defer slackRouteMutationMu.Unlock()
+
 		var req SlackConfigRequest
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			log.Printf("[SLACK] Failed to decode request: %v", err)
@@ -320,12 +348,6 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			BotToken:  req.BotToken,
 			AppToken:  req.AppToken,
 			ChannelID: req.ChannelID,
-		}
-
-		if err := slackService.SaveConfig(r.Context(), config); err != nil {
-			log.Printf("[SLACK] SaveConfig failed: %v", err)
-			http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
-			return
 		}
 
 		var existingRouting map[string]ChannelRoute
@@ -348,6 +370,29 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 				return
 			}
 		}
+		currentConfig := slackService.GetConfig()
+		currentBotConfig, configErr := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
+		if configErr != nil {
+			http.Error(w, configErr.Error(), http.StatusInternalServerError)
+			return
+		}
+		botMode := currentBotConfig != nil && currentBotConfig.BotMode
+		connectorChanged := req.Enabled != currentConfig.Enabled || req.ChannelID != currentConfig.ChannelID || req.BotMode != botMode || req.BotToken != currentConfig.BotToken || req.AppToken != currentConfig.AppToken
+		if connectorChanged {
+			claims := GetUserFromContext(r.Context())
+			if claims == nil || claims.Provider == "bot_route" || !currentUserIsAdmin(r) {
+				http.Error(w, "only an operator may configure Slack credentials or enablement", http.StatusForbidden)
+				return
+			}
+
+			if err := slackService.SaveConfig(r.Context(), config); err != nil {
+				log.Printf("[SLACK] SaveConfig failed: %v", err)
+				http.Error(w, fmt.Sprintf("failed to save config: %v", err), http.StatusInternalServerError)
+				return
+			}
+
+		}
+
 		channelRouting := req.ChannelRouting
 		allowedChannelsJSON := ""
 		if req.ChannelRouting != nil {
@@ -378,18 +423,30 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			}
 		}
 
+		if currentBotConfig == nil {
+			currentBotConfig = &chathistory.BotConnectorConfig{}
+		}
 		// Save bot_mode and Slack channel routing to the filesystem-backed bot connector config.
 		if _, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
 			ID:              "slack",
 			Enabled:         req.Enabled,
 			BotMode:         req.BotMode,
+			ConfigJSON:      currentBotConfig.ConfigJSON,
+			DefaultPresetID: currentBotConfig.DefaultPresetID,
+			AutoConfirm:     currentBotConfig.AutoConfirm,
 			AllowedChannels: allowedChannelsJSON,
 		}); err != nil {
 			log.Printf("[SLACK] Failed to save bot config: %v", err)
-			// Non-fatal — Slack config itself was saved
+			http.Error(w, "failed to save Slack routes", http.StatusInternalServerError)
+			return
 		} else {
 		}
 
+		if req.Enabled && req.BotMode {
+			api.revokeChangedBotSessions(channelRouting)
+		} else {
+			api.revokeChangedBotSessions(nil)
+		}
 		// Dynamically register/unregister Slack bot connector
 		if api.botManager != nil {
 			if req.BotMode && req.Enabled {

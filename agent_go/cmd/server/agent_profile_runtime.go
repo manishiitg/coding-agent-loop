@@ -599,6 +599,16 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		}
 	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
+		var input QueryRequest
+		if len(req) > 0 {
+			input = req[0]
+		}
+		active, _ := api.getActiveSession(sessionID)
+		policy := resolveWorkflowChatPolicy("workshop", sessionID, input, active, false)
+		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", policy.Origin == "interactive" && registerWorkUIAllowed(input) && workflowAccessForIdentity(userID, "", "") != WorkflowAccessRead); err != nil {
+			return err
+		}
+
 		if err := api.registerGmailConnectionManagementTools(registrar, sessionID, workspacePath); err != nil {
 			return err
 		}

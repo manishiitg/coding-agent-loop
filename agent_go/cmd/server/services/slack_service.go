@@ -82,20 +82,44 @@ func loadSlackConfigFromDisk() (*SlackConfig, error) {
 		if err := json.Unmarshal([]byte(legacyData), &legacyCfg); err != nil {
 			return nil, fmt.Errorf("failed to parse legacy slack_config.json: %w", err)
 		}
-		if err := saveSlackConfigToDisk(&legacyCfg); err != nil {
+		decoded, err := decryptSlackConfig(&legacyCfg)
+		if err != nil {
 			return nil, err
 		}
-		return &legacyCfg, nil
+		if err := saveSlackConfigToDisk(decoded); err != nil {
+			return nil, err
+		}
+		return decoded, nil
 	}
 	var cfg SlackConfig
 	if err := json.Unmarshal([]byte(data), &cfg); err != nil {
 		return nil, fmt.Errorf("failed to parse slack-config.json: %w", err)
 	}
-	return &cfg, nil
+	legacyCredentials := cfg.BotToken != "" && !strings.HasPrefix(cfg.BotToken, "encrypted:v1:") || cfg.AppToken != "" && !strings.HasPrefix(cfg.AppToken, "encrypted:v1:")
+	decoded, err := decryptSlackConfig(&cfg)
+	if err != nil {
+		return nil, err
+	}
+	if legacyCredentials && slackCredentialEncrypt != nil {
+		if err := saveSlackConfigToDisk(decoded); err != nil {
+			return nil, err
+		}
+	}
+	return decoded, nil
 }
 
 func saveSlackConfigToDisk(cfg *SlackConfig) error {
-	data, err := json.MarshalIndent(cfg, "", "  ")
+	stored := *cfg
+	var err error
+	stored.BotToken, err = encodeSlackCredential(cfg.BotToken)
+	if err != nil {
+		return err
+	}
+	stored.AppToken, err = encodeSlackCredential(cfg.AppToken)
+	if err != nil {
+		return err
+	}
+	data, err := json.MarshalIndent(stored, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -176,19 +200,21 @@ type SlackConfig struct {
 // the NotificationConnector interface and persists its configuration and the
 // feedback-message mapping via the helpers above.
 type SlackService struct {
-	client        *slack.Client
-	socketClient  *socketmode.Client // Socket Mode client for WebSocket connection
-	config        *SlackConfig
-	enabled       bool
-	channelID     string
-	useSocketMode bool
-	socketCtx     context.Context
-	socketCancel  context.CancelFunc
-	socketMux     sync.RWMutex
+	triggerHandler SlackTriggerHandler
+	client         *slack.Client
+	socketClient   *socketmode.Client // Socket Mode client for WebSocket connection
+	config         *SlackConfig
+	enabled        bool
+	channelID      string
+	useSocketMode  bool
+	socketCtx      context.Context
+	socketCancel   context.CancelFunc
+	socketMux      sync.RWMutex
 
 	// Bot connector handlers (set by BotConversationManager)
 	messageHandler     BotMessageHandler
 	interactionHandler BotInteractionHandler
+	botID              string
 	botUserID          string // Bot's own Slack user ID (for stripping @mentions)
 
 	// Message deduplication — prevents processing the same Slack event twice
@@ -1190,8 +1216,30 @@ func (s *SlackService) handleSocketModeEvent(evt socketmode.Event) {
 	}
 }
 
+// Both Slack event surfaces must select the saved trigger before generic chat,
+// regardless of which event arrives first for a human app mention.
+func (s *SlackService) handleConfiguredSlackTrigger(ev *slackevents.MessageEvent) bool {
+	if s.botID != "" && ev.BotID == s.botID {
+		return true
+	}
+	route := s.resolveSlackChannelWorkflow(ev.Channel)
+	if route == nil || s.triggerHandler == nil || !SlackTriggerMatches(route.Trigger, ev, s.botUserID) {
+		return false
+	}
+	if !s.isDuplicateMessage(ev.Channel + ":" + ev.TimeStamp) {
+		if err := s.triggerHandler(context.Background(), ev.Channel, ev); err != nil {
+			log.Printf("[SLACK_TRIGGER] %v", err)
+		}
+	}
+	return true
+}
+
 // handleSocketModeMessage handles message events from Socket Mode
 func (s *SlackService) handleSocketModeMessage(ev *slackevents.MessageEvent) {
+	if s.handleConfiguredSlackTrigger(ev) {
+		return
+	}
+
 	// Only process thread replies (not bot messages)
 	if ev.BotID != "" || ev.ThreadTimeStamp == "" || ev.ThreadTimeStamp == ev.TimeStamp {
 		return
@@ -1214,7 +1262,7 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 		return
 	}
 
-	if s.isDuplicateMessage(messageTS) {
+	if s.isDuplicateMessage(channelID + ":" + messageTS) {
 		return
 	}
 
@@ -1399,6 +1447,7 @@ func (s *SlackService) StartListening(ctx context.Context) error {
 		authResp, err := s.client.AuthTest()
 		if err == nil {
 			s.botUserID = authResp.UserID
+			s.botID = authResp.BotID
 			log.Printf("[SLACK_BOT] Bot user ID resolved: %s", s.botUserID)
 		}
 	}
@@ -1645,6 +1694,9 @@ func (s *SlackService) isDuplicateMessage(ts string) bool {
 		log.Printf("[SLACK_DEDUP] Skipping duplicate message ts=%s", ts)
 		return true
 	}
+	if s.seenMessages == nil {
+		s.seenMessages = make(map[string]time.Time)
+	}
 	s.seenMessages[ts] = time.Now()
 
 	// Cleanup entries older than 5 minutes
@@ -1659,13 +1711,19 @@ func (s *SlackService) isDuplicateMessage(ts string) bool {
 
 // handleAppMentionEvent handles @mention events
 func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
+	if ev.Edited != nil || ev.User == s.botUserID || ev.BotID != "" {
+		return
+	}
+	if s.handleConfiguredSlackTrigger(&slackevents.MessageEvent{User: ev.User, Channel: ev.Channel, Text: ev.Text, TimeStamp: ev.TimeStamp, ThreadTimeStamp: ev.ThreadTimeStamp}) {
+		return
+	}
 	if s.messageHandler == nil {
 		log.Printf("[SLACK_BOT] AppMention received but no message handler set, ignoring")
 		return
 	}
 
 	// Dedup: skip if we've already seen this message timestamp
-	if s.isDuplicateMessage(ev.TimeStamp) {
+	if s.isDuplicateMessage(ev.Channel + ":" + ev.TimeStamp) {
 		return
 	}
 
@@ -1760,15 +1818,10 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 	if err := json.Unmarshal([]byte(slackCfg.AllowedChannels), &routes); err != nil {
 		return nil
 	}
-	for rawKey, route := range routes {
-		if strings.EqualFold(strings.TrimSpace(rawKey), channelID) && strings.TrimSpace(route.WorkflowID) != "" {
-			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
-			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
-			route.SendFullDetails = true
-			return &route
-		}
+	if route := ResolveChannelRoute(slackCfg.AllowedChannels, channelID); route != nil {
+		return route
 	}
+
 	defaultChannelID := ""
 	if s.config != nil {
 		defaultChannelID = strings.ToUpper(strings.TrimSpace(s.config.ChannelID))
@@ -1988,12 +2041,26 @@ func (s *SlackService) GetConfig() *SlackConfig {
 
 	// Return config with masked tokens
 	config := *s.config
-	if len(config.BotToken) > 4 {
+	if config.BotToken != "" && len(config.BotToken) <= 4 {
+		config.BotToken = "xoxb-..."
+	} else if len(config.BotToken) > 4 {
 		config.BotToken = "xoxb-..." + config.BotToken[len(config.BotToken)-4:]
 	}
-	if len(config.AppToken) > 4 {
+	if config.AppToken != "" && len(config.AppToken) <= 4 {
+		config.AppToken = "xapp-..."
+	} else if len(config.AppToken) > 4 {
 		config.AppToken = "xapp-..." + config.AppToken[len(config.AppToken)-4:]
 	}
 
 	return &config
+}
+
+// PostRouteMessage makes exactly one Slack post, preserving the root timestamp.
+// Route scope, durable idempotency and references are owned by the application.
+func (s *SlackService) PostRouteMessage(ctx context.Context, channel, thread, message string) (string, error) {
+	if s.client == nil || !s.IsEnabled() {
+		return "", fmt.Errorf("Slack connector unavailable")
+	}
+	_, ts, err := s.client.PostMessageContext(ctx, channel, slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false), slack.MsgOptionTS(thread))
+	return ts, err
 }

@@ -609,8 +609,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) markRunMetadataStartedForExecution(ct
 		meta["active_slot_at_start"] = currentWorkflowRunFolder
 		meta["plan_revision"] = planRevision
 		meta["run_folder"] = runFolder
-		if opts := hcpo.GetExecutionOptions(); opts != nil && opts.RunKind == "schedule" {
-			meta["run_kind"] = "schedule"
+		if opts := hcpo.GetExecutionOptions(); opts != nil && (opts.RunKind == "schedule" || opts.RunKind == "slack") {
+			meta["run_kind"] = opts.RunKind
 			meta["schedule_run_id"] = opts.ScheduleRunID
 			meta["schedule_id"] = opts.ScheduleID
 			meta["trigger_source"] = opts.TriggerSource

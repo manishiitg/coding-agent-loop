@@ -203,9 +203,18 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	if err != nil {
 		return nil, "", false, fmt.Errorf("resolve %s conversation: %w", profile.Name, err)
 	}
+	if err := initializeProductConversationWorkspace(ctx, workspaceUserID, profile, binding); err != nil {
+		return nil, "", false, err
+	}
 	conversation, err := defaultProductConversationRegistryStore().resolveOrCreate(ctx, workspaceUserID, profile, binding, "")
 	if err != nil {
 		return nil, "", false, fmt.Errorf("open %s conversation: %w", profile.Name, err)
+	}
+	if msg.ResumeSessionID != "" {
+		conversation, err = resumeProductConversation(ctx, workspaceUserID, profile, binding, msg.ResumeSessionID)
+		if err != nil {
+			return nil, "", false, err
+		}
 	}
 	input := AgentProfileChatRequest{Message: msg.Text}
 	if conversation.ProjectLLMConfig == nil {
@@ -217,26 +226,17 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 			}
 		}
 	}
-	query, err := queryRequestForAgentProfileChat(profile, input, conversation)
+	query, err := prepareProductConversationTurn(ctx, workspaceUserID, profile, input, conversation)
 	if err != nil {
 		return nil, "", false, err
 	}
-	if strings.TrimSpace(query.Provider) != "" {
-		_, restartNeeded, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(
-			ctx, workspaceUserID, profile, conversation.ConversationKey,
-			query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills,
-			query.WorkflowContextPaths,
-		)
-		if err != nil {
-			return nil, "", false, err
-		}
-		if restartNeeded {
-			closeAllCodingCLIInteractiveSessionsForOwner(conversation.SessionID, "whatsapp turn: coding agent, model, MCP or skill configuration changed")
-		}
-	}
+
 	reqMap, err := queryRequestToMap(query)
 	if err != nil {
 		return nil, "", false, err
+	}
+	if query.resolvedResumeTarget != nil {
+		reqMap["_trusted_resume_target"] = query.resolvedResumeTarget
 	}
 	// The channel prompt (WhatsApp's markup subset) applies to this turn only;
 	// the app's own turns in the same conversation send no bot_platform.

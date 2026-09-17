@@ -807,7 +807,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 	// When running a subset of groups, keep iteration-0 in place so other groups' output is preserved.
 	// Batch execution handles per-group cleanup independently.
 	execOpts := hcpo.executionOptions
-	isPartialGroupRun := hcpo.isPartialGroupRun() && (execOpts == nil || (execOpts.WebhookInputFile == "" && execOpts.RunKind != "schedule"))
+	isPartialGroupRun := hcpo.isPartialGroupRun() && (execOpts == nil || (execOpts.WebhookInputFile == "" && execOpts.RunKind != "schedule" && execOpts.RunKind != "slack"))
 	var selectedRunFolder string
 	if isPartialGroupRun {
 		// Partial group run — reuse iteration-0 without backup

@@ -110,9 +110,10 @@ func TestWorkspaceMapPicksOneVariantPerMode(t *testing.T) {
 func TestProjectMemoryIsSharedByEveryProductAndWorkflow(t *testing.T) {
 	section := sectionByName(t, "project-memory")
 	for _, ctx := range []promptContext{
-		{HasProfile: true, ProfileID: "work"},
-		{HasProfile: true, ProfileID: "video-studio"},
-		{IsWorkflowPhase: true},
+		{HasProfile: true, ProfileID: "work", Provider: "claude-code"},
+		{HasProfile: true, ProfileID: "video-studio", Provider: "codex-cli"},
+		{HasProfile: true, ProfileID: "dominion", Provider: "cursor-cli"},
+		{IsWorkflowPhase: true, Provider: "cursor-cli"},
 	} {
 		if !section.Applies(ctx) {
 			t.Fatalf("project memory did not apply to %+v", ctx)
@@ -127,6 +128,8 @@ func TestProjectMemoryIsSharedByEveryProductAndWorkflow(t *testing.T) {
 		"one durable memory store",
 		"chat, schedule, bot, webhook-triggered task, and background task",
 		"normal project file browser",
+		"Claude auto-memory, Cursor Memories, Cursor rules, Codex AGENTS.md",
+		"Persist learned information only in the project-root MEMORY.md",
 		"reverse chronological",
 		"YYYY-MM-DD — Topic",
 		"Never create or update a skill",

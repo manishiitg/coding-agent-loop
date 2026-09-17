@@ -85,6 +85,7 @@ type promptContext struct {
 const governedProjectMemoryInstructions = `## Persistent project memory
 
 - Use the project root MEMORY.md as the one durable memory store shared by every chat, schedule, bot, webhook-triggered task, and background task in this project. Keep memory visible in the normal project file browser. Do not create another memory file, memory folder, memory index, or memory skill.
+- Provider-native instruction and memory surfaces are not alternate stores. Never create, update, or invoke Claude auto-memory, Cursor Memories, Cursor rules, Codex AGENTS.md, or any provider memory tool to retain learned project information. AgentWorks may temporarily project this system prompt through a provider instruction file; do not edit that file. Persist learned information only in the project-root MEMORY.md.
 - Before saying project-specific information is unknown or starting new research, read MEMORY.md when it exists. When remembered information materially affects the answer, mention MEMORY.md so the user can inspect it.
 - Save stable, verified information likely to help future work without waiting for the user to repeat a request. Keep the file concise and reverse chronological using headings in the form "## YYYY-MM-DD — Topic", newest first. Record sources and verification dates when they matter. Replace or remove stale entries when newer evidence contradicts them.
 - Never create or update a skill as a side effect of learning something. Skills change only when the user explicitly asks to create, import, install, or change one.

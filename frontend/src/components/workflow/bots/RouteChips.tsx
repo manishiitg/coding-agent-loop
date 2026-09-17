@@ -58,31 +58,25 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       </button>
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-          <span className="text-muted-foreground">The bot can run existing work. Channel members cannot change the workflow.</span>
           {route.kind === 'slack' && (
             <label className="w-full text-muted-foreground">
               Blocked email addresses
               <input aria-label="Blocked email addresses" className="mt-1 w-full rounded border border-border bg-background px-2 py-1" value={blockedEmails} disabled={readOnly || saving} onChange={e => setBlockedEmails(e.target.value)} placeholder="person@example.com, another@example.com" />
-              <button type="button" className="mt-1 rounded border border-border px-2 py-1" disabled={readOnly || saving} onClick={() => void updateRoute(route, { blocked_emails: blockedEmails.split(',').map(email => email.trim()).filter(Boolean) })}>Save exclusions</button>
-              <span className="mt-1 block">When exclusions exist, Slack must provide a verified email. Removing all exclusions allows everyone in the channel.</span>
+              <button type="button" className="mt-1 rounded border border-border px-2 py-1" disabled={readOnly || saving} onClick={() => void updateRoute(route, { blocked_emails: blockedEmails.split(',').map(email => email.trim()).filter(Boolean) })}>Save</button>
+              <span className="mt-1 block">Everyone in the channel is allowed unless blocked.</span>
             </label>
           )}
-          {route.kind === 'slack' ? (
-            <p className="w-full text-muted-foreground">Slack shows workflow progress, step updates, and the final reply in the conversation thread.</p>
-          ) : (
-            <div className="w-full space-y-1">
-              <label className="flex items-center gap-1.5 text-muted-foreground">
-                <input
-                  type="checkbox"
-                  checked={!!route.send_full_details}
-                  disabled={readOnly || saving}
-                  onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
-                  className="h-3.5 w-3.5"
-                />
-                Show workflow progress
-              </label>
-              <p className="text-muted-foreground">Include workflow progress and step updates alongside replies, requests for input, and errors.</p>
-            </div>
+          {route.kind === 'whatsapp' && (
+            <label className="flex items-center gap-1.5 text-muted-foreground" title="Include workflow progress and step updates alongside replies, requests for input, and errors.">
+              <input
+                type="checkbox"
+                checked={!!route.send_full_details}
+                disabled={readOnly || saving}
+                onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
+                className="h-3.5 w-3.5"
+              />
+              Show workflow progress
+            </label>
           )}
         </div>
       )}

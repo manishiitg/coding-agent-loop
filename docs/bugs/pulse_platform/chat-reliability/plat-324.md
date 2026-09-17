@@ -708,3 +708,6 @@ current user message, ahead of a visible `[USER MESSAGE]` delimiter. It is not a
 separate synthetic history row. The combined turn remains visible in durable
 history so operators and users can see when a provider reconnect required an
 archive read; the server does not silently add or later strip that instruction.
+This behavior shipped in `f68164b7a` and was deployed to RTS as
+`f68164b-20260917110335`. The release symlink, all three services, local/public
+health, and the repaired production conversation counts were verified.

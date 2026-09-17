@@ -76,3 +76,49 @@ func TestRegistrationAfterFinalizeIsStillRejected(t *testing.T) {
 		t.Fatal("registration succeeded after finalize")
 	}
 }
+
+// New tools, timeout registrations, and replacements all inherit the same
+// transport-independent identity binding without an opt-in in their handlers.
+func TestEveryToolRegistrationBindsExecutionContext(t *testing.T) {
+	type identityKey struct{}
+	calls := 0
+	w := &LLMAgentWrapper{config: LLMAgentConfig{ToolExecutionContext: func(ctx context.Context, name string) (context.Context, error) {
+		calls++
+		if name == "denied" {
+			return nil, context.Canceled
+		}
+		return context.WithValue(ctx, identityKey{}, "authenticated-owner"), nil
+	}}}
+	execute := func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		if ctx.Value(identityKey{}) != "authenticated-owner" {
+			t.Fatal("tool did not inherit authenticated context")
+		}
+		return "ok", nil
+	}
+	if err := w.RegisterCustomTool("future_tool", "", nil, execute, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.RegisterCustomToolWithTimeout("timeout_tool", "", nil, execute, 17, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := w.RegisterCustomTool("future_tool", "replacement", nil, execute, ""); err != nil {
+		t.Fatal(err)
+	}
+	ranDenied := false
+	if err := w.RegisterCustomTool("denied", "", nil, func(context.Context, map[string]interface{}) (string, error) { ranDenied = true; return "", nil }, ""); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range w.definition.Tools.Direct {
+		_, err := tool.Execute(context.Background(), nil)
+		if tool.Name == "denied" {
+			if err != context.Canceled || ranDenied {
+				t.Fatal("rejected identity reached tool handler")
+			}
+		} else if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if calls != 3 {
+		t.Fatalf("context resolver called %d times, want once per invocation", calls)
+	}
+}

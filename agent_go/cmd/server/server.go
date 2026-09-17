@@ -4877,7 +4877,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Create a detached context for the entire streaming operation.
 		// Execution is stopped by explicit cancellation, not by a wall-clock timeout.
-		streamCtx, cancel := context.WithCancel(context.Background())
+		streamCtx, cancel := context.WithCancel(context.WithoutCancel(r.Context()))
 		streamCtx = queryLogCtx.Context(streamCtx)
 		defer cancel()
 
@@ -5140,6 +5140,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		agentConfig.AgentMode = mcpagent.SimpleAgent
 		log.Printf("[AGENT DEBUG] Creating agent with mode: %s, servers: %s", agentConfig.AgentMode, serverList)
 		logfWithContext(queryLogCtx, "[LATENCY_DEBUG] T+%dms | Agent config built, creating agent wrapper | provider=%s model=%s", time.Since(startTime).Milliseconds(), finalProvider, finalModelID)
+		agentConfig.ToolExecutionContext = api.bindToolExecutionContext(r.Context(), sessionID, req, currentUserIsReadOnly)
 		// Create LLM agent wrapper with trace using streamCtx
 		llmAgent, err := agent.NewLLMAgentWrapperWithTrace(streamCtx, agentConfig, tracer, traceID, queryLogger)
 		if err != nil {

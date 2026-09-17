@@ -57,19 +57,26 @@ func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := reg.tools["create_slack_bot_route"]
+	resolve := api.bindToolExecutionContext(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice"}), "builder-alice", QueryRequest{SelectedFolder: "Workflow/example", PresetQueryID: "example"}, false)
+	invoke := func(ctx context.Context, args map[string]interface{}) (string, error) {
+		operatorCtx, err := resolve(ctx, "create_slack_bot_route")
+		if err != nil {
+			return "", err
+		}
+		return tool.exec(operatorCtx, args)
+	}
 	ctx := executor.WithSessionID(context.Background(), "builder-alice")
 	args := map[string]interface{}{"channel_id": "C0BTUQW85L1"}
 	for _, bad := range []context.Context{
-		context.Background(),
 		executor.WithSessionID(context.Background(), "unknown"),
 		context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "bob"}),
 		context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "alice", Provider: "bot_route"}),
 	} {
-		if _, err := tool.exec(bad, args); err == nil {
+		if _, err := invoke(bad, args); err == nil {
 			t.Fatal("route tool accepted anonymous, conflicting, or bot caller")
 		}
 	}
-	if _, err := tool.exec(ctx, args); err != nil {
+	if _, err := invoke(ctx, args); err != nil {
 		t.Fatalf("authenticated CLI owner could not create route: %v", err)
 	}
 	_, routes, err := api.slackRoutes(context.Background())
@@ -81,7 +88,7 @@ func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
 		t.Fatalf("unexpected persisted route: %+v", routes)
 	}
 	api.botExecutionSessions.Store("builder-alice", botExecutionSession{})
-	if _, err := api.slackToolOperatorContext(ctx, "builder-alice"); err == nil {
+	if _, err := resolve(ctx, "create_slack_bot_route"); err == nil {
 		t.Fatal("bot-bound bridge recovered owner authority")
 	}
 }

@@ -323,6 +323,11 @@ type LLMAgentConfig struct {
 	// must not call back into the wrapper.
 	AdmitTool func(name string) bool
 
+	// ToolExecutionContext binds server-owned session identity to every direct
+	// tool invocation. Run before the tool's action-specific permission checks.
+	// It must preserve cancellation and reject conflicting caller identities.
+	ToolExecutionContext func(context.Context, string) (context.Context, error)
+
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode                   bool
@@ -792,6 +797,16 @@ func (w *LLMAgentWrapper) RegisterCustomToolWithTimeout(name, description string
 	// not a failure. Callers treat a returned error as fatal to the session.
 	if w.admitTool != nil && !w.admitTool(name) {
 		return nil
+	}
+	if resolve := w.config.ToolExecutionContext; resolve != nil && execute != nil {
+		original := execute
+		execute = func(ctx context.Context, args map[string]interface{}) (string, error) {
+			boundCtx, err := resolve(ctx, name)
+			if err != nil {
+				return "", err
+			}
+			return original(boundCtx, args)
+		}
 	}
 	tool := mcpagent.ToolDefinition{
 		Name: name, Description: description, InputSchema: parameters,

@@ -356,3 +356,25 @@ This contract covers default product-owned surfaces. User-selected skills, MCP
 servers, provider-native tools, and dynamic request-specific instructions have
 separate policies; this test does not claim to scan arbitrary Go instruction text.
 A new shared prompt section must be declared in each affected product manifest.
+
+
+## Session identity at tool execution
+
+The query boundary sets `LLMAgentConfig.ToolExecutionContext` once from the
+validated request and its session. `RegisterCustomTool` and
+`RegisterCustomToolWithTimeout` wrap every direct tool callback, including
+replacement registrations. This is shared by AgentWorks and Crew and applies
+to browser, inline, and CLI bridge calls. New tools inherit the binding;
+they should read claims from their execution context instead of reconstructing
+a user or requiring browser JWT claims. They still call the existing resource
+and action authorization handlers.
+
+The shared binding preserves cancellation, rejects conflicting callers and
+changed session ownership, checks current account/target access, and revalidates
+bot routes without turning the bot's resource owner into account authority.
+Detached query contexts use `context.WithoutCancel` to retain authenticated
+request values. The Slack-only identity adapter was removed.
+
+CI runs `TestToolExecutionContext.*` and
+`TestEveryToolRegistrationBindsExecutionContext` as regression contracts for
+this boundary, in addition to the product surface checks above.

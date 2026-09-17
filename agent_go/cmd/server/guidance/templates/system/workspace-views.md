@@ -52,7 +52,8 @@ Refresh or claim an answer was applied just because it disappeared from pending.
 | `secrets` | Secret names attached to the workflow (never values) | You set or attached a secret |
 | `mcp` | MCP servers and tool allowlists for the workflow | You added or changed a server |
 | `llm` | The workflow's LLM configuration: tiers and per-step models | You changed which model runs what |
-| `bots` | Connected bots (Slack, WhatsApp) for this workflow | You connected or changed a channel |
+| `bots` | Slack and WhatsApp cards with workflow routes; Open shows shared connection settings | You connected or changed a channel |
+| `email` | Gmail accounts, default recipients, and email access settings (Setup > Gmail) | You changed a Gmail connection or email settings |
 | `folders` | Folders attached to the workflow | You attached a folder |
 
 ### Focusing something inside a view: `target`

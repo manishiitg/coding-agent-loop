@@ -139,6 +139,33 @@ func TestValidatePathAgainstGuardEmptyCapabilitiesFailClosed(t *testing.T) {
 	}
 }
 
+func TestValidatePathWithContextNormalizesPublicPerUserPath(t *testing.T) {
+	const (
+		sessionID = "work-project-public-path"
+		userID    = "aa73da63e26b40a1bb701c2b4c024870"
+	)
+	project := "_users/" + userID + "/Chats/Work/projects/latency"
+	SetSessionFolderGuard(sessionID, []string{project}, []string{project + "/db"})
+	SetSessionFolderGuardBlockedPaths(sessionID, []string{project + "/db/private"})
+	defer ClearSessionShellConfig(sessionID)
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
+	client := NewClient("http://unused", WithUserID(userID))
+	if err := client.ValidatePathWithContext(ctx, "Chats/Work/projects/latency/db/migrations/add.sql", false); err != nil {
+		t.Fatalf("public Work path should match its physical session guard: %v", err)
+	}
+	if err := client.ValidatePathWithContext(ctx, "Chats/Work/projects/latency/db/private/secret.sql", false); err == nil {
+		t.Fatal("public Work path must retain the physical guard's blocked paths")
+	}
+	if err := client.ValidatePathWithContext(ctx, "Chats/Work/projects/other/db/migrations/add.sql", false); err == nil {
+		t.Fatal("normalization must not grant another Work project")
+	}
+	foreignClient := NewClient("http://unused", WithUserID("another-user"))
+	if err := foreignClient.ValidatePathWithContext(ctx, "Chats/Work/projects/latency/db/migrations/add.sql", false); err == nil {
+		t.Fatal("normalization must not grant another user's physical path")
+	}
+}
+
 func TestResolveEffectiveFolderGuardPreservesReadOnlyAndDenyPaths(t *testing.T) {
 	sessionID := "read-only-session-guard"
 	SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, nil)

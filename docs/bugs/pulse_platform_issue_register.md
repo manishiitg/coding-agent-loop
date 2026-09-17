@@ -35,8 +35,8 @@ message can reach a provider conversation. Its latest deployed correction also
 prevents a stale second hydration from removing a Cursor final that was already
 visible in the live chat timeline.
 Additional 2026-09-17 multi-user/tab isolation, durable acceptance and recovery
-hardening is implemented and locally verified; deployment and the live
-continuity acceptance matrix remain pending. See the ticket for current status.
+hardening is deployed to RTS in `1979a25-20260917063441`, with health verified;
+the user live continuity acceptance matrix remains pending. See the ticket for current status.
 
 ## Persistent managed browser ownership — PLAT-322
 

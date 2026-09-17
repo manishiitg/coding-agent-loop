@@ -1,6 +1,6 @@
 # Chat reliability implementation — 2026-09-17
 
-Implemented and verified locally in the working tree. Not committed or deployed. This supersedes the failure status in the two earlier architecture/isolation reviews; it does not claim production verification.
+Implemented in commit `1979a25ef` and deployed to RTS as `1979a25-20260917063441`; service health and frontend HTTP checks passed. User live chat acceptance remains pending. This supersedes the failure status in the two earlier architecture/isolation reviews; it does not claim production verification.
 
 ## Underlying problem
 
@@ -34,4 +34,4 @@ The transcript mutex protects one active backend process. Concurrent writing rep
 
 Native adapters still lack application turn IDs. Ordered text-occurrence import remains a repair heuristic; ambiguous provider execution cannot be called exactly-once. Unresolved markers are retained and periodically retried, without automatic garbage collection. These changes are incremental safeguards, not a replacement transactional conversation database.
 
-No live provider/browser restart matrix or deployment was performed. Before production sign-off, validate two users with multiple tabs, queued input while another tab is selected, delayed native flush, reload/restart during acceptance and completion, and a context-dependent follow-up through each supported CLI. Verify both visible history and actual provider context; unit checks alone cannot establish that result.
+Deployment completed on 2026-09-17. No live provider/browser restart acceptance matrix was performed. Before production sign-off, validate two users with multiple tabs, queued input while another tab is selected, delayed native flush, reload/restart during acceptance and completion, and a context-dependent follow-up through each supported CLI. Verify both visible history and actual provider context; unit checks alone cannot establish that result.

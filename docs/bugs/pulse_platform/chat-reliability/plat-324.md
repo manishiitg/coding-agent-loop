@@ -5,9 +5,9 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `additional reliability fixes implemented and locally verified; deployment and live acceptance pending` |
+| Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | Working-tree reliability hardening, 2026-09-17 — not committed or deployed |
+| Latest regression fix | `1979a25ef` — chat persistence, acceptance and ownership hardening |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -346,3 +346,23 @@ Implemented locally:
 
 See the [implementation report](../../../audits/chat-reliability-implementation-2026-09-17.md)
 for the complete change mapping, validation logs and remaining architecture limits.
+
+
+### RTS deployment — 2026-09-17
+
+- Pushed implementation commit `1979a25ef1176d406f887785b355581374449ffb`
+  to main and deployed release `1979a25-20260917063441` through the standard
+  RTS server-side build and idle-drain activation procedure.
+- Recorded sibling revisions: mcpagent `0220d4294b1fab3168611ed1c2c4263d005c281b`;
+  multi-llm-provider-go `5e625eb6219be2fc5a7622989af1e18d3d0c28ed`.
+- Native Linux backend and production frontend builds passed. Release asset
+  checks and bundle limits passed (JS gzip 975.43 kB, below the 1030 kB limit).
+  The deploy's Landlock overlap smoke test skipped because its config directory
+  was not writable; it is not recorded as verified by this release.
+- Confirmed current release symlink and source revisions, all three user
+  services active, public health healthy with zero active sessions and idle
+  drain, and frontend HTTP 200 at 06:40 UTC.
+- The service's persistent config root is writable and lives outside releases;
+  chat acceptance and recovery journals survive release replacement.
+- User will perform live chat testing. Multi-tab/provider continuity acceptance
+  remains pending; successful deployment and health do not close this ticket.

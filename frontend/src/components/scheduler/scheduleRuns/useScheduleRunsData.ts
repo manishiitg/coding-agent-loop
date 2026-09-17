@@ -98,14 +98,15 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   // Callers pass `workflowScope` as an inline object literal, so depending on
   // it directly would re-run every memo below (including the 3-month cron
   // expansion) on each parent render. Depend on its primitives instead.
+  const scopeWorkflowId = workflowScope?.workflowId ?? null
   const scopePresetId = workflowScope?.presetQueryId ?? null
   const scopePath = workflowScope?.workspacePath ?? null
   const scopeLabel = workflowScope?.label ?? null
   const canWriteWorkflow = useCanWriteWorkflow(scopePath)
   const isReadOnlyUser = canManage === undefined ? !canWriteWorkflow : !canManage
   const stableScope = useMemo<WorkflowScope | undefined>(
-    () => (isWorkflowScoped ? { presetQueryId: scopePresetId, workspacePath: scopePath, label: scopeLabel } : undefined),
-    [isWorkflowScoped, scopePresetId, scopePath, scopeLabel],
+    () => (isWorkflowScoped ? { workflowId: scopeWorkflowId, presetQueryId: scopePresetId, workspacePath: scopePath, label: scopeLabel } : undefined),
+    [isWorkflowScoped, scopeWorkflowId, scopePresetId, scopePath, scopeLabel],
   )
 
   const panelJobs = useMemo(() => {

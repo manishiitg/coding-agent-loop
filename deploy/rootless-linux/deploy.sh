@@ -94,6 +94,18 @@ if [[ -n "${PIN_NODE_VERSION:-}" ]]; then
     npm --version"
 fi
 
+# WhatsApp voice notes arrive as Ogg/Opus. The shared speech engine consumes
+# PCM WAV, so every rootless product needs an audio converter even when the
+# host administrator has not installed the distro ffmpeg package. Keep the
+# pinned binary outside releases so it survives normal deploy/prune cycles.
+echo "==> [$PRODUCT] Ensuring ffmpeg is available for voice-note transcription"
+if "${SSH[@]}" "export PATH='$REMOTE_RUNTIME_PATH'; command -v ffmpeg" >/dev/null 2>&1; then
+  echo "    ffmpeg is present."
+else
+  "${SSH[@]}" "REMOTE_APP='$REMOTE_APP' python3 -" < "$LOCAL_SCRIPT_DIR/install-ffmpeg.py"
+  "${SSH[@]}" "export PATH='$REMOTE_RUNTIME_PATH'; ffmpeg -version | head -n 1"
+fi
+
 # Browser automation and every advertised coding provider are installation
 # dependencies, not something an end user is expected to install over SSH.
 # Keep the binaries in stable, service-owned paths outside releases so

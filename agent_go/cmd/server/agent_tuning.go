@@ -23,6 +23,16 @@ import (
 // same ~200 lines of closures were duplicated in both config literals and had
 // already started to drift.
 func applySharedLLMAgentTuning(cfg *agent.LLMAgentConfig, req *QueryRequest, preset *workflowtypes.PresetLLMConfig) {
+	// AgentWorks owns durable memory through product/workflow stores. Claude
+	// Code's provider-private auto-memory lives outside the governed workspace,
+	// is invisible to other providers, and can conflict with those stores. Keep
+	// it disabled for every AgentWorks Claude session, including delegated agents.
+	if strings.EqualFold(strings.TrimSpace(string(cfg.Provider)), "claude-code") {
+		if cfg.CodingAgentSecretEnvironment == nil {
+			cfg.CodingAgentSecretEnvironment = make(map[string]string)
+		}
+		cfg.CodingAgentSecretEnvironment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"] = "1"
+	}
 	cfg.ToolTimeout = resolveToolTimeout()
 
 	// Context summarization

@@ -3,12 +3,22 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   chatUsesStructuredTransport,
   createLiveInputSubmissionCoordinator,
+  isDefinitelyMissingLiveSession,
   shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
   shouldShowLiveTerminalControl,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
+
+describe('isDefinitelyMissingLiveSession', () => {
+  it('accepts only the pre-delivery missing-session response', () => {
+    expect(isDefinitelyMissingLiveSession({ response: { status: 404, data: 'Session not found\n' } })).toBe(true)
+    expect(isDefinitelyMissingLiveSession({ response: { status: 404, data: 'No running agent for this session\n' } })).toBe(false)
+    expect(isDefinitelyMissingLiveSession({ response: { status: 409, data: 'session_not_active\n' } })).toBe(false)
+    expect(isDefinitelyMissingLiveSession(new Error('network error'))).toBe(false)
+  })
+})
 
 describe('chatUsesStructuredTransport', () => {
   it('keeps Workflow Builder on tmux even when a provider summary says structured', () => {
@@ -103,6 +113,7 @@ describe('shouldUseRetainedLiveInput', () => {
     fullTurnStreaming: true,
     turnIsStreaming: false,
     hasSession: true,
+    sessionKnownToServer: true,
     hasOneShotContext: false,
   }
 
@@ -116,6 +127,14 @@ describe('shouldUseRetainedLiveInput', () => {
 
   it('keeps the existing AgentWorks retained-input behavior outside product full-turn mode', () => {
     expect(shouldUseRetainedLiveInput({ ...base, fullTurnStreaming: false })).toBe(true)
+  })
+
+  it('starts a normal request for a provisional UUID despite a persisted busy flag', () => {
+    expect(shouldUseRetainedLiveInput({ ...base, turnIsStreaming: true, sessionKnownToServer: false })).toBe(false)
+  })
+
+  it('starts a normal request for a cold workflow after restart', () => {
+    expect(shouldUseRetainedLiveInput({ ...base, fullTurnStreaming: false, sessionKnownToServer: false })).toBe(false)
   })
 
   it('never uses retained input for one-shot context', () => {

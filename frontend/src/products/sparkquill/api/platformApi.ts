@@ -348,14 +348,14 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     // QR request names the profile (and where photos land — the inbox the
     // attach button already uses, so process-file files them); the status
     // poll repairs a pairing made before the default existed.
-    whatsappStatus: async () => {
+    whatsappStatus: async (opts) => {
       const s = await request<{
         paired?: boolean; connected?: boolean; own_jid?: string
         qr_available?: boolean; qr_expires_at?: string
         default_profile_id?: string
         devices?: { slot: string; paired: boolean; connected: boolean; own_jid?: string }[]
         next_device?: { slot?: string; qr_available?: boolean; qr_expires_at?: string }
-      }>('GET', '/api/whatsapp/status')
+      }>('GET', `/api/whatsapp/status${opts?.addAnother ? '?device=next' : ''}`)
       if (s.paired && s.default_profile_id !== PARENT_PROFILE) {
         await request('PUT', '/api/whatsapp/default-profile', { profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER }).catch(() => undefined)
       }
@@ -368,8 +368,9 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
         pairing: { qr_available: pairing.qr_available === true, qr_expires_at: pairing.qr_expires_at },
       }
     },
-    whatsappPairImageUrl: (nonce) => {
-      const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, device: 'next', size: '384', n: String(nonce) })
+    whatsappPairImageUrl: (nonce, addAnother) => {
+      const params = new URLSearchParams({ profile_id: PARENT_PROFILE, upload_folder: WHATSAPP_UPLOAD_FOLDER, size: '384', n: String(nonce) })
+      if (addAnother) params.set('device', 'next')
       // An <img> cannot send a header; the platform accepts the token as a
       // query parameter, the same way rawUrl does.
       params.set('token', store.get() ?? '')
@@ -409,4 +410,3 @@ function browserTokenStore() {
     set: (t: string | null) => { try { if (t) localStorage.setItem(TOKEN_KEY, t); else localStorage.removeItem(TOKEN_KEY) } catch { /* ignore */ } },
   }
 }
-

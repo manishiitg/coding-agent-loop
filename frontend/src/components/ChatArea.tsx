@@ -12,6 +12,7 @@ import { configureChatQueueController } from '../utils/chatQueueController'
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import {
   liveInputSubmissionCoordinator,
+  isDefinitelyMissingLiveSession,
   shouldRefreshSessionEventStream,
   shouldUseRetainedLiveInput,
 } from '../utils/liveInputSubmission'
@@ -2817,6 +2818,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       fullTurnStreaming,
       turnIsStreaming: freshActiveTab?.isStreaming === true,
       hasSession: Boolean(tabSessionId),
+      // A browser UUID or persisted busy flag is not an active server session.
+      // Cold/new sessions must use the normal request with workspace and resume
+      // context before they can accept retained input.
+      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === tabSessionId),
       hasOneShotContext,
     })
     // A retained CLI delivery can take a few seconds to acknowledge while the
@@ -2826,6 +2831,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // fallback reuses this row instead of echoing it a second time.
     let optimisticLiveInputEventID = ''
     if (useRetainedLiveInput) {
+      let retryAsNormalTurn = false
       const existingEvents = chatStore.getTabEvents(tabSessionId)
       const latestTimestampMs = existingEvents.reduce((latest, event) => {
         const ts = getEventTimestampMs(event)
@@ -2880,18 +2886,40 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       } catch (error) {
         if (!isChatIdentityCurrent(identity)) return false
-        // Never resend an ambiguous delivery via a second endpoint. The server
-        // owns cold-session fallback and durable idempotent receipt recovery.
-        chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
+        if (isDefinitelyMissingLiveSession(error)) {
+          // The process that owned this retained session has gone away (most
+          // commonly during a deployment). Authorization rejects this before
+          // the durable submission journal or provider sees the message, so a
+          // normal turn retry with the same receipt cannot duplicate delivery.
+          useChatStore.setState(state => ({
+            activeSessionsCache: state.activeSessionsCache.filter(session => session.session_id !== tabSessionId),
+            activeSessionsCacheTimestamp: null,
+            tabEvents: {
+              ...state.tabEvents,
+              [tabSessionId]: (state.tabEvents[tabSessionId] || []).filter(event => event.id !== optimisticLiveInputEventID),
+            },
+          }))
+          optimisticLiveInputEventID = ''
+          resetStreamingState(currentTab.tabId)
+          retryAsNormalTurn = true
+        } else {
+          // Never resend an ambiguous delivery via a second endpoint. The server
+          // owns cold-session fallback and durable idempotent receipt recovery.
+          chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
+          resetStreamingState(currentTab.tabId)
+          return false
+        }
+      }
+      if (retryAsNormalTurn) {
+        logger.info('ChatArea', `Retained session ${tabSessionId} disappeared; retrying submission as a normal turn`)
+      } else {
+        // A transport success without an acceptance receipt is still ambiguous.
+        // Retain the submission ID and never send it again through /query here.
+        chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId,
+          new Error('Delivery was not confirmed. Retry with the retained submission to check its status.'))])
         resetStreamingState(currentTab.tabId)
         return false
       }
-      // A transport success without an acceptance receipt is still ambiguous.
-      // Retain the submission ID and never send it again through /query here.
-      chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId,
-        new Error('Delivery was not confirmed. Retry with the retained submission to check its status.'))])
-      resetStreamingState(currentTab.tabId)
-      return false
     }
 
     const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
@@ -3377,6 +3405,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       fullTurnStreaming,
       turnIsStreaming: sourceTab?.isStreaming === true,
       hasSession: Boolean(sourceTab?.sessionId),
+      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === sourceTab?.sessionId),
       hasOneShotContext: Boolean(
         sourceTab?.config?.restoredConversationPath?.trim() ||
         sourceTab?.config?.fileContext?.length ||

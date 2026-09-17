@@ -145,4 +145,36 @@ describe('queued notification and human message ownership', () => {
     await manual
   })
 
+  it.each(['human decision question', 'generated dashboard button'])('does not redeliver %s when idle delivery starts streaming', async message => {
+    state.tabs.B.config.queuedMessages = [message]
+    let release!: (value: boolean) => void
+    const send = vi.fn((_message: string, _options: unknown) => new Promise<boolean>(resolve => { release = resolve }))
+    const idle = drainChatQueue('B', send, build)
+    await Promise.resolve()
+    state.tabs.B.isStreaming = true
+    // The live-input effect sees the entry before the first response settles.
+    const live = await sendQueuedChatMessage('B', 0, message, send)
+    expect(live).toBe(false)
+    expect(state.tabs.B.config.queuedMessages).toEqual([message])
+    expect(send).toHaveBeenCalledTimes(1)
+    release(true)
+    await idle
+    expect(state.tabs.B.config.queuedMessages).toEqual([])
+    expect(state.tabs.B.config.queueError).toBeUndefined()
+  })
+
+  it('keeps separate report actions and later arrivals in order during live delivery', async () => {
+    state.tabs.B.isStreaming = true
+    state.tabs.B.config.queuedMessages = ['decision question', 'dashboard action']
+    let release!: (value: boolean) => void
+    const send = vi.fn((_message: string, _options: unknown) => new Promise<boolean>(resolve => { release = resolve }))
+    const first = sendQueuedChatMessage('B', 0, 'decision question', send)
+    state.tabs.B.config.queuedMessages.push('later action')
+    expect(state.tabs.B.config.queuedMessages).toHaveLength(3)
+    release(true)
+    await first
+    expect(state.tabs.B.config.queuedMessages).toEqual(['dashboard action', 'later action'])
+    expect(send.mock.calls[0]?.[0]).toBe('decision question')
+  })
+
 })

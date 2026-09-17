@@ -67,6 +67,27 @@ func TestApplySharedLLMAgentTuningDefaults(t *testing.T) {
 	}
 }
 
+func TestApplySharedLLMAgentTuningDisablesClaudePrivateMemoryForEveryAgent(t *testing.T) {
+	clearTuningEnv(t)
+	claude := agent.LLMAgentConfig{
+		Provider:                     "claude-code",
+		CodingAgentSecretEnvironment: map[string]string{"SECRET_EXISTING": "kept"},
+	}
+	applySharedLLMAgentTuning(&claude, &QueryRequest{}, nil)
+	if got := claude.CodingAgentSecretEnvironment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"]; got != "1" {
+		t.Fatalf("Claude auto-memory control = %q, want 1", got)
+	}
+	if claude.CodingAgentSecretEnvironment["SECRET_EXISTING"] != "kept" {
+		t.Fatal("adding the Claude control replaced the existing scoped environment")
+	}
+
+	codex := agent.LLMAgentConfig{Provider: "codex-cli"}
+	applySharedLLMAgentTuning(&codex, &QueryRequest{}, nil)
+	if _, exists := codex.CodingAgentSecretEnvironment["CLAUDE_CODE_DISABLE_AUTO_MEMORY"]; exists {
+		t.Fatal("Claude-specific control was added to a non-Claude provider")
+	}
+}
+
 func TestApplySharedLLMAgentTuningPriority(t *testing.T) {
 	clearTuningEnv(t)
 	// Env layer

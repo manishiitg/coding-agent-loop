@@ -3469,6 +3469,16 @@ export interface NotificationRouteSummary {
   sections?: OrgDashboardNotificationSection[]
 }
 
+export interface PulseReviewSummary {
+  module: string
+  label?: string
+  status: 'clean' | 'issues_found' | 'fixed' | 'incomplete' | 'failed' | 'skipped'
+  summary: string
+  issues_found: number
+  fixes_applied: number
+  verification: 'verified' | 'monitoring' | 'unverified' | 'not_applicable'
+}
+
 export interface OrgDashboardRouteNotifications {
   routing_step_id?: string
   route_id: string
@@ -3486,6 +3496,7 @@ export interface OrgDashboardNotification {
   status: 'completed' | 'failed' | 'blocked' | 'waiting_for_user' | 'waiting_for_platform' | 'monitoring' | 'informational' | 'no_run'
   route?: string
   message: string
+  reviews?: PulseReviewSummary[]
   routes?: NotificationRouteSummary[]
   fields?: OrgDashboardNotificationField[]
   sections?: OrgDashboardNotificationSection[]

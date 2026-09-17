@@ -373,33 +373,13 @@ func whatsappPutRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 // should call NextPairingDevice (which creates an unpaired slot on disk if
 // none exists) versus only advertising an already-existing one.
 //
-// True when the caller explicitly asked (?device=next), or when the primary
-// is already paired and there's no unpaired extra slot yet -- that combination
-// is exactly the "add another number" moment. A paired primary with no
-// pending extra slot polling this endpoint is never "still working through
-// its own first pairing", so creating one here can't produce the phantom
-// phone-N this gate originally existed to prevent.
-//
-// Without the paired-primary branch, an account whose only entry point to
-// "add another number" is a status poll with no query param (SparkQuill's
-// whatsappStatus, which renders its pairing <img src> -- the only thing that
-// ever sends device=next -- only once next_device.qr_available is already
-// true) can never bootstrap: the image needs the slot to exist to render,
-// and the slot only gets created by that same image's own device=next
-// request. See PLAT-194-followup (WhatsApp PR #194 review).
+// True only when the caller explicitly asked for the next device. Ordinary
+// status polling must be read-only: otherwise the first successful pairing
+// silently creates phone-2 and starts an endless QR loop even when the user
+// never chose "add another parent".
 func shouldPrepareNextPairingDevice(deviceQueryParam string, primaryPaired bool, devices []services.WhatsAppDevice) bool {
-	if strings.TrimSpace(deviceQueryParam) == "next" {
-		return true
-	}
-	if !primaryPaired {
-		return false
-	}
-	for _, device := range devices {
-		if device.Slot != "" && !device.Paired {
-			return false // an unpaired extra slot already exists; advertise it, don't create another
-		}
-	}
-	return true
+	_, _ = primaryPaired, devices
+	return strings.TrimSpace(deviceQueryParam) == "next"
 }
 
 // whatsappStatusHandler reports connector lifecycle state as JSON:

@@ -56,3 +56,33 @@ func TestBrowserLivePortUsesSystemdRuntimeDirectory(t *testing.T) {
 		t.Fatalf("port=%d err=%v", port, err)
 	}
 }
+
+func TestBrowserLiveEndpointFindsNamespacedMetadataBeforeLegacy(t *testing.T) {
+	for _, key := range []string{"AGENT_BROWSER_SOCKET_DIR", "XDG_RUNTIME_DIR"} {
+		t.Run(key, func(t *testing.T) {
+			root := t.TempDir()
+			t.Setenv("AGENT_BROWSER_SOCKET_DIR", "")
+			t.Setenv("XDG_RUNTIME_DIR", "")
+			t.Setenv(key, root)
+			t.Setenv("AGENT_BROWSER_NAMESPACE", "sparkquill-test")
+			base := root
+			if key == "XDG_RUNTIME_DIR" {
+				base = filepath.Join(root, "agent-browser")
+			}
+			dir := filepath.Join(base, "namespaces", "sparkquill-test", "run")
+			if err := os.MkdirAll(dir, 0700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(base, "namespace-live-test.stream"), []byte("12345"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(dir, "namespace-live-test.stream"), []byte("12346"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			port, foundDir, err := browserLiveEndpoint("namespace-live-test")
+			if err != nil || port != 12346 || foundDir != dir {
+				t.Fatalf("port=%d dir=%q err=%v", port, foundDir, err)
+			}
+		})
+	}
+}

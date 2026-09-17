@@ -1,0 +1,16 @@
+#!/bin/sh
+# Managed Chrome survives individual sandbox commands; their scratch does not.
+set -eu
+uid=$(id -u)
+browser_tmp="/tmp/aw-browser-$uid"
+if ! mkdir -m 700 "$browser_tmp" 2>/dev/null; then
+    if [ -L "$browser_tmp" ] || [ ! -d "$browser_tmp" ] || [ "$(stat -c '%u:%a' "$browser_tmp")" != "$uid:700" ]; then
+        echo "Unsafe managed browser temporary directory" >&2
+        exit 1
+    fi
+fi
+export TMPDIR="$browser_tmp" TMP="$browser_tmp" TEMP="$browser_tmp"
+# The zygote and separate GPU startup paths require child /proc entries that
+# Landlock cannot grant dynamically. Keep existing sandbox permissions intact.
+# The managed headless launcher already supplies --no-sandbox.
+exec "$(dirname "$0")/chrome" --disable-dev-shm-usage --no-zygote --in-process-gpu "$@"

@@ -7,8 +7,46 @@
 | Assigned agent | Codex |
 | Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `1979a25ef` — chat persistence, acceptance and ownership hardening |
+| Latest regression fix | `624d4a8a1` deployed — retain Work chat names before the first transcript save |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
+
+## Post-incident assessment — 2026-09-17
+
+The broad reliability change `1979a25ef` was too large for one rollout: it
+changed 58 files and added about 3,400 lines across persistence, submission
+receipts, queue ownership, native recovery, multi-user isolation and background
+notifications. It introduced two confirmed regressions:
+
+- workflow-scoped sessions could not recover their project after a backend
+  restart because the new durable fallback began with an empty workspace path;
+- conversation snapshot reconciliation used the shorter incoming runtime
+  snapshot as the merge base, allowing prior history blocks to be appended
+  again.
+
+Two other incidents were pre-existing defects exposed during this rollout:
+
+- the ChatInput live-delivery effect had bypassed the shared queue worker since
+  August. The new durable idempotency journal made that race visible as a 409
+  instead of allowing a possible second delivery. For the observed Strategic
+  Review action, the first request was durably accepted and the conflicting
+  second attempt was rejected;
+- the background completion retry sweep predated this change and did not honor
+  `suppress_auto_notification`, so it could revive a deliberately suppressed
+  child completion.
+
+The architectural failure is split message ownership. Browser storage, React
+effects, the queue worker, `/api/query`, `/live-input`, in-memory session maps
+and durable history were each able to make independent routing or persistence
+decisions. Durability was added around that structure before every entry point
+shared one immutable submission lifecycle.
+
+The targeted corrections have fail-before/pass-after coverage and are deployed,
+but service health is not proof of end-to-end chat correctness. This ticket
+remains open until live acceptance covers two users, multiple tabs, idle and
+running turns, browser reload, backend restart and deployment. Known remaining
+limits are process-local conversation locks, no general exactly-once guarantee
+after an uncertain provider response, and already-corrupted duplicate history
+that has deliberately not been rewritten.
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
   fresh agent conversation. The visible transcript remained in the tab, but the
@@ -363,6 +401,393 @@ for the complete change mapping, validation logs and remaining architecture limi
   services active, public health healthy with zero active sessions and idle
   drain, and frontend HTTP 200 at 06:40 UTC.
 - The service's persistent config root is writable and lives outside releases;
-  chat acceptance and recovery journals survive release replacement.
+  native recovery markers survive release replacement. Acceptance journals live
+  in the persistent user-scoped workspace chat_history/submissions directory.
 - User will perform live chat testing. Multi-tab/provider continuity acceptance
   remains pending; successful deployment and health do not close this ticket.
+
+
+### 2026-09-17 post-deployment live-input regression — hotfix
+
+The user reported an RTS `404 Session not found` at 12:54 IST and a separate
+local workflow live-input failure. RTS logs show a successful normal Work query
+and retained follow-up in `product-6a648cdb-fc00-43cc-b1db-2e200c9b9c7a`, followed
+at 07:24:50 UTC by live-input to unrecognized browser session
+`67007965-e580-4093-8268-0b0b67d86135`. The latter was rejected before dispatch
+or journal acceptance. The exact browser transition remains unverified.
+
+Code review also confirmed the new cold journal project resolver only requested
+history with an empty workspace path, which misses workflow-scoped transcripts.
+This is a regression/gap in commit `1979a25ef`; earlier passing injected-resolver
+tests did not cover real workflow discovery after cache loss.
+
+Follow-up work requires retained input to target a session known to the server,
+and real owner-checked workflow history discovery after restart. Live acceptance
+remains open; the deployed hardening did not yet satisfy the complete contract.
+
+
+Hotfix implementation: retained live-input now requires the exact session to
+appear in the server session cache; provisional/cold sessions use the ordinary
+request carrying workspace and continuation context. Backend project recovery
+now discovers workflow-scoped and private Work transcripts from disk or the
+workspace API, verifies owner/session/path, and rehydrates the project binding.
+Missing optional directories do not block recovery; ambiguous project matches
+fail closed. Terminal authorization is unchanged.
+
+Validation: 69 frontend tests across six files and TypeScript passed. New backend
+regressions invoke the live-input handler with empty project caches and an actual
+saved workflow transcript, verify restored journal attribution, reject another
+owner, and cover workspace-API-only discovery. Focused journal/live-input tests
+passed. These checks cover the previously missed cold-workflow lookup, not the
+unobserved browser transition that produced the RTS provisional UUID.
+
+
+Hotfix deployed to RTS as `4e2d78b-20260917073436` on 2026-09-17. Verified
+current release, all three services active, public health healthy/idle and
+frontend HTTP 200 at 07:39 UTC. The Linux backend and production frontend builds,
+asset checks and bundle limits passed. The existing Landlock overlap smoke test
+again skipped due to its config-directory permission issue. Live user acceptance
+remains pending; this deployment did not replay or resend the user's failed input.
+
+
+### 2026-09-17 duplicate exchange after live-input — confirmed, unresolved
+
+User screenshot shows `did you trigger webhooks for it` twice. RTS logs show
+one live-input delivery and one HTTP 200 at 07:49:35–07:49:37 UTC for
+`c7d58080-0058-4f6f-a394-feea651f405b` (Workflow/rtsprreviweer).
+Read-only inspection of that saved transcript found the exact human row and
+its same adjacent assistant exchange repeated at different history offsets;
+the copy count grew between reads while background processing continued.
+This is persisted duplication, not merely an optimistic UI bubble. No duplicate
+provider dispatch of that exact input was found in the inspected log.
+
+History reconciliation is the suspected writer boundary: cumulative/native
+snapshot merging can preserve earlier repeated blocks, and the continuation
+merge appends an entire incoming segment when strict prefix/suffix matching
+fails. Exact responsible save sequence still needs a deterministic reproducer.
+No history deletion, production transcript repair or new fix is claimed here.
+
+
+### Duplicate snapshot merge and suppressed-child retry — reproduced
+
+A private replay of the affected production history established the snapshot
+writer failure: with the saved prefix containing the reported message once,
+merging a 114-message source snapshot using the old reversed ordering produced
+two copies; merging the subsequent 126-message source produced three. Keeping
+canonical saved history as the base retained one copy through the 114/126/132
+snapshot sequence. The runtime source snapshots themselves each contained the
+message once. A sanitized regression covers the same long-history/short-snapshot
+shape without committing user conversation data.
+
+A separate real-notification defect was identified: retry sweeping requeued
+completed children marked suppress_auto_notification, even after producer-side
+suppression. Production trace contains full-run, suppressed verify-and-repair
+child, then Basic PR review completion prompts. The child caused an extra
+actual model turn; it is distinct from persisted duplicate blocks.
+
+The correction is deployed and its focused regression tests pass. Existing
+corrupt history has not been deleted or automatically deduplicated, because
+text-only deletion would also remove legitimate repeated turns.
+
+
+Duplicate follow-up locally verified: both snapshot writers now preserve canonical
+order and full tool content identity. Regression tests cover repeated saves,
+retained tails, opaque metadata and distinct numeric tool payloads. Suppression
+is enforced by retry, delay, batch, steer and atomic claim paths. Focused combined
+snapshot/native/journal/notification Go tests pass. Existing duplicated rows are
+preserved pending a separate verified repair; distinct enclosing run and step
+notifications remain separate under current policy.
+
+The Recent/Schedules/Bots/Webhooks filter header now uses panel-width container
+queries: labels disappear at 560px and counts at 320px, with icon tooltips and
+accessible button names retained. Chrome computed-style checks at 700/530/300px,
+five existing filter tests and TypeScript passed.
+
+
+2026-09-17 report/human-decision 409 follow-up: production recorded a successful
+/api/query delivery at 08:05:04 UTC, immediately followed by a conflicting
+/live-input attempt for the same session. The durable receipt confirms the
+Strategic Review question was delivered; its original project was empty while
+the live-input path resolved Workflow/rtslatency. The server correctly rejected
+the second use of the same submission ID with different project metadata.
+
+The ChatInput live queue effect bypassed the shared queue controller: when the
+idle worker started streaming before its response settled, the effect could
+remove and resubmit the same still-pending message. It now uses
+sendQueuedChatMessage, sharing the worker's lock and durable receipt, retaining
+entries until acceptance, respecting queue errors, and delivering separate human
+actions separately. Both human-decision questions and generated report buttons
+use sendWorkflowMessageToChat; neither entry point is removed or disabled.
+
+Validation: 43 tests passed across queue ownership, human-decision context,
+shared report dispatch, dashboard request IDs and live routing; TypeScript
+passed. Added race cases for both entry points and preservation of later actions.
+Live authenticated acceptance still needs the user's test.
+
+The preceding duplicate-history/responsive release is now live on RTS as
+4ad83b2-20260917080551 (includes b90b02639). Agent, workspace and gateway services
+are active and local API health is healthy. Existing duplicate history remains
+preserved; the fixes prevent the identified new duplicates.
+
+
+Report queue follow-up deployed to RTS as eb93a59-20260917081444 at
+2026-09-17 08:19 UTC. The current release symlink was verified, all three user
+services (agent/workspace/gateway) are active, and the public /api/health is
+healthy. The additional report-frame/bootstrap/decision-refresh checks passed
+(13 tests), for 56 focused frontend tests overall; production frontend build,
+release assets and bundle budget passed. Existing non-blocking Go lint warnings
+remain; the unrelated Landlock deployment smoke skipped because its configured
+GOG_HOME could not be created. No authenticated production actions were replayed.
+User acceptance remains pending after a browser refresh: one decision question
+and one generated report chat action during an active turn should each deliver
+once to the intended interactive conversation with context intact.
+
+### Work chat rename before first transcript
+
+RTS reproduced a timing gap for a newly created Work tab. The frontend had a
+valid product session ID and allowed rename immediately, while the backend
+rename endpoint required the first conversation file to already be discoverable.
+The initial request therefore returned `Session not found`; after the running
+turn saved its transcript, the same rename succeeded. Production timestamps
+show the first transcript at 08:34:55 UTC and the successful `latency` title at
+08:37:06 UTC.
+
+The backend now accepts an early rename only for the authenticated user's
+private `Chats/Work/projects/...` scope. It records the pending title in that
+project's durable chat index without fabricating a transcript. The first
+conversation save adopts the indexed title into the transcript, then replaces
+the pending index row with the completed metadata. Conversation and index locks
+keep a simultaneous first-save/rename race ordered. Workflow-scoped chats retain
+their existing author verification and do not use this fallback.
+
+Regression coverage exercises rename before the first save, adoption by the
+first transcript, completed index metadata, and a subsequent normal rename.
+Focused chat-history, snapshot and submission tests pass. The correction was
+deployed to RTS as `624d4a8-20260917085131` at 08:56 UTC. The current release
+symlink, agent/workspace/gateway services, local health and public health were
+verified. Live acceptance remains pending: create a Work chat, send its first
+message and rename the tab immediately while the turn is still running; the
+rename should succeed without waiting for the first transcript save.
+
+### Native transcript replies replayed after server restart
+
+RTS reproduced a second, separate duplicate-display failure immediately after
+the `624d4a8` deployment restarted the backend. The user's message (`ok when
+will it get pick up do you know`) was accepted once for session
+`7864f623-67fd-4929-88bd-02d8427bfe91`. When the missing native Cursor process
+was relaunched, transcript recovery published dozens of older assistant rows as
+new live events. Logs record recovered history indexes across the retained
+window at 08:57:14 UTC, followed by another recovered batch at 08:58:15 UTC.
+The same replay signature occurred after the earlier 08:26 restart, so the
+rename change did not introduce it; deployment exposed an existing recovery
+defect.
+
+The restart repair gate checked the durable conversation against only the
+in-memory EventStore. That store is empty after process restart, even though
+the conversation file already contains the UI events the browser restores.
+Consequently every recent saved assistant reply appeared absent and was
+republished. Recovery now combines live and durable UI visibility counts,
+taking the larger count so the same event present in both sources is not
+double-counted. A native reply absent from both sources is still published.
+
+Regression coverage clears the live store to simulate a restart and verifies
+that a reply in the durable UI trace is not replayed. A companion case verifies
+that one genuinely missing newer native reply is still recovered while an
+older durable reply is skipped. Existing restart repair behavior for records
+without any durable UI trace remains covered.
+
+The correction shipped in `e03b1baba` and was deployed to RTS as
+`e03b1ba-20260917090545` at 09:12 UTC. The release symlink, agent/workspace/
+gateway services and public health endpoint were verified. The deployment
+restart restored the affected session's SSE subscription without any
+`Published recovered native assistant reply` entries afterward. For comparison,
+the prior release logged another ten-row replay for a separate Work session at
+09:08:05 UTC, confirming this was a shared recovery-path defect rather than a
+single corrupted tab.
+
+### Stale retained session routed a new message to live input after deployment
+
+RTS reproduced a related send failure after the 09:50 UTC deployment. The
+browser retained session `product-a159a050-a710-49f6-837d-ba149cb1a2e1` in its
+active-session cache after the server process had stopped it. UI-control polling
+then returned `409 session_not_active` every three seconds, but the composer
+still classified the next message as retained live input. At 09:51:35 UTC it
+posted to `/live-input`, whose pre-delivery ownership check returned the exact
+`404 Session not found` response. The message never reached the durable
+submission journal or a provider.
+
+The client now treats only that exact pre-delivery 404 as proof that retry is
+safe. It removes the stale session from the active cache, removes the temporary
+optimistic row, and submits the same message and submission receipt through the
+normal turn endpoint. Other 404 and 409 responses remain non-retriable because
+they may follow durable acceptance or uncertain provider delivery.
+
+The same release moved project-memory behavior into the shared AgentWorks prompt
+assembly. Every project product and workflow now uses one visible project-root
+`MEMORY.md` across chats, schedules, bots, webhook-triggered tasks, background
+work, and delegated project agents. Claude's provider-private auto-memory is
+disabled at the shared root/delegated launch boundary. The affected Work project
+now has a visible root `MEMORY.md`; the previous hidden provider files were left
+untouched as backup.
+
+Focused live-input routing tests (22), TypeScript, shared prompt tests, Crew
+profile tests, and the relevant server tests passed. The changes shipped in
+`be77ed4d3` and were deployed to RTS as `be77ed4-20260917095842` at 10:04 UTC.
+The release symlink, agent/workspace/gateway services, visible memory-file
+ownership, and public health endpoint were verified.
+
+The provider-specific half of the one-memory rule shipped next in
+`75afbf985`. The shared prompt now explicitly forbids Claude auto-memory,
+Cursor Memories/rules and Codex `AGENTS.md` as alternate persistence stores;
+all three coding providers are directed to the same project-root `MEMORY.md`.
+RTS release `75afbf9-20260917100931` completed at 10:15 UTC with release assets,
+services and public health verified.
+
+### Profile refresh truncated resumed context and replayed old replies
+
+The memory rollout exposed a more fundamental provider-reconnect defect in Work
+session `product-a159a050-a710-49f6-837d-ba149cb1a2e1`. Its durable transcript
+was intact. At 10:08:20 UTC the Work profile fingerprint changed, so the server
+correctly rejected the old Claude session and seeded a replacement with the
+bounded recent tail (40 of 119 UI-history messages). The replacement was then
+saved under the current fingerprint. On the following turn at 10:09:18 UTC,
+the resume gate trusted that replacement as complete and skipped all durable
+history, so Claude claimed the chat only concerned the recent memory exchange.
+
+The bounded tail was also confused with new output at two persistence layers.
+The normal save appended the 40 replayed messages back to the canonical record,
+growing it from 119 to 170 messages. Native transcript recovery then aligned on
+the first matching repeated text, treated many replayed assistant rows as new,
+and published dozens of old replies into the open chat at 10:09:08 UTC. This is
+why the earlier durable-UI visibility fix did not prevent this batch: these were
+new duplicate rows manufactured during the reconnect, not existing rows merely
+missing from the process-local EventStore.
+
+The correction treats a coding-provider replacement as an explicit continuity
+boundary across Claude, Codex, Cursor, Pi and Muse. A bounded tail now begins
+with a synthetic continuity notice that records how many earlier messages were
+omitted and points to the complete project-relative conversation archive. The
+provider can read that archive before answering whole-chat or older-context
+questions. The notice and replayed tail are model context only: the save path
+removes their exact injected segment and persists only the new exchange. Native
+transcript reconciliation filters synthetic handoffs and uses longest-common-
+subsequence alignment, so repeated text and replayed tails cannot be appended
+or live-published as new replies.
+
+Focused fallback persistence, resume, native transcript, live-input, submission
+journal and queue-ownership tests pass. The full server suite has one unrelated
+environment-dependent failure in `TestBotFollowUpReachesRetainedMuseThroughQueryP0`
+because its durable submission-journal workspace is unavailable in the local
+test environment; the relevant focused suite passes.
+
+The fix shipped in `dcac66a6e` and was deployed to RTS as
+`dcac66a-20260917102738` at 10:33 UTC. Agent, workspace and gateway services,
+local health and public health were verified. The affected production
+conversation was backed up, then repaired from 230 to 140 canonical messages:
+90 rows belonging to the two verified replay blocks and the 36 recovery events
+published together at 10:09:08 UTC were removed. Its project chat index was
+updated, and the partial native handle was invalidated so the next user message
+performs one clean provider reconnect with the new continuity notice.
+
+Follow-up decision: a replacement coding-provider session now receives only the
+archive pointer and must read the complete conversation JSON before answering
+its first message. The 48-message/48-KiB tail remains solely as an emergency
+fallback when the durable archive cannot be resolved. This makes the durable
+conversation the single context source and avoids copying historical messages
+into a new provider transcript at all.
+
+The same protected archive handoff now covers an explicit coding-CLI provider
+change. Claude-to-Codex/Cursor (and other supported coding-provider switches)
+cannot reuse the old provider's native session, so the new provider receives
+the identical mandatory full-archive read instruction. The older query suffix
+that merely suggested scanning recent JSON entries remains only for non-coding
+fallbacks.
+
+The archive-read instruction is sent in the same provider user turn as the
+current user message, ahead of a visible `[USER MESSAGE]` delimiter. It is not a
+separate synthetic history row. The combined turn remains visible in durable
+history so operators and users can see when a provider reconnect required an
+archive read; the server does not silently add or later strip that instruction.
+This behavior shipped in `f68164b7a` and was deployed to RTS as
+`f68164b-20260917110335`. The release symlink, all three services, local/public
+health, and the repaired production conversation counts were verified.
+
+### Project-relative recovery paths and restart replay
+
+The first live continuity test exposed two remaining path and event-boundary
+mistakes. Product resume targets store their workspace as
+`Chats/Work/projects/<project>` while the canonical archive path includes the
+`_users/<id>/` owner prefix. The continuity prompt therefore failed to strip
+the project prefix and told a CLI already running at the project root to open
+`_users/<id>/...`; its first archive read failed before it searched for the
+correct `builder/conversation/...` path. The same split affected project
+memory: shell reads of `MEMORY.md` were project-relative, while
+`diff_patch_workspace_file("MEMORY.md")` validated that bare name against a
+docs-root-qualified folder guard and rejected the first write.
+
+Conversation archive paths now normalize both owner-prefixed and owner-relative
+workspace identities before producing a provider path. The diff tool now maps
+a relative filename into the sole guarded writable project root; it refuses to
+guess when multiple roots make the target ambiguous and never rewrites an
+already workspace-qualified path.
+
+The test also exposed a separate duplicate-display source. When native
+transcript synchronization found no canonical history change after a backend
+restart, it treated the empty in-memory EventStore as evidence that up to 50
+historical replies needed live publication. Those replies were already loaded
+from durable conversation history, so the open tab received them again. A
+no-change synchronization now publishes nothing; only messages actually added
+to canonical history during that synchronization may be emitted as recovered
+live replies.
+
+These corrections shipped in `39d5cabbb` and were deployed to RTS as
+`39d5cab-20260917141618`. The release symlink, three services, local/public
+health, persisted memory, canonical conversation counts, and zero post-restart
+historical-reply publications were verified.
+
+### Crew workspace panels disappeared after the memory profile bump
+
+The governed-memory rollout intentionally advanced Crew's backend profile from
+version 1 to version 2, but `frontend/src/products/work/workData.ts` still
+pinned version 1. RTS consequently returned 404 for
+`GET /api/agent-profiles/work?version=1`. The frontend capability helper
+translated that request failure into an empty panel set, producing “No
+workspace view is enabled for this product” even though Crew still declares
+and implements all workspace panels.
+
+The frontend now requests Crew profile version 2. Crew also treats an empty or
+temporarily unavailable remote capability set as unresolved and retains its
+local workspace-panel surface instead of disabling the entire workspace. A
+cross-tree contract test compares the frontend constant with the backend
+manifest version so a future profile bump cannot silently repeat this drift.
+
+This correction shipped in `bb0d6182d` and was force-activated on RTS as
+`bb0d618-20260917142749`. The normal drain remained occupied by a scheduled
+workflow rather than an interactive chat, so the operator explicitly chose an
+immediate swap. The active release symlink, agent/workspace/gateway services,
+release source revision, runtime configuration, local agent/workspace health,
+and public agent health were verified after activation.
+
+### Crew project schedules were saved but absent from the project view
+
+The first Crew schedule created after this release was persisted correctly in
+the project's durable `workflow.json`, but the embedded Schedules view showed
+no rows. Crew supplied the public project path (`Chats/Work/projects/...`) to
+the shared AgentWorks schedule panel while the scheduler response correctly
+used the user-scoped runtime path (`_users/<user>/Chats/Work/projects/...`).
+The shared path equality filter therefore rejected the project's own schedule.
+
+Crew now supplies the stable project ID as the schedule scope, and the shared
+schedule matcher checks that identity before falling back to preset or path
+matching. This follows the AgentWorks identity-based model and keeps schedules
+isolated correctly when multiple users or projects have similar paths.
+
+Crew already shared AgentWorks' acknowledged workspace-view tool family and
+implemented project-scoped webhook triggers, including authenticated delivery,
+one-time secrets, idempotency, and the combined Schedules/Webhooks panel. One
+presentation gap remained: Crew's UI-control contract advertised the Schedules
+shell without its `schedules` and `webhooks` section targets, and the Crew
+adapter discarded a supplied target. The contract and adapter now preserve the
+section target, so Crew can open the Webhooks section after creating or
+discussing a project trigger and wait for the browser acknowledgment just as
+AgentWorks does.

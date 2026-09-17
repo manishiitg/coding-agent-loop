@@ -12,6 +12,7 @@ export function defaultSchedulePanelView(isWorkflowScoped: boolean): SchedulePan
 }
 
 export type WorkflowScope = {
+  workflowId?: string | null
   presetQueryId?: string | null
   workspacePath?: string | null
   label?: string | null
@@ -291,6 +292,10 @@ export function jobMatchesWorkflowScope(
   presetMap: PresetMap
 ): boolean {
   if (!workflowScope) return true
+
+  if (workflowScope.workflowId && job.workflow_id === workflowScope.workflowId) {
+    return true
+  }
 
   if (workflowScope.presetQueryId && job.preset_query_id === workflowScope.presetQueryId) {
     return true

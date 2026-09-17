@@ -1,11 +1,18 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"github.com/gorilla/mux"
+	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"sync"
 	"testing"
 )
@@ -188,5 +195,69 @@ func TestChatSubmissionInheritedTokenCannotAuthorizeAnotherConversation(t *testi
 	rejected := httptest.NewRecorder()
 	if _, _, _, ok := api.beginChatSubmission(rejected, nested, "other", "p", "hello"); ok || rejected.Code != 409 {
 		t.Fatal("inherited token bypassed another conversation's durable acceptance")
+	}
+}
+
+func TestChatSubmissionLiveInputDiscoversSavedWorkflowAfterRestart(t *testing.T) {
+	t.Chdir(t.TempDir())
+	const owner, session, project = "alice", "cold-builder-chat", "Workflow/cold-workflow"
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	path := project + "/builder/conversation/users/alice/2026-09-17/session-" + session + "-conversation.json"
+	// Legacy CLI runtime omitted workspace_path. The workflow path is durable
+	// evidence after both process-local project maps have disappeared.
+	raw := `{"session_id":"cold-builder-chat","user_id":"alice","agent_mode":"workflow","runtime":{"provider":"claude-code","external_session_id":"native-chat"},"conversation_history":[{"Role":"human","Parts":[{"Text":"old message"}]}]}`
+	full := filepath.Join(root, filepath.FromSlash(path))
+	if err := os.MkdirAll(filepath.Dir(full), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(full, []byte(raw), 0600); err != nil {
+		t.Fatal(err)
+	}
+	workspace := &mockWorkspaceAPI{files: map[string]string{path: raw}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	events := internalevents.NewEventStore(10)
+	defer events.Stop()
+	events.SetSessionOwner(session, owner)
+	api := &StreamingAPI{eventStore: events, runningAgents: map[string]*mcpagent.Agent{session: testCodingAgent(llm.ProviderOpenAI, "gpt-5")}, agentCancelFuncs: map[string]context.CancelFunc{session: func() {}}}
+	r := httptest.NewRequest(http.MethodPost, "/api/sessions/"+session+"/live-input", bytes.NewBufferString(`{"message":"follow up after restart"}`))
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: owner}))
+	r = mux.SetURLVars(r, map[string]string{"session_id": session})
+	r.Header.Set("Idempotency-Key", "cold-real-workflow")
+	result := httptest.NewRecorder()
+	api.handleLiveInputMessage(result, r)
+	if result.Code != http.StatusOK {
+		t.Fatalf("legitimate retained chat rejected after restart: %d %s", result.Code, result.Body.String())
+	}
+	if api.sessionWorkspaceFolders[session] != project {
+		t.Fatalf("durable project was not restored: %v", api.sessionWorkspaceFolders)
+	}
+	journalPath := filepath.ToSlash(filepath.Join(chatHistoryRoot(owner), "submissions", submissionDigest("cold-real-workflow")+".json"))
+	var receipt chatSubmissionRecord
+	if err := json.Unmarshal([]byte(workspace.files[journalPath]), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Owner != owner || receipt.Session != session || receipt.Project != project {
+		t.Fatalf("wrong durable acceptance identity: %+v", receipt)
+	}
+	if _, err := durableSubmissionProject("bob", session); err == nil {
+		t.Fatal("another user discovered alice's chat as their own")
+	}
+}
+
+func TestChatSubmissionDiscoversWorkflowThroughWorkspaceAPI(t *testing.T) {
+	t.Chdir(t.TempDir())
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	const project = "Workflow/remote-cold-project"
+	path := project + "/builder/conversation/2026-09-17/session-remote-saved-conversation.json"
+	workspace := &mockWorkspaceAPI{files: map[string]string{path: `{"session_id":"remote-saved","user_id":"alice","runtime":{"provider":"codex-cli"}}`}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	got, err := durableSubmissionProject("alice", "remote-saved")
+	if err != nil || got != project {
+		t.Fatalf("remote durable discovery = %q, %v", got, err)
 	}
 }

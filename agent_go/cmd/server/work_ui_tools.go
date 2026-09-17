@@ -15,7 +15,7 @@ var workUIControlContract = uiContract{
 		{ID: "database", Label: "Database", Actions: []string{"open"}},
 		{ID: "browser", Label: "Browser", Actions: []string{"open"}},
 		{ID: "costs", Label: "Costs and usage", Actions: []string{"open"}},
-		{ID: "schedules", Label: "Schedules", Actions: []string{"open"}},
+		{ID: "schedules", Label: "Schedules", TargetKind: "view_section", Actions: []string{"open"}, Targets: []string{"schedules", "webhooks"}},
 		{ID: "files", Label: "Files", Actions: []string{"open"}},
 		{ID: "skills", Label: "Skills", Actions: []string{"open"}},
 		{ID: "secrets", Label: "Secrets", Actions: []string{"open"}},
@@ -51,7 +51,8 @@ func (api *StreamingAPI) registerOpenWorkWorkspaceViewTool(registrar definitionT
 	params := map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"view": map[string]interface{}{"type": "string", "enum": uiContractViewIDs(workUIControlContract)},
+			"view":   map[string]interface{}{"type": "string", "enum": uiContractViewIDs(workUIControlContract)},
+			"target": map[string]interface{}{"type": "string", "enum": []string{"schedules", "webhooks"}, "description": "Optional section when view is schedules."},
 		},
 		"required":             []string{"view"},
 		"additionalProperties": false,
@@ -62,7 +63,8 @@ func (api *StreamingAPI) registerOpenWorkWorkspaceViewTool(registrar definitionT
 			return uiError(fmt.Errorf("inactive_scope")), nil
 		}
 		view, _ := args["view"].(string)
-		return api.performUIActionForContract(ctx, session, workspace, workUIControlContract, map[string]interface{}{"view": strings.ToLower(strings.TrimSpace(view)), "action": "open"})
+		target, _ := args["target"].(string)
+		return api.performUIActionForContract(ctx, session, workspace, workUIControlContract, map[string]interface{}{"view": strings.ToLower(strings.TrimSpace(view)), "action": "open", "target": strings.ToLower(strings.TrimSpace(target))})
 	}, "product_ui"); err != nil {
 		return err
 	}

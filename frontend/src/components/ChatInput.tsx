@@ -1830,40 +1830,28 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // is false for those providers.
   //
   // Auto-notifications are left queued on purpose; they wait for idle.
-  const liveDeliveryInFlightRef = useRef(false)
   useEffect(() => {
-    if (liveDeliveryInFlightRef.current) return
+    if (!activeTabId || tabConfig?.isQueueProcessing || tabConfig?.queueError) return
+    if (!isChatIdentityCurrent(composerIdentityRef.current) ||
+        useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
     const { human } = splitQueuedMessages(queuedMessages, AUTO_NOTIFICATION_PREFIX)
     if (human.length === 0) return
 
     const route = routeForQueuedMessage({
       isStreaming,
       hasSession: Boolean(tabSessionId),
-      // This is capability-derived and false for structured workflow steps.
-      // Interactive Claude, Codex, Cursor, Pi, and future coding CLIs all use
-      // the same backend-owned native live-input route.
       canUseLiveQuery: routeLiveInputToCLI,
       canSteer,
     })
     if (route === 'wait') return
-
-    liveDeliveryInFlightRef.current = true
-    try {
-      if (route === 'steer') {
-        // One at a time: handleSteerQueuedMessage reports per-message delivery
-        // status and removes the message itself. The effect re-runs for the next.
-        const index = queuedMessages.findIndex(message => message === human[0])
-        if (index >= 0) void handleSteerQueuedMessage(index, human[0])
-        return
-      }
-      // live-query: same single-entry path as typing into a CLI/workflow chat.
-      const remaining = queuedMessages.filter(message => message.startsWith(AUTO_NOTIFICATION_PREFIX))
-      if (activeTabId) setTabConfig(activeTabId, { queuedMessages: remaining })
-      onSubmit(human.map(message => message.trim()).join('\n\n'), { preferLiveInput: true })
-    } finally {
-      // Released on the next tick so a single state update cannot re-enter,
-      // while a genuinely new queued message still gets picked up.
-      window.setTimeout(() => { liveDeliveryInFlightRef.current = false }, 0)
+    const index = queuedMessages.findIndex(message => message === human[0])
+    if (route === 'steer') {
+      void handleSteerQueuedMessage(index, human[0])
+    } else {
+      // Report buttons and decision questions share the idle worker's receipt
+      // and lock. Keep each queue entry until the server acknowledges it.
+      void sendQueuedChatMessage(activeTabId, index, human[0],
+        async (message, options) => (await onSubmit(message, options)) !== false)
     }
   }, [
     activeTabId,
@@ -1873,7 +1861,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     onSubmit,
     queuedMessages,
     routeLiveInputToCLI,
-    setTabConfig,
+    tabConfig?.isQueueProcessing,
+    tabConfig?.queueError,
     tabSessionId,
   ])
 

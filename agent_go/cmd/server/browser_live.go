@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/url"
 	"os"
@@ -31,17 +32,21 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 		if browser.IsUserBrowserSession(item["browser_session"]) {
 			userID := GetUserIDFromContext(r.Context())
 			expected := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(userID, "", workspace) + "--browser")
-			if userID != "" && item["browser_session"] == expected {
+			productSession := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
+			if userID != "" && (item["browser_session"] == expected || item["browser_session"] == productSession) {
 				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
 				if manifest != nil {
 					// A real Workflow/ folder: its own capabilities.browser_mode
 					// setting can disable browser access even though a session
 					// exists, so it gates visibility here too.
 					item["label"] = "Workflow browser"
-					if level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
+					if item["browser_session"] == expected && level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
 						result = append(result, item)
 					}
 				} else if !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace) {
+					// Product chats bind with BindSessionBrowserIsolation (user
+					// scope), rather than the workflow-path namespace. Accept
+					// that identity only here, never in a real workflow above.
 					// No workflow manifest at this path: a fixed-workspace
 					// product session (SparkQuill, Dominion, ...), not a
 					// Workflow/ folder -- there is no browser_mode toggle to
@@ -240,8 +245,10 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 			return
 		}
 		var message struct {
-			Type string `json:"type"`
-			Tab  string `json:"tab"`
+			Type   string `json:"type"`
+			Tab    string `json:"tab"`
+			Width  int    `json:"width"`
+			Height int    `json:"height"`
 		}
 		if json.Unmarshal(data, &message) != nil {
 			continue
@@ -273,6 +280,19 @@ func (api *StreamingAPI) handleLiveBrowserStream(w http.ResponseWriter, r *http.
 				releaseControl = nil
 			}
 			_ = send(map[string]interface{}{"type": "viewer_control", "controlling": false})
+		case "resize_viewport":
+			if releaseControl == nil || !canControl() {
+				continue
+			}
+			// Bound rendering cost and accept only real viewport dimensions.
+			if message.Width < 320 || message.Width > 1920 || message.Height < 320 || message.Height > 1920 {
+				sendError("Page dimensions must be between 320 and 1920 pixels.")
+				continue
+			}
+			_, err := browser.NewClient(workspaceURL).ExecuteCommand(ctx, append(browser.HeadlessLaunchArgsForSession(session), "--session", session, "set", "viewport", fmt.Sprint(message.Width), fmt.Sprint(message.Height), "--json"), &browser.ExecuteOptions{Timeout: 10 * time.Second})
+			if err != nil {
+				sendError("Unable to resize the browser page.")
+			}
 		case "switch_tab":
 			if releaseControl == nil || !liveBrowserTabRef.MatchString(message.Tab) {
 				continue

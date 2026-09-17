@@ -73,11 +73,22 @@ export function createLiveInputSubmissionCoordinator(): LiveInputSubmissionCoord
 
 export const liveInputSubmissionCoordinator = createLiveInputSubmissionCoordinator()
 
+// A server restart can leave the browser with a session that was active in the
+// previous process. The live-input authorization check runs before durable
+// acceptance, so this exact response proves that nothing was delivered and it
+// is safe to retry the same submission through the normal turn endpoint.
+export function isDefinitelyMissingLiveSession(error: unknown): boolean {
+  const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
+  if (response?.status !== 404 || typeof response.data !== 'string') return false
+  return response.data.trim().toLowerCase() === 'session not found'
+}
+
 export interface RetainedLiveInputDecision {
   requested: boolean
   fullTurnStreaming: boolean
   turnIsStreaming: boolean
   hasSession: boolean
+  sessionKnownToServer: boolean
   hasOneShotContext: boolean
 }
 
@@ -90,9 +101,10 @@ export function shouldUseRetainedLiveInput({
   fullTurnStreaming,
   turnIsStreaming,
   hasSession,
+  sessionKnownToServer,
   hasOneShotContext,
 }: RetainedLiveInputDecision): boolean {
-  if (!requested || !hasSession || hasOneShotContext) return false
+  if (!requested || !hasSession || !sessionKnownToServer || hasOneShotContext) return false
   return !fullTurnStreaming || turnIsStreaming
 }
 

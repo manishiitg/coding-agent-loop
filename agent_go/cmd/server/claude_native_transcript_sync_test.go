@@ -325,8 +325,9 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 		t.Fatalf("second sync published duplicate live reply: %d events", got)
 	}
 
-	// Simulate a backend restart restoring an older UI trace: durable history is
-	// already current, but the live EventStore no longer contains the answer.
+	// Simulate a backend restart. Durable history is already current, so an
+	// empty live EventStore is not evidence that the historical reply is new.
+	// The browser restores that reply from the canonical conversation.
 	eventStore.RemoveSession(sessionID)
 	// The restored browser/session re-registers its authenticated owner.
 	eventStore.SetSessionOwner(sessionID, userID)
@@ -334,8 +335,28 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 		t.Fatalf("restart repair changed/supported = %v/%v, want false/true", changed, supported)
 	}
 	restoredEvents := eventStore.GetAllEventsRaw(sessionID)
-	if len(restoredEvents) != 1 || !storeevents.IsTranscriptMessage(restoredEvents[0]) {
-		t.Fatalf("restart repair events = %+v, want one transcript message", restoredEvents)
+	if len(restoredEvents) != 0 {
+		t.Fatalf("restart replayed canonical history as new live events: %+v", restoredEvents)
+	}
+
+	// A further restart also remains quiet.
+	var durableRecord map[string]interface{}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &durableRecord); err != nil {
+		t.Fatal(err)
+	}
+	durableRecord["ui_events"] = restoredEvents
+	durableContent, err := json.Marshal(durableRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace.files[conversationPath] = string(durableContent)
+	eventStore.RemoveSession(sessionID)
+	eventStore.SetSessionOwner(sessionID, userID)
+	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
+		t.Fatalf("durable restart changed/supported = %v/%v, want false/true", changed, supported)
+	}
+	if got := len(eventStore.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("durable reply was replayed after restart: %d events", got)
 	}
 }
 
@@ -353,9 +374,41 @@ func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsAlreadyVisibleRep
 	current := []builderConversationMessage{{Role: "human", Parts: []builderConversationPart{{Text: "tell me links"}}}}
 	refreshed := append(current, builderConversationMessage{Role: "ai", Parts: []builderConversationPart{{Text: "Here are the links."}}})
 
-	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current, refreshed)
+	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current, refreshed, nil)
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
 		t.Fatalf("already-visible reply was duplicated: %d events", got)
+	}
+}
+
+func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsDurableReplyAfterRestart(t *testing.T) {
+	store := storeevents.NewEventStore(100)
+	defer store.Stop()
+	api := &StreamingAPI{eventStore: store}
+	const sessionID = "cursor-restarted"
+
+	oldChunk := &agentevents.StreamingChunkEvent{Content: "An older reply.", Source: agentevents.StreamingChunkSourceTranscript}
+	durableUIEvents := []storeevents.Event{{
+		ID: "persisted-old-reply", Type: "streaming_chunk", SessionID: sessionID,
+		ExecutionKind: "main_agent", Data: agentevents.NewAgentEvent(oldChunk),
+	}}
+	refreshed := []builderConversationMessage{
+		{Role: "human", Parts: []builderConversationPart{{Text: "old request"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "An older reply."}}},
+		{Role: "human", Parts: []builderConversationPart{{Text: "new request"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "The newly recovered reply."}}},
+	}
+
+	published := api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, nil, refreshed, durableUIEvents)
+	if published != 1 {
+		t.Fatalf("published = %d, want only the newly recovered reply", published)
+	}
+	events := store.GetAllEventsRaw(sessionID)
+	if len(events) != 1 {
+		t.Fatalf("live events = %d, want one", len(events))
+	}
+	payload := eventPayloadMap(events[0])
+	if got, _ := payload["content"].(string); got != "The newly recovered reply." {
+		t.Fatalf("published content = %q, replayed an older durable reply", got)
 	}
 }
 
@@ -499,5 +552,45 @@ func TestMergeBuilderConversationHistoryKeepsPreNativePrefixAndRepeatedMessages(
 		if got := merged[index].Parts[0].Text; got != text {
 			t.Fatalf("merged[%d] = %q, want %q; full history: %+v", index, got, text, merged)
 		}
+	}
+}
+
+func TestMergeBuilderConversationHistoryAlignsReplayedTailWithoutDuplicates(t *testing.T) {
+	msg := func(role, text string) builderConversationMessage {
+		return builderConversationMessage{Role: role, Parts: []builderConversationPart{{Text: text}}}
+	}
+	persisted := []builderConversationMessage{
+		msg("human", "old request"),
+		msg("ai", "same status"),
+		msg("human", "middle request"),
+		msg("ai", "same status"),
+		msg("human", "latest request"),
+	}
+	native := []builderConversationMessage{
+		msg("ai", "same status"),
+		msg("human", "latest request"),
+		msg("ai", "new reply"),
+	}
+	merged := mergeBuilderConversationHistory(persisted, native)
+	want := []string{"old request", "same status", "middle request", "same status", "latest request", "new reply"}
+	if len(merged) != len(want) {
+		t.Fatalf("merged history has %d messages, want %d: %+v", len(merged), len(want), merged)
+	}
+	for i, text := range want {
+		if got := builderConversationMessageText(merged[i]); got != text {
+			t.Fatalf("merged[%d] = %q, want %q", i, got, text)
+		}
+	}
+}
+
+func TestFilterNativeContinuityMessagesRemovesSyntheticHandoffs(t *testing.T) {
+	messages := []builderConversationMessage{
+		{Role: "human", Parts: []builderConversationPart{{Text: "[AGENTWORKS CONVERSATION CONTINUITY]\ninternal\n[/AGENTWORKS CONVERSATION CONTINUITY]"}}},
+		{Role: "human", Parts: []builderConversationPart{{Text: "real user message"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "real reply"}}},
+	}
+	filtered := filterNativeContinuityMessages(messages)
+	if len(filtered) != 2 || builderConversationMessageText(filtered[0]) != "real user message" {
+		t.Fatalf("synthetic continuity handoff leaked into durable history: %+v", filtered)
 	}
 }

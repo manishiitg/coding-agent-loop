@@ -2,6 +2,12 @@
 
 ## Status
 
+2026-09-17: reproduced with a fresh isolated profile and fixed the demonstrated
+failure on SparkQuill using a managed Chrome launcher. Follow-up 7 below
+supersedes the earlier conclusion that Landlock was ruled out and that a
+corrupt family profile was the leading explanation. The original profile was
+not reset. The earlier recovery fixes remain useful, but were not sufficient.
+
 Deployed 2026-09-16 to SparkQuill's Hetzner production deployment
 (`sparkquill.agentworkshq.com`, persistent shared Chrome profile), where this
 was found and root-caused live. The original fix (clearing the lock files,
@@ -394,6 +400,116 @@ regardless of target page. Proposed next step, **not yet done**: back up
 completely fresh one. Cost: Myra's saved Veracross session state, if any
 survived today's crash cycles, would be lost — a real tradeoff, deferred
 pending a decision rather than acted on unilaterally.
+
+## Follow-up 7: separate sandbox requests exposed the actual lifetime and launch failures
+
+Re-tested on the SparkQuill host on 2026-09-17 using `agent-browser 0.38.0`,
+Chrome for Testing `153.0.8010.47`, and the deployed workspace `/api/execute`
+endpoint. Every `open`, `snapshot`, `tab list`, and `get url` was a **separate
+HTTP request**, with FolderGuard enabled. Test sessions and profiles were
+isolated from the family's real session. Later tests used a private copy of
+the affected profile, never the original.
+
+Three independently relevant failures were demonstrated:
+
+1. **The long-lived browser inherits short-lived command scratch.**
+   `Isolator.ExecuteIsolated` assigns `TMPDIR`, `TMP`, and `TEMP` to
+   `/tmp/aws-993/c-<random>`. Its cleanup deletes that directory when the
+   shell command returns. The `agent-browser` daemon survives the command
+   and retains that environment. Chrome's temporary sockets/files disappear;
+   later launches inherit a nonexistent temporary root. With launch flags
+   corrected but scratch unchanged, `open` succeeded and the very next
+   `snapshot` failed with `Failed to create socket directory` and
+   `ProcessSingleton`. Stale profile locks alone do not explain this error.
+
+2. **Chrome's zygote startup needs process-filesystem access the policy denies.**
+   Fresh-profile startup exposed the actual assertion:
+   `FATAL:sandbox/linux/services/proc_util.cc:38 ... Permission denied (13)`.
+   The launcher's `/proc/self` grant refers to the launcher PID's filesystem
+   object; it is not a dynamic grant to each descendant's own `/proc` subtree.
+   `--no-zygote` avoided this startup path. `/dev/shm` writes were also denied;
+   `--disable-dev-shm-usage` redirects that shared memory to temporary files.
+
+3. **The separate GPU process had another proc-dependent assertion.**
+   With the preceding changes, commands could all return success while
+   Chrome repeatedly restarted. Logging exposed
+   `FATAL:sandbox/policy/linux/sandbox_linux.cc:616 ... Permission denied (13)`
+   (`StopThreadAndEnsureNotCounted` in this Chrome version). Merely disabling
+   GPU acceleration/software rasterization did not eliminate it.
+   `--in-process-gpu` avoided the failing separate-process initialization.
+   This is why checking Chrome PID continuity matters in addition to exit codes.
+
+**Applied fix:** installed `deploy/rootless-linux/chrome-agentworks` next to
+the pinned Chrome binary and changed SparkQuill's environment to:
+
+```
+AGENT_BROWSER_EXECUTABLE_PATH=/srv/sparkquill/tools/chrome/current/chrome-agentworks
+```
+
+The launcher provides a private service-owned `/tmp/aw-browser-993` temporary
+root, validates its ownership/mode, and adds `--disable-dev-shm-usage`,
+`--no-zygote`, and `--in-process-gpu`. Existing headless launches already
+include `--no-sandbox`. Landlock stays enabled with the existing filesystem
+permissions; neither broad `/proc` access nor a general sandbox bypass was
+introduced. Per-command scratch cleanup remains unchanged.
+
+The agent reported idle before restarting only SparkQuill's workspace and
+agent services. Both processes were verified to have the new executable path.
+The previous environment was backed up privately on the host as
+`/srv/sparkquill/.env.before-browser-fix-20260917T072320`. The application
+release was not replaced. Rollback is to restore the previous
+`AGENT_BROWSER_EXECUTABLE_PATH` value and restart those two services when idle.
+
+**Verification:** the final test against a copy of the affected profile passed
+20 cycles / 80 separate sandbox requests across Example Domain and Wikipedia,
+with one unchanged Chrome PID throughout. Screenshot generation succeeded and
+the PNG was visually checked. A diagnostic localStorage value survived a clean
+close/reopen. A further 20-cycle test using the deployed environment (no
+per-command executable override) passed with an isolated fresh profile and
+unchanged Chrome PID, including screenshot and storage-persistence checks.
+
+`deploy/rootless-linux/verify-managed-chrome.py` makes this regression check
+repeatable. The real family's profile/login was not cleared or edited, and no
+authenticated school-site workflow was performed. These bounded tests establish
+the reproduced failure is fixed; they do not establish indefinite stability or
+prove every historical renderer crash had the same cause.
+
+The earlier "Landlock ruled out" conclusions were too strong: reusing an
+existing daemon can inherit a different launch policy, and a sequence within
+one shell call does not exercise scratch deletion between requests. Future A/B
+tests must start with a distinct daemon/profile per condition and verify
+separate calls plus process continuity.
+
+## Follow-up 8: live-view discovery was a separate defect (deployed 2026-09-17)
+
+After browser commands were working, SparkQuill's panel still showed "Not
+connected". Two independent live-view lookups were wrong:
+
+- `agent_go/cmd/server/browser_live.go` computed a workflow-path browser
+  identity for a product chat bound to its user identity. The corrected
+  discovery accepts the authenticated user's product browser only in the
+  non-workflow branch, preserving workflow capability/ownership checks.
+- `workspace/handlers/browser_live.go` searched only flat runtime directories.
+  It now searches each root's `namespaces/<namespace>/run` first, then the
+  legacy locations, for stream/recording metadata.
+
+Deployed only to SparkQuill as
+`/srv/sparkquill/releases/sparkquill-6f6e176e-live-view-20260917`, built from
+the exact prior source/dependency revisions plus the four-file patch recorded
+inside the release as `LIVE_BROWSER_HOTFIX.patch`. Only agent/workspace
+binaries were rebuilt; existing frontend and native speech libraries were
+retained/staged. The previous release remains available for rollback, and the
+Chrome launcher configuration from Follow-up 7 remains active.
+
+Verification passed: targeted discovery, authorization and metadata tests;
+real-browser WebSocket frames, tabs and mouse/keyboard input in an isolated
+integration test; and frames/tabs through the actual newly deployed workspace
+endpoint with namespaced metadata. The authenticated deployed discovery API
+also responded successfully. Services are healthy and the public site returns
+its normal login redirect. Confida was not redeployed in this operation.
+
+The code patch is also present in the local working tree; it must be included
+in the source branch before a subsequent ordinary branch-based deployment.
 
 ## Related
 

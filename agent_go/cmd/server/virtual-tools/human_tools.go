@@ -212,7 +212,7 @@ func CreateHumanTools() []llmtypes.Tool {
 		},
 	}
 	humanTools = append(humanTools, notifyUserTool)
-	humanTools = append(humanTools, createGoogleCLITool(), createSlackMessageTool())
+	humanTools = append(humanTools, createPublishPulseUpdateTool(), createGoogleCLITool(), createSlackMessageTool())
 
 	return humanTools
 }
@@ -407,12 +407,15 @@ func IsHumanToolCategory(category string) bool {
 // short-lived human-only input. It is excluded from interactive Builder chat,
 // where the agent asks the user directly in its ordinary response channel.
 // notify_user is the non-blocking outbound push (Slack/WhatsApp/Gmail).
+// publish_pulse_update is the structured Pulse outcome boundary; it records
+// review results in Activity and delegates external delivery to the same
+// notification backend.
 // get_human_input_request, list_approved_fixer_decisions, create_human_input_request,
 // answer_human_input_request, and mark_human_input_consumed implement the
 // non-blocking Pulse/report question lifecycle stored in the workflow-local
 // db/db.sqlite.
 func WorkshopHumanToolNames() []string {
-	return []string{"human_feedback", "notify_user", "send_slack_message", "google_workspace_cli", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
+	return []string{"human_feedback", "notify_user", "publish_pulse_update", "send_slack_message", "google_workspace_cli", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
 }
 
 // HumanToolNamesForWorkshopMode narrows the registered human-tool surface for
@@ -442,6 +445,7 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 	executors["human_feedback"] = handleHumanFeedback
 	executors["notify_user"] = handleNotifyUser
 	executors["send_slack_message"] = handleSlackMessage
+	executors["publish_pulse_update"] = handlePublishPulseUpdate
 	executors["google_workspace_cli"] = handleGoogleWorkspaceCLI
 
 	return executors
@@ -884,6 +888,10 @@ func notificationSummaryFromArgs(
 	if err != nil {
 		return nil, err
 	}
+	reviews, err := pulseReviewsFromArg(args["pulse_reviews"])
+	if err != nil {
+		return nil, err
+	}
 	if len(routes) > 0 && strings.TrimSpace(route) != "" {
 		return nil, fmt.Errorf("use summary_routes or legacy summary_route, not both")
 	}
@@ -893,6 +901,7 @@ func notificationSummaryFromArgs(
 		Title:    strings.TrimSpace(title),
 		Status:   status,
 		Route:    strings.TrimSpace(route),
+		Reviews:  reviews,
 		Fields:   fields,
 		Sections: sections,
 		Routes:   routes,

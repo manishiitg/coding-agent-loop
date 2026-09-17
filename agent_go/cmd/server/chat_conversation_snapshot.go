@@ -43,24 +43,9 @@ func persistRawConversationSnapshot(ctx context.Context, path, content string) e
 		if old.UserID != "" && next.UserID == "" {
 			incoming["user_id"] = old.UserID
 		}
-		merged := mergeBuilderConversationRecordHistory(incoming, next.ConversationHistory, old.ConversationHistory)
-		if original, ok := builderConversationRawHistory(previous); ok && len(original) == len(old.ConversationHistory) {
-			byKey := make(map[string][]json.RawMessage)
-			for i, message := range old.ConversationHistory {
-				key := builderConversationMessageKey(message)
-				byKey[key] = append(byKey[key], original[i])
-			}
-			for i, raw := range merged {
-				var message builderConversationMessage
-				if json.Unmarshal(raw, &message) != nil {
-					continue
-				}
-				key := builderConversationMessageKey(message)
-				if entries := byKey[key]; len(entries) > 0 {
-					merged[i] = entries[0]
-					byKey[key] = entries[1:]
-				}
-			}
+		merged, err := mergeChatConversationSnapshots(previous, incoming)
+		if err != nil {
+			return err
 		}
 		incoming["conversation_history"] = merged
 		var oldEvents, nextEvents []internalevents.Event

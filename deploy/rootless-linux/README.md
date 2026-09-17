@@ -75,3 +75,43 @@ Requirements this template assumes:
 
 Env overrides (all default from `product.env`): `HOST_IP`, `SSH_PORT`,
 `SSH_KEY_PATH`, `DEPLOY_BRANCH` (defaults to `main`).
+
+## Managed Chrome under the shell sandbox
+
+SparkQuill uses the `chrome-agentworks` launcher alongside its pinned Chrome
+for Testing binary. Install it into the same version directory as `chrome`
+and set the service environment to its stable symlink path:
+
+```
+AGENT_BROWSER_EXECUTABLE_PATH=/srv/sparkquill/tools/chrome/current/chrome-agentworks
+```
+
+The launcher uses a private, service-owned `/tmp/aw-browser-<uid>` directory
+which survives individual commands. Shell commands retain their existing
+per-command scratch cleanup. It also adds `--disable-dev-shm-usage`,
+`--no-zygote`, and `--in-process-gpu` for the existing headless `--no-sandbox`
+launch configuration. These avoid Chrome startup operations denied by the
+Landlock policy without broadening `/proc` access or disabling Landlock.
+Keeping the wrapper next to Chrome preserves the executable-directory read
+grant already derived from `AGENT_BROWSER_EXECUTABLE_PATH`.
+
+When upgrading Chrome, install this wrapper alongside the new binary before
+switching `current`. On a new host, installing Chrome and the wrapper is still
+a bootstrap step; `deploy.sh` does not download Chrome. Both `tools/` and this
+`.env` setting survive application redeploys. After changing the environment,
+wait for `/api/health` to report `drain.idle=true`, then restart the product's
+workspace and agent services. Existing browser daemons must be closed before
+they can adopt a new executable.
+
+Run the regression check as the product account on the host:
+
+```
+python3 verify-managed-chrome.py sparkquill --port 23001 --cycles 20
+```
+
+It creates an isolated profile, runs 80 separate sandboxed browser commands,
+requires the same Chrome PID throughout, checks a PNG screenshot, and verifies
+localStorage survives close/reopen. It cleans up its successful test profile
+and does not read or change a real user's login. Use this after browser upgrades;
+a sequence that merely reports successful commands can conceal browser crashes
+and automatic relaunches.

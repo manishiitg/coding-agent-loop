@@ -18,3 +18,11 @@ These are single-server-process conversation locks. Multiple simultaneously writ
 Native repair still merges by ordered role/text occurrences. It cannot establish application turn identity or prove that a provider finished an ambiguous submission. Recovery markers remain unresolved and are retried periodically and on restart rather than being falsely marked complete. Windows are bounded and unresolved markers are retained; there is no automatic marker garbage collection yet.
 
 An inability to persist a recovery marker is logged while in-process recovery still runs; completion observers cannot undo an already executed provider turn. The separate submission acceptance journal protects the earlier dispatch boundary.
+
+## Follow-up: snapshot duplication regression
+
+The first snapshot implementation incorrectly reused the native role/text merge with the incoming snapshot as its base. An older canonical tool-only row could match a newer incoming tool-only row (both projected to empty text). This moved the incoming recent human row ahead of the old canonical history and then appended its canonical copy later. Saving progressively extended snapshots duplicated prior turns.
+
+A sanitized fail-before test (`TestSnapshotRetainedTailNeverPrecedesOlderCanonicalToolTurn`) demonstrated 10 rows instead of the expected 9 on the first save. A private production-data simulation using the original canonical prefix and three captured source snapshots reproduced one target human row growing from one occurrence to two, then three under the old merge. Canonical-first merging held it at one. No production content was added to tests or the repository.
+
+Both application snapshot writers now use `mergeChatConversationSnapshots`, which retains canonical order and matches complete structured Role/Parts content rather than the lossy builder text projection; canonical top-level trace enrichment is preserved without creating a second message. It preserves tools and repeated occurrence counts, inserts canonical-only answers before new rows in the same gap, and keeps replayed snapshots idempotent. The native provider transcript merge is unchanged. This prevents further snapshot-induced duplication; it does not remove already persisted duplicate rows.

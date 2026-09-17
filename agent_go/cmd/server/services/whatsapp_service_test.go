@@ -6,8 +6,36 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/whatsappbot"
 	"go.mau.fi/whatsmeow/types"
+	"go.mau.fi/whatsmeow/types/events"
 )
+
+func TestWhatsAppDefaultProfileAcceptsMessageWithoutWorkflowSlug(t *testing.T) {
+	var got *BotIncomingMessage
+	svc := &WhatsAppService{
+		messageHandler: func(msg BotIncomingMessage) { got = &msg },
+		owner: &WhatsAppOwner{
+			UserID:              "user-1",
+			DefaultProfileID:    "sparkquill",
+			DefaultUploadFolder: "Chats/SparkQuill/inbox",
+		},
+	}
+	chat := types.JID{User: "15551234567", Server: types.DefaultUserServer}
+	event := &events.Message{Info: types.MessageInfo{
+		MessageSource: types.MessageSource{Chat: chat, Sender: chat},
+		ID:            "phone-message", Timestamp: time.Now(),
+	}}
+	svc.HandleMessage(context.Background(), &whatsappbot.Message{
+		Event: event, Chat: chat, Sender: chat, ID: event.Info.ID, Text: "How is school going?",
+	})
+	if got == nil {
+		t.Fatal("message with a configured default profile was held as unrouted")
+	}
+	if got.Text != "How is school going?" || got.PresetWorkflow != nil || got.PresetProfile != nil {
+		t.Fatalf("forwarded message = %+v, want an ordinary default-profile turn", got)
+	}
+}
 
 // PLAT (SetDeviceLabel network bootstrap): the label must persist to disk
 // through the meta-store-only path, durably (read back with a fresh

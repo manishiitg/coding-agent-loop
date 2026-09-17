@@ -30,7 +30,7 @@ Local logs: `/tmp/chat-reliability-final-tests.log`, `/tmp/chat-reliability-tsc.
 
 ## Release and architecture limits
 
-The transcript mutex protects one active backend process. Concurrent writing replicas still require storage-level compare-and-swap or a transactional conversation store. The configured AgentWorks state root must persist across replacement/deployment because it now also holds submission and recovery journals.
+The transcript mutex protects one active backend process. Concurrent writing replicas still require storage-level compare-and-swap or a transactional conversation store. The configured AgentWorks state root must persist across replacement/deployment for recovery markers; acceptance journals are stored in the durable workspace under each user’s chat_history/submissions directory.
 
 Native adapters still lack application turn IDs. Ordered text-occurrence import remains a repair heuristic; ambiguous provider execution cannot be called exactly-once. Unresolved markers are retained and periodically retried, without automatic garbage collection. These changes are incremental safeguards, not a replacement transactional conversation database.
 

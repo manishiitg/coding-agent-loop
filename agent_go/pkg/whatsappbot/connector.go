@@ -530,7 +530,11 @@ func (c *Connector) SendText(ctx context.Context, chat types.JID, text string) e
 	if a == nil {
 		return fmt.Errorf("whatsapp not paired")
 	}
-	return a.SendText(ctx, chat, c.outbound(text))
+	id, err := a.SendTextID(ctx, chat, c.outbound(text))
+	if err == nil {
+		c.rememberOutbound(id)
+	}
+	return err
 }
 
 // SendTextWithRetry retries a send a few times before giving up.
@@ -576,7 +580,11 @@ func (c *Connector) SendToAllSelf(ctx context.Context, text string) (sent int, l
 	for _, a := range c.connectedAccounts() {
 		self, err := a.SelfChat()
 		if err == nil {
-			err = a.SendText(ctx, self, c.outbound(text))
+			var id types.MessageID
+			id, err = a.SendTextID(ctx, self, c.outbound(text))
+			if err == nil {
+				c.rememberOutbound(id)
+			}
 		}
 		if err != nil {
 			lastErr = err
@@ -661,7 +669,21 @@ func (c *Connector) SendTextID(ctx context.Context, chat types.JID, text string)
 	if a == nil {
 		return "", fmt.Errorf("whatsapp not paired")
 	}
-	return a.SendTextID(ctx, chat, c.outbound(text))
+	id, err := a.SendTextID(ctx, chat, c.outbound(text))
+	if err == nil {
+		c.rememberOutbound(id)
+	}
+	return id, err
+}
+
+// rememberOutbound prevents WhatsApp's self-chat echo of a bot response from
+// being dispatched as a fresh user message. Messages typed by the user in
+// "Message yourself" are also marked from-me, so filtering every FromMe event
+// would drop legitimate input; the message ID is the reliable distinction.
+func (c *Connector) rememberOutbound(id types.MessageID) {
+	if id != "" {
+		c.seen.Seen(id)
+	}
 }
 
 // ChatName returns a display name for a chat, "" when unknown.

@@ -911,6 +911,8 @@ export interface ChannelRoute {
   profile_id?: string
   conversation_key?: string
   profile_label?: string
+  // Server-owned product workspace owner for profile routes.
+  workspace_user_id?: string
   // Explicit route grant. "owner" maps to Builder/Workshop authority; "run" is read-only/runtime.
   bot_grant?: 'owner' | 'run'
   // Compatibility mode field derived from bot_grant.

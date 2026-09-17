@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -118,6 +119,7 @@ type ChannelRoute struct {
 	ProfileID       string `json:"profile_id,omitempty"`
 	ConversationKey string `json:"conversation_key,omitempty"`
 	ProfileLabel    string `json:"profile_label,omitempty"`
+	WorkspaceUserID string `json:"workspace_user_id,omitempty"`
 	// WorkshopMode overrides the bot workflow route mode. Valid: "workshop" | "run".
 	// UI/API aliases like "build" normalize to "workshop".
 	WorkshopMode    string `json:"workshop_mode,omitempty"`
@@ -239,6 +241,7 @@ type ProfileRoute struct {
 	ConversationKey string
 	UploadFolder    string
 	Label           string
+	WorkspaceUserID string
 }
 
 // botMessageRouteKey identifies the destination a message names, so a
@@ -791,14 +794,21 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return true
 	}
 	if strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) != "" {
-		botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
-		msg.WorkspaceUserID = botUserID
+		workspaceUserID := routeWorkspaceUserID(*route, strings.TrimSpace(msg.WorkspaceUserID))
+		if workspaceUserID == "" {
+			log.Printf("[BOT_MANAGER] Profile route on %s channel=%s has no workspace owner", msg.Platform, msg.ChannelID)
+			if msg.IsMention {
+				m.sendWorkflowAccessDenied(msg.Platform, threadID, "This Slack route is missing its product owner. Ask a product owner to save the route again.")
+			}
+			return false
+		}
+		msg.WorkspaceUserID = workspaceUserID
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
 		}
 		if active != nil {
 			active.mu.Lock()
-			active.UserID = botUserID
+			active.UserID = workspaceUserID
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
 			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
@@ -809,6 +819,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 				ConversationKey: strings.TrimSpace(route.ConversationKey),
 				UploadFolder:    strings.TrimSpace(route.WorkspacePath),
 				Label:           firstNonEmptyString(strings.TrimSpace(route.ProfileLabel), strings.TrimSpace(route.ProfileID)),
+				WorkspaceUserID: workspaceUserID,
 			}
 			active.mu.Unlock()
 		}
@@ -2214,6 +2225,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 			ConversationKey: strings.TrimSpace(route.ConversationKey),
 			UploadFolder:    strings.TrimSpace(route.WorkspacePath),
 			Label:           label,
+			WorkspaceUserID: routeWorkspaceUserID(*route, strings.TrimSpace(msg.WorkspaceUserID)),
 		}
 		msg.PresetWorkflow = nil
 	}
@@ -2904,6 +2916,7 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 			route.ProfileID = strings.TrimSpace(route.ProfileID)
 			route.ConversationKey = strings.TrimSpace(route.ConversationKey)
 			route.ProfileLabel = strings.TrimSpace(route.ProfileLabel)
+			route.WorkspaceUserID = strings.TrimSpace(route.WorkspaceUserID)
 			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
 			return &route
 		}
@@ -3104,18 +3117,20 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	botMeta := active.Metadata
 	routeGrant := ""
 	if agentMode == "workflow_phase" && workspacePath != "" {
-		// Carry the session's own mode across turns. A blank mode must not
-		// escalate: buildQueryRequest starts bot traffic in Run, so defaulting
-		// a follow-up to Workshop would hand the thread full authoring
-		// authority on its second message. The server still applies the
-		// routed user's read-only pin on top of whatever is asked for here.
-		workshopMode = NormalizeBotWorkshopMode(workshopMode)
-		if workshopMode == "" {
-			if strings.TrimSpace(platform) != "" {
+		if strings.EqualFold(strings.TrimSpace(platform), "slack") {
+			// Slack route grants are authoritative and re-read below. A blank
+			// mode must not escalate: buildQueryRequest starts Slack bot traffic
+			// in Run, so defaulting a follow-up to Workshop would hand the
+			// thread authoring authority on its second message.
+			workshopMode = NormalizeBotWorkshopMode(workshopMode)
+			if workshopMode == "" {
 				workshopMode = "run"
-			} else {
-				workshopMode = "workshop"
 			}
+		} else {
+			// WhatsApp has not been moved to the route-grant model. Preserve its
+			// existing workflow-phase follow-up behavior until that migration is
+			// explicit and covered separately.
+			workshopMode = "workshop"
 		}
 	}
 	if strings.EqualFold(strings.TrimSpace(platform), "slack") {
@@ -3179,6 +3194,7 @@ func (m *BotConversationManager) turnRequestForActive(active *activeBotSession, 
 						ProfileID:       profileRoute.ProfileID,
 						ConversationKey: profileRoute.ConversationKey,
 						WorkspacePath:   profileRoute.UploadFolder,
+						WorkspaceUserID: profileRoute.WorkspaceUserID,
 						BotGrant:        routeGrant,
 					}, platform)
 				}
@@ -3309,11 +3325,26 @@ func botRouteFromActive(active *activeBotSession) *ChannelRoute {
 	if profileRoute != nil {
 		route.ProfileID = strings.TrimSpace(profileRoute.ProfileID)
 		route.ConversationKey = strings.TrimSpace(profileRoute.ConversationKey)
+		route.WorkspaceUserID = strings.TrimSpace(profileRoute.WorkspaceUserID)
 		if route.WorkspacePath == "" {
 			route.WorkspacePath = strings.TrimSpace(profileRoute.UploadFolder)
 		}
 	}
 	return route
+}
+
+func routeWorkspaceUserID(route ChannelRoute, fallback string) string {
+	if userID := strings.TrimSpace(route.WorkspaceUserID); userID != "" {
+		return userID
+	}
+	clean := strings.Trim(filepath.ToSlash(filepath.Clean(strings.TrimSpace(route.WorkspacePath))), "/")
+	if strings.HasPrefix(clean, "_users/") {
+		parts := strings.Split(clean, "/")
+		if len(parts) > 1 && strings.TrimSpace(parts[1]) != "" {
+			return strings.TrimSpace(parts[1])
+		}
+	}
+	return strings.TrimSpace(fallback)
 }
 
 // isMultiUserThread checks if a thread has multiple distinct human users.

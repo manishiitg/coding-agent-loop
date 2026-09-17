@@ -149,6 +149,7 @@ func (api *StreamingAPI) whatsappProfileRouter(ctx context.Context, userID, toke
 		ConversationKey: strings.TrimSpace(route.ConversationKey),
 		UploadFolder:    uploadFolder,
 		Label:           strings.TrimSpace(route.Label),
+		WorkspaceUserID: workspaceUserID,
 	}, nil
 }
 
@@ -178,7 +179,9 @@ func (api *StreamingAPI) botProfileTurn(ctx context.Context, userID string, msg 
 	// belongs to the configured default owner on a single-user deployment,
 	// exactly as the app's own profile chat resolves it.
 	workspaceUserID := userID
-	if msg.Platform == "whatsapp" {
+	if msg.PresetProfile != nil && strings.TrimSpace(msg.PresetProfile.WorkspaceUserID) != "" {
+		workspaceUserID = strings.TrimSpace(msg.PresetProfile.WorkspaceUserID)
+	} else if msg.Platform == "whatsapp" {
 		workspaceUserID = whatsappWorkspaceUserID(userID)
 	}
 	conversationKey := ""

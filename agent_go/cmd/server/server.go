@@ -2493,12 +2493,15 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Register bot routes
 	BotRoutes(router, api)
+	// Product/profile bot routes are shared by Slack and WhatsApp. WhatsApp
+	// has extra default-profile routing below, but Slack profile routes need
+	// this handler even when WhatsApp is disabled.
+	botManager.SetProfileTurnFunc(api.botProfileTurn)
 	if api.whatsappManager != nil {
 		WhatsAppRoutes(router, api.whatsappManager, api.whatsappDefaultProfileResolver)
 		// Unrouted WhatsApp messages on a pairing with a default product
 		// profile run in that profile's own conversation; the product's own
 		// @tokens pick one of its other profiles.
-		botManager.SetProfileTurnFunc(api.botProfileTurn)
 		api.whatsappManager.SetProfileRouter(api.whatsappProfileRouter)
 		// A voice note is transcribed on-device before it ever reaches a
 		// conversation — the chat never learns it arrived as audio at all.

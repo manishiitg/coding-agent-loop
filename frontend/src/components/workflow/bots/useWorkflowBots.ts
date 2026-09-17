@@ -86,7 +86,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [routeSaving, setRouteSaving] = useState<string | null>(null)
   const [routeError, setRouteError] = useState<string | null>(null)
   const [newSlackChannel, setNewSlackChannel] = useState('')
-  const [newSlackMode, setNewSlackMode] = useState<'run' | 'workshop'>('run')
   const [newWaSlug, setNewWaSlug] = useState('')
   const [addError, setAddError] = useState<Partial<Record<ChannelKind, string>>>({})
 
@@ -724,8 +723,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 	    for (const channel of channels) {
 	      next[channel] = {
 	        ...baseRoute,
-	        workshop_mode: target ? 'run' : newSlackMode,
-	        bot_grant: target || newSlackMode === 'run' ? 'run' : 'owner',
+	        workshop_mode: 'run',
+	        bot_grant: 'run',
 	        send_full_details: true,
 	      }
 	    }
@@ -976,7 +975,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     workflowId, readOnly,
     // navigation
     setup, setSetup, expandedChip, setExpandedChip,
-    routeSaving, routeError, newSlackChannel, setNewSlackChannel, newSlackMode, setNewSlackMode, newWaSlug, setNewWaSlug, addError, setAddError,
+    routeSaving, routeError, newSlackChannel, setNewSlackChannel, newWaSlug, setNewWaSlug, addError, setAddError,
     // slack
     slackConfig, setSlackConfig, slackOriginal, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,

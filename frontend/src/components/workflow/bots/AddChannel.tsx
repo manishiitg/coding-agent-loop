@@ -1,4 +1,4 @@
-import { ChevronRight, Loader2, MessageSquare, Phone, PlayCircle, Plus, Wrench } from 'lucide-react'
+import { ChevronRight, Loader2, MessageSquare, Phone, Plus } from 'lucide-react'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import { routeId, type ChannelKind } from './types'
 import type { WorkflowBots } from './useWorkflowBots'
@@ -9,7 +9,7 @@ import type { WorkflowBots } from './useWorkflowBots'
 type ChannelRowBots = Pick<WorkflowBots,
   | 'readOnly' | 'workflowId' | 'setSetup'
   | 'slackReady' | 'waReady' | 'slackStatusLabel' | 'waStatusLabel' | 'slackLoading' | 'slackOriginal' | 'waStatus' | 'waError'
-  | 'newSlackChannel' | 'setNewSlackChannel' | 'newSlackMode' | 'setNewSlackMode' | 'newWaSlug' | 'setNewWaSlug' | 'addSlackRoute' | 'addWaRoute'
+  | 'newSlackChannel' | 'setNewSlackChannel' | 'newWaSlug' | 'setNewWaSlug' | 'addSlackRoute' | 'addWaRoute'
   | 'routeSaving' | 'myRoutes' | 'addError' | 'setAddError'
 >
 
@@ -17,7 +17,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
   const {
     readOnly, workflowId, setSetup,
     slackReady, waReady, slackStatusLabel, waStatusLabel, slackLoading, slackOriginal, waStatus, waError,
-    newSlackChannel, setNewSlackChannel, newSlackMode, setNewSlackMode, newWaSlug, setNewWaSlug, addSlackRoute, addWaRoute,
+    newSlackChannel, setNewSlackChannel, newWaSlug, setNewWaSlug, addSlackRoute, addWaRoute,
     routeSaving, myRoutes, addError, setAddError,
   } = bots
 
@@ -73,30 +73,6 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
             title={readOnly ? READ_ONLY_TITLE : undefined}
             className="min-w-0 flex-1 px-2 py-1 text-xs bg-secondary border border-border rounded font-mono focus:outline-none focus:ring-1 focus:ring-primary disabled:opacity-50"
           />
-          {kind === 'slack' && (
-            <div className="grid h-7 grid-cols-2 rounded-md border border-border bg-muted/30 p-0.5">
-              <button
-                type="button"
-                onClick={() => setNewSlackMode('run')}
-                disabled={readOnly || !!adding}
-                className={`inline-flex min-w-[4.25rem] items-center justify-center gap-1 rounded px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${newSlackMode === 'run' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                title="Run mode"
-              >
-                <PlayCircle className="h-3.5 w-3.5" />
-                Run
-              </button>
-              <button
-                type="button"
-                onClick={() => setNewSlackMode('workshop')}
-                disabled={readOnly || !!adding}
-                className={`inline-flex min-w-[4.25rem] items-center justify-center gap-1 rounded px-2 text-xs font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${newSlackMode === 'workshop' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
-                title="Build mode"
-              >
-                <Wrench className="h-3.5 w-3.5" />
-                Build
-              </button>
-            </div>
-          )}
           <button
             type="button"
             onClick={add}

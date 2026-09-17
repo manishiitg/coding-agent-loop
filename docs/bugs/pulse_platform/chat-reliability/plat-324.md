@@ -739,3 +739,8 @@ from durable conversation history, so the open tab received them again. A
 no-change synchronization now publishes nothing; only messages actually added
 to canonical history during that synchronization may be emitted as recovered
 live replies.
+
+These corrections shipped in `39d5cabbb` and were deployed to RTS as
+`39d5cab-20260917141618`. The release symlink, three services, local/public
+health, persisted memory, canonical conversation counts, and zero post-restart
+historical-reply publications were verified.

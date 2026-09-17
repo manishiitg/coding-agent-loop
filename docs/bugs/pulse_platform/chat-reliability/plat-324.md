@@ -711,3 +711,31 @@ archive read; the server does not silently add or later strip that instruction.
 This behavior shipped in `f68164b7a` and was deployed to RTS as
 `f68164b-20260917110335`. The release symlink, all three services, local/public
 health, and the repaired production conversation counts were verified.
+
+### Project-relative recovery paths and restart replay
+
+The first live continuity test exposed two remaining path and event-boundary
+mistakes. Product resume targets store their workspace as
+`Chats/Work/projects/<project>` while the canonical archive path includes the
+`_users/<id>/` owner prefix. The continuity prompt therefore failed to strip
+the project prefix and told a CLI already running at the project root to open
+`_users/<id>/...`; its first archive read failed before it searched for the
+correct `builder/conversation/...` path. The same split affected project
+memory: shell reads of `MEMORY.md` were project-relative, while
+`diff_patch_workspace_file("MEMORY.md")` validated that bare name against a
+docs-root-qualified folder guard and rejected the first write.
+
+Conversation archive paths now normalize both owner-prefixed and owner-relative
+workspace identities before producing a provider path. The diff tool now maps
+a relative filename into the sole guarded writable project root; it refuses to
+guess when multiple roots make the target ambiguous and never rewrites an
+already workspace-qualified path.
+
+The test also exposed a separate duplicate-display source. When native
+transcript synchronization found no canonical history change after a backend
+restart, it treated the empty in-memory EventStore as evidence that up to 50
+historical replies needed live publication. Those replies were already loaded
+from durable conversation history, so the open tab received them again. A
+no-change synchronization now publishes nothing; only messages actually added
+to canonical history during that synchronization may be emitted as recovered
+live replies.

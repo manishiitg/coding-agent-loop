@@ -182,19 +182,13 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	}
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(ctx, conversationPath, string(raw), current)
 	if builderConversationHistoriesEqual(refreshed.ConversationHistory, current.ConversationHistory) && refreshed.UpdatedAt == current.UpdatedAt {
-		// A restart can restore an older UI-event trace even though the durable
-		// conversation is already complete. Repair the recent live window from
-		// that canonical history as well; otherwise refresh keeps omitting final
-		// replies that transcript catch-up persisted before the restart.
-		api.publishOwnedNativeTranscriptRecoveredAssistantMessages(
-			userID, sessionID,
-			nil,
-			recentBuilderConversationMessages(current.ConversationHistory, 50),
-			readPersistedChatHistoryUIEvents(ctx, conversationPath),
-		)
+		// No canonical history changed, so there is no newly recovered reply to
+		// publish. Replaying a recent canonical window here is unsafe after an
+		// EventStore restart: its empty in-memory counts make historical replies
+		// look new and duplicate them in both the open chat and durable UI trace.
+		// The browser restores old replies from conversation_history directly.
 		// Keep changed=false so the completion scheduler still performs its
-		// short retries. A pre-flush attempt may repair older live rows while the
-		// current provider answer has not reached the native transcript yet.
+		// short retries while the current provider answer flushes.
 		return false, true
 	}
 
@@ -317,24 +311,6 @@ func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessi
 		log.Printf("[CHAT_HISTORY] Published recovered native assistant reply to live chat session=%s history_index=%d chars=%d", sessionID, index, len(text))
 	}
 	return published
-}
-
-func recentBuilderConversationMessages(messages []builderConversationMessage, limit int) []builderConversationMessage {
-	if limit <= 0 {
-		return nil
-	}
-	start := len(messages)
-	seen := 0
-	for start > 0 && seen < limit {
-		start--
-		message := messages[start]
-		role := strings.ToLower(strings.TrimSpace(message.Role))
-		if builderConversationMessageText(message) == "" || (role != "human" && role != "user" && !builderConversationRoleIsAssistant(role)) {
-			continue
-		}
-		seen++
-	}
-	return messages[start:]
 }
 
 func builderConversationRoleIsAssistant(role string) bool {

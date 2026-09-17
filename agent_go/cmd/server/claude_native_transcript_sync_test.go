@@ -325,8 +325,9 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 		t.Fatalf("second sync published duplicate live reply: %d events", got)
 	}
 
-	// Simulate a backend restart restoring an older UI trace: durable history is
-	// already current, but the live EventStore no longer contains the answer.
+	// Simulate a backend restart. Durable history is already current, so an
+	// empty live EventStore is not evidence that the historical reply is new.
+	// The browser restores that reply from the canonical conversation.
 	eventStore.RemoveSession(sessionID)
 	// The restored browser/session re-registers its authenticated owner.
 	eventStore.SetSessionOwner(sessionID, userID)
@@ -334,12 +335,11 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 		t.Fatalf("restart repair changed/supported = %v/%v, want false/true", changed, supported)
 	}
 	restoredEvents := eventStore.GetAllEventsRaw(sessionID)
-	if len(restoredEvents) != 1 || !storeevents.IsTranscriptMessage(restoredEvents[0]) {
-		t.Fatalf("restart repair events = %+v, want one transcript message", restoredEvents)
+	if len(restoredEvents) != 0 {
+		t.Fatalf("restart replayed canonical history as new live events: %+v", restoredEvents)
 	}
 
-	// Once that reply is in the durable UI trace, another restart must not
-	// publish it again as a new live message.
+	// A further restart also remains quiet.
 	var durableRecord map[string]interface{}
 	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &durableRecord); err != nil {
 		t.Fatal(err)

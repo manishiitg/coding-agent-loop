@@ -94,6 +94,20 @@ func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
 	}
 }
 
+func TestBuildCodingAgentContinuityNoticeNormalizesUserPrefixedProjectPath(t *testing.T) {
+	got := buildCodingAgentContinuityNotice(
+		"_users/u/Chats/Work/projects/demo/builder/conversation/session.json",
+		"Chats/Work/projects/demo",
+		140,
+	)
+	if !strings.Contains(got, "at builder/conversation/session.json (relative to the project workspace)") {
+		t.Fatalf("notice path is not relative to the provider cwd: %s", got)
+	}
+	if strings.Contains(got, "_users/u/") {
+		t.Fatalf("notice retained the docs-root user prefix: %s", got)
+	}
+}
+
 func TestPrependCodingAgentContinuityNoticeUsesSameVisibleUserTurn(t *testing.T) {
 	got := prependCodingAgentContinuityNotice(
 		"when will it get picked up?",

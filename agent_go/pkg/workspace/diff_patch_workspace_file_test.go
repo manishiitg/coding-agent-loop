@@ -122,3 +122,25 @@ func TestDiffPatchWorkspaceFileValidatesInternally(t *testing.T) {
 		t.Fatalf("diff patch should be denied before making an HTTP request, got %v", err)
 	}
 }
+
+func TestResolveGuardRelativeWorkspacePathUsesSoleProjectRoot(t *testing.T) {
+	client := NewClient("http://unused", WithFolderGuard(&FolderGuardConfig{
+		Enabled:    true,
+		WritePaths: []string{"_users/alice/Chats/Work/projects/demo"},
+	}))
+	got := client.resolveGuardRelativeWorkspacePath(context.Background(), "MEMORY.md")
+	want := "_users/alice/Chats/Work/projects/demo/MEMORY.md"
+	if got != want {
+		t.Fatalf("relative project file = %q, want %q", got, want)
+	}
+}
+
+func TestResolveGuardRelativeWorkspacePathLeavesAmbiguousRootsUnchanged(t *testing.T) {
+	client := NewClient("http://unused", WithFolderGuard(&FolderGuardConfig{
+		Enabled:    true,
+		WritePaths: []string{"Workflow/one", "Workflow/two"},
+	}))
+	if got := client.resolveGuardRelativeWorkspacePath(context.Background(), "MEMORY.md"); got != "MEMORY.md" {
+		t.Fatalf("ambiguous relative project file resolved to %q", got)
+	}
+}

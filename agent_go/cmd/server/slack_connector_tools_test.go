@@ -3,6 +3,10 @@ package server
 import (
 	"context"
 	"testing"
+
+	events "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
+	"github.com/manishiitg/mcpagent/executor"
 )
 
 func TestSlackCredentialToolsRequireInteractiveMutationAdmission(t *testing.T) {
@@ -30,5 +34,54 @@ func TestSlackCredentialToolsRequireInteractiveMutationAdmission(t *testing.T) {
 				}
 			}
 		}
+	}
+}
+
+func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	server, workspace := newFakeWorkspaceServer(t)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	workspace.files["Workflow/example/workflow.json"] = `{"schema_version":1,"id":"example","label":"Example","created_by":"alice"}`
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: true, BotMode: true, AllowedChannels: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{chatStore: store, eventStore: events.NewEventStore(10)}
+	api.eventStore.SetSessionOwner("builder-alice", "alice")
+	reg := &recordingRegistrar{}
+	if err := api.registerSlackBotTools(reg, "builder-alice", "Workflow/example", "", true); err != nil {
+		t.Fatal(err)
+	}
+	tool := reg.tools["create_slack_bot_route"]
+	ctx := executor.WithSessionID(context.Background(), "builder-alice")
+	args := map[string]interface{}{"channel_id": "C0BTUQW85L1"}
+	for _, bad := range []context.Context{
+		context.Background(),
+		executor.WithSessionID(context.Background(), "unknown"),
+		context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "bob"}),
+		context.WithValue(ctx, UserContextKey, &UserClaims{UserID: "alice", Provider: "bot_route"}),
+	} {
+		if _, err := tool.exec(bad, args); err == nil {
+			t.Fatal("route tool accepted anonymous, conflicting, or bot caller")
+		}
+	}
+	if _, err := tool.exec(ctx, args); err != nil {
+		t.Fatalf("authenticated CLI owner could not create route: %v", err)
+	}
+	_, routes, err := api.slackRoutes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route, found := routes["C0BTUQW85L1"]
+	if !found || route.WorkflowID != "example" || route.BotGrant != "run" || len(route.BlockedEmails) != 0 {
+		t.Fatalf("unexpected persisted route: %+v", routes)
+	}
+	api.botExecutionSessions.Store("builder-alice", botExecutionSession{})
+	if _, err := api.slackToolOperatorContext(ctx, "builder-alice"); err == nil {
+		t.Fatal("bot-bound bridge recovered owner authority")
 	}
 }

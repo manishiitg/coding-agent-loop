@@ -129,8 +129,52 @@ func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRou
 	return err
 }
 
+// CLI bridge calls have a session bearer instead of browser JWT claims. Use
+// the shared session-owner resolver, retaining bot restrictions and live owner
+// checks rather than falling back to the installation's default user.
+func (api *StreamingAPI) slackToolOperatorContext(ctx context.Context, session string) (context.Context, error) {
+	if claims := GetUserFromContext(ctx); claims != nil && (claims.Provider == "bot_route" || claims.BotRouteGrant != "") {
+		return nil, fmt.Errorf("bot-origin sessions cannot manage Slack settings or routes")
+	}
+	if _, bot := api.botExecutionSessions.Load(session); bot {
+		return nil, fmt.Errorf("bot-origin sessions cannot manage Slack settings or routes")
+	}
+	active, _ := api.getActiveSession(session)
+	if active != nil && (active.BotPlatform != "" || strings.HasPrefix(active.TriggeredBy, "bot:")) {
+		return nil, fmt.Errorf("bot-origin sessions cannot manage Slack settings or routes")
+	}
+	userID, err := api.mcpToolUserID(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if api.eventStore != nil {
+		if owner := api.eventStore.GetSessionOwner(session); owner != "" && owner != userID {
+			return nil, fmt.Errorf("Slack tool user does not own this session")
+		}
+	}
+	claims := GetUserFromContext(ctx)
+	if claims != nil {
+		return ctx, nil
+	}
+	claims = &UserClaims{UserID: userID}
+	if record := directoryUserFor(userID, "", ""); record != nil {
+		claims.Username, claims.Email = record.Username, record.Email
+	}
+	return context.WithValue(ctx, UserContextKey, claims), nil
+}
+
 func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar, session, workspace, profile string, canMutate bool) error {
 	register := func(name, description string, properties map[string]interface{}, required []string, execute func(context.Context, map[string]interface{}) (string, error)) error {
+		if name != "get_slack_bot_settings" && name != "test_slack_bot_connection" {
+			original := execute
+			execute = func(ctx context.Context, args map[string]interface{}) (string, error) {
+				operatorCtx, err := api.slackToolOperatorContext(ctx, session)
+				if err != nil {
+					return "", err
+				}
+				return original(operatorCtx, args)
+			}
+		}
 		return registrar.RegisterCustomTool(name, description, map[string]interface{}{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, execute, "slack_bot_management")
 	}
 	if err := register("get_slack_bot_settings", "Inspect Slack connector state and routes for this workflow/project. Credentials are never returned. Read before and after any route change.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {

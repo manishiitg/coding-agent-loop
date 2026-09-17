@@ -280,6 +280,10 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"mention `MEMORY.md`",
 		`"remember this"`,
 		`"forget this"`,
+		"reverse chronological",
+		"## YYYY-MM-DD — Topic",
+		"place the newest entry first",
+		"remove the stale entry",
 	} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Crew prompt is missing %q", required)

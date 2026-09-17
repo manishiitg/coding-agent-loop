@@ -57,9 +57,10 @@ Use this saved identity as project guidance:
   materially affects the answer, mention `MEMORY.md` so the user can inspect it.
 - After work reveals stable, verified information likely to help a future task,
   save it in `MEMORY.md` without waiting for the user to repeat a request. Keep
-  the file concise and organized by topic. Record the source and verification
-  date when they matter. Reconcile newer evidence with an existing entry instead
-  of appending a conflicting duplicate.
+  the file concise and reverse chronological. Use `## YYYY-MM-DD — Topic`
+  headings and place the newest entry first. Record the source and verification
+  date when they matter. When newer evidence changes an existing memory, replace
+  or remove the stale entry instead of retaining contradictory history.
 - Use this knowledge store for every automatic memory write. Do not create or
   update a skill as a side effect of learning something; skills are managed only
   when the user explicitly asks to create, import, install, or change one.

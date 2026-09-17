@@ -1,9 +1,12 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 
@@ -170,7 +173,8 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 			return "", fmt.Errorf("Slack connector unavailable; check Setup > Bots")
 		}
 		if err := svc.TestConnection(ctx); err != nil {
-			return `{"success":false,"message":"Connection failed; check Setup > Bots"}`, nil
+			raw, marshalErr := json.Marshal(map[string]interface{}{"success": false, "message": err.Error()})
+			return string(raw), marshalErr
 		}
 		return `{"success":true}`, nil
 	}); err != nil {
@@ -178,6 +182,77 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 	}
 	if !canMutate {
 		return nil
+	}
+
+	// Reuse the UI handler so credential encryption, operator authorization,
+	// route preservation, session revocation and connector activation stay shared.
+	if err := register("configure_slack_bot", "Save shared Slack bot credentials and enable/disable the bot. Interactive operators only. Omit either token to keep it unchanged. Tokens are encrypted and never returned. Channel routes are preserved. Use test_slack_bot_connection afterward.", map[string]interface{}{
+		"enabled":   map[string]interface{}{"type": "boolean"},
+		"bot_token": map[string]interface{}{"type": "string", "description": "New Bot User OAuth Token (xoxb-); omit to preserve"},
+		"app_token": map[string]interface{}{"type": "string", "description": "New App-Level Token (xapp-); omit to preserve"},
+	}, []string{"enabled"}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		claims := GetUserFromContext(ctx)
+		operatorRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/api/slack/config", nil)
+		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" || !currentUserIsAdmin(operatorRequest) {
+			return "", fmt.Errorf("only an authenticated interactive operator may configure Slack credentials")
+		}
+		enabled, ok := args["enabled"].(bool)
+		if !ok {
+			return "", fmt.Errorf("enabled is required")
+		}
+		svc, err := ensureSlackService()
+		if err != nil {
+			return "", fmt.Errorf("Slack service unavailable")
+		}
+		current := svc.GetConfig()
+		request := SlackConfigRequest{Enabled: enabled, BotMode: enabled, BotToken: current.BotToken, AppToken: current.AppToken}
+		for key, target := range map[string]*string{"bot_token": &request.BotToken, "app_token": &request.AppToken} {
+			if raw, present := args[key]; present {
+				token, ok := raw.(string)
+				if !ok {
+					return "", fmt.Errorf("%s must be a string", key)
+				}
+				*target = strings.TrimSpace(token)
+				prefix := "xoxb-"
+				if key == "app_token" {
+					prefix = "xapp-"
+				}
+				if *target != "" && !strings.HasPrefix(*target, prefix) {
+					return "", fmt.Errorf("%s has the wrong token type", key)
+				}
+			}
+		}
+		body, err := json.Marshal(request)
+		if err != nil {
+			return "", fmt.Errorf("invalid Slack configuration")
+		}
+		r, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/slack/config", bytes.NewReader(body))
+		if err != nil {
+			return "", fmt.Errorf("invalid Slack configuration request")
+		}
+		response := httptest.NewRecorder()
+		updateSlackConfigHandler(api)(response, r)
+		if response.Code != http.StatusOK {
+			return "", fmt.Errorf("Slack configuration was not saved (HTTP %d); inspect operator permissions and Slack settings", response.Code)
+		}
+		return `{"saved":true,"credentials_redacted":true}`, nil
+	}); err != nil {
+		return err
+	}
+	if err := register("get_slack_bot_credentials", "Read masked Slack bot/app credentials and enablement. Interactive operators only; full token values are never exposed.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+		claims := GetUserFromContext(ctx)
+		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/api/slack/config", nil)
+		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" || !currentUserIsAdmin(request) {
+			return "", fmt.Errorf("only an authenticated interactive operator may inspect Slack credentials")
+		}
+		svc, err := ensureSlackService()
+		if err != nil {
+			return "", fmt.Errorf("Slack service unavailable")
+		}
+		raw, err := json.Marshal(svc.GetConfig())
+		return string(raw), err
+	}); err != nil {
+		return err
 	}
 	for _, name := range []string{"create_slack_bot_route", "update_slack_bot_route_permission", "remove_slack_bot_route"} {
 		properties := map[string]interface{}{"channel_id": map[string]interface{}{"type": "string", "description": "Exact Slack channel ID, e.g. C1234567890"}}

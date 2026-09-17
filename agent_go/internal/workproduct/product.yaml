@@ -12,7 +12,7 @@ prompt:
 profile:
   id: work
   name: Crew
-  version: 1
+  version: 2
   # Each shared feature expands into its existing tools, skills, prompt
   # extension, runtime capabilities and UI panels. This is the source of truth;
   # the compatibility fields returned by the profile API are derived from it.

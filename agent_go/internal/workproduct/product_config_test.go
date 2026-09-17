@@ -242,8 +242,8 @@ func TestBuiltinAgentProfilesReturnsExactlyOneVersion(t *testing.T) {
 	if len(profiles) != 1 {
 		t.Fatalf("expected exactly one built-in profile, got %d", len(profiles))
 	}
-	if profiles[0].Version != 1 {
-		t.Fatalf("expected version 1, got %d", profiles[0].Version)
+	if profiles[0].Version != 2 {
+		t.Fatalf("expected version 2, got %d", profiles[0].Version)
 	}
 }
 

@@ -83,6 +83,16 @@ func TestCheckRuntimeFlagsExplicitNonCompletion(t *testing.T) {
 	}
 }
 
+func TestCheckRuntimeTreatsLegacyCompletedWithPersistenceErrorAsSuccess(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	writeRuntimeFixture(t, filepath.Join(root, "Workflow", "demo", "runs", "iteration-1", "default", "run_metadata.json"), `{"status":"completed_with_persistence_error"}`)
+	got := CheckRuntime("Workflow/demo", time.Now())
+	if len(got.Findings) != 0 {
+		t.Fatalf("legacy successful-with-warning status produced findings: %+v", got.Findings)
+	}
+}
+
 func TestCheckRuntimeDoesNotTreatMissingRunsAsClean(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)

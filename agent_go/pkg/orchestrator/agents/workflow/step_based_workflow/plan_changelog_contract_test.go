@@ -10,6 +10,7 @@ func TestCompletePlanChangelogEntryTypesEvaluationAndLearningMutations(t *testin
 		tool, target, dependency string
 	}{
 		{"update_evaluation_plan", "evaluation/evaluation_plan.json", "evaluation_contract"},
+		{"add_evaluation_step", "evaluation/evaluation_plan.json", "evaluation_contract"},
 		{"runtime_learning_update", "learnings/_global", "runtime_guidance"},
 	} {
 		entry := PlanChangelogEntry{

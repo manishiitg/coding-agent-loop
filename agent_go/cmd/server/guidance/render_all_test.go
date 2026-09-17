@@ -183,15 +183,12 @@ func TestGoalAdvisorAliasUsesCanonicalStrategyReview(t *testing.T) {
 func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testing.T) {
 	tests := map[string][]string{
 		"ops-review": {
-			"STANDALONE TECHNICAL REVIEW — OPERATIONS FOCUS",
-			"must not edit files or config",
-			"Container necessity",
-			"owned children as one execution unit",
-			"fully prescribed child set and order",
-			"not automatically waste",
-			"material goal criterion is below target",
-			"Missing evidence means keep the tier",
-			"before `/engineering-review` can apply them",
+			"STANDALONE TECHNICAL REVIEW — CORRECTNESS FOCUS",
+			"does the current approved design",
+			"Do not call",
+			"edit files or configuration",
+			"structural improvements to Architecture",
+			"A no-issue conclusion is valid",
 		},
 		"strategy-auditor": {
 			"STANDALONE STRATEGY AUDITOR",
@@ -210,7 +207,8 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 			"continuing Workflow Builder conversation",
 			`"name":"workflow-commands","path":"references/ops-review.md"`,
 			"Standalone Operations Review",
-			"record_pulse_module_due",
+			"manual=true",
+			"note_only=true",
 			"Do not call\n   `record_pulse_worklist`",
 			"Own the review yourself",
 			"link it to an existing issue, promote it with evidence, or reject it",
@@ -265,12 +263,11 @@ func TestStandaloneOpsReviewRunsDirectlyAndRequiresTerminalModuleResult(t *testi
 		`human_input_id`,
 		"Never emit `decision_required` without this question",
 		"record_pulse_result",
-		"module=technical_review",
-		"Execution-health diagnosis",
-		"repeated context reconstruction",
-		"ops-decision-execution-efficiency-",
+		`module="technical_review"`,
+		"required-output impact",
+		"normal execution noise",
 	} {
-		if !strings.Contains(prompt, want) {
+		if !containsNormalizedText(prompt, want) {
 			t.Errorf("standalone ops-review missing direct typed-completion contract %q", want)
 		}
 	}
@@ -382,10 +379,6 @@ func TestEvaluationPlanGuidanceAnchorsSubjectiveRatingScales(t *testing.T) {
 
 func TestPulseCostGuidanceReconcilesRawLedgersWithoutDoubleCounting(t *testing.T) {
 	postRun := readPulseDesignSpec(t)
-	opsReview, err := renderFromRegistry("ops-review", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render ops-review: %v", err)
-	}
 
 	for _, want := range []string{
 		"execution_id",
@@ -404,25 +397,6 @@ func TestPulseCostGuidanceReconcilesRawLedgersWithoutDoubleCounting(t *testing.T
 	} {
 		if !strings.Contains(postRun, want) {
 			t.Fatalf("post-run-monitor cost reconciliation guidance missing %q", want)
-		}
-	}
-	for _, want := range []string{
-		"execution_id",
-		"evaluation_id",
-		"archived_run_folder",
-		"legacy fallback",
-		"group_folder",
-		"run_folder",
-		"by_model",
-		"by_step_and_model",
-		"never add",
-		"unattributed/orchestrator",
-		"workflow_orchestrator",
-		"missing buckets",
-		"unpriced calls",
-	} {
-		if !strings.Contains(opsReview, want) {
-			t.Fatalf("ops-review cost reconciliation guidance missing %q", want)
 		}
 	}
 }
@@ -872,21 +846,10 @@ func TestLLMOpsGuidanceReviewsExactPinsWithoutSilentUpgrade(t *testing.T) {
 			"Never silently replace an exact pin",
 			"Upgrade, Keep current, or Decide later",
 		},
-		"ops-review": {
-			"Inventory exact model",
-			"list_provider_models",
-			"default_tier_models",
-			"Provider-profile defaults update automatically",
-			"user approval required",
-		},
 	}
 
 	for kind, wants := range cases {
-		registry := referenceKinds
-		if kind == "ops-review" {
-			registry = allKinds
-		}
-		rendered, err := renderFromRegistry(kind, tmplData{}, registry)
+		rendered, err := renderFromRegistry(kind, tmplData{}, referenceKinds)
 		if err != nil {
 			t.Fatalf("render %s: %v", kind, err)
 		}
@@ -941,7 +904,7 @@ func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
 	for _, want := range []string{
 		`same main-agent conversation`,
 		`cheapest sufficient approach`,
-		`at most the two due perspectives`,
+		`handles due modules in canonical order`,
 		`owns review selection`,
 		`terminal module receipts`,
 		`later Dashboard stage`,
@@ -1096,6 +1059,24 @@ func TestReviewArtifactDriftSharesPlanDriftReviewMechanismAndStaysReadOnlyElsewh
 	}
 }
 
+func TestPlanDriftReviewClosesDependencyReceiptsInSamePass(t *testing.T) {
+	rendered, err := renderFromRegistry("plan-drift-review", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatalf("render plan-drift-review: %v", err)
+	}
+	for _, want := range []string{
+		"Close the exact plan-change dependency receipts",
+		"mark_changelog_artifact_reviewed",
+		"all six",
+		"receipt-only Technical pass",
+		"Do not mark a newer",
+	} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("plan-drift-review missing %q:\n%s", want, rendered)
+		}
+	}
+}
+
 // review-code is gone (see the removal note above TestReviewImproveLogMigrationIsExtracted's
 // former location); "builder/improve.html" is gone from every remaining
 // specialist's own handoff text too, confirmed by rendering each one, since
@@ -1154,9 +1135,9 @@ func TestStandalonePulseReviewCommandsUsePersistedReviewerPipeline(t *testing.T)
 		}
 		if kind == "ops-review" {
 			wants = []string{
-				"do the review directly in this agent",
-				"typed Pulse finding, verification",
-				`module=technical_review`,
+				"Do the review directly in this agent",
+				"typed Pulse findings, verification guidance",
+				`module="technical_review"`,
 				"record_pulse_result",
 			}
 		} else if kind == "strategy-auditor" {
@@ -1168,7 +1149,7 @@ func TestStandalonePulseReviewCommandsUsePersistedReviewerPipeline(t *testing.T)
 			}
 		}
 		for _, want := range wants {
-			if !strings.Contains(rendered, want) {
+			if !containsNormalizedText(rendered, want) {
 				t.Fatalf("%s missing persisted standalone-review contract %q", kind, want)
 			}
 		}
@@ -1681,6 +1662,40 @@ func TestArchitectureOwnsMeasuredTierChanges(t *testing.T) {
 			if strings.Contains(strings.ToLower(text), retired) {
 				t.Fatalf("%s still instructs automatic tier promotion: %s", kind, retired)
 			}
+		}
+	}
+}
+
+func TestPulseResearchReviewsUseDifferentHorizonsAndStrategyDoesNotLoopOnSymptoms(t *testing.T) {
+	gate, err := renderFromRegistry("pulse-gate", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Architecture normally uses the longest review horizon",
+		"Strategic Review uses the shorter research horizon",
+		"place Architecture later than Strategy",
+		`"booking-heavy"`,
+		"perfect-execution counterfactual",
+	} {
+		if !containsNormalizedText(gate, want) {
+			t.Fatalf("pulse gate missing review-horizon contract %q", want)
+		}
+	}
+
+	strategy, err := renderFromRegistry("strategy-auditor", tmplData{}, referenceKinds)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Stay on strategy, not recurring execution symptoms",
+		"Technical findings are constraints and handoff context",
+		`such as "booking-heavy"`,
+		"assume the symptom is fixed",
+		"A technical handoff alone is not a Strategic Review result",
+	} {
+		if !containsNormalizedText(strategy, want) {
+			t.Fatalf("strategy reviewer missing symptom-loop guard %q", want)
 		}
 	}
 }

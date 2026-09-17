@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented protected per-module scheduling; live acceptance pending` |
-| Last synchronized | `2026-09-10` |
+| Ticket state | `implemented protected asymmetric per-module scheduling; live acceptance pending` |
+| Last synchronized | `2026-09-17` |
 
 ## Problem and evidence
 
@@ -84,3 +84,22 @@ and limits are in [PLAT-305](plat-305.md). Production workflow acceptance remain
 The stale guidance tests noted above were corrected against their current
 canonical references/normalized text during this change; no named test exclusion
 is needed for the final affected-package run.
+
+## 2026-09-17 cadence follow-through
+
+Independent boundaries are now intentionally asymmetric. Architecture uses the
+longest review horizon and normally waits for several comparable producing runs
+unless a material design change, repeated structural signal, or reached proposal
+checkpoint makes it useful sooner. Strategic Review uses the shorter research
+horizon and is reconsidered at the next meaningful goal/outcome, feedback,
+experiment, decision, or measurement checkpoint. It is still skipped when no
+strategic evidence changed; "shorter" does not mean every Pulse tick.
+
+When both need a new boundary and no domain-specific date is stronger, Gate is
+instructed to place Architecture later than Strategy and never copy the same
+date/cooldown mechanically onto both. Existing protected dates remain durable
+across Gate skips. Plan Drift remains an exclusive prerequisite cycle and does
+not erase either later research boundary.
+
+The guidance regression suite passes locally. Deployment and multi-schedule RTS
+evidence are still required before claiming the observed cadence distribution.

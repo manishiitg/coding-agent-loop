@@ -21,6 +21,7 @@ import (
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowrun"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -322,6 +323,12 @@ func readRunMetadata(ctx context.Context, metadataFilePath string) (*RunMetadata
 	var metadata RunMetadata
 	if err := json.Unmarshal([]byte(content), &metadata); err != nil {
 		return nil, nil
+	}
+	// All server-side consumers, including scheduler reconciliation and the UI,
+	// see the same workflow outcome. Legacy aliases remain readable without
+	// allowing each consumer to interpret them independently.
+	if status := workflowrun.CanonicalStatus(metadata.Status); status != "" {
+		metadata.Status = string(status)
 	}
 	if metadata.StartedAt.IsZero() {
 		metadata.StartedAt = metadata.CreatedAt
@@ -654,7 +661,8 @@ type RunMetadata struct {
 	StartedAt       time.Time                `json:"started_at,omitempty"`
 	CompletedAt     *time.Time               `json:"completed_at,omitempty"`
 	DurationMs      *int64                   `json:"duration_ms,omitempty"`
-	Status          string                   `json:"status"`                 // "running", "completed", "failed", "canceled"
+	Status          string                   `json:"status"`                 // canonical execution outcome: "running", "completed", "failed", "canceled"
+	Warnings        []string                 `json:"warnings,omitempty"`     // non-fatal conditions; never encoded as another status
 	TriggeredBy     string                   `json:"triggered_by,omitempty"` // "manual", "cron", "workflow_builder"
 	Models          *RunMetadataModels       `json:"models,omitempty"`       // LLM config used for this run
 }
@@ -1090,18 +1098,6 @@ func (api *StreamingAPI) handleGetRunFolders(w http.ResponseWriter, r *http.Requ
 			if metadata != nil {
 				_ = writeRunMetadata(r.Context(), metadataPath, metadata)
 			}
-		} else if metadata != nil && metadata.Status == "running" && progress != nil && progress.TotalSteps > 0 && len(progress.CompletedStepIndices) >= progress.TotalSteps {
-			completedAt := progress.LastUpdated
-			metadata.Status = "completed"
-			metadata.CompletedAt = &completedAt
-			startedAt := metadata.StartedAt
-			if startedAt.IsZero() {
-				startedAt = metadata.CreatedAt
-				metadata.StartedAt = startedAt
-			}
-			durationMs := completedAt.Sub(startedAt).Milliseconds()
-			metadata.DurationMs = &durationMs
-			_ = writeRunMetadata(r.Context(), metadataPath, metadata)
 		}
 
 		if metadata != nil {

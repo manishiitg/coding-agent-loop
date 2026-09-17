@@ -69,6 +69,7 @@ chat:
     # Default workflow phase tools; integration tests compare real registration.
     tools:
       - add_branch_step
+      - add_evaluation_step
       - add_group
       - add_human_input_step
       - add_mcp_server

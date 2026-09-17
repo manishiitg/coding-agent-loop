@@ -28,16 +28,12 @@ Run this full audit for scheduled Pulse or an explicit user request. Ordinary pl
 
 ## Part 1 — run plan_drift_review's real procedure now
 
-First call `record_pulse_module_due(pulse_run_id="current", module=
-"plan_drift_review", reason="manual /review-artifact-drift invocation")`.
-This manual invocation has no Gate-recorded worklist entry the way a
-scheduled Pulse pass does, and `record_pulse_result`'s own write only accepts
-a terminal result when the durable worklist already shows the module due for
-this exact conversation's run id — without this call, the repair work below
-would complete but its receipt would fail to persist, the exact
-"review completed but result failed" outcome this call exists to prevent.
+First call `record_pulse_result(pulse_run_id="current", module=
+"plan_drift_review", result="running", note_only=true, manual=true,
+reason="manual /review-artifact-drift invocation")`. This starts the manual
+review and establishes its due claim through the same tool used to complete it.
 
-If `record_pulse_module_due` refuses because a real scheduled Pulse pass is
+If that initial `record_pulse_result` refuses because a real scheduled Pulse pass is
 already mid-flight for `plan_drift_review` (a genuine, rare collision — it
 means Gate is actively running this same module right now under a different
 run), stop here: state that plainly and do not proceed into repair work whose
@@ -53,7 +49,7 @@ audit still needs its dependent-artifact fallout traced.
 
 If the array is non-empty, load
 `read_skill(skills=[{"name":"builder-reference","path":"references/plan-drift-review.md"}])`
-and follow its steps 1-6 (and its workflow-level deletion audit section, for
+and follow its steps 1-7 (and its workflow-level deletion audit section, for
 the `__workflow_drift_review__` candidate if present) exactly, for every
 candidate — applying and verifying safe workflow-owned fixes directly,
 routing only genuine human decisions or platform-owned boundaries, and

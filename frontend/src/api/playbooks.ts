@@ -16,7 +16,7 @@ type ServerPlaybook = {
   setup_inputs?: PlaybookSetupInput[]
   required_capabilities?: string[]
   recommended_tools?: PlaybookRecommendedTool[]
-  pulse_focus?: PlaybookPulseFocus[]
+  pulse_focus?: Array<PlaybookPulseFocus | (Omit<PlaybookPulseFocus, 'module'> & { module: 'technical_review' | 'architecture_review' })>
   outputs?: string[]
 }
 
@@ -42,7 +42,7 @@ const normalize = (item: ServerPlaybook): PlaybookCatalogItem => ({
   setupInputs: item.setup_inputs || [],
   requiredCapabilities: item.required_capabilities || [],
   recommendedTools: item.recommended_tools || [],
-  pulseFocus: item.pulse_focus || [],
+  pulseFocus: (item.pulse_focus || []).filter((focus): focus is PlaybookPulseFocus => focus.module === 'strategic_review'),
   outputs: item.outputs || [],
 })
 

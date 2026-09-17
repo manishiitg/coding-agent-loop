@@ -226,6 +226,7 @@ func TestBackgroundTaskGetsWorkshopMutationToolDefinitions(t *testing.T) {
 		"update_message_sequence_step",
 		"update_step_config",
 		"update_schedule",
+		"add_evaluation_step",
 		"update_evaluation_plan",
 		"run_in_background",
 	} {

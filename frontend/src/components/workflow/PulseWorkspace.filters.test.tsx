@@ -66,7 +66,6 @@ describe('Pulse workspace filter interactions', () => {
     vi.mocked(playbooksApi.list).mockResolvedValue([{
       id: 'browser-performance-validation', title: 'Browser Performance Validation', description: 'Measure journeys.', version: '0.2.1',
       category: 'Performance Engineering', order: 1, inputCount: 6, toolCount: 3, pulseFocus: [
-        { module: 'architecture_review', label: 'Performance architecture', focus_areas: ['Sampling remains comparable across routes'], review_when: ['A route or browser foundation changes'] },
         { module: 'strategic_review', label: 'Performance strategy', focus_areas: ['Budgets align with the workflow goal'], review_when: ['A customer goal or budget changes'] },
       ],
     }])
@@ -98,7 +97,6 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('clicks all nine queues and resets both category and area', async () => {
-    await click('Clear filter')
     for (const [label, expected] of [
       ['Current', 10], ['Pulse to fix', 0], ['Queued for Pulse', 2], ['Waiting for evidence', 4],
       ['Your decisions', 0], ['Ideas', 0], ['Paused', 0], ['Platform repair pending', 4], ['Resolved', 11],
@@ -120,7 +118,7 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('keeps step-reported technical issues visible and badges scoped', async () => {
-    await click('Health')
+    await click('Technical')
     expect(count('Current')).toBe(5)
     expect(count('Queued for Pulse')).toBe(2)
     expect(count('Platform repair pending')).toBe(3)
@@ -147,7 +145,7 @@ describe('Pulse workspace filter interactions', () => {
     expect(container.textContent).toContain('After ten completed growth days')
     await click('Ideas')
     shownCount(0)
-    await click('Health')
+    await click('Technical')
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
     shownCount(5)
     await click('Strategy')
@@ -159,20 +157,41 @@ describe('Pulse workspace filter interactions', () => {
     shownCount(4)
   })
 
-  it('shows installed playbook focus on architecture before a review is recorded', async () => {
-    expect(button('Architecture').textContent).toContain('Sampling remains comparable across routes')
+  it('keeps custom playbook focus on strategy and not architecture', async () => {
+    expect(button('Architecture').textContent).not.toContain('Strategic focus')
     await click('Architecture')
-    expect(container.textContent).toContain('Playbook focus areas')
-    expect(container.textContent).toContain('A route or browser foundation changes')
+    expect(container.textContent).not.toContain('Strategic playbook focus')
+    await click('Strategy')
+    expect(container.textContent).toContain('Strategic playbook focus')
+    expect(container.textContent).toContain('Budgets align with the workflow goal')
+  })
+
+  it('shows reviewer run counts and dates at the bottom', async () => {
+    vi.mocked(agentApi.getPulseReviews).mockResolvedValue({ success: true, reviews: [
+      ...['2026-09-17T03:00:00Z', '2026-09-14T03:00:00Z', '2026-09-11T03:00:00Z', '2026-09-08T03:00:00Z']
+        .map((recorded_at, index) => ({ id: index + 1, module: 'technical_review', review_run_id: `tech-${index}`, finding_count: 0, verification_count: 0, recorded_at })),
+      { id: 10, module: 'strategic_review', review_run_id: 'strategy-1', finding_count: 1, verification_count: 0, recorded_at: '2026-09-17T04:00:00Z' },
+      { id: 11, module: 'architecture_review', review_run_id: 'architecture-1', finding_count: 0, verification_count: 0, recorded_at: '2026-09-10T04:00:00Z' },
+    ] })
+    await act(async () => window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT)))
+    const history = container.querySelector('[aria-label="Review run history"]')!
+    const cards = [...history.querySelectorAll(':scope > div:last-child > div')]
+    const card = (label: string) => cards.find((item) => item.textContent?.startsWith(label))!
+    expect(card('Plan Drift').textContent).toContain('0 runs')
+    expect(card('Technical').textContent).toContain('4 runs')
+    expect(card('Technical').textContent).toContain('View all 4 run dates')
+    expect(card('Technical').textContent).toContain('2026')
+    expect(card('Architecture').textContent).toContain('1 run')
+    expect(card('Strategic').textContent).toContain('1 run')
   })
 
 
   it('opens drift content and resolved findings together when no current findings remain', async () => {
-    expect(container.querySelector('[aria-label="Health content"]')).not.toBeNull()
+    expect(container.querySelector('[aria-label="Strategy content"]')).not.toBeNull()
     await click('Drift check')
     expect(button('Drift check').getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[aria-label="Drift check content"]')?.textContent).toContain('No current drift findings.')
-    expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Strategy content"]')).toBeNull()
     expect(container.textContent).not.toContain('View drift findings')
     expect(button('Resolved').getAttribute('aria-pressed')).toBe('true')
     shownCount(3)
@@ -198,7 +217,7 @@ describe('Pulse workspace filter interactions', () => {
     await click('Resolved')
     await act(async () => render('Workflow/another'))
     expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    expect(button('Health').getAttribute('aria-pressed')).toBe('true')
-    shownCount(5)
+    expect(button('Strategy').getAttribute('aria-pressed')).toBe('true')
+    shownCount(10)
   })
 })

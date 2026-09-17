@@ -79,6 +79,31 @@ func TestHumanInTheLoopReferenceIsAttachedForWorkflowModes(t *testing.T) {
 	}
 }
 
+func TestMaterializedReviewReferencesKeepDistinctRoleQuestions(t *testing.T) {
+	reference := MaterializeReferenceSkill("workshop")
+	if reference == nil {
+		t.Fatal("workshop builder-reference skill is missing")
+	}
+	wants := map[string]string{
+		"references/plan-drift-review.md":   "approved plan rather than asking whether a different plan",
+		"references/architecture-review.md": "how to build the current approved approach better",
+		"references/technical-review.md":    "whether the current approved design executes correctly",
+		"references/strategy-auditor.md":    "whether the workflow is achieving its goal",
+	}
+	for path, want := range wants {
+		content := materializedFileContent(t, reference, path)
+		if !containsNormalizedText(content, want) {
+			t.Fatalf("%s missing role boundary %q", path, want)
+		}
+	}
+	technical := materializedFileContent(t, reference, "references/technical-review.md")
+	for _, forbidden := range []string{"Persistent model/tier optimization belongs to Technical", "General prompt, script, orchestration belong to Technical"} {
+		if strings.Contains(technical, forbidden) {
+			t.Fatalf("materialized Technical Review retains architecture ownership %q", forbidden)
+		}
+	}
+}
+
 func TestRunReferenceSurfaceExcludesWorkshopMaintenanceSkills(t *testing.T) {
 	var attached = map[string]*llmtypes.Skill{}
 	if err := AttachReferenceSurface("run", func(skill *llmtypes.Skill) error {
@@ -382,7 +407,7 @@ func TestPulseReviewFixerDocsAreNamedAndLoadable(t *testing.T) {
 	for _, want := range []string{
 		"execution_health",
 		"cadence-threatening",
-		"durable approval request",
+		"Architecture questions",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Errorf("pulse-review-fixer is missing execution-health handoff %q", want)
@@ -392,21 +417,15 @@ func TestPulseReviewFixerDocsAreNamedAndLoadable(t *testing.T) {
 
 func TestPromptContractReviewsRequireStepDescriptionRubric(t *testing.T) {
 	const rubricCall = `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
-	prompts := map[string]string{
-		"pulse-review-fixer": RenderSystemDoc("pulse-review-fixer"),
-	}
-	opsReview, err := renderKind("ops-review", tmplData{})
+	architecture, err := renderReferenceKind("architecture-review", tmplData{})
 	if err != nil {
-		t.Fatalf("render ops-review: %v", err)
+		t.Fatalf("render architecture-review: %v", err)
 	}
-	prompts["ops-review"] = opsReview
-	for kind, prompt := range prompts {
-		if !strings.Contains(prompt, rubricCall) {
-			t.Fatalf("%s does not require the canonical prompt-engineering rubric", kind)
-		}
-		if !strings.Contains(prompt, "short") || !strings.Contains(prompt, "semantic") {
-			t.Fatalf("%s does not distinguish semantic quality from size-only triage", kind)
-		}
+	if !strings.Contains(architecture, rubricCall) {
+		t.Fatal("architecture-review does not require the canonical prompt-engineering rubric")
+	}
+	if !strings.Contains(architecture, "semantic") || !strings.Contains(architecture, "length alone") {
+		t.Fatal("architecture-review does not distinguish semantic quality from size-only triage")
 	}
 }
 
@@ -421,7 +440,8 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 		`"name":"workflow-commands","path":"references/ops-review.md"`,
 		"standalone wrapper",
 		"pulse_run_id=\"current\"",
-		"record_pulse_module_due",
+		"manual=true",
+		"note_only=true",
 		"not a scheduled Pulse Gate pass",
 		"Own the review yourself",
 		"Persist typed findings and any reproduced failures",

@@ -230,15 +230,35 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 		}
 	}
 
-	grants := make(map[string]bool, len(conn.Services))
+	// Cross-check every requested grant against Google's actually-granted
+	// scopes, not the stored request. AllowReadAccess/Services only record
+	// what was asked for at connect time — a user who requested Drive access
+	// but never completed reconnect, or whose grant was later revoked or
+	// downgraded in Google, must not receive a misleading "authorized"
+	// result. AuthStatusForConnectionBlocking performs a real gog/Google
+	// check (serving a fresh cache within gmailAuthCacheTTL, computing inline
+	// otherwise), so this stays live without paying a subprocess on every
+	// tool call.
+	status, _ := g.AuthStatusForConnectionBlocking(ctx, conn.ID)
+	liveScopes := status.Scopes
+
+	grants := make(map[string]bool, len(conn.Services)+1)
 	for _, grant := range conn.Services {
-		grants[grant.Service] = grant.Write
+		if grant.Write {
+			if scope, _, ok := GoogleServiceScopeURI(grant.Service, true); ok && GoogleScopesGrant(liveScopes, scope) {
+				grants[grant.Service] = true
+				continue
+			}
+		}
+		// Write was not requested, or was requested but not actually granted:
+		// fall back to whatever read access Google did grant for this
+		// service, rather than an all-or-nothing denial.
+		if scope, _, ok := GoogleServiceScopeURI(grant.Service, false); ok && GoogleScopesGrant(liveScopes, scope) {
+			grants[grant.Service] = false
+		}
 	}
 	// Mailbox reads are always forced through gog's --readonly runtime mode.
-	// Check Google's observed scopes, not only the stored opt-in, so a user who
-	// has not completed reconnect cannot accidentally receive a misleading
-	// "authorized" result.
-	if conn.AllowReadAccess && GoogleScopesGrant(conn.Scopes, GmailReadonlyScope) {
+	if conn.AllowReadAccess && GoogleScopesGrant(liveScopes, GmailReadonlyScope) {
 		grants["gmail"] = false
 	}
 	if len(grants) == 0 {

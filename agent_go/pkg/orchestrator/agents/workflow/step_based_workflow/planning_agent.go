@@ -276,7 +276,7 @@ type AgentConfigs struct {
 	LegacyDeclaredExecutionModeReason string           `json:"declared_execution_mode_reason,omitempty"`
 	DescriptionReviewed               *bool            `json:"description_reviewed,omitempty"` // True when the step description has been reviewed — clarity AND secrets/hardcoded values.
 	ReviewNotes                       string           `json:"review_notes,omitempty"`         // Free-form rationale covering why config, learning/KB choices, code locks, or description review state are justified.
-	DriftReview                       *StepDriftReview `json:"drift_review,omitempty"`         // Plan-drift review record: evidence from the last completed plan_drift_review pass over this step, plus a NeedsReview flag every persisted field change sets true (clearDriftReviewAfterPlanUpdate). Nil (no record yet) or NeedsReview==true both mean "due." Set by that module or its manual slash-command equivalent; never by a step-editing agent directly.
+	DriftReview                       *StepDriftReview `json:"drift_review,omitempty"`         // Plan-drift review record: evidence from the last completed plan_drift_review pass over this step, plus a NeedsReview flag every persisted field change or unresolved failed drift check keeps true. Nil (no record yet) or NeedsReview==true both mean "due." Set by that module or its manual slash-command equivalent; never by a step-editing agent directly.
 }
 
 // StepDriftReview is the "stale flag" model (superseding the earlier
@@ -285,7 +285,8 @@ type AgentConfigs struct {
 // presence/absence of the whole record. Every persisted plan-step field
 // change sets NeedsReview=true and leaves everything else untouched; only a
 // completed plan_drift_review turn replaces Checks/ReviewedAt/ReviewedBy/
-// ReviewedThroughChangeID and clears the flag. This means a step's last real
+// ReviewedThroughChangeID and clears the flag only when no check remains failed.
+// This means a step's last real
 // review is always available as evidence, even while a newer edit has made it
 // stale — the reviewer reads it plus only the changelog entries after
 // ReviewedThroughChangeID, instead of starting from nothing.
@@ -6202,7 +6203,7 @@ func registerPlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"record_plan_drift_review",
-		"Record the results of a plan-drift review pass for one step, into planning/step_config.json's drift_review field. Call once per step with every check that ran, including checks that passed — not just failures. Each check needs check_id, status (pass/fail/fixed — fixed means real drift was found AND repaired in this same pass, not merely flagged), and evidence describing what was actually compared and what was found (a bare verdict like \"looks fine\" is rejected). Writing this record is what clears the step from plan_drift_review's due list; it stays cleared until the step is edited again (any dependency-triggering field change nulls it automatically).",
+		"Record the results of a plan-drift compatibility pass for one step in planning/step_config.json. Call once per step with every check that actually ran, including checks that passed. Select checks from the specific approved-plan change: prompt and step-type best-practice checks apply only to a first baseline or when those surfaces changed; a title-only or unrelated edit may use a compact compatibility check. General design optimization belongs to Architecture. Each check needs check_id, status (pass/fail/fixed — fixed means real drift was found and repaired in this pass), and evidence describing what was compared and found. Writing this record clears the step from plan_drift_review's due list only when no failed check remains.",
 		driftReviewParams,
 		createRecordPlanDriftReviewExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -6487,6 +6488,16 @@ func registerPlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register update_validation_schema tool: %w", err)
+	}
+
+	if err := mcpAgent.RegisterCustomTool(
+		"add_evaluation_step",
+		"Add one new step to evaluation/evaluation_plan.json and record the full addition in planning/changelog. Use this to create the first step in an empty evaluation plan. IDs must be unique across both execution and evaluation plans. Provide id, title, description, and reason; the complete candidate plan is validated before it is written.",
+		parseSchemaForToolParametersMust(getAddEvaluationPlanStepSchema()),
+		createAddEvaluationPlanStepExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_evaluation_step tool: %w", err)
 	}
 
 	// The evaluation plan had no mutation tool, so every edit arrived by direct

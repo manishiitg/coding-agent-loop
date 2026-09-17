@@ -85,6 +85,6 @@ Could someone who has never seen the workflow read the description and understan
 ### Related
 
 - `references/plan-design.md` for step-type selection, context flow, and validation design.
-- The Standalone Technical Review's Prompt-contract health check (`/ops-review`) audits existing plans against these same principles after the fact. Applying them while authoring is cheaper than fixing a finding later.
+- Architecture Review audits existing prompt structure against these principles when evidence suggests a material design improvement. Applying them while authoring is cheaper than proposing a later migration.
 
 - Plan Drift applies this same guide to due steps and records `step_prompt_quality`. It checks prompt meaning, supplied schemas, and accessible guidance; it does not require rewriting a compatible prompt or optimizing an unrelated architecture.

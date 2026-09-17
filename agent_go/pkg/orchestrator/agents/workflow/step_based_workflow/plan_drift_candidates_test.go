@@ -126,6 +126,24 @@ func TestCollectPlanDriftCandidatesNilWhenAllReviewed(t *testing.T) {
 	}
 }
 
+func TestCollectPlanDriftDueItemsExplainsLiveDueStateWithoutRunningChecks(t *testing.T) {
+	stepConfig := `{"steps":[
+  {"id":"step-a","agent_configs":{"drift_review":{"needs_review":true,"contract_version":3,"checks":[{"check_id":"step_description_accuracy","status":"fail","evidence":"the saved description no longer matches the step","finding_id":"PUL-1234ABCD"}]}}},
+  {"id":"step-b","agent_configs":{"drift_review":{"needs_review":false,"contract_version":3,"checks":[{"check_id":"step_description_accuracy","status":"pass","evidence":"the saved description matches the step"}]}}}
+]}`
+	planDriftCandidateWorkspace(t, "Workflow/drift-due-summary", twoStepPlan, stepConfig)
+	items, err := CollectPlanDriftDueItems("Workflow/drift-due-summary")
+	if err != nil {
+		t.Fatalf("CollectPlanDriftDueItems: %v", err)
+	}
+	if len(items) != 1 || items[0].StepID != "step-a" {
+		t.Fatalf("due items = %#v, want only step-a", items)
+	}
+	if !strings.Contains(items[0].Reason, "unresolved") {
+		t.Fatalf("due reason = %q, want unresolved-drift explanation", items[0].Reason)
+	}
+}
+
 // TestCollectPlanDriftCandidatesReflagsStaleContractVersion is the second
 // independent PLAT-259 review's finding #1: a routing step reviewed BEFORE
 // phase B added route_structural_isolation/route_eval_pairing has
@@ -188,6 +206,21 @@ func TestRequiredPlanDriftContractVersionIsTypeSpecific(t *testing.T) {
 		if got := requiredPlanDriftReviewContractVersion(stepType); got != 2 {
 			t.Fatalf("required version for %s = %d, want 2", stepType, got)
 		}
+	}
+}
+
+func TestContextDependencyFilenameCheckRejectsStepIDs(t *testing.T) {
+	plan := &PlanningResponse{Steps: []PlanStepInterface{
+		&RegularPlanStep{Type: StepTypeRegular, CommonStepFields: CommonStepFields{ID: "producer", ContextOutput: FlexibleContextOutput("result.json")}},
+		&RegularPlanStep{Type: StepTypeRegular, CommonStepFields: CommonStepFields{ID: "consumer", ContextDependencies: []string{"producer"}}},
+	}}
+	check := checkContextDependencyFilenames(plan, "consumer")
+	if check.Status != stepDriftCheckStatusFail || !strings.Contains(check.Evidence, "result") && !strings.Contains(check.Evidence, "producer") {
+		t.Fatalf("step-ID dependency was not rejected: %+v", check)
+	}
+	plan.Steps[1].(*RegularPlanStep).ContextDependencies = []string{"result.json"}
+	if check := checkContextDependencyFilenames(plan, "consumer"); check.Status != stepDriftCheckStatusPass {
+		t.Fatalf("artifact filename dependency was rejected: %+v", check)
 	}
 }
 

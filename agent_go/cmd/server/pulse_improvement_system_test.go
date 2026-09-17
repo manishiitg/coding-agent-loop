@@ -39,20 +39,21 @@ func TestPulseFourModulesPersistAndCompleteIndependently(t *testing.T) {
 	ws, run := "Workflow/independent", "pulse-four"
 	decisions := completePulseWorklistDecisions(nil)
 	for i := range decisions {
-		decisions[i].Due = true
+		decisions[i].Due = decisions[i].Module != pulseModulePlanDriftReview
+		if !decisions[i].Due {
+			decisions[i].CooldownRuns = 1
+		}
 	}
 	if _, err := recordPulseWorklist(ctx, ws, run, decisions); err != nil {
 		t.Fatal(err)
 	}
-	for _, module := range []string{pulseModulePlanDriftReview, pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview} {
-		if module != pulseModulePlanDriftReview {
-			stage := pulseLifecycleModuleReviewStep(run, module)
-			if !strings.Contains(stage.query, "review_module="+`"`+module+`"`) {
-				t.Fatalf("role missing: %s", stage.query)
-			}
-			if err := beginDuePulseReviewRecoveries(ctx, ws, run, module); err != nil {
-				t.Fatal(err)
-			}
+	for _, module := range []string{pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview} {
+		stage := pulseLifecycleModuleReviewStep(run, module)
+		if !strings.Contains(stage.query, "review_module="+`"`+module+`"`) {
+			t.Fatalf("role missing: %s", stage.query)
+		}
+		if err := beginDuePulseReviewRecoveries(ctx, ws, run, module); err != nil {
+			t.Fatal(err)
 		}
 		result := "done"
 		if module == pulseModuleTechnicalReview {

@@ -14,7 +14,10 @@ func TestPulseReviewNotesWorkingThenCompletion(t *testing.T) {
 	ws, run, module := "Workflow/notes", "pulse-notes", pulseModuleStrategicReview
 	decisions := completePulseWorklistDecisions(nil)
 	for i := range decisions {
-		decisions[i].Due = true
+		decisions[i].Due = decisions[i].Module == module
+		if !decisions[i].Due {
+			decisions[i].CooldownRuns = 1
+		}
 	}
 	if _, err := recordPulseWorklist(ctx, ws, run, decisions); err != nil {
 		t.Fatal(err)

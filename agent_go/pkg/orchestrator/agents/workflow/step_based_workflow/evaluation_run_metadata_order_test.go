@@ -20,7 +20,7 @@ func TestSuccessfulTargetRunIsFinalizedBeforeAutoEvaluation(t *testing.T) {
 		t.Fatal("successful group block not found")
 	}
 	tail := text[successAt:]
-	finalizeAt := strings.Index(tail, "hcpo.finalizeRunMetadata(ctx, runFolder, completionStatus")
+	finalizeAt := strings.Index(tail, "hcpo.finalizeRunMetadata(ctx, runFolder, \"completed\"")
 	evaluateAt := strings.Index(tail, "hcpo.MaybeRunAutoEvaluation(ctx)")
 	if finalizeAt < 0 || evaluateAt < 0 {
 		t.Fatalf("finalize/evaluation calls missing after successful execution: finalize=%d evaluate=%d", finalizeAt, evaluateAt)

@@ -1,9 +1,29 @@
 package step_based_workflow
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestResolveDependencyPathCandidatesRepairsProducerIDDependency(t *testing.T) {
+	steps := []PlanStepInterface{
+		&RegularPlanStep{Type: StepTypeRegular, CommonStepFields: CommonStepFields{
+			ID: "step-engagement-performance", ContextOutput: FlexibleContextOutput("performance_checked.json"),
+		}},
+		&RegularPlanStep{Type: StepTypeRegular, CommonStepFields: CommonStepFields{
+			ID: "step-performance-analytics", ContextDependencies: []string{"step-engagement-performance"},
+		}},
+	}
+	candidates := ResolveDependencyPathCandidates(
+		"step-engagement-performance", 1, "step-2", steps,
+		"Workflow/linkedin/runs/iteration-0/execution", "/workspace-docs", nil,
+	)
+	want := filepath.Join("/workspace-docs", "Workflow/linkedin/runs/iteration-0/execution", "step-engagement-performance", "performance_checked.json")
+	if len(candidates) == 0 || candidates[0] != want {
+		t.Fatalf("producer-ID dependency candidates = %#v, want first candidate %q", candidates, want)
+	}
+}
 
 // TestManagedDBGuidanceNeverRequiresDBReadmeUnconditionally reproduces
 // Upwork PUL-EDFF0710: the injected boilerplate told every step to read

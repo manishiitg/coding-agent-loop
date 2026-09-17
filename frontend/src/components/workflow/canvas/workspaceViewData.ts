@@ -6,6 +6,7 @@ import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type {
   PulseFinalCommandState,
   PulseModuleState,
+  PulsePlanDriftDueItem,
   PulseReviewFocus,
   PulseReviewerModule,
   VariablesManifest,
@@ -25,6 +26,9 @@ export interface PulseData {
   reviewModuleSaving: PulseReviewerModule | null
   toggleReviewModule: (module: PulseReviewerModule) => void
   moduleStates: PulseModuleState[]
+  planDriftDue: boolean
+  planDriftDueItems: PulsePlanDriftDueItem[]
+  planDriftDueError: string | null
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]

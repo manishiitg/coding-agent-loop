@@ -15,11 +15,47 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/loopclosure"
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulseintake"
 	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 )
+
+func TestTerminalPulseResultProjectsOneActivityItemPerRun(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/result-activity"
+	pulseRunID := "pulse-result-activity"
+	if _, err := recordPulseWorklist(ctx, workspacePath, pulseRunID, completePulseWorklistDecisions(map[string]PulseWorklistDecision{
+		pulseModuleTechnicalReview:    {Module: pulseModuleTechnicalReview, Due: true, Reason: "Execution evidence is ready."},
+		pulseModuleArchitectureReview: {Module: pulseModuleArchitectureReview, Due: true, Reason: "Structural evidence is ready."},
+	})); err != nil {
+		t.Fatalf("record worklist: %v", err)
+	}
+	if _, err := markPulseModuleResultFromAgent(ctx, workspacePath, pulseModuleTechnicalReview, pulseRunID, "done", "Checked execution and validation health; both are healthy, with no follow-up needed.", nil); err != nil {
+		t.Fatalf("record terminal result: %v", err)
+	}
+	if _, err := markPulseModuleResultFromAgent(ctx, workspacePath, pulseModuleArchitectureReview, pulseRunID, "done", "Checked workflow structure and boundaries; the current design remains appropriate.", nil); err != nil {
+		t.Fatalf("record second terminal result: %v", err)
+	}
+
+	activity, err := services.ListOrgDashboardNotifications(ctx, workspacePath, 10)
+	if err != nil {
+		t.Fatalf("read projected Pulse Activity: %v", err)
+	}
+	if activity.PulseSummary == nil || len(activity.PulseSummary.Reviews) != 2 || len(activity.Recent) != 1 {
+		t.Fatalf("terminal result was not projected into one Pulse Activity item: %#v", activity.PulseSummary)
+	}
+	reviewByModule := map[string]services.PulseReviewSummary{}
+	for _, review := range activity.PulseSummary.Reviews {
+		reviewByModule[review.Module] = review
+	}
+	if got := reviewByModule[pulseModuleTechnicalReview]; got.Summary != "Checked execution and validation health; both are healthy, with no follow-up needed." {
+		t.Fatalf("Pulse Activity did not use the first stored review result: %#v", got)
+	}
+}
 
 func TestPulseModuleSchemaMigratesLegacyAdvisorsToNewestStrategicState(t *testing.T) {
 	ctx := context.Background()
@@ -459,7 +495,7 @@ func TestPulseWorklistLetsGateSelectTheEvidenceJustifiedModules(t *testing.T) {
 	}
 }
 
-func TestPulseWorklistRequiresTechnicalReviewForFailedPlanDependencyIntake(t *testing.T) {
+func TestPulseWorklistRequiresPlanDriftForFailedPlanDependencyIntake(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)
 	workspacePath := "Workflow/example"
@@ -474,15 +510,15 @@ func TestPulseWorklistRequiresTechnicalReviewForFailedPlanDependencyIntake(t *te
 
 	skipped := completePulseWorklistDecisions(nil)
 	if _, err := recordPulseWorklist(context.Background(), workspacePath, "pulse-plan-check-skip", skipped); err == nil ||
-		!strings.Contains(err.Error(), "plan change") || !strings.Contains(err.Error(), "technical_review must be due") {
-		t.Fatalf("failed plan dependency intake was allowed to skip Technical Review: %v", err)
+		!strings.Contains(err.Error(), "plan change") || !strings.Contains(err.Error(), "plan_drift_review") {
+		t.Fatalf("failed plan dependency intake was allowed to skip Plan Drift: %v", err)
 	}
 
 	due := completePulseWorklistDecisions(map[string]PulseWorklistDecision{
-		pulseModuleTechnicalReview: {Module: pulseModuleTechnicalReview, Due: true, Reason: "Inspect incomplete plan dependency coverage."},
+		pulseModulePlanDriftReview: {Module: pulseModulePlanDriftReview, Due: true, Reason: "Repair incomplete plan dependency coverage."},
 	})
 	if _, err := recordPulseWorklist(context.Background(), workspacePath, "pulse-plan-check-due", due); err != nil {
-		t.Fatalf("agentic Technical Review routing was rejected: %v", err)
+		t.Fatalf("Plan Drift routing was rejected: %v", err)
 	}
 }
 
@@ -679,6 +715,45 @@ func TestPulseWorklistRequiresPlanDriftReviewWhenCandidatesExist(t *testing.T) {
 	}
 }
 
+func TestPlanDriftDueCreatesExclusiveReviewPass(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/plan-drift-exclusive"
+	planningDir := filepath.Join(root, workspacePath, "planning")
+	if err := os.MkdirAll(planningDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planningDir, "plan.json"), []byte(`{"steps":[{"id":"step-a","type":"regular"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(planningDir, "step_config.json"), []byte(`{"steps":[{"id":"step-a"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	overrides := map[string]PulseWorklistDecision{}
+	for _, module := range pulseModuleOrder {
+		overrides[module] = PulseWorklistDecision{Module: module, Due: true, Reason: "Gate initially selected this review."}
+	}
+	states, err := recordPulseWorklist(context.Background(), workspacePath, "pulse-exclusive", completePulseWorklistDecisions(overrides))
+	if err != nil {
+		t.Fatalf("record exclusive Plan Drift worklist: %v", err)
+	}
+	for _, state := range states {
+		if state.Module == pulseModulePlanDriftReview {
+			if state.LastDecision != "due" {
+				t.Fatalf("Plan Drift decision = %q, want due", state.LastDecision)
+			}
+			continue
+		}
+		if state.LastDecision != "skipped" {
+			t.Fatalf("%s decision = %q, want skipped while Plan Drift is due", state.Module, state.LastDecision)
+		}
+		if !strings.Contains(strings.Join(state.Evidence, " "), "plan_drift_review:exclusive_prerequisite") {
+			t.Fatalf("%s missing exclusive-prerequisite evidence: %+v", state.Module, state.Evidence)
+		}
+	}
+}
+
 // A deleted step's own drift_review record is cascade-removed along with it,
 // so the per-step candidate set alone can go empty even though a deletion's
 // dependent-artifact fallout still needs auditing — the workflow-level
@@ -722,8 +797,8 @@ func TestPulseWorklistRequiresPlanDriftReviewWhenWorkflowLevelFlagged(t *testing
 
 // A scan failure (unreadable/malformed plan.json or step_config.json) must
 // never silently read as "nothing is due" — the real candidate set is
-// unknown, not empty, so Gate must route it to either plan_drift_review or
-// technical_review rather than being allowed to skip both.
+// unknown, not empty, so Gate must keep the exclusive plan_drift_review
+// prerequisite due.
 func TestPulseWorklistRequiresRoutingWhenPlanDriftScanFails(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)
@@ -738,15 +813,15 @@ func TestPulseWorklistRequiresRoutingWhenPlanDriftScanFails(t *testing.T) {
 
 	skipped := completePulseWorklistDecisions(nil)
 	if _, err := recordPulseWorklist(context.Background(), workspacePath, "pulse-drift-scan-fail-skip", skipped); err == nil ||
-		!strings.Contains(err.Error(), "plan_drift_review or technical_review must be due") {
-		t.Fatalf("a failed plan drift scan was allowed to skip both plan_drift_review and technical_review: %v", err)
+		!strings.Contains(err.Error(), "plan_drift_review must be due") {
+		t.Fatalf("a failed plan drift scan was allowed to skip plan_drift_review: %v", err)
 	}
 
 	due := completePulseWorklistDecisions(map[string]PulseWorklistDecision{
-		pulseModuleTechnicalReview: {Module: pulseModuleTechnicalReview, Due: true, Reason: "Investigate malformed plan.json."},
+		pulseModulePlanDriftReview: {Module: pulseModulePlanDriftReview, Due: true, Reason: "Investigate unreadable plan state."},
 	})
 	if _, err := recordPulseWorklist(context.Background(), workspacePath, "pulse-drift-scan-fail-due", due); err != nil {
-		t.Fatalf("technical_review routing was rejected despite being marked due: %v", err)
+		t.Fatalf("plan_drift_review routing was rejected despite being marked due: %v", err)
 	}
 }
 
@@ -1635,11 +1710,14 @@ func TestHandleGetPulseModuleState(t *testing.T) {
 		t.Fatalf("status = %d, body=%s", rec.Code, rec.Body.String())
 	}
 	var payload struct {
-		Success        bool                     `json:"success"`
-		Modules        []PulseModuleState       `json:"modules"`
-		Commands       []PulseFinalCommandState `json:"commands"`
-		GateMode       *PulseRunMode            `json:"gate_mode"`
-		ShadowCoverage map[string]string        `json:"shadow_signal_coverage"`
+		Success        bool                                   `json:"success"`
+		Modules        []PulseModuleState                     `json:"modules"`
+		Commands       []PulseFinalCommandState               `json:"commands"`
+		GateMode       *PulseRunMode                          `json:"gate_mode"`
+		ShadowCoverage map[string]string                      `json:"shadow_signal_coverage"`
+		PlanDriftDue   bool                                   `json:"plan_drift_due"`
+		PlanDriftItems []step_based_workflow.PlanDriftDueItem `json:"plan_drift_due_items"`
+		PlanDriftError string                                 `json:"plan_drift_due_error"`
 	}
 	if err := json.NewDecoder(rec.Body).Decode(&payload); err != nil {
 		t.Fatalf("decode response: %v", err)
@@ -1661,6 +1739,9 @@ func TestHandleGetPulseModuleState(t *testing.T) {
 	}
 	if payload.ShadowCoverage["status"] != "not_instrumented" {
 		t.Fatalf("shadow coverage = %+v, want not_instrumented", payload.ShadowCoverage)
+	}
+	if payload.PlanDriftDue || len(payload.PlanDriftItems) != 0 || payload.PlanDriftError != "" {
+		t.Fatalf("unexpected Plan Drift due summary for workflow with no plan: due=%v items=%+v error=%q", payload.PlanDriftDue, payload.PlanDriftItems, payload.PlanDriftError)
 	}
 }
 
@@ -2113,6 +2194,72 @@ func TestGetPulseModuleStateExposesLoopClosureButNotShadowHistory(t *testing.T) 
 	}
 }
 
+func writePlanDriftDependencyReceiptFixture(t *testing.T, root, workspacePath, artifactReview string) {
+	t.Helper()
+	dir := filepath.Join(root, workspacePath, "planning", "changelog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	body := fmt.Sprintf(`{"entries":[{"change_id":"change-plan-drift-1","timestamp":"2026-09-17T06:00:00Z","tool":"update_regular_step","reason":"change the output contract","step_ids":["step-a"]%s}]}`, artifactReview)
+	if err := os.WriteFile(filepath.Join(dir, "changelog-2026-09-17-06-00-00.json"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// Gate is allowed to select Plan Drift instead of Technical Review for an
+// incomplete PLAT-197 receipt. The selected module must close that exact
+// receipt before claiming success, or the next Gate deterministically creates
+// the receipt-only Technical pass this bridge is intended to eliminate.
+func TestPlanDriftResultRejectsOpenDependencyReceiptsWhenTechnicalIsNotDue(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/plan-drift-receipt"
+	writePlanDriftDependencyReceiptFixture(t, root, workspacePath, "")
+
+	err := validatePlanDriftDependencyClosure(context.Background(), workspacePath, "pulse-1", pulseModulePlanDriftReview, "done")
+	if err == nil {
+		t.Fatal("successful Plan Drift result was allowed to leave an incomplete dependency receipt")
+	}
+	for _, want := range []string{"change-plan-drift-1", "mark_changelog_artifact_reviewed", "six-surface"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("closure error missing %q: %v", want, err)
+		}
+	}
+}
+
+func TestPlanDriftResultAllowsReceiptOwnedByTechnicalInSameRun(t *testing.T) {
+	ctx := context.Background()
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/plan-drift-technical-owner"
+	writePlanDriftDependencyReceiptFixture(t, root, workspacePath, "")
+	if err := writePulseModuleDueRow(ctx, workspacePath, "pulse-1", pulseModuleTechnicalReview, "technical review owns the receipt"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := validatePlanDriftDependencyClosure(ctx, workspacePath, "pulse-1", pulseModulePlanDriftReview, "done"); err != nil {
+		t.Fatalf("Plan Drift should allow the same-run Technical owner to close the receipt: %v", err)
+	}
+}
+
+func TestPlanDriftResultAcceptsCompleteDependencyReceipt(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	workspacePath := "Workflow/plan-drift-closed-receipt"
+	surfaces := `,"artifact_review":{"done":true,"surfaces":{` +
+		`"downstream_steps":{"disposition":"already_compatible","evidence":["consumer contract checked"]},` +
+		`"validation":{"disposition":"already_compatible","evidence":["validation contract checked"]},` +
+		`"evaluation":{"disposition":"not_applicable","evidence":["no evaluation consumes this field"]},` +
+		`"reporting":{"disposition":"already_compatible","evidence":["report query checked"]},` +
+		`"database":{"disposition":"already_compatible","evidence":["database contract checked"]},` +
+		`"learnings_and_knowledge":{"disposition":"not_applicable","evidence":["no guidance describes this field"]}}}`
+	writePlanDriftDependencyReceiptFixture(t, root, workspacePath, surfaces)
+
+	if err := validatePlanDriftDependencyClosure(context.Background(), workspacePath, "pulse-1", pulseModulePlanDriftReview, "done"); err != nil {
+		t.Fatalf("complete dependency receipt should allow Plan Drift success: %v", err)
+	}
+}
+
 func TestRecordPulseWorklistPersistsShadowObservationAfterDecision(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/example"
@@ -2298,11 +2445,9 @@ func TestPulseReviewFocusCatalogUsesValidationContractHealthWithoutSafety(t *tes
 	want := []string{
 		"execution_health",
 		"validation_contract_health",
-		"plan_orchestration_integrity",
 		"store_integrity",
 		"report_quality_truth",
 		"evaluation_quality_truth",
-		"model_cost_fitness",
 	}
 	if got := pulseReviewFocusCatalog[pulseModuleTechnicalReview]; !slices.Equal(got, want) {
 		t.Fatalf("technical focus catalog = %v, want %v", got, want)

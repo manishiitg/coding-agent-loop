@@ -1,17 +1,23 @@
-import { useState } from 'react'
-import { FileText, GitCompare, Lightbulb, Maximize2, Wrench, Blocks } from 'lucide-react'
-import type { PulseFindingLifecycle, PulseModuleState, PulseReviewAudit, PulseReviewFocus, PulseReviewReport, PulseReviewerModule } from '../../services/api-types'
+import type { ReactNode } from 'react'
+import { AlertTriangle, GitCompare, Lightbulb, Loader2, Play, Wrench, Blocks } from 'lucide-react'
+import type { PulseFindingLifecycle, PulseModuleState, PulsePlanDriftDueItem, PulseReviewAudit, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 import { normalizePulseWorkspaceModule, pulseFindingReviewAreas, pulseWorkspaceQueueCounts } from './pulseWorkspaceUtils'
 import { pulseReviewDate, reviewCoverageForArea, TECHNICAL_REVIEW_AREAS, ARCHITECTURE_REVIEW_AREAS } from './pulseReviewCoverage'
 
-import { PulseReviewReportReader } from './PulseReviewReportReader'
-const labels: Record<string, string> = { technical_review: 'Health', architecture_review: 'Architecture', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
+const labels: Record<string, string> = { technical_review: 'Technical review', architecture_review: 'Architecture', strategic_review: 'Strategic review', plan_drift_review: 'Drift check', done: 'Completed', changed: 'Changes made', timed_out: 'Timed out' }
 const readable = (text?: string) => labels[text || ''] || (text ? text.charAt(0).toUpperCase() + text.slice(1).replaceAll('_', ' ') : 'Recorded')
+
+function nextAssessment(state?: PulseModuleState): string | null {
+  if (state?.next_check_at) return pulseReviewDate(state.next_check_at)
+  if (state?.next_check_after_run_id) return `After workflow run ${state.next_check_after_run_id}`
+  if (state?.cooldown_runs) return `After ${state.cooldown_runs} scheduled ${state.cooldown_runs === 1 ? 'run' : 'runs'}`
+  return null
+}
 
 export type InstalledPlaybookReviewFocus = {
   playbookId: string
   playbookTitle: string
-  module: 'technical_review' | 'architecture_review' | 'strategic_review'
+  module: 'strategic_review'
   label: string
   focusAreas: string[]
   reviewWhen: string[]
@@ -24,30 +30,7 @@ function Evidence({ items, title = 'Evidence' }: { items?: string[]; title?: str
   </div>
 }
 
-function ReviewReport({ report }: { report: PulseReviewReport }) {
-  const [open, setOpen] = useState(false)
-  return <>
-    <button type="button" aria-haspopup="dialog" onClick={() => setOpen(true)} className="flex w-full items-center justify-between gap-3 rounded-lg border bg-background px-3 py-3 text-left text-xs hover:bg-muted/30">
-      <span><span className="inline-flex items-center gap-2 font-medium"><FileText className="h-3.5 w-3.5" />{report.source === 'review_note' ? 'Read review' : 'Read report'}</span>
-        <span className="mt-1 block text-muted-foreground">Updated {pulseReviewDate(report.updated_at)}{report.result === 'incomplete' && ' · No completion recorded'}</span></span>
-      <Maximize2 className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden="true" />
-    </button>
-    {open && <PulseReviewReportReader report={report} title={`${readable(report.module)} report`} onClose={() => setOpen(false)} />}
-  </>
-}
-
-function Reports({ reports }: { reports: PulseReviewReport[] }) {
-  const [all, setAll] = useState(false)
-  if (!reports.length) return <p className="text-xs text-muted-foreground">No saved review notes or reports found.</p>
-  return <div className="space-y-2">
-    {(all ? reports : reports.slice(0, 1)).map(report => <ReviewReport key={`${report.source || 'file'}:${report.module}:${report.pulse_run_id}:${report.path}`} report={report} />)}
-    {reports.length > 1 && <button type="button" aria-expanded={all} onClick={() => setAll(value => !value)} className="text-xs font-medium text-primary hover:underline">
-      {all ? 'Hide report history' : `View report history (${reports.length - 1})`}
-    </button>}
-  </div>
-}
-
-function FocusDetails({ items, reports, findings }: { items: PulseReviewFocus[]; reports: PulseReviewReport[]; findings: PulseFindingLifecycle[] }) {
+function FocusDetails({ items, findings }: { items: PulseReviewFocus[]; findings: PulseFindingLifecycle[] }) {
   return <div className="space-y-4">
     {!items.length && <p>No review recorded for this scope. A Pulse tick or general store check does not establish coverage.</p>}
     {items.map(item => <div key={`${item.focus_key}:${item.route_scope}:${item.last_pulse_run_id}`}>
@@ -60,22 +43,24 @@ function FocusDetails({ items, reports, findings }: { items: PulseReviewFocus[];
         {issue.verifications.map((check, index) => <div key={index} className="mt-2"><p>{check.check} · <strong>{readable(check.verdict)}</strong></p>
           {check.observed && <p>{check.observed}</p>}<Evidence items={check.evidence} /></div>)}
       </div>)}
-      <div className="mt-3"><Reports reports={reports.filter(report => report.pulse_run_id === item.last_pulse_run_id)} /></div>
     </div>)}
   </div>
 }
 
-export function PulseReviewOverview({ moduleStates, coverage, audits, reports, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [], disabledReviewModules = [], reviewModuleSaving = null, onToggleReviewModule }: {
+export function PulseReviewOverview({ moduleStates, planDriftDue = false, planDriftDueItems = [], planDriftDueError = null, coverage, audits, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [], disabledReviewModules = [], reviewModuleSaving = null, onToggleReviewModule, runningReviewModule = null, onRunReviewModule, strategySupplement }: {
   moduleStates: PulseModuleState[]; coverage: PulseReviewFocus[]; audits: PulseReviewAudit[];
-  reports: PulseReviewReport[]; findings: PulseFindingLifecycle[]; moduleFilter: string | null;
+  planDriftDue?: boolean; planDriftDueItems?: PulsePlanDriftDueItem[]; planDriftDueError?: string | null;
+  findings: PulseFindingLifecycle[]; moduleFilter: string | null;
   onSelectModule: (module: string) => void; reviewFocusSelections?: PulseReviewFocus[];
   playbookFocuses?: InstalledPlaybookReviewFocus[];
   disabledReviewModules?: PulseReviewerModule[]; reviewModuleSaving?: PulseReviewerModule | null;
   onToggleReviewModule?: (module: PulseReviewerModule) => void;
+  runningReviewModule?: string | null; onRunReviewModule?: (module: string) => void | Promise<void>;
+  strategySupplement?: ReactNode;
 }) {
   const areas = [
     { id: 'plan_drift_review', label: 'Drift check', description: 'Changes to the plan and their follow-up checks.', Icon: GitCompare },
-    { id: 'technical_review', label: 'Health', description: 'Correctness, failures, and regressions.', Icon: Wrench },
+    { id: 'technical_review', label: 'Technical', description: 'Correctness, failures, and regressions.', Icon: Wrench },
     { id: 'architecture_review', label: 'Architecture', description: 'Better prompts, orchestration, learning, knowledge, data and reports.', Icon: Blocks },
     { id: 'strategic_review', label: 'Strategy', description: 'Progress toward the goal and recommendations.', Icon: Lightbulb },
   ]
@@ -88,54 +73,96 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
   const drift = stateFor('plan_drift_review')
   const driftAudit = latestAuditFor('plan_drift_review')
   const pendingDrift = drift?.last_gate_decision === 'due' && drift.last_pulse_run_id !== driftAudit?.pulse_run_id
-  const driftStatus = pendingDrift ? 'Pending check' : driftAudit
+  const liveDriftDue = planDriftDue || pendingDrift
+  const driftStatus = liveDriftDue ? 'Due now' : driftAudit
     ? `${['done', 'changed'].includes(driftAudit.result) ? 'Checked' : readable(driftAudit.result)} · ${pulseReviewDate(driftAudit.recorded_at)}`
     : 'No completed check recorded'
   const selectedAudit = selected && latestAuditFor(selected.id)
   const selectedState = selected && stateFor(selected.id)
+  const selectedNextAssessment = nextAssessment(selectedState || undefined)
   const selectedCoverage = selected ? coverageFor(selected.id) : []
   const latestCoverage = selected && latestCoverageFor(selected.id)
-  const selectedReports = reports.filter(item => normalizePulseWorkspaceModule(item.module) === moduleFilter)
   const selectedPlaybookFocuses = selected ? playbookFocusFor(selected.id) : []
-  const visibleAudits = audits.filter(item => item.result !== 'skipped' && (!moduleFilter || normalizePulseWorkspaceModule(item.module) === moduleFilter))
   const driftCounts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes('plan_drift_review')))
-  return <section className="space-y-4" aria-label="Pulse reviews">
-    <div><h3 className="text-sm font-semibold">Work areas</h3><p className="mt-1 text-xs text-muted-foreground">Choose an area to see its review, reports, checks, and findings below.</p></div>
-    <nav className="grid gap-2 md:grid-cols-3" aria-label="Pulse work areas">
-      {areas.filter(area => area.id !== 'plan_drift_review').map(area => {
-        const module = area.id as PulseReviewerModule
-        const disabled = disabledReviewModules.includes(module)
-        const audit = latestAuditFor(area.id)
-        const lastReviewed = audit?.recorded_at || latestCoverageFor(area.id)?.last_reviewed_at
-        const recommendedFocus = playbookFocusFor(area.id)
-        const active = moduleFilter === area.id
-        return <div key={area.id} className={`overflow-hidden rounded-xl border transition-colors ${active ? 'border-primary/40 bg-primary/10' : disabled ? 'bg-muted/20' : 'bg-background'}`}>
-          <button type="button" aria-pressed={active} onClick={() => onSelectModule(area.id)} className="w-full p-3 text-left hover:bg-muted/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary">
-            <span className="flex items-center gap-2 text-xs font-semibold"><area.Icon className="h-4 w-4 shrink-0" />{area.label}{disabled && <span className="ml-auto rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Off</span>}</span>
-            <span className="mt-2 block text-[11px] leading-5 text-muted-foreground">{disabled ? 'Reviewer disabled for future Pulse runs' : lastReviewed ? `Last reviewed ${pulseReviewDate(lastReviewed)}` : 'No review recorded'}</span>
-            <span className="mt-1.5 block text-[11px] leading-4 text-foreground/80">
-              <span className="font-medium">Playbook focus:</span> {recommendedFocus.length > 0
-                ? recommendedFocus.flatMap(item => item.focusAreas).slice(0, 2).join(' · ')
-                : 'None configured'}
-            </span>
+  const reviewCard = (area: (typeof areas)[number], prominent = false) => {
+    const module = area.id as PulseReviewerModule
+    const disabled = disabledReviewModules.includes(module)
+    const audit = latestAuditFor(area.id)
+    const lastReviewed = audit?.recorded_at || latestCoverageFor(area.id)?.last_reviewed_at
+    const recommendedFocus = area.id === 'strategic_review' ? playbookFocusFor(area.id) : []
+    const active = moduleFilter === area.id
+    const running = runningReviewModule === area.id
+    const runBlocked = liveDriftDue || !!planDriftDueError || (!!runningReviewModule && !running)
+    return <div key={area.id} className={`overflow-hidden rounded-xl border transition-colors ${prominent ? 'shadow-sm' : ''} ${active ? 'border-primary/40 bg-primary/10' : disabled ? 'bg-muted/20' : 'bg-background'}`}>
+      <button type="button" aria-pressed={active} onClick={() => onSelectModule(area.id)} className={`w-full text-left hover:bg-muted/30 focus-visible:outline focus-visible:outline-2 focus-visible:outline-primary ${prominent ? 'p-4' : 'p-3'}`}>
+        <span className={`flex items-center gap-2 font-semibold ${prominent ? 'text-sm' : 'text-xs'}`}><area.Icon className={prominent ? 'h-5 w-5 shrink-0 text-primary' : 'h-4 w-4 shrink-0'} />{area.label}{disabled && <span className="ml-auto rounded-full border border-border bg-muted px-1.5 py-0.5 text-[9px] font-medium uppercase tracking-wide text-muted-foreground">Automatic off</span>}</span>
+        {prominent && <span className="mt-2 block text-xs leading-5 text-muted-foreground">Connects workflow results to goals and metrics, then recommends what should change next.</span>}
+        <span className={`mt-2 block text-[11px] leading-5 ${liveDriftDue && !disabled ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}>{disabled ? 'Disabled for automatic Pulse runs' : liveDriftDue ? 'Waiting for Plan Drift' : lastReviewed ? `Last reviewed ${pulseReviewDate(lastReviewed)}` : 'No review recorded'}</span>
+        {area.id === 'strategic_review' && <span className="mt-1.5 block text-[11px] leading-4 text-foreground/80">
+          <span className="font-medium">Strategic focus:</span> {recommendedFocus.length > 0
+            ? recommendedFocus.flatMap(item => item.focusAreas).slice(0, 2).join(' · ')
+            : 'None configured'}
+        </span>}
+      </button>
+      <div className="flex flex-wrap items-center justify-between gap-2 border-t border-border/70 px-3 py-2">
+        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
+          <span>Run automatically</span>
+          <button type="button" role="switch" aria-label={`Include ${area.label} reviewer in Pulse reviews`} aria-checked={!disabled} disabled={!!reviewModuleSaving || !onToggleReviewModule} onClick={() => onToggleReviewModule?.(module)} className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:opacity-50 ${disabled ? 'bg-muted-foreground/30' : 'bg-primary'}`}>
+            <span className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${disabled ? 'translate-x-0.5' : 'translate-x-3.5'}`} />
           </button>
-          <div className="flex items-center justify-between border-t border-border/70 px-3 py-2">
-            <span className="text-[10px] text-muted-foreground">Include in Pulse reviews</span>
-            <button type="button" role="switch" aria-label={`Include ${area.label} reviewer in Pulse reviews`} aria-checked={!disabled} disabled={!!reviewModuleSaving || !onToggleReviewModule} onClick={() => onToggleReviewModule?.(module)} className={`relative inline-flex h-4 w-7 items-center rounded-full transition-colors disabled:opacity-50 ${disabled ? 'bg-muted-foreground/30' : 'bg-primary'}`}>
-              <span className={`h-3 w-3 rounded-full bg-white shadow-sm transition-transform ${disabled ? 'translate-x-0.5' : 'translate-x-3.5'}`} />
-            </button>
-          </div>
         </div>
-      })}
-    </nav>
-    <button type="button" onClick={() => onSelectModule('plan_drift_review')} aria-pressed={moduleFilter === 'plan_drift_review'} className="flex items-center gap-2 text-xs text-muted-foreground hover:text-foreground"><GitCompare className="h-3.5 w-3.5" />Drift check · {driftStatus}</button>
+        <button type="button" aria-label={`Run ${area.label} review now`} disabled={!onRunReviewModule || runBlocked} title={liveDriftDue || planDriftDueError ? 'Run Plan Drift successfully first' : disabled ? 'Run once without enabling automatic reviews' : 'Run this review now'} onClick={() => onRunReviewModule?.(area.id)} className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[10px] font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+          {running ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}{running ? 'Starting…' : 'Run now'}
+        </button>
+      </div>
+    </div>
+  }
+  return <section className="space-y-4" aria-label="Pulse reviews">
+    <div aria-label="Pulse work areas" className="space-y-4">
+      <section aria-labelledby="pulse-strategy-heading">
+        <div className="mb-2"><h3 id="pulse-strategy-heading" className="text-sm font-semibold">Goals, metrics &amp; strategy</h3><p className="mt-1 text-xs text-muted-foreground">The user-facing view: is this workflow producing the right outcome, and what should improve?</p></div>
+        {reviewCard(areas.find(area => area.id === 'strategic_review')!, true)}
+        {strategySupplement && <div className="mt-3">{strategySupplement}</div>}
+      </section>
+      <section aria-labelledby="pulse-platform-heading">
+        <div className="mb-2"><h3 id="pulse-platform-heading" className="text-sm font-semibold">Platform health &amp; stability</h3><p className="mt-1 text-xs text-muted-foreground">Maintenance checks Pulse normally handles to keep the plan correct and reliable.</p></div>
+        <div className="grid gap-2 md:grid-cols-2">
+          {areas.filter(area => ['technical_review', 'architecture_review'].includes(area.id)).map(area => reviewCard(area))}
+        </div>
+        {liveDriftDue && <div className="mt-2 flex w-full flex-wrap items-start gap-3 rounded-xl border border-amber-500/40 bg-amber-500/10 p-4 text-left text-amber-900 dark:text-amber-100" aria-label="Plan Drift due">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0" aria-hidden="true" />
+          <span className="min-w-0 flex-1">
+            <span className="block text-sm font-semibold">Plan Drift is due</span>
+            <span className="mt-1 block text-xs leading-5">{planDriftDueItems.length > 0
+              ? `${planDriftDueItems.length} ${planDriftDueItems.length === 1 ? 'step needs' : 'steps need'} compatibility review before Technical, Architecture, or Strategy can run.`
+              : 'A drift review is pending. Technical, Architecture, and Strategy wait until the plan is current.'}</span>
+            {planDriftDueItems.length > 0 && <span className="mt-2 flex flex-wrap gap-1.5">{planDriftDueItems.slice(0, 5).map(item => <span key={item.step_id} title={item.reason} className="rounded-full border border-amber-500/30 bg-background/70 px-2 py-0.5 text-[10px] font-medium">{item.step_id === '__workflow_drift_review__' ? 'Deleted-step dependencies' : item.step_id}</span>)}{planDriftDueItems.length > 5 && <span className="px-1 py-0.5 text-[10px]">+{planDriftDueItems.length - 5} more</span>}</span>}
+          </span>
+          <span className="flex shrink-0 flex-wrap items-center gap-2">
+            <button type="button" onClick={() => onSelectModule('plan_drift_review')} className="rounded-md px-2 py-1 text-xs font-medium hover:bg-amber-500/10">View details</button>
+            <button type="button" aria-label="Run Plan Drift now" disabled={!onRunReviewModule || (!!runningReviewModule && runningReviewModule !== 'plan_drift_review')} onClick={() => onRunReviewModule?.('plan_drift_review')} className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-background px-2 py-1 text-[10px] font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+              {runningReviewModule === 'plan_drift_review' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}{runningReviewModule === 'plan_drift_review' ? 'Starting…' : 'Run Drift check'}
+            </button>
+          </span>
+        </div>}
+        {planDriftDueError && <div role="alert" className="mt-2 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-xs text-red-700 dark:text-red-300"><span className="font-semibold">Plan Drift status unavailable.</span> The plan cannot be treated as clean until this check succeeds. <span className="break-words">{planDriftDueError}</span></div>}
+        {!liveDriftDue && <div className="mt-2 flex flex-wrap items-center justify-between gap-2 rounded-lg border bg-muted/20 px-3 py-2">
+          <button type="button" onClick={() => onSelectModule('plan_drift_review')} aria-pressed={moduleFilter === 'plan_drift_review'} className={`flex items-center gap-2 text-left text-xs hover:text-foreground ${liveDriftDue ? 'font-medium text-amber-700 dark:text-amber-300' : 'text-muted-foreground'}`}><GitCompare className="h-3.5 w-3.5" /><span><span className="font-medium text-foreground">Drift check</span> · {driftStatus}<span className="mt-0.5 block text-[10px] text-muted-foreground">Required Plan Drift compatibility check after plan changes</span></span></button>
+          <button type="button" aria-label="Run Plan Drift now" disabled={!onRunReviewModule || (!!runningReviewModule && runningReviewModule !== 'plan_drift_review')} onClick={() => onRunReviewModule?.('plan_drift_review')} className="inline-flex items-center gap-1.5 rounded-md border bg-background px-2 py-1 text-[10px] font-semibold text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50">
+            {runningReviewModule === 'plan_drift_review' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}{runningReviewModule === 'plan_drift_review' ? 'Starting…' : 'Run drift check'}
+          </button>
+        </div>}
+      </section>
+    </div>
     {selected && <section key={selected.id} aria-label={`${selected.label} content`} className="space-y-4 rounded-xl border bg-background p-4">
       <div><h4 className="text-sm font-semibold">{selected.label}</h4><p className="mt-1 text-xs text-muted-foreground">{selected.description}</p></div>
-      {selected.id !== 'plan_drift_review' && disabledReviewModules.includes(selected.id as PulseReviewerModule) && <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">This reviewer is off. Future Pulse runs will skip it; previous findings, coverage, and reports remain below.</p>}
+      {selected.id !== 'plan_drift_review' && disabledReviewModules.includes(selected.id as PulseReviewerModule) && <p className="rounded-lg border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground">This reviewer is off. Future Pulse runs will skip it; previous findings and coverage remain below.</p>}
+      {selected.id !== 'plan_drift_review' && liveDriftDue && <p className="rounded-lg border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">Waiting for Plan Drift to establish a current plan baseline. This review will resume in a later Pulse cycle.</p>}
       {selected.id === 'plan_drift_review' ? <div className="space-y-2 text-xs leading-5 text-muted-foreground">
         <p className="font-medium text-foreground">{driftStatus}</p>
         <p>{driftCounts.all ? `${driftCounts.all} current drift finding${driftCounts.all === 1 ? '' : 's'}.` : 'No current drift findings.'}
           {driftCounts.resolved > 0 && ` ${driftCounts.resolved} resolved finding${driftCounts.resolved === 1 ? '' : 's'} available below.`}</p>
+        {planDriftDueItems.length > 0 && <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2"><p className="font-medium text-foreground">Steps requiring review</p><ul className="mt-1 space-y-1">{planDriftDueItems.map(item => <li key={item.step_id}><span className="font-medium text-foreground">{item.step_id === '__workflow_drift_review__' ? 'Deleted-step dependencies' : item.step_id}</span> — {item.reason}</li>)}</ul></div>}
         <details><summary className="cursor-pointer">Check details</summary><p className="mt-2 break-words">{drift?.last_reason || driftAudit?.reason || 'No drift-check details recorded.'}</p>
           {pendingDrift && driftAudit && <p className="mt-2">Previous check: {pulseReviewDate(driftAudit.recorded_at)} · {readable(driftAudit.result)}</p>}
         </details>
@@ -143,9 +170,9 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
         <p className="font-medium text-foreground">{selectedAudit?.reason || latestCoverage?.last_verdict || 'No review outcome recorded yet.'}</p>
         {selectedState?.last_gate_decision === 'skipped' && <details className="mt-2"><summary className="cursor-pointer">Why no new review ran</summary><p className="mt-2">{selectedState.last_reason}</p></details>}
       </div>}
-      {selected.id !== 'plan_drift_review' && <div>
-        <h5 className="mb-2 text-xs font-semibold">Playbook focus areas</h5>
-        {selectedPlaybookFocuses.length === 0 ? <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">No installed playbook defines a focus for this review area.</p> : <div className="divide-y rounded-lg border">
+      {selected.id === 'strategic_review' && <div>
+        <h5 className="mb-2 text-xs font-semibold">Strategic playbook focus</h5>
+        {selectedPlaybookFocuses.length === 0 ? <p className="rounded-lg border border-dashed p-3 text-xs text-muted-foreground">No installed playbook defines a strategic focus.</p> : <div className="divide-y rounded-lg border">
           {selectedPlaybookFocuses.map(item => <div key={`${item.playbookId}:${item.module}:${item.label}`} className="px-3 py-3 text-xs">
             <p className="font-medium text-foreground">{item.playbookTitle} · {item.label}</p>
             <ul className="mt-2 list-disc space-y-1 pl-4 leading-5 text-muted-foreground">{item.focusAreas.map(area => <li key={area}>{area}</li>)}</ul>
@@ -160,40 +187,11 @@ export function PulseReviewOverview({ moduleStates, coverage, audits, reports, f
             <summary className="cursor-pointer text-xs"><span className="font-medium text-foreground">{area.label}</span>
               <span className={`mt-1 block pl-4 ${items[0] ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-300'}`}>
                 {items[0] ? `Last reviewed ${pulseReviewDate(items[0].last_reviewed_at)}` : 'No specific review recorded'}</span></summary>
-            <div className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground"><FocusDetails items={items} reports={selectedReports} findings={findings} /></div>
+            <div className="mt-3 border-t pt-3 text-xs leading-5 text-muted-foreground"><FocusDetails items={items} findings={findings} /></div>
           </details>
         })}
       </div></div>}
-      {selectedState?.next_check_at && <p className="text-xs text-muted-foreground">Next assessment: {pulseReviewDate(selectedState.next_check_at)}</p>}
-      <div><h5 className="mb-2 text-xs font-semibold">Review notes and reports <span className="font-normal text-muted-foreground">({selectedReports.length})</span></h5><Reports reports={selectedReports} /></div>
+      {selected.id !== 'plan_drift_review' && selectedNextAssessment && <p className="text-xs text-muted-foreground">Next assessment: {selectedNextAssessment}</p>}
     </section>}
-    <ReviewChecks key={`checks:${moduleFilter || 'all'}`} audits={visibleAudits} reports={reports} label={selected?.label} />
-  </section>
-}
-
-
-function ReviewChecks({ audits, reports, label }: { audits: PulseReviewAudit[]; reports: PulseReviewReport[]; label?: string }) {
-  const [history, setHistory] = useState(false)
-  const [limit, setLimit] = useState(10)
-  const renderCheck = (item: PulseReviewAudit, latest: boolean) => <details key={`${item.module}:${item.pulse_run_id}`} className="px-4 py-3">
-    <summary className="cursor-pointer text-xs">{latest ? 'Latest check' : readable(item.module)} · {readable(item.result)} · {pulseReviewDate(item.recorded_at)}</summary>
-    <div className="mt-3 text-xs leading-5 text-muted-foreground">
-      <p>{item.reason}</p><Evidence title="Recorded checks" items={item.verification} />
-      {!item.verification?.length && <p className="mt-2">No test results attached to this review.</p>}
-      <Evidence title="Changed files" items={item.changed_files} /><Evidence items={item.evidence} />
-      <div className="mt-3"><Reports reports={reports.filter(report => normalizePulseWorkspaceModule(report.module) === normalizePulseWorkspaceModule(item.module) && report.pulse_run_id === item.pulse_run_id)} /></div>
-    </div>
-  </details>
-  return <section className="overflow-hidden rounded-xl border bg-background" aria-label={label ? `${label} checks and results` : 'All checks and results'}>
-    {audits.length ? renderCheck(audits[0], true) : <p className="p-4 text-xs text-muted-foreground">No review results recorded yet.</p>}
-    {audits.length > 1 && <div className="border-t">
-      <button type="button" aria-expanded={history} onClick={() => { setHistory(value => !value); setLimit(10) }} className="px-4 py-3 text-xs font-medium text-primary hover:underline">
-        {history ? 'Hide review history' : `View review history (${audits.length - 1})`}
-      </button>
-      {history && <div className="divide-y border-t" aria-label="Review history">
-        {audits.slice(1, limit + 1).map(item => renderCheck(item, false))}
-        {audits.length > limit + 1 && <button type="button" onClick={() => setLimit(value => value + 10)} className="px-4 py-3 text-xs font-medium text-primary hover:underline">Show more reviews</button>}
-      </div>}
-    </div>}
   </section>
 }

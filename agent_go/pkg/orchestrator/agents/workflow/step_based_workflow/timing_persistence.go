@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowrun"
 )
 
 //nolint:unused // staged for the run-metadata timing persistence rollout.
@@ -630,23 +631,49 @@ func (hcpo *StepBasedWorkflowOrchestrator) markRunMetadataStartedForExecution(ct
 //nolint:unused // staged for the run-metadata timing persistence rollout.
 func (hcpo *StepBasedWorkflowOrchestrator) finalizeRunMetadata(ctx context.Context, runFolder string, status string, startedAt time.Time, completedAt time.Time) {
 	if err := hcpo.upsertRunMetadata(ctx, runFolder, func(meta map[string]interface{}) {
-		if _, ok := meta["created_at"]; !ok {
-			meta["created_at"] = formatRFC3339UTC(startedAt)
-		}
-		if _, ok := meta["started_at"]; !ok {
-			meta["started_at"] = formatRFC3339UTC(startedAt)
-		}
-		meta["completed_at"] = formatRFC3339UTC(completedAt)
-		meta["duration_ms"] = completedAt.Sub(startedAt).Milliseconds()
-		if status == "completed" {
-			if failures, ok := meta["persistence_errors"].([]interface{}); ok && len(failures) > 0 {
-				status = "completed_with_persistence_error"
-			}
-		}
-		meta["status"] = status
+		applyRunFinalization(meta, status, startedAt, completedAt)
 	}); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to finalize run metadata %s: %v", runFolder, err))
 	}
+}
+
+func applyRunFinalization(meta map[string]interface{}, status string, startedAt, completedAt time.Time) {
+	if canonical := workflowrun.CanonicalStatus(status); canonical != "" {
+		status = string(canonical)
+	}
+	if _, ok := meta["created_at"]; !ok {
+		meta["created_at"] = formatRFC3339UTC(startedAt)
+	}
+	if _, ok := meta["started_at"]; !ok {
+		meta["started_at"] = formatRFC3339UTC(startedAt)
+	}
+	meta["completed_at"] = formatRFC3339UTC(completedAt)
+	meta["duration_ms"] = completedAt.Sub(startedAt).Milliseconds()
+	if status == "completed" && metadataListHasValues(meta["persistence_errors"]) {
+		meta["warnings"] = appendUniqueMetadataString(meta["warnings"], "persistence_error")
+	}
+	meta["status"] = status
+}
+
+func metadataListHasValues(value interface{}) bool {
+	switch values := value.(type) {
+	case []interface{}:
+		return len(values) > 0
+	case []map[string]interface{}:
+		return len(values) > 0
+	default:
+		return false
+	}
+}
+
+func appendUniqueMetadataString(value interface{}, addition string) []interface{} {
+	values, _ := value.([]interface{})
+	for _, existing := range values {
+		if strings.EqualFold(strings.TrimSpace(fmt.Sprint(existing)), addition) {
+			return values
+		}
+	}
+	return append(values, addition)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) recordRunPersistenceError(ctx context.Context, stepID string, persistenceErr error) {

@@ -22,9 +22,10 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    this review turn.
 2. Use `pulse_run_id="current"`, which resolves to this current Workflow Builder
    chat. This is a manual Technical Review, not a scheduled Pulse Gate pass:
-   call `record_pulse_module_due(workspace_path=<this workflow>,
-   pulse_run_id="current", module="technical_review", reason=<the explicit
-   command/focus that requested this review>)` exactly once. Do not call
+   call `record_pulse_result(workspace_path=<this workflow>,
+   pulse_run_id="current", module="technical_review", result="running",
+   note_only=true, manual=true, reason=<the explicit command/focus that
+   requested this review>)` exactly once. Do not call
    `record_pulse_worklist`, do not select among Plan Drift, Technical Review,
    and Strategic Review, and do not change another module's cadence. If the
    due claim is refused because a scheduled Pulse pass is already reviewing
@@ -66,9 +67,10 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    decision-required finding without a real pending question. Normal safe
    engineering repairs use `fixer_handoff` and do not consume operator attention.
 4. Deduplicate by root cause and leave one compact, ordered canonical repair
-   queue. Do not apply repairs. Record the chosen focus exactly once, then call
-   `record_pulse_result(module="technical_review", result="done", ...)` exactly
-   once with the truthful review outcome and evidence. The same retained Review+Fix task may later add a supplemental changed result with repair
+   queue. Do not apply repairs. Call
+   `record_pulse_result(module="technical_review", result="done", focuses=[...], ...)`
+   exactly once with the truthful review outcome, evidence, and actual focus
+   coverage. The same retained Review+Fix task may later add a supplemental changed result with repair
    dispositions; it must not invent a separate completion handshake.
 5. Finish with a concise summary of what was reviewed, promoted, linked,
    rejected, already verified, awaiting evidence, or blocked. State whether at

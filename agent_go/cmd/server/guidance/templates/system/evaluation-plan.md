@@ -1,5 +1,10 @@
 ## EVALUATION PLAN — evaluation/evaluation_plan.json
 
+Use `add_evaluation_step` to create a new evaluation step (including the first
+step in an empty plan), `update_evaluation_plan` to edit an existing step, and
+`delete_evaluation_step` to remove one. These governed tools validate the plan
+and record the change in `planning/changelog`; do not edit the file directly.
+
 Workshop owns the eval plan: write it, validate it, and keep it aligned as the workflow evolves. Interactive tests target `iteration-0`; a scheduled invocation targets its server-bound `iteration-N-sched` run.
 
 ### Division of labor — evals measure the GOAL; Pulse owns the rest

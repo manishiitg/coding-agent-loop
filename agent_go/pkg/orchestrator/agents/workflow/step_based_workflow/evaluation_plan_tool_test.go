@@ -89,6 +89,47 @@ func TestUpdateEvaluationPlanPreservesFieldsTheStructDoesNotModel(t *testing.T) 
 	}
 }
 
+func TestAddEvaluationPlanStepCreatesFirstStepAndRecordsChangelog(t *testing.T) {
+	workspacePath, files, read, write := evalPlanHarness(t, `{"steps":[]}`)
+	files[workspacePath+"/planning/plan.json"] = `{"steps":[{"type":"message_sequence","id":"run-step","title":"Run","description":"Run it","items":[{"id":"do","type":"user_message","message":"Run it"}]}]}`
+
+	out, err := AddEvaluationPlanStep(context.Background(), workspacePath, map[string]interface{}{
+		"id": "eval-outcome", "title": "Outcome", "description": "Score the observed outcome from zero to ten.", "max_score": 10,
+	}, "Add the workflow's first outcome evaluation.", read, write, loggerv2.NewNoop())
+	if err != nil {
+		t.Fatalf("add: %v", err)
+	}
+	if !strings.Contains(out, "eval-outcome") {
+		t.Fatalf("result did not name the added step: %s", out)
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal([]byte(files[workspacePath+"/"+evaluationPlanRelPath]), &document); err != nil {
+		t.Fatal(err)
+	}
+	if steps := document["steps"].([]interface{}); len(steps) != 1 || steps[0].(map[string]interface{})["id"] != "eval-outcome" {
+		t.Fatalf("first evaluation step was not persisted: %#v", document)
+	}
+	entry := findChangelogEntry(t, workspacePath, files, "add_evaluation_step")
+	if len(entry.AddedSteps) != 1 {
+		t.Fatalf("addition was not captured for review/revert: %+v", entry)
+	}
+}
+
+func TestAddEvaluationPlanStepRejectsCrossPlanIDCollisionWithoutWriting(t *testing.T) {
+	workspacePath, files, read, write := evalPlanHarness(t, `{"steps":[]}`)
+	original := files[workspacePath+"/"+evaluationPlanRelPath]
+	files[workspacePath+"/planning/plan.json"] = `{"steps":[{"type":"regular","id":"shared","title":"Run","description":"Run it"}]}`
+	_, err := AddEvaluationPlanStep(context.Background(), workspacePath, map[string]interface{}{
+		"id": "shared", "title": "Outcome", "description": "Score it.",
+	}, "Add evaluation.", read, write, loggerv2.NewNoop())
+	if err == nil || !strings.Contains(err.Error(), "collides") {
+		t.Fatalf("cross-plan collision accepted: %v", err)
+	}
+	if got := files[workspacePath+"/"+evaluationPlanRelPath]; got != original {
+		t.Fatalf("failed addition mutated the plan: %s", got)
+	}
+}
+
 // TestUpdateEvaluationPlanCanRealignRouteGatingAndPreValidationAtomically
 // reproduces LinkedIn PUL-E45BE152: update_evaluation_plan had no editable
 // pre_validation field, so a step's producer-route gate (applies_to_routes)

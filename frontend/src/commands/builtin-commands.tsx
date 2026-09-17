@@ -250,12 +250,11 @@ export const builtinCommands: CommandDefinition[] = [
     requiredWorkshopMode: 'workshop',
     source: 'builtin',
     execute: (ctx) => {
-      submitGuidedWorkflowCommand(ctx, 'engineering-review', {
-        runFolder: ctx.getWorkflowStore().selectedRunFolder,
-        background: true,
-        displayName: 'review-code',
-        forcedFocus: [
-          'Manual read-only Technical Review focus: plan_orchestration_integrity. Inspect saved scripts against their current step objectives, input/output contracts, and relevant retained behavior.',
+      submitGuidedWorkflowCommand(ctx, 'design-plan', {
+		runFolder: ctx.getWorkflowStore().selectedRunFolder,
+		displayName: 'review-code',
+		forcedFocus: [
+		  'Architecture focus: inspect saved scripts against their current step objectives, input/output contracts, and relevant retained behavior. Propose improvements without applying them.',
           'Load and apply read_skill(skills=[{"name":"builder-reference","path":"references/code-authoring.md"}]), then load and apply read_skill(skills=[{"name":"builder-reference","path":"references/scripted.md"}]) as review references; their authoring and execution instructions do not grant mutation or producing-run authority in this review.',
           'Check source-layout migration consistency: resolve canonical code paths from workflow.json.code_layout_version. Version 1 uses code/<step-id>/main.py directly and shared imports rooted at WORKFLOW_CODE_ROOT, without execution-copy or copy-back assumptions. Absent/zero uses the supported legacy learnings/<step-id>/main.py layout. Inspect relevant active code, imports, and plan references for missing canonical files or stale layout assumptions; historical retained copies and an intentionally legacy layout are not defects. Do not migrate implicitly or infer the version from folder existence.',
           'For a legacy scripted workflow, assess and normally propose migration to code/ using the Deliberate migration to code/ section of code-authoring.md. Include the complete source/helper/metadata scope, supported manifest-switch mechanism or its absence, rollback boundary, and focused runtime tests. Treat this as a maintenance improvement, not a bug; reuse existing proposals and respect explicit deferrals. If migration and testing are already authorized, preserve that scope for the implementation handoff rather than asking again. This review remains read-only.',

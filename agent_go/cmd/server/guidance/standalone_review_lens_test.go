@@ -23,7 +23,7 @@ func TestAppendStandaloneReviewLensNoticeCoversEveryOrphanableLens(t *testing.T)
 		if !strings.Contains(got, "STANDALONE MODE") {
 			t.Errorf("appendStandaloneReviewLensNotice(%q, ...) missing the standalone recording notice", kind)
 		}
-		if !strings.Contains(got, "record_pulse_review_focus") || !strings.Contains(got, "record_pulse_finding") {
+		if !strings.Contains(got, "record_pulse_result") || !strings.Contains(got, "focuses=") {
 			t.Errorf("appendStandaloneReviewLensNotice(%q, ...) does not tell the agent which typed Pulse tools to call", kind)
 		}
 		if !strings.HasPrefix(got, "base guidance text") {

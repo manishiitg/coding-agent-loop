@@ -8,16 +8,17 @@ import {
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { playbooksApi } from '../../api/playbooks'
+import { useChatStore } from '../../stores/useChatStore'
+import { sendWorkflowMessageToChat } from '../../utils/reportHumanInputChat'
 import type {
   PulseFinalCommandState,
   PulseFindingLifecycle,
   PulseImpactLedger,
-  PulseContextRecord,
   PulseModuleState,
+  PulsePlanDriftDueItem,
   PulseReviewRecord,
   PulseReviewFocus,
   PulseReviewAudit,
-  PulseReviewReport,
   PulseReviewerModule,
 } from '../../services/api-types'
 import { ReportHumanInputPanel } from './ReportHumanInputPanel'
@@ -37,44 +38,12 @@ import {
   type PulseFocus,
 } from './pulseWorkspaceUtils'
 import {
-  PULSE_FIXED_COMMANDS,
   PULSE_MODULE_COMMANDS,
 } from './canvas/pulseSections'
-
-function formatDate(value?: string): string {
-  if (!value) return 'Not recorded'
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? value
-    : date.toLocaleString(undefined, {
-        month: 'short',
-        day: 'numeric',
-        hour: '2-digit',
-        minute: '2-digit',
-      })
-}
 
 function readable(value?: string): string {
   const text = (value || '').trim().replaceAll('_', ' ')
   return text ? text.charAt(0).toUpperCase() + text.slice(1) : 'No data'
-}
-
-function statusTone(value?: string): string {
-  const status = (value || '').toLowerCase().replace(/^last\s+/, '')
-  if (['failed', 'blocked', 'timed_out', 'timed out'].includes(status)) {
-    return 'border-red-500/30 bg-red-500/10 text-red-700 dark:text-red-300'
-  }
-  if (['changed', 'due', 'fixing', 'awaiting_verification'].includes(status)) {
-    return 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-  }
-  if (['done', 'completed', 'clean', 'published', 'healthy'].includes(status)) {
-    return 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-  }
-  return 'border-border bg-muted text-muted-foreground'
-}
-
-function finalCommandLabel(state?: PulseFinalCommandState): string {
-  return readable(state?.status)
 }
 
 type ReviewFocusLabel = {
@@ -108,10 +77,41 @@ const FOCUS_HINTS: Record<PulseFocus, string> = {
   workflow_reported: 'Evidence filed by workflow steps, kept separate from Pulse\u2019s repair queue',
 }
 
+const REVIEW_HISTORY_MODULES = [
+  { id: 'plan_drift_review', label: 'Plan Drift' },
+  { id: 'technical_review', label: 'Technical' },
+  { id: 'architecture_review', label: 'Architecture' },
+  { id: 'strategic_review', label: 'Strategic' },
+] as const
+
+function reviewRunDate(value: string): string {
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+export function manualPulseReviewMessage(module: string, workspacePath = '<this workflow>'): string {
+  switch (module) {
+    case 'strategic_review':
+      return 'Run the Strategic Review for this workflow now. Call get_workflow_command_guidance(kind="strategy-auditor", focus="Manual Strategic Review requested from the Pulse UI") and follow the returned instructions exactly. Run it as a background review so this chat stays responsive.'
+    case 'architecture_review':
+      return `Run a manual Architecture Review for this workflow now. First call record_pulse_result(workspace_path=${JSON.stringify(workspacePath)}, module="architecture_review", pulse_run_id="current", result="running", note_only=true, manual=true, reason="Manual Architecture Review requested from the Pulse UI"). If another Pulse pass owns it, report that collision and stop. Otherwise load read_skill(skills=[{"name":"builder-reference","path":"references/architecture-review.md"}]) and follow it exactly as a read-only review. Persist findings, decisions, impact records, and one terminal architecture_review result with focuses included; do not edit the workflow.`
+    case 'technical_review':
+      return 'Run the Technical Review for this workflow now. Call get_workflow_command_guidance(kind="engineering-review", focus="Manual Technical Review requested from the Pulse UI") and follow the returned instructions exactly. Run only the review phase; diagnose concrete correctness failures and leave repairs for an explicit Fix action.'
+    case 'plan_drift_review':
+      return 'Run Plan Drift for this workflow now. Call get_workflow_command_guidance(kind="review-artifact-drift", focus="Manual Plan Drift requested from the Pulse UI") and follow the returned instructions exactly. Apply only the bounded compatibility repairs that Plan Drift authorizes.'
+    default:
+      throw new Error(`Unsupported Pulse review module: ${module}`)
+  }
+}
+
 export function PulseWorkspace({
   workspacePath,
   moduleStates,
-  finalCommandStates,
+  planDriftDue = false,
+  planDriftDueItems = [],
+  planDriftDueError = null,
   reviewFocuses,
   reviewFocusSelections,
   disabledReviewModules = [],
@@ -121,6 +121,9 @@ export function PulseWorkspace({
 }: {
   workspacePath: string
   moduleStates: PulseModuleState[]
+  planDriftDue?: boolean
+  planDriftDueItems?: PulsePlanDriftDueItem[]
+  planDriftDueError?: string | null
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
@@ -134,12 +137,12 @@ export function PulseWorkspace({
   const [reviews, setReviews] = useState<PulseReviewRecord[]>([])
   const [coverage, setCoverage] = useState<PulseReviewFocus[]>([])
   const [audits, setAudits] = useState<PulseReviewAudit[]>([])
-  const [reports, setReports] = useState<PulseReviewReport[]>([])
   const [impact, setImpact] = useState<PulseImpactLedger>({ interventions: [], observations: [], assessments: [] })
-  const [contextRecords, setContextRecords] = useState<PulseContextRecord[]>([])
   const [playbookFocuses, setPlaybookFocuses] = useState<InstalledPlaybookReviewFocus[]>([])
   const [focus, setFocus] = useState<PulseFocus>('all')
-  const [moduleFilter, setModuleFilter] = useState<string | null>('technical_review')
+  const [moduleFilter, setModuleFilter] = useState<string | null>(null)
+  const [selectedReviewModule, setSelectedReviewModule] = useState<string>('strategic_review')
+  const [manualReviewStarting, setManualReviewStarting] = useState<string | null>(null)
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null)
   const [showCompleteBacklog, setShowCompleteBacklog] = useState(false)
   const [loading, setLoading] = useState(false)
@@ -150,11 +153,10 @@ export function PulseWorkspace({
     const version = ++loadVersion.current
     if (showLoading) setLoading(true)
     if (showLoading) setError(null)
-    const [findingResult, reviewResult, impactResult, contextResult, playbookResult] = await Promise.allSettled([
+    const [findingResult, reviewResult, impactResult, playbookResult] = await Promise.allSettled([
       agentApi.getPulseFindings(workspacePath),
       agentApi.getPulseReviews(workspacePath),
       agentApi.getPulseImpact(workspacePath),
-      agentApi.getPulseContext(workspacePath),
       Promise.all([playbooksApi.list(), playbooksApi.listInstalled(workspacePath)]),
     ])
     if (version !== loadVersion.current) return
@@ -173,12 +175,10 @@ export function PulseWorkspace({
       setReviews(reviewResult.value.reviews || [])
       setCoverage(reviewResult.value.coverage || [])
       setAudits(reviewResult.value.audits || [])
-      setReports(reviewResult.value.reports || [])
     } else {
       setReviews([])
       setCoverage([])
       setAudits([])
-      setReports([])
       errors.push(
         reviewResult.status === 'rejected'
           ? (reviewResult.reason instanceof Error ? reviewResult.reason.message : 'Could not load reviews.')
@@ -195,21 +195,11 @@ export function PulseWorkspace({
           : impactResult.value.error || 'Could not load goal impact.',
       )
     }
-    if (contextResult.status === 'fulfilled' && contextResult.value.success) {
-      setContextRecords(contextResult.value.records || [])
-    } else {
-      setContextRecords([])
-      errors.push(
-        contextResult.status === 'rejected'
-          ? (contextResult.reason instanceof Error ? contextResult.reason.message : 'Could not load user context.')
-          : contextResult.value.error || 'Could not load user context.',
-      )
-    }
     if (playbookResult.status === 'fulfilled') {
       const [catalog, installed] = playbookResult.value
       const installedIDs = new Set(installed.filter(item => item.status !== 'disabled').map(item => item.id))
       setPlaybookFocuses(catalog.filter(playbook => installedIDs.has(playbook.id)).flatMap(playbook =>
-        (playbook.pulseFocus || []).map(focus => ({
+        (playbook.pulseFocus || []).filter(focus => focus.module === 'strategic_review').map(focus => ({
           playbookId: playbook.id,
           playbookTitle: playbook.title,
           module: focus.module,
@@ -228,19 +218,31 @@ export function PulseWorkspace({
 
   useEffect(() => {
     setFocus('all')
-    setModuleFilter('technical_review')
+    setModuleFilter(null)
+    setSelectedReviewModule('strategic_review')
     setExpandedFinding(null)
     setShowCompleteBacklog(false)
     setCoverage([])
     setAudits([])
-    setReports([])
     setFindings([])
     setReviews([])
     setImpact({ interventions: [], observations: [], assessments: [] })
-    setContextRecords([])
     setPlaybookFocuses([])
     void load()
   }, [load])
+
+  const runReviewNow = useCallback(async (module: string) => {
+    if (manualReviewStarting) return
+    setManualReviewStarting(module)
+    try {
+      await sendWorkflowMessageToChat({ workspacePath, message: manualPulseReviewMessage(module, workspacePath), viewMode: 'terminal' })
+      useChatStore.getState().addToast(`${module === 'strategic_review' ? 'Strategic' : module === 'architecture_review' ? 'Architecture' : module === 'technical_review' ? 'Technical' : 'Plan Drift'} Review opened in chat`, 'success')
+    } catch (err) {
+      useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not start the review', 'error')
+    } finally {
+      setManualReviewStarting(null)
+    }
+  }, [manualReviewStarting, workspacePath])
 
   useEffect(() => {
     const onRefresh = () => { void load(false) }
@@ -281,10 +283,13 @@ export function PulseWorkspace({
     )
   }, [reviewFocusSelections, moduleFilter])
 
-  const finalCommandStateByID = useMemo(
-    () => new Map(finalCommandStates.map((state) => [state.command, state])),
-    [finalCommandStates],
-  )
+  const reviewRunHistory = useMemo(() => REVIEW_HISTORY_MODULES.map((module) => ({
+    ...module,
+    runs: reviews
+      .filter((review) => normalizePulseWorkspaceModule(review.module) === module.id)
+      .sort((left, right) => right.recorded_at.localeCompare(left.recorded_at)),
+  })), [reviews])
+
   const matchingFindings = useMemo(
     () => {
       const matched = areaFindings
@@ -331,22 +336,31 @@ export function PulseWorkspace({
 
   return (
     <div className="space-y-4">
-      <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
       <SoulViewer workspacePath={workspacePath} pulseSummary />
       <GoalProgress workspacePath={workspacePath} impact={impact} />
-      <PulseImprovements impact={impact} />
 
-      <PulseReviewOverview moduleStates={moduleStates} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
-        audits={audits} reports={reports} findings={findings} moduleFilter={moduleFilter} reviewFocusSelections={reviewFocusSelections}
+      <PulseReviewOverview moduleStates={moduleStates} planDriftDue={planDriftDue} planDriftDueItems={planDriftDueItems} planDriftDueError={planDriftDueError} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
+        audits={audits} findings={findings} moduleFilter={selectedReviewModule} reviewFocusSelections={reviewFocusSelections}
         playbookFocuses={playbookFocuses}
         disabledReviewModules={disabledReviewModules} reviewModuleSaving={reviewModuleSaving} onToggleReviewModule={onToggleReviewModule}
+        runningReviewModule={manualReviewStarting} onRunReviewModule={runReviewNow}
+        strategySupplement={<PulseImprovements
+          impact={impact}
+          kinds={['strategy_experiment']}
+          title="Strategic proposals"
+          description="What Strategic Review proposed, whether it was approved or applied, and what happened to the goal metrics."
+          emptyMessage="Strategic Review has not recorded a proposal yet. Its latest conclusion and review notes are shown below."
+        />}
         onSelectModule={module => {
           const counts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes(module)))
+          setSelectedReviewModule(module)
           setModuleFilter(module)
           setFocus(module === 'plan_drift_review' && counts.all === 0 && counts.resolved > 0 ? 'resolved' : 'all')
           setShowCompleteBacklog(false)
           setExpandedFinding(null)
         }} />
+
+      <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
 
       {(error || statusError) && (
         <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
@@ -463,6 +477,7 @@ export function PulseWorkspace({
                       expandedFinding === issueID ? null : issueID,
                     )}
                     onOpenModule={moduleID ? () => {
+                      setSelectedReviewModule(moduleID)
                       setModuleFilter(moduleID)
                       setFocus('all')
                       setShowCompleteBacklog(false)
@@ -474,55 +489,52 @@ export function PulseWorkspace({
           )}
         </section>
 
-        {contextRecords.length > 0 && (
-          <section className="overflow-hidden rounded-xl border bg-background">
-            <div className="border-b px-4 py-3">
-              <h3 className="text-sm font-semibold text-foreground">User rules</h3>
-              <p className="mt-0.5 text-[11px] text-muted-foreground">Confirmed context that future workflow runs must respect</p>
-            </div>
-            <div className="divide-y">
-              {contextRecords.slice(0, 5).map((record) => (
-                <div key={record.context_id} className="px-4 py-3">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{record.section}</span>
-                    <span className="shrink-0 text-[9px] text-muted-foreground">{formatDate(record.created_at)}</span>
-                  </div>
-                  <p className="mt-1 text-xs leading-5 text-foreground">{record.context_text}</p>
-                  {record.example_note && <p className="mt-1 text-[10px] leading-4 text-muted-foreground">{record.example_note}</p>}
-                </div>
-              ))}
-            </div>
-          </section>
-        )}
       </div>
 
-      <section className="overflow-hidden rounded-xl border bg-background">
+      <PulseImprovements
+        impact={impact}
+        kinds={['fix_bundle', 'architecture_improvement']}
+        title="Platform improvements"
+        description="Technical and architecture changes, from application through observed outcome."
+      />
+
+      <section className="overflow-hidden rounded-xl border bg-background" aria-label="Review run history">
         <div className="border-b px-4 py-3">
-          <h3 className="text-sm font-semibold text-foreground">Finalization</h3>
-          <p className="mt-0.5 text-[11px] text-muted-foreground">Dashboard, backup, publish, and notification outcomes</p>
+          <h3 className="text-sm font-semibold text-foreground">Review run history</h3>
+          <p className="mt-0.5 text-[11px] text-muted-foreground">Recorded completed runs and their dates for each Pulse reviewer</p>
         </div>
         <div className="grid gap-px bg-border sm:grid-cols-2 lg:grid-cols-4">
-          {PULSE_FIXED_COMMANDS.map((command) => {
-            const state = finalCommandStateByID.get(command.id)
-            return (
-              <div key={command.id} className="min-w-0 bg-background p-3">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold text-foreground">{command.label}</span>
-                  <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-semibold capitalize ${statusTone(finalCommandLabel(state))}`}>
-                    {finalCommandLabel(state)}
-                  </span>
-                </div>
-                <div className="mt-1 line-clamp-2 text-[10px] leading-4 text-muted-foreground">
-                  {state?.reason || command.description}
-                </div>
-                <div className="mt-2 text-[9px] text-muted-foreground">
-                  {formatDate(state?.finished_at || state?.updated_at || state?.started_at)}
-                </div>
+          {reviewRunHistory.map((module) => (
+            <div key={module.id} className="min-w-0 bg-background p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-xs font-semibold text-foreground">{module.label}</span>
+                <span className="rounded-full border bg-muted px-2 py-0.5 text-[9px] font-semibold tabular-nums text-muted-foreground">
+                  {module.runs.length} {module.runs.length === 1 ? 'run' : 'runs'}
+                </span>
               </div>
-            )
-          })}
+              {module.runs.length === 0 ? (
+                <p className="mt-2 text-[10px] text-muted-foreground">No completed runs recorded.</p>
+              ) : (
+                <>
+                  <div className="mt-2 text-[9px] font-semibold uppercase tracking-wide text-muted-foreground">Recent dates</div>
+                  <ul className="mt-1 space-y-1 text-[10px] text-foreground">
+                    {module.runs.slice(0, 3).map((run) => <li key={run.id} className="tabular-nums">{reviewRunDate(run.recorded_at)}</li>)}
+                  </ul>
+                  {module.runs.length > 3 && (
+                    <details className="mt-2 text-[10px] text-muted-foreground">
+                      <summary className="cursor-pointer font-medium text-primary">View all {module.runs.length} run dates</summary>
+                      <ul className="mt-1 space-y-1 pl-2 tabular-nums">
+                        {module.runs.map((run) => <li key={run.id}>{reviewRunDate(run.recorded_at)}</li>)}
+                      </ul>
+                    </details>
+                  )}
+                </>
+              )}
+            </div>
+          ))}
         </div>
       </section>
+
     </div>
   )
 }

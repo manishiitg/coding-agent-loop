@@ -43,7 +43,7 @@ REQUIRED_MANIFEST_FIELDS = [
 ]
 REQUIRED_TOOL_FIELDS = {"id", "name", "type", "purpose", "capability", "optional"}
 REQUIRED_PULSE_FOCUS_FIELDS = {"module", "label", "focus_areas", "review_when"}
-PULSE_FOCUS_MODULES = {"technical_review", "architecture_review", "strategic_review"}
+PULSE_FOCUS_MODULES = {"strategic_review"}
 REQUIRED_SKILL_RECOMMENDATION_FIELDS = {
     "id",
     "name",
@@ -174,7 +174,7 @@ def validate_package(package: Path, errors: list[str]) -> dict[str, object] | No
             if not isinstance(focus.get("review_when"), list) or not focus["review_when"]:
                 fail(errors, manifest_path, f"pulse_focus[{index}].review_when must be a non-empty list")
         if modules != PULSE_FOCUS_MODULES:
-            fail(errors, manifest_path, "pulse_focus must define technical_review, architecture_review, and strategic_review only")
+            fail(errors, manifest_path, "pulse_focus must define strategic_review only")
     recommended_skills = manifest.get("recommended_skills", [])
     if not isinstance(recommended_skills, list):
         fail(errors, manifest_path, "recommended_skills must be a list")

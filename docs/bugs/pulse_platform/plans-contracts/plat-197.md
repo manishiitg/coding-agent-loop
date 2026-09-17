@@ -6,7 +6,7 @@
 |---|---|
 | Assigned agent | `Codex` |
 | Ticket state | `implementation_in_progress` — origin and dependency closure implemented; revision/effect closure remains |
-| Last synchronized | `2026-08-28` |
+| Last synchronized | `2026-09-17` |
 
 - **Priority:** P1 — a plan mutation can be recorded as reviewed while a
   downstream step, validation contract, evaluation, report, DB contract, or
@@ -189,3 +189,45 @@ Still open before this ticket can close:
   `not_measurable` disposition) for every closed material change; and
 - deployed workflow re-verification is still required for user-chat, generic
   Pulse Fixer, and approved-human-decision paths.
+
+## Follow-up — 2026-09-17: Plan Drift/Technical duplicate-review gap
+
+The six-surface contract was deployed, but the scheduler exposed a second-order
+gap: Gate could route an incomplete `plan_change_dependencies` receipt to
+`plan_drift_review`, which then cleared only the per-step drift record. The
+unchanged PLAT-197 receipt remained open and deterministically forced a later
+Technical Review whose only useful action was marking those same entries.
+
+Plan Drift now owns both closure records when Gate selects it in lieu of
+Technical Review. Its procedure marks only the exact changelog entries it
+actually inspected, with all six surface dispositions and durable issue links
+for unresolved defects. `record_pulse_result` also rejects a successful Plan
+Drift result if current-contract dependency receipts remain incomplete and
+Technical Review is not due in that same run. This preserves revision safety:
+newer/uninspected entries stay open, while an already-completed drift review can
+no longer manufacture a receipt-only Technical pass on the next schedule.
+
+The scheduler boundary is stricter as of the same follow-up: any due Plan Drift
+review makes that Pulse cycle an exclusive prerequisite pass. Technical,
+Architecture, and Strategic Review are deferred until the following cycle, so
+they never assess runtime or product behavior against a plan already known to
+be stale. Pending reviewer-recovery records remain durable and are selected
+again after Plan Drift establishes the new baseline. A persisted `fail` check
+now keeps `drift_review.needs_review=true`, so an unresolved drift cannot clear
+the prerequisite merely because its reviewer turn ended.
+
+The Pulse UI now reads a lightweight live due-item projection from Go and shows
+a prominent prerequisite banner with the candidate count, affected step IDs,
+and reasons. Technical, Architecture, and Strategy visibly show “Waiting for Plan
+Drift,” including before the next scheduled Gate has run; a scan error is shown
+as unknown/not-clean rather than silently appearing healthy.
+
+The 2026-09-17 Pulse control follow-through also adds a direct **Run drift
+check** action. Downstream manual Technical, Architecture and Strategic actions
+are disabled while drift is due or its live status cannot be established.
+The due state is rendered once: the prominent prerequisite card owns its
+details and manual-run actions, while the normal compact drift-status row is
+suppressed until the prerequisite clears.
+Plan Drift deliberately has no disable switch: allowing the owner to suppress
+the compatibility prerequisite would violate this ticket's current-plan
+baseline guarantee.

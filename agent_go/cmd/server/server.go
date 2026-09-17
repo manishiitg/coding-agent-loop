@@ -1763,17 +1763,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
 	} else {
 		log.Printf("✅ Slack service initialized")
-		// Set feedback store function for test connections only
-		// Note: For receiving feedback, notification manager handles it
-		services.SetFeedbackStoreFuncs(
-			func(uniqueID string, message string) error {
-				store := virtualtools.GetHumanFeedbackStore()
-				if store != nil {
-					return store.CreateRequest(uniqueID, message)
-				}
-				return nil
-			},
-		)
 	}
 
 	// Initialize Gmail service (single-user, backed by the `gws` CLI). Unlike

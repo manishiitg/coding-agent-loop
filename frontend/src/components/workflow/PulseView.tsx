@@ -1,7 +1,7 @@
 import { Activity, RefreshCw } from 'lucide-react'
 import { PulseWorkspace } from './PulseWorkspace'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
-import type { PulseFinalCommandState, PulseModuleState, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
+import type { PulseFinalCommandState, PulseModuleState, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
 export interface PulseOverview {
   recorded: number
@@ -18,6 +18,9 @@ interface PulseViewProps {
   reviewModuleSaving: PulseReviewerModule | null
   onToggleReviewModule: (module: PulseReviewerModule) => void
   moduleStates: PulseModuleState[]
+  planDriftDue: boolean
+  planDriftDueItems: PulsePlanDriftDueItem[]
+  planDriftDueError: string | null
   finalCommandStates: PulseFinalCommandState[]
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
@@ -37,6 +40,9 @@ export default function PulseView({
   reviewModuleSaving,
   onToggleReviewModule,
   moduleStates,
+  planDriftDue,
+  planDriftDueItems,
+  planDriftDueError,
   finalCommandStates,
   reviewFocuses,
   reviewFocusSelections,
@@ -92,6 +98,9 @@ export default function PulseView({
             <PulseWorkspace
               workspacePath={workspacePath}
               moduleStates={moduleStates}
+              planDriftDue={planDriftDue}
+              planDriftDueItems={planDriftDueItems}
+              planDriftDueError={planDriftDueError}
               finalCommandStates={finalCommandStates}
               reviewFocuses={reviewFocuses}
               reviewFocusSelections={reviewFocusSelections}

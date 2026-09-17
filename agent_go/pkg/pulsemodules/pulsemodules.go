@@ -34,6 +34,15 @@ type Module struct {
 	// Aliases are shorthand or superseded spellings that normalize to ID.
 	// These are accepted as input; they are never emitted.
 	Aliases []string
+	// Question is the single boundary question this reviewer answers. Keep this
+	// short enough to reuse in dispatch and UI copy.
+	Question string
+	// Trigger states what evidence makes the module useful. It is descriptive;
+	// Gate still records the durable due decision.
+	Trigger string
+	// Authority is either repair (may apply bounded workflow-owned fixes) or
+	// propose (research-only; changes require the normal Builder/decision path).
+	Authority string
 }
 
 // Canonical module IDs. Consumers that need compile-time constants must alias
@@ -59,14 +68,13 @@ const (
 	PseudoRunSummaryID = "run_summary"
 )
 
-// All is the canonical, ordered module set. Order is the Pulse worklist order
-// and is part of the contract — the scheduler and UI both rely on it.
+// All is the stable identity/catalog order used by persisted worklists and UI
+// projections. ExecutionOrder below is the runtime dependency order.
 var All = []Module{
 	{
 		// Technical Review is one retained reviewer sequence with an agent-chosen
-		// deep lens. Engineering correctness, store integrity, runtime operations,
-		// model/tier fitness, orchestration shape, and execution efficiency are
-		// lenses within this module rather than competing durable identities.
+		// correctness lens. Structural optimization, model/tier fitness and
+		// orchestration redesign belong to Architecture instead.
 		ID:        TechnicalReviewID,
 		Label:     "Technical review",
 		StepLabel: "technical-review",
@@ -75,12 +83,18 @@ var All = []Module{
 			"correctness_review", "ops", "operations",
 			LegacyWorkflowReviewID, LegacyLLMOpsReviewID,
 		},
+		Question:  "Does the current approved design execute correctly?",
+		Trigger:   "Concrete runtime, output, validation, scheduler, or safety failure evidence.",
+		Authority: "repair",
 	},
 	{
 		ID:        ArchitectureReviewID,
 		Label:     "Architecture review",
 		StepLabel: "architecture-review",
 		Aliases:   []string{"architecture", "workflow_improvement"},
+		Question:  "Could the approved approach be implemented with a materially better technical structure?",
+		Trigger:   "Evidence of structural complexity, duplication, handoff friction, topology limits, or persistent cost/latency inefficiency.",
+		Authority: "propose",
 	},
 	{
 		// Strategic Review owns both causal criticism of the current strategy
@@ -95,6 +109,9 @@ var All = []Module{
 			"strategy", "strategy_review", "plan_effectiveness", "advisor",
 			LegacyStrategyAuditorID, LegacyGoalAdvisorID,
 		},
+		Question:  "Is the workflow achieving its goal, and what should improve next?",
+		Trigger:   "Outcome movement, feedback, measurement gaps, experiment checkpoints, or grounded strategic opportunity.",
+		Authority: "propose",
 	},
 	{
 		// Plan Drift Review is event-triggered rather than time-cadenced: it is
@@ -110,7 +127,27 @@ var All = []Module{
 		Label:     "Plan drift review",
 		StepLabel: "plan-drift-review",
 		Aliases:   []string{"drift_review", "plan_drift"},
+		Question:  "Did a specific approved plan change leave dependent artifacts inconsistent?",
+		Trigger:   "A new or stale per-step drift receipt or an unreviewed plan-change dependency receipt.",
+		Authority: "repair",
 	},
+}
+
+// ExecutionOrder is the canonical reviewer sequence. Plan Drift is an
+// exclusive prerequisite: when it is due, the scheduler runs only it in that
+// cycle. On a clean baseline, Architecture gets the first structural look,
+// Technical validates concrete behavior, and Strategic evaluates outcomes.
+var ExecutionOrder = []string{
+	PlanDriftReviewID,
+	ArchitectureReviewID,
+	TechnicalReviewID,
+	StrategicReviewID,
+}
+
+// PostDriftExecutionOrder returns the reviewers eligible after Gate has
+// established that Plan Drift is not due.
+func PostDriftExecutionOrder() []string {
+	return append([]string(nil), ExecutionOrder[1:]...)
 }
 
 // PseudoIDs are data-module values that appear in builder/improve.html but are

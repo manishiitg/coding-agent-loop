@@ -454,7 +454,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) findExecutionPlanProducerCandidates(
 			continue
 		}
 		output := ResolveVariables(step.GetContextOutput().String(), variableValues)
-		if !contextOutputMatchesDependency(output, dep) {
+		matchesOutput := contextOutputMatchesDependency(output, dep)
+		matchesProducerID := strings.TrimSpace(step.GetID()) == strings.TrimSpace(dep)
+		if !matchesOutput && !matchesProducerID {
 			continue
 		}
 
@@ -471,8 +473,14 @@ func (hcpo *StepBasedWorkflowOrchestrator) findExecutionPlanProducerCandidates(
 			candidates = append(candidates, candidate)
 		}
 
+		outputNames := []string{dep}
+		if matchesProducerID && !matchesOutput {
+			outputNames = contextOutputFileNames(output)
+		}
 		// Prefer the stable artifact folder keyed by step_id.
-		appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, stepID, stepID), dep))
+		for _, outputName := range outputNames {
+			appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, stepID, stepID), outputName))
+		}
 
 		// Backward compatibility: older runs may still have artifacts in positional step folders
 		// like execution/step-1 or execution/step-1-sub-read-credentials.
@@ -484,7 +492,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) findExecutionPlanProducerCandidates(
 			legacyStepPath = resolveInnerStepPath(executionPlanFromContext(ctx).Steps, &infoCopy)
 		}
 		if legacyStepPath != "" {
-			appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, "", legacyStepPath), dep))
+			for _, outputName := range outputNames {
+				appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, "", legacyStepPath), outputName))
+			}
 		}
 	}
 

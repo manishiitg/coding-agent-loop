@@ -47,6 +47,20 @@ type playbookChangelogEntry struct {
 	Summary string `json:"summary"`
 }
 
+// Playbooks may specialize Strategic Review, where the useful question depends
+// on the customer's goals and domain. Technical and Architecture Review keep
+// their canonical evidence- and structure-driven scopes. Filtering here also
+// makes older catalog manifests harmless without breaking reads.
+func strategicPlaybookFocus(focuses []map[string]interface{}) []map[string]interface{} {
+	filtered := make([]map[string]interface{}, 0, 1)
+	for _, focus := range focuses {
+		if module, _ := focus["module"].(string); module == pulseModuleStrategicReview {
+			filtered = append(filtered, focus)
+		}
+	}
+	return filtered
+}
+
 func playbooksRoot() (string, error) {
 	if configured := strings.TrimSpace(os.Getenv("AGENTWORKS_PLAYBOOKS_DIR")); configured != "" {
 		if info, err := os.Stat(configured); err == nil && info.IsDir() {
@@ -95,6 +109,7 @@ func loadPlaybookCatalog() ([]playbookCatalogItem, error) {
 		}
 		item.SourceDir = filepath.Dir(filePath)
 		item.Category = playbookCategory(item.Hierarchy)
+		item.PulseFocus = strategicPlaybookFocus(item.PulseFocus)
 		items = append(items, item)
 		return nil
 	})

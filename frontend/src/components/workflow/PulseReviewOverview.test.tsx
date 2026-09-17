@@ -2,12 +2,9 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
-vi.mock('../../services/api', () => ({ agentApi: { getPlannerFileContent: vi.fn() } }))
-vi.mock('../ui/MarkdownRenderer', () => ({ MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div> }))
-import { agentApi } from '../../services/api'
 import { PulseReviewOverview } from './PulseReviewOverview'
 
-it('keeps review history collapsed, pages older checks, and resets it when changing areas', async () => {
+it('keeps the current outcome but omits the old expandable check history', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const container = document.createElement('div'); document.body.append(container)
   const root = createRoot(container)
@@ -16,73 +13,31 @@ it('keeps review history collapsed, pages older checks, and resets it when chang
     result: 'done', reason: `Review outcome ${i}`, recorded_at: `2026-09-${String(20 - i).padStart(2, '0')}T09:00:00Z`,
     verification: [`Verified check ${i}`],
   }))
-  const reports = audits.slice(0, 3).map(audit => ({ module: audit.module, pulse_run_id: audit.pulse_run_id,
-    path: `Workflow/example/runs/pulse/${audit.pulse_run_id}/technical-review.md`, updated_at: audit.recorded_at }))
   const render = (moduleFilter: string) => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]}
-    audits={audits} reports={reports} moduleFilter={moduleFilter} onSelectModule={() => {}} />)
-  const button = (prefix: string) => [...container.querySelectorAll<HTMLButtonElement>('button')].find(node => node.textContent?.startsWith(prefix))!
+    audits={audits} moduleFilter={moduleFilter} onSelectModule={() => {}} />)
   try {
     await act(async () => render('technical_review'))
-    const checks = () => container.querySelector('[aria-label="Health checks and results"]')!
-    expect(checks().querySelectorAll('details')).toHaveLength(1)
+    expect(container.querySelector('[aria-label="Technical content"]')?.textContent).toContain('Review outcome 0')
+    expect(container.textContent).not.toContain('Latest check')
+    expect(container.textContent).not.toContain('View review history')
     expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
-    await act(async () => button('View report history').click())
-    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(3)
-    await act(async () => button('View review history').click())
-    expect(container.querySelector('[aria-label="Review history"]')!.querySelectorAll('details')).toHaveLength(10)
-    await act(async () => button('Show more reviews').click())
-    expect(container.querySelector('[aria-label="Review history"]')!.querySelectorAll('details')).toHaveLength(12)
-    expect(checks().textContent).toContain('Verified check 12')
-    await act(async () => render('strategic_review'))
-    await act(async () => render('technical_review'))
-    expect(container.querySelector('[aria-label="Review history"]')).toBeNull()
-    expect(checks().querySelectorAll('details')).toHaveLength(1)
-    expect(container.querySelector('[aria-label="Health content"]')!.querySelectorAll('[aria-haspopup="dialog"]')).toHaveLength(1)
   } finally { await act(async () => root.unmount()); container.remove() }
 })
 
-it('opens saved Markdown outside the workspace panel, retries errors, and closes the reader', async () => {
-  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  const path = 'Workflow/rtslatency/runs/pulse/pulse-1/strategic-review.md'
-  vi.mocked(agentApi.getPlannerFileContent).mockRejectedValueOnce(new Error('Report temporarily unavailable'))
-  const container = document.createElement('div'); document.body.append(container)
-  const root = createRoot(container)
-  try {
-    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} audits={[]} findings={[]} moduleFilter="strategic_review" onSelectModule={() => {}}
-      reports={[{ path, module: 'strategic_review', pulse_run_id: 'pulse-1', updated_at: '2026-09-09T09:00:00Z' }]} />))
-    expect(agentApi.getPlannerFileContent).not.toHaveBeenCalled()
-    const trigger = container.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!
-    await act(async () => trigger.click())
-    const report = document.querySelector('dialog')!
-    expect(report.open).toBe(true)
-    expect(container.contains(report)).toBe(false)
-    expect(report.className).toContain('w-screen')
-    expect(agentApi.getPlannerFileContent).toHaveBeenCalledWith(path)
-    expect(report.textContent).toContain('Report temporarily unavailable')
-    vi.mocked(agentApi.getPlannerFileContent).mockResolvedValue({ success: true, data: { content: '# Strategic findings', filepath: path } } as Awaited<ReturnType<typeof agentApi.getPlannerFileContent>>)
-    await act(async () => [...report.querySelectorAll('button')].find(button => button.textContent === 'Retry')!.click())
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
-    expect(report.textContent).toContain('Strategic findings')
-    await act(async () => report.querySelector<HTMLButtonElement>('[aria-label="Close report"]')!.click())
-    expect(document.querySelector('dialog')).toBeNull()
-    await act(async () => trigger.click())
-    await act(async () => document.querySelector('dialog')!.dispatchEvent(new Event('cancel', { cancelable: true })))
-    expect(document.querySelector('dialog')).toBeNull()
-  } finally { await act(async () => root.unmount()); container.remove() }
-})
-
-it('shows Architecture as its own review area with a separate drift check', async () => {
+it('makes Strategy primary and groups Architecture with platform stability', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const container = document.createElement('div'); const root = createRoot(container)
   try {
-    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} reports={[]} moduleFilter="architecture_review" onSelectModule={() => {}} />))
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} moduleFilter="architecture_review" onSelectModule={() => {}} />))
     const navigation = container.querySelector('[aria-label="Pulse work areas"]')!
     expect(navigation.querySelectorAll('[role="switch"]')).toHaveLength(3)
+    expect(navigation.textContent).toContain('Goals, metrics & strategy')
+    expect(navigation.textContent).toContain('Platform health & stability')
     expect(navigation.textContent).toContain('Architecture')
-    expect(navigation.textContent).not.toContain('Drift check')
+    expect(navigation.textContent).toContain('Drift check')
+    expect(navigation.textContent!.indexOf('Strategy')).toBeLessThan(navigation.textContent!.indexOf('Architecture'))
     expect(container.querySelector('[aria-label="Architecture content"]')?.textContent).toContain('Learning quality')
-    expect(container.querySelector('[aria-label="Health content"]')).toBeNull()
+    expect(container.querySelector('[aria-label="Technical content"]')).toBeNull()
   } finally { await act(async () => root.unmount()) }
 })
 
@@ -90,35 +45,58 @@ it('lets the user turn an individual reviewer back on while preserving its histo
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const container = document.createElement('div'); const root = createRoot(container)
   const onToggleReviewModule = vi.fn()
+  const onRunReviewModule = vi.fn()
   try {
-    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]} reports={[]}
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]}
       moduleFilter="strategic_review" onSelectModule={() => {}} disabledReviewModules={['strategic_review']}
-      onToggleReviewModule={onToggleReviewModule} />))
+      onToggleReviewModule={onToggleReviewModule} onRunReviewModule={onRunReviewModule} />))
     const strategySwitch = container.querySelector<HTMLButtonElement>('[aria-label="Include Strategy reviewer in Pulse reviews"]')!
     expect(strategySwitch.getAttribute('aria-checked')).toBe('false')
-    expect(container.textContent).toContain('Future Pulse runs will skip it; previous findings, coverage, and reports remain below.')
+    expect(container.textContent).toContain('Future Pulse runs will skip it; previous findings and coverage remain below.')
     await act(async () => strategySwitch.click())
     expect(onToggleReviewModule).toHaveBeenCalledWith('strategic_review')
+    const runButton = container.querySelector<HTMLButtonElement>('[aria-label="Run Strategy review now"]')!
+    expect(runButton.disabled).toBe(false)
+    await act(async () => runButton.click())
+    expect(onRunReviewModule).toHaveBeenCalledWith('strategic_review')
   } finally { await act(async () => root.unmount()) }
 })
 
-it('reads an incomplete SQLite note without a file fetch and preserves its incomplete status', async () => {
+it('shows the stored date, run, or cooldown boundary for skipped reviewers', async () => {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
-  vi.mocked(agentApi.getPlannerFileContent).mockClear()
-  const container = document.createElement('div'); document.body.append(container)
-  const root = createRoot(container)
+  const container = document.createElement('div'); const root = createRoot(container)
+  const render = (module: string, boundary: { next_check_at?: string; next_check_after_run_id?: string; cooldown_runs?: number }) => root.render(
+    <PulseReviewOverview moduleStates={[{ workspace_path: 'Workflow/example', module, last_gate_decision: 'skipped', last_reason: 'No mature evidence yet.', ...boundary }]}
+      coverage={[]} findings={[]} audits={[]} moduleFilter={module} onSelectModule={() => {}} />)
   try {
-    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} audits={[]} findings={[]} moduleFilter="architecture_review" onSelectModule={() => {}}
-      reports={[{ path: '', source: 'review_note', content: 'Rejected caching until freshness can be measured.', result: 'incomplete', module: 'architecture_review', pulse_run_id: 'pulse-note', updated_at: '2026-09-10T09:00:00Z' }]} />))
-    expect(container.textContent).toContain('No completion recorded')
-    await act(async () => container.querySelector<HTMLButtonElement>('[aria-haspopup="dialog"]')!.click())
-    await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)) })
-    const dialog = document.querySelector('dialog')!
-    expect(dialog.textContent).toContain('Rejected caching until freshness can be measured.')
-    expect(dialog.textContent).toContain('No completion recorded')
-    expect(dialog.textContent).not.toContain('Report file')
-    expect(agentApi.getPlannerFileContent).not.toHaveBeenCalled()
-    await act(async () => dialog.querySelector<HTMLButtonElement>('[aria-label="Close report"]')!.click())
-    expect(document.querySelector('dialog')).toBeNull()
-  } finally { await act(async () => root.unmount()); container.remove() }
+    await act(async () => render('technical_review', { cooldown_runs: 2 }))
+    expect(container.textContent).toContain('Next assessment: After 2 scheduled runs')
+    await act(async () => render('architecture_review', { next_check_after_run_id: 'iteration-42' }))
+    expect(container.textContent).toContain('Next assessment: After workflow run iteration-42')
+    await act(async () => render('strategic_review', { next_check_at: '2026-09-19T00:00:00Z' }))
+    expect(container.textContent).toContain('Next assessment:')
+    expect(container.textContent).toMatch(/Sep\w* 19|19 Sep\w*/)
+    expect(container.textContent).toContain('2026')
+  } finally { await act(async () => root.unmount()) }
+})
+
+it('requires Plan Drift before manual reviewers and keeps the drift action available', async () => {
+  Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+  const container = document.createElement('div'); const root = createRoot(container)
+  const onRunReviewModule = vi.fn()
+  try {
+    await act(async () => root.render(<PulseReviewOverview moduleStates={[]} coverage={[]} findings={[]} audits={[]}
+      moduleFilter="strategic_review" onSelectModule={() => {}} planDriftDue onRunReviewModule={onRunReviewModule} />))
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Run Strategy review now"]')!.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Run Technical review now"]')!.disabled).toBe(true)
+    expect(container.querySelector<HTMLButtonElement>('[aria-label="Run Architecture review now"]')!.disabled).toBe(true)
+    expect(container.querySelectorAll('[aria-label="Plan Drift due"]')).toHaveLength(1)
+    expect([...container.querySelectorAll('button')].filter(button => button.textContent?.startsWith('Drift check ·'))).toHaveLength(0)
+    expect(container.textContent!.indexOf('Technical')).toBeLessThan(container.textContent!.indexOf('Plan Drift is due'))
+    expect(container.textContent!.indexOf('Architecture')).toBeLessThan(container.textContent!.indexOf('Plan Drift is due'))
+    const driftButton = container.querySelector<HTMLButtonElement>('[aria-label="Run Plan Drift now"]')!
+    expect(driftButton.disabled).toBe(false)
+    await act(async () => driftButton.click())
+    expect(onRunReviewModule).toHaveBeenCalledWith('plan_drift_review')
+  } finally { await act(async () => root.unmount()) }
 })

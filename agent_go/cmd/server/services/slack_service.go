@@ -170,22 +170,7 @@ func saveSlackFeedbackMessagesLocked() error {
 	return writeWorkspaceFile(context.Background(), workspaceAPIURL(), slackMessagesFilePath(), string(data))
 }
 
-// FeedbackStoreFunc is a function type for creating feedback requests (to avoid import cycle)
-type FeedbackStoreFunc func(uniqueID string, message string) error
-
 // FeedbackResponseFunc is defined in notification_manager.go (same package)
-
-var (
-	// createFeedbackRequest is used for test connections only
-	// For production feedback requests, use notification manager instead
-	createFeedbackRequest FeedbackStoreFunc
-)
-
-// SetFeedbackStoreFuncs sets the feedback store function for creating test requests
-// Note: For receiving feedback, use notification manager's ReceiveNotification instead
-func SetFeedbackStoreFuncs(createFn FeedbackStoreFunc) {
-	createFeedbackRequest = createFn
-}
 
 // SlackConfig represents Slack configuration (Socket Mode only)
 type SlackConfig struct {
@@ -269,13 +254,6 @@ func (s *SlackService) SendUserNotification(ctx context.Context, message string,
 		return "", fmt.Errorf("failed to post Slack user notification: %w", err)
 	}
 	return timestamp, nil
-}
-
-func notificationDestUser(dest *NotificationDestination) string {
-	if dest == nil {
-		return ""
-	}
-	return dest.UserID
 }
 
 var (
@@ -1174,13 +1152,6 @@ func (s *SlackService) routeSlackWorkflowMessage(_ context.Context, userID, user
 		return text, route, true
 	}
 	return text, route, false
-}
-
-func slackMessageFileCount(msg *slack.Msg) int {
-	if msg == nil {
-		return 0
-	}
-	return len(msg.Files)
 }
 
 // handleSocketModeInteractive handles interactive events (button clicks) from Socket Mode

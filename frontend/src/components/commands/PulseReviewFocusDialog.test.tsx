@@ -27,10 +27,10 @@ describe('Pulse review focus picker', () => {
   const select = () => form().querySelector<HTMLSelectElement>('select')!
   const button = (label: string) => [...form().querySelectorAll('button')].find(node => node.textContent === label)!
 
-  it('offers automatic selection and all nine focuses without starting work on open', async () => {
+  it('offers automatic selection and all seven correctness focuses without starting work on open', async () => {
     const onStart = vi.fn()
     await act(async () => root.render(<PulseReviewFocusDialog initialContext="a specific concern" onClose={vi.fn()} onStart={onStart} />))
-    expect(select().options).toHaveLength(10)
+    expect(select().options).toHaveLength(8)
     expect(select().value).toBe('auto')
     expect(document.activeElement).toBe(select())
     expect(form().querySelector('textarea')!.value).toBe('a specific concern')
@@ -40,7 +40,7 @@ describe('Pulse review focus picker', () => {
     expect(onStart).toHaveBeenCalledExactlyOnceWith('auto', 'a specific concern')
   })
 
-  it('submits a chosen prompt review with context and its specialist review/fix instructions', async () => {
+  it('submits a chosen validation review with context and its specialist review/fix instructions', async () => {
     const onSubmit = vi.fn()
     const onStart = (focusId: string, context: string) => findCommand('pulse-review', 'workflow', 'workshop')!.execute({
       beforeSlash: context, pulseReviewFocus: focusId, onSubmit, workshopMode: 'workshop',
@@ -48,15 +48,14 @@ describe('Pulse review focus picker', () => {
     } as unknown as CommandContext)
     await act(async () => root.render(<PulseReviewFocusDialog initialContext="check the report step" onClose={vi.fn()} onStart={onStart} />))
     await act(async () => {
-      select().value = 'prompts'
+      select().value = 'validation'
       select().dispatchEvent(new Event('change', { bubbles: true }))
     })
-    expect(form().textContent).toContain('Step instructions, clarity, duplication')
+    expect(form().textContent).toContain('Checks that protect real outcomes')
     await act(async () => form().dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
     expect(onSubmit).toHaveBeenCalledTimes(1)
     const prompt = onSubmit.mock.calls[0][0] as string
-    expect(prompt).toContain('get_plan_prompt_health')
-    expect(prompt).toContain('references/step-description.md')
+    expect(prompt).toContain('validation_contract_health')
     expect(prompt).toContain('check the report step')
     expect(prompt).toContain('iteration-8/default')
     expect(prompt).toContain('message_sequence=')

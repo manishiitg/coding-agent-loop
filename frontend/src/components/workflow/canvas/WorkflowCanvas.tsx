@@ -11,7 +11,7 @@ import {
   type NodeChange,
   type OnNodeDrag
 } from '@xyflow/react'
-import { Braces, FileText, ListOrdered, Maximize, RefreshCw, Route, Settings, X } from 'lucide-react'
+import { Braces, FileCode2, FileText, ListOrdered, Maximize, RefreshCw, Route, Settings, X } from 'lucide-react'
 import '@xyflow/react/dist/style.css'
 
 import { useModeStore } from '../../../stores/useModeStore'
@@ -56,6 +56,7 @@ import {
 import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
+import { planStepTypeLabel, scriptedStepFilePath } from './scriptedStepPresentation'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -744,15 +745,18 @@ function DetailSection({
 
 function ReadOnlyStepDetailPanel({
   node,
+  workspacePath,
   onClose,
 }: {
   node: WorkflowNode
+  workspacePath: string | null
   onClose: () => void
 }) {
   const data = node.data as WorkflowNodeData
   const step = 'step' in data && data.step ? data.step as PlanStep : null
   const title = (typeof data.title === 'string' && data.title) || step?.title || node.id
-  const type = data.isEvaluationStep ? 'Evaluation' : step?.type || node.type || 'node'
+  const rawType = data.isEvaluationStep ? 'Evaluation' : step?.type || node.type || 'node'
+  const type = planStepTypeLabel(rawType)
   const routes = step?.type === 'routing' || step?.type === 'branch'
     ? step.routes
     : (step?.type === 'todo_task' || step?.type === 'orchestrator')
@@ -770,6 +774,31 @@ function ReadOnlyStepDetailPanel({
   const contextOutput = step?.context_output
   const contextOutputs = Array.isArray(contextOutput) ? contextOutput : (contextOutput ? [contextOutput] : [])
   const routingQuestion = typeof data.routing_question === 'string' ? data.routing_question : undefined
+  const [openingScript, setOpeningScript] = React.useState(false)
+  const openScript = React.useCallback(async () => {
+    if (!step?.id || step.type !== 'regular' || openingScript) return
+
+    setOpeningScript(true)
+    try {
+      let codeLayoutVersion = 0
+      if (workspacePath) {
+        const workflowConfigPath = `${workspacePath.replace(/\/+$/g, '')}/workflow.json`
+        const response = await agentApi.getPlannerFileContent(workflowConfigPath)
+        const content = response.success ? response.data?.content : undefined
+        if (content != null) {
+          const parsed = typeof content === 'string' ? JSON.parse(content) : content
+          const configuredVersion = Number((parsed as { code_layout_version?: unknown }).code_layout_version)
+          if (Number.isFinite(configuredVersion)) codeLayoutVersion = configuredVersion
+        }
+      }
+      useWorkflowStore.getState().openWorkspaceView('files', scriptedStepFilePath(step.id, codeLayoutVersion))
+    } catch {
+      // An absent or unreadable workflow.json is the supported legacy layout.
+      useWorkflowStore.getState().openWorkspaceView('files', scriptedStepFilePath(step.id, 0))
+    } finally {
+      setOpeningScript(false)
+    }
+  }, [openingScript, step, workspacePath])
 
   return (
     <aside
@@ -784,6 +813,29 @@ function ReadOnlyStepDetailPanel({
             {step?.id && <span className="truncate font-mono text-[10px] text-muted-foreground">{step.id}</span>}
           </div>
           <h3 className="truncate text-sm font-semibold text-foreground">{title}</h3>
+          {step?.type === 'regular' && (
+            <div className="mt-2">
+              <button
+                type="button"
+                onClick={() => void openScript()}
+                disabled={openingScript}
+                className="inline-flex items-center gap-1.5 rounded-md border border-border bg-muted/30 px-2 py-1 font-mono text-[11px] text-foreground/80 transition-colors hover:bg-muted hover:text-foreground disabled:cursor-wait disabled:opacity-60"
+                aria-label={`Open code file for ${title}`}
+                title="Open this scripted step's code file"
+              >
+                <FileCode2 className="h-3.5 w-3.5" />
+                <span>{openingScript ? 'Opening…' : 'main.py'}</span>
+              </button>
+              <div className="mt-2 flex max-w-2xl items-start gap-2 rounded-md border border-blue-500/20 bg-blue-500/5 px-2.5 py-2 text-[11px] leading-relaxed text-muted-foreground">
+                <RefreshCw className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-500" />
+                <span>
+                  {agentConfigs?.lock_code
+                    ? 'Runs the saved Python code first. Automatic repair is off because this code is locked.'
+                    : 'Runs the saved Python code first. If it fails, an agent uses the description below to repair the code and retry.'}
+                </span>
+              </div>
+            </div>
+          )}
         </div>
       </div>
 
@@ -2712,6 +2764,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         {selectedFlowNode && (
           <ReadOnlyStepDetailPanel
             node={selectedFlowNode}
+            workspacePath={workspacePath}
             onClose={() => setSelectedFlowNode(null)}
           />
         )}

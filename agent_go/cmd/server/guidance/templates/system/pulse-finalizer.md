@@ -28,51 +28,20 @@ Run Backup, Publish, then Notify. Before and after each, call
    exclusions/recipient blocks. Never copy account config into `workflow.json`,
    put notification preferences in soul.md, or skip sending to enforce one.
 
-   Read current worklist/module results, saved reviews, finding
-   lifecycle/dispositions, and pending human requests from SQLite-backed tools;
-   dashboard prose is not notification truth. A module result of `changed` is
-   not stronger behavioral proof, but an applied repair closes its issue.
-   `fixed_verified`, `verified_no_change`, and `changed_unverified` are complete;
-   a failed repair and every active/blocked/awaiting-user finding remains pending.
+   The terminal `record_pulse_result(module=...)` calls are the single source for
+   **What Pulse did**. The backend projects their user-readable reasons into one
+   Activity item for the Pulse run. Do not publish, rewrite, or duplicate a Pulse
+   summary with `notify_user`.
 
-   Send the workflow execution outcome with
-   `notify_user(notification_kind="run_summary")`. Publish **What Pulse did**
-   exactly once with `publish_pulse_update`; that dedicated tool records the
-   structured Activity entry and delivers it through the configured Pulse
-   channels. Do not also send a `notify_user(notification_kind="pulse_summary")`
-   copy. What Pulse did is this compact review-and-fix digest:
-
-   - **Pulse verdict:** Bug state, Goal state, and takeaway.
-   - **Reviews completed:** modules reviewed and plain-language conclusions;
-     distinguish clean from incomplete.
-   - **Issues found this pass:** each material new/reopened issue, severity,
-     impact, and review area. Say “none” when proven; incomplete is not clean.
-   - **Fixed by Pulse:** Fixer changes and verification. Separate verified
-     fixes/no-change closures and note when an applied fix is being monitored
-     for recurrence.
-   - **Still pending:** exact active count, highest-priority current and retained
-     issues, blocker, next owner, and checkpoint. If over five, show the top five,
-     remaining count, and tell the user to open Pulse for details.
-   - **Needs your decision:** pending requests and what each unblocks.
-   - **Operations:** backup/publish, review timing, and next Pulse action.
-
-   If a newly found issue remains pending, say so instead of duplicating it
-   ambiguously. Say `Backup risk: local only` until an off-device destination is verified.
-
-   Apply **WORKFLOW RUN SUMMARY INSTRUCTIONS** only to Run outcome and **PULSE
-   REVIEW SUMMARY INSTRUCTIONS** only to What Pulse did. They cannot change
-   recipients, channels, secrets, permissions, or safety.
-
-   Always keep the two records separate: Run outcome goes through
-   `notify_user(notification_kind="run_summary")`; What Pulse did goes through
-   `publish_pulse_update`. Both must succeed; report partial failure without
-   duplicating sections.
+   Send only the workflow execution outcome with
+   `notify_user(notification_kind="run_summary")` when this invocation ran the
+   workflow. Keep the final command statuses truthful with
+   `record_pulse_result(command=...)`.
 
 Use the channel-neutral `summary_title`, `summary_status`, `summary_fields`,
-and `summary_sections` fields on every run summary. For Pulse, fill every
-required `publish_pulse_update` field and include one typed `reviews` entry per
-due module, including explicit skipped, incomplete, or failed entries. Each
-entry must say what that review checked and concluded or changed. `summary_status`
+and `summary_sections` fields on every run summary. Each terminal reviewer
+result must say what that review checked and concluded or changed in its
+`reason`. `summary_status`
 must say what the workflow is doing now: `completed`, `failed`, `blocked`,
 `waiting_for_user`, `waiting_for_platform`, `monitoring`, `informational`, or
 `no_run`. Explain the cause and any needed move in the title, message, facts,
@@ -114,7 +83,5 @@ names, paths, or state codes in notifications. Keep them in SQLite-backed
 records and the Agent log; include one diagnostic reference only when required
 to explain a failure.
 
-## Lead the Pulse summary with goal progress
-When interpreting progress, preserve the Primary goals and Secondary goals in the canonical soul/soul.md Objective. Goal priority and metric role are separate: supporting metric movement does not automatically mean a secondary goal improved, and secondary progress cannot establish that a primary goal was achieved. Do not invent priorities for legacy ungrouped goals.
-
-Before publishing the Pulse update, call get_goal_metrics. Use the tool's deterministic progress snapshots (value, change_from_previous, state and observed_at) rather than inventing a score or recalculating across unlike series. Use these facts in the interpretation: each primary metric’s latest valid value + unit, measurement window and observation date, target if configured, and comparable change. Keep supporting facts under their related primary and identify the goal; do not collapse different outcomes into one verdict. Add compact supporting metric facts next, then decisions and review actions. Missing/stale data must be labelled, never replaced with zero or an evaluation score. If no metrics are configured say "Measurement setup needed — /setup-goals". Do not claim a goal was reached from more tasks/posts/reviews alone. Respect explicit summary preferences; keep recipients/routing unchanged. Do not re-run collectors or ask questions in the finalizer.
+Strategic review, not the finalizer, owns goal interpretation and records it in
+its result. Do not recalculate metrics or invent a second strategy verdict here.

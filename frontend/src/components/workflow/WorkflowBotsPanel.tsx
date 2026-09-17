@@ -1,4 +1,4 @@
-import { AlertCircle, AlertTriangle, ArrowLeft, MessageSquare, Phone } from 'lucide-react'
+import { AlertCircle, ArrowLeft, MessageSquare, Phone } from 'lucide-react'
 import { useWorkflowBots, type BotRouteTarget } from './bots/useWorkflowBots'
 import { SlackSetup } from './bots/SlackSetup'
 import { WhatsAppSetup } from './bots/WhatsAppSetup'
@@ -34,46 +34,30 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
           {setup === 'slack' ? 'Slack' : 'WhatsApp'}
           <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>
         </div>
+        <section className="space-y-3 rounded-lg border border-border p-3">
+          <h3 className="text-sm font-medium">Routes for this {scopeNoun}</h3>
+          {!workflowId ? (
+            <p className="text-xs text-muted-foreground">This panel needs an active {scopeNoun}.</p>
+          ) : myRoutes.filter(route => route.kind === setup).length === 0 ? (
+            <p className="text-xs text-muted-foreground">No routes yet. Connect the bot and add a route below.</p>
+          ) : (
+            <div className="grid max-h-96 gap-2 overflow-y-auto sm:grid-cols-2">
+              {myRoutes.filter(route => route.kind === setup).map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}
+            </div>
+          )}
+          {routeError && <p className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{routeError}</p>}
+          {setup === 'whatsapp' && waRoutingError && <p className="text-xs text-amber-600 dark:text-amber-400">WhatsApp routing unavailable: {waRoutingError}</p>}
+          <ChannelRow bots={bots} kind={setup} manageRoutes showSettings={false} />
+        </section>
         {setup === 'slack' ? <SlackSetup bots={bots} /> : <WhatsAppSetup bots={bots} />}
       </div>
     )
   }
 
-  // ── Main view ─────────────────────────────────────────────────────────────
-
-    return (
-      <div className="space-y-4">
-        {/* This workflow/project answers on */}
-        <div className="rounded-lg border border-border bg-muted/20 p-3">
-          <div className="mb-1.5 text-sm font-medium text-muted-foreground">This {scopeNoun} answers on</div>
-          {!workflowId ? (
-          <p className="text-xs text-muted-foreground">This panel needs an active {scopeNoun}.</p>
-        ) : myRoutes.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">No bot routes yet. Add one below.</p>
-        ) : (
-          <div className="grid max-h-96 gap-2 overflow-y-auto sm:grid-cols-2">{myRoutes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}</div>
-        )}
-        {routeError && (
-          <p className="mt-2 flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400">
-            <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />{routeError}
-          </p>
-        )}
-        {waRoutingError && (
-          <p className="mt-2 flex items-start gap-1.5 text-xs text-amber-600 dark:text-amber-400">
-            <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" />WhatsApp routing unavailable: {waRoutingError}
-          </p>
-        )}
-      </div>
-
-      {/* Add a bot route */}
-      <div>
-        <div className="mb-1.5 text-sm font-medium text-muted-foreground">Add a bot route</div>
-        <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
-          <ChannelRow bots={bots} kind="slack" />
-          <ChannelRow bots={bots} kind="whatsapp" />
-        </div>
-      </div>
-
+  return (
+    <div className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
+      <ChannelRow bots={bots} kind="slack" />
+      <ChannelRow bots={bots} kind="whatsapp" />
     </div>
   )
 }

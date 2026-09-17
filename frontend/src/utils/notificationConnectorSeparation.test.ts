@@ -5,7 +5,9 @@ describe('bot and notification settings separation', () => {
   it('keeps email in its own Setup section and webhooks in Notifications', () => {
     const bots = readFileSync('src/components/workflow/WorkflowBotsPanel.tsx', 'utf8')
     expect(bots).not.toContain('Slack Incoming Webhook')
-    expect(bots).toContain('This {scopeNoun} answers on')
+    expect(bots).toContain('Routes for this {scopeNoun}')
+    expect(bots).toContain('route.kind === setup')
+    expect(bots).toContain('manageRoutes showSettings={false}')
     expect(bots).not.toContain('Gmail')
     const email = readFileSync('src/components/workflow/WorkflowEmailPanel.tsx', 'utf8')
     expect(email).toContain('<GmailNotifications')

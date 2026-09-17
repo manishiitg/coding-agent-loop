@@ -13,7 +13,7 @@ type ChannelRowBots = Pick<WorkflowBots,
   | 'routeSaving' | 'myRoutes' | 'addError' | 'setAddError'
 >
 
-export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: ChannelKind }) {
+export function ChannelRow({ bots, kind, manageRoutes = false, showSettings = true }: { bots: ChannelRowBots; kind: ChannelKind; manageRoutes?: boolean; showSettings?: boolean }) {
   const {
     readOnly, workflowId, setSetup,
     slackReady, waReady, slackStatusLabel, waStatusLabel, slackLoading, slackOriginal, waStatus, waError,
@@ -45,17 +45,17 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
           {statusLabel}
         </span>
         <span className="flex-1" />
-        <button
+        {showSettings && <button
           type="button"
           onClick={() => setSetup(kind)}
           className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
           title={`Connect or configure ${name}`}
         >
-          {ready ? 'Settings' : 'Set up'}
+          Open
           <ChevronRight className="h-3.5 w-3.5" />
-        </button>
+        </button>}
       </div>
-      {ready && workflowId && (
+      {manageRoutes && ready && workflowId && (
         <div className="mt-2 flex items-center gap-2">
           {kind === 'whatsapp' && <span className="text-xs text-muted-foreground select-none">@</span>}
           <input
@@ -86,7 +86,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
           </button>
         </div>
       )}
-      {error && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{error}</p>}
+      {manageRoutes && error && <p className="mt-1.5 text-xs text-red-600 dark:text-red-400">{error}</p>}
     </div>
   )
 }

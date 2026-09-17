@@ -6,7 +6,6 @@ import {
   ShieldCheck,
   Activity,
   BellRing,
-  CalendarClock,
   ChevronDown,
   Gauge,
 } from 'lucide-react'
@@ -14,12 +13,11 @@ import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowSto
 import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
 import { useChatStore } from '../../../stores/useChatStore'
 import { useAuthStore } from '../../../stores/useAuthStore'
-import type { ScheduledJob, VariablesManifest } from '../../../services/api-types'
+import type { VariablesManifest } from '../../../services/api-types'
 import type { PlanningResponse } from '../../../utils/stepConfigMatching'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type { ExecutionOptions } from '../../../services/api-types'
 import { agentApi } from '../../../services/api'
-import { schedulerApi } from '../../../api/scheduler'
 import { getBackupDotClass } from '../backupStatus'
 import { getPublishDotClass } from '../publishStatus'
 import { getNotificationDotClass } from '../notificationStatus'
@@ -36,8 +34,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'webhooks', 'schedules', 'execution-logs'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])
 const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
@@ -111,28 +108,6 @@ function ToolbarPopoverItem({ label, Icon, active, onClick, indicatorClass, ...a
 
 const CAPABILITY_BUTTON_ATTRS: Partial<Record<WorkspaceViewId, { 'data-tour': string; 'data-testid': string }>> = {
   bots: { 'data-tour': 'bot-connector', 'data-testid': 'tour-bot-connector' },
-}
-
-type WorkflowScheduleStats = {
-  total: number
-  running: number
-  enabled: number
-  paused: number
-  missed: number
-  issues: number
-}
-
-const EMPTY_WORKFLOW_SCHEDULE_STATS: WorkflowScheduleStats = {
-  total: 0,
-  running: 0,
-  enabled: 0,
-  paused: 0,
-  missed: 0,
-  issues: 0,
-}
-
-function normalizeWorkspacePath(path?: string | null): string {
-  return (path || '').replace(/\/+$/, '')
 }
 
 interface WorkflowToolbarProps {
@@ -225,45 +200,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const [notificationState, setNotificationState] = useState<WorkflowNotificationState | 'loading'>('loading')
   // Share is for this workflow's owners (or an admin), multi-user mode only.
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
-  const [workflowScheduleStats, setWorkflowScheduleStats] = useState<WorkflowScheduleStats>(EMPTY_WORKFLOW_SCHEDULE_STATS)
-  const updateWorkflowScheduleStats = useCallback((jobs: ScheduledJob[]) => {
-    const normalizedWorkspacePath = normalizeWorkspacePath(workspacePath)
-    const matchingJobs = jobs.filter((job) => {
-      if (presetQueryId && job.preset_query_id === presetQueryId) return true
-      if (!normalizedWorkspacePath) return false
-      return normalizeWorkspacePath(job.workspace_path) === normalizedWorkspacePath
-    })
-    setWorkflowScheduleStats({
-      total: matchingJobs.length,
-      running: matchingJobs.filter(job => job.last_status === 'running').length,
-      enabled: matchingJobs.filter(job => job.enabled).length,
-      paused: matchingJobs.filter(job => !job.enabled).length,
-      missed: matchingJobs.filter(job => job.enabled && (job.missed_run_count ?? 0) > 0).length,
-      issues: matchingJobs.filter(job => job.last_status === 'error').length,
-    })
-  }, [workspacePath, presetQueryId])
-
-  const refreshWorkflowScheduleStats = useCallback(async () => {
-    if (!workspacePath && !presetQueryId) {
-      setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
-      return
-    }
-
-    try {
-      const resp = await schedulerApi.listJobs({
-        entity_type: 'workflow',
-        limit: WORKFLOW_SCHEDULE_TOOLBAR_LIMIT,
-      })
-      updateWorkflowScheduleStats(resp.jobs || [])
-    } catch {
-      setWorkflowScheduleStats(EMPTY_WORKFLOW_SCHEDULE_STATS)
-    }
-  }, [workspacePath, presetQueryId, updateWorkflowScheduleStats])
-
-  useEffect(() => {
-    void refreshWorkflowScheduleStats()
-  }, [refreshWorkflowScheduleStats])
-
   // Lightweight backup-status poll so the toolbar dot reflects health at a glance.
   const refreshBackupState = useCallback(async () => {
     if (!workspacePath) {
@@ -438,39 +374,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   // - variables_manifest (via setVariablesManifest)
   // This eliminates duplicate API calls on initial page load.
 
-  const scheduleTooltip = useMemo(() => {
-    if (workflowScheduleStats.total === 0) return 'Schedules · None configured'
-    if (workflowScheduleStats.issues > 0 || workflowScheduleStats.missed > 0) {
-      const parts: string[] = []
-      if (workflowScheduleStats.issues > 0) {
-        parts.push(`${workflowScheduleStats.issues} failed`)
-      }
-      if (workflowScheduleStats.missed > 0) {
-        parts.push(`${workflowScheduleStats.missed} missed`)
-      }
-      if (workflowScheduleStats.running > 0) {
-        parts.push(`${workflowScheduleStats.running} running`)
-      }
-      return `Schedules · ${parts.join(' · ')}`
-    }
-    if (workflowScheduleStats.running > 0) {
-      return `Schedules · ${workflowScheduleStats.running} running`
-    }
-    if (workflowScheduleStats.enabled > 0) {
-      return `Schedules · ${workflowScheduleStats.enabled} enabled`
-    }
-    return `Schedules · ${workflowScheduleStats.total === 1 ? 'Paused' : `All ${workflowScheduleStats.total} paused`}`
-  }, [workflowScheduleStats])
-  const scheduleStatusDotClass = workflowScheduleStats.issues > 0
-    ? 'bg-red-500'
-    : workflowScheduleStats.missed > 0
-        ? 'bg-amber-500'
-        : workflowScheduleStats.running > 0
-          ? 'bg-sky-500 animate-pulse'
-          : workflowScheduleStats.enabled > 0
-            ? 'bg-emerald-500'
-            : 'bg-muted-foreground/40'
-
   return (
     <>
     <WorkspaceTopToolbar className={className}>
@@ -555,21 +458,6 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     </Tooltip>
                   )
                 })}
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      type="button"
-                      onClick={() => openWorkspaceView('schedules', 'schedules')}
-                      className={`relative flex h-6 w-7 items-center justify-center rounded transition-colors ${activeWorkspaceView === 'schedules' ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label="Schedules"
-                      aria-pressed={activeWorkspaceView === 'schedules'}
-                    >
-                      <CalendarClock className="h-3.5 w-3.5" />
-                      <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${scheduleStatusDotClass}`} />
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
-                </Tooltip>
               </div>
           )}
 

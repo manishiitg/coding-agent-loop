@@ -66,31 +66,21 @@ func TestValidateStepDriftChecksRejectsFailWithoutFindingID(t *testing.T) {
 	}
 }
 
-func TestValidateStepTypeDriftChecksRequiresReferenceBackedBestPractices(t *testing.T) {
-	base := []StepDriftCheck{{CheckID: "step_description_accuracy", Status: "pass", Evidence: "the current description matches configured behavior"}}
-	for stepType, requiredCheckID := range map[string]string{
-		"regular":          scriptedBestPracticesDriftCheckID,
-		"message_sequence": messageSequenceBestPracticesDriftCheckID,
-		"todo_task":        orchestratorBestPracticesDriftCheckID,
-		"routing":          routingBestPracticesDriftCheckID,
-		"branch":           branchBestPracticesDriftCheckID,
-	} {
-		t.Run(stepType, func(t *testing.T) {
-			if err := validateStepTypeDriftChecks(stepType, base); err == nil || !strings.Contains(err.Error(), requiredCheckID) {
-				t.Fatalf("expected %s to require %s, got %v", stepType, requiredCheckID, err)
-			}
-			checks := append(append([]StepDriftCheck{}, base...), StepDriftCheck{
-				CheckID:  requiredCheckID,
-				Status:   "pass",
-				Evidence: "the step matches its canonical reference and has explicit evidence for every applicable execution boundary",
-			})
-			if err := validateStepTypeDriftChecks(stepType, checks); err != nil {
-				t.Fatalf("expected %s with %s to pass, got %v", stepType, requiredCheckID, err)
-			}
-		})
+func TestRecordPlanDriftReviewAllowsCompatibilityOnlyCheckSet(t *testing.T) {
+	files := map[string]string{
+		"planning/plan.json":        `{"steps":[{"id":"step-a","type":"regular"}]}`,
+		"planning/step_config.json": `{"steps":[{"id":"step-a"}]}`,
 	}
-	if err := validateStepTypeDriftChecks("human_input", base); err != nil {
-		t.Fatalf("human_input has no new reference-backed check in this change: %v", err)
+	exec := newPlanDriftReviewTestExecutor(files)
+	_, err := exec(context.Background(), map[string]interface{}{
+		"step_id": "step-a",
+		"checks": []interface{}{map[string]interface{}{
+			"check_id": "title_reference_compatibility", "status": "pass",
+			"evidence": "The title changed, and no dependent artifact references the display title.",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("compatibility-only drift receipt should not require a general design audit: %v", err)
 	}
 }
 
@@ -149,6 +139,16 @@ func TestRecordPlanDriftReviewExecutorRequiresRealFindingForFailStatus(t *testin
 		},
 	}); err != nil {
 		t.Fatalf("expected acceptance for a real finding_id %q, got: %v", realID, err)
+	}
+	var out StepConfigFile
+	if err := json.Unmarshal([]byte(files[ws+"/planning/step_config.json"]), &out); err != nil {
+		t.Fatalf("decode updated step config: %v", err)
+	}
+	if len(out.Steps) != 1 || out.Steps[0].AgentConfigs == nil || out.Steps[0].AgentConfigs.DriftReview == nil {
+		t.Fatalf("missing persisted drift review: %+v", out.Steps)
+	}
+	if !out.Steps[0].AgentConfigs.DriftReview.NeedsReview {
+		t.Fatal("an unresolved failed drift check must remain due so later reviewers cannot run against a stale plan")
 	}
 }
 
@@ -273,7 +273,7 @@ func TestRecordPlanDriftReviewExecutorWritesNewRecord(t *testing.T) {
 	}
 }
 
-func TestRecordPlanDriftReviewExecutorEnforcesMessageSequenceBestPracticesCheck(t *testing.T) {
+func TestRecordPlanDriftReviewExecutorAllowsCompatibilityOnlyMessageSequenceReceipt(t *testing.T) {
 	ctx := context.Background()
 	files := map[string]string{
 		"planning/plan.json":        `{"steps":[{"id":"sequence-a","type":"message_sequence","title":"Sequence","description":"Complete the outcome.","items":[{"id":"verify","type":"user_message","message":"Verify the outcome."}]}]}`,
@@ -285,8 +285,8 @@ func TestRecordPlanDriftReviewExecutorEnforcesMessageSequenceBestPracticesCheck(
 	if _, err := executor(ctx, map[string]interface{}{
 		"step_id": "sequence-a",
 		"checks":  []interface{}{baseCheck},
-	}); err == nil || !strings.Contains(err.Error(), messageSequenceBestPracticesDriftCheckID) {
-		t.Fatalf("expected the executor to reject a message-sequence receipt without its type-specific check, got %v", err)
+	}); err != nil {
+		t.Fatalf("expected the executor to accept a targeted compatibility receipt without a general structure audit, got %v", err)
 	}
 
 	if _, err := executor(ctx, map[string]interface{}{
@@ -300,7 +300,7 @@ func TestRecordPlanDriftReviewExecutorEnforcesMessageSequenceBestPracticesCheck(
 			},
 		},
 	}); err != nil {
-		t.Fatalf("expected the executor to accept a complete message-sequence receipt, got %v", err)
+		t.Fatalf("expected the executor to accept an explicitly relevant message-sequence check, got %v", err)
 	}
 }
 

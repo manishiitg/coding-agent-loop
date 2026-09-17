@@ -48,28 +48,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Cost data freshness, allocation, anomaly validity, and savings verification",
-        "Recommendation and IaC change evidence"
-      ],
-      "review_when": [
-        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Cloud account boundaries, cost model, approvals, IaC workflow, and rollback",
-        "Baseline, attribution, and reporting architecture"
-      ],
-      "review_when": [
-        "The workflow, integration, environment, scale, or operating policy changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

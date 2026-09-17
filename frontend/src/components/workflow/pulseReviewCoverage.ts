@@ -4,13 +4,11 @@ import { normalizePulseWorkspaceModule } from './pulseWorkspaceUtils'
 export const TECHNICAL_REVIEW_AREAS = [
   { key: 'execution_health', label: 'Execution health' },
   { key: 'validation_contract_health', label: 'Validation and contracts' },
-  { key: 'plan_orchestration_integrity', label: 'Plan and orchestration' },
   { key: 'store_integrity', label: 'Data and stored knowledge' },
   { key: 'learnings', label: 'Learnings', scope: /(?:^|[\s/_.-])learnings?(?:$|[\s/_.-])/i },
   { key: 'knowledge_base', label: 'Knowledge base', scope: /(?:^|[\s/_.-])(?:kb|knowledge[_ -]?base)(?:$|[\s/_.-])/i },
   { key: 'report_quality_truth', label: 'Dashboard accuracy' },
   { key: 'evaluation_quality_truth', label: 'Evaluation quality' },
-  { key: 'model_cost_fitness', label: 'Models, cost and efficiency' },
 ]
 
 export const ARCHITECTURE_REVIEW_AREAS: typeof TECHNICAL_REVIEW_AREAS = [

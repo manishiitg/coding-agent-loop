@@ -1,7 +1,7 @@
 ## Module dispatch boundary
 
 The scheduler dispatches one module per blocking lifecycle step, in order:
-Drift Check, Technical QA, Architecture, Strategy. Handle ONLY the module named
+Drift Check, Architecture, Technical QA, Strategy. Handle ONLY the module named
 in the current dispatch. Never launch another module from its child. Architecture
 uses `architecture-review.md`; Strategy uses `strategy-auditor.md` and both use
 `run_in_background(review_module=..., pulse_run_id=...)` research scope.
@@ -18,9 +18,9 @@ as a defect. Diagnose actual auth, quota, availability, or generation failures.
 
 Scheduled Pulse uses this after Gate. Manual commands follow their own
 module-due and review/fix instructions without running Gate. Pulse uses one
-sequenced Review + Fix parent turn. Technical
-Review and bounded repair run as ordered messages in one retained background
-executor; Strategic Review remains a separate read-only sequence when due.
+sequenced Review + Fix parent turn. Technical Review and bounded repair run as
+ordered messages in one retained background executor. Architecture and
+Strategic Review each remain separate read-only sequences when due.
 The technical executor is not authorized to repair while it is a reviewer.
 Persist its completed `technical_review` receipt before the repair phase.
 Background executors share the Builder toolset; tool availability does not
@@ -45,9 +45,10 @@ dispatching any child. Its `gate_mode` is the contract for this pass:
 - In `observe`, do not launch a reviewer or fixer; record the required skipped
   receipts and wait for the named evidence boundary.
 Gate decides independently whether `technical_review`, `architecture_review`, and
-`strategic_review` are due. Engineering correctness, Stores Health,
-operations, cost, tool/runtime reliability, scheduling, and model-tier fitness
-are focus lenses inside `technical_review`; they are not independent modules or
+`strategic_review` are due after Plan Drift is clean. Runtime/output/validation
+correctness and concrete store/report/evaluation failures are Technical lenses.
+Prompt, script, orchestration, store design, persistent cost/latency and
+model-tier fitness are Architecture lenses. They are not independent modules or
 receipts. Read that durable worklist yourself. Go does not choose reviewers or
 automatically launch a residual Fixer/recovery agent.
 
@@ -82,16 +83,16 @@ No mandatory Markdown checkpoint, per-turn notebook updates, or reporting-only
 turn. Optional note_only=true with result=running preserves working context only
 when a long investigation needs it. Runtime owns timestamps and interruption state.
 
-Before each due technical or strategic deep review, read
+Before each due Architecture, Technical or Strategic deep review, read
 `get_pulse_state(view="focus_agenda")` for that module and each materially relevant
 route scope. Do a lightweight safety scan for critical regressions, matured
 strategic experiment evidence, answered unapplied decisions, plan routes, and retained run
 selectors, then choose the smallest sufficient coherent focus set. Rotation is agentic:
 the compact agenda informs judgment but does not require blind round-robin.
 For `technical_review`, use `execution_health` when Gate cites a cadence-threatening
-run or evidence of incorrect execution, repeated context, payload, retries,
-tool/runtime failure, schedule recovery, or sequence overhead with material
-effect on required outputs, reliability, cost, or latency. Small recovered
+run or evidence of incorrect execution, retries, tool/runtime failure, schedule
+recovery, or another malfunction with material effect on required outputs or
+reliability. Small recovered
 tool failures with correct outputs and negligible overhead do not justify a
 deep review or a finding. The focus requires
 a causal diagnosis of exact plan items, not a generic cost summary. Use
@@ -107,44 +108,17 @@ self-asserted success markers, and checks no real consumer reads are removal
 candidates; branch-conditional fields must be optional or conditional rather
 than forcing placeholders. The reviewer recommends a minimal contract; the
 Fixer removes or rewrites a check only after tracing consumers and preserving a
-negative fixture that rejects the original meaningful defect. Use
-`plan_orchestration_integrity` when the central question is step type, scripted
-versus agentic ownership, dependencies, handoffs, or unnecessary orchestration.
-If the smallest safe repair changes plan topology,
-step type, route ownership, retry semantics, public-action ordering, or a
-safety boundary, the Operations turn creates a durable approval request; the
-Fixer must not make that structural choice on its own.
-Prompt-contract consolidation follows the same boundary: use
-`plan_orchestration_integrity` when compact prompt-health evidence indicates
-shared policy/DB/browser/validation prose has accumulated. The reviewer first
-decides whether the text is actually extractable; a multi-step migration needs
-an approved `technical-decision-prompt-contract-consolidation-...` request.
-
-When `/plan-prompt-bloat` explicitly selects this focus, it is a full
-prompt-contract review rather than a character-count check. Call
-`read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])`
-and call
-`get_plan_prompt_health` once. Then assess the authored descriptions and their
-validation schemas against the guide: clear objective and success boundary;
-necessary inputs, evidence, scope, authority, and output location; WHAT in the
-description versus reusable HOW in accessible skills/learnings; output shape in
-a light, load-bearing schema; precise language without vague qualifiers or
-micromanaged procedure; no conflicting or repeated instructions; and no shared
-policy copied across steps. Report semantic guide violations separately from
-mechanical size and exact-duplicate signals. A short description can fail this
-review, while a long safety-critical or adaptive description can pass. Do not
-rewrite a prompt merely to reduce its character count.
-
-For a shared or multi-step extraction, the Fixer needs an approved phased
-proposal. A small local prompt correction preserving behavior may use the
-normal bounded Fixer handoff. Preserve exact step
-inputs, outputs, validation, routes, and side-effect ordering, then records the applied fix as closed. Observe later normal-run recurrence;
-do not wait for a post-change producing run merely to close it. It must never bulk-truncate old prompts to satisfy
-a character threshold.
-When that module's review is complete, call `record_pulse_review_focus` once for
-every focus actually investigated, including its stable route/group/sub-workflow
-scope unless the conclusion is genuinely workflow-wide. Record the priority
-class, selection reason, compact evidence references, and deferred focus keys.
+negative fixture that rejects the original meaningful defect. Structural
+validation redesign, step-type choice, dependencies, handoffs, prompt
+consolidation and unnecessary orchestration are Architecture questions.
+Technical may record the concrete failure they caused, but must not redesign
+those surfaces or send that redesign to the Fixer as an ordinary correctness
+repair.
+When that module's review is complete, include one `focuses` entry on its
+terminal `record_pulse_result` for every focus actually investigated, including
+its stable route/group/sub-workflow scope unless the conclusion is genuinely
+workflow-wide. Record the priority class, selection reason, compact evidence
+references, and deferred focus keys.
 There is no mechanical focus quota: a small route may justify one, while
 distinct large routes may justify several. Stop when another focus would repeat
 evidence or could not change a decision, repair, or next check. This is durable

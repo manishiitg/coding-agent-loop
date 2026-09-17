@@ -82,6 +82,28 @@ func TestCodeLayoutSourceAndEvaluationCompatibility(t *testing.T) {
 	}
 }
 
+func TestCodeLayoutVersionOneNeverFallsBackToLegacyScript(t *testing.T) {
+	base := newFakeWorkspaceAPIWithContent(t, map[string]string{
+		"Workflow/testing/learnings/step/main.py": "print('legacy')",
+	})
+	base.SetWorkspacePath("Workflow/testing")
+	c := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
+	c.codeLayoutVersion.Store(1)
+	if c.hasValidLearnedScriptAPI(context.Background(), "step") {
+		t.Fatal("version 1 accepted a script that exists only in the legacy learnings tree")
+	}
+
+	base = newFakeWorkspaceAPIWithContent(t, map[string]string{
+		"Workflow/testing/code/step/main.py": "print('canonical')",
+	})
+	base.SetWorkspacePath("Workflow/testing")
+	c = &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
+	c.codeLayoutVersion.Store(1)
+	if !c.hasValidLearnedScriptAPI(context.Background(), "step") {
+		t.Fatal("version 1 did not resolve the canonical code tree")
+	}
+}
+
 func TestCodeLayoutGrantsRespectLock(t *testing.T) {
 	c := codeLayoutController(t, 1)
 	for _, locked := range []bool{false, true} {

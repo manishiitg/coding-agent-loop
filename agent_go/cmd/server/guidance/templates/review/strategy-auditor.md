@@ -11,7 +11,11 @@ verification, and one terminal module result are required. This is the
 lifecycle receipts. Do not run Pulse Gate,
 Goal Advisor, the workflow, or any fixer. In other words, this is the same
 standalone diagnosis without running Pulse Gate, Goal Advisor, the workflow, or
-any fixer.{{if .Focus}}
+any fixer.
+
+Your defining question is whether the workflow is achieving its goal and what
+should improve next. Plan compatibility belongs to Plan Drift, technical
+structure to Architecture, and concrete execution failures to Technical Review.{{if .Focus}}
 
 Focus especially on: {{.Focus}}.{{end}}{{if .RunFolder}}
 
@@ -25,8 +29,10 @@ inspect; it must preserve broad strategic thinking and read-only implementation
 authority. Explore alternatives yourself without launching Goal Advisor.
 
 For this manual invocation, use `pulse_run_id="current"` and first call
-`record_pulse_module_due(module="strategic_review", pulse_run_id="current",
-reason="manual /strategy-auditor review")` once. If another active pass owns
+`record_pulse_result(module="strategic_review", pulse_run_id="current",
+result="running", note_only=true, manual=true,
+reason="manual /strategy-auditor review")` once. This starts the manual review
+using the same result tool that later completes it. If another active pass owns
 the module and the claim is refused, report the collision and stop without
 writing findings or proposals. Do not run Gate or change another module's cadence.
 
@@ -74,12 +80,11 @@ writing findings or proposals. Do not run Gate or change another module's cadenc
    `human_input_id` on `record_pulse_finding`, which
    links the finding as `awaiting_user`. Never leave an actionable strategic
    proposal without a decision card.
-7. Record `record_pulse_review_focus(module="strategic_review", ...)` for each
-   lens actually investigated, with its scope, reason, and evidence; labels
-   are guides to thinking, not a coverage quota.
-   Reconcile your findings against the actual artifacts, then call
+7. Reconcile your findings against the actual artifacts, then call
    `record_pulse_result` exactly once with `module="strategic_review"`,
-   `result="done"`, a concise evidence-grounded reason, and its evidence. That
+   `result="done"`, a concise evidence-grounded reason, its evidence, and a
+   `focuses` entry for each lens actually investigated. Focus labels are guides
+   to thinking, not a coverage quota. That
    module result is the completion boundary: returning prose without it leaves
    the background work incomplete. Do not edit the plan, configuration,
    workflow DB data, or reports/evals. Do not launch `/goal-advisor` automatically.

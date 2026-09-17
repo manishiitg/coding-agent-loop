@@ -22,11 +22,15 @@ func TestPulseGateAssessesImpactAndAccumulatesEvidence(t *testing.T) {
 		"Chat turns", "tool calls, retries, unrelated routes",
 		"do not impose a universal run-count threshold",
 		"Do not keep moving an unmet boundary",
-		"All three reviews may be skipped",
+		"All three non-drift reviews may be skipped",
 		"New critical regressions, security/data-loss risks",
 		"Ordinary recovered errors do not override it",
-		"deterministic hard requirement remains for `plan_change_dependencies`",
+		"deterministic hard requirement for `plan_change_dependencies` belongs to",
+		"reviewer must inspect each surface and record",
+		"until those structured receipts are complete",
 		"plan_drift_review.due=true",
+		"Plan Drift is an exclusive prerequisite pass",
+		"Technical, Architecture, and Strategic Review skipped",
 	} {
 		if !strings.Contains(gate, want) {
 			t.Errorf("missing Gate contract: %q", want)

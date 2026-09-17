@@ -120,28 +120,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Source freshness, normalization, metric reproducibility, and evidence quality",
-        "Review completeness, decision state, and action receipts"
-      ],
-      "review_when": [
-        "A sync or review fails, evidence is incomplete, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Whether one workflow still fits the team's sources, stores, routes, and permissions",
-        "Identity, history, metric, dashboard, and notification design"
-      ],
-      "review_when": [
-        "Team scope, integrations, access boundaries, volume, or operating lifecycle changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

@@ -32,28 +32,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Signal correlation, timeline accuracy, impact evidence, and RCA quality",
-        "Status, handoff, and unresolved-state integrity"
-      ],
-      "review_when": [
-        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Incident trigger, evidence, role, communication, and coordination boundaries",
-        "Data retention and recovery workflow design"
-      ],
-      "review_when": [
-        "The workflow, integration, environment, scale, or operating policy changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

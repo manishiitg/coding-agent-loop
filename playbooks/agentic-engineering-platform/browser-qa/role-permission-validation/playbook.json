@@ -31,28 +31,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Authorization outcomes across roles, resources, and tenants",
-        "False-positive, evidence, and coverage integrity"
-      ],
-      "review_when": [
-        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Permission model, test identity isolation, and scenario reuse",
-        "Tenant and ownership boundary design"
-      ],
-      "review_when": [
-        "The workflow, integration, environment, scale, or operating policy changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

@@ -44,7 +44,8 @@ func TestInteractivePlanEditsDoNotRequireFullDriftAudit(t *testing.T) {
 		"A stale `drift_review.needs_review` flag alone does not require this audit before testing",
 		"Merely reading this guide during an edit does not authorize launching a background audit",
 		// Explicit audits must retain the real scheduled procedure and receipts.
-		"record_pulse_module_due",
+		"manual=true",
+		"note_only=true",
 		"record_plan_drift_review",
 	} {
 		if !strings.Contains(audit, want) {

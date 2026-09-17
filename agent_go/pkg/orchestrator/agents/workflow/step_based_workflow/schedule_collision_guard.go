@@ -23,7 +23,7 @@ func ScheduleGuardedTool(name string) bool {
 		"update_scripted_step", "update_message_sequence_step", "update_routing_step", "update_branch_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route", "update_orchestrator_step", "update_orchestrator_route",
 		"delete_todo_task_route", "delete_orchestrator_route", "update_step_config", "update_validation_schema",
-		"update_evaluation_plan", "delete_evaluation_step", "migrate_message_sequence_code_items",
+		"add_evaluation_step", "update_evaluation_plan", "delete_evaluation_step", "migrate_message_sequence_code_items",
 		"migrate_orchestrator_step_type", "migrate_declared_execution_mode", "strip_declared_execution_mode",
 		"update_workflow_config", "set_workflow_llm_config", "update_variable", "add_group", "update_group", "delete_group":
 		return true

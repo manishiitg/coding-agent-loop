@@ -22,8 +22,8 @@ Old Markdown reports remain historical evidence; consult one only when needed.
 
 ## Plan drift review
 
-`plan_drift_review` is a review-**and**-fix module, the same shape as
-`technical_review`: in one retained turn it establishes ground truth per due
+`plan_drift_review` is a change-compatibility review-and-fix module. In one
+retained turn it establishes ground truth per due
 step, applies safe workflow-owned repairs directly, checks the immediate edit
 proportionally, and
 only routes to a human decision or a platform-owned boundary what it
@@ -35,9 +35,10 @@ root cause.
 Its remit is change compatibility and step-prompt quality: does the current
 plan agree with its dependent code, configuration, validation, reports, DB
 contracts, schedules, and accessible guidance, and are its execution prompts
-clear and well formed? It is not a recurring architecture redesign. General
-normalization, step-type optimization, or new product ideas belong to Technical
-or Strategic Review unless needed to resolve a concrete changed contract.
+clear and well formed when those prompt surfaces changed? It preserves the
+approved plan rather than asking whether a different plan would be better.
+General normalization, step-type/topology optimization, and implementation
+efficiency belong to Architecture; product direction belongs to Strategic.
 
 `plan_drift_review` is event-triggered, not cadenced: it becomes due whenever
 any canonical plan step has no `drift_review` record at all, or has one with
@@ -98,7 +99,7 @@ step's own `drift_review` record is removed along with it, so the per-step
 scan above structurally cannot see anything requiring review for a step that
 no longer exists, even though the deletion can leave dangling references
 elsewhere. Treat this candidate as its own due item, using the exact same
-tools as every other step (steps 3-6 below apply to it unchanged) — it just
+tools as every other step (steps 3-7 below apply to it unchanged) — it just
 has no real step to attach fixes to.
 
 Audit procedure:
@@ -139,8 +140,10 @@ Read `read_skill(skills=[{"name":"builder-reference","path":"references/step-des
 once per pass. This is the canonical prompt-engineering guidance; apply it rather
 than inventing a second rubric or judging prompts by character count.
 
-For each due step, record a **`step_prompt_quality`** check in the
-`record_plan_drift_review` checks array. Inspect the authored description and,
+Record a **`step_prompt_quality`** check only when the authored prompt, supplied
+schema/context, accessible guidance, or prompt authority changed, or when this is
+the step's first baseline review. A title-only or unrelated configuration edit
+does not require replaying prompt review. When applicable, inspect the authored description and,
 for message sequences, the individual item prompts together with the schema,
 context dependencies, and guidance that execution actually receives. Assess:
 
@@ -188,26 +191,27 @@ Then inspect only the dependencies the actual change could affect:
 - **Schedules and downstream handoffs:** trace changed IDs, routes, inputs,
   outputs, and intended order. Preserve delivery and approval boundaries.
 
-Keep the existing reference-backed check IDs for each applicable step type:
+When the step type, topology, or its relevant execution boundary changed—or this
+is the first baseline review—use the existing reference-backed check ID for that
+applicable step type:
 `scripted_best_practices` (`references/scripted.md`),
 `message_sequence_best_practices` (`references/message-sequence.md`),
 `orchestrator_best_practices` (`references/orchestrator.md`),
 `routing_best_practices` (`references/routing.md`), and
 `branch_best_practices` (`references/branch.md`). Load the matching reference and
-check the current step's prompt/configuration and affected execution boundaries.
-These IDs are compatibility coverage, not a mandate to redesign a step or replay
-every design recommendation after every edit. Existing tool enforcement still
-requires the matching check; include `step_prompt_quality` separately so prompt
-quality is visible in the saved review. For the synthetic workflow-deletion
+check the changed configuration and affected execution boundaries. These IDs are
+compatibility coverage, not a mandate to redesign a step or replay every design
+recommendation after every edit. For the synthetic workflow-deletion
 candidate, there is no step prompt to score; review prompts only on real affected
 steps and record that scope in the deletion audit.
 
-A preferred alternative architecture is not itself drift. Propose material
-step-type, topology, retry, ownership, or side-effect changes through a human
-decision or Technical Review; never convert a step just to satisfy a best-practice
+A preferred alternative architecture is not itself drift. Route material
+step-type, topology, retry, ownership, or side-effect improvement ideas to
+Architecture; never convert a step just to satisfy a best-practice
 preference. Make only clear, bounded repairs that preserve the intended behavior.
 
-For a candidate whose `step_type` is `"routing"` only (never `"branch"` —
+When a candidate's routing topology or route/evaluation contract changed, or this
+is its first baseline review, and its `step_type` is `"routing"` (never `"branch"` —
 branch is deliberately the small in-flow decision, these two checks do not
 apply to it; see `references/routing.md`/`references/branch.md`), also
 judge:
@@ -299,7 +303,7 @@ exact step under review, not merely to exist somewhere in the backlog.
 - **A platform-owned boundary** (a runtime/harness/bridge limitation, not
   this workflow's own plan, config, code, or data): `record_pulse_finding`
   with `step_id` (`recommended_route` may be omitted — it is not a valid
-  route for this case). Then, in the same turn's step 6 close-out, give that
+  route for this case). Then, in the same turn's step 7 close-out, give that
   finding's `finding_dispositions[]` entry on `record_pulse_result`
   `disposition="external_action_required"` with a `reason_code`, an
   `external_owner`, and a `reopen_condition` — those three fields belong to
@@ -327,7 +331,28 @@ real, active, already-filed Pulse finding for this exact step — this is what
 keeps a routed check from ever being persisted as "reviewed" with no
 corresponding tracked item.
 
-### 5. Persist the merged result per step
+### 5. Close the exact plan-change dependency receipts you consumed
+
+The `plan_change_dependencies` intake and the per-step drift flag are two views
+of the same edit, not two reviews. When Gate routed an incomplete current-contract
+dependency receipt to Plan Drift instead of Technical Review, finish that receipt
+in this turn. For each exact changelog entry you actually inspected, call
+`mark_changelog_artifact_reviewed` with evidence-backed dispositions for all six
+surfaces: `downstream_steps`, `validation`, `evaluation`, `reporting`, `database`,
+and `learnings_and_knowledge`. Use `updated`, `already_compatible`, or
+`not_applicable` when reconciled. A still-unresolved surface uses `blocked` or
+`broken` and must link the durable Pulse `issue_ids` you filed above; an unresolved
+defect therefore does not require leaving its review receipt open.
+
+Mark only the immutable entry indexes/change IDs you read. Do not mark a newer
+entry that appeared after your inspection. If one mutation names multiple affected
+steps, wait until every affected due step has been reviewed before marking that
+entry. This structured receipt reuses the evidence gathered in this pass; it does
+not require six duplicate audits. The backend rejects a successful Plan Drift
+result while these receipts remain incomplete when Technical Review was not also
+selected, preventing the same work from returning as a receipt-only Technical pass.
+
+### 6. Persist the merged result per step
 
 Call `record_plan_drift_review(step_id=..., checks=[...], reviewed_through_change_id=...)`
 exactly once per candidate step, merging the precomputed checks from step 1
@@ -339,10 +364,11 @@ step-4 routes. Every check needs a real `check_id`, a `status` of
 reason). Pass `reviewed_through_change_id` as the latest
 `planning/changelog/` `change_id` you actually read for this step, so the
 next review resumes exactly where this one left off. This call always fully
-replaces the step's prior evidence and clears `needs_review` — there is no
-partial update.
+replaces the step's prior evidence. It clears `needs_review` only when every
+check is `pass` or `fixed`; any `fail` keeps Plan Drift due and therefore keeps
+the other review modules deferred on later Pulse cycles. There is no partial update.
 
-### 6. Close out
+### 7. Close out
 
 Finish with one `record_pulse_result(module="plan_drift_review")`; use reason for the conclusion and optional review_note only for new reasoning or limitations. Do not duplicate the per-step checks or maintain a Markdown checkpoint.
 Include a `finding_dispositions[]` entry for every finding filed this turn:

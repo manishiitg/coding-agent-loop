@@ -1,3 +1,5 @@
+import { useState } from "react";
+import { ChevronDown } from "lucide-react";
 import type {
   GoalMetric,
   PulseGoalObservation,
@@ -20,9 +22,15 @@ export const GOAL_SETUP_MESSAGE =
 function MetricCard({
   metric,
   observations,
+  supportingCount = 0,
+  supportingOpen = false,
+  onToggleSupporting,
 }: {
   metric: GoalMetric;
   observations: PulseGoalObservation[];
+  supportingCount?: number;
+  supportingOpen?: boolean;
+  onToggleSupporting?: () => void;
 }) {
   const p = goalMetricProgress(metric, observations);
   const primary = metric.role === "primary";
@@ -119,6 +127,20 @@ function MetricCard({
           ? ` · ${p.latest.status}`
           : ""}
       </p>
+      {primary && supportingCount > 0 && onToggleSupporting && (
+        <button
+          type="button"
+          aria-expanded={supportingOpen}
+          aria-controls={`supporting-metrics-${metric.id}`}
+          onClick={onToggleSupporting}
+          className="mt-3 flex w-full items-center justify-between rounded-lg border bg-background px-3 py-2 text-left text-xs font-medium hover:bg-muted/40"
+        >
+          <span>
+            {supportingOpen ? "Hide" : "Show"} {supportingCount} supporting {supportingCount === 1 ? "metric" : "metrics"}
+          </span>
+          <ChevronDown className={`h-4 w-4 transition-transform ${supportingOpen ? "rotate-180" : ""}`} aria-hidden="true" />
+        </button>
+      )}
       <details className="mt-3 text-xs">
         <summary className="cursor-pointer text-muted-foreground">
           Measurement details and history
@@ -184,6 +206,46 @@ function MetricCard({
   );
 }
 
+function PrimaryMetricGroup({
+  metric,
+  supporting,
+  observations,
+}: {
+  metric: GoalMetric;
+  supporting: GoalMetric[];
+  observations: PulseGoalObservation[];
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section
+      aria-label={`${metric.name} and supporting measurements`}
+      className="space-y-3"
+    >
+      <MetricCard
+        metric={metric}
+        observations={observations}
+        supportingCount={supporting.length}
+        supportingOpen={open}
+        onToggleSupporting={() => setOpen((value) => !value)}
+      />
+      {open && supporting.length > 0 && (
+        <div
+          id={`supporting-metrics-${metric.id}`}
+          className="grid gap-3 border-l-2 pl-3 md:grid-cols-2"
+        >
+          {supporting.map((supportingMetric) => (
+            <MetricCard
+              key={supportingMetric.id}
+              metric={supportingMetric}
+              observations={observations}
+            />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function GoalProgress({
   impact,
   workspacePath,
@@ -225,27 +287,12 @@ export function GoalProgress({
             >
               <h3 className="text-sm font-semibold">{group.name}</h3>
               {group.primaries.map(({ metric, supporting }) => (
-                <section
-                  key={metric.id}
-                  aria-label={`${metric.name} and supporting measurements`}
-                  className="space-y-3"
-                >
-                  <MetricCard
-                    metric={metric}
-                    observations={impact.observations}
-                  />
-                  {supporting.length > 0 && (
-                    <div className="grid gap-3 border-l-2 pl-3 md:grid-cols-2">
-                      {supporting.map((m) => (
-                        <MetricCard
-                          key={m.id}
-                          metric={m}
-                          observations={impact.observations}
-                        />
-                      ))}
-                    </div>
-                  )}
-                </section>
+                <PrimaryMetricGroup
+                  key={`${workspacePath}:${metric.id}`}
+                  metric={metric}
+                  supporting={supporting}
+                  observations={impact.observations}
+                />
               ))}
             </section>
           ))}
@@ -255,16 +302,8 @@ export function GoalProgress({
               className="space-y-3"
             >
               <p className="text-xs text-muted-foreground">
-                These supporting measurements need a primary metric
-                relationship. Edit goals &amp; metrics to assign them.
+                {unassigned.length} supporting {unassigned.length === 1 ? "measurement needs" : "measurements need"} a primary metric relationship. Edit goals &amp; metrics to assign {unassigned.length === 1 ? "it" : "them"}.
               </p>
-              {unassigned.map((m) => (
-                <MetricCard
-                  key={m.id}
-                  metric={m}
-                  observations={impact.observations}
-                />
-              ))}
             </section>
           )}
         </>

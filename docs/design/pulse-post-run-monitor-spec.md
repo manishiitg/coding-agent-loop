@@ -179,13 +179,16 @@ Gate must record exactly one decision for each module. A partial worklist is inv
 
 ## One Agent-Owned Review+Fix Turn
 
-After Gate, the scheduler sends one Review+Fix message to the same main-agent conversation.
-The agent reads the durable worklist and handles at most the two due perspectives Gate selected.
-It owns review selection, specialist delegation,
-consolidation, repair, verification, and terminal module receipts. Strategy
-Auditor and Goal Advisor remain independent product/business lenses; Engineering
-and Operations may share evidence. Go does not launch reviewer sessions, a
-residual Fixer, or a recovery agent.
+After Gate, the scheduler handles due modules in canonical order. Plan Drift is
+an exclusive prerequisite: if it is due, no other reviewer runs in that cycle.
+Once drift is clean, Architecture runs before Technical so a material structure
+proposal is not produced after a correctness repair against a design already
+being reconsidered; Strategic follows as the goal/outcome perspective. Each
+stage continues in the same main-agent conversation. Each reviewer owns review selection
+and uses the cheapest sufficient approach for its question; each due
+module owns one of the terminal module receipts. Architecture and Strategic are read-only;
+Technical may repair concrete correctness failures through the retained repair
+contract. Go does not invent an extra reviewer, residual Fixer, or recovery agent.
 
 1. Read `get_pulse_state` views `module` and `backlog`, the durable
    Gate/worklist, current-run module results, and saved SQLite reviewer records. If every due module already has a

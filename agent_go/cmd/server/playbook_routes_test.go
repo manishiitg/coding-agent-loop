@@ -29,6 +29,23 @@ func TestLoadPlaybookCatalogFindsEngineeringPlaybooks(t *testing.T) {
 	if item.Category != "Security Engineering" {
 		t.Fatalf("category = %q, want Security Engineering", item.Category)
 	}
+	for _, playbook := range items {
+		if len(playbook.PulseFocus) != 1 || playbook.PulseFocus[0]["module"] != pulseModuleStrategicReview {
+			t.Fatalf("playbook %s focus = %#v, want strategic only", playbook.ID, playbook.PulseFocus)
+		}
+	}
+}
+
+func TestStrategicPlaybookFocusIgnoresLegacyReviewerSpecialization(t *testing.T) {
+	focuses := []map[string]interface{}{
+		{"module": pulseModuleTechnicalReview, "label": "legacy technical"},
+		{"module": pulseModuleArchitectureReview, "label": "legacy architecture"},
+		{"module": pulseModuleStrategicReview, "label": "strategy"},
+	}
+	filtered := strategicPlaybookFocus(focuses)
+	if len(filtered) != 1 || filtered[0]["label"] != "strategy" {
+		t.Fatalf("filtered focus = %#v, want strategy only", filtered)
+	}
 }
 
 func TestRewriteExternalPlaybookLinksMaterializesSharedReferences(t *testing.T) {

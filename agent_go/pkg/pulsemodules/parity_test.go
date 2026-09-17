@@ -32,8 +32,11 @@ func TestRegistryIsInternallyConsistent(t *testing.T) {
 	}
 
 	for _, m := range All {
-		if m.ID == "" || m.Label == "" || m.StepLabel == "" {
+		if m.ID == "" || m.Label == "" || m.StepLabel == "" || m.Question == "" || m.Trigger == "" || m.Authority == "" {
 			t.Fatalf("module %+v has an empty required field", m)
+		}
+		if m.Authority != "repair" && m.Authority != "propose" {
+			t.Fatalf("module %q has unsupported authority %q", m.ID, m.Authority)
 		}
 
 		if seenStep[m.StepLabel] {
@@ -62,6 +65,22 @@ func TestRegistryIsInternallyConsistent(t *testing.T) {
 		if IsValid(p) {
 			t.Fatalf("pseudo ID %q must not be a scheduled module", p)
 		}
+	}
+}
+
+func TestExecutionOrderKeepsDriftExclusiveThenArchitectureBeforeTechnical(t *testing.T) {
+	want := []string{PlanDriftReviewID, ArchitectureReviewID, TechnicalReviewID, StrategicReviewID}
+	if len(ExecutionOrder) != len(want) {
+		t.Fatalf("ExecutionOrder = %v, want %v", ExecutionOrder, want)
+	}
+	for i := range want {
+		if ExecutionOrder[i] != want[i] {
+			t.Fatalf("ExecutionOrder = %v, want %v", ExecutionOrder, want)
+		}
+	}
+	postDrift := PostDriftExecutionOrder()
+	if len(postDrift) != 3 || postDrift[0] != ArchitectureReviewID || postDrift[1] != TechnicalReviewID || postDrift[2] != StrategicReviewID {
+		t.Fatalf("PostDriftExecutionOrder = %v", postDrift)
 	}
 }
 

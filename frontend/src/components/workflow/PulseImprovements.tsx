@@ -19,22 +19,35 @@ const statusLabels: Record<string, string> = {
   assessed: "Assessed",
   blocked: "Blocked",
 };
-export function PulseImprovements({ impact }: { impact: PulseImpactLedger }) {
+export function PulseImprovements({
+  impact,
+  kinds,
+  title = "Improvements",
+  description = "From proposal to applied change and observed outcome.",
+  emptyMessage,
+}: {
+  impact: PulseImpactLedger;
+  kinds?: string[];
+  title?: string;
+  description?: string;
+  emptyMessage?: string;
+}) {
   const [all, setAll] = useState(false);
-  const items = [...impact.interventions].sort((a, b) =>
-    (b.updated_at || "").localeCompare(a.updated_at || ""),
-  );
-  if (!items.length) return null;
+  const items = impact.interventions
+    .filter((item) => !kinds || kinds.includes(item.kind || "fix_bundle"))
+    .sort((a, b) => (b.updated_at || "").localeCompare(a.updated_at || ""));
+  if (!items.length && !emptyMessage) return null;
   return (
     <section
-      aria-label="Workflow improvements"
+      aria-label={title}
       className="rounded-xl border bg-background p-4"
     >
-      <h3 className="text-sm font-semibold">Improvements</h3>
+      <h3 className="text-sm font-semibold">{title}</h3>
       <p className="mt-1 text-xs text-muted-foreground">
-        From proposal to applied change and observed outcome.
+        {description}
       </p>
-      <div className="mt-3 divide-y">
+      {!items.length && <p className="mt-3 rounded-lg border border-dashed p-3 text-xs text-muted-foreground">{emptyMessage}</p>}
+      {items.length > 0 && <div className="mt-3 divide-y">
         {(all ? items : items.slice(0, 3)).map((item) => {
           const outcomes = pulseMetricOutcomes(item, impact.assessments);
           const assessment = outcomes[0]?.assessment;
@@ -89,7 +102,7 @@ export function PulseImprovements({ impact }: { impact: PulseImpactLedger }) {
             </details>
           );
         })}
-      </div>
+      </div>}
       {items.length > 3 && (
         <button
           type="button"

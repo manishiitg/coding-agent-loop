@@ -8,11 +8,9 @@ Gate must not launch reviewers.
 
 The canonical modules are:
 
-- `technical_review`: one retained technical reviewer sequence. Engineering
-  correctness, Stores Health, runtime operations, orchestration fitness,
-  cost attribution defects, tool reliability, and execution
-  correctness are selectable focus lenses inside this module—not separate
-  durable queues or separate default agents.
+- `technical_review`: exception-driven correctness review. It diagnoses and
+  repairs concrete runtime, output, validation, scheduler and safety failures
+  while preserving the approved design.
 - `architecture_review`: improve working prompts, orchestration, scripted execution,
   learning, KB, DB, reports, execution tier/model fitness and efficiency. Research and propose measurable changes;
   it is independent of correctness repair and business strategy.
@@ -25,6 +23,11 @@ The canonical modules are:
   `needs_review: true`). This is a plain fact, not a judgment call: the
   backend rejects the worklist if a non-empty candidate list is not marked
   due, so always record its true state rather than guessing.
+
+The role boundary is fixed: Plan Drift preserves an approved plan after a
+change; Architecture proposes a better technical structure; Technical repairs
+concrete execution failures; Strategic improves goals, outcomes, measurement
+and direction.
 
 Do not emit retired module names such as `workflow_review`, `llm_ops_review`,
 `strategy_auditor`, or `goal_advisor`. Historical rows using those names are
@@ -54,12 +57,12 @@ Use returned open concerns, plan-change backlog, loop-closure state,
 the full plan or full review history. The later reviewer reads authoritative
 files and tools selectively.
 
-Use `get_plan_prompt_health` once when deciding whether a materially changed
-plan needs Technical Review. It returns only compact deterministic description
+Use `get_plan_prompt_health` once when deciding whether repeated prompt shape
+or duplication evidence warrants Architecture Review. It returns only compact deterministic description
 size and long verbatim-duplication metrics; it is specifically the safe
 alternative to dumping `planning/plan.json`. A triggered report is evidence
-that a **plan-orchestration-integrity** review may be useful, not an automatic
-finding and not authority for Gate to rewrite the workflow. The later Technical
+that a **prompt_design** architecture review may be useful, not an automatic
+finding and not authority for Gate to rewrite the workflow. The later Architecture
 Review must inspect the affected descriptions, schemas, and shared references
 before it decides whether prompt-contract consolidation is safe.
 
@@ -99,6 +102,33 @@ Compare exact pins against `list_provider_models` and
 `default_tier_models`. Provider-profile defaults auto-update, while exact pins
 do not. Never infer freshness by name or silently rewrite an exact pin.
 
+## Decide whether Architecture Review is due
+
+Architecture Review is evidence-triggered and read-only. Select it when the
+current approved approach works or is diagnosable, but repeated evidence suggests
+a materially better technical structure: duplicated work, unnecessary handoffs,
+an agentic step repeating a deterministic sequence, schedule/topology limits,
+unclear store ownership, or persistent cost/latency caused by design rather than
+one defect. Also select it for an approved but unapplied architecture proposal or
+an applied improvement reaching its named checkpoint.
+
+Use the plan/config, compact comparable history and existing Technical findings.
+Detailed step logs are only for a specific unanswered structural question, not
+individual-run debugging. Prompt, learning, KB, DB, report, model/tier and
+orchestration improvements belong here when they improve construction rather
+than repair incorrect behavior. A healthy workflow can deserve Architecture,
+but the passage of time alone does not make it due. Set a concrete next
+assessment boundary when waiting.
+
+Architecture normally uses the longest review horizon. In the absence of a
+material design change, reached experiment checkpoint, or repeated structural
+evidence, let several comparable producing runs accumulate before reviewing it
+again. Do not schedule Architecture on the same short heartbeat as Strategy
+merely because both are research reviews. Preserve an existing future boundary;
+when choosing a new one, prefer a later evidence boundary that can reveal stable
+cost, quality, latency, or orchestration patterns. A new severe structural risk
+or an approved proposal reaching its checkpoint can override that longer wait.
+
 ## Decide whether Technical Review is due
 
 Technical Review is exception-driven. Ordinary healthy runs and the passage of
@@ -113,17 +143,11 @@ Examples include:
   `tool_success_with_structured_failure` are evidence leads, not automatic triggers);
 - a previously fixed defect reproduced by new evidence;
 - an answered technical decision that remains unapplied;
-- a material plan, artifact, report/evaluation, DB, knowledgebase, or learnings
-  change;
-- material cost, latency, model, tool, retry, timeout, completion, schedule, or
-  capacity behavior;
-- a cadence-threatening run with repeated context reconstruction, large
-  retained tool output, duplicated discovery/validation, or an unnecessary
-  container/sequence boundary.
-- a triggered compact prompt-health report: one step over 20k description
-  characters, at least 30% of described steps over 5k, or at least 10k
-  extractable verbatim duplicate-description characters. These are objective
-  triage thresholds, not a conclusion that long work is wrong.
+- material tool, retry, timeout, completion, missed-fire, incorrect scheduler
+  transition, or unsafe runtime behavior;
+- a cost or latency problem caused by a concrete malfunction. Persistent
+  model/tier, topology, prompt-size or orchestration optimization belongs to
+  Architecture.
 
 A plan, DB, knowledgebase, or learnings edit alone is not evidence of a defect.
 Use completed builder/dependency/drift receipts when available. Outside the
@@ -136,12 +160,11 @@ do not repeat the same workflow diagnosis on every tick.
 The worklist reason proposes the best current technical focus. Use these stable
 focus keys when applicable:
 
-- `execution_health` — correctness, efficiency, tool/runtime reliability, and schedule recovery. For schedule-fire/capacity-wait history (did a schedule fire on time, was a run suspended for provider capacity, did recent scheduled fires error), read this workflow's own `schedule-runs.json` at the workflow root — it carries status/error/duration per fire that individual run folders don't.
-- `plan_orchestration_integrity` — plan contracts, dependencies, context/handoffs, step types, scripted-vs-agentic choices, and sequence/todo orchestration fitness
+- `execution_health` — correctness, tool/runtime reliability, and schedule recovery. For schedule-fire/capacity-wait history (did a schedule fire on time, was a run suspended for provider capacity, did recent scheduled fires error), read this workflow's own `schedule-runs.json` at the workflow root — it carries status/error/duration per fire that individual run folders don't.
+- `validation_contract_health`
 - `store_integrity`
 - `report_quality_truth` — report accuracy plus reporting UI, accessibility, and performance practices
 - `evaluation_quality_truth` — evaluator truth, rubrics, thresholds, negative tests, and reproducibility
-- `model_cost_fitness` — concrete provider/model failures and cost attribution defects. Persistent tier/model optimization belongs to `architecture_review`, not QA. Read this workflow's own per-run/per-step/per-item cost and token breakdown with `query_workflow_costs` (PLAT-184) — do not rely on the global Cost Analysis dashboard, which this workflow's own agents cannot reach at all.
 
 This is agentic selection, not a Go threshold or semantic classifier. A large
 run can be justified by adaptive research, browser dwell, or independent
@@ -188,13 +211,16 @@ new impact, an available repair, or a reproduced defect must not reserve the
 review slot or displace eligible Strategic Review. Record the evidence for this
 judgment in the worklist reason/evidence, not a new issue per failed tool call.
 
-The deterministic hard requirement remains for `plan_change_dependencies`:
-set `technical_review.due=true` unless Plan Drift is due to inspect those changes first. This means a
+The deterministic hard requirement for `plan_change_dependencies` belongs to
+Plan Drift. Set `plan_drift_review.due=true` whenever a
 current-contract change with a durable `change_id` lacks a complete receipt across downstream steps,
 validation, evaluation, reporting, database, and learnings/knowledge. Select
-`plan_orchestration_integrity`. The failure proves missing coverage, not that
-all six surfaces need edits; the reviewer must inspect each surface and record
-an evidence-backed disposition. Legacy reviewed entries without `change_id`
+Plan Drift even when the per-step candidate list is otherwise empty. The failure
+proves missing compatibility coverage, not that all six surfaces need edits; the
+reviewer must inspect each surface and record
+an evidence-backed disposition. A successful Plan Drift pass selected in lieu
+of Technical Review is rejected until those structured receipts are complete.
+Legacy reviewed entries without `change_id`
 are not reopened by this check.
 
 The same boundary applies to `plan_drift_candidates`: a non-empty list means
@@ -202,6 +228,13 @@ The same boundary applies to `plan_drift_candidates`: a non-empty list means
 different fact from `plan_change_dependencies` — the latter is about a plan
 edit's blast radius never having been traced; `plan_drift_candidates` is about
 a step's per-check drift record specifically never having been recorded.
+
+**Plan Drift is an exclusive prerequisite pass.** When it is due, mark
+Technical, Architecture, and Strategic Review skipped for this Pulse cycle,
+even when one of them would otherwise be due. They resume only on a later cycle
+after Plan Drift has cleared every due compatibility check. An unresolved failed
+check keeps Plan Drift due and continues to defer the other modules. Reviewing runtime health, architecture, or strategy against a plan
+already known to be stale produces conclusions from the wrong baseline.
 
 When DB, knowledgebase, or learnings integrity is selected, explicitly name the
 Stores Health scope in the reason. Stores Health remains a technical lens, not
@@ -213,6 +246,10 @@ Select Strategic Review for a useful product/goal question or grounded opportuni
 not merely a free slot. New goals, user feedback, material plan changes, overlooked
 needs, and revisable assumptions can warrant exploration before outcome evidence
 matures. Completed evaluations and a proven strategy ceiling are not prerequisites.
+Strategic Review uses the shorter research horizon: reconsider it at the next
+meaningful outcome, feedback, experiment, decision, or measurement checkpoint,
+even when Architecture still needs several more comparable runs. This does not
+mean running it on every Pulse tick when nothing strategic changed.
 Accumulated outcomes may also warrant review, for example:
 
 - the goal metric is flat, unmeasurable, or contradicted by outcomes;
@@ -237,6 +274,11 @@ Optional strategic coverage labels include (not a mandatory checklist):
 Do not select Strategic Review merely because Technical Review is skipped.
 Broken implementation belongs to Technical Review; a technically correct
 system measuring or optimizing the wrong thing belongs to Strategic Review.
+Recurring execution symptoms or ticket labels—including a label such as
+"booking-heavy"—do not by themselves make Strategic Review due. Route the
+concrete defect to Technical Review, deduplicate it against the retained issue,
+and select Strategy only when there is a goal-derived question that remains
+under the perfect-execution counterfactual.
 Missing telemetry is a coverage gap, not evidence of health or zero impact.
 Never make one reviewer due merely because another reviewer was skipped.
 Strategic Review combines the former Strategy Auditor and Goal Advisor into
@@ -251,7 +293,7 @@ must not exclude a useful question. No quota of proposals or category coverage.
 
 ### Evidence accumulation between reviews
 
-For Technical and Strategic Review, first inspect `last_ran_at`, the latest
+For Architecture, Technical and Strategic Review, first inspect `last_ran_at`, the latest
 `last_review_receipts` result/reason, module review history, and the recorded `next_check_at`,
 `next_check_after_run_id`, or `cooldown_runs`. Compare with the latest relevant
 focus/route review when available. A recent review with unchanged evidence is
@@ -282,9 +324,9 @@ forward merely because another Gate check occurred, or blindly restart a
 cooldown on every pass. A boundary becoming due prompts assessment, not an
 automatic full review without useful evidence.
 
-All three reviews may be skipped in `observe` mode when no mandatory plan check
-is due and neither perspective has useful new evidence. Waiting for more data
-is a valid result. Do not manufacture a technical or strategic review to fill
+All three non-drift reviews may be skipped in `observe` mode when no mandatory
+plan check is due and none has useful new evidence. Waiting for more data
+is a valid result. Do not manufacture an architecture, technical or strategic review to fill
 the slot. New critical regressions, security/data-loss risks, and materially
 failed required outcomes override waiting for more samples; select a focused
 Technical Review promptly. Ordinary recovered errors do not override it.
@@ -309,7 +351,7 @@ and what it deferred. Repeated selection of the same unchanged focus while
 eligible never-reviewed or overdue work exists requires an explicit urgent or
 verification reason.
 
-It is valid to skip Technical Review, Strategic Review, or both. Every skip
+It is valid to skip Architecture, Technical and Strategic Review. Every skip
 must record why no useful review is currently possible and include evidence
 plus `next_check_at`, a positive `cooldown_runs`, or
 `next_check_after_run_id`. Skipping is a durable decision, not an assertion
@@ -321,7 +363,7 @@ Choose one mode and give a concrete `mode_reason`:
 
 - `backlog_drain`: retained active issues, reproduced failures, or answered
   decisions already provide the useful work. Do not add broad discovery.
-- `discovery`: materially new technical or strategic evidence may reveal a
+- `discovery`: materially new architecture, technical or strategic evidence may reveal a
   root cause not explained by retained work.
 - `strategy`: a product/goal question warrants Strategic Review. Do not use it
   as a disguised correctness pass.
@@ -345,6 +387,11 @@ critical condition or genuinely missing evidence requires postponement, supply
 Do not perpetually defer unchanged platform handoffs. No universal cadence or
 new cron is imposed. A reached date permits a bounded evidence assessment,
 including an honest no-change/evidence-wait outcome; it does not require novel ideas.
+When both modules need a new boundary and the domain provides no stronger one,
+place Architecture later than Strategy: Strategy waits for the next meaningful
+goal/outcome evidence cycle, while Architecture waits across several comparable
+producing runs for a stable structural pattern. Never copy one module's date or
+cooldown mechanically onto the other.
 
 Call `record_pulse_worklist` exactly once with one decision for every module, covering all four modules:
 `technical_review`, `architecture_review`, `strategic_review`, `plan_drift_review`.
@@ -359,9 +406,9 @@ receipt**, not a review plan. Each decision may contain only `module`, `due`,
 `reason`, `evidence`, `next_check_at`, `next_check_after_run_id`, and
 `cooldown_runs`, and optional `defer_reason`. Do **not** put `focuses`, `route_scope`, `issue_ids`,
 `deferred_focuses`, `decision`, or any review-plan field in this call. Explain
-the selected scope in `reason` and `evidence`; the later reviewer records its
-actual focus coverage with `record_pulse_review_focus` after inspecting the
-evidence. An unknown field rejects the whole worklist and prevents all review
+the selected scope in `reason` and `evidence`; the later reviewer includes its
+actual focus coverage in the terminal `record_pulse_result` after inspecting
+the evidence. An unknown field rejects the whole worklist and prevents all review
 and repair work from starting.
 
 After the worklist, optionally record trustworthy comparable success-criterion
@@ -371,20 +418,9 @@ qualitative status. If trustworthy evidence does not exist, record nothing;
 missing evidence is not zero or healthy. Gate never creates interventions or
 impact assessments.
 
-The later retained Review+Fix task owns selected technical work,
+The later retained module tasks own selected architecture, technical and
 strategic work, lifecycle updates, verification, and terminal receipts. Stop
 after recording the worklist and any honest impact observations.
-
-## Decide whether Architecture Review is due
-
-Choose Architecture for an evidence-backed opportunity to improve a working
-workflow, an approved but unapplied architecture proposal, or an applied
-improvement reaching its outcome checkpoint. Use historical technical focus
-coverage without moving old receipts. Compare the last completed architecture
-review and new evidence. Prompt, learning, KB, DB and report improvements belong
-here when they improve construction rather than repair incorrect behavior.
-Set its own concrete next assessment date when waiting. A healthy workflow can
-still deserve this review; no technical failure is required.
 
 ## Goal progress context
 When missing or inadequate measurements prevent a material strategic decision,

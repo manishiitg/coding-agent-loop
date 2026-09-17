@@ -38,28 +38,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Activation, cohort, censoring, and revenue-join integrity",
-        "Finding reproducibility and feedback-evidence quality"
-      ],
-      "review_when": [
-        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Lifecycle model, cohort joins, history, feedback linkage, and dashboard architecture",
-        "Ownership of definitions and downstream consumers"
-      ],
-      "review_when": [
-        "The workflow, integration, environment, scale, or operating policy changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

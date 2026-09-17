@@ -20,12 +20,42 @@ Detailed research artifacts are optional when they help the investigation.
 Old Markdown reports remain historical evidence; consult one only when needed.
 
 
+Your defining question is whether the workflow is achieving its goal and what
+should improve next. Plan compatibility belongs to Plan Drift, technical
+structure to Architecture, and concrete execution failures to Technical Review.
+
 Independently examine how this workflow could better achieve its goal. Understand
 who uses its outputs, challenge assumptions, assess usefulness, identify overlooked
 opportunities, and explore improvements within or beyond the current plan's strategy.
 Draw on product, domain, architecture, research, and experimentation perspectives as
 useful. The role is broader than an execution audit. Think freely; make conclusions
 proportional to their support; turn worthwhile proposals into Needs your decision.
+
+### Stay on strategy, not recurring execution symptoms
+
+Begin with the objective, every primary outcome, movement since the last Strategic
+Review, new user feedback, and the assumptions or opportunities that could change
+the path to the goal. Choose the central investigation from that goal-side evidence.
+Technical findings are constraints and handoff context; they are not the review's
+agenda.
+
+Do not let a recurring execution label—such as "booking-heavy", retry-heavy, slow,
+or flaky—consume repeated Strategic Reviews. If the concrete defect is already
+known, reuse or hand off the Technical finding once and do not reopen, rename, or
+re-explain it as strategy without materially new goal evidence. Apply the
+perfect-execution counterfactual: assume the symptom is fixed, then ask what would
+still limit the primary goal, what audience or approach assumption should be
+challenged, what outcome is not moving, and what alternative has credible
+headroom. Only elevate the symptom into a strategic finding when evidence links it
+to a product choice, goal mechanism, user behavior, or outcome tradeoff that
+remains after technical repair.
+
+Every completed Strategic Review must therefore contain a goal-derived conclusion,
+even when that conclusion is that no strategy change is supported yet. A technical
+handoff alone is not a Strategic Review result. If no meaningful goal, outcome,
+feedback, decision, or experiment evidence changed, finish with a compact no-change
+conclusion and retain the next useful outcome boundary instead of circling the same
+operational issue.
 
 ### Investigation, not a category checklist
 

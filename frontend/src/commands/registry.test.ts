@@ -125,7 +125,7 @@ describe('Pulse slash commands', () => {
   it('hides Builder reviews from Run and rejects direct command lookup there', () => {
     const runCommands = getCommands('workflow', 'run').map(command => command.command)
 
-    for (const command of ['pulse', 'pulse-review', 'pulse-fixer', 'strategy-auditor', 'goal-advisor', 'design-plan', 'review-code', 'review-artifact-drift', 'pulse-review-execution-health', 'plan-prompt-bloat', 'pulse-review-validation-contract', 'backup', 'publish', 'notify']) {
+    for (const command of ['pulse', 'pulse-review', 'pulse-fixer', 'strategy-auditor', 'goal-advisor', 'design-plan', 'review-code', 'review-artifact-drift', 'pulse-review-execution-health', 'pulse-review-validation-contract', 'backup', 'publish', 'notify']) {
       expect(runCommands).not.toContain(command)
       expect(findCommand(command, 'workflow', 'run', true)).toBeUndefined()
       expect(findCommand(command, 'workflow', 'workshop', true)).toBeDefined()
@@ -158,12 +158,6 @@ describe('Pulse slash commands', () => {
     } finally {
       setUserCommands([])
     }
-  })
-
-  it('makes prompt-bloat review discoverable when searching Pulse commands', () => {
-    const promptBloat = findCommand('plan-prompt-bloat', 'workflow')
-
-    expect(promptBloat?.description.toLowerCase()).toContain('pulse review')
   })
 
   it('reads review-code reference files one at a time', () => {
@@ -367,7 +361,7 @@ describe('Pulse slash commands', () => {
     expect(submitted).toContain('lifecycle outcomes')
   })
 
-  it('routes saved-code review to an existing read-only technical flow', () => {
+  it('routes saved-code review to the read-only architecture flow', () => {
     let submitted = ''
     findCommand('review-code', 'workflow')?.execute({
       beforeSlash: 'check the report exporter',
@@ -376,9 +370,10 @@ describe('Pulse slash commands', () => {
       getWorkflowStore: () => ({ selectedRunFolder: 'iteration-2/dev' }),
     } as CommandContext)
 
-    expect(submitted).toContain('kind=\\"engineering-review\\"')
-    expect(submitted).not.toContain('kind=\\"review-code\\"')
+    expect(submitted).toContain('kind="design-plan"')
+    expect(submitted).not.toContain('kind="review-code"')
     expect(submitted).toContain('workflow.json.code_layout_version')
+    expect(submitted).toContain('Architecture focus')
     expect(submitted).toContain('do not apply changes in this review')
     expect(submitted).not.toContain('message_sequence=')
     expect(submitted).toContain('check the report exporter')

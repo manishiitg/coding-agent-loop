@@ -63,37 +63,48 @@ func TestPulseReviewFocusToolsPersistDurableAgenda(t *testing.T) {
 	const pulseRunID = "focus-session"
 	ctx := mcpexecutor.WithSessionID(context.Background(), pulseRunID)
 	_, executors, _ := createPulseWorklistTools()
-	record := executors["record_pulse_review_focus"].(func(context.Context, map[string]interface{}) (string, error))
+	record := executors["record_pulse_result"].(func(context.Context, map[string]interface{}) (string, error))
 	// get_pulse_review_focus_agenda was folded into get_pulse_state(view="focus_agenda").
 	agenda := executors["get_pulse_state"].(func(context.Context, map[string]interface{}) (string, error))
 
-	raw, err := record(ctx, map[string]interface{}{
+	if _, err := record(ctx, map[string]interface{}{
 		"workspace_path": workspacePath, "pulse_run_id": pulseRunID, "module": pulseModuleTechnicalReview,
-		"route_scope": "daily-execution/small-route",
-		"focus_key":   "execution_health", "priority_class": "overdue", "selection_reason": "This lens has not been reviewed since the timeout recurrence.",
-		"verdict": "Observer now has a targeted recheck.", "evidence": []interface{}{"runs/iteration-0/execution/attempt.json"},
-		"issue_ids": []interface{}{"PUL-AB12CD34"}, "deferred_focuses": []interface{}{"plan_orchestration_integrity"},
-		"next_check_at": "2026-08-21T00:00:00Z", "next_check_reason": "next producing run",
+		"result": "running", "reason": "manual technical review", "note_only": true, "manual": true,
+	}); err != nil {
+		t.Fatalf("start manual review: %v", err)
+	}
+	_, err := record(ctx, map[string]interface{}{
+		"workspace_path": workspacePath, "pulse_run_id": pulseRunID, "module": pulseModuleTechnicalReview,
+		"result": "done", "reason": "technical focus reviewed", "evidence": []interface{}{"runs/iteration-0/execution/attempt.json"},
+		"focuses": []interface{}{map[string]interface{}{
+			"route_scope": "daily-execution/small-route",
+			"focus_key":   "execution_health", "priority_class": "overdue", "selection_reason": "This lens has not been reviewed since the timeout recurrence.",
+			"verdict": "Observer now has a targeted recheck.", "evidence": []interface{}{"runs/iteration-0/execution/attempt.json"},
+			"issue_ids": []interface{}{"PUL-AB12CD34"}, "deferred_focuses": []interface{}{"store_integrity"},
+			"next_check_at": "2026-08-21T00:00:00Z", "next_check_reason": "next producing run",
+		}},
 	})
 	if err != nil {
 		t.Fatalf("record focus: %v", err)
 	}
-	var stored PulseReviewFocus
-	if err := json.Unmarshal([]byte(raw), &stored); err != nil || stored.LastReviewedAt == "" || stored.FocusKey != "execution_health" {
-		t.Fatalf("stored focus=%#v decode_err=%v raw=%s", stored, err, raw)
-	}
-	if stored.RouteScope != "daily-execution/small-route" {
-		t.Fatalf("stored route scope = %q", stored.RouteScope)
+	if _, err := record(ctx, map[string]interface{}{
+		"workspace_path": workspacePath, "pulse_run_id": pulseRunID, "module": pulseModuleArchitectureReview,
+		"result": "running", "reason": "manual architecture review", "note_only": true, "manual": true,
+	}); err != nil {
+		t.Fatalf("start second manual review: %v", err)
 	}
 	if _, err := record(ctx, map[string]interface{}{
-		"workspace_path": workspacePath, "pulse_run_id": pulseRunID, "module": pulseModuleTechnicalReview,
-		"route_scope": "daily-execution/large-route",
-		"focus_key":   "plan_orchestration_integrity", "priority_class": "new_or_changed", "selection_reason": "The larger route has distinct payload amplification evidence.",
-		"verdict": "The large route needs a bounded repair.", "evidence": []interface{}{"runs/iteration-1/costs/execution.json"},
+		"workspace_path": workspacePath, "pulse_run_id": pulseRunID, "module": pulseModuleArchitectureReview,
+		"result": "done", "reason": "architecture focus reviewed",
+		"focuses": []interface{}{map[string]interface{}{
+			"route_scope": "daily-execution/large-route",
+			"focus_key":   "orchestration_design", "priority_class": "new_or_changed", "selection_reason": "The larger route has distinct payload amplification evidence.",
+			"verdict": "The large route needs a structural proposal.", "evidence": []interface{}{"runs/iteration-1/costs/execution.json"},
+		}},
 	}); err != nil {
 		t.Fatalf("record second route focus: %v", err)
 	}
-	raw, err = agenda(ctx, map[string]interface{}{"workspace_path": workspacePath, "view": "focus_agenda", "module": pulseModuleTechnicalReview, "route_scope": "daily-execution/small-route"})
+	raw, err := agenda(ctx, map[string]interface{}{"workspace_path": workspacePath, "view": "focus_agenda", "module": pulseModuleTechnicalReview, "route_scope": "daily-execution/small-route"})
 	if err != nil {
 		t.Fatalf("read agenda: %v", err)
 	}
@@ -110,8 +121,8 @@ func TestPulseReviewFocusToolsPersistDurableAgenda(t *testing.T) {
 	if counts["execution_health"] != [2]int{1, 1} {
 		t.Fatalf("small-route execution-health counts = %v", counts["execution_health"])
 	}
-	if counts["plan_orchestration_integrity"] != [2]int{1, 0} {
-		t.Fatalf("small-route plan counts = %v", counts["plan_orchestration_integrity"])
+	if counts["store_integrity"] != [2]int{0, 0} {
+		t.Fatalf("small-route deferred store counts = %v", counts["store_integrity"])
 	}
 	selections, err := getPulseReviewFocusSelections(ctx, workspacePath, 10)
 	if err != nil {

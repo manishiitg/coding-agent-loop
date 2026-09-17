@@ -64,48 +64,6 @@ func validateStepDriftChecks(checks []StepDriftCheck) error {
 	return nil
 }
 
-func validateStepTypeDriftChecks(stepType string, checks []StepDriftCheck) error {
-	requiredCheckID := requiredStepTypeBestPracticesCheckID(stepType)
-	if requiredCheckID == "" {
-		return nil
-	}
-	if requiredCheckID == orchestratorBestPracticesDriftCheckID {
-		// Records reviewed before contract v1.0.35 carry the legacy ID.
-		for _, check := range checks {
-			if strings.TrimSpace(check.CheckID) == legacyOrchestratorBestPracticesDriftCheckID {
-				return nil
-			}
-		}
-	}
-	for _, check := range checks {
-		if strings.TrimSpace(check.CheckID) == requiredCheckID {
-			return nil
-		}
-	}
-	return fmt.Errorf(
-		"%s step reviews must include check_id %q after reading the matching builder-reference step-type guidance",
-		strings.TrimSpace(stepType), requiredCheckID,
-	)
-}
-
-func planDriftStepType(ctx context.Context, workspacePath, stepID string, readFile func(context.Context, string) (string, error)) string {
-	if stepID == WorkflowDriftReviewStepID {
-		return "workflow"
-	}
-	planPath := normalizePathForWorkspaceAPI("planning/plan.json", workspacePath)
-	content, err := readFile(ctx, planPath)
-	if err != nil || strings.TrimSpace(content) == "" {
-		return ""
-	}
-	var plan PlanningResponse
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return ""
-	}
-	stepTypes := map[string]string{}
-	collectStepTypesByID(plan.Steps, stepTypes)
-	return stepTypes[stepID]
-}
-
 // pulseFindingInactiveStatuses mirrors the "active" boundary used elsewhere
 // in this package (e.g. run_concerns.go's active-issue filter): a finding
 // that has been closed out no longer represents unresolved repair work, so
@@ -175,7 +133,7 @@ func getRecordPlanDriftReviewSchema() string {
 					"properties": {
 						"check_id": {
 							"type": "string",
-							"description": "Stable check identifier. For the deterministic checks, use their real names: report_query_compatibility, validation_schema_db_rules, validation_schema_file_rules, scripted_code_db_queries, db_readme_contract, orphaned_tables. Step types require their matching reference-backed check: scripted_best_practices, message_sequence_best_practices, orchestrator_best_practices (legacy orchestrator_best_practices accepted), routing_best_practices, or branch_best_practices. For each due real step, also record step_prompt_quality after applying references/step-description.md to its description, item prompts, supplied schema, and accessible guidance. Reuse prior prompt evidence only when those inputs remain unchanged. Scope type-specific checks to compatibility, not unsolicited architecture redesign. Other checks need a clear stable id for an affected dependency, e.g. step_description_accuracy or learnings_content_staleness."
+							"description": "Stable check identifier. Use the real deterministic check names when applicable: report_query_compatibility, validation_schema_db_rules, validation_schema_file_rules, scripted_code_db_queries, db_readme_contract, context_dependency_filenames, orphaned_tables. Add step_prompt_quality only when the prompt/schema/guidance changed or this is the first baseline review. Add a reference-backed step-type check only when the step type, topology, or relevant execution boundary changed. Plan Drift checks compatibility with the approved plan; general design optimization belongs to Architecture. Other checks need a clear stable id for an affected dependency, e.g. step_description_accuracy or learnings_content_staleness."
 						},
 						"status": {
 							"type": "string",
@@ -231,10 +189,6 @@ func createRecordPlanDriftReviewExecutor(workspacePath string, logger loggerv2.L
 		if err := validateStepDriftChecks(checks); err != nil {
 			return "", err
 		}
-		stepType := planDriftStepType(ctx, workspacePath, stepID, readFile)
-		if err := validateStepTypeDriftChecks(stepType, checks); err != nil {
-			return "", err
-		}
 		if err := verifyStepDriftCheckFindingsExist(ctx, workspacePath, stepID, checks); err != nil {
 			return "", err
 		}
@@ -256,12 +210,23 @@ func createRecordPlanDriftReviewExecutor(workspacePath string, logger loggerv2.L
 		}
 
 		now := time.Now().UTC().Format(time.RFC3339)
-		// NeedsReview is explicitly false: this is what actually clears the
-		// step from plan_drift_review's due list. A completed review always
-		// fully replaces the prior evidence — the stale flag model never keeps
-		// an old check result "pending" alongside a new one.
+		var passed, failed, fixed int
+		for _, c := range checks {
+			switch c.Status {
+			case stepDriftCheckStatusPass:
+				passed++
+			case stepDriftCheckStatusFail:
+				failed++
+			case stepDriftCheckStatusFixed:
+				fixed++
+			}
+		}
+		// A review replaces the prior evidence, but it clears due-ness only when
+		// every check is compatible or fixed. An unresolved fail remains a Plan
+		// Drift prerequisite on the next Pulse cycle; otherwise later reviewers
+		// would assess a baseline this receipt already proves is stale.
 		record := &StepDriftReview{
-			NeedsReview:             false,
+			NeedsReview:             failed > 0,
 			ReviewedAt:              now,
 			ReviewedBy:              reviewedBy,
 			ReviewedThroughChangeID: reviewedThroughChangeID,
@@ -292,21 +257,14 @@ func createRecordPlanDriftReviewExecutor(workspacePath string, logger loggerv2.L
 			return "", fmt.Errorf("failed to write step_config.json: %w", err)
 		}
 
-		var passed, failed, fixed int
-		for _, c := range checks {
-			switch c.Status {
-			case stepDriftCheckStatusPass:
-				passed++
-			case stepDriftCheckStatusFail:
-				failed++
-			case stepDriftCheckStatusFixed:
-				fixed++
-			}
-		}
 		logger.Info(fmt.Sprintf("📋 record_plan_drift_review: step=%q checks=%d pass=%d fail=%d fixed=%d by=%s", stepID, len(checks), passed, failed, fixed, reviewedBy))
+		stateMessage := "This clears the step from plan_drift_review's due list until it is edited again."
+		if failed > 0 {
+			stateMessage = "Unresolved failed checks keep this step due for plan_drift_review; other review modules remain deferred until the drift is fixed."
+		}
 		return fmt.Sprintf(
-			"Recorded drift_review for step %q: %d check(s) (%d pass, %d fail, %d fixed). This clears the step from plan_drift_review's due list until it is edited again.",
-			stepID, len(checks), passed, failed, fixed,
+			"Recorded drift_review for step %q: %d check(s) (%d pass, %d fail, %d fixed). %s",
+			stepID, len(checks), passed, failed, fixed, stateMessage,
 		), nil
 	}
 }

@@ -37,28 +37,6 @@
   ],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": [
-        "Prompt versioning, sample integrity, and citation-attribution rules",
-        "Finding reproducibility and recommendation-evidence quality"
-      ],
-      "review_when": [
-        "A run fails, produces incomplete evidence, or a key metric becomes unreliable"
-      ]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": [
-        "Prompt-set model, tracking architecture, history, and dashboard design",
-        "Ownership of targets and downstream consumers"
-      ],
-      "review_when": [
-        "The workflow, integration, environment, scale, or operating policy changes materially"
-      ]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": [

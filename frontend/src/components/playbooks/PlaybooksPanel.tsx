@@ -95,7 +95,7 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
     const setupInputs = selected.setupInputs || []
     const requiredCapabilities = selected.requiredCapabilities || []
     const recommendedTools = selected.recommendedTools || []
-    const pulseFocus = selected.pulseFocus || []
+    const pulseFocus = (selected.pulseFocus || []).filter(focus => focus.module === 'strategic_review')
     const outputs = selected.outputs || []
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
@@ -152,9 +152,9 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           )}
           {pulseFocus.length > 0 && (
             <section className="mt-4 rounded-lg border border-border p-4">
-              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Activity className="h-4 w-4 text-primary" /> Pulse review focus</div>
-              <p className="mt-1 text-xs leading-5 text-muted-foreground">Recommended lenses for this playbook. Builder adapts them to the workflow before enabling recurring reviews.</p>
-              <div className="mt-3 grid gap-2 lg:grid-cols-3">
+              <div className="flex items-center gap-2 text-sm font-semibold text-foreground"><Activity className="h-4 w-4 text-primary" /> Strategic review focus</div>
+              <p className="mt-1 text-xs leading-5 text-muted-foreground">A goal-specific lens for Strategic Review. Technical and Architecture Review choose scope from current evidence and structural risk.</p>
+              <div className="mt-3 grid gap-2">
                 {pulseFocus.map(focus => (
                   <div key={focus.module} className="rounded-md bg-muted/30 px-3 py-2">
                     <div className="text-xs font-medium text-foreground">{focus.label}</div>

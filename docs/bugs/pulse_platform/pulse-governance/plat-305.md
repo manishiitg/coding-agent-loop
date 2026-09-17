@@ -10,8 +10,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented first release; deployment and live workflow acceptance pending` |
-| Last synchronized | `2026-09-10` |
+| Ticket state | `implemented role/UI/cadence follow-through locally; deployment and live workflow acceptance pending` |
+| Last synchronized | `2026-09-17` |
 
 ## User problem
 
@@ -57,3 +57,75 @@ under PLAT-257/298. An automated lifecycle fixture is not evidence of business
 impact. No legacy workflow schema or learning file is rewritten by this change.
 
 [Implementation and operational contract](../../../pulse-workflow-improvement-system.md)
+
+## 2026-09-17 role, control and outcome-focus follow-through
+
+The first release still presented Health, Architecture and Strategy as peer
+work areas, allowed workflow-specific playbook focus to leak into technical
+and architecture review, and had no direct one-off reviewer controls. The role
+contracts and Pulse workspace now make the intended hierarchy explicit:
+
+- Plan Drift is the exclusive compatibility prerequisite after plan changes.
+  Technical, Architecture and Strategy wait for a clean current plan instead
+  of reviewing stale structure or evidence.
+- Technical owns concrete correctness failures and regressions. Architecture
+  owns evidence-backed improvements to the technical construction of an
+  otherwise working plan. Strategy owns goals, outcomes, measurement,
+  assumptions, useful alternatives and self-improvement.
+- Installed playbook custom focus is Strategy-only. Technical and Architecture
+  retain their canonical platform-owned scopes rather than receiving arbitrary
+  workflow-specific focus lists.
+- The Pulse UI leads with goals, metrics and Strategy. Technical, Architecture
+  and Plan Drift are grouped as platform health and stability. Strategy opens
+  by default without filtering the complete issue backlog.
+- Goal progress keeps the primary outcomes scannable: supporting/secondary
+  metric cards are collapsed by default and appear only when the user opens
+  their linked primary metric. Opening one primary does not reveal another
+  primary's supporting metrics; unassigned supporting metrics produce only a
+  compact setup notice until they are linked.
+- The first review area now keeps Strategic Review and its proposal lifecycle
+  together. `strategy_experiment` interventions appear as **Strategic
+  proposals** directly beneath the Strategy card, before platform maintenance
+  or the general decision queue. The former mixed **Improvements** block is now
+  a lower **Platform improvements** section limited to Technical fix bundles
+  and Architecture improvements, so those records no longer displace or
+  duplicate Strategy's proposals.
+- Technical, Architecture and Strategy each expose a durable **Run
+  automatically** toggle and an independent **Run now** action. A disabled
+  automatic reviewer can still run once by hand. Plan Drift remains mandatory,
+  cannot be disabled, and has its own manual drift-check action. A due or
+  unavailable Plan Drift status disables the three downstream manual actions.
+- Manual actions reuse the canonical guided review contracts in the workflow's
+  interactive Builder chat; they do not invent a second execution path.
+
+Scheduling now has an explicit research-horizon asymmetry without adding new
+cron jobs or a universal fixed interval. Architecture normally waits across
+several comparable producing runs for stable structural evidence. Strategy is
+reconsidered at the next meaningful goal, outcome, feedback, experiment,
+decision or measurement checkpoint, so it normally receives the shorter
+research horizon. Material evidence and reached checkpoints can still override
+either wait.
+
+Strategy also has a symptom-loop guard. A recurring operational label such as
+`booking-heavy` is Technical context, not a sufficient strategic agenda. The
+reviewer deduplicates or hands off the concrete defect, assumes it is fixed,
+then asks what would still limit the primary goal. Every completed Strategic
+Review must contain a goal-derived conclusion (including an honest no-change
+conclusion); a technical handoff alone is not completion.
+
+### Local verification
+
+- 73 Pulse-focused frontend tests pass.
+- The focused Goal Progress, metric-grouping and Pulse workspace suites pass,
+  including primary-specific supporting-metric disclosure.
+- Frontend TypeScript build passes.
+- Complete `cmd/server/guidance` Go test suite passes, including regression
+  coverage for distinct Architecture/Strategy horizons and the recurring
+  symptom guard.
+- `git diff --check` passes.
+
+Deployment and a live RTS Pulse acceptance pass remain open. Live acceptance
+must confirm that Architecture is selected less often than Strategy over
+several comparable schedules, Strategy produces a goal-derived conclusion,
+and an existing `booking-heavy` Technical issue is not recreated or used as the
+entire Strategic Review.

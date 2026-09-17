@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowrun"
 )
 
 const (
@@ -315,17 +316,18 @@ func inspectRun(run runCandidate) ([]Finding, error) {
 	if err := json.Unmarshal(metadataBytes, &metadata); err != nil {
 		return nil, fmt.Errorf("decode run_metadata.json: %w", err)
 	}
-	status := strings.ToLower(strings.TrimSpace(metadata.Status))
+	rawStatus := strings.TrimSpace(metadata.Status)
+	status := workflowrun.CanonicalStatus(rawStatus)
 	observedAt := run.modTime.UTC().Format(time.RFC3339Nano)
 	var findings []Finding
-	if status != "" && status != "completed" && status != "success" {
+	if rawStatus != "" && status != workflowrun.StatusCompleted {
 		findings = append(findings, Finding{
 			Kind: "run_not_completed", Severity: severityHigh, Subject: "Run did not complete",
 			Detail:   "The retained run has an explicit non-success terminal/runtime status.",
 			Evidence: fmt.Sprintf("run_metadata.status=%q", metadata.Status), ObservedAt: observedAt, RunFolder: run.rel, Artifact: "run_metadata.json",
 		})
 	}
-	if status != "completed" && status != "success" {
+	if status != workflowrun.StatusCompleted {
 		return findings, nil
 	}
 	err = filepath.WalkDir(filepath.Join(run.dir, "logs"), func(path string, entry fs.DirEntry, walkErr error) error {

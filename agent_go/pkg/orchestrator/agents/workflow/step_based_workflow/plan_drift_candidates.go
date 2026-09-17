@@ -65,6 +65,41 @@ func requiredPlanDriftReviewContractVersion(stepType string) int {
 	return 2
 }
 
+const contextDependencyFilenameDriftCheckID = "context_dependency_filenames"
+
+func checkContextDependencyFilenames(plan *PlanningResponse, stepID string) StepDriftCheck {
+	check := StepDriftCheck{
+		CheckID:  contextDependencyFilenameDriftCheckID,
+		Status:   stepDriftCheckStatusPass,
+		Evidence: "Every context dependency was checked against declared step IDs and uses an artifact filename.",
+	}
+	if plan == nil {
+		check.Evidence = "Plan could not be decoded; no step-ID dependency comparison was available."
+		return check
+	}
+	stepIDs := make(map[string]bool)
+	for _, info := range collectAllSteps(append(append([]PlanStepInterface{}, plan.Steps...), plan.OrphanSteps...)) {
+		if info.Step != nil {
+			stepIDs[strings.TrimSpace(info.Step.GetID())] = true
+		}
+	}
+	for _, info := range collectAllSteps(append(append([]PlanStepInterface{}, plan.Steps...), plan.OrphanSteps...)) {
+		if info.Step == nil || strings.TrimSpace(info.Step.GetID()) != stepID {
+			continue
+		}
+		for _, dep := range info.Step.GetContextDependencies() {
+			dep = strings.TrimSpace(dep)
+			if stepIDs[dep] {
+				check.Status = stepDriftCheckStatusFail
+				check.Evidence = fmt.Sprintf("context_dependencies contains step ID %q; declare the producer's context_output filename instead.", dep)
+				return check
+			}
+		}
+		break
+	}
+	return check
+}
+
 // PlanDriftCandidate is one step with no drift_review record at all, or one
 // whose record has needs_review==true (flagged stale by a dependency-
 // triggering plan edit since its last completed review), together with the
@@ -84,6 +119,85 @@ type PlanDriftCandidate struct {
 	// other step type do not. Empty if plan.json could not be read/parsed.
 	StepType string           `json:"step_type,omitempty"`
 	Checks   []StepDriftCheck `json:"checks"`
+}
+
+// PlanDriftDueItem is the lightweight UI/status projection of due-ness. It
+// intentionally omits deterministic check execution so polling the Pulse UI
+// does not repeatedly run report, DB, validation, and scripted-code checks.
+type PlanDriftDueItem struct {
+	StepID   string `json:"step_id"`
+	StepType string `json:"step_type,omitempty"`
+	Reason   string `json:"reason"`
+}
+
+// CollectPlanDriftDueItems computes the same due boundary as
+// CollectPlanDriftCandidates without running the expensive evidence checks.
+// It is safe for frequently refreshed status surfaces.
+func CollectPlanDriftDueItems(workspacePath string) ([]PlanDriftDueItem, error) {
+	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
+	if workspacePath == "" {
+		return nil, nil
+	}
+	planPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(workspacePath), PlanningFolderName, "plan.json")
+	planRaw, err := os.ReadFile(planPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("read planning/plan.json: %w", err)
+	}
+	stepIDs, err := planStepIDsFromPlanJSON(string(planRaw))
+	if err != nil {
+		return nil, err
+	}
+	if len(stepIDs) == 0 {
+		return nil, nil
+	}
+	stepTypeByID := map[string]string{}
+	var plan PlanningResponse
+	if err := json.Unmarshal(planRaw, &plan); err == nil {
+		collectStepTypesByID(plan.Steps, stepTypeByID)
+	}
+
+	configPath := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(workspacePath), PlanningFolderName, "step_config.json")
+	byID := map[string]StepConfig{}
+	configRaw, err := os.ReadFile(configPath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, fmt.Errorf("read planning/step_config.json: %w", err)
+		}
+	} else {
+		configs, parseErr := ParseStepConfigContent(string(configRaw))
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse planning/step_config.json: %w", parseErr)
+		}
+		for _, cfg := range configs {
+			byID[cfg.ID] = cfg
+		}
+	}
+
+	items := make([]PlanDriftDueItem, 0)
+	for id := range stepIDs {
+		cfg, ok := byID[id]
+		reason := ""
+		requiredVersion := requiredPlanDriftReviewContractVersion(stepTypeByID[id])
+		switch {
+		case !ok || cfg.AgentConfigs == nil || cfg.AgentConfigs.DriftReview == nil:
+			reason = "No completed Plan Drift review exists for this step."
+		case cfg.AgentConfigs.DriftReview.NeedsReview:
+			reason = "The plan changed or a prior drift check remains unresolved."
+		case cfg.AgentConfigs.DriftReview.ContractVersion < requiredVersion:
+			reason = "The saved review predates the current Plan Drift contract."
+		}
+		if reason != "" {
+			items = append(items, PlanDriftDueItem{StepID: id, StepType: stepTypeByID[id], Reason: reason})
+		}
+	}
+	if cfg, ok := byID[WorkflowDriftReviewStepID]; ok && cfg.AgentConfigs != nil && cfg.AgentConfigs.DriftReview != nil && cfg.AgentConfigs.DriftReview.NeedsReview {
+		items = append(items, PlanDriftDueItem{StepID: WorkflowDriftReviewStepID, StepType: "workflow", Reason: "A deleted step's dependent artifacts still require review."})
+	}
+	sort.Slice(items, func(i, j int) bool { return items[i].StepID < items[j].StepID })
+	return items, nil
 }
 
 // planDriftPlainFileReader adapts the workspace-relative paths that
@@ -211,7 +325,9 @@ func CollectPlanDriftCandidates(ctx context.Context, workspacePath string) ([]Pl
 	// for it (second independent review, 2026-08-30).
 	stepTypeByID := map[string]string{}
 	var plan PlanningResponse
+	planDecoded := false
 	if err := json.Unmarshal(planRaw, &plan); err == nil {
+		planDecoded = true
 		collectStepTypesByID(plan.Steps, stepTypeByID)
 	}
 
@@ -269,6 +385,9 @@ func CollectPlanDriftCandidates(ctx context.Context, workspacePath string) ([]Pl
 	candidates := make([]PlanDriftCandidate, 0, len(pendingStepIDs)+1)
 	for _, stepID := range pendingStepIDs {
 		checks := []StepDriftCheck{reportCheck, readmeCheck}
+		if planDecoded {
+			checks = append(checks, checkContextDependencyFilenames(&plan, stepID))
+		}
 
 		scriptedCheck, _ := CheckScriptedCodeDBQueries(ctx, workspacePath, stepID, planDriftPlainFileReader)
 		checks = append(checks, scriptedCheck)

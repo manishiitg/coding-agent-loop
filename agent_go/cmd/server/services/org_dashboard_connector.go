@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -248,6 +249,97 @@ func ensureOrgDashboardSchema(ctx context.Context, db *sql.DB) error {
 				}
 			}
 		}
+	}
+	return nil
+}
+
+// UpsertPulseResultActivity projects the durable reviewer results for one Pulse
+// run into the existing Activity stream. The reviewer result remains the source
+// of truth; this row is only a read model for the UI. Rewriting the same run
+// updates one item rather than creating a second agent-authored summary.
+func UpsertPulseResultActivity(ctx context.Context, rawWorkspacePath, pulseRunID string, reviews []PulseReviewSummary, recordedAt string) error {
+	workspacePath, dbPath, err := orgDashboardDBPath(rawWorkspacePath)
+	if err != nil {
+		return err
+	}
+	pulseRunID = strings.TrimSpace(pulseRunID)
+	if pulseRunID == "" {
+		return fmt.Errorf("pulse result activity requires pulse_run_id")
+	}
+	if len(reviews) == 0 {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return fmt.Errorf("create workflow database folder: %w", err)
+	}
+
+	status := "completed"
+	changed, issues, fixes := 0, 0, 0
+	var message strings.Builder
+	for _, review := range reviews {
+		issues += review.IssuesFound
+		fixes += review.FixesApplied
+		if review.Status == "fixed" {
+			changed++
+		}
+		switch review.Status {
+		case "failed":
+			status = "failed"
+		case "incomplete":
+			if status != "failed" {
+				status = "blocked"
+			}
+		case "fixed":
+			if status == "completed" {
+				status = "monitoring"
+			}
+		}
+		if message.Len() > 0 {
+			message.WriteString("\n")
+		}
+		fmt.Fprintf(&message, "%s — %s", review.Label, review.Summary)
+	}
+	title := fmt.Sprintf("Pulse reviewed %d area", len(reviews))
+	if len(reviews) != 1 {
+		title += "s"
+	}
+	if changed > 0 {
+		title = fmt.Sprintf("Pulse improved %d area", changed)
+		if changed != 1 {
+			title += "s"
+		}
+	}
+	fields := []NotificationSummaryField{
+		{Label: "Reviews", Value: fmt.Sprintf("%d recorded", len(reviews))},
+		{Label: "Issues found", Value: fmt.Sprintf("%d", issues)},
+		{Label: "Fixes applied", Value: fmt.Sprintf("%d", fixes)},
+	}
+	reviewsJSON, _ := json.Marshal(reviews)
+	fieldsJSON, _ := json.Marshal(fields)
+	hash := sha256.Sum256([]byte(workspacePath + "\x00" + pulseRunID))
+	id := fmt.Sprintf("pulse-result-%x", hash[:12])
+	if strings.TrimSpace(recordedAt) == "" {
+		recordedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+
+	db, err := openOrgDashboardDB(ctx, dbPath)
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+	if err := ensureOrgDashboardSchema(ctx, db); err != nil {
+		return err
+	}
+	_, err = db.ExecContext(ctx, `INSERT INTO org_dashboard_notifications
+		(id, notification_kind, title, status, message, fields_json, sections_json, route_summaries_json, reviews_json, summary_text, created_at)
+		VALUES (?, 'pulse_summary', ?, ?, ?, ?, '[]', '[]', ?, '', ?)
+		ON CONFLICT(id) DO UPDATE SET
+			title=excluded.title, status=excluded.status, message=excluded.message,
+			fields_json=excluded.fields_json, reviews_json=excluded.reviews_json,
+			created_at=excluded.created_at`,
+		id, title, status, message.String(), string(fieldsJSON), string(reviewsJSON), recordedAt)
+	if err != nil {
+		return fmt.Errorf("project Pulse results into Activity for %s: %w", workspacePath, err)
 	}
 	return nil
 }

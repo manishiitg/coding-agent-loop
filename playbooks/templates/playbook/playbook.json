@@ -44,18 +44,6 @@
   "recommended_skills": [],
   "pulse_focus": [
     {
-      "module": "technical_review",
-      "label": "Technical review",
-      "focus_areas": ["Topic-specific correctness and evidence"],
-      "review_when": ["A run fails or its evidence becomes incomplete"]
-    },
-    {
-      "module": "architecture_review",
-      "label": "Architecture review",
-      "focus_areas": ["Topic-specific workflow and data design"],
-      "review_when": ["The implementation or operating boundary changes materially"]
-    },
-    {
       "module": "strategic_review",
       "label": "Strategic review",
       "focus_areas": ["Topic-specific outcome and decision value"],

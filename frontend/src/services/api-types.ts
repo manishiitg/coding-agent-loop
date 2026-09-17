@@ -451,6 +451,12 @@ export interface PulseModuleState {
   updated_at?: string
 }
 
+export interface PulsePlanDriftDueItem {
+  step_id: string
+  step_type?: string
+  reason: string
+}
+
 export interface PulseFinalCommandState {
   workspace_path: string
   command: string
@@ -523,6 +529,9 @@ export interface PulseModuleStateResponse {
     status: string
     reason?: string
   }
+  plan_drift_due?: boolean
+  plan_drift_due_items?: PulsePlanDriftDueItem[]
+  plan_drift_due_error?: string
   error?: string
 }
 

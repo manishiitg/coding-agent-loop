@@ -147,6 +147,17 @@ func contextOutputMatchesDependency(output string, dep string) bool {
 	return false
 }
 
+func contextOutputFileNames(output string) []string {
+	parts := strings.Split(output, ",")
+	names := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if name := strings.TrimSpace(part); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
+}
+
 // BuildMainPyAuthoringRules returns the canonical rules that any agent writing or
 // patching a step's main.py MUST follow. Shared by:
 //   - the execution agent in scripted mode (via GetScriptedModeInstructions)
@@ -395,6 +406,16 @@ func ResolveDependencyPathCandidates(
 			prevStepPath := fmt.Sprintf("step-%d", j+1)
 			prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, allSteps[j].GetID(), prevStepPath)
 			appendCandidate(buildDepAbsPath(prevStepExecPath, dep))
+		} else if strings.TrimSpace(allSteps[j].GetID()) == strings.TrimSpace(dep) {
+			// Compatibility for plans that accidentally stored the producer step
+			// ID instead of its context_output filename. Resolve the declared
+			// output so execution remains safe; Plan Drift separately flags the
+			// plan for canonical cleanup.
+			prevStepPath := fmt.Sprintf("step-%d", j+1)
+			prevStepExecPath := getExecutionFolderPath(executionWorkspacePath, allSteps[j].GetID(), prevStepPath)
+			for _, outputName := range contextOutputFileNames(prevOutput) {
+				appendCandidate(buildDepAbsPath(prevStepExecPath, outputName))
+			}
 		}
 	}
 

@@ -191,6 +191,110 @@ func UpdateEvaluationPlanStep(
 	return fmt.Sprintf("Updated evaluation step %q (%s) and recorded it in planning/changelog.", stepID, strings.Join(changed, ", ")), nil
 }
 
+// AddEvaluationPlanStep appends one governed evaluation step and records the
+// full added object in planning/changelog. This closes the empty-plan gap left
+// by update_evaluation_plan: an update tool cannot create the first step.
+func AddEvaluationPlanStep(
+	ctx context.Context,
+	workspacePath string,
+	step map[string]interface{},
+	reason string,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+	logger loggerv2.Logger,
+) (string, error) {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return "", fmt.Errorf("reason is required: the changelog records why an evaluation step was added")
+	}
+	stepID, _ := step["id"].(string)
+	title, _ := step["title"].(string)
+	description, _ := step["description"].(string)
+	stepID, title, description = strings.TrimSpace(stepID), strings.TrimSpace(title), strings.TrimSpace(description)
+	if stepID == "" || title == "" || description == "" {
+		return "", fmt.Errorf("id, title, and description are required")
+	}
+	step["id"], step["title"], step["description"] = stepID, title, description
+
+	for _, field := range []string{"validation_schema", "pre_validation"} {
+		if raw, ok := step[field]; ok && raw != nil {
+			if err := validateSchemaLikeUpdateField(field, raw); err != nil {
+				return "", err
+			}
+		}
+	}
+	if raw, ok := step["execution_mode"]; ok {
+		mode, isString := raw.(string)
+		if !isString {
+			return "", fmt.Errorf("execution_mode must be a string (\"scripted\" or \"agentic\"), got %T", raw)
+		}
+		canonical := canonicalDeclaredExecutionMode(mode)
+		if canonical != StepModeScripted && canonical != StepModeAgentic && canonical != "" {
+			return "", fmt.Errorf("execution_mode must be \"scripted\" or \"agentic\" (empty clears it), got %q", mode)
+		}
+		step["execution_mode"] = canonical
+	}
+
+	path, document, stepsKey, rawSteps, err := loadEvaluationPlanDocument(ctx, workspacePath, readFile)
+	if err != nil {
+		return "", err
+	}
+	for _, entry := range rawSteps {
+		if existing, ok := entry.(map[string]interface{}); ok {
+			if id, _ := existing["id"].(string); strings.TrimSpace(id) == stepID {
+				return "", fmt.Errorf("evaluation step id %q already exists", stepID)
+			}
+		}
+	}
+
+	// Execution and evaluation steps share one identity namespace. Refuse the
+	// collision before writing so the operation remains atomic.
+	execPlan, readErr := readPlanFromFile(ctx, workspacePath, readFile)
+	if readErr != nil {
+		return "", fmt.Errorf("read execution plan for cross-plan ID validation: %w", readErr)
+	}
+	if execPlan != nil {
+		execIDs := make(map[string]string)
+		if err := collectStepIDsRecursive(execPlan.Steps, "plan.steps", execIDs); err != nil {
+			return "", err
+		}
+		if err := collectStepIDsRecursive(execPlan.OrphanSteps, "plan.orphan_steps", execIDs); err != nil {
+			return "", err
+		}
+		if location, exists := execIDs[stepID]; exists {
+			return "", fmt.Errorf("step ID %q collides with execution step at %s", stepID, location)
+		}
+	}
+
+	rawSteps = append(rawSteps, step)
+	document[stepsKey] = rawSteps
+	encoded, err := json.MarshalIndent(document, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("encode %s: %w", evaluationPlanRelPath, err)
+	}
+	var check EvaluationPlan
+	if err := json.Unmarshal(encoded, &check); err != nil {
+		return "", fmt.Errorf("refusing to write: the edited plan no longer parses as an evaluation plan: %w", err)
+	}
+	if len(check.Steps) != len(rawSteps) {
+		return "", fmt.Errorf("refusing to write: the edited plan parses to %d steps, expected %d", len(check.Steps), len(rawSteps))
+	}
+	addedJSON, err := json.Marshal(step)
+	if err != nil {
+		return "", fmt.Errorf("encode added evaluation step: %w", err)
+	}
+	if err := writeFile(ctx, path, string(encoded)); err != nil {
+		return "", fmt.Errorf("write %s: %w", evaluationPlanRelPath, err)
+	}
+	logPlanChange(ctx, workspacePath, PlanChangelogEntry{
+		Tool:       "add_evaluation_step",
+		Reason:     reason,
+		StepIDs:    []string{stepID},
+		AddedSteps: []json.RawMessage{addedJSON},
+	}, readFile, writeFile, logger)
+	return fmt.Sprintf("Added evaluation step %q and recorded it in planning/changelog.", stepID), nil
+}
+
 // loadEvaluationPlanDocument reads and decodes evaluation/evaluation_plan.json
 // into a generic container (unrecognized keys survive a later write) and
 // resolves whether this file uses "steps" or the legacy "eval_steps" key,
@@ -440,6 +544,46 @@ func createUpdateEvaluationPlanExecutor(
 			}
 		}
 		return UpdateEvaluationPlanStep(ctx, workspacePath, stepID, updates, reason, readFile, writeFile, logger)
+	}
+}
+
+func getAddEvaluationPlanStepSchema() string {
+	return `{
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "id": {"type": "string", "description": "Unique evaluation step ID; must not collide with an execution step."},
+    "title": {"type": "string"},
+    "description": {"type": "string", "description": "Complete evaluation rubric, including what passing and failing mean."},
+    "reason": {"type": "string", "description": "Why this evaluation step is being added. Recorded in planning/changelog."},
+    "context_output": {"type": "string"},
+    "context_dependencies": {"type": "array", "items": {"type": "string"}},
+    "max_score": {"type": "integer"},
+    "db_write": {"type": "boolean"},
+    "execution_mode": {"type": "string", "enum": ["agentic", "scripted"]},
+    "validation_schema": {"type": "object"},
+    "pre_validation": {"type": "object"},
+    "applies_to_routes": {"type": "array", "items": {"type": "object"}}
+  },
+  "required": ["id", "title", "description", "reason"]
+}`
+}
+
+func createAddEvaluationPlanStepExecutor(
+	workspacePath string,
+	logger loggerv2.Logger,
+	readFile func(context.Context, string) (string, error),
+	writeFile func(context.Context, string, string) error,
+) func(context.Context, map[string]interface{}) (string, error) {
+	return func(ctx context.Context, args map[string]interface{}) (string, error) {
+		reason, _ := args["reason"].(string)
+		step := make(map[string]interface{}, len(args)-1)
+		for key, value := range args {
+			if key != "reason" && value != nil {
+				step[key] = value
+			}
+		}
+		return AddEvaluationPlanStep(ctx, workspacePath, step, reason, readFile, writeFile, logger)
 	}
 }
 

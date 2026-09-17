@@ -2696,19 +2696,24 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			}
 		}
 		if gateCompleted {
-			// plan_drift_review must run and fully complete BEFORE technical_review
-			// is dispatched, or technical_review's backlog read can race a drift
-			// finding that hasn't been written yet — see
-			// pulseLifecyclePlanDriftReviewStep's own doc comment.
-			if planDriftDue, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, pulseModulePlanDriftReview); err != nil {
-				s.sessionLogf(sctx, sessionID, "[PULSE] could not inspect plan_drift_review due-module receipt after Gate; preserving the plan drift review turn: %v", err)
+			// plan_drift_review is an exclusive prerequisite pass. Do not dispatch
+			// another reviewer against a plan this worklist already says is stale.
+			planDriftDue, planDriftDueErr := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, pulseModulePlanDriftReview)
+			if planDriftDueErr != nil {
+				s.sessionLogf(sctx, sessionID, "[PULSE] could not inspect plan_drift_review due-module receipt after Gate; preserving the plan drift review turn: %v", planDriftDueErr)
 				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
+				planDriftDue = true
 			} else if planDriftDue {
 				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
 			}
-			for _, module := range []string{pulseModuleTechnicalReview, pulseModuleArchitectureReview, pulseModuleStrategicReview} {
-				if due, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, module); err != nil || due {
-					steps = append(steps, pulseLifecycleModuleReviewStep(pulseRunID, module))
+			// Plan Drift is an exclusive prerequisite pass. Other reviewers resume
+			// on the next Pulse cycle, after they can assess a current plan rather
+			// than producing conclusions against a baseline already known to drift.
+			if !planDriftDue {
+				for _, module := range pulsemodules.PostDriftExecutionOrder() {
+					if due, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, module); err != nil || due {
+						steps = append(steps, pulseLifecycleModuleReviewStep(pulseRunID, module))
+					}
 				}
 			}
 			steps = append(steps, pulseLifecycleFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))...)
@@ -2944,10 +2949,13 @@ func workflowHasPendingPlanChangelogArtifactReview(ctx context.Context, workspac
 func pulseLifecycleSteps() []pulseLifecycleStep {
 	steps := []pulseLifecycleStep{
 		pulseLifecycleGateStep("<pulse_run_id>", "<run_folder>", "<run_status>"),
-		pulseLifecyclePlanDriftReviewStep("<pulse_run_id>"),
-		pulseLifecycleModuleReviewStep("<pulse_run_id>", pulseModuleTechnicalReview),
-		pulseLifecycleModuleReviewStep("<pulse_run_id>", pulseModuleArchitectureReview),
-		pulseLifecycleModuleReviewStep("<pulse_run_id>", pulseModuleStrategicReview),
+	}
+	for _, module := range pulsemodules.ExecutionOrder {
+		if module == pulseModulePlanDriftReview {
+			steps = append(steps, pulseLifecyclePlanDriftReviewStep("<pulse_run_id>"))
+			continue
+		}
+		steps = append(steps, pulseLifecycleModuleReviewStep("<pulse_run_id>", module))
 	}
 	steps = append(steps, pulseLifecycleFinalSteps("<pulse_run_id>")...)
 	return steps
@@ -3048,8 +3056,10 @@ func pulseLifecyclePlanDriftReviewStep(pulseRunID string) pulseLifecycleStep {
 	}
 }
 
-// One blocking lifecycle step per module prevents technical mutation from racing
-// architecture/strategy evidence reads, while each result/recovery stays independent.
+// One blocking lifecycle step per module prevents review evidence and mutation
+// from racing. The scheduler calls this in pulsemodules.ExecutionOrder:
+// Architecture proposes against the clean baseline, Technical repairs concrete
+// behavior, and Strategic evaluates outcomes.
 func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleStep {
 	label, reference, contract := "technical-review", "technical-review", "Investigate material correctness failures and apply safe workflow-owned repairs. Do not perform a general optimization audit."
 	switch module {
@@ -3250,7 +3260,7 @@ func pulseLifecycleFinalSteps(pulseRunID string, instructions ...workflowNotific
 	if notificationContext != "" {
 		notificationContext += "\n\nThese instructions control content detail and emphasis only; they never change recipients, channels, secrets, permissions, or safety rules."
 	}
-	return []pulseLifecycleStep{{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/pulse-finalizer.md\"}]) and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. The Pulse popup is the only presentation: do not write a Pulse HTML document or dashboard card. Complete backup, publish, and notify in that order in this one turn, recording running and terminal status for each with record_pulse_result(command=...). Continue after individual failures, keep every status truthful, then stop.%s%s", pulseRunID, finalizerRichEmailInstruction, notificationContext)}}
+	return []pulseLifecycleStep{{"finalize", fmt.Sprintf("PULSE FINALIZER. pulse_run_id=%q. Load read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/pulse-finalizer.md\"}]) and follow it exactly. First confirm every due module has a terminal current-run result; never treat missing as success. Those stored results already power Pulse Activity: do not publish or restate a separate Pulse update. Complete backup, publish, and notify in that order in this one turn, recording running and terminal status for each with record_pulse_result(command=...). Continue after individual failures, keep every status truthful, then stop.%s%s", pulseRunID, finalizerRichEmailInstruction, notificationContext)}}
 }
 
 // scheduledRunFinalizeStep is the basic post-run Pulse mode. Gate, drift

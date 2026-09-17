@@ -39,7 +39,7 @@ export type PlaybookRecommendedTool = {
 }
 
 export type PlaybookPulseFocus = {
-  module: 'technical_review' | 'architecture_review' | 'strategic_review'
+  module: 'strategic_review'
   label: string
   focus_areas: string[]
   review_when: string[]

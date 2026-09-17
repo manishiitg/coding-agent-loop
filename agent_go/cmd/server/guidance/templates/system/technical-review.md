@@ -24,11 +24,15 @@ This retained executor owns only `technical_review`. Diagnose material failures
 of required behavior using compact backlog, run output/validation receipts and
 bounded traces. Load `pulse-bug-review.md` for the QA evidence method and
 `pulse-fixer-practices.md` plus `fix-verification.md` for safe repair practices.
+Your question is whether the current approved design executes correctly—not
+whether a different plan or technical structure would be better.
 An ordinary successful run is not a reason to audit all implementation surfaces.
 Persistent model/tier optimization belongs to Architecture; preserve explicit
 settings while diagnosing concrete failures. General prompt, script, orchestration,
 learning, KB, DB and report improvements
 belong to Architecture unless they repair a concrete correctness failure.
+Plan-change compatibility belongs to Plan Drift. Business usefulness, goals and
+experiments belong to Strategic Review.
 
 For a concrete missed fire, incorrect wait/skip/expiry transition, runaway run,
 or unsafe schedule configuration, load `references/schedules.md` before deciding

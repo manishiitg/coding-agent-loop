@@ -400,6 +400,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			cancel()
 			if persistenceErr != nil {
 				hcpo.GetLogger().Warn(fmt.Sprintf("Workflow execution finished, but cost persistence did not: %v", persistenceErr))
+				hcpo.recordRunPersistenceError(context.Background(), "cost_usage", persistenceErr)
 			}
 		}
 
@@ -427,11 +428,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		// boundary before starting the separate evaluation run; otherwise every
 		// evaluator necessarily reads status=running with no completed_at and
 		// cannot bind its evidence to the run it is grading.
-		completionStatus := "completed"
-		if persistenceErr != nil {
-			completionStatus = "completed_with_persistence_error"
-		}
-		hcpo.finalizeRunMetadata(ctx, runFolder, completionStatus, groupStartTime, time.Now())
+		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, time.Now())
 
 		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
 		disableEval := hcpo.executionOptions != nil && hcpo.executionOptions.DisableEval

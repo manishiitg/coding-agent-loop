@@ -4,9 +4,9 @@
 
 | Coordination | Value |
 |---|---|
-| Assigned agent | `Unassigned` |
-| Ticket state | `reproduced; implementation boundary open` |
-| Last synchronized | `2026-08-19` |
+| Assigned agent | `Codex` |
+| Ticket state | `implemented locally; focused verification passed; live acceptance pending` |
+| Last synchronized | `2026-09-17` |
 
 > Claim this ticket in this file before implementation. During active work,
 > update this fragment rather than the shared index; synchronize the index
@@ -29,9 +29,9 @@
 - **Impact:** Pulse and later consumers cannot choose one authoritative run
   status; the same completed run can appear successful in schedule history and
   active/incomplete in workflow evidence.
-- **Current state:** open. Reproduce on the current binary before choosing
-  whether scheduler completion must finalize run metadata directly or a shared
-  reconciler must atomically persist both terminal projections.
+- **Current state:** canonical workflow-outcome implementation is complete
+  locally. Focused verification passes; live scheduled-run acceptance and
+  deployment remain.
 - **Acceptance:** after one completed, failed, canceled, and interrupted
   scheduled fixture, scheduler history and `run_metadata` agree on terminal
   state, completion time, and owning execution identity. A partial write is
@@ -74,10 +74,37 @@ dead pass genuinely recorded are preserved. Tests:
 `...ToleratesMissingTable`. The three Upwork rows above were reconciled directly
 because that server is intentionally stopped pending a rebuild.
 
-**Still open, and still the core of this ticket:** the `run_metadata.json`
-half. Startup reconciliation closes stranded rows *after the fact*; it does not
-make scheduler history and workflow run metadata agree at completion time. The
-implementation boundary question in *Current state* is unchanged.
+The original `run_metadata.json` half is implemented locally as described in
+the 2026-09-17 update below. Live scheduled-run acceptance remains open.
+
+## Canonical workflow outcome implementation — 2026-09-17
+
+The implementation now makes the existing `run_metadata.json` record the
+single workflow-execution outcome instead of allowing its consumers to infer a
+second outcome:
+
+- the persisted vocabulary is `running`, `completed`, `failed`, or `canceled`;
+- non-fatal persistence problems remain `status=completed` and are recorded in
+  `warnings` plus the existing structured `persistence_errors`, rather than the
+  pseudo-status `completed_with_persistence_error`;
+- Pulse normalizes legacy `success`, `error`, `stopped`, spelling variants of
+  canceled, and `completed_with_persistence_error` before assessing a run;
+- listing a run no longer changes an existing `status=running` record merely
+  because `steps_done.json` contains every step index. Step progress is detail,
+  not authority. The inference path remains only for pre-metadata legacy run
+  folders; and
+- chat/session completion and the scheduler's whole-job phase remain separate
+  lifecycle projections. They consume the workflow result but do not redefine
+  it. The durable scheduler ledger continues to own post-run Pulse/finalization.
+
+Focused tests cover status normalization, the legacy successful-with-warning
+case in Pulse intake, warning de-duplication, and the requirement that the
+canonical workflow result is finalized before evaluation begins.
+
+Remaining acceptance is operational: run one successful, failed, canceled and
+restart-interrupted scheduled fixture, then verify the workflow record,
+scheduler ledger/history, Pulse intake and UI converge without a later reader
+rewriting the workflow outcome.
 
 ## False interruption reproduction and scheduler-side repair — 2026-08-15 (Upwork)
 
@@ -110,7 +137,8 @@ Focused regression coverage reproduces both a completely missing receipt and
 the exact Upwork state: terminal module result plus `pulse_review_log=running`.
 
 This closes the `pulse_review_log` completion-boundary half. The independent
-`run_metadata.json` half described above remains open.
+`run_metadata.json` half was subsequently implemented in the 2026-09-17 update
+above; live acceptance remains.
 
 ## Fresh terminal-reconciliation reproduction — 2026-08-18 (Tectonic USA Day Trading)
 

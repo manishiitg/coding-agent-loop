@@ -191,7 +191,7 @@
     },
     {
       "id": "email",
-      "label": "Email",
+      "label": "Gmail",
       "actions": ["open"],
       "targets": []
     },

@@ -317,7 +317,7 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
       >
         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${gmailOpen ? 'rotate-90' : ''}`} />
         <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-        Email notifications
+        Gmail notifications
         <span className="font-normal text-muted-foreground">— shared by all projects and workflows</span>
         <span className="flex-1" />
         <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${gmailConfig.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>

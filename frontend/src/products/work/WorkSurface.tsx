@@ -38,7 +38,7 @@ const WORK_UI_PRESENTATION_VIEWS = {
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
   report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', schedules: 'Schedules', files: 'Files',
-  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Email', folders: 'Attached folders',
+  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
 }
 
 function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {

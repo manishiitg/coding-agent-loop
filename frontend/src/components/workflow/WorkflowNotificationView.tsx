@@ -192,7 +192,7 @@ export default function WorkflowNotificationView({
                       {gmailSender ? <span className={`${chipFrom} font-mono`} title="Sends from">{gmailSender}</span> : <span className={chipMuted}>No sending account</span>}
                       {gmailDefault
                         ? <span className={`${chipTo} font-mono`} title="Default recipients">→ {gmailDefault}</span>
-                        : gmailReady && <span className={chipMuted} title="Mail that names no recipient has nowhere to go until one is set (Email panel → Default recipients)">no default recipient</span>}
+                        : gmailReady && <span className={chipMuted} title="Mail that names no recipient has nowhere to go until one is set (Gmail panel → Default recipients)">no default recipient</span>}
                       {!gmailReady && !gmailChecking && info.gmail?.summary && <span className={chipWarn}>{info.gmail.summary}</span>}
                       <span className={`ml-auto rounded-full border px-2 py-0.5 text-xs ${gmailReady ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : 'border-border bg-background text-muted-foreground'}`}>
                         {gmailChecking ? 'Checking…' : gmailReady ? 'Connected' : 'Not connected'}

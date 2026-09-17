@@ -82,7 +82,7 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
     savesViaManifest: false,
   },
   email: {
-    title: 'Email',
+    title: 'Gmail',
     description: 'Gmail accounts, default recipients, and email access settings. Connections are shared across AgentWorks.',
     savesViaManifest: false,
   },

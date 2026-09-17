@@ -75,7 +75,7 @@ const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideI
   { id: 'secrets', label: 'Secrets', icon: KeyRound },
   { id: 'mcp', label: 'MCP servers', icon: Server },
   { id: 'models', label: 'Agent configuration', icon: BrainCircuit },
-  { id: 'email', label: 'Email', icon: Mail },
+  { id: 'email', label: 'Gmail', icon: Mail },
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'folders', label: 'Attached folders', icon: FolderOpen },
 ]
@@ -113,7 +113,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
           <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
             <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
-          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots, email and folders">
+          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots, Gmail and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>

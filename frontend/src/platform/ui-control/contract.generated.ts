@@ -192,7 +192,7 @@ export const UI_CONTROL_CONTRACT = {
     },
     {
       "id": "email",
-      "label": "Email",
+      "label": "Gmail",
       "actions": [
         "open"
       ],

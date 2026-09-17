@@ -16,6 +16,7 @@ import {
   Globe,
   KeyRound,
   LayoutDashboard,
+  Mail,
   Monitor,
   Puzzle,
   Route,
@@ -106,6 +107,7 @@ const VIEWS = [
   { id: 'mcp', kind: 'capability', label: 'Workflow MCP servers', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
   { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
+  { id: 'email', kind: 'capability', label: 'Email', icon: Mail, toolbarGroup: 'capabilities', pane: true },
   { id: 'bots', kind: 'capability', label: 'Workflow bots', icon: Bot, toolbarGroup: 'capabilities', pane: true },
   { id: 'folders', kind: 'inspector', label: 'Attached folders', icon: FolderOpen, toolbarGroup: 'capabilities', pane: true },
 ] as const satisfies readonly WorkspaceViewDef[]

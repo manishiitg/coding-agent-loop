@@ -2,7 +2,6 @@ import { AlertCircle, AlertTriangle, ArrowLeft, MessageSquare, Phone } from 'luc
 import { useWorkflowBots, type BotRouteTarget } from './bots/useWorkflowBots'
 import { SlackSetup } from './bots/SlackSetup'
 import { WhatsAppSetup } from './bots/WhatsAppSetup'
-import { GmailNotifications } from './bots/GmailNotifications'
 import { RouteChip } from './bots/RouteChips'
 import { ChannelRow } from './bots/AddChannel'
 import { routeId } from './bots/types'
@@ -14,9 +13,9 @@ type WorkflowBotsPanelProps = {
 }
 
 // Composition over useWorkflowBots: status card, route chips, add-channel
-// rows, the Slack/WhatsApp drill-ins, and the shared Gmail block.
+// rows, and the Slack/WhatsApp drill-ins.
 export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = 'workflow' }: WorkflowBotsPanelProps) {
-  const bots = useWorkflowBots(workspacePath, target)
+  const bots = useWorkflowBots(workspacePath, target, 'bots')
   const { setup, setSetup, workflowId, myRoutes, routeError, waRoutingError } = bots
 
   if (setup !== null) {
@@ -75,8 +74,6 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
         </div>
       </div>
 
-      {/* Email notifications (Gmail) — account-wide, shared by every workflow */}
-      <GmailNotifications bots={bots} />
     </div>
   )
 }

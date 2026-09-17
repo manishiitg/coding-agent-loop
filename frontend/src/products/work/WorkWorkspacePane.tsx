@@ -9,6 +9,7 @@ import {
   FolderOpen,
   KeyRound,
   LayoutDashboard,
+  Mail,
   Monitor,
   Puzzle,
   Server,
@@ -32,6 +33,7 @@ import { WorkflowReferenceAccess } from '../../components/folders/WorkflowRefere
 import { WorkModelsPanel } from './WorkModelsPanel'
 import { BrowserWorkspacePanel } from '../../components/workflow/BrowserWorkspacePanel'
 import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
+import WorkflowEmailPanel from '../../components/workflow/WorkflowEmailPanel'
 import type { BrowserAutomationMode } from '../../components/BrowserAutomationSettings'
 import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
 import type { WorkRuntimeSelection } from './workTabs'
@@ -41,7 +43,7 @@ const WorkflowScheduleRunsPanel = lazy(() => import('../../components/scheduler/
 const ReportView = lazy(() => import('../../components/workflow/ReportViewer').then(module => ({ default: module.ReportView })))
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 
-export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'folders'
+export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
 
 function queueWorkMessage(tabId: string, message: string) {
   const chatStore = useChatStore.getState()
@@ -73,6 +75,7 @@ const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideI
   { id: 'secrets', label: 'Secrets', icon: KeyRound },
   { id: 'mcp', label: 'MCP servers', icon: Server },
   { id: 'models', label: 'Agent configuration', icon: BrainCircuit },
+  { id: 'email', label: 'Email', icon: Mail },
   { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'folders', label: 'Attached folders', icon: FolderOpen },
 ]
@@ -110,7 +113,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
           <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
             <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
-          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots and folders">
+          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots, email and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>
@@ -385,6 +388,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
         {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={message => queueWorkMessage(tabId, message)} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
+        {view === 'email' && <div className="h-full overflow-y-auto p-4"><WorkflowEmailPanel workspacePath={workspacePath} /></div>}
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
           workspacePath={workspacePath}
           scopeNoun="project"

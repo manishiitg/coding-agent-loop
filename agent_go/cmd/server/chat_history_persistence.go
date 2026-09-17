@@ -1031,6 +1031,19 @@ func mergeNativeContinuationChatHistory(existing, current []llmtypes.MessageCont
 	return mergeRestoredChatHistory(existing, current)
 }
 
+// mergeCodingAgentFallbackChatHistory removes the historical messages that
+// were injected only to seed a replacement coding-provider session, then joins
+// the genuinely new exchange to the complete durable transcript.
+func mergeCodingAgentFallbackChatHistory(existing, agentHistory []llmtypes.MessageContent, injectedAt, injectedCount int) []llmtypes.MessageContent {
+	if injectedAt < 0 || injectedCount <= 0 || injectedAt+injectedCount > len(agentHistory) {
+		return agentHistory
+	}
+	currentOnly := make([]llmtypes.MessageContent, 0, len(agentHistory)-injectedCount)
+	currentOnly = append(currentOnly, agentHistory[:injectedAt]...)
+	currentOnly = append(currentOnly, agentHistory[injectedAt+injectedCount:]...)
+	return mergeNativeContinuationChatHistory(existing, currentOnly)
+}
+
 // mergeModeChangedChatHistory keeps the canonical UI transcript complete when
 // a workflow session relaunches with a different prompt/tool/skill surface.
 // The first current message is the synthetic pointer supplied only to the new

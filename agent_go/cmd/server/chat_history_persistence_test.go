@@ -640,6 +640,42 @@ func TestMergeRestoredChatHistoryIgnoresChangingSystemPromptWhenBodyIsCumulative
 	}
 }
 
+func TestMergeCodingAgentFallbackHistoryDropsInjectedReplayBeforePersistence(t *testing.T) {
+	message := func(role llmtypes.ChatMessageType, text string) llmtypes.MessageContent {
+		return llmtypes.MessageContent{Role: role, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}}}
+	}
+	existing := []llmtypes.MessageContent{
+		message(llmtypes.ChatMessageTypeHuman, "old request"),
+		message(llmtypes.ChatMessageTypeAI, "old answer"),
+		message(llmtypes.ChatMessageTypeHuman, "recent request"),
+		message(llmtypes.ChatMessageTypeAI, "recent answer"),
+	}
+	agentHistory := []llmtypes.MessageContent{
+		message(llmtypes.ChatMessageTypeSystem, "current product prompt"),
+		message(llmtypes.ChatMessageTypeHuman, "[AGENTWORKS CONVERSATION CONTINUITY] internal"),
+		message(llmtypes.ChatMessageTypeHuman, "recent request"),
+		message(llmtypes.ChatMessageTypeAI, "recent answer"),
+		message(llmtypes.ChatMessageTypeHuman, "new request"),
+		message(llmtypes.ChatMessageTypeAI, "new answer"),
+	}
+	merged := mergeCodingAgentFallbackChatHistory(existing, agentHistory, 1, 3)
+	texts := make([]string, 0, len(merged))
+	for _, msg := range merged {
+		if len(msg.Parts) > 0 {
+			texts = append(texts, chatHistoryPartText(msg.Parts[0]))
+		}
+	}
+	want := []string{"old request", "old answer", "recent request", "recent answer", "current product prompt", "new request", "new answer"}
+	if len(texts) != len(want) {
+		t.Fatalf("merged messages = %q, want %q", texts, want)
+	}
+	for i := range want {
+		if texts[i] != want[i] {
+			t.Fatalf("merged[%d] = %q, want %q; all=%q", i, texts[i], want[i], texts)
+		}
+	}
+}
+
 func TestShouldAttachRestoredConversationFallbackSkipsMatchingCodingAgent(t *testing.T) {
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",

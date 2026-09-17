@@ -6668,6 +6668,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		replayHistoryToAgent := true
+		codingFallbackConversationPath := ""
+		codingFallbackWorkspace := ""
+		codingFallbackHistoryBase := -1
+		codingFallbackInjectedMessages := 0
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
@@ -6838,18 +6842,43 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				replayHistoryToAgent = false
 				logfWithContext(queryLogCtx, "[CONVERSATION] Coding-agent context is owned by its transport/native continuation; UI history will not be replayed")
 			}
+			codingFallbackConversationPath = restoredConversationPathForFallback
+			codingFallbackWorkspace = restoredConversationWorkspace
 		}
 
 		if len(historyForAgent) > 0 && replayHistoryToAgent {
 			historyToReplay := historyForAgent
 			if isCodingAgentProvider(finalProvider, finalModelID) {
+				codingFallbackHistoryBase = len(llmAgent.GetHistory())
 				historyToReplay = boundedChatHistoryTail(historyForAgent, maxCodingAgentFallbackMessages, maxCodingAgentFallbackBytes)
+				if len(historyToReplay) < len(historyForAgent) {
+					if codingFallbackConversationPath == "" {
+						if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, sessionID, codingFallbackWorkspace); err != nil {
+							logfWithContext(queryLogCtx, "[CHAT_HISTORY] Could not resolve complete conversation archive for coding-agent fallback: %v", err)
+						} else if ok {
+							codingFallbackConversationPath = path
+						}
+					}
+					llmAgent.AppendMessage(llmtypes.MessageContent{
+						Role: llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: buildCodingAgentContinuityNotice(
+							codingFallbackConversationPath,
+							codingFallbackWorkspace,
+							len(historyForAgent),
+							len(historyToReplay),
+						)}},
+					})
+					codingFallbackInjectedMessages++
+				}
 				logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; replaying bounded fallback of %d/%d UI-history messages", len(historyToReplay), len(historyForAgent))
 			} else {
 				logfWithContext(queryLogCtx, "[CONVERSATION] Replaying %d in-memory messages for session %s", len(historyToReplay), sessionID)
 			}
 			for _, msg := range historyToReplay {
 				llmAgent.AppendMessage(msg)
+				if isCodingAgentProvider(finalProvider, finalModelID) {
+					codingFallbackInjectedMessages++
+				}
 			}
 		}
 
@@ -6961,6 +6990,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// itself correctly continued the same conversation.
 			finalHistory = mergeNativeContinuationChatHistory(historyForAgent, finalHistory)
 			log.Printf("[CONVERSATION DEBUG] Native continuation merge: retained %d prior messages, final history now %d messages for session %s", len(historyForAgent), len(finalHistory), sessionID)
+		} else if !modeChangedThisTurn && codingFallbackHistoryBase >= 0 && codingFallbackInjectedMessages > 0 &&
+			codingFallbackHistoryBase+codingFallbackInjectedMessages <= len(finalHistory) {
+			// A replacement coding-provider session was seeded with a bounded
+			// historical tail. That tail belongs only to model context: appending
+			// GetHistory wholesale to the canonical transcript persisted those old
+			// turns a second time and native recovery then published the copies as
+			// new live messages. Remove the exact injected segment and merge only
+			// the new exchange back into the complete durable history.
+			finalHistory = mergeCodingAgentFallbackChatHistory(historyForAgent, finalHistory, codingFallbackHistoryBase, codingFallbackInjectedMessages)
+			log.Printf("[CONVERSATION DEBUG] Coding-agent fallback merge: removed %d injected context messages, retained %d prior messages, final history now %d messages for session %s", codingFallbackInjectedMessages, len(historyForAgent), len(finalHistory), sessionID)
 		}
 		// What we write to disk. Defaults to finalHistory; if mode changed
 		// this turn, drop the synthetic handoff message (index 0) and append

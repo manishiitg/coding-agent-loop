@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -501,6 +500,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 			return nil, time.Time{}, "", false, err
 		}
 		messages, maxTimestamp, err = readNewClaudeTranscriptMessages(transcriptPath, time.Time{})
+		messages = filterNativeContinuityMessages(messages)
 		return messages, maxTimestamp, transcriptPath, err == nil, err
 	case "codex-cli":
 		if nativeSessionID == "" {
@@ -511,6 +511,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 			return nil, time.Time{}, "", false, err
 		}
 		messages, maxTimestamp, err = readCodexTranscriptMessages(transcriptPath)
+		messages = filterNativeContinuityMessages(messages)
 		return messages, maxTimestamp, transcriptPath, err == nil, err
 	case "cursor-cli":
 		if nativeSessionID == "" || workingDir == "" {
@@ -520,7 +521,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	case "pi-cli":
 		if nativeSessionID == "" || workingDir == "" {
 			return nil, time.Time{}, "", false, nil
@@ -529,7 +530,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	case "muse-cli":
 		if nativeSessionID == "" {
 			return nil, time.Time{}, "", false, nil
@@ -538,9 +539,27 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	}
 	return nil, time.Time{}, "", false, nil
+}
+
+func filterNativeContinuityMessages(messages []builderConversationMessage) []builderConversationMessage {
+	filtered := make([]builderConversationMessage, 0, len(messages))
+	for _, message := range messages {
+		text := strings.TrimSpace(builderConversationMessageText(message))
+		if strings.HasPrefix(text, "[AGENTWORKS CONVERSATION CONTINUITY]") || strings.HasPrefix(text, "[WORKFLOW CHAT HANDOFF]") {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	// The canonical transcript is capped at this same message count. Keeping a
+	// larger native prefix cannot restore anything visible, while the LCS merge
+	// matrix would otherwise grow with an unbounded provider transcript.
+	if len(filtered) > maxPersistedChatHistoryMessages {
+		filtered = filtered[len(filtered)-maxPersistedChatHistoryMessages:]
+	}
+	return filtered
 }
 
 // refreshLatestBuilderConversationFromNativeTranscript catches a persisted
@@ -702,43 +721,15 @@ func mergeBuilderConversationHistory(persisted, native []builderConversationMess
 		return append([]builderConversationMessage(nil), persisted...)
 	}
 
-	positions := make(map[string][]int, len(persisted))
-	for index, message := range persisted {
-		positions[builderConversationMessageKey(message)] = append(positions[builderConversationMessageKey(message)], index)
-	}
-
-	// Find the first shared anchor. Persisted history may include conversation
-	// from before the native session began, so that prefix must remain first.
-	firstNative, firstPersisted := -1, -1
-	for nativeIndex, message := range native {
-		if candidates := positions[builderConversationMessageKey(message)]; len(candidates) > 0 {
-			firstNative, firstPersisted = nativeIndex, candidates[0]
-			break
+	refs := builderConversationMergeRefs(persisted, native)
+	merged := make([]builderConversationMessage, 0, len(refs))
+	for _, ref := range refs {
+		if ref.persisted {
+			merged = append(merged, persisted[ref.index])
+		} else {
+			merged = append(merged, native[ref.index])
 		}
 	}
-	if firstNative < 0 {
-		merged := append([]builderConversationMessage(nil), persisted...)
-		return append(merged, native...)
-	}
-
-	merged := make([]builderConversationMessage, 0, len(persisted)+len(native))
-	merged = append(merged, persisted[:firstPersisted]...)
-	merged = append(merged, native[:firstNative]...)
-	merged = append(merged, persisted[firstPersisted])
-	persistedCursor := firstPersisted + 1
-
-	for _, message := range native[firstNative+1:] {
-		candidates := positions[builderConversationMessageKey(message)]
-		candidateIndex := sort.SearchInts(candidates, persistedCursor)
-		if candidateIndex < len(candidates) {
-			matchedPersisted := candidates[candidateIndex]
-			merged = append(merged, persisted[persistedCursor:matchedPersisted+1]...)
-			persistedCursor = matchedPersisted + 1
-			continue
-		}
-		merged = append(merged, message)
-	}
-	merged = append(merged, persisted[persistedCursor:]...)
 	return merged
 }
 
@@ -755,39 +746,68 @@ func mergeBuilderConversationRecordHistory(record map[string]interface{}, persis
 		return rawHistory
 	}
 
-	positions := make(map[string][]int, len(persisted))
-	for index, message := range persisted {
-		key := builderConversationMessageKey(message)
-		positions[key] = append(positions[key], index)
-	}
-	firstNative, firstPersisted := -1, -1
-	for nativeIndex, message := range native {
-		if candidates := positions[builderConversationMessageKey(message)]; len(candidates) > 0 {
-			firstNative, firstPersisted = nativeIndex, candidates[0]
-			break
+	refs := builderConversationMergeRefs(persisted, native)
+	merged := make([]json.RawMessage, 0, len(refs))
+	for _, ref := range refs {
+		if ref.persisted {
+			merged = append(merged, rawHistory[ref.index])
+		} else {
+			merged = append(merged, marshalBuilderConversationMessages([]builderConversationMessage{native[ref.index]})...)
 		}
 	}
-	if firstNative < 0 {
-		return append(rawHistory, marshalBuilderConversationMessages(native)...)
-	}
+	return merged
+}
 
-	merged := make([]json.RawMessage, 0, len(persisted)+len(native))
-	merged = append(merged, rawHistory[:firstPersisted]...)
-	merged = append(merged, marshalBuilderConversationMessages(native[:firstNative])...)
-	merged = append(merged, rawHistory[firstPersisted])
-	persistedCursor := firstPersisted + 1
-	for _, message := range native[firstNative+1:] {
-		candidates := positions[builderConversationMessageKey(message)]
-		candidateIndex := sort.SearchInts(candidates, persistedCursor)
-		if candidateIndex < len(candidates) {
-			matchedPersisted := candidates[candidateIndex]
-			merged = append(merged, rawHistory[persistedCursor:matchedPersisted+1]...)
-			persistedCursor = matchedPersisted + 1
-			continue
-		}
-		merged = append(merged, marshalBuilderConversationMessages([]builderConversationMessage{message})...)
+type builderConversationMergeRef struct {
+	persisted bool
+	index     int
+}
+
+// builderConversationMergeRefs computes a shortest common supersequence from
+// the persisted and native transcripts. The earlier greedy first-anchor merge
+// chose the first occurrence of repeated text; after a provider restart with a
+// replayed history tail, that misaligned the entire tail and appended old
+// assistant replies as new messages. LCS alignment maximizes reused messages
+// and therefore preserves real repeats without manufacturing replay copies.
+func builderConversationMergeRefs(persisted, native []builderConversationMessage) []builderConversationMergeRef {
+	n, m := len(persisted), len(native)
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
 	}
-	return append(merged, rawHistory[persistedCursor:]...)
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]) {
+				dp[i][j] = 1 + dp[i+1][j+1]
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+	refs := make([]builderConversationMergeRef, 0, n+m-dp[0][0])
+	for i, j := 0, 0; i < n || j < m; {
+		switch {
+		case i == n:
+			refs = append(refs, builderConversationMergeRef{index: j})
+			j++
+		case j == m:
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+		case builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]):
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+			j++
+		case dp[i+1][j] >= dp[i][j+1]:
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+		default:
+			refs = append(refs, builderConversationMergeRef{index: j})
+			j++
+		}
+	}
+	return refs
 }
 
 func builderConversationRawHistory(record map[string]interface{}) ([]json.RawMessage, bool) {

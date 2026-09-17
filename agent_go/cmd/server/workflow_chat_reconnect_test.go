@@ -76,3 +76,21 @@ func TestPolicyReconnectKeepsContextWithHeavilyEscapedLatestReply(t *testing.T) 
 		t.Fatal("large encoded reply displaced the request or exceeded the context budget")
 	}
 }
+
+func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
+	got := buildCodingAgentContinuityNotice(
+		"_users/u/Chats/Work/projects/demo/builder/conversation/2026-09-17/session-chat-conversation.json",
+		"_users/u/Chats/Work/projects/demo",
+		119,
+		40,
+	)
+	if !strings.Contains(got, "40 most recent messages") || !strings.Contains(got, "79 older messages") {
+		t.Fatalf("notice does not explain the bounded handoff: %s", got)
+	}
+	if !strings.Contains(got, "builder/conversation/2026-09-17/session-chat-conversation.json") {
+		t.Fatalf("notice does not expose the project-relative archive: %s", got)
+	}
+	if strings.Contains(got, "_users/u/Chats/Work/projects/demo/") {
+		t.Fatalf("notice leaked docs-root path instead of project-relative path: %s", got)
+	}
+}

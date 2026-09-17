@@ -554,3 +554,43 @@ func TestMergeBuilderConversationHistoryKeepsPreNativePrefixAndRepeatedMessages(
 		}
 	}
 }
+
+func TestMergeBuilderConversationHistoryAlignsReplayedTailWithoutDuplicates(t *testing.T) {
+	msg := func(role, text string) builderConversationMessage {
+		return builderConversationMessage{Role: role, Parts: []builderConversationPart{{Text: text}}}
+	}
+	persisted := []builderConversationMessage{
+		msg("human", "old request"),
+		msg("ai", "same status"),
+		msg("human", "middle request"),
+		msg("ai", "same status"),
+		msg("human", "latest request"),
+	}
+	native := []builderConversationMessage{
+		msg("ai", "same status"),
+		msg("human", "latest request"),
+		msg("ai", "new reply"),
+	}
+	merged := mergeBuilderConversationHistory(persisted, native)
+	want := []string{"old request", "same status", "middle request", "same status", "latest request", "new reply"}
+	if len(merged) != len(want) {
+		t.Fatalf("merged history has %d messages, want %d: %+v", len(merged), len(want), merged)
+	}
+	for i, text := range want {
+		if got := builderConversationMessageText(merged[i]); got != text {
+			t.Fatalf("merged[%d] = %q, want %q", i, got, text)
+		}
+	}
+}
+
+func TestFilterNativeContinuityMessagesRemovesSyntheticHandoffs(t *testing.T) {
+	messages := []builderConversationMessage{
+		{Role: "human", Parts: []builderConversationPart{{Text: "[AGENTWORKS CONVERSATION CONTINUITY]\ninternal\n[/AGENTWORKS CONVERSATION CONTINUITY]"}}},
+		{Role: "human", Parts: []builderConversationPart{{Text: "real user message"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "real reply"}}},
+	}
+	filtered := filterNativeContinuityMessages(messages)
+	if len(filtered) != 2 || builderConversationMessageText(filtered[0]) != "real user message" {
+		t.Fatalf("synthetic continuity handoff leaked into durable history: %+v", filtered)
+	}
+}

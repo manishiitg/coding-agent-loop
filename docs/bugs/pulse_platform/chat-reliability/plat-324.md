@@ -635,3 +635,47 @@ profile tests, and the relevant server tests passed. The changes shipped in
 `be77ed4d3` and were deployed to RTS as `be77ed4-20260917095842` at 10:04 UTC.
 The release symlink, agent/workspace/gateway services, visible memory-file
 ownership, and public health endpoint were verified.
+
+The provider-specific half of the one-memory rule shipped next in
+`75afbf985`. The shared prompt now explicitly forbids Claude auto-memory,
+Cursor Memories/rules and Codex `AGENTS.md` as alternate persistence stores;
+all three coding providers are directed to the same project-root `MEMORY.md`.
+RTS release `75afbf9-20260917100931` completed at 10:15 UTC with release assets,
+services and public health verified.
+
+### Profile refresh truncated resumed context and replayed old replies
+
+The memory rollout exposed a more fundamental provider-reconnect defect in Work
+session `product-a159a050-a710-49f6-837d-ba149cb1a2e1`. Its durable transcript
+was intact. At 10:08:20 UTC the Work profile fingerprint changed, so the server
+correctly rejected the old Claude session and seeded a replacement with the
+bounded recent tail (40 of 119 UI-history messages). The replacement was then
+saved under the current fingerprint. On the following turn at 10:09:18 UTC,
+the resume gate trusted that replacement as complete and skipped all durable
+history, so Claude claimed the chat only concerned the recent memory exchange.
+
+The bounded tail was also confused with new output at two persistence layers.
+The normal save appended the 40 replayed messages back to the canonical record,
+growing it from 119 to 170 messages. Native transcript recovery then aligned on
+the first matching repeated text, treated many replayed assistant rows as new,
+and published dozens of old replies into the open chat at 10:09:08 UTC. This is
+why the earlier durable-UI visibility fix did not prevent this batch: these were
+new duplicate rows manufactured during the reconnect, not existing rows merely
+missing from the process-local EventStore.
+
+The correction treats a coding-provider replacement as an explicit continuity
+boundary across Claude, Codex, Cursor, Pi and Muse. A bounded tail now begins
+with a synthetic continuity notice that records how many earlier messages were
+omitted and points to the complete project-relative conversation archive. The
+provider can read that archive before answering whole-chat or older-context
+questions. The notice and replayed tail are model context only: the save path
+removes their exact injected segment and persists only the new exchange. Native
+transcript reconciliation filters synthetic handoffs and uses longest-common-
+subsequence alignment, so repeated text and replayed tails cannot be appended
+or live-published as new replies.
+
+Focused fallback persistence, resume, native transcript, live-input, submission
+journal and queue-ownership tests pass. The full server suite has one unrelated
+environment-dependent failure in `TestBotFollowUpReachesRetainedMuseThroughQueryP0`
+because its durable submission-journal workspace is unavailable in the local
+test environment; the relevant focused suite passes.

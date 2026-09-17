@@ -392,6 +392,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
           workspacePath={workspacePath}
           scopeNoun="project"
+          onAsk={message => { queueWorkMessage(tabId, message) }}
           target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
         /></div>}
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>

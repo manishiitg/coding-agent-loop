@@ -5,18 +5,29 @@ import { WhatsAppSetup } from './bots/WhatsAppSetup'
 import { RouteChip } from './bots/RouteChips'
 import { ChannelRow } from './bots/AddChannel'
 import { routeId } from './bots/types'
+import { AskAIButton } from './AskAIButton'
 
 type WorkflowBotsPanelProps = {
   workspacePath: string | null
   target?: BotRouteTarget
   scopeNoun?: 'workflow' | 'project'
+  onAsk?: (message: string) => void | Promise<void>
 }
 
 // Composition over useWorkflowBots: status card, route chips, add-channel
 // rows, and the Slack/WhatsApp drill-ins.
-export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = 'workflow' }: WorkflowBotsPanelProps) {
+export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = 'workflow', onAsk }: WorkflowBotsPanelProps) {
   const bots = useWorkflowBots(workspacePath, target, 'bots')
   const { setup, setSetup, workflowId, myRoutes, routeError, waRoutingError } = bots
+
+  const askSlackSetup = (
+    <AskAIButton
+      workspacePath={workspacePath}
+      onAsk={onAsk}
+      label={scopeNoun === 'project' ? 'Ask Crew to set up Slack' : 'Ask Builder to set up Slack'}
+      message={`Read builder-reference/references/slack-bot-routing.md, inspect get_slack_bot_settings, and help me set up the Slack bot and channel routes for this ${scopeNoun}. Guide me through app creation and credentials in the settings UI without requesting tokens in chat. Use the existing scoped tools to create the route once the channel ID and bot grant are clear. Everyone in the channel is allowed by default; ask about blocked emails only if I need exclusions.`}
+    />
+  )
 
   if (setup !== null) {
     return (
@@ -34,6 +45,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
           {setup === 'slack' ? 'Slack' : 'WhatsApp'}
           <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>
         </div>
+        {setup === 'slack' && askSlackSetup}
         {setup === 'slack' ? <SlackSetup bots={bots} /> : <WhatsAppSetup bots={bots} />}
       </div>
     )
@@ -45,7 +57,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
         const routes = myRoutes.filter(route => route.kind === kind)
         return (
           <section key={kind} className="overflow-hidden rounded-md border border-border bg-background">
-            <ChannelRow bots={bots} kind={kind} manageRoutes />
+            <ChannelRow bots={bots} kind={kind} manageRoutes headerAction={kind === 'slack' ? askSlackSetup : undefined} />
             <div className="space-y-2 px-3 pb-3">
               <h3 className="text-xs font-medium text-muted-foreground">Routes for this {scopeNoun}</h3>
               {!workflowId ? (

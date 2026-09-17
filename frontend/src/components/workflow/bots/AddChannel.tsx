@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { ChevronRight, Loader2, MessageSquare, Phone, Plus } from 'lucide-react'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import { routeId, type ChannelKind } from './types'
@@ -13,7 +14,7 @@ type ChannelRowBots = Pick<WorkflowBots,
   | 'routeSaving' | 'myRoutes' | 'addError' | 'setAddError'
 >
 
-export function ChannelRow({ bots, kind, manageRoutes = false }: { bots: ChannelRowBots; kind: ChannelKind; manageRoutes?: boolean }) {
+export function ChannelRow({ bots, kind, manageRoutes = false, headerAction }: { bots: ChannelRowBots; kind: ChannelKind; manageRoutes?: boolean; headerAction?: ReactNode }) {
   const {
     readOnly, workflowId, setSetup,
     slackReady, waReady, slackStatusLabel, waStatusLabel, slackLoading, slackOriginal, waStatus, waError,
@@ -45,6 +46,7 @@ export function ChannelRow({ bots, kind, manageRoutes = false }: { bots: Channel
           {statusLabel}
         </span>
         <span className="flex-1" />
+        {headerAction}
         <button
           type="button"
           onClick={() => setSetup(kind)}

@@ -318,6 +318,15 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 			}
 		}
 	}
+	// A Work tab can be named as soon as the backend assigns its session ID,
+	// before the first agent turn has produced a transcript. In that window the
+	// rename endpoint records the title in the durable project index. Apply it to
+	// the first transcript so the transcript remains authoritative thereafter.
+	if _, titled := convData["title"]; !titled {
+		if title := chatHistoryTitleFromPersistedIndex(userID, sessionID, convPath); title != "" {
+			convData["title"] = title
+		}
+	}
 
 	// The in-memory event store only knows about turns since this process
 	// started. Writing it alone after a restart replaced the whole saved trace
@@ -448,6 +457,26 @@ func chatHistoryIndexTitleForSession(index chatHistoryIndex, sessionID string) s
 		}
 	}
 	return title
+}
+
+func chatHistoryTitleFromPersistedIndex(userID, sessionID, conversationPath string) string {
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	if indexPath == "" {
+		return ""
+	}
+	mutex := chatHistoryIndexMutex(indexPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+	data, exists, err := readFileFromWorkspace(context.Background(), indexPath)
+	if err != nil || !exists {
+		return ""
+	}
+	index := newChatHistoryIndex()
+	if json.Unmarshal([]byte(data), &index) != nil {
+		return ""
+	}
+	index.normalize()
+	return chatHistoryIndexTitleForSession(index, sessionID)
 }
 
 func preserveChatHistorySessionTitle(index *chatHistoryIndex, session *ChatHistorySession) bool {
@@ -2498,6 +2527,10 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 	if userID == "" {
 		userID = "default"
 	}
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("conversation not found")
+	}
 	var err error
 	title, err = normalizeChatHistoryTitle(title)
 	if err != nil {
@@ -2508,7 +2541,16 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 	if !found {
-		return fmt.Errorf("conversation not found")
+		// Work creates a tab and assigns its product session before the first
+		// transcript save. Record the requested title in that user's project index
+		// instead of making rename wait for the running turn to finish. Workflow
+		// chats retain the existing author check in the route and are not allowed
+		// through this private Work-only fallback.
+		var workProject bool
+		conversationPath, workProject = workProjectChatHistoryConversationPath(userID, workspacePath, sessionID, time.Now())
+		if !workProject {
+			return fmt.Errorf("conversation not found")
+		}
 	}
 	lock := chatConversationMutex(conversationPath)
 	lock.Lock()
@@ -2518,7 +2560,7 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("conversation not found")
+		return persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title, 0, true)
 	}
 	var record map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &record); err != nil {
@@ -2534,6 +2576,10 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 
+	return persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title, int64(len(encoded)), true)
+}
+
+func persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title string, sourceSize int64, create bool) error {
 	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
 	if indexPath == "" {
 		return nil
@@ -2543,25 +2589,51 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 	defer mutex.Unlock()
 	index := newChatHistoryIndex()
 	indexRaw, indexExists, err := readFileFromWorkspace(context.Background(), indexPath)
-	if err != nil || !indexExists {
+	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
-		return fmt.Errorf("decode %s: %w", indexPath, err)
+	if indexExists {
+		if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
+			return fmt.Errorf("decode %s: %w", indexPath, err)
+		}
 	}
 	index.normalize()
-	// Apply the rename to every dated index row for this durable session. This
-	// prevents an older resumed copy from later reintroducing the previous name.
+	updated := false
 	for indexedPath, entry := range index.Entries {
 		if sanitizeChatHistorySessionID(entry.Session.SessionID) != sessionID {
 			continue
 		}
 		entry.Session.Title = title
-		if indexedPath == conversationPath {
-			entry.SourceSize = int64(len(encoded))
+		if indexedPath == conversationPath && sourceSize > 0 {
+			entry.SourceSize = sourceSize
 		}
 		index.Entries[indexedPath] = entry
+		updated = true
 	}
+	if !updated && create {
+		now := time.Now().Format(time.RFC3339)
+		index.Entries[conversationPath] = chatHistoryIndexEntry{
+			Session: ChatHistorySession{
+				SessionID:        sessionID,
+				Title:            title,
+				AgentMode:        "multi-agent",
+				Status:           "pending",
+				UserID:           userID,
+				Username:         chatHistoryUsername(userID, ""),
+				WorkspacePath:    chatHistoryWorkspacePathFromConversation(conversationPath),
+				ConversationPath: conversationPath,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+			},
+			SourceSize:          sourceSize,
+			AttributionVerified: true,
+		}
+		updated = true
+	}
+	if !updated {
+		return nil
+	}
+	index.Version = chatHistoryIndexVersion
 	index.UpdatedAt = time.Now().Format(time.RFC3339)
 	updatedIndex, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {

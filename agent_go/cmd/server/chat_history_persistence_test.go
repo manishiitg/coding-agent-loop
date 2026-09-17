@@ -1921,6 +1921,79 @@ func TestNormalizeChatHistoryTitle(t *testing.T) {
 	}
 }
 
+func TestRenameWorkChatBeforeFirstPersistenceRetainsTitle(t *testing.T) {
+	workspace := &mockWorkspaceAPI{files: map[string]string{}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	const (
+		userID        = "rename-before-save-user"
+		sessionID     = "product-rename-before-save"
+		workspacePath = "Chats/Work/projects/new-project"
+		title         = "Latency investigation"
+	)
+
+	if err := RenameChatHistorySession(userID, sessionID, workspacePath, title); err != nil {
+		t.Fatalf("rename before first save: %v", err)
+	}
+	conversationPath, ok := workProjectChatHistoryConversationPath(userID, workspacePath, sessionID, time.Now())
+	if !ok {
+		t.Fatal("expected Work project conversation path")
+	}
+	if _, exists := workspace.files[conversationPath]; exists {
+		t.Fatal("rename must not fabricate a transcript")
+	}
+
+	history := []llmtypes.MessageContent{{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "check this Notion board"}},
+	}}
+	(&StreamingAPI{}).persistChatConversationToPathWithTerminalSession(
+		sessionID, "", "multi-agent", userID, history, nil, nil, conversationPath,
+	)
+
+	raw, exists := workspace.files[conversationPath]
+	if !exists {
+		t.Fatal("first transcript was not persisted")
+	}
+	var record struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		t.Fatalf("decode first transcript: %v", err)
+	}
+	if record.Title != title {
+		t.Fatalf("first transcript title = %q, want %q", record.Title, title)
+	}
+
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	var index chatHistoryIndex
+	if err := json.Unmarshal([]byte(workspace.files[indexPath]), &index); err != nil {
+		t.Fatalf("decode Work chat index: %v", err)
+	}
+	entry, exists := index.Entries[conversationPath]
+	if !exists || entry.Session.SessionID != sessionID || entry.Session.Title != title || entry.Session.Status != "completed" {
+		t.Fatalf("saved index entry = %#v", entry)
+	}
+
+	const updatedTitle = "Notion latency investigation"
+	if err := RenameChatHistorySession(userID, sessionID, workspacePath, updatedTitle); err != nil {
+		t.Fatalf("rename persisted Work chat: %v", err)
+	}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &record); err != nil {
+		t.Fatalf("decode renamed transcript: %v", err)
+	}
+	if record.Title != updatedTitle {
+		t.Fatalf("renamed transcript title = %q, want %q", record.Title, updatedTitle)
+	}
+	if err := json.Unmarshal([]byte(workspace.files[indexPath]), &index); err != nil {
+		t.Fatalf("decode renamed Work chat index: %v", err)
+	}
+	if got := index.Entries[conversationPath].Session.Title; got != updatedTitle {
+		t.Fatalf("renamed index title = %q, want %q", got, updatedTitle)
+	}
+}
+
 func TestParseLocalChatHistorySessionSkipsLowSignalTitle(t *testing.T) {
 	data := `{
   "session_id": "session-1",

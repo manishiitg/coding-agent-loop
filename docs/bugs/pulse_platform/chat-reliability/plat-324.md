@@ -541,3 +541,26 @@ GOG_HOME could not be created. No authenticated production actions were replayed
 User acceptance remains pending after a browser refresh: one decision question
 and one generated report chat action during an active turn should each deliver
 once to the intended interactive conversation with context intact.
+
+### Work chat rename before first transcript
+
+RTS reproduced a timing gap for a newly created Work tab. The frontend had a
+valid product session ID and allowed rename immediately, while the backend
+rename endpoint required the first conversation file to already be discoverable.
+The initial request therefore returned `Session not found`; after the running
+turn saved its transcript, the same rename succeeded. Production timestamps
+show the first transcript at 08:34:55 UTC and the successful `latency` title at
+08:37:06 UTC.
+
+The backend now accepts an early rename only for the authenticated user's
+private `Chats/Work/projects/...` scope. It records the pending title in that
+project's durable chat index without fabricating a transcript. The first
+conversation save adopts the indexed title into the transcript, then replaces
+the pending index row with the completed metadata. Conversation and index locks
+keep a simultaneous first-save/rename race ordered. Workflow-scoped chats retain
+their existing author verification and do not use this fallback.
+
+Regression coverage exercises rename before the first save, adoption by the
+first transcript, completed index metadata, and a subsequent normal rename.
+Focused chat-history, snapshot and submission tests pass. Deployment and live
+acceptance are pending.

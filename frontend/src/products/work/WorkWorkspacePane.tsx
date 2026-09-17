@@ -406,7 +406,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             canManage
             scopeNoun="project"
             productTriggerScope={enabledPanels?.has('triggers') === false ? undefined : { profileId: 'work', projectId }}
-            workflowScope={{ workspacePath, label: projectTitle }}
+            workflowScope={{ workflowId: projectId, workspacePath, label: projectTitle }}
             onClose={() => onViewChange('files')}
             headerAction={<AskAIButton
               workspacePath={workspacePath}

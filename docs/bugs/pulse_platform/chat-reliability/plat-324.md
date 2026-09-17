@@ -767,3 +767,17 @@ workflow rather than an interactive chat, so the operator explicitly chose an
 immediate swap. The active release symlink, agent/workspace/gateway services,
 release source revision, runtime configuration, local agent/workspace health,
 and public agent health were verified after activation.
+
+### Crew project schedules were saved but absent from the project view
+
+The first Crew schedule created after this release was persisted correctly in
+the project's durable `workflow.json`, but the embedded Schedules view showed
+no rows. Crew supplied the public project path (`Chats/Work/projects/...`) to
+the shared AgentWorks schedule panel while the scheduler response correctly
+used the user-scoped runtime path (`_users/<user>/Chats/Work/projects/...`).
+The shared path equality filter therefore rejected the project's own schedule.
+
+Crew now supplies the stable project ID as the schedule scope, and the shared
+schedule matcher checks that identity before falling back to preset or path
+matching. This follows the AgentWorks identity-based model and keeps schedules
+isolated correctly when multiple users or projects have similar paths.

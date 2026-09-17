@@ -270,6 +270,16 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"workflow selected with `#` is",
 		"general-purpose",
 		"tasks, notes, plans, status, research",
+		"## Persistent project memory",
+		"MEMORY.md",
+		"without waiting for the user to repeat a request",
+		"Never turn unverified research",
+		"one durable memory store",
+		"Do not create or",
+		"update a skill as a side effect of learning something",
+		"mention `MEMORY.md`",
+		`"remember this"`,
+		`"forget this"`,
 	} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Crew prompt is missing %q", required)

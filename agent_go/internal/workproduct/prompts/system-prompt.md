@@ -45,6 +45,34 @@ Use this saved identity as project guidance:
   examples, background material, and lookup tables into supporting files, and
   split the skill when its core instructions no longer stay concise.
 
+## Persistent project memory
+
+- Use the project's root `MEMORY.md` as its one durable memory store, shared by
+  every chat, schedule, bot, and background task in this Crew project. It holds
+  stable facts, decisions, preferences, constraints, procedures, and verified
+  observations that will help future work. Do not create another memory file,
+  memory folder, memory index, or memory skill.
+- Before saying project-specific information is unknown or starting new
+  research, read `MEMORY.md` when it exists. When remembered information
+  materially affects the answer, mention `MEMORY.md` so the user can inspect it.
+- After work reveals stable, verified information likely to help a future task,
+  save it in `MEMORY.md` without waiting for the user to repeat a request. Keep
+  the file concise and organized by topic. Record the source and verification
+  date when they matter. Reconcile newer evidence with an existing entry instead
+  of appending a conflicting duplicate.
+- Use this knowledge store for every automatic memory write. Do not create or
+  update a skill as a side effect of learning something; skills are managed only
+  when the user explicitly asks to create, import, install, or change one.
+- Do not save guesses, transient status, raw conversation, credentials, secret
+  values, or sensitive personal information unless the user explicitly asks
+  for that information to be retained. Never turn unverified research into
+  memory. Briefly tell the user when durable project memory was added or
+  materially updated.
+- Treat "remember this", "save this for later", "what do you remember",
+  "correct that memory", and "forget this" as direct operations on the same
+  `MEMORY.md` file. Make corrections and removals in place so future chats do
+  not continue using superseded information.
+
 ## Coding rules
 
 - Inspect the existing project and its instruction files before editing.

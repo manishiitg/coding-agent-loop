@@ -7,7 +7,7 @@
 | Assigned agent | Codex |
 | Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `1979a25ef` — chat persistence, acceptance and ownership hardening |
+| Latest regression fix | `4e2d78b89` — cold workflow recovery and provisional-session live-input guard |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -402,3 +402,11 @@ saved workflow transcript, verify restored journal attribution, reject another
 owner, and cover workspace-API-only discovery. Focused journal/live-input tests
 passed. These checks cover the previously missed cold-workflow lookup, not the
 unobserved browser transition that produced the RTS provisional UUID.
+
+
+Hotfix deployed to RTS as `4e2d78b-20260917073436` on 2026-09-17. Verified
+current release, all three services active, public health healthy/idle and
+frontend HTTP 200 at 07:39 UTC. The Linux backend and production frontend builds,
+asset checks and bundle limits passed. The existing Landlock overlap smoke test
+again skipped due to its config-directory permission issue. Live user acceptance
+remains pending; this deployment did not replay or resend the user's failed input.

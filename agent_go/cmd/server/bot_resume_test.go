@@ -123,3 +123,38 @@ func TestResolveBotResumeTargetByOrdinalWithWorkflowFilter(t *testing.T) {
 		t.Fatalf("target = %+v, want old-report", target)
 	}
 }
+
+func TestResolveBotResumeTargetMatchesPublicAndUserScopedWorkPaths(t *testing.T) {
+	api := &StreamingAPI{
+		activeSessions: map[string]*ActiveSessionInfo{
+			"work-session": {
+				SessionID:     "work-session",
+				AgentMode:     "multi-agent",
+				Status:        "running",
+				UserID:        "user-1",
+				LastActivity:  time.Now(),
+				WorkspacePath: "_users/user-1/Chats/Work/projects/project-1",
+			},
+		},
+	}
+
+	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "latest", services.BotResumeFilter{
+		WorkspacePath: "Chats/Work/projects/project-1",
+	})
+	if err != nil {
+		t.Fatalf("resolveBotResumeTarget returned error: %v", err)
+	}
+	if target == nil || target.SessionID != "work-session" {
+		t.Fatalf("target = %+v, want work-session", target)
+	}
+
+	foreign, err := api.resolveBotResumeTarget(context.Background(), "user-2", "latest", services.BotResumeFilter{
+		WorkspacePath: "Chats/Work/projects/project-1",
+	})
+	if err != nil {
+		t.Fatalf("foreign resolveBotResumeTarget returned error: %v", err)
+	}
+	if foreign != nil {
+		t.Fatalf("foreign target = %+v, want nil", foreign)
+	}
+}

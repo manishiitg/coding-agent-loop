@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Check, ChevronDown, LayoutDashboard, Share2 } from 'lucide-react'
 import { useAuthStore } from '../../stores/useAuthStore'
+import { publicWorkspacePathForUser } from '../../utils/workspacePathUtils'
 import { useChatStore } from '../../stores/useChatStore'
 import { isShareableAppOrigin, sharedReportLink } from '../../utils/sharedLinks'
 import { copyToClipboard } from '../../utils/textUtils'
@@ -53,10 +54,12 @@ export function ReportDocumentSwitcher({ workspacePath, active, onOpen }: {
   }
 
   const copyShareLink = async (path: string) => {
-    const uid = workspacePath.startsWith('Chats/Work/projects/')
-      ? useAuthStore.getState().user?.id || ''
+    const currentUserId = useAuthStore.getState().user?.id || ''
+    const publicWorkspacePath = publicWorkspacePathForUser(workspacePath, currentUserId)
+    const uid = publicWorkspacePath.startsWith('Chats/Work/projects/')
+      ? currentUserId
       : ''
-    const url = sharedReportLink(window.location.origin, workspacePath, path, uid)
+    const url = sharedReportLink(window.location.origin, publicWorkspacePath, path, uid)
     if (!await copyToClipboard(url)) {
       useChatStore.getState().addToast('Could not copy the report share link.', 'error')
       return

@@ -797,3 +797,22 @@ and webhook-view parity change shipped in `00d63a3ef` and was deployed to RTS
 as `00d63a3-20260917145523`. The active source revision and release symlink,
 agent/workspace/gateway services, local agent/workspace health, and public
 agent health were verified after the final swap.
+
+### Remaining Crew public/physical workspace comparisons
+
+A follow-up boundary audit found two remaining backend comparisons that treated
+the browser's public Crew path (`Chats/Work/projects/...`) and the runtime's
+physical per-user path (`_users/<user>/Chats/Work/projects/...`) as different
+projects. Agent-profile turn authorization could consequently reject a valid
+restored Crew conversation, while Bot Connector resume/status filtering could
+omit the matching active conversation. Dashboard share-link generation also
+passed through a physical path when one reached the restored tab, producing a
+URL the public Dashboard route intentionally rejects.
+
+All three paths now use the same authenticated-user-aware identity rule already
+used by chat persistence. Only `_users/<authenticated-user>/...` is reduced to
+its public form; another user's physical path remains distinct. Dashboard share
+links likewise convert the current user's physical path to the public API form
+and retain the owner UID. Focused Go regressions cover Work turn/bot path
+identity and cross-user rejection; frontend regressions cover public conversion
+and foreign-path preservation.

@@ -306,7 +306,7 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		if bindingErr != nil {
 			return nil, fmt.Errorf("resolve Work workspace: %w", bindingErr)
 		}
-		if filepath.Clean(binding.WorkspacePath) != filepath.Clean(workspacePath) {
+		if !workspacePathsMatchForUser(userID, binding.WorkspacePath, workspacePath) {
 			return nil, fmt.Errorf("Work conversation does not match the selected session")
 		}
 	}

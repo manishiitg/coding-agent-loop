@@ -101,6 +101,25 @@ export function normalizeWorkspacePath(path?: string | null): string {
 }
 
 /**
+ * Convert the authenticated user's physical workspace path to the public path
+ * used by browser APIs. A foreign _users path is deliberately left intact.
+ */
+export function publicWorkspacePathForUser(path: string | null | undefined, userId: string | null | undefined): string {
+  const normalized = normalizeWorkspacePath(path).replace(/^\/+/, '').replace(/\\/g, '/')
+  if (!normalized || !userId || !/^[a-zA-Z0-9_-]{1,128}$/.test(userId)) return normalized
+  const prefix = `_users/${userId}/`
+  return normalized.startsWith(prefix) ? normalized.slice(prefix.length) : normalized
+}
+
+export function workspacePathsEqualForUser(
+  left: string | null | undefined,
+  right: string | null | undefined,
+  userId: string | null | undefined,
+): boolean {
+  return publicWorkspacePathForUser(left, userId) === publicWorkspacePathForUser(right, userId)
+}
+
+/**
  * Normalize a path for comparison (lowercase, remove leading/trailing slashes)
  */
 export function normalizePathForComparison(path: string): string {

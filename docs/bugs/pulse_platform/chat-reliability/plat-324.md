@@ -7,7 +7,7 @@
 | Assigned agent | Codex |
 | Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `eb93a5972` deployed — shared queue ownership for human-decision and generated report chat actions |
+| Latest regression fix | `624d4a8a1` deployed — retain Work chat names before the first transcript save |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 ## Post-incident assessment — 2026-09-17
@@ -562,5 +562,9 @@ their existing author verification and do not use this fallback.
 
 Regression coverage exercises rename before the first save, adoption by the
 first transcript, completed index metadata, and a subsequent normal rename.
-Focused chat-history, snapshot and submission tests pass. Deployment and live
-acceptance are pending.
+Focused chat-history, snapshot and submission tests pass. The correction was
+deployed to RTS as `624d4a8-20260917085131` at 08:56 UTC. The current release
+symlink, agent/workspace/gateway services, local health and public health were
+verified. Live acceptance remains pending: create a Work chat, send its first
+message and rename the tab immediately while the turn is still running; the
+rename should succeed without waiting for the first transcript save.

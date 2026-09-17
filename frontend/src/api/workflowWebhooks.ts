@@ -10,6 +10,7 @@ export interface WorkflowAPITrigger {
   path: string
   route_selections: Record<string, string>
   group_names: string[]
+  max_concurrency?: number
   payload_mappings?: WebhookPayloadMappings
   secret?: string
 }

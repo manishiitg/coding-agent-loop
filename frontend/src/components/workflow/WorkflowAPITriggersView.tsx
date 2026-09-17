@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import axios from 'axios'
-import { Copy, RefreshCw, Webhook } from 'lucide-react'
+import { Copy, GitBranch, RefreshCw, ShieldCheck, Webhook, Zap } from 'lucide-react'
 import { workflowWebhooksApi, apiTriggerURL, type APITriggerOptions, type WorkflowAPITrigger } from '../../api/workflowWebhooks'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
@@ -76,21 +76,36 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
   }
 
   if (!workspacePath) return <p className="p-4 text-sm text-muted-foreground">Select a workflow to configure API triggers.</p>
+  const activeTriggers = options.triggers.filter(trigger => trigger.enabled).length
   return (
-    <div className="h-full overflow-y-auto p-4 space-y-5">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <h2 className="flex items-center gap-2 text-base font-semibold"><Webhook size={17} />Webhooks</h2>
-          <p className="mt-1 text-xs text-muted-foreground">Start a saved workflow route when an external service sends a webhook.</p>
+    <div className="h-full overflow-y-auto bg-background">
+      <div className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <Webhook className="h-4 w-4 text-muted-foreground" />
+              <h2 className="text-base font-semibold">Webhooks</h2>
+              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{options.triggers.length}</span>
+            </div>
+            <p className="mt-1 text-xs text-muted-foreground">External events that start this workflow.</p>
+          </div>
+          <div className="flex items-center gap-2">
+            <button type="button" aria-label="Refresh webhooks" title="Refresh webhooks" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
+            {headerAction}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
-          <button type="button" aria-label="Refresh API triggers" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
-          {headerAction}
+        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+          <span><span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeTriggers} active</span>
+          <span>{options.triggers.length - activeTriggers} paused</span>
+          <button type="button" className="text-foreground underline underline-offset-2" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>
         </div>
       </div>
-      <p className="text-xs leading-relaxed text-muted-foreground">Time triggers run on a schedule. API triggers run when their endpoint receives a request. API triggers can run the full workflow, a route with prerequisites, or one standalone step. <button type="button" className="underline text-foreground" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules', 'schedules')}>View trigger runs</button></p>
-      <p className="text-xs text-muted-foreground">Create webhooks and change their routes or authentication through the workflow builder chat.</p>
-      {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
+      <div className="space-y-4 p-4 sm:p-6">
+      <div className="flex items-start gap-2 rounded-lg bg-muted/35 px-3 py-2.5 text-xs text-muted-foreground">
+        <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+        <p>Create a webhook or change its routing by asking Builder. Each webhook accepts up to four deliveries at once; additional deliveries receive a retry response.</p>
+      </div>
+      {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
       {issued?.secret && (
         <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
           <h3 className="text-sm font-medium">Secret for {issued.name}</h3>
@@ -101,32 +116,57 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
         </section>
       )}
       <div className="space-y-3">
-        {options.triggers.map(trigger => (
-          <section key={trigger.id} className="space-y-3 rounded-lg border border-border p-3">
-            <div className="flex justify-between gap-2"><h3 className="text-sm font-medium">{trigger.name}</h3><span className="text-xs text-muted-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span></div>
-            <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all text-xs select-all">{apiTriggerURL(trigger.path)}</code><button type="button" aria-label={`Copy endpoint for ${trigger.name}`} className={buttonClass} onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={13} /></button></div>
-            <p className="text-xs text-muted-foreground">{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'} · Groups: {trigger.group_names.join(', ')}</p>
-            <ul className="text-xs space-y-1">{trigger.step_id && <li>Step only: {options.steps?.find(step => step.step_id === trigger.step_id)?.title || trigger.step_id}</li>}{!trigger.step_id && Object.keys(trigger.route_selections).length === 0 && <li>Full workflow</li>}{Object.entries(trigger.route_selections).map(([stepId, routeId]) => {
-              const route = options.routes.find(option => option.step_id === stepId && option.route_id === routeId)
+        {options.triggers.map(trigger => {
+          const routeSelections = trigger.route_selections || {}
+          const groupNames = trigger.group_names || []
+          const concurrency = trigger.max_concurrency || 4
+          return <section key={trigger.id} className="overflow-hidden rounded-xl border border-border bg-card">
+            <div className="flex items-start justify-between gap-3 px-4 py-3">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <h3 className="truncate text-sm font-semibold" title={trigger.name}>{trigger.name}</h3>
+                  <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-medium ${trigger.enabled ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300' : 'bg-muted text-muted-foreground'}`}>{trigger.enabled ? 'Active' : 'Paused'}</span>
+                </div>
+                <p className="mt-1 text-[11px] text-muted-foreground">POST endpoint · up to {concurrency} concurrent deliveries</p>
+              </div>
+              {canWrite && <button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Pause' : 'Enable'}</button>}
+            </div>
+            <div className="border-y border-border bg-muted/20 px-4 py-2.5">
+              <div className="flex items-center gap-2">
+                <code className="min-w-0 flex-1 truncate text-xs text-foreground" title={apiTriggerURL(trigger.path)}>{apiTriggerURL(trigger.path)}</code>
+                <button type="button" aria-label={`Copy endpoint for ${trigger.name}`} title="Copy endpoint" className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={14} /></button>
+              </div>
+            </div>
+            <div className="grid gap-3 px-4 py-3 text-xs sm:grid-cols-2">
+              <div className="flex min-w-0 items-start gap-2"><GitBranch className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Starts</p><ul className="mt-1 space-y-1">{trigger.step_id && <li>Step only: {options.steps?.find(step => step.step_id === trigger.step_id)?.title || trigger.step_id}</li>}{!trigger.step_id && Object.keys(routeSelections).length === 0 && <li>Full workflow</li>}{Object.entries(routeSelections).map(([stepId, routeId]) => {
+              const route = (options.routes || []).find(option => option.step_id === stepId && option.route_id === routeId)
               return <li key={stepId}>{route ? `${route.step_title} → ${route.route_name || routeId}` : `${stepId} → ${routeId} (route unavailable)`}</li>
-            })}</ul>
-            {trigger.payload_mappings && <ul className="space-y-1 rounded bg-muted/40 p-2 text-xs text-muted-foreground">
-              {trigger.payload_mappings.group && <li>Payload {trigger.payload_mappings.group.source} → group ({Object.entries(trigger.payload_mappings.group.values).map(([value, group]) => `${value} → ${group}`).join(', ')})</li>}
-              {Object.entries(trigger.payload_mappings.routes || {}).map(([stepId, mapping]) => <li key={stepId}>Payload {mapping.source} → {stepId} branch ({Object.entries(mapping.values).map(([value, route]) => `${value} → ${route}`).join(', ')})</li>)}
-              {trigger.payload_mappings.step && <li>Payload {trigger.payload_mappings.step.source} → single step ({Object.entries(trigger.payload_mappings.step.values).map(([value, step]) => `${value} → ${step}`).join(', ')})</li>}
-            </ul>}
-            {canWrite && <div className="flex flex-wrap gap-2">
-              <button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button>
+            })}</ul></div></div>
+              <div className="flex min-w-0 items-start gap-2"><ShieldCheck className="mt-0.5 h-3.5 w-3.5 shrink-0 text-muted-foreground" /><div className="min-w-0"><p className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">Security and access</p><p className="mt-1">{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'}</p><p className="mt-0.5 truncate text-muted-foreground" title={groupNames.join(', ')}>{groupNames.length ? `Groups: ${groupNames.join(', ')}` : 'Default access'}</p></div></div>
+            </div>
+            {trigger.payload_mappings && <details className="border-t border-border px-4 py-2.5 text-xs">
+              <summary className="cursor-pointer text-muted-foreground hover:text-foreground">Payload mappings</summary>
+              <ul className="mt-2 space-y-1 text-muted-foreground">
+                {trigger.payload_mappings.group && <li>Payload {trigger.payload_mappings.group.source} → group ({Object.entries(trigger.payload_mappings.group.values || {}).map(([value, group]) => `${value} → ${group}`).join(', ')})</li>}
+                {Object.entries(trigger.payload_mappings.routes || {}).map(([stepId, mapping]) => <li key={stepId}>Payload {mapping.source} → {stepId} branch ({Object.entries(mapping.values || {}).map(([value, route]) => `${value} → ${route}`).join(', ')})</li>)}
+                {trigger.payload_mappings.step && <li>Payload {trigger.payload_mappings.step.source} → single step ({Object.entries(trigger.payload_mappings.step.values || {}).map(([value, step]) => `${value} → ${step}`).join(', ')})</li>}
+              </ul>
+            </details>}
+            {canWrite && <div className="flex flex-wrap items-center gap-2 border-t border-border px-4 py-2.5">
               <button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button>
-              <button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button>
+              <button type="button" disabled={busy} className="ml-auto rounded-md px-3 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:opacity-50" onClick={() => void remove(trigger.id)}>Remove</button>
             </div>}
           </section>
-        ))}
+        })}
         {options.triggers.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the workflow builder chat to create one.</p>}
       </div>
       {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}
       {options.route_error && <p className="text-xs text-muted-foreground">{options.route_error}</p>}
-      <p className="text-xs leading-relaxed text-muted-foreground">Use a server URL reachable by the caller; localhost is only reachable on this computer. Public services need a reachable HTTPS deployment or tunnel. Send JSON up to 1 MiB. A successful delivery returns 202 with a run ID. Busy workflows return 503 with Retry-After; configure the sender to retry. Reuse Idempotency-Key (or GitHub’s delivery ID) to avoid duplicate runs.</p>
+      <details className="rounded-lg border border-border px-3 py-2.5 text-xs text-muted-foreground">
+        <summary className="cursor-pointer text-foreground">Delivery requirements</summary>
+        <p className="mt-2 leading-relaxed">Use a server URL reachable by the caller. Send JSON up to 1 MiB. A successful delivery returns 202 with a run ID. When all four delivery slots are busy, the endpoint returns 503 with Retry-After. Reuse Idempotency-Key or GitHub’s delivery ID when retrying.</p>
+      </details>
+      </div>
     </div>
   )
 }

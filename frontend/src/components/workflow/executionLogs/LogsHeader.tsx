@@ -1,4 +1,4 @@
-import { Filter, RefreshCw, Terminal } from 'lucide-react'
+import { Braces, Filter, RefreshCw, Terminal } from 'lucide-react'
 import type { RunFolderInfo } from '../../../services/api-types'
 import { formatStartedAt } from '../../../utils/duration'
 import { formatDeploymentDateTime } from '../../../utils/displayTime'
@@ -16,6 +16,9 @@ export interface LogsHeaderProps {
   loadLogs: () => void
   onRefreshRunFolders?: () => void | Promise<void>
   headerAction?: React.ReactNode
+  showWebhookPayload?: boolean
+  webhookPayloadOpen?: boolean
+  onToggleWebhookPayload?: () => void
 }
 
 // Header content only; InspectorShell owns the row wrapper and the close X.
@@ -30,6 +33,9 @@ export function LogsHeader({
   loadLogs,
   onRefreshRunFolders,
   headerAction,
+  showWebhookPayload = false,
+  webhookPayloadOpen = false,
+  onToggleWebhookPayload,
 }: LogsHeaderProps) {
   const timestampsByFolder = new Map(
     runFolderInfos.map(folder => [
@@ -93,6 +99,23 @@ export function LogsHeader({
                     </SelectContent>
                   </Select>
                 </div>
+              )}
+
+              {showWebhookPayload && (
+                <button
+                  type="button"
+                  onClick={onToggleWebhookPayload}
+                  aria-expanded={webhookPayloadOpen}
+                  className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
+                    webhookPayloadOpen
+                      ? 'border-primary/40 bg-primary/10 text-foreground'
+                      : 'border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground'
+                  }`}
+                  title="View the request payload that started this webhook run"
+                >
+                  <Braces className="h-3.5 w-3.5" />
+                  Payload
+                </button>
               )}
 
               {/* Refresh Button — also refreshes the run-folder list itself

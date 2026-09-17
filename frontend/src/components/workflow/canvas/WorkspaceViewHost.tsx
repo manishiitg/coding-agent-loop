@@ -67,6 +67,7 @@ const KnowledgebaseView = lazy(() => import('../KnowledgebaseView'))
 const DatabaseView = lazy(() => import('../DatabaseView'))
 const PulseEvalSummary = lazy(() => import('../PulseEvalSummary').then(module => ({ default: module.PulseEvalSummary })))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
+const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
 const WorkflowFolderAccessView = lazy(() => import('../WorkflowFolderAccessView'))
 const PulseView = lazy(() => import('../PulseView'))
@@ -200,6 +201,14 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             workflowScope={{ presetQueryId: presetQueryId || undefined, workspacePath: workspacePath || undefined }}
             onClose={closeInspector}
             headerAction={askAI('schedules')}
+          />
+        )
+      case 'webhooks':
+        return (
+          <WorkflowAPITriggersView
+            workspacePath={workspacePath}
+            onViewRuns={() => useWorkflowStore.getState().openWorkspaceView('schedules')}
+            headerAction={askAI('webhooks')}
           />
         )
       case 'folders':

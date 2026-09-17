@@ -2139,6 +2139,16 @@ export const agentApi = {
     return response.data
   },
 
+  // Webhook bodies are loaded only when the user opens the payload panel.
+  // Keeping them out of getExecutionLogs avoids re-downloading a potentially
+  // large request body on every live-log polling interval.
+  getExecutionWebhookPayload: async (workspacePath: string, runFolder: string): Promise<{ success: boolean; run_id: string; raw_payload: string }> => {
+    const response = await api.get('/api/workflow/logs/webhook-payload', {
+      params: { workspace_path: workspacePath, run_folder: runFolder }
+    })
+    return response.data
+  },
+
   // Get workspace-scoped cost data. Cost Analysis uses the bounded summary
   // view; legacy callers can omit options to retain the full artifact reader.
   getCosts: async (

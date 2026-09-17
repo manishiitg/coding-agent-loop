@@ -33,7 +33,7 @@ export const WorkflowTriggerNode = memo(({ data }: NodeProps) => {
     {!!job.group_names?.length && <p className="mt-1 truncate px-1 text-[10px] text-muted-foreground" title={job.group_names.join(', ')}>Access: {job.group_names.join(', ')}</p>}
     <div className="mt-auto flex items-center gap-2 border-t border-border/70 pt-2">
       <button type="button" onClick={onSelect} disabled={!routeSummary?.canTrace} aria-pressed={!!active} className="rounded-lg px-2 py-1 text-xs font-medium text-primary hover:bg-primary/10 disabled:text-muted-foreground disabled:opacity-50">{active ? 'Clear path' : 'View path'}</button>
-      <button type="button" onClick={() => onSettings?.(webhook ? 'webhooks' : 'schedules')} className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`Open settings for ${job.name}`} title="Open settings"><Settings className="h-4 w-4" /></button>
+      <button type="button" onClick={() => onSettings?.(webhook ? 'webhooks' : 'schedules')} className="ml-auto rounded-lg p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" aria-label={`Open settings for ${job.name}`} title={`Open ${webhook ? 'webhooks' : 'schedules'}`}><Settings className="h-4 w-4" /></button>
     </div>
     {routeSummary?.canTrace && <Handle type="source" position={Position.Bottom} className="!h-2 !w-2 !bg-muted-foreground" />}
   </article>

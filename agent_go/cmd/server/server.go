@@ -2586,6 +2586,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/variable-groups", api.handleGetVariableGroups).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/variable-groups", requireWorkflowWriteAccess(api.handleUpdateVariableGroups)).Methods("POST", "PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs", api.handleGetExecutionLogs).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/logs/webhook-payload", api.handleGetExecutionWebhookPayload).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")

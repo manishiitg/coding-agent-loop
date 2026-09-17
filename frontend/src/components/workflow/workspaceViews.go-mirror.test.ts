@@ -27,13 +27,14 @@ describe('primary workspace toolbar views', () => {
       'learnings',
       'knowledgebase',
       'database',
+      'webhooks',
       'files',
       'browser',
     ])
   })
 
-  it('folds the former webhook panel into schedules', () => {
+  it('maps the former API trigger id to the dedicated webhook view', () => {
     expect(WORKSPACE_VIEWS.map(view => view.id)).not.toContain('api-triggers')
-    expect(normalizeWorkspaceViewId('api-triggers')).toBe('schedules')
+    expect(normalizeWorkspaceViewId('api-triggers')).toBe('webhooks')
   })
 })

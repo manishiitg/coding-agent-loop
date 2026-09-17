@@ -34,7 +34,7 @@ import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'webhooks', 'schedules', 'execution-logs'])
 const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
@@ -554,7 +554,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${scheduleStatusDotClass}`} />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>{scheduleTooltip} · Webhooks</p></TooltipContent>
+                  <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
                 </Tooltip>
               </div>
           )}

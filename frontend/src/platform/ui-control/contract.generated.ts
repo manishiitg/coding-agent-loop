@@ -191,6 +191,14 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
+      "id": "email",
+      "label": "Email",
+      "actions": [
+        "open"
+      ],
+      "targets": []
+    },
+    {
       "id": "bots",
       "label": "Workflow bots",
       "actions": [

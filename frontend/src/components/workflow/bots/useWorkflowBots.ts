@@ -44,7 +44,7 @@ export type BotRouteTarget = {
   label: string
 }
 
-export function useWorkflowBots(workspacePath: string | null, target?: BotRouteTarget) {
+export function useWorkflowBots(workspacePath: string | null, target?: BotRouteTarget, section: 'bots' | 'email' | 'all' = 'all') {
   // ── Workflow identity ─────────────────────────────────────────────────────
   const workflows = useWorkflowManifestStore(state => state.workflows)
   const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
@@ -455,11 +455,15 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 
   useEffect(() => {
     void loadEmails()
-    void loadSlack()
-    void loadWaStatus()
-    void loadWaRouting()
-    void loadGmail()
-  }, [loadEmails, loadGmail, loadSlack, loadWaRouting, loadWaStatus])
+    if (section !== 'bots') {
+      void loadGmail()
+    }
+    if (section !== 'email') {
+      void loadSlack()
+      void loadWaStatus()
+      void loadWaRouting()
+    }
+  }, [section, loadEmails, loadGmail, loadSlack, loadWaRouting, loadWaStatus])
 
   // ── WhatsApp: status polling while the pairing screen is open ─────────────
   // Not yet paired → poll /status every 3s so a fresh QR (rotating every

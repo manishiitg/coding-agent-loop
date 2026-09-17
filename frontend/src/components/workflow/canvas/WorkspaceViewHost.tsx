@@ -248,6 +248,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
       case 'secrets':
       case 'browser':
       case 'llm':
+      case 'email':
       case 'bots':
         return <WorkflowCapabilitiesPanel section={view} workspacePath={workspacePath} />
       default:

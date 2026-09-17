@@ -29,6 +29,7 @@ import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_UI_PRESENTATION_VIEWS = {
@@ -98,16 +99,18 @@ async function restoreWorkRuntimeSelection(tabId: string, sessionId: string, wor
 
 function useWorkSessions() {
   const [sessions, setSessions] = useState<WorkSession[]>([])
-  const [selectedId, setSelectedId] = useState<string | null>(null)
+  const selectedId = useProductSurfaceStore(state => state.selectedWorkProjectId)
+  const setSelectedId = useProductSurfaceStore(state => state.setSelectedWorkProjectId)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
     const listed = await loadWorkSessions()
     setSessions(listed)
-    setSelectedId((current) => current && listed.some(item => item.id === current) ? current : listed[0]?.id ?? null)
+    const current = useProductSurfaceStore.getState().selectedWorkProjectId
+    setSelectedId(current && listed.some(item => item.id === current) ? current : listed[0]?.id ?? null)
     return listed
-  }, [])
+  }, [setSelectedId])
 
   useEffect(() => {
     let cancelled = false
@@ -115,7 +118,7 @@ function useWorkSessions() {
       .then((listed) => {
         if (cancelled) return
         setSessions(listed)
-        setSelectedId((current) => current ?? listed[0]?.id ?? null)
+        setSelectedId(useProductSurfaceStore.getState().selectedWorkProjectId ?? listed[0]?.id ?? null)
       })
       .catch((cause) => {
         if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not load projects.')
@@ -124,7 +127,7 @@ function useWorkSessions() {
         if (!cancelled) setLoading(false)
       })
     return () => { cancelled = true }
-  }, [])
+  }, [setSelectedId])
 
   const create = useCallback(async (title: string, description: string) => {
     const session = await createWorkSession(title, description)
@@ -488,6 +491,8 @@ export function WorkSurface() {
   const [workshopOpen, setWorkshopOpen] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
+  const pendingWorkView = useProductSurfaceStore(state => state.pendingWorkView)
+  const setPendingWorkView = useProductSurfaceStore(state => state.setPendingWorkView)
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
   const [enabledWorkspacePanels, setEnabledWorkspacePanels] = useState<Set<string> | undefined>()
   const splitLayoutRef = useRef<HTMLDivElement>(null)
@@ -509,6 +514,11 @@ export function WorkSurface() {
     setPanelOpen(true)
     setWorkspaceView(panel)
   }, [enabledWorkspacePanels])
+  useEffect(() => {
+    if (!pendingWorkView) return
+    openWorkPresentationView(pendingWorkView)
+    setPendingWorkView(null)
+  }, [openWorkPresentationView, pendingWorkView, setPendingWorkView])
   const workUIAdapter = useMemo<WorkspaceUIControlAdapter>(() => ({
     getView: () => workPresentationView(workspaceView),
     openView: openWorkPresentationView,

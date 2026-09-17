@@ -1,17 +1,18 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
-import { Activity, Layers, MessageSquare, Search } from 'lucide-react'
+import { Activity, Layers, MessageSquare, Search, Users } from 'lucide-react'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useModeStore } from '../stores/useModeStore'
 import { useChatStore } from '../stores'
 import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset, PredefinedPreset } from '../types/preset'
 import type { ActiveSessionInfo } from '../services/api-types'
-import { activateTab } from '../utils/activateTab'
 import { scopeQuickSwitcherToAgentWorks } from '../utils/quickSwitcherScope'
-import { openCanonicalActivitySession, openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
+import { openWorkflowPresetPage, pickWorkflowActiveSession, workflowSessionBotPlatform } from '../utils/workflowSessionRestore'
 import { runtimeHasBackgroundAgents, runtimeNeedsUserInput, sessionRuntimeStatus } from '../utils/runtimeActivity'
 import { hasIdleAliveCodingAgent, isVisibleActivitySession, nonWorkflowActivityTitle } from '../utils/activitySessions'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
+import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
+import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -55,7 +56,19 @@ interface ActiveWorkItem {
   mode: 'workflow' | 'multi-agent'
 }
 
-type QuickSwitcherItem = WorkflowItem | ChatTabItem | ActiveWorkItem
+interface CrewChatItem {
+  type: 'crew'
+  id: string
+  label: string
+  subtitle: string
+  isActive: boolean
+  lastAccessedAt: number
+  tabId: string
+  activeSession?: ActiveSessionInfo
+  hasLocalActivity: boolean
+}
+
+type QuickSwitcherItem = WorkflowItem | ChatTabItem | CrewChatItem | ActiveWorkItem
 
 const EMPTY_CHAT_TABS: Record<string, ChatTab> = {}
 const EMPTY_ACTIVE_SESSIONS: ActiveSessionInfo[] = []
@@ -73,6 +86,13 @@ const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
 }
 
 const activeSessionLabel = (session: ActiveSessionInfo): string => {
+  if (isWorkProductSession(session)) {
+    return session.current_execution_name ||
+      session.title ||
+      session.workspace_path?.split('/').filter(Boolean).pop() ||
+      session.query ||
+      'Crew work'
+  }
   if (isWorkflowSession(session)) {
     return session.workflow_label ||
       session.workflow_name ||
@@ -118,6 +138,7 @@ const workflowSessionMatchesPreset = (
 
 const itemTypeRank = (item: QuickSwitcherItem): number => {
   if (item.type === 'active') return 0
+  if (item.type === 'crew') return 1
   if (item.type === 'chat') return 1
   if (item.type === 'workflow') return 2
   return 3
@@ -159,6 +180,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
   const listRef = useRef<HTMLDivElement>(null)
 
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
+  const productSurface = useProductSurfaceStore(state => state.productSurface)
   const isWorkflowMode = selectedModeCategory === 'workflow'
   const isChatMode = selectedModeCategory === 'multi-agent'
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
@@ -181,15 +203,25 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     }
   }, [isOpen, initialQuery, workflowPresets])
 
-  // The shared chat store also contains other products. Scope every result
-  // source before grouping so excluded chats cannot reappear as active work.
+  // AgentWorks and Crew share one switcher while other product surfaces stay
+  // isolated. Stable product metadata, rather than workspace strings, owns
+  // Crew navigation.
   const allItems = useMemo<QuickSwitcherItem[]>(() => {
     if (!isOpen) return []
 
-    const { tabs: scopedTabs, sessions: scopedSessions } = scopeQuickSwitcherToAgentWorks(chatTabs, activeSessions)
-    const allTabs = Object.values(scopedTabs)
+    const { tabs: agentWorksTabs, sessions: agentWorksSessions } = scopeQuickSwitcherToAgentWorks(chatTabs, activeSessions)
+    const crewTabs = Object.fromEntries(
+      Object.entries(chatTabs).filter(([, tab]) => tab.metadata?.agentProfileId === 'work'),
+    )
+    const crewSessionIds = new Set(Object.values(crewTabs).map(tab => tab.sessionId).filter(Boolean))
+    const sharedSessions = activeSessions.filter(session =>
+      agentWorksSessions.some(candidate => candidate.session_id === session.session_id) ||
+      crewSessionIds.has(session.session_id) ||
+      isWorkProductSession(session),
+    )
+    const allTabs = { ...agentWorksTabs, ...crewTabs }
     const activeSessionsByID = new Map<string, ActiveSessionInfo>()
-    for (const session of scopedSessions.filter(isVisibleActivitySession)) {
+    for (const session of sharedSessions.filter(isVisibleActivitySession)) {
       activeSessionsByID.set(session.session_id, session)
     }
     const visibleActiveSessions = Array.from(activeSessionsByID.values())
@@ -199,7 +231,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return tab.isStreaming || tab.isSyntheticTurn ? ' · builder busy' : ' · builder idle'
     }
 
-    const chatItems: ChatTabItem[] = Object.values(scopedTabs)
+    const chatItems: ChatTabItem[] = Object.values(agentWorksTabs)
       .filter(tab => tab.metadata?.mode === 'multi-agent' && !tab.metadata?.isOrganizationAssistant)
       .sort((a, b) => a.createdAt - b.createdAt)
       .map(tab => {
@@ -210,7 +242,27 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           id: `chat:${tab.tabId}`,
           label: tab.name,
           subtitle: `Chat · ${streamingLabel}${builderStateSuffix(tab)}${activeSessionSuffix(activeSession)}`,
-          isActive: isChatMode && tab.tabId === activeTabId,
+          isActive: productSurface === 'agentworks' && isChatMode && tab.tabId === activeTabId,
+          lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
+          tabId: tab.tabId,
+          activeSession,
+          hasLocalActivity: isLocalActivityFallbackTab(tab),
+        }
+      })
+
+    const crewItems: CrewChatItem[] = Object.values(crewTabs)
+      .filter(tab => !tab.metadata?.isScheduledRun && !tab.metadata?.isBotRun && !tab.metadata?.isViewOnly)
+      .sort((a, b) => (b.lastAccessedAt || b.createdAt || 0) - (a.lastAccessedAt || a.createdAt || 0))
+      .map(tab => {
+        const activeSession = tab.sessionId ? visibleActiveSessions.find(session => session.session_id === tab.sessionId) : undefined
+        const project = tab.metadata?.agentProfileProjectTitle || 'Crew'
+        const role = tab.metadata?.agentProfileBuilder ? 'Builder' : 'Chat'
+        return {
+          type: 'crew' as const,
+          id: `crew:${tab.tabId}`,
+          label: tab.metadata?.agentProfileBuilder ? project : tab.name,
+          subtitle: `Crew · ${project} · ${role}${builderStateSuffix(tab)}${activeSessionSuffix(activeSession)}`,
+          isActive: productSurface === 'work' && tab.tabId === activeTabId,
           lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
           tabId: tab.tabId,
           activeSession,
@@ -219,23 +271,27 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       })
 
     const workflowItems: WorkflowItem[] = workflowPresets
-      .filter(p => p.selectedFolder?.filepath)
-      .map(p => {
-        const matchingActiveSessions = visibleActiveSessions.filter(session => workflowSessionMatchesPreset(session, p, scopedTabs))
-        const activeSession = pickWorkflowActiveSession(matchingActiveSessions, p, scopedTabs)
-        const workflowTab = allTabs.find(tab => tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === p.id)
+      .filter(preset => preset.selectedFolder?.filepath)
+      .map(preset => {
+        const matchingActiveSessions = visibleActiveSessions.filter(session =>
+          !isWorkProductSession(session) && workflowSessionMatchesPreset(session, preset, agentWorksTabs),
+        )
+        const activeSession = pickWorkflowActiveSession(matchingActiveSessions, preset, agentWorksTabs)
+        const workflowTab = Object.values(agentWorksTabs).find(tab =>
+          tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === preset.id,
+        )
         const activeCountSuffix = matchingActiveSessions.length > 1 ? ` · ${matchingActiveSessions.length} active runs` : ''
         return {
           type: 'workflow' as const,
-          id: `workflow:${p.id}`,
-          label: p.label,
-          subtitle: `Automation · ${p.selectedFolder!.filepath}${builderStateSuffix(workflowTab)}${activeSessionSuffix(activeSession)}${activeCountSuffix}`,
-          isActive: isWorkflowMode && p.id === activePresetId,
-          lastAccessedAt: recentPresetAccessedAt[p.id] || (() => {
-            const recentIndex = recentPresetOrder.indexOf(p.id)
+          id: `workflow:${preset.id}`,
+          label: preset.label,
+          subtitle: `Automation · ${preset.selectedFolder!.filepath}${builderStateSuffix(workflowTab)}${activeSessionSuffix(activeSession)}${activeCountSuffix}`,
+          isActive: productSurface === 'agentworks' && isWorkflowMode && preset.id === activePresetId,
+          lastAccessedAt: recentPresetAccessedAt[preset.id] || (() => {
+            const recentIndex = recentPresetOrder.indexOf(preset.id)
             return recentIndex >= 0 ? 1_000_000 - recentIndex : 0
           })(),
-          preset: p,
+          preset,
           activeSession,
           hasLocalActivity: !!workflowTab && isLocalActivityFallbackTab(workflowTab),
         }
@@ -243,25 +299,26 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
     const activeItems: ActiveWorkItem[] = visibleActiveSessions
       .filter(session => {
-        const tab = findTabForSession(scopedTabs, session.session_id)
+        const tab = findTabForSession(allTabs, session.session_id)
         if (tab && !tab.metadata?.isOrganizationAssistant) return false
         if (
-          isWorkflowSession(session) &&
-          workflowPresets.some(preset => workflowSessionMatchesPreset(session, preset, scopedTabs))
+          !isWorkProductSession(session) && isWorkflowSession(session) &&
+          workflowPresets.some(preset => workflowSessionMatchesPreset(session, preset, agentWorksTabs))
         ) return false
         return true
       })
       .map(session => {
-        const tab = findTabForSession(scopedTabs, session.session_id)
-        const workflow = isWorkflowSession(session)
+        const tab = findTabForSession(allTabs, session.session_id)
+        const crew = isWorkProductSession(session)
+        const workflow = !crew && isWorkflowSession(session)
         const status = activeSessionStatusLabel(session)
         const current = session.current_execution_name ? ` · ${session.current_execution_name}` : ''
         return {
           type: 'active' as const,
           id: `active:${session.session_id}`,
           label: activeSessionLabel(session),
-          subtitle: `${workflow ? 'Active automation' : 'Active chat'} · ${status}${current} · ${sessionShortId(session.session_id)}`,
-          isActive: !!tab && tab.tabId === activeTabId,
+          subtitle: `${crew ? 'Active Crew work' : workflow ? 'Active automation' : 'Active chat'} · ${status}${current} · ${sessionShortId(session.session_id)}`,
+          isActive: !!tab && tab.tabId === activeTabId && productSurface === (crew ? 'work' : 'agentworks'),
           lastAccessedAt: tab?.lastAccessedAt || tab?.createdAt || Date.parse(session.last_activity || session.created_at || '') || 0,
           session,
           tabId: tab?.tabId,
@@ -278,28 +335,29 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return a.label.localeCompare(b.label)
     })
 
-    return [...activeItems, ...chatItems, ...workflowItems].sort((a, b) => {
+    return [...activeItems, ...crewItems, ...chatItems, ...workflowItems].sort((a, b) => {
       if (a.isActive !== b.isActive) return a.isActive ? -1 : 1
       if (a.lastAccessedAt !== b.lastAccessedAt) return b.lastAccessedAt - a.lastAccessedAt
       if (a.type !== b.type) return itemTypeRank(a) - itemTypeRank(b)
       return a.label.localeCompare(b.label)
     })
-  }, [isOpen, isWorkflowMode, isChatMode, activePresetId, chatTabs, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
+  }, [isOpen, isWorkflowMode, isChatMode, productSurface, activePresetId, chatTabs, activeSessions, activeTabId, workflowPresets, recentPresetOrder, recentPresetAccessedAt])
 
   // Filter and sort
   const filteredItems = useMemo<QuickSwitcherItem[]>(() => {
     const rawQuery = query.toLowerCase().trim()
     if (!rawQuery) return allItems
 
-    const scopeMatch = rawQuery.match(/^@(active|workflows?|chats?|tabs)\s*/)
+    const scopeMatch = rawQuery.match(/^@(active|workflows?|chats?|tabs|crew)\s*/)
     const scope = scopeMatch?.[1] || null
     const q = scopeMatch ? rawQuery.slice(scopeMatch[0].length).trim() : rawQuery
     const scoped = scope
       ? allItems.filter(item => {
           if (scope === 'active') return itemHasActiveWork(item)
           if (scope === 'workflow' || scope === 'workflows') return item.type === 'workflow'
+          if (scope === 'crew') return item.type === 'crew' || (item.type === 'active' && isWorkProductSession(item.session))
           if (scope === 'chat' || scope === 'chats') return item.type === 'chat'
-          return item.type === 'chat' || item.type === 'workflow'
+          return item.type === 'chat' || item.type === 'workflow' || item.type === 'crew'
         })
       : allItems
 
@@ -359,7 +417,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     if (item.type === 'active') {
       // Shared path with the header activity monitor so opening the same session
       // behaves identically from either surface.
-      await openCanonicalActivitySession(item.session, {
+      await openGlobalActivitySession(item.session, {
         title: item.label,
         source: 'quick-switcher',
       })
@@ -367,9 +425,9 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       return
     }
 
-    if (item.type === 'chat') {
+    if (item.type === 'chat' || item.type === 'crew') {
       console.log(`%c[QuickSwitcher] Switching to chat tab: ${item.label} (${item.tabId})`, 'color: #FF9800; font-weight: bold')
-      activateTab(item.tabId)
+      openGlobalTab(item.tabId)
       requestChatScrollToBottom()
       onClose()
       return
@@ -379,6 +437,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     console.log(`%c[QuickSwitcher] Switching to workflow: ${item.label?.slice(0,30)} (${item.id?.slice(0,8)})`, 'color: #FF9800; font-weight: bold')
     console.time('[QuickSwitcher] workflow-switch-total')
 
+    useProductSurfaceStore.getState().setProductSurface('agentworks')
     await openWorkflowPresetPage(item.preset, {
       activeSession: item.activeSession,
       title: item.label,
@@ -409,11 +468,11 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
 
   if (!isOpen) return null
 
-  const placeholder = 'Search automations, chats, or active work...'
+  const placeholder = 'Search Crew, automations, chats, or active work...'
   const emptyText = query ? 'No matching items' : 'No switchable items available'
   return (
     <div
-      className="absolute inset-0 z-50 flex items-start justify-center pt-[20vh]"
+      className="fixed inset-0 z-50 flex items-start justify-center pt-[20vh]"
       onClick={onClose}
     >
       {/* Backdrop */}
@@ -452,6 +511,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
               const isSelected = index === selectedIndex
               const ItemIcon = item.type === 'workflow'
                 ? Layers
+                : item.type === 'crew'
+                  ? Users
                 : item.type === 'active'
                   ? Activity
                   : MessageSquare
@@ -508,7 +569,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
               <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↑↓</kbd> navigate</span>
               <span><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">↵</kbd> switch</span>
             </div>
-            <span className="hidden sm:inline flex-shrink-0">@active @workflows @chats</span>
+            <span className="hidden sm:inline flex-shrink-0">@active @crew @workflows @chats</span>
             <span className="flex-shrink-0"><kbd className="px-1 py-0.5 bg-gray-200 dark:bg-gray-600 rounded text-[10px]">esc</kbd> close</span>
           </div>
         </div>

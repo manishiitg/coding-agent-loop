@@ -822,3 +822,23 @@ was deployed to RTS as `c058841-20260917162036`. The production build, release
 asset checks, idle drain, all three services, active release symlink, and public
 agent health passed after activation. User acceptance of a restored Crew turn,
 bot resume, and Dashboard share link remains pending.
+
+### Shared global activity and Ctrl+K across AgentWorks and Crew
+
+AgentWorks and Crew previously mounted separate top-bar shells even though they
+share the same authenticated chat store and header-summary feed. `Ctrl+K` was
+explicitly disabled outside AgentWorks, its switcher removed every product tab,
+and Crew's reduced top bar hid the global activity monitor. Clicking an
+AgentWorks activity while another product was visible also activated a hidden
+tab without changing product surfaces.
+
+The application now mounts one Quick Switcher above the AgentWorks/Crew surface
+boundary and keeps the same Global Activity Monitor visible in both top bars.
+The switcher groups retained Crew chats alongside AgentWorks chats, automations,
+and active work, with an `@crew` filter. A shared navigation router changes the
+product surface before activating a tab, persists the selected Crew project,
+and routes tabless Crew schedules or bots into the corresponding project view
+without creating automatic chat tabs. Other dedicated product surfaces remain
+outside this shared shell. Backend session ownership remains the authenticated
+user boundary; frontend navigation uses stable project and conversation
+identity.

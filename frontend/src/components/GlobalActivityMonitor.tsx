@@ -4,11 +4,9 @@ import { AlertCircle, Clock, Loader2, Pause } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
-import { activateTab } from '../utils/activateTab'
 import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import {
   isScheduledWorkflowSession,
-  openCanonicalActivitySession,
 } from '../utils/workflowSessionRestore'
 import { useAppStore } from '../stores/useAppStore'
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
@@ -22,6 +20,7 @@ import {
   visibleActivitySessions,
 } from '../utils/globalActivityMonitorStatus'
 import { workflowTriggerLabel, isInternalChildSession } from '../utils/workflowSessionKinds'
+import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
 
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 
@@ -172,7 +171,7 @@ export const GlobalActivityMonitor: React.FC = () => {
         parentSessionId: session.parent_session_id,
         sessionKind: session.session_kind,
       }) &&
-      !isProductProjectSession(session) &&
+      (!isProductProjectSession(session) || isWorkProductSession(session)) &&
       isVisibleActivitySession(session)
     )
   }, [activeSessionsCache])
@@ -202,7 +201,7 @@ export const GlobalActivityMonitor: React.FC = () => {
   const fallbackBuilderTabs = useMemo(
     () => Object.values(chatTabs).filter(tab =>
       tab.tabId !== activeTabId &&
-      !tab.metadata?.agentProfileId &&
+      (!tab.metadata?.agentProfileId || tab.metadata.agentProfileId === 'work') &&
       isLocalActivityFallbackTab(tab) &&
       !activityKeysForTab(tab).some(key => visibleActivityKeys.has(key))
     ),
@@ -276,7 +275,7 @@ export const GlobalActivityMonitor: React.FC = () => {
     // A workflow pill represents the workflow, not whichever reviewer/step
     // most recently emitted activity. Resolve the preset again and let the
     // canonical workflow navigation path choose its root main-agent session.
-    await openCanonicalActivitySession(session, {
+    await openGlobalActivitySession(session, {
       title: sessionTitle(session, undefined, currentWorkflowPresetName),
       source: 'global-activity-monitor',
     })
@@ -308,7 +307,7 @@ export const GlobalActivityMonitor: React.FC = () => {
               {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
               <button
                 type="button"
-                onClick={() => activateTab(item.tab.tabId)}
+                onClick={() => openGlobalTab(item.tab.tabId)}
                 className={pillClasses}
                 title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
               >

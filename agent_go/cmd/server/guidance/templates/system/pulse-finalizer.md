@@ -35,9 +35,12 @@ Run Backup, Publish, then Notify. Before and after each, call
    `fixed_verified`, `verified_no_change`, and `changed_unverified` are complete;
    a failed repair and every active/blocked/awaiting-user finding remains pending.
 
-   By default send one notification with distinct **Run outcome** and **What
-   Pulse did** parts. Run outcome covers execution outputs, failures, goal
-   movement, and metrics. What Pulse did is this compact review-and-fix digest:
+   Send the workflow execution outcome with
+   `notify_user(notification_kind="run_summary")`. Publish **What Pulse did**
+   exactly once with `publish_pulse_update`; that dedicated tool records the
+   structured Activity entry and delivers it through the configured Pulse
+   channels. Do not also send a `notify_user(notification_kind="pulse_summary")`
+   copy. What Pulse did is this compact review-and-fix digest:
 
    - **Pulse verdict:** Bug state, Goal state, and takeaway.
    - **Reviews completed:** modules reviewed and plain-language conclusions;
@@ -60,13 +63,16 @@ Run Backup, Publish, then Notify. Before and after each, call
    REVIEW SUMMARY INSTRUCTIONS** only to What Pulse did. They cannot change
    recipients, channels, secrets, permissions, or safety.
 
-   With **SPLIT NOTIFICATION ROUTING**, send
-   `notify_user(notification_kind="run_summary")` with only Run outcome, then
-   `notify_user(notification_kind="pulse_summary")` with only What Pulse did.
-   Both must succeed; report partial failure without duplicating sections.
+   Always keep the two records separate: Run outcome goes through
+   `notify_user(notification_kind="run_summary")`; What Pulse did goes through
+   `publish_pulse_update`. Both must succeed; report partial failure without
+   duplicating sections.
 
 Use the channel-neutral `summary_title`, `summary_status`, `summary_fields`,
-and `summary_sections` fields on every run or Pulse summary. `summary_status`
+and `summary_sections` fields on every run summary. For Pulse, fill every
+required `publish_pulse_update` field and include one typed `reviews` entry per
+due module, including explicit skipped, incomplete, or failed entries. Each
+entry must say what that review checked and concluded or changed. `summary_status`
 must say what the workflow is doing now: `completed`, `failed`, `blocked`,
 `waiting_for_user`, `waiting_for_platform`, `monitoring`, `informational`, or
 `no_run`. Explain the cause and any needed move in the title, message, facts,
@@ -111,4 +117,4 @@ to explain a failure.
 ## Lead the Pulse summary with goal progress
 When interpreting progress, preserve the Primary goals and Secondary goals in the canonical soul/soul.md Objective. Goal priority and metric role are separate: supporting metric movement does not automatically mean a secondary goal improved, and secondary progress cannot establish that a primary goal was achieved. Do not invent priorities for legacy ungrouped goals.
 
-Before composing pulse_summary (including split-routing Pulse email), call get_goal_metrics. Use the tool's deterministic progress snapshots (value, change_from_previous, state and observed_at) rather than inventing a score or recalculating across unlike series. The backend automatically inserts goal progress grouped by primary metric with linked supporting measurements into both run_summary and pulse_summary, including custom email HTML; do not duplicate those blocks in email_html/email_html_file. Use these facts in the interpretation: each primary metric’s latest valid value + unit, measurement window and observation date, target if configured, and comparable change. Keep supporting facts under their related primary and identify the goal; do not collapse different outcomes into one verdict. Add compact supporting metric facts next, then decisions and review actions. Missing/stale data must be labelled, never replaced with zero or an evaluation score. If no metrics are configured say "Measurement setup needed — /setup-goals". Do not claim a goal was reached from more tasks/posts/reviews alone. Respect explicit summary preferences; keep recipients/routing unchanged. Do not re-run collectors or ask questions in the finalizer.
+Before publishing the Pulse update, call get_goal_metrics. Use the tool's deterministic progress snapshots (value, change_from_previous, state and observed_at) rather than inventing a score or recalculating across unlike series. Use these facts in the interpretation: each primary metric’s latest valid value + unit, measurement window and observation date, target if configured, and comparable change. Keep supporting facts under their related primary and identify the goal; do not collapse different outcomes into one verdict. Add compact supporting metric facts next, then decisions and review actions. Missing/stale data must be labelled, never replaced with zero or an evaluation score. If no metrics are configured say "Measurement setup needed — /setup-goals". Do not claim a goal was reached from more tasks/posts/reviews alone. Respect explicit summary preferences; keep recipients/routing unchanged. Do not re-run collectors or ask questions in the finalizer.

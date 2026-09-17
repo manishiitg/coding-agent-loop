@@ -29,6 +29,7 @@ type OrgDashboardNotification struct {
 	Status        string                       `json:"status"`
 	Route         string                       `json:"route,omitempty"`
 	Message       string                       `json:"message"`
+	Reviews       []PulseReviewSummary         `json:"reviews,omitempty"`
 	Fields        []NotificationSummaryField   `json:"fields,omitempty"`
 	Sections      []NotificationSummarySection `json:"sections,omitempty"`
 	Routes        []NotificationRouteSummary   `json:"routes,omitempty"`
@@ -104,6 +105,14 @@ func (c *OrgDashboardConnector) SendUserNotification(ctx context.Context, messag
 	if err != nil {
 		return "", err
 	}
+	reviews := summary.Reviews
+	if reviews == nil {
+		reviews = []PulseReviewSummary{}
+	}
+	reviewsJSON, err := json.Marshal(reviews)
+	if err != nil {
+		return "", err
+	}
 	// Keep message complete for existing reports that read only that column.
 	// New views use the lead plus typed route entries without duplicate prose.
 	summaryText := ""
@@ -125,9 +134,9 @@ func (c *OrgDashboardConnector) SendUserNotification(ctx context.Context, messag
 	}
 	if _, err := db.ExecContext(ctx, `
 		INSERT INTO org_dashboard_notifications
-		(id, notification_kind, title, status, message, fields_json, sections_json, route_summaries_json, summary_text, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		id, kind, strings.TrimSpace(summary.Title), normalizedSummaryStatus(summary.Status), strings.TrimSpace(message), string(fieldsJSON), string(sectionsJSON), string(routesJSON), summaryText, now,
+		(id, notification_kind, title, status, message, fields_json, sections_json, route_summaries_json, reviews_json, summary_text, created_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		id, kind, strings.TrimSpace(summary.Title), normalizedSummaryStatus(summary.Status), strings.TrimSpace(message), string(fieldsJSON), string(sectionsJSON), string(routesJSON), string(reviewsJSON), summaryText, now,
 	); err != nil {
 		return "", fmt.Errorf("persist org dashboard notification for %s: %w", workspacePath, err)
 	}
@@ -224,6 +233,7 @@ func ensureOrgDashboardSchema(ctx context.Context, db *sql.DB) error {
 	}
 	for _, column := range []struct{ name, ddl string }{
 		{"route_summaries_json", `ALTER TABLE org_dashboard_notifications ADD COLUMN route_summaries_json TEXT NOT NULL DEFAULT '[]'`},
+		{"reviews_json", `ALTER TABLE org_dashboard_notifications ADD COLUMN reviews_json TEXT NOT NULL DEFAULT '[]'`},
 		{"summary_text", `ALTER TABLE org_dashboard_notifications ADD COLUMN summary_text TEXT NOT NULL DEFAULT ''`},
 	} {
 		var exists int
@@ -270,7 +280,7 @@ func ListOrgDashboardNotifications(ctx context.Context, rawWorkspacePath string,
 	// Read the bounded retained store, rather than deriving per-route latest
 	// from the caller's recent limit (which could contain only a busy route).
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, notification_kind, title, status, message, fields_json, sections_json, route_summaries_json, summary_text, created_at
+		SELECT id, notification_kind, title, status, message, fields_json, sections_json, route_summaries_json, reviews_json, summary_text, created_at
 		FROM org_dashboard_notifications
 		ORDER BY created_at DESC, id DESC`)
 	if err != nil {
@@ -280,9 +290,9 @@ func ListOrgDashboardNotifications(ctx context.Context, rawWorkspacePath string,
 	byRoute := map[[3]string]int{}
 	for rows.Next() {
 		var item OrgDashboardNotification
-		var fieldsJSON, sectionsJSON, routesJSON, summaryText string
+		var fieldsJSON, sectionsJSON, routesJSON, reviewsJSON, summaryText string
 		item.WorkspacePath = workspacePath
-		if err := rows.Scan(&item.ID, &item.Kind, &item.Title, &item.Status, &item.Message, &fieldsJSON, &sectionsJSON, &routesJSON, &summaryText, &item.CreatedAt); err != nil {
+		if err := rows.Scan(&item.ID, &item.Kind, &item.Title, &item.Status, &item.Message, &fieldsJSON, &sectionsJSON, &routesJSON, &reviewsJSON, &summaryText, &item.CreatedAt); err != nil {
 			return result, err
 		}
 		_ = json.Unmarshal([]byte(fieldsJSON), &item.Fields)
@@ -291,6 +301,9 @@ func ListOrgDashboardNotifications(ctx context.Context, rawWorkspacePath string,
 		_ = json.Unmarshal([]byte(sectionsJSON), &item.Sections)
 		if err := json.Unmarshal([]byte(routesJSON), &item.Routes); err != nil {
 			return result, fmt.Errorf("read route summaries for notification %s: %w", item.ID, err)
+		}
+		if err := json.Unmarshal([]byte(reviewsJSON), &item.Reviews); err != nil {
+			return result, fmt.Errorf("read Pulse reviews for notification %s: %w", item.ID, err)
 		}
 		if len(item.Routes) > 0 && summaryText != "" {
 			item.Message = summaryText

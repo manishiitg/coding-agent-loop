@@ -125,6 +125,69 @@ func TestNotifyUserDefaultsToBackendOwnedRichSlack(t *testing.T) {
 	}
 }
 
+func TestPublishPulseUpdateExposesTypedReviews(t *testing.T) {
+	var description string
+	var parameters string
+	for _, tool := range CreateHumanTools() {
+		if tool.Function != nil && tool.Function.Name == "publish_pulse_update" {
+			description = tool.Function.Description
+			raw, err := json.Marshal(tool.Function.Parameters)
+			if err != nil {
+				t.Fatalf("marshal publish_pulse_update parameters: %v", err)
+			}
+			parameters = string(raw)
+			break
+		}
+	}
+	for _, want := range []string{"typed result", `"reviews"`, `"module"`, `"issues_found"`, `"fixes_applied"`, `"verification"`, `"summary_routes"`} {
+		if !strings.Contains(description+parameters, want) {
+			t.Fatalf("publish_pulse_update contract missing %q:\ndescription=%s\nparameters=%s", want, description, parameters)
+		}
+	}
+}
+
+func TestPublishPulseUpdateDelegatesDeliveryWithStructuredReview(t *testing.T) {
+	manager := services.GetNotificationManager()
+	connector := &testUserNotificationConnector{name: "pulse_test", ch: make(chan *services.NotificationDestination, 1)}
+	manager.RegisterConnector(connector)
+	t.Cleanup(func() { manager.UnregisterConnector("pulse_test") })
+
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{WorkspacePath: "Workflow/demo"})
+	_, err := handlePublishPulseUpdate(ctx, map[string]interface{}{
+		"title":   "Pulse repaired one issue",
+		"status":  "monitoring",
+		"summary": "The repair is complete and the next run will confirm it remains healthy.",
+		"reviews": []interface{}{map[string]interface{}{
+			"module": "technical_review", "label": "Technical review", "status": "fixed",
+			"summary": "Corrected the balance calculation.", "issues_found": float64(1),
+			"fixes_applied": float64(1), "verification": "monitoring",
+		}},
+		"issues_found":       []interface{}{"Balance calculation used the wrong source."},
+		"fixed_by_pulse":     []interface{}{"Corrected the source and reran the check."},
+		"still_pending":      []interface{}{},
+		"decisions_required": []interface{}{},
+		"operations":         []interface{}{"Backup completed."},
+	})
+	if err != nil {
+		t.Fatalf("handlePublishPulseUpdate: %v", err)
+	}
+	select {
+	case dest := <-connector.ch:
+		if dest.Content == nil || dest.Content.Summary == nil {
+			t.Fatalf("missing structured summary: %#v", dest)
+		}
+		summary := dest.Content.Summary
+		if summary.Kind != "pulse_summary" || len(summary.Reviews) != 1 {
+			t.Fatalf("unexpected summary: %#v", summary)
+		}
+		if got := summary.Reviews[0]; got.Module != "technical_review" || got.Status != "fixed" || got.FixesApplied != 1 {
+			t.Fatalf("unexpected review: %#v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("publish_pulse_update did not use notification delivery")
+	}
+}
+
 func TestNotifyUserExposesSingleHTMLBodyForGmail(t *testing.T) {
 	manager := services.GetNotificationManager()
 	manager.RegisterConnector(&testUserNotificationConnector{name: "gmail", ch: make(chan *services.NotificationDestination, 1)})

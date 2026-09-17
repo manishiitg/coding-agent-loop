@@ -12,6 +12,7 @@ import (
 )
 
 type testBotConnector struct {
+	capabilities    *ChannelCapabilities
 	name            string
 	supportsThreads bool
 	mu              sync.Mutex // guards sent; every other field here is only ever touched single-threaded
@@ -64,7 +65,12 @@ func (c *testBotConnector) IsEnabled() bool {
 func (c *testBotConnector) SendNotification(context.Context, string, string, string, *ButtonOptions, *NotificationDestination) (string, error) {
 	return "", nil
 }
-func (c *testBotConnector) SupportsThreads() bool { return c.supportsThreads }
+func (c *testBotConnector) Capabilities() ChannelCapabilities {
+	if c.capabilities != nil {
+		return *c.capabilities
+	}
+	return ChannelCapabilities{Threads: c.supportsThreads, MessageEdits: true, StreamingReplies: true, Reactions: true, MessageDeletion: true, ProgressUpdates: true, WorkflowProgress: true}
+}
 func (c *testBotConnector) StartListening(context.Context) error {
 	return nil
 }

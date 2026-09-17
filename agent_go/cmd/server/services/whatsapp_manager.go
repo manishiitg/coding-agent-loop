@@ -142,7 +142,9 @@ func NewWhatsAppServiceManager(baseDir string) *WhatsAppServiceManager {
 
 func (m *WhatsAppServiceManager) Name() string { return "whatsapp" }
 
-func (m *WhatsAppServiceManager) SupportsThreads() bool { return false }
+func (m *WhatsAppServiceManager) Capabilities() ChannelCapabilities {
+	return ChannelCapabilities{WorkflowProgress: true}
+}
 
 func (m *WhatsAppServiceManager) IsEnabled() bool {
 	m.mu.RLock()

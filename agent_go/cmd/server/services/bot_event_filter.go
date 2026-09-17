@@ -55,7 +55,6 @@ type BotEventFilter struct {
 	completionReceived  bool   // set when unified_completion, agent_end, or conversation_end arrives
 	sessionFailed       bool   // authoritative main-level error completion
 	sessionDone         bool   // idempotency guard — ensures onSessionDone fires at most once
-	workflowStepStarted bool   // true once a workflow step breadcrumb was sent
 	baseHierarchy       int    // the minimum hierarchy level seen — treated as "main" level
 	baseHierarchySet    bool   // true once baseHierarchy has been calibrated
 	lastActivity        string // human-friendly description of current activity
@@ -63,7 +62,7 @@ type BotEventFilter struct {
 	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
 	lastErrorText       string // prevents duplicate error/completion notifications
 	lastMainText        string // last main-level text sent to the bot thread this turn
-	streamingMessageID  string // Slack message timestamp for the in-place streamed reply
+	streamingMessageID  string // channel message ID for the in-place streamed reply
 	streamingText       string // accumulated clean assistant text for the current streamed reply
 	streamingSentText   string // last accumulated text actually visible in Slack
 	lastStreamingUpdate time.Time
@@ -229,14 +228,12 @@ func (f *BotEventFilter) Start(ctx context.Context, subscriber BotEventSubscribe
 			f.mu.Lock()
 			done := f.sessionDone
 			awaiting := f.awaitingInput
-			whatsApp := strings.EqualFold(f.threadID.Platform, "whatsapp")
-			workflowStepOnly := f.isWhatsAppWorkflowStepOnlyLocked()
 			activity := f.lastActivity
 			toolCount := f.toolCallCount
 			pendingDel := f.pendingDelegations
 			f.mu.Unlock()
 			// Only send heartbeat if: session active, events flowing recently, and no message sent recently
-			if !done && !awaiting && !whatsApp && !workflowStepOnly && !lastEventTime.IsZero() &&
+			if !done && !awaiting && f.capabilities().ProgressUpdates && !lastEventTime.IsZero() &&
 				time.Since(lastEventTime) < 60*time.Second &&
 				time.Since(lastSendTime) > 20*time.Second {
 				msg := f.buildHeartbeatMessage(activity, toolCount, pendingDel, heartbeatCount)
@@ -522,23 +519,18 @@ func (f *BotEventFilter) classifyBotNotification(event BotEventData) BotNotifica
 	return BotNotifyNone
 }
 
-func (f *BotEventFilter) isWhatsAppWorkflowStepOnlyLocked() bool {
-	return strings.EqualFold(f.threadID.Platform, "whatsapp") && f.workflowStepStarted
+func (f *BotEventFilter) capabilities() ChannelCapabilities {
+	if f.connector == nil {
+		return ChannelCapabilities{}
+	}
+	return f.connector.Capabilities()
 }
 
 func (f *BotEventFilter) suppressWorkflowRuntimeChatter(event BotEventData) bool {
 	f.mu.Lock()
-	sendFullDetails := f.sendFullDetails
+	full := f.sendFullDetails
 	f.mu.Unlock()
-	if sendFullDetails {
-		return false
-	}
-	return f.isSlackOrWhatsApp() && f.isWorkflowScopedEvent(event)
-}
-
-func (f *BotEventFilter) isSlackOrWhatsApp() bool {
-	return strings.EqualFold(f.threadID.Platform, "slack") ||
-		strings.EqualFold(f.threadID.Platform, "whatsapp")
+	return f.isWorkflowScopedEvent(event) && (!f.capabilities().WorkflowProgress || !full)
 }
 
 func (f *BotEventFilter) isWorkflowScopedEvent(event BotEventData) bool {
@@ -789,7 +781,6 @@ func (f *BotEventFilter) formatOrchestratorAgentStart(event BotEventData) string
 		return ""
 	}
 	f.startedAgents[key] = true
-	f.workflowStepStarted = true
 	f.lastActivity = fmt.Sprintf("Step started: %s", displayName)
 	f.mu.Unlock()
 
@@ -1240,10 +1231,10 @@ func (f *BotEventFilter) formatGenerationEnd(event BotEventData) string {
 	return content
 }
 
-var botSlackStreamUpdateInterval = 1200 * time.Millisecond
+var botStreamUpdateInterval = 1200 * time.Millisecond
 
 func (f *BotEventFilter) sendStreamingChunk(ctx context.Context, event BotEventData) bool {
-	if !strings.EqualFold(f.threadID.Platform, "slack") {
+	if caps := f.capabilities(); !caps.StreamingReplies || !caps.MessageEdits {
 		return false
 	}
 	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
@@ -1275,7 +1266,7 @@ func (f *BotEventFilter) sendStreamingChunk(ctx context.Context, event BotEventD
 	}
 	messageID := f.streamingMessageID
 	f.streamingText = nextText
-	if messageID != "" && time.Since(f.lastStreamingUpdate) < botSlackStreamUpdateInterval {
+	if messageID != "" && time.Since(f.lastStreamingUpdate) < botStreamUpdateInterval {
 		f.mu.Unlock()
 		return false
 	}
@@ -1528,22 +1519,20 @@ func (f *BotEventFilter) buildShareableURL(filePath string) string {
 	return url
 }
 
-// Slack progress is temporary UI, not conversation history. Other connectors
-// need no deletion API; use this optional capability only for Slack.
-type botProgressMessageDeleter interface {
-	DeleteMessage(context.Context, ThreadID, string) error
-}
-
 func (f *BotEventFilter) sendProgressMessage(ctx context.Context, text string) {
 	f.progressMu.Lock()
 	defer f.progressMu.Unlock()
 	f.mu.Lock()
 	inactive := f.sessionDone || f.awaitingInput
 	f.mu.Unlock()
-	if inactive || f.connector == nil {
+	caps := f.capabilities()
+	if inactive || !caps.ProgressUpdates || (!caps.MessageEdits && !caps.MessageDeletion) || f.connector == nil {
 		return
 	}
 	if f.progressMessageID != "" {
+		if !caps.MessageEdits {
+			return
+		}
 		if err := f.connector.UpdateMessage(ctx, f.threadID, f.progressMessageID, text); err != nil {
 			log.Printf("[BOT_FILTER] Failed to update progress message: %v", err)
 		}
@@ -1567,12 +1556,15 @@ func (f *BotEventFilter) clearProgressMessage(fallback string) {
 	f.progressMessageID = ""
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if deleter, ok := f.connector.(botProgressMessageDeleter); ok && strings.EqualFold(f.threadID.Platform, "slack") {
+	if deleter, ok := f.connector.(BotMessageDeleter); ok && f.capabilities().MessageDeletion {
 		if err := deleter.DeleteMessage(ctx, f.threadID, id); err == nil {
 			return
 		} else {
 			log.Printf("[BOT_FILTER] Failed to remove progress message: %v", err)
 		}
+	}
+	if !f.capabilities().MessageEdits {
+		return
 	}
 	if err := f.connector.UpdateMessage(ctx, f.threadID, id, fallback); err != nil {
 		log.Printf("[BOT_FILTER] Failed to finalize progress message: %v", err)

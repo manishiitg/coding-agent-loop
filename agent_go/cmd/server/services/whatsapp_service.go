@@ -157,9 +157,9 @@ func (w *WhatsAppService) IsEnabled() bool {
 	return w.conn != nil && w.conn.Started()
 }
 
-// SupportsThreads returns false: WhatsApp has no Slack-style threads. Every
-// message from a JID goes into one ongoing conversation, keyed by ChannelID.
-func (w *WhatsAppService) SupportsThreads() bool { return false }
+func (w *WhatsAppService) Capabilities() ChannelCapabilities {
+	return ChannelCapabilities{WorkflowProgress: true}
+}
 
 // StartListening opens the sqlite session store, creates the whatsmeow
 // client, registers the event handler, and (if already paired) connects to

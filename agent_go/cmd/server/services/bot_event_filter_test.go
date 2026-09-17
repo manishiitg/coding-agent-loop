@@ -48,7 +48,7 @@ func TestSuppressWorkflowRuntimeChatterAllowsFullDetailsOptIn(t *testing.T) {
 		},
 	}
 
-	filter := NewBotEventFilter(nil, ThreadID{Platform: "slack"}, "session-1", "", "user-1")
+	filter := NewBotEventFilter(&testBotConnector{}, ThreadID{Platform: "slack"}, "session-1", "", "user-1")
 	filter.SetSendFullDetails(true)
 	if filter.suppressWorkflowRuntimeChatter(event) {
 		t.Fatal("expected full-details opt-in to allow workflow runtime chatter")

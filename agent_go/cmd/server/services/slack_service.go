@@ -1248,9 +1248,8 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 
 // --- BotConnector interface implementation ---
 
-// SupportsThreads returns true because Slack natively supports threads
-func (s *SlackService) SupportsThreads() bool {
-	return true
+func (s *SlackService) Capabilities() ChannelCapabilities {
+	return ChannelCapabilities{Threads: true, MessageEdits: true, StreamingReplies: true, Reactions: true, MessageDeletion: true, ProgressUpdates: true, WorkflowProgress: true}
 }
 
 // StartListening starts the bot listener (Socket Mode is already started separately)

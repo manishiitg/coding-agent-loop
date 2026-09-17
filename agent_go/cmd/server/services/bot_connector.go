@@ -331,11 +331,29 @@ type MessageFormatter interface {
 	SplitLongMessage(text string) []string
 }
 
+// ChannelCapabilities declares presentation features without coupling shared
+// session handling to platform names. Zero values opt out of each feature.
+type ChannelCapabilities struct {
+	Threads          bool
+	MessageEdits     bool
+	StreamingReplies bool
+	Reactions        bool
+	MessageDeletion  bool
+	ProgressUpdates  bool
+	WorkflowProgress bool
+}
+
+// BotMessageDeleter is implemented by connectors advertising MessageDeletion.
+// Other editable channels finalize temporary progress with a terminal status.
+type BotMessageDeleter interface {
+	DeleteMessage(context.Context, ThreadID, string) error
+}
+
 // BotConnector is the per-platform bidirectional bot interface
 type BotConnector interface {
 	NotificationConnector // embeds: Name(), IsEnabled(), SendNotification()
 
-	SupportsThreads() bool // true for Slack, false for WhatsApp/Telegram/web_simulator
+	Capabilities() ChannelCapabilities
 	StartListening(ctx context.Context) error
 	StopListening()
 	SendThreadMessage(ctx context.Context, threadID ThreadID, message string) (string, error)
@@ -956,7 +974,7 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	}
 
 	// Determine thread key based on whether platform supports threads
-	supportsThreads := connector != nil && connector.SupportsThreads()
+	supportsThreads := connector != nil && connector.Capabilities().Threads
 	if !supportsThreads {
 		threadID.ThreadTS = msg.ChannelID
 	} else if threadID.ThreadTS == "" {
@@ -1345,7 +1363,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 				// the message just falls into a silent void and looks like a
 				// bug. Best-effort: log and move on if the platform doesn't
 				// support reactions or the call fails.
-				if connector := m.GetConnector(active.Platform); connector != nil && msg.ChannelID != "" && msg.MessageTS != "" {
+				if connector := m.GetConnector(active.Platform); connector != nil && connector.Capabilities().Reactions && msg.ChannelID != "" && msg.MessageTS != "" {
 					if err := connector.AddReaction(context.Background(), msg.ChannelID, msg.MessageTS, "zipper_mouth_face"); err != nil {
 						log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
 					}
@@ -2371,7 +2389,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 			if !stillRunning {
 				return
 			}
-			if connector := m.GetConnector(platform); connector != nil {
+			if connector := m.GetConnector(platform); connector != nil && connector.Capabilities().Reactions {
 				if err := connector.AddReaction(context.Background(), channelID, messageTS, "hourglass_flowing_sand"); err != nil {
 					log.Printf("[BOT_MANAGER] Failed to add hourglass reaction: %v", err)
 				}
@@ -2549,7 +2567,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	// reactions are treated as non-fatal by the connector impl.
 	if ackChannel != "" && ackTS != "" {
 		connector := m.GetConnector(active.Platform)
-		if connector != nil {
+		if connector != nil && connector.Capabilities().Reactions {
 			for _, emoji := range []string{"eyes", "hourglass_flowing_sand"} {
 				if err := connector.RemoveReaction(ctx, ackChannel, ackTS, emoji); err != nil {
 					log.Printf("[BOT_MANAGER] Failed to remove %s reaction: %v", emoji, err)
@@ -2879,7 +2897,7 @@ func (m *BotConversationManager) IsBotSession(sessionID string) bool {
 // live sessions inject follow-ups as raw text since the LLM retains prior turns in its own context.
 func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platform string, threadID ThreadID) string {
 	connector := m.GetConnector(platform)
-	if connector == nil || !connector.SupportsThreads() {
+	if connector == nil || !connector.Capabilities().Threads {
 		return query
 	}
 
@@ -3436,7 +3454,7 @@ func routeWorkspaceUserID(route ChannelRoute, fallback string) string {
 // If only the current message sender has posted (besides the bot), treat it as single-user.
 func (m *BotConversationManager) isMultiUserThread(active *activeBotSession, msg BotIncomingMessage) bool {
 	connector := m.GetConnector(active.Platform)
-	if connector == nil || !connector.SupportsThreads() {
+	if connector == nil || !connector.Capabilities().Threads {
 		return false
 	}
 	history, err := connector.GetThreadHistory(context.Background(), active.ThreadID)

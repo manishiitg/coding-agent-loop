@@ -688,3 +688,10 @@ conversation was backed up, then repaired from 230 to 140 canonical messages:
 published together at 10:09:08 UTC were removed. Its project chat index was
 updated, and the partial native handle was invalidated so the next user message
 performs one clean provider reconnect with the new continuity notice.
+
+Follow-up decision: a replacement coding-provider session now receives only the
+archive pointer and must read the complete conversation JSON before answering
+its first message. The 48-message/48-KiB tail remains solely as an emergency
+fallback when the durable archive cannot be resolved. This makes the durable
+conversation the single context source and avoids copying historical messages
+into a new provider transcript at all.

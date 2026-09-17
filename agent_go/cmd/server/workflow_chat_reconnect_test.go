@@ -82,10 +82,9 @@ func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
 		"_users/u/Chats/Work/projects/demo/builder/conversation/2026-09-17/session-chat-conversation.json",
 		"_users/u/Chats/Work/projects/demo",
 		119,
-		40,
 	)
-	if !strings.Contains(got, "40 most recent messages") || !strings.Contains(got, "79 older messages") {
-		t.Fatalf("notice does not explain the bounded handoff: %s", got)
+	if !strings.Contains(got, "complete 119-message conversation archive") || !strings.Contains(got, "Before answering") {
+		t.Fatalf("notice does not require the complete archive read: %s", got)
 	}
 	if !strings.Contains(got, "builder/conversation/2026-09-17/session-chat-conversation.json") {
 		t.Fatalf("notice does not expose the project-relative archive: %s", got)

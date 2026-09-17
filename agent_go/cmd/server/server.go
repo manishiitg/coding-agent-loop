@@ -6850,27 +6850,31 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			historyToReplay := historyForAgent
 			if isCodingAgentProvider(finalProvider, finalModelID) {
 				codingFallbackHistoryBase = len(llmAgent.GetHistory())
-				historyToReplay = boundedChatHistoryTail(historyForAgent, maxCodingAgentFallbackMessages, maxCodingAgentFallbackBytes)
-				if len(historyToReplay) < len(historyForAgent) {
-					if codingFallbackConversationPath == "" {
-						if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, sessionID, codingFallbackWorkspace); err != nil {
-							logfWithContext(queryLogCtx, "[CHAT_HISTORY] Could not resolve complete conversation archive for coding-agent fallback: %v", err)
-						} else if ok {
-							codingFallbackConversationPath = path
-						}
+				if codingFallbackConversationPath == "" {
+					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, sessionID, codingFallbackWorkspace); err != nil {
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Could not resolve complete conversation archive for coding-agent fallback: %v", err)
+					} else if ok {
+						codingFallbackConversationPath = path
 					}
+				}
+				if codingFallbackConversationPath != "" {
 					llmAgent.AppendMessage(llmtypes.MessageContent{
 						Role: llmtypes.ChatMessageTypeHuman,
 						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: buildCodingAgentContinuityNotice(
 							codingFallbackConversationPath,
 							codingFallbackWorkspace,
 							len(historyForAgent),
-							len(historyToReplay),
 						)}},
 					})
 					codingFallbackInjectedMessages++
+					historyToReplay = nil
+					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; requiring provider to read complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
+				} else {
+					// A missing archive is an exceptional durability failure. Preserve
+					// enough immediate context to answer rather than starting blind.
+					historyToReplay = boundedChatHistoryTail(historyForAgent, maxCodingAgentFallbackMessages, maxCodingAgentFallbackBytes)
+					logfWithContext(queryLogCtx, "[CONVERSATION] Complete conversation archive unavailable; replaying emergency bounded fallback of %d/%d UI-history messages", len(historyToReplay), len(historyForAgent))
 				}
-				logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; replaying bounded fallback of %d/%d UI-history messages", len(historyToReplay), len(historyForAgent))
 			} else {
 				logfWithContext(queryLogCtx, "[CONVERSATION] Replaying %d in-memory messages for session %s", len(historyToReplay), sessionID)
 			}

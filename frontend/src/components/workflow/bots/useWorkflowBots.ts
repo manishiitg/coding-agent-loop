@@ -8,6 +8,7 @@ import type {
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
+import { slackConnectionStatus } from './slackConnectionStatus'
 
 type WaRoute = WhatsAppRoute
 
@@ -786,6 +787,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         channel_routing: slackOriginal.channel_routing || {},
       }
       await agentApi.updateSlackFeedbackConfig(request)
+      setTestResult(null)
       setSlackSuccess('Saved successfully!')
       await loadSlack()
       setTimeout(() => setSlackSuccess(null), 3000)
@@ -966,10 +968,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // ── Connection status per channel ─────────────────────────────────────────
   // Slack bot sessions require the app to be enabled and bot mode turned on.
   const slackReady = slackOriginal.enabled && !!slackOriginal.bot_mode
-  const slackStatusLabel = slackLoading ? 'Loading…'
-    : !slackOriginal.enabled ? 'Not connected'
-      : !slackOriginal.bot_mode ? 'Bot mode off'
-        : 'Connected'
+  const slackStatusLabel = slackConnectionStatus(slackOriginal.enabled, !!slackOriginal.bot_mode, slackLoading, slackTesting, testResult)
 
   const waLinkedDevices = waStatus?.devices?.filter(device => device.paired) || []
   const waReady = !!waStatus?.enabled && (waStatus.paired || waLinkedDevices.length > 0)

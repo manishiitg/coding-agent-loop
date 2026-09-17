@@ -23,6 +23,7 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
 
   const ready = kind === 'slack' ? slackReady : waReady
   const statusLabel = kind === 'slack' ? slackStatusLabel : waStatusLabel
+  const connected = kind === 'slack' ? statusLabel === 'Connected' : ready
   const loading = kind === 'slack' ? slackLoading : (!waStatus && !waError)
   const Icon = kind === 'slack' ? MessageSquare : Phone
   const name = kind === 'slack' ? 'Slack' : 'WhatsApp'
@@ -37,10 +38,10 @@ export function ChannelRow({ bots, kind }: { bots: ChannelRowBots; kind: Channel
         <Icon className="h-4 w-4 shrink-0 text-muted-foreground" />
         <span className="text-sm font-medium text-foreground">{name}</span>
         <span
-          className={`inline-flex items-center gap-1 text-[11px] font-medium ${ready ? 'text-emerald-600 dark:text-emerald-400' : loading ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}
-          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Turn on Bot Mode in Set up before Slack can receive @mentions.' : undefined}
+          className={`inline-flex items-center gap-1 text-[11px] font-medium ${connected ? 'text-emerald-600 dark:text-emerald-400' : loading ? 'text-muted-foreground' : 'text-amber-600 dark:text-amber-400'}`}
+          title={kind === 'slack' && slackOriginal.enabled && !slackOriginal.bot_mode ? 'Enable the Slack bot in Settings before it can receive messages.' : undefined}
         >
-          <span className={`h-1.5 w-1.5 rounded-full ${ready ? 'bg-emerald-500' : loading ? 'bg-muted-foreground/40' : 'bg-amber-500'}`} />
+          <span className={`h-1.5 w-1.5 rounded-full ${connected ? 'bg-emerald-500' : loading ? 'bg-muted-foreground/40' : 'bg-amber-500'}`} />
           {statusLabel}
         </span>
         <span className="flex-1" />

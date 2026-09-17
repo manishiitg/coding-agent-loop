@@ -76,6 +76,9 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 			for _, check := range result.Checks {
 				checks[check.Name] = check
 			}
+			if tc.missing != "" && (!strings.Contains(result.Message, tc.missing) || !strings.Contains(result.Message, "reinstall")) {
+				t.Fatal("summary omitted the missing permission or corrective action")
+			}
 			if tc.missing != "" && checks[tc.missing].Status != "missing" {
 				t.Fatalf("did not identify missing scope: %+v", checks)
 			}

@@ -1020,6 +1020,12 @@ func tryUnwrapMCPAPIResponse(stdout string) string {
 
 	// Only unwrap if it matches the MCP API response shape (has success + result/error)
 	if !apiResp.Success && apiResp.Error != "" {
+		// Retain the failure signal and the tool's actionable diagnostic body.
+		// A generic success=false envelope must not erase missing scopes,
+		// validation errors, or other reasons the agent needs to explain.
+		if apiResp.Result != "" {
+			return fmt.Sprintf("ERROR: %s\n\n%s", apiResp.Error, apiResp.Result)
+		}
 		return fmt.Sprintf("ERROR: %s", apiResp.Error)
 	}
 

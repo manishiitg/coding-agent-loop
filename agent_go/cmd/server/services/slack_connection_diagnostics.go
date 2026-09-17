@@ -76,7 +76,22 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 			result.Message = "Tokens verified. Bot permissions and event subscriptions need manual verification."
 		}
 	} else {
-		result.Message = "Slack setup checks failed. Fix the failed or missing items below and test again."
+		var missing []string
+		for _, check := range result.Checks {
+			if check.Status == "missing" {
+				missing = append(missing, check.Name)
+			}
+		}
+		if len(missing) > 0 {
+			result.Message = "Missing bot permissions: " + strings.Join(missing, ", ") + ". Add these scopes under OAuth & Permissions and reinstall the Slack app."
+		} else {
+			for _, check := range result.Checks {
+				if check.Status == "failed" {
+					result.Message = check.Name + ": " + check.Message
+					break
+				}
+			}
+		}
 	}
 	return result
 }

@@ -17,7 +17,7 @@ or another project view intended to organize or manage information visually.
   with `{"schema_version":1,"default":"overview","views":[{"id":"overview","title":"Overview","path":"db/reports/index.html","order":0}]}`
   to control titles, order, and the default. Paths must remain under
   `db/reports/` and end in `.html`.
-- This is a general project artifact, not an AgentWorks workflow report. Do not
+- This is a general project artifact, not an AgentWorks workflow Dashboard. Do not
   create a workflow, plan, phase, step, route, Pulse configuration, or managed
   workflow merely to provide a Dashboard. A project-owned managed database is
   optional and should be added only when the view needs durable structured data.
@@ -26,7 +26,7 @@ or another project view intended to organize or manage information visually.
 - Build responsive documents. Use separate toolbar views for genuinely distinct
   destinations and internal sections/tabs for closely related material.
 - Support both app themes using `:root.dark` or `[data-theme="dark"]`.
-- Choose any CSS/component approach that fits the report, including plain CSS,
+- Choose any CSS/component approach that fits the Dashboard, including plain CSS,
   Tailwind, Bootstrap, daisyUI, another framework, or a combination that works
   in the browser. Version-pinned HTTPS CDN stylesheets and browser scripts are
   supported. If using daisyUI, `<html data-report-ui="daisyui">` asks the host
@@ -58,7 +58,7 @@ or another project view intended to organize or manage information visually.
 
 ## Verification
 
-- Re-read changed files, run `validate_report_html` for every changed report
+- Re-read changed files, run `validate_report_html` for every changed Dashboard
   document, and then use `preview_report` for each when browser rendering is
   available.
 - Verify responsive layout, light and dark themes, navigation, empty states,
@@ -74,5 +74,5 @@ or another project view intended to organize or manage information visually.
   loopback deployments), describe it only as a same-machine preview and relay
   the warning instead of presenting it as shareable. It uses AgentWorks SSO and
   must not receive a second publish password/login gate; only a separately
-  hosted public/static report uses publish visibility controls.
+  hosted public/static Dashboard uses publish visibility controls.
 - Tell the user the Dashboard is available from the Crew **Dashboard** button.

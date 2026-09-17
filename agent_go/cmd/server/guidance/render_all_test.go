@@ -1034,7 +1034,7 @@ func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) 
 			"one semantic item, one authoritative owner",
 		},
 		"improve-report": {
-			"ENGINEERING REVIEW — REPORT LENS",
+			"ENGINEERING REVIEW — DASHBOARD LENS",
 			"do not edit or ask from the reviewer",
 			"Pulse Fixer",
 			"recommended_fix",
@@ -1273,7 +1273,7 @@ func TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff(t *testing.T) {
 	}
 	for _, want := range []string{
 		"GOAL ADVISOR MEASUREMENT HANDOFF",
-		"An unapproved metric proposal is not report data",
+		"An unapproved metric proposal is not Dashboard data",
 		"window.report.query",
 		"not measured yet",
 	} {

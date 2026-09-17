@@ -1,11 +1,11 @@
-## HTML-only reporting policy
+## HTML-only Dashboard policy
 
-The Report tab renders workflow-owned HTML documents under `db/reports/`.
+The Dashboard tab renders workflow-owned HTML documents under `db/reports/`.
 `index.html` remains the default. Additional `.html` documents become views in
 the shared top toolbar. Auto-discovery uses each document's `<title>`; an optional
 `db/reports/views.json` can set stable IDs, titles, order, and default:
 `{"schema_version":1,"default":"overview","views":[{"id":"overview","title":"Overview","path":"db/reports/index.html","order":0}]}`.
-There is no report generation step or widget-layout registry.
+There is no Dashboard generation step or widget-layout registry.
 
 ### Page contract
 
@@ -13,25 +13,25 @@ There is no report generation step or widget-layout registry.
   `db/reports/`. Use separate documents for genuinely distinct destinations;
   keep closely related sections inside one document.
 - Include a non-empty `<title>` and accessible internal navigation when the
-  report has multiple views or sections.
+  Dashboard has multiple views or sections.
 - Keep CSS and JavaScript inline. Do not pin body height or create a nested
   scroll container.
-- CSS and component-library choice belongs to the report author. HTTPS CDN
+- CSS and component-library choice belongs to the Dashboard author. HTTPS CDN
   stylesheets and browser scripts are supported, including Tailwind's browser
   build. Pin library versions rather than using floating `latest` URLs, and
-  use `preview_report` to prove the chosen stack works in the report sandbox.
-  Keep report-specific CSS/JS inline when that is the simpler choice.
+  use `preview_report` to prove the chosen stack works in the Dashboard sandbox.
+  Keep Dashboard-specific CSS/JS inline when that is the simpler choice.
   daisyUI is CDN-only. To use it, inspect/install the official
   `saadeghi/daisyui` skill, read it, add `data-report-ui="daisyui"` to the
   document's `<html>` element, and include the pinned stylesheet
   `https://cdn.jsdelivr.net/npm/daisyui@5.7.38/daisyui.css`. The host supplies
-  that same CDN link for opted-in reports that omit it. Use inline CSS
+  that same CDN link for opted-in Dashboards that omit it. Use inline CSS
   for layout when Tailwind utilities are not loaded.
 - Choose any suitable charting approach: Chart.js, another browser library,
   SVG/canvas, or HTML/CSS are all valid. Match the implementation to the
   visualization, make it responsive and theme-aware, and render a readable
   fallback when an external dependency fails to load.
-- Design for the default Tablet report pane first (~768px). Use one or two
+- Design for the default Tablet Dashboard pane first (~768px). Use one or two
   primary columns, responsive spacing/type, 44px minimum touch targets, no
   hover-only interactions, and tabs that wrap or scroll without clipping.
   Tables must reflow or stay inside an intentional horizontal scroller; the
@@ -44,14 +44,14 @@ There is no report generation step or widget-layout registry.
   document or add a step that regenerates it each run.
 - A user action button can offer a contextual workflow-agent request through
   `window.report.sendChatMessage`. The app sends it directly to an existing automation chat,
-  creating one only if none exists. For report-owned approvals, save first and then offer the request;
-  see "Sending a report request to the workflow agent" below.
+  creating one only if none exists. For Dashboard-owned approvals, save first and then offer the request;
+  see "Sending a Dashboard request to the workflow agent" below.
 - A markdown file under `db/` renders inline with
   `el.innerHTML = await window.report.getHtml('db/notes/brief.md')`; a
   markdown string from a query row with `window.report.renderMarkdown(text)`.
   Both come back themed (`.report-markdown`), and links/images inside them
   that point at workspace files (`db/...`, or paths relative to the .md
-  file) load and open the in-report preview. Never show markdown as raw text.
+  file) load and open the in-Dashboard preview. Never show markdown as raw text.
 - For audio or video under `db/assets/`, persist the workspace-relative path
   in the database and obtain a fresh playback URL with
   `await window.report.mediaUrl(path)` only when the user opens the media.
@@ -61,8 +61,8 @@ There is no report generation step or widget-layout registry.
   an internal report-preview/report-media HTTP endpoint directly, persist the
   returned URL, embed media as base64/data URLs, or eagerly load every media
   row with `fileUrl`. `fileUrl` remains appropriate for ordinary downloadable
-  files and backward-compatible reports, but `mediaUrl` is the explicit
-  contract for new audio/video report code. Show playback errors and let a
+  files and backward-compatible Dashboards, but `mediaUrl` is the explicit
+  contract for new audio/video Dashboard code. Show playback errors and let a
   retry request a fresh URL. Preserve the existing media element and its source
   during data refresh when the recording has not changed. Compare the workspace
   path plus a run/version identifier, not the expiring signed URL; repeated
@@ -76,23 +76,23 @@ There is no report generation step or widget-layout registry.
   runs every literal `window.report.query` SQL against the live
   `db/db.sqlite`, confirms every referenced `db/` file exists, checks local
   stylesheet/script references, and warns on OS-only dark mode. HTTPS CDN
-  stylesheets and scripts are valid report dependencies.
+  stylesheets and scripts are valid Dashboard dependencies.
 - `validate_report_html` is static and fast; it cannot tell you the page
   actually renders. Call `preview_report` for each changed document after it passes, or whenever
-  visual review is requested: it opens the report in a real headless browser
-  through the same runtime the Report tab uses, waits for it to settle, and
+  visual review is requested: it opens the Dashboard in a real headless browser
+  through the same runtime the Dashboard tab uses, waits for it to settle, and
   returns whether it errored, its script/data-fetch errors, its tab labels,
   any `Loading…` placeholder still on screen, and screenshots at tablet
   (primary), mobile, and desktop widths in both themes
   under `db/reports/preview/` — open them with `read_image`. Prefer it over
-  asking the user to open the Report tab for you.
+  asking the user to open the Dashboard tab for you.
 - Always include one section, as its own top-level tab (not a subsection
   scrolled past within another tab, and not merely an anchored region on a
-  single scrolling page), that reports what the workflow actually did, in
+  single scrolling page), that Dashboards what the workflow actually did, in
   plain non-technical language (recent runs and the actions taken in
   each) — named for the workflow's real run cadence (e.g. `Daily Action`
   for a daily workflow, `Recent Activity` for hourly/weekly/on-demand ones).
-  A report with no other tabs still needs this one; the rest of its content
+  A Dashboard with no other tabs still needs this one; the rest of its content
   becomes a second tab.
   **Default source, no extra step needed:** every `notify_user(notification_kind="run_summary")`
   call (required at the end of a Pulse cycle, and normal after an ordinary
@@ -121,9 +121,9 @@ There is no report generation step or widget-layout registry.
   route as clean, or copy a workflow total into each route. No extra plan step
   or workflow-owned activity table is needed.
 
-### Responding to `report:focus` (tabbed reports)
+### Responding to `report:focus` (tabbed Dashboards)
 
-A report with top-level tabs should let the agent point the reader at one:
+A Dashboard with top-level tabs should let the agent point the reader at one:
 
 ```js
 window.addEventListener('report:focus', function () {
@@ -133,13 +133,13 @@ window.addEventListener('report:focus', function () {
 ```
 
 `open_workspace_view(view="report", target="<tab>")` sets `report.focus` and
-fires this event. It is optional — a report that ignores it simply stays on
-its current tab — but a tabbed report that honors it lets the agent say
+fires this event. It is optional — a Dashboard that ignores it simply stays on
+its current tab — but a tabbed Dashboard that honors it lets the agent say
 "here is the answer" and land the reader on the right tab.
 
 ### Data lifecycle: always gate on `window.report.ready(fn)`
 
-`window.report` is injected into the page AFTER the report's own `<script>`
+`window.report` is injected into the page AFTER the Dashboard's own `<script>`
 has already parsed and started running — it does not exist on the page's
 first line. Wrap every use of `window.report.*` in:
 
@@ -153,14 +153,14 @@ window.report.ready(function () {
 Do NOT gate data calls on `DOMContentLoaded`, `window.onload`, or a bare
 top-level `(async () => { await window.report.query(...) })()`. All three can
 run before injection, before `window.report.query` is truly live — the single
-most common cause of a report that shows a "data loading error" or is stuck on
+most common cause of a Dashboard that shows a "data loading error" or is stuck on
 "Loading…" the first time it is opened. `validate_report_html()` cannot catch
 this: it parses the markup, it does not execute the page. `.ready()` is the
 only pattern that is safe regardless of when it runs.
 
 ### Writing back: `window.report.updateField`/`updateFields`
 
-A report may write a plain business field on a row it already reads via
+A Dashboard may write a plain business field on a row it already reads via
 `query` — for example an inline Approve/Reject button that flips a
 `status` column, or a bulk list where each row edits independently. This
 is a narrow, structured write, not a general database API:
@@ -189,7 +189,7 @@ either function, and no declaration step is needed first:
 - every value must be a plain string, number, boolean, or null — no
   objects/arrays.
 
-Report-owned approval buttons are supported: update an existing business row
+Dashboard-owned approval buttons are supported: update an existing business row
 (an email's `status`, an audit finding's approval), then optionally offer a
 scoped agent request using `sendChatMessage` below. This does not replace the
 platform's human-decision lifecycle. Platform decisions created through
@@ -197,15 +197,15 @@ platform's human-decision lifecycle. Platform decisions created through
 audit trail in the Pulse panel/chat; do not edit `report_human_inputs` through
 the business-field write API or invent a duplicate platform decision store.
 
-### Sending a report request to the workflow agent
+### Sending a Dashboard request to the workflow agent
 
 When choosing between a business approval, a Pulse decision, a blocking
 checkpoint, and an agent request, read
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`.
-The API details below implement the report-to-chat pattern.
+The API details below implement the Dashboard-to-chat pattern.
 
 `await window.report.sendChatMessage(message, { requestId })` sends directly
-from the report action, without a second popup or chat-choice step. The app
+from the Dashboard action, without a second popup or chat-choice step. The app
 uses the same workflow-scoped chat queue as the human-decision panel's
 **Ask in chat**: reuse an interactive chat,
 queue behind its running foreground turn, or create a chat if none exists.
@@ -215,10 +215,10 @@ it does not directly execute a route or trigger the scheduler.
 Call this only from a user action handler. Never call it from `ready`, render,
 polling, or refresh handlers. It is unavailable in `preview_report`. Before the
 host initializes, it rejects instead of queuing a request to replay on load.
-The host supplies the workspace; reports cannot choose another workspace.
+The host supplies the workspace; Dashboards cannot choose another workspace.
 Messages must be non-empty and at most 12,000 characters.
 
-For an existing report-owned approval, await the DB commit before offering the
+For an existing Dashboard-owned approval, await the DB commit before offering the
 action request. Include the exact row/proposal version and the intended route
 or consumer step. Ask the agent to re-read the current approval, skip work
 already applied, and act only on that item. Do not use a generic “run workflow”
@@ -231,7 +231,7 @@ showStatus('Approval saved. Sending action request…');
 const result = await window.report.sendChatMessage(
   `Apply only approved audit_findings row ${row.id}, proposal version ${row.proposal_version}. ` +
   `Re-read its current approval and proposed fix from the database; skip it if already applied. ` +
-  `Use the existing remediation route for this item, then verify and refresh the report.`,
+  `Use the existing remediation route for this item, then verify and refresh the Dashboard.`,
   { requestId: `finding:${row.id}:${row.proposal_version}:apply` }
 );
 showStatus(result.queuedBehindRunningTurn
@@ -251,20 +251,20 @@ On failure, keep that approval visible and offer **Send action request** again
 without rewriting it. Catch errors locally and re-enable the
 button in `finally`. Repeated clicks while sending share one request;
 an optional stable `requestId` (max 200 characters) reuses a successful receipt
-for the same message in the current report view (up to 100 receipts). Reloads,
+for the same message in the current Dashboard view (up to 100 receipts). Reloads,
 different views, and later sessions still require the consumer's durable
 already-applied check. This API does not provide atomic approval-and-execution.
 
 ### Referenced files must live under `db/`
 
-A report may only reference paths under `db/`. That is the durable store the
-Report tab reads; anything else is invisible to it.
+A Dashboard may only reference paths under `db/`. That is the durable store the
+Dashboard tab reads; anything else is invisible to it.
 
 A step's own execution folder (`runs/iteration-N/<group>/execution/...`) is
 per-run scratch, not a referenceable location. A screenshot, PDF, or export
-captured there is not reachable from the report just because it exists on disk
+captured there is not reachable from the Dashboard just because it exists on disk
 — the step must copy it into `db/` (for example `db/reports/<key>/proof.png`)
-for the report to show it.
+for the Dashboard to show it.
 
 Referencing a path that was never published produces a broken-image icon and
 nothing else at runtime: no error, no log line, no failed run. Verify the file
@@ -277,23 +277,23 @@ variables is invisible to it — prefer literal paths, or verify those yourself.
 
 ### Workshop and Run boundaries
 
-Workshop owns report authoring and may create or edit `db/reports/index.html`.
-Keep report-only changes presentational unless the user also asked to change
-workflow behavior or evaluation. Run mode never authors report pages; it only
+Workshop owns Dashboard authoring and may create or edit `db/reports/index.html`.
+Keep Dashboard-only changes presentational unless the user also asked to change
+workflow behavior or evaluation. Run mode never authors Dashboard pages; it only
 produces the durable data those pages read.
 
-Platform human-decision lifecycles stay in the Pulse panel and chat. A report
+Platform human-decision lifecycles stay in the Pulse panel and chat. A Dashboard
 can expose its own business approval buttons using `updateField`/`updateFields`
 and hand a specific request to the workflow agent using `sendChatMessage`.
-See "Writing back" and "Sending a report request" above.
+See "Writing back" and "Sending a Dashboard request" above.
 
 For typed route rows, `summary_text` contains only the shared lead; `message`
-remains the complete rendered digest for older reports. Render the lead plus
+remains the complete rendered digest for older Dashboards. Render the lead plus
 route entries once, or the complete message as a fallback, never both.
 
 ### Goal progress: shared data and an optional ready-made widget
 
-Reports can show the same primary metric, supporting metrics, and measured history
+Dashboards can show the same primary metric, supporting metrics, and measured history
 as Pulse. No additional collector, table, chart library, or custom CSS is needed:
 
 ```html
@@ -307,7 +307,7 @@ window.report.ready(async function () {
 
 The optional widget renders primary/supporting cards, targets, change since the
 previous measurement, trends, freshness, and expandable definitions/evidence/history.
-It inherits the report's text color, fits the available width, and replaces its
+It inherits the Dashboard's text color, fits the available width, and replaces its
 contents on refresh. Use an empty `div` or `section` as the container. Keep the
 returned promise inside `ready` so preview_report can observe loading/errors.
 
@@ -320,18 +320,18 @@ History includes up to 120 comparable observations per active metric, with scope
 unit, and evidence preserved. Use `window.report.query` against
 `workflow_goal_metrics` and `pulse_goal_observations` for a longer/custom history;
 check `sqlite_master` first for workflows that have not configured measurements.
-These are platform-owned, read-only tables for reports; use the managed goal tools
+These are platform-owned, read-only tables for Dashboards; use the managed goal tools
 for changes, not `updateField`/`updateFields` or direct SQL writes. Run `/setup-goals`
 when definitions or collection are missing. Do not invent targets or samples.
 
-Adding this section is optional and does not replace the report's own navigation
+Adding this section is optional and does not replace the Dashboard's own navigation
 or layout. Offer it when a user wants goal tracking in their dashboard. Validate
-and preview the report using the normal report tools after adding it.
+and preview the Dashboard using the normal Dashboard tools after adding it.
 
-### Evaluations and costs: matching report helpers
+### Evaluations and costs: matching Dashboard helpers
 
 Use the existing stored evaluations and canonical cost ledger without creating
-report-owned copies. Both helpers work in the app and `preview_report`:
+Dashboard-owned copies. Both helpers work in the app and `preview_report`:
 
 ```html
 <section id="evaluations"></section>
@@ -347,7 +347,7 @@ window.report.ready(async function () {
 ```
 
 The widgets include their own responsive styling and expandable details. No chart
-library or design work is required. Add them only when useful to the user's report.
+library or design work is required. Add them only when useful to the user's Dashboard.
 
 For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
 - Evaluations returns `{ results, criteria, run_count, result_limit, possibly_truncated }`.
@@ -365,4 +365,4 @@ For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
   amounts and do not prove every call was priced. No model prices are guessed.
 
 Continue using `window.report.ready` for loading and refresh. Returned promises
-reject on read failures, which the host exposes in the report's error surface.
+reject on read failures, which the host exposes in the Dashboard's error surface.

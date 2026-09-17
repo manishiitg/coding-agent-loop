@@ -1,12 +1,12 @@
-Design the workflow's reporting UI from the ground up. First load and apply
+Design the workflow's Dashboard UI from the ground up. First load and apply
 `read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`,
 then load and apply
 `read_skill(skills=[{"name":"builder-reference","path":"references/html-output.md"}])`.
 Then load `read_skill(skills=[{"name":"ui-ux-pro-max"}])` and use its design
 intelligence where it helps the requested outcome. It advises visual and
-interaction decisions; it does not select a framework or override the report
+interaction decisions; it does not select a framework or override the Dashboard
 runtime contract.
-A workflow report consists of one or more complete HTML
+A workflow Dashboard consists of one or more complete HTML
 documents under `db/reports/`; `index.html` is the default and the shared top
 toolbar exposes additional documents. Use optional `views.json` only for view
 titles, ordering, and default selection—not as a widget/layout plan. Each
@@ -15,7 +15,7 @@ inside the workflow-owned HTML.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
-For goal tracking, evaluations, or costs, use the shared report helpers before
+For goal tracking, evaluations, or costs, use the shared Dashboard helpers before
 writing custom queries or charts:
 - `window.report.getGoalMetrics()` / `renderGoalProgress('#goals')`
 - `window.report.getEvaluations()` / `renderEvaluations('#evals')`
@@ -37,7 +37,7 @@ criterion scores, or add a collector/table just to populate a widget. Keep
 missing and skipped results explicit. Cost total/activity are all-time;
 model/daily breakdowns and window_total_usd cover the selected UTC window.
 
-Every report must include one section, as its own top-level tab — not a
+Every Dashboard must include one section, as its own top-level tab — not a
 subsection scrolled past within another tab, and not merely an anchored
 region on a single scrolling page — that answers "what did this workflow
 actually do," in plain, non-technical language: recent runs and the
@@ -45,8 +45,8 @@ actions taken in each, in the order a non-technical reader would want
 them, with no raw JSON, internal IDs, or state codes. Name it for
 the workflow's real run cadence: `Daily Action` (or `Today's Actions`) for a
 workflow that genuinely runs daily, `Recent Activity` or `Latest Run` for
-one that runs hourly, weekly, or on demand. Even a report with no other
-distinct views needs this one top-level tab; the rest of the report's
+one that runs hourly, weekly, or on demand. Even a Dashboard with no other
+distinct views needs this one top-level tab; the rest of the Dashboard's
 content becomes a second tab rather than the whole page staying tab-less.
 
 **Build it from the run summaries you already send, by default.**
@@ -74,19 +74,19 @@ explicit legacy Route field. Missing route scope is unknown, not healthy, and
 historical labels must not be guessed into canonical IDs. Preserve timestamps
 so a quiet route's old update cannot appear to be today's work.
 
-For report actions that should hand work to the agent, use
+For Dashboard actions that should hand work to the agent, use
 `read_skill(skills=[{"name":"builder-reference","path":"references/human-in-the-loop.md"}])`
 to choose the human interaction pattern, then
 `window.report.sendChatMessage(message, { requestId })` from the button handler,
 following `reporting-policy.md`. The app sends directly to an existing workflow
-chat, creating one only if none exists. Save any existing report-owned approval
+chat, creating one only if none exists. Save any existing Dashboard-owned approval
 first; include the exact item/version and intended route, and distinguish
 approval saved, request queued, and evidence of actual completion. Never
 send during rendering or polling.
 
-**Design tablet-first.** AgentWorks opens a new workflow report in the Tablet
+**Design tablet-first.** AgentWorks opens a new workflow Dashboard in the Tablet
 preview by default, normally as roughly half of the application canvas. Treat a
-768px-wide report pane as the primary composition—not a shrunken laptop page.
+768px-wide Dashboard pane as the primary composition—not a shrunken laptop page.
 Lead with one or two columns, let dense secondary content progressively expand
 on wider laptop panes, and stack cleanly at mobile width. Avoid four-card KPI
 rows, fixed-width sidebars, hover-only interactions, and controls that depend on
@@ -97,10 +97,10 @@ overflow. Use responsive padding/type so 480px remains readable without making
 the tablet view sparse.
 
 1. Decide the reader's questions and the durable DB/asset evidence that answers
-   them. Design one coherent reporting experience; use internal views only for
+   them. Design one coherent Dashboard experience; use internal views only for
    genuinely distinct questions.
 2. Inspect the real DB schema and sample rows before authoring. Do not invent
-   values or make a workflow run regenerate a report.
+   values or make a workflow run regenerate a Dashboard.
 3. Write the complete experience as `db/reports/index.html`. Include a
    meaningful `<title>` and accessible internal navigation when needed. Use
    `window.report` data helpers or `query` for live data, inline CSS/JS, responsive layout, clear
@@ -110,12 +110,12 @@ the tablet view sparse.
    `:root.dark` / `[data-theme="dark"]` (or use the injected
    `hsl(var(--background))`-style tokens) — `prefers-color-scheme` alone
    ignores the in-app light/dark toggle.
-   Choose the CSS, component, and charting stack that best fits the report;
+   Choose the CSS, component, and charting stack that best fits the Dashboard;
    plain CSS, Tailwind, Bootstrap, daisyUI, Chart.js, other browser libraries,
    SVG, and canvas are all valid. Every CDN-backed feature needs a readable
    fallback, and `preview_report` must verify the chosen stack actually loaded
    in both themes and at all required widths.
-4. **Markdown belongs in the report as rendered prose, never as raw text.**
+4. **Markdown belongs in the Dashboard as rendered prose, never as raw text.**
    A markdown file the workflow keeps under `db/` (a weekly summary, a
    strategy note, a generated brief) drops in with one call, themed to
    match the page; a markdown string from a query row goes through
@@ -133,7 +133,7 @@ the tablet view sparse.
 
    Links and images inside that markdown that point at workspace files
    (`db/assets/chart.png`, `db/reports/proof.pdf`, or paths relative to the
-   .md file) work: images load, links open the in-report file preview.
+   .md file) work: images load, links open the in-Dashboard file preview.
    Use `getText` only when you genuinely want the raw source.
    For test recordings or audio saved under `db/assets/`, use
    `await window.report.mediaUrl(path)` with a native `<video controls>` or
@@ -166,22 +166,22 @@ the tablet view sparse.
    broken local stylesheet/script references, and warns when dark mode keys only off
    the OS scheme. A query built from variables is reported as unchecked —
    prefer literal SQL so the validator can see it.
-6. Call `preview_report` for every changed document after validation passes. It renders the report in a
-   real headless browser through the same runtime the Report tab uses and
+6. Call `preview_report` for every changed document after validation passes. It renders the Dashboard in a
+   real headless browser through the same runtime the Dashboard tab uses and
    reports whether it settled, its script/fetch errors, its tab labels, any
    `Loading…` text never replaced, and screenshots at tablet (primary), mobile,
    and desktop widths in both themes — open
    them with `read_image` and judge layout, contrast, and empty states
    directly, rather than asking the user to check.
 7. Tablet/mobile/desktop verification is required for every authored or revised
-   report. When deeper visual review is requested beyond `preview_report`, also
-   inspect those device modes in the live Report tab.
+   Dashboard. When deeper visual review is requested beyond `preview_report`, also
+   inspect those device modes in the live Dashboard tab.
 
-Before writing a large report, briefly state the sections/views you will create
+Before writing a large Dashboard, briefly state the sections/views you will create
 and what each answers, including the required activity/actions section above.
-The report should lead with goal progress and key risks, then evidence and
+The Dashboard should lead with goal progress and key risks, then evidence and
 detail—not raw JSON or a generic data dump.
 
 For typed route rows, `summary_text` contains only the shared lead; `message`
-remains the complete rendered digest for older reports. Render the lead plus
+remains the complete rendered digest for older Dashboards. Render the lead plus
 route entries once, or the complete message as a fallback, never both.

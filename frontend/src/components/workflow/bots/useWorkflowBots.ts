@@ -603,17 +603,25 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     })
   }, [waStatus?.devices])
 
-  // ── Routes for this workflow ──────────────────────────────────────────────
-  const myRoutes = useMemo<WorkflowRoute[]>(() => {
-    if (!workflowId) return []
+  // Show accessible workflow destinations in the shared connector overview.
+  // Crew remains scoped to its selected project.
+  const workflowRoutes = useMemo<WorkflowRoute[]>(() => {
+    const visible = (route: ChannelRoute | WaRoute) => routeMatchesTarget(route) || (!target && !!route.workflow_id && workflows.some(w => w.manifest.id === route.workflow_id))
+    const describe = (route: ChannelRoute | WaRoute) => ({
+      target_label: route.profile_id ? route.profile_label || route.conversation_key : workflows.find(w => w.manifest.id === route.workflow_id)?.manifest.label || route.workflow_id,
+      current_target: routeMatchesTarget(route),
+      workshop_mode: route.workshop_mode,
+      send_full_details: route.send_full_details,
+    })
     const slack = Object.entries(slackOriginal.channel_routing || {})
-      .filter(([, r]) => routeMatchesTarget(r))
-      .map(([key, r]) => ({ kind: 'slack' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details, blocked_emails: 'blocked_emails' in r ? r.blocked_emails : undefined }))
+      .filter(([, route]) => visible(route))
+      .map(([key, route]) => ({ kind: 'slack' as const, key, ...describe(route), blocked_emails: route.blocked_emails }))
     const wa = Object.entries(waRouting)
-      .filter(([, r]) => routeMatchesTarget(r))
-      .map(([key, r]) => ({ kind: 'whatsapp' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
+      .filter(([, route]) => visible(route))
+      .map(([key, route]) => ({ kind: 'whatsapp' as const, key, ...describe(route) }))
     return [...slack, ...wa]
-  }, [slackOriginal.channel_routing, waRouting, workflowId, routeMatchesTarget])
+  }, [slackOriginal.channel_routing, waRouting, workflows, target, routeMatchesTarget])
+  const myRoutes = useMemo(() => workflowRoutes.filter(route => route.current_target), [workflowRoutes])
 
   // Slack channel routing writes: base on the last loaded config so unsaved
   // setup-screen token edits cannot ride along. Masked tokens round-trip as
@@ -990,7 +998,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     waPairDeviceLabel, setWaPairDeviceLabel, waPairDeviceLabelSaving, waPairingDeviceSlot, handleSaveWhatsAppPairDeviceLabel,
     waReady, waStatusLabel,
     // routes
-    myRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,
+    myRoutes, workflowRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,
     // gmail
     gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,

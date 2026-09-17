@@ -8,6 +8,8 @@ export type ChannelKind = 'slack' | 'whatsapp'
 export type WorkflowRoute = {
   kind: ChannelKind
   key: string
+  target_label?: string
+  current_target?: boolean
   workshop_mode?: 'run' | 'workshop' | string
   send_full_details?: boolean
   blocked_emails?: string[]

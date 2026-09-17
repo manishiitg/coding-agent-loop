@@ -18,7 +18,7 @@ type WorkflowBotsPanelProps = {
 // rows, and the Slack/WhatsApp drill-ins.
 export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = 'workflow', onAsk }: WorkflowBotsPanelProps) {
   const bots = useWorkflowBots(workspacePath, target, 'bots')
-  const { setup, setSetup, workflowId, myRoutes, routeError, waRoutingError } = bots
+  const { setup, setSetup, workflowId, workflowRoutes, routeError, waRoutingError } = bots
 
   const askSlackSetup = (
     <AskAIButton
@@ -54,20 +54,18 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
   return (
     <div className="space-y-4">
       {(['slack', 'whatsapp'] as const).map(kind => {
-        const routes = myRoutes.filter(route => route.kind === kind)
+        const routes = workflowRoutes.filter(route => route.kind === kind)
         return (
           <section key={kind} className="overflow-hidden rounded-md border border-border bg-background">
             <ChannelRow bots={bots} kind={kind} manageRoutes headerAction={kind === 'slack' ? askSlackSetup : undefined} />
             <div className="space-y-2 px-3 pb-3">
-              <h3 className="text-xs font-medium text-muted-foreground">Routes for this {scopeNoun}</h3>
-              {!workflowId ? (
-                <p className="text-xs text-muted-foreground">Select a {scopeNoun} to manage routes.</p>
-              ) : routes.length === 0 ? (
-                <p className="text-xs text-muted-foreground">No routes yet.</p>
-              ) : (
+              <h3 className="text-xs font-medium text-muted-foreground">{target ? `Routes for this ${scopeNoun}` : 'Workflow routes'}</h3>
+              {routes.length > 0 ? (
                 <div className="grid gap-2">
-                  {routes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}
+                  {routes.map(route => <RouteChip key={routeId(route)} bots={{ ...bots, readOnly: bots.readOnly || !route.current_target }} route={route} />)}
                 </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">{workflowId ? 'No routes yet.' : `Select a ${scopeNoun} to manage routes.`}</p>
               )}
               {routeError && <p className="flex items-start gap-1.5 text-xs text-red-600 dark:text-red-400"><AlertCircle className="h-3.5 w-3.5 shrink-0" />{routeError}</p>}
               {kind === 'whatsapp' && waRoutingError && <p className="text-xs text-amber-600 dark:text-amber-400">WhatsApp routing unavailable: {waRoutingError}</p>}

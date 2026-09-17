@@ -46,6 +46,7 @@ import (
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchEvents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	orchtypes "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/types"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsestore"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/voicestt"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
@@ -1560,6 +1561,24 @@ func runServer(cmd *cobra.Command, args []string) {
 			log.Printf("[STARTUP] swept %d orphaned coding-agent tmux sessions", n)
 		}
 		cancelSweep()
+	}
+
+	// Upgrade every currently available workflow database before schedules and
+	// interactive Pulse sessions can write. This is intentionally repeated at
+	// startup: the version receipt makes it a no-op after the first successful
+	// deployment, while the lazy open guard covers laptops that were offline.
+	pulseMigrationCtx, cancelPulseMigration := context.WithTimeout(context.Background(), 10*time.Minute)
+	pulseMigrationReport, pulseMigrationErr := pulsestore.MigrateWorkspaceDatabases(pulseMigrationCtx, fsutil.WorkspaceDocsRoot())
+	cancelPulseMigration()
+	if pulseMigrationErr != nil {
+		log.Printf("[PULSE MIGRATION] deployment scan failed: %v", pulseMigrationErr)
+	} else {
+		log.Printf("[PULSE MIGRATION] scanned=%d migrated=%d current=%d skipped=%d failures=%d",
+			pulseMigrationReport.Scanned, pulseMigrationReport.Migrated, pulseMigrationReport.Current,
+			pulseMigrationReport.Skipped, len(pulseMigrationReport.Failures))
+		for _, failure := range pulseMigrationReport.Failures {
+			log.Printf("[PULSE MIGRATION] blocked database=%s error=%s", failure.Path, failure.Error)
+		}
 	}
 
 	// Show execution agent LLM config at startup

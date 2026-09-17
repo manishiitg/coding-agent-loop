@@ -20,6 +20,7 @@ import (
 
 	"github.com/gorilla/mux"
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsestore"
 	"github.com/manishiitg/coding-agent-loop/workspace/sqliteopen"
 	mcpexecutor "github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -199,6 +200,16 @@ func openReportHumanInputDB(ctx context.Context, workspacePath string, create bo
 	if err := ensureReportHumanInputSchema(ctx, db); err != nil {
 		_ = db.Close()
 		return "", nil, err
+	}
+	if _, err := pulsestore.Ensure(ctx, db, dbPath); err != nil {
+		_ = db.Close()
+		return "", nil, fmt.Errorf("migrate compact Pulse store: %w", err)
+	}
+	if create {
+		if err := pulsestore.RefreshCompatibility(ctx, db); err != nil {
+			_ = db.Close()
+			return "", nil, fmt.Errorf("install compact Pulse compatibility: %w", err)
+		}
 	}
 	return normalized, db, nil
 }

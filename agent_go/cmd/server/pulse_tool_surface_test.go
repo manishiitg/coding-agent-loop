@@ -26,7 +26,6 @@ var pulseConsolidatedToolNames = []string{
 	"get_pulse_state",
 	"record_pulse_worklist",
 	"record_pulse_result",
-	"record_pulse_impact",
 }
 
 var pulseReviewerWriteToolNames = []string{
@@ -38,6 +37,9 @@ var pulseReviewerWriteToolNames = []string{
 // four above; a stale registration would give the agent two ways to say the
 // same thing, which is the condition this consolidation removed.
 var pulseRemovedToolNames = []string{
+	// Compact Pulse stores measurements in workflow/evaluation output and the
+	// review conclusion; reviewers no longer maintain a parallel impact ledger.
+	"record_pulse_impact",
 	"get_pulse_module_state",
 	"get_pulse_finding_backlog",
 	"get_pulse_review_result",

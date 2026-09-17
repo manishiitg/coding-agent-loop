@@ -1179,7 +1179,7 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 		}
 	}
 	for _, stage := range steps[2:5] {
-		for _, contract := range []string{"run_in_background", "review_module=", "runtime waits for the child", "one terminal result", "Do not render a dashboard"} {
+		for _, contract := range []string{"run_in_background", "review_module=", "runtime waits for the child", "one terminal review result", "Do not render a dashboard"} {
 			if !strings.Contains(stage.query, contract) {
 				t.Fatalf("%s missing %s", stage.label, contract)
 			}

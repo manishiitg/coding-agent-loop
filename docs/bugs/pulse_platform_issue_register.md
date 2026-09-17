@@ -22,12 +22,15 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 ## Pulse persistence simplification — PLAT-326
 
-[PLAT-326](pulse_platform/pulse-governance/plat-326.md) records the explicitly
-deferred recommendation to replace Pulse's extensive workflow-local persistence
-and verification lifecycle with three product records: reviews, issues and
-human decisions. The target lifecycle is report/open, take action, close; an
-unfinished fix remains open. This is a design ticket only and must not be
-implemented until separately prioritized.
+[PLAT-326](pulse_platform/pulse-governance/plat-326.md) completed its corrected
+schema-v2 rollout across the local workspace after the `Workflow/testing`
+canary. Twelve workflow databases are current, integrity-clean and contain only
+Plan Drift, Technical, Architecture and Strategic review identities; a second
+pass was a no-op. RTS, other laptops and deployments such as Confida remain
+pending until this code is deployed. Reviewer skills now use one result,
+canonical issues and genuine human decisions; Gate owns only scheduling,
+Activity reuses the result, and the separate impact tool is no longer exposed.
+UI/read cutover and removal of rollback-window compatibility tables remain.
 
 ## Chat reliability — PLAT-178, PLAT-323 and PLAT-324
 

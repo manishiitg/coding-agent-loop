@@ -14,13 +14,16 @@ func TestResearchReviewKeepsResearchAndReceiptsWithoutImplementationTools(t *tes
 		handlers[name] = name
 	}
 	kept, exec := filterResearchReviewTools(tools, handlers)
-	if len(kept) != 6 || len(exec) != 6 {
+	if len(kept) != 5 || len(exec) != 5 {
 		t.Fatalf("wrong research tools: %+v", exec)
 	}
-	for _, name := range names[:6] {
+	for _, name := range []string{"agent_browser", "web_search", "query_workflow_db", "record_pulse_result", "create_human_input_request"} {
 		if exec[name] != name {
 			t.Fatalf("research/receipt tool missing: %s", name)
 		}
+	}
+	if _, ok := exec["record_pulse_impact"]; ok {
+		t.Fatal("research review must not receive the retired impact-ledger tool")
 	}
 	if len(tools) != len(names) {
 		t.Fatal("filter mutated parent tool surface")

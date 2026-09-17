@@ -1529,7 +1529,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"merge_pulse_issues",
 		"record_pulse_worklist",
 		"record_pulse_result",
-		"record_pulse_impact",
 		"resolve_run_concern",
 		"mark_changelog_artifact_reviewed",
 	}

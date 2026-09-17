@@ -5,8 +5,8 @@ Spend the review on investigation and useful action. Read
 `get_pulse_state(view="review_notes", module="architecture_review")` once for relevant
 recent reasoning (default latest 3); use pulse_run_id only for a specific run.
 Read compact findings and fetch detail only for relevant IDs. Do not repeatedly
-scan history. Existing decisions, findings and impact records remain authoritative.
-Record those as the work happens; do not defer all findings to a final report.
+scan history. Existing decisions and canonical issues remain authoritative.
+Update those as the work happens; do not defer all issues to a final report.
 Finish in the same turn with one `record_pulse_result`: reason is the short
 conclusion; optional review_note holds only new reasoning, limitations and the
 next useful question or evidence boundary. Evidence and existing records need
@@ -122,33 +122,34 @@ Propose only concrete improvements with expected benefit and tradeoffs. Avoid
 rewrites for style alone. If a required outcome is broken, link the existing QA
 or platform finding and do not turn this review into its recurring diagnosis.
 
-For each worthwhile improvement, use the existing `record_pulse_impact` ledger:
-`kind="architecture_improvement"`, `status="proposed"`, stable criterion_id,
-metric, baseline_window, scope, checkpoint, guardrails and rollback_condition.
+For each worthwhile improvement, open or update one canonical issue. Put the
+structural problem, evidence, expected benefit, tradeoffs, guardrails and the
+next outcome checkpoint in that issue rather than creating a separate impact or
+proposal record.
 Create a nonblocking `create_human_input_request(source="architecture_review")`
 with approve/reject/defer, exact intended changes and the existing apply_contract.
-Link human_input_id to the same improvement and typed finding. Approval is not
-application. The existing decision application turn applies approved changes,
-records their provenance, then moves the same improvement to running/measuring.
-Do not create a second backlog or manufacture a problem to justify a proposal.
+Link human_input_id to that issue. Approval is not application. The existing
+decision application turn applies approved changes; the issue stays open until
+the action is actually taken. Do not create a second backlog or manufacture a
+problem to justify a proposal.
 
-Assess previously applied improvements at their named evidence checkpoint using
-`record_pulse_impact(assessments=[...])`. Compare compatible runs and plan versions;
-report confounding, missing evidence or an inconclusive outcome honestly. Never
-mark adopted from approval or a plan edit alone. Require an actual outcome
-assessment before adoption. Keep, revise or retire with a recorded explanation.
+Assess previously applied improvements at their named evidence checkpoint by
+updating the same issue or recording the conclusion in the review result.
+Compare compatible runs and plan versions; report confounding, missing evidence
+or an inconclusive outcome honestly. Never claim success from approval or a
+plan edit alone.
 Do not restart QA verification-only loops for fixes already applied.
 
 Learning is part of this assessment: distinguish hypotheses from validated
 observations, name applicability and contradictory evidence, and propose retiring
 stale advice. A successful script is not proof that a business strategy improved.
 
-The review is read-only for workflow implementation. Save research only under
-this run's Pulse research directory and use typed findings, decisions and impact
-tools. Do not edit plans, code, DB records, learnings, KB, reports or schedules.
+The review is read-only for workflow implementation. Save research only when it
+materially helps, and persist only canonical issues, genuine decisions and one
+review result. Do not edit plans, code, DB records, learnings, KB, reports or schedules.
 Do not publish, message others, or execute production actions during research.
-Record investigated focuses (descriptive snake_case keys are allowed), then one
-terminal `record_pulse_result(module="architecture_review")` with evidence.
+Record one terminal `record_pulse_result(module="architecture_review")` with a
+concise conclusion and evidence; do not persist focus coverage.
 A useful no-change or evidence-wait conclusion is a completed review.
 
 Use goal metrics only when they are needed to protect an architecture proposal's

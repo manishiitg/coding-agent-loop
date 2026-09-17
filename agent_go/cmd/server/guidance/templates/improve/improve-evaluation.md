@@ -11,8 +11,9 @@ semantic changes still require an exact approved human-input request.
 Return only: `module=technical_review`, `verdict`, `next_check`, and ordered findings
 tagged `CORRECTNESS_REPAIR`, `OPERATIONAL`, or `GOAL_SEMANTIC`. Every finding
 includes stable `finding_id`, `target_key`, severity, plain-language summary,
-precise `evidence`, bounded `recommended_fix`, score-continuity impact, exact
-`verification`, and `user_judgment_required` with reason. Use the remaining
+precise evidence, score-continuity impact, the smallest useful action or
+experiment in the description, and `user_judgment_required` with reason. Do not
+create separate recommendation, verification, impact, or disposition records. Use the remaining
 document only as the evaluation-health audit checklist.
 
 Read typed Pulse findings, decisions, and review history as durable prior context,

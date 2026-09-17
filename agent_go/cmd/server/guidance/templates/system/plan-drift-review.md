@@ -5,8 +5,8 @@ Spend the review on investigation and useful action. Read
 `get_pulse_state(view="review_notes", module="plan_drift_review")` once for relevant
 recent reasoning (default latest 3); use pulse_run_id only for a specific run.
 Read compact findings and fetch detail only for relevant IDs. Do not repeatedly
-scan history. Existing decisions, findings and impact records remain authoritative.
-Record those as the work happens; do not defer all findings to a final report.
+scan history. Existing decisions and canonical issues remain authoritative.
+Update those as the work happens; do not defer all issues to a final report.
 Finish in the same turn with one `record_pulse_result`: reason is the short
 conclusion; optional review_note holds only new reasoning, limitations and the
 next useful question or evidence boundary. Evidence and existing records need

@@ -347,7 +347,7 @@ var standaloneReviewLensKinds = map[string]bool{
 
 const standaloneReviewLensRecordingNotice = `
 
-STANDALONE MODE. This checklist is normally loaded as one lens inside a larger Engineering Review turn (ops-review), which records every lens's findings once they all return. You were called directly — there is no such parent turn. Record your own findings, then finish with record_pulse_result(module="technical_review", ..., focuses=[{focus_key: ..., priority_class: ..., selection_reason: ...}]) so the focus you investigated and the review outcome are stored together. Do this even though the checklist text above told you not to record — that instruction assumes a parent turn that does not exist here.`
+STANDALONE MODE. This checklist is normally loaded as one lens inside a larger Engineering Review turn (ops-review), which records every lens's findings once they all return. You were called directly — there is no such parent turn. Record canonical issues only when evidence supports them, then finish with one concise record_pulse_result(module="technical_review", result="done", reason=..., evidence=[...]). Do not create separate focus, recommendation, verification, impact, or disposition records. Do this even though the checklist text above told you not to record — that instruction assumes a parent turn that does not exist here.`
 
 // appendStandaloneReviewLensNotice appends standaloneReviewLensRecordingNotice
 // to text when kind is one of standaloneReviewLensKinds, otherwise returns

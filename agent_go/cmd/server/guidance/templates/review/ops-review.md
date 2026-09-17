@@ -2,8 +2,8 @@
 
 Run the same Technical Review used by Pulse. Do the review directly in this agent
 rather than dispatching another reviewer. This standalone command is
-read-only with respect to workflow artifacts and configuration; typed Pulse
-findings, verification guidance and one terminal module result are required.{{if .Focus}}
+read-only with respect to workflow artifacts and configuration; only canonical
+issues and one terminal review result are persisted.{{if .Focus}}
 
 Treat this request as context, not a custom reviewer charter: {{.Focus}}.{{end}}{{if .RunFolder}}
 
@@ -18,10 +18,7 @@ goals, outcomes, measurement and experiments to Strategic Review.
 
 1. Load
    `read_skill(skills=[{"name":"builder-reference","path":"references/pulse-review-fixer.md"}])`.
-   Use `pulse-bug-review.md` for the QA evidence method and
-   `fix-verification.md` to write bounded verification requirements. Read
-   `get_pulse_state(view="focus_agenda", module="technical_review",
-   route_scope=<relevant route>)`, then inspect the compact active backlog,
+   Use `pulse-bug-review.md` for the QA evidence method. Inspect the compact active backlog,
    latest meaningful outputs, validation receipts and run summaries. Select
    only evidence tied to a concrete correctness question. An ordinary
    successful run is not a reason to audit every implementation surface.
@@ -43,9 +40,10 @@ goals, outcomes, measurement and experiments to Strategic Review.
 4. Work from canonical issue roots. Reuse an existing `issue_id` when the text
    and history describe the same root cause; link cross-workflow platform
    defects to the existing PLAT ticket. Record each evidence-backed issue with
-   `record_pulse_finding`. Include severity, plain-language summary, exact
-   evidence, bounded `recommended_fix`, verification, and
-   `user_judgment_required`; use no invented identifier. A shared
+   `record_pulse_finding`. Include severity, a plain-language root-cause
+   description, exact evidence, and whether human judgment is actually needed;
+   use no invented identifier. Do not create a separate recommendation,
+   verification, disposition, or impact record. A shared
    harness/runtime/bridge/tool-API defect is `issue_kind=harness_issue`. Wrong
    workflow arguments, paths, credentials, IDs or data remain workflow issues.
 5. Use `recommended_route="fixer_handoff"` for safe correctness repairs,
@@ -62,11 +60,10 @@ goals, outcomes, measurement and experiments to Strategic Review.
    type, persistent model/tier, prompt architecture, product direction or
    success criteria, record the concrete failure and hand the design question
    to its owning reviewer.
-7. Call `record_pulse_result` exactly
-   once with `module="technical_review"`, `result="done"`, a concise truthful
-   reason, its evidence, and `focuses` covering each correctness area actually
-   investigated, including route scope, selection reason, evidence and deferred
-   areas. This terminal receipt is the completion boundary.
+7. Call `record_pulse_result` exactly once with `module="technical_review"`,
+   `result="done"`, a concise truthful summary and the evidence used. Do not
+   submit focus coverage or a second lifecycle summary. This terminal review
+   result is the completion boundary.
    Do not apply recommendations in this read-only command.
 
 Finish with a short executive summary followed by every material

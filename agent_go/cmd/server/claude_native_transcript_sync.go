@@ -7,7 +7,6 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 
@@ -183,18 +182,13 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	}
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(ctx, conversationPath, string(raw), current)
 	if builderConversationHistoriesEqual(refreshed.ConversationHistory, current.ConversationHistory) && refreshed.UpdatedAt == current.UpdatedAt {
-		// A restart can restore an older UI-event trace even though the durable
-		// conversation is already complete. Repair the recent live window from
-		// that canonical history as well; otherwise refresh keeps omitting final
-		// replies that transcript catch-up persisted before the restart.
-		api.publishOwnedNativeTranscriptRecoveredAssistantMessages(
-			userID, sessionID,
-			nil,
-			recentBuilderConversationMessages(current.ConversationHistory, 50),
-		)
+		// No canonical history changed, so there is no newly recovered reply to
+		// publish. Replaying a recent canonical window here is unsafe after an
+		// EventStore restart: its empty in-memory counts make historical replies
+		// look new and duplicate them in both the open chat and durable UI trace.
+		// The browser restores old replies from conversation_history directly.
 		// Keep changed=false so the completion scheduler still performs its
-		// short retries. A pre-flush attempt may repair older live rows while the
-		// current provider answer has not reached the native transcript yet.
+		// short retries while the current provider answer flushes.
 		return false, true
 	}
 
@@ -232,10 +226,17 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 		conversationPath,
 		int64(len(persistedRaw)),
 		time.Now(),
+		botMetadataFromRecord(persistedRecord),
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}
-	api.publishOwnedNativeTranscriptRecoveredAssistantMessages(userID, sessionID, current.ConversationHistory, refreshed.ConversationHistory)
+	api.publishOwnedNativeTranscriptRecoveredAssistantMessages(
+		userID,
+		sessionID,
+		current.ConversationHistory,
+		refreshed.ConversationHistory,
+		readPersistedChatHistoryUIEvents(ctx, conversationPath),
+	)
 	return true, true
 }
 
@@ -246,13 +247,22 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 // transcript chunk used by normal CLI streaming. This deliberately is not a
 // second completion event: a completion would settle the next queued retained
 // turn when several user messages were submitted together.
-func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) int {
+func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage, durableUIEvents []storeevents.Event) int {
 	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
 		return 0
 	}
 
 	currentCounts := assistantMessageCounts(current)
 	eventCounts := liveAssistantMessageCounts(api.eventStore.GetAllEventsRaw(sessionID))
+	// The in-memory EventStore starts empty after every server restart. Durable
+	// UI events are what the browser will restore, so include them in the same
+	// visibility gate. Use the larger count rather than adding the two sources:
+	// they normally contain the same reply while the server is running.
+	for key, count := range liveAssistantMessageCounts(durableUIEvents) {
+		if count > eventCounts[key] {
+			eventCounts[key] = count
+		}
+	}
 	refreshedCounts := make(map[string]int)
 	now := time.Now()
 	published := 0
@@ -302,24 +312,6 @@ func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessi
 		log.Printf("[CHAT_HISTORY] Published recovered native assistant reply to live chat session=%s history_index=%d chars=%d", sessionID, index, len(text))
 	}
 	return published
-}
-
-func recentBuilderConversationMessages(messages []builderConversationMessage, limit int) []builderConversationMessage {
-	if limit <= 0 {
-		return nil
-	}
-	start := len(messages)
-	seen := 0
-	for start > 0 && seen < limit {
-		start--
-		message := messages[start]
-		role := strings.ToLower(strings.TrimSpace(message.Role))
-		if builderConversationMessageText(message) == "" || (role != "human" && role != "user" && !builderConversationRoleIsAssistant(role)) {
-			continue
-		}
-		seen++
-	}
-	return messages[start:]
 }
 
 func builderConversationRoleIsAssistant(role string) bool {
@@ -485,6 +477,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 			return nil, time.Time{}, "", false, err
 		}
 		messages, maxTimestamp, err = readNewClaudeTranscriptMessages(transcriptPath, time.Time{})
+		messages = filterNativeContinuityMessages(messages)
 		return messages, maxTimestamp, transcriptPath, err == nil, err
 	case "codex-cli":
 		if nativeSessionID == "" {
@@ -495,6 +488,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 			return nil, time.Time{}, "", false, err
 		}
 		messages, maxTimestamp, err = readCodexTranscriptMessages(transcriptPath)
+		messages = filterNativeContinuityMessages(messages)
 		return messages, maxTimestamp, transcriptPath, err == nil, err
 	case "cursor-cli":
 		if nativeSessionID == "" || workingDir == "" {
@@ -504,7 +498,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	case "pi-cli":
 		if nativeSessionID == "" || workingDir == "" {
 			return nil, time.Time{}, "", false, nil
@@ -513,7 +507,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	case "muse-cli":
 		if nativeSessionID == "" {
 			return nil, time.Time{}, "", false, nil
@@ -522,9 +516,27 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
-		return builderConversationMessagesFromLLMTypes(transcript.Messages), transcript.UpdatedAt, transcript.Path, true, nil
+		return filterNativeContinuityMessages(builderConversationMessagesFromLLMTypes(transcript.Messages)), transcript.UpdatedAt, transcript.Path, true, nil
 	}
 	return nil, time.Time{}, "", false, nil
+}
+
+func filterNativeContinuityMessages(messages []builderConversationMessage) []builderConversationMessage {
+	filtered := make([]builderConversationMessage, 0, len(messages))
+	for _, message := range messages {
+		text := strings.TrimSpace(builderConversationMessageText(message))
+		if strings.HasPrefix(text, "[AGENTWORKS CONVERSATION CONTINUITY]") || strings.HasPrefix(text, "[WORKFLOW CHAT HANDOFF]") {
+			continue
+		}
+		filtered = append(filtered, message)
+	}
+	// The canonical transcript is capped at this same message count. Keeping a
+	// larger native prefix cannot restore anything visible, while the LCS merge
+	// matrix would otherwise grow with an unbounded provider transcript.
+	if len(filtered) > maxPersistedChatHistoryMessages {
+		filtered = filtered[len(filtered)-maxPersistedChatHistoryMessages:]
+	}
+	return filtered
 }
 
 // refreshLatestBuilderConversationFromNativeTranscript catches a persisted
@@ -686,43 +698,15 @@ func mergeBuilderConversationHistory(persisted, native []builderConversationMess
 		return append([]builderConversationMessage(nil), persisted...)
 	}
 
-	positions := make(map[string][]int, len(persisted))
-	for index, message := range persisted {
-		positions[builderConversationMessageKey(message)] = append(positions[builderConversationMessageKey(message)], index)
-	}
-
-	// Find the first shared anchor. Persisted history may include conversation
-	// from before the native session began, so that prefix must remain first.
-	firstNative, firstPersisted := -1, -1
-	for nativeIndex, message := range native {
-		if candidates := positions[builderConversationMessageKey(message)]; len(candidates) > 0 {
-			firstNative, firstPersisted = nativeIndex, candidates[0]
-			break
+	refs := builderConversationMergeRefs(persisted, native)
+	merged := make([]builderConversationMessage, 0, len(refs))
+	for _, ref := range refs {
+		if ref.persisted {
+			merged = append(merged, persisted[ref.index])
+		} else {
+			merged = append(merged, native[ref.index])
 		}
 	}
-	if firstNative < 0 {
-		merged := append([]builderConversationMessage(nil), persisted...)
-		return append(merged, native...)
-	}
-
-	merged := make([]builderConversationMessage, 0, len(persisted)+len(native))
-	merged = append(merged, persisted[:firstPersisted]...)
-	merged = append(merged, native[:firstNative]...)
-	merged = append(merged, persisted[firstPersisted])
-	persistedCursor := firstPersisted + 1
-
-	for _, message := range native[firstNative+1:] {
-		candidates := positions[builderConversationMessageKey(message)]
-		candidateIndex := sort.SearchInts(candidates, persistedCursor)
-		if candidateIndex < len(candidates) {
-			matchedPersisted := candidates[candidateIndex]
-			merged = append(merged, persisted[persistedCursor:matchedPersisted+1]...)
-			persistedCursor = matchedPersisted + 1
-			continue
-		}
-		merged = append(merged, message)
-	}
-	merged = append(merged, persisted[persistedCursor:]...)
 	return merged
 }
 
@@ -739,39 +723,68 @@ func mergeBuilderConversationRecordHistory(record map[string]interface{}, persis
 		return rawHistory
 	}
 
-	positions := make(map[string][]int, len(persisted))
-	for index, message := range persisted {
-		key := builderConversationMessageKey(message)
-		positions[key] = append(positions[key], index)
-	}
-	firstNative, firstPersisted := -1, -1
-	for nativeIndex, message := range native {
-		if candidates := positions[builderConversationMessageKey(message)]; len(candidates) > 0 {
-			firstNative, firstPersisted = nativeIndex, candidates[0]
-			break
+	refs := builderConversationMergeRefs(persisted, native)
+	merged := make([]json.RawMessage, 0, len(refs))
+	for _, ref := range refs {
+		if ref.persisted {
+			merged = append(merged, rawHistory[ref.index])
+		} else {
+			merged = append(merged, marshalBuilderConversationMessages([]builderConversationMessage{native[ref.index]})...)
 		}
 	}
-	if firstNative < 0 {
-		return append(rawHistory, marshalBuilderConversationMessages(native)...)
-	}
+	return merged
+}
 
-	merged := make([]json.RawMessage, 0, len(persisted)+len(native))
-	merged = append(merged, rawHistory[:firstPersisted]...)
-	merged = append(merged, marshalBuilderConversationMessages(native[:firstNative])...)
-	merged = append(merged, rawHistory[firstPersisted])
-	persistedCursor := firstPersisted + 1
-	for _, message := range native[firstNative+1:] {
-		candidates := positions[builderConversationMessageKey(message)]
-		candidateIndex := sort.SearchInts(candidates, persistedCursor)
-		if candidateIndex < len(candidates) {
-			matchedPersisted := candidates[candidateIndex]
-			merged = append(merged, rawHistory[persistedCursor:matchedPersisted+1]...)
-			persistedCursor = matchedPersisted + 1
-			continue
-		}
-		merged = append(merged, marshalBuilderConversationMessages([]builderConversationMessage{message})...)
+type builderConversationMergeRef struct {
+	persisted bool
+	index     int
+}
+
+// builderConversationMergeRefs computes a shortest common supersequence from
+// the persisted and native transcripts. The earlier greedy first-anchor merge
+// chose the first occurrence of repeated text; after a provider restart with a
+// replayed history tail, that misaligned the entire tail and appended old
+// assistant replies as new messages. LCS alignment maximizes reused messages
+// and therefore preserves real repeats without manufacturing replay copies.
+func builderConversationMergeRefs(persisted, native []builderConversationMessage) []builderConversationMergeRef {
+	n, m := len(persisted), len(native)
+	dp := make([][]int, n+1)
+	for i := range dp {
+		dp[i] = make([]int, m+1)
 	}
-	return append(merged, rawHistory[persistedCursor:]...)
+	for i := n - 1; i >= 0; i-- {
+		for j := m - 1; j >= 0; j-- {
+			if builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]) {
+				dp[i][j] = 1 + dp[i+1][j+1]
+			} else if dp[i+1][j] >= dp[i][j+1] {
+				dp[i][j] = dp[i+1][j]
+			} else {
+				dp[i][j] = dp[i][j+1]
+			}
+		}
+	}
+	refs := make([]builderConversationMergeRef, 0, n+m-dp[0][0])
+	for i, j := 0, 0; i < n || j < m; {
+		switch {
+		case i == n:
+			refs = append(refs, builderConversationMergeRef{index: j})
+			j++
+		case j == m:
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+		case builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]):
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+			j++
+		case dp[i+1][j] >= dp[i][j+1]:
+			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
+			i++
+		default:
+			refs = append(refs, builderConversationMergeRef{index: j})
+			j++
+		}
+	}
+	return refs
 }
 
 func builderConversationRawHistory(record map[string]interface{}) ([]json.RawMessage, bool) {
@@ -971,9 +984,9 @@ func extractClaudeTranscriptText(content json.RawMessage) string {
 
 // Startup recovery may run before a browser restores a session. Persist its
 // history, but publish live events only to an already registered matching owner.
-func (api *StreamingAPI) publishOwnedNativeTranscriptRecoveredAssistantMessages(owner, session string, current, refreshed []builderConversationMessage) int {
+func (api *StreamingAPI) publishOwnedNativeTranscriptRecoveredAssistantMessages(owner, session string, current, refreshed []builderConversationMessage, durableUIEvents []storeevents.Event) int {
 	if api == nil || api.eventStore == nil || owner == "" || api.eventStore.GetSessionOwner(session) != owner {
 		return 0
 	}
-	return api.publishNativeTranscriptRecoveredAssistantMessages(session, current, refreshed)
+	return api.publishNativeTranscriptRecoveredAssistantMessages(session, current, refreshed, durableUIEvents)
 }

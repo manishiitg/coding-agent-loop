@@ -2319,7 +2319,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration := "iteration-0"
 			if iwm.workshopConfig != nil && iwm.workshopConfig.ScheduleInvocation != nil {
-				iteration = iwm.workshopConfig.ScheduleInvocation.RunFolder
+				iteration = iwm.workshopConfig.ScheduleInvocation.BoundRunFolder()
 			}
 
 			// Build run_folder from iteration + group folder name
@@ -3108,7 +3108,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"description": "Character offset into the saved scripted execution log; use next_log_offset to read more.",
 				},
 				"iteration": map[string]interface{}{
-					"type": "string", "pattern": "^iteration-[0-9]+(?:-(?:hook|sched))?$",
+					"type": "string", "pattern": "^iteration-[0-9]+(?:-(?:hook|sched|slack-[a-f0-9]+))?$",
 					"description": "Run iteration to inspect, default iteration-0.",
 				},
 				"step_id": map[string]interface{}{
@@ -3137,7 +3137,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 			iteration := "iteration-0"
 			if value, ok := args["iteration"].(string); ok && value != "" {
-				if !regexp.MustCompile(`^iteration-[0-9]+(?:-(?:hook|sched))?$`).MatchString(value) {
+				if !regexp.MustCompile(`^iteration-[0-9]+(?:-(?:hook|sched|slack-[a-f0-9]+))?$`).MatchString(value) {
 					return "iteration must be iteration-<number>", nil
 				}
 				iteration = value

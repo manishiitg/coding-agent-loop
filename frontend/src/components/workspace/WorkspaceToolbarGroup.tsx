@@ -6,11 +6,12 @@ type WorkspaceToolbarGroupProps = {
   open: boolean
   onToggle?: () => void
   title: string
+  hideLabel?: boolean
   children: ReactNode
 } & Record<`data-${string}`, string | undefined>
 
 /** Shared AgentWorks Views/Setup toolbar group used by workflow and product workspaces. */
-export function WorkspaceToolbarGroup({ label, open, onToggle, title, children, ...rest }: WorkspaceToolbarGroupProps) {
+export function WorkspaceToolbarGroup({ label, open, onToggle, title, hideLabel = false, children, ...rest }: WorkspaceToolbarGroupProps) {
   return (
     <div {...rest} className="inline-flex h-full items-center gap-0.5 px-1 first:pl-0.5 last:pr-0.5">
       {onToggle ? (
@@ -18,10 +19,11 @@ export function WorkspaceToolbarGroup({ label, open, onToggle, title, children, 
           type="button"
           onClick={onToggle}
           aria-expanded={open}
+          aria-label={hideLabel ? label : undefined}
           title={title}
-          className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium outline-none transition-colors hover:bg-background/70 ${open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+          className={`inline-flex h-6 items-center gap-1 rounded text-[11px] font-medium outline-none transition-colors hover:bg-background/70 ${hideLabel ? 'px-1' : 'px-2'} ${open ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
         >
-          <span>{label}</span>
+          {!hideLabel && <span>{label}</span>}
           {open ? <ChevronDown className="h-3 w-3" aria-hidden="true" /> : <ChevronRight className="h-3 w-3" aria-hidden="true" />}
         </button>
       ) : (

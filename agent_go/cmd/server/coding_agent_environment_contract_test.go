@@ -131,14 +131,15 @@ func TestBlankValuesDoNotReachTheChildProcess(t *testing.T) {
 // is the shape the original drift took.
 func TestPolicyOwnerAgreesAcrossBothBoundaries(t *testing.T) {
 	cases := map[string]bool{
-		"SECRET_A":     true,
-		"VAR_A":        true,
-		"MCP_CUSTOM":   true,
-		"MCP_AUTH":     true,
-		"PATH":         false,
-		"MCP_ANYTHING": false,
-		"SECRETX":      false,
-		"VARX":         false,
+		"SECRET_A":                        true,
+		"VAR_A":                           true,
+		"MCP_CUSTOM":                      true,
+		"MCP_AUTH":                        true,
+		"CLAUDE_CODE_DISABLE_AUTO_MEMORY": true,
+		"PATH":                            false,
+		"MCP_ANYTHING":                    false,
+		"SECRETX":                         false,
+		"VARX":                            false,
 	}
 	for key, admitted := range cases {
 		if got := llmtypes.IsScopedCodingAgentEnvironmentKey(key); got != admitted {

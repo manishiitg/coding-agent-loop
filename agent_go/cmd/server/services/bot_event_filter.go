@@ -61,7 +61,11 @@ type BotEventFilter struct {
 	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
 	lastErrorText       string // prevents duplicate error/completion notifications
 	lastMainText        string // last main-level text sent to the bot thread this turn
-	sendFullDetails     bool   // opt-in: forward workflow runtime chatter to bot channel
+	streamingMessageID  string // Slack message timestamp for the in-place streamed reply
+	streamingText       string // accumulated clean assistant text for the current streamed reply
+	streamingSentText   string // last accumulated text actually visible in Slack
+	lastStreamingUpdate time.Time
+	sendFullDetails     bool // opt-in: forward workflow runtime chatter to bot channel
 	onBlockingEvent     BlockingEventCallback
 	onSessionDone       SessionDoneCallback
 }
@@ -116,6 +120,10 @@ func (f *BotEventFilter) ResetForNewTurn() {
 	f.mainTextSent = false
 	f.lastMainText = ""
 	f.lastErrorText = ""
+	f.streamingMessageID = ""
+	f.streamingText = ""
+	f.streamingSentText = ""
+	f.lastStreamingUpdate = time.Time{}
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Reset for new turn")
 }
@@ -167,6 +175,10 @@ func (f *BotEventFilter) ClearBlockingState() {
 	f.completionReceived = false
 	f.mainTextSent = false // reset so follow-up agent's completion will be shown
 	f.lastMainText = ""
+	f.streamingMessageID = ""
+	f.streamingText = ""
+	f.streamingSentText = ""
+	f.lastStreamingUpdate = time.Time{}
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Blocking state cleared, completion reset")
 }
@@ -321,10 +333,17 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			f.mu.Unlock()
 		}
 
+	case "streaming_chunk":
+		return f.sendStreamingChunk(ctx, event)
+
 	case "llm_generation_end":
 		kind := f.classifyBotNotification(event)
 		if kind == BotNotifyBuilderText {
 			msg := f.formatGenerationEnd(event)
+			if f.flushStreamingMessage(ctx, msg) {
+				log.Printf("[BOT_FILTER] llm_generation_end: flushed streamed reply")
+				return true
+			}
 			// The progressive-text poller (see SendProgressiveText) may have
 			// already forwarded this exact reply straight from durable
 			// conversation history, ahead of this event; a genuinely
@@ -399,7 +418,14 @@ func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) b
 			// same thing again a second later with a "*Result:*" label).
 			uc, _ := event.Data.Data.(*events.UnifiedCompletionEvent)
 			msg := f.formatUnifiedCompletion(event)
-			if msg != "" && uc != nil && f.ShouldSendSyntheticFinal(uc.FinalResult) {
+			summary := ""
+			if uc != nil {
+				summary = cleanBotStreamingContent(uc.FinalResult, false)
+			}
+			if summary != "" && f.flushStreamingMessage(ctx, summary) {
+				log.Printf("[BOT_FILTER] unified_completion: flushed streamed reply")
+				sent = true
+			} else if msg != "" && uc != nil && f.ShouldSendSyntheticFinal(uc.FinalResult) {
 				log.Printf("[BOT_FILTER] unified_completion: sending main-level result")
 				sent = f.sendMainText(ctx, msg)
 			} else {
@@ -876,7 +902,7 @@ func (f *BotEventFilter) formatUnifiedCompletion(event BotEventData) string {
 
 	isSubAgent := !f.isMainLevel(event)
 
-	summary := uc.FinalResult
+	summary := cleanBotStreamingContent(uc.FinalResult, false)
 
 	if isSubAgent {
 		name := ""
@@ -1125,7 +1151,7 @@ func (f *BotEventFilter) describeToolCall(event BotEventData) string {
 	// Map tool names to user-friendly descriptions
 	switch {
 	case name == "execute_shell_command":
-		return "Running shell commands"
+		return "Working on the request"
 	case name == "delegate" || name == "call_sub_agent" || name == "call_scripted_sub_agent" || name == "call_generic_agent":
 		return "Delegating to a sub-agent"
 	case name == "agent_browser" || strings.HasPrefix(name, "browser_") || name == "web_search":
@@ -1200,12 +1226,213 @@ func (f *BotEventFilter) formatGenerationEnd(event BotEventData) string {
 		return ""
 	}
 
-	content := strings.TrimSpace(gen.Content)
+	content := strings.TrimSpace(cleanBotStreamingContent(gen.Content, false))
 	if content == "" {
 		return "" // pure tool-call turn, no text to show
 	}
 
 	return content
+}
+
+var botSlackStreamUpdateInterval = 1200 * time.Millisecond
+
+func (f *BotEventFilter) sendStreamingChunk(ctx context.Context, event BotEventData) bool {
+	if !strings.EqualFold(f.threadID.Platform, "slack") {
+		return false
+	}
+	if event.Data == nil || event.Data.Data == nil || !f.isMainLevel(event) {
+		return false
+	}
+	if f.suppressWorkflowRuntimeChatter(event) {
+		log.Printf("[BOT_FILTER] streaming_chunk: suppressed workflow runtime chunk for %s", f.threadID.Platform)
+		return false
+	}
+
+	chunk, ok := event.Data.Data.(*events.StreamingChunkEvent)
+	if !ok {
+		return false
+	}
+	if chunk.IsToolCall || strings.EqualFold(strings.TrimSpace(chunk.Source), events.StreamingChunkSourceTerminal) {
+		return false
+	}
+
+	content := cleanBotStreamingContent(chunk.Content, chunk.IsDelta)
+	if content == "" {
+		return false
+	}
+
+	f.mu.Lock()
+	nextText := appendBotStreamingText(f.streamingText, content, chunk.IsDelta)
+	if strings.TrimSpace(nextText) == "" || sameBotMainText(nextText, f.streamingText) {
+		f.mu.Unlock()
+		return false
+	}
+	messageID := f.streamingMessageID
+	f.streamingText = nextText
+	if messageID != "" && time.Since(f.lastStreamingUpdate) < botSlackStreamUpdateInterval {
+		f.mu.Unlock()
+		return false
+	}
+	f.mu.Unlock()
+
+	if messageID == "" {
+		sentID, err := f.connector.SendThreadMessage(ctx, f.threadID, nextText)
+		if err != nil {
+			log.Printf("[BOT_FILTER] Failed to send streaming message: %v", err)
+			return false
+		}
+		f.mu.Lock()
+		if f.streamingMessageID == "" {
+			f.streamingMessageID = sentID
+		}
+		f.streamingSentText = nextText
+		f.lastStreamingUpdate = time.Now()
+		f.mainTextSent = true
+		f.lastMainText = strings.TrimSpace(nextText)
+		f.mu.Unlock()
+		log.Printf("[BOT_FILTER] streaming_chunk: started streamed reply (%d chars)", len(nextText))
+		return true
+	}
+
+	if err := f.connector.UpdateMessage(ctx, f.threadID, messageID, nextText); err != nil {
+		log.Printf("[BOT_FILTER] Failed to update streaming message: %v", err)
+		return false
+	}
+	f.mu.Lock()
+	f.streamingSentText = nextText
+	f.lastStreamingUpdate = time.Now()
+	f.mainTextSent = true
+	f.lastMainText = strings.TrimSpace(nextText)
+	f.mu.Unlock()
+	log.Printf("[BOT_FILTER] streaming_chunk: updated streamed reply (%d chars)", len(nextText))
+	return true
+}
+
+func (f *BotEventFilter) flushStreamingMessage(ctx context.Context, finalText string) bool {
+	f.mu.Lock()
+	messageID := f.streamingMessageID
+	if messageID == "" {
+		f.mu.Unlock()
+		return false
+	}
+	text := strings.TrimSpace(finalText)
+	if text == "" {
+		text = strings.TrimSpace(f.streamingText)
+	}
+	if text == "" {
+		f.mu.Unlock()
+		return false
+	}
+	if sameBotMainText(text, f.streamingSentText) {
+		f.mainTextSent = true
+		f.lastMainText = strings.TrimSpace(f.streamingSentText)
+		f.mu.Unlock()
+		return true
+	}
+	f.streamingText = text
+	f.mu.Unlock()
+
+	if err := f.connector.UpdateMessage(ctx, f.threadID, messageID, text); err != nil {
+		log.Printf("[BOT_FILTER] Failed to flush streaming message: %v", err)
+		return false
+	}
+	f.mu.Lock()
+	f.streamingSentText = text
+	f.lastStreamingUpdate = time.Now()
+	f.mainTextSent = true
+	f.lastMainText = strings.TrimSpace(text)
+	f.mu.Unlock()
+	log.Printf("[BOT_FILTER] streaming_chunk: flushed streamed reply (%d chars)", len(text))
+	return true
+}
+
+func cleanBotStreamingContent(content string, preserveLeading bool) string {
+	if content == "" {
+		return ""
+	}
+	lines := strings.Split(content, "\n")
+	kept := make([]string, 0, len(lines))
+	for _, line := range lines {
+		if isBotStreamingStatusLine(line) {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	cleaned := strings.Join(kept, "\n")
+	if preserveLeading {
+		return cleaned
+	}
+	return strings.TrimLeft(cleaned, "\n\r\t ")
+}
+
+func isBotStreamingStatusLine(line string) bool {
+	trimmed := strings.TrimSpace(line)
+	if trimmed == "" {
+		return false
+	}
+	lower := strings.ToLower(trimmed)
+	if strings.Contains(lower, "running shell command") ||
+		strings.Contains(lower, "running shell commands") ||
+		strings.Contains(lower, "claude code is working") ||
+		strings.Contains(lower, "calling api-bridge") ||
+		strings.Contains(lower, "called api-bridge") ||
+		strings.Contains(lower, "using api-bridge") {
+		return true
+	}
+	if strings.Contains(trimmed, "(MCP)") || strings.Contains(trimmed, "(tool)") {
+		return true
+	}
+	return false
+}
+
+func appendBotStreamingText(currentText, incoming string, isDelta bool) string {
+	if incoming == "" {
+		return currentText
+	}
+	if currentText == "" {
+		return incoming
+	}
+	if isDelta {
+		return currentText + botDeltaSeparator(currentText, incoming) + incoming
+	}
+	if strings.HasSuffix(currentText, incoming) {
+		return currentText
+	}
+	return currentText + botBlockSeparator(currentText, incoming) + incoming
+}
+
+func botDeltaSeparator(currentText, incoming string) string {
+	prev := lastRune(currentText)
+	next := firstRune(incoming)
+	if (prev == '.' || prev == '!' || prev == '?') && next >= 'A' && next <= 'Z' {
+		return " "
+	}
+	return ""
+}
+
+func botBlockSeparator(currentText, incoming string) string {
+	if strings.HasSuffix(currentText, "\n\n") || strings.HasPrefix(incoming, "\n\n") {
+		return ""
+	}
+	if strings.HasSuffix(currentText, "\n") {
+		return "\n"
+	}
+	return "\n\n"
+}
+
+func firstRune(s string) rune {
+	for _, r := range s {
+		return r
+	}
+	return 0
+}
+
+func lastRune(s string) rune {
+	var last rune
+	for _, r := range s {
+		last = r
+	}
+	return last
 }
 
 // SendProgressiveText forwards one completed assistant reply, read straight

@@ -110,7 +110,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
       <TooltipProvider delayDuration={150}>
         {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          <WorkspaceToolbarGroup label="Views" open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
+          <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
             <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
           <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots, email and folders">
@@ -410,7 +410,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             canManage
             scopeNoun="project"
             productTriggerScope={enabledPanels?.has('triggers') === false ? undefined : { profileId: 'work', projectId }}
-            workflowScope={{ workspacePath, label: projectTitle }}
+            workflowScope={{ workflowId: projectId, workspacePath, label: projectTitle }}
             onClose={() => onViewChange('files')}
             headerAction={<AskAIButton
               workspacePath={workspacePath}

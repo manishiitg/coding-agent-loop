@@ -28,6 +28,7 @@ import { updateProductProjectLLMConfig, updateProductProjectSelections } from '.
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
+import { useWorkflowStore } from '../../stores/useWorkflowStore'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_UI_PRESENTATION_VIEWS = {
@@ -498,10 +499,13 @@ export function WorkSurface() {
   const activeSessionId = useChatStore(state => tabId ? state.chatTabs[tabId]?.sessionId : undefined)
   const legacyViewEvents = usePresentationEvents(activeSessionId ?? undefined, ['workflow.view'])
   const handledLegacyViewEvents = useRef<{ session?: string; count: number }>({ session: activeSessionId ?? undefined, count: legacyViewEvents.length })
-  const openWorkPresentationView = useCallback((view: string) => {
+  const openWorkPresentationView = useCallback((view: string, target?: string) => {
     if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
     if (enabledWorkspacePanels && !enabledWorkspacePanels.has(panel)) return
+    if (panel === 'schedules') {
+      useWorkflowStore.getState().openWorkspaceView('schedules', target === 'webhooks' ? 'webhooks' : 'schedules')
+    }
     setPanelOpen(true)
     setWorkspaceView(panel)
   }, [enabledWorkspacePanels])
@@ -511,6 +515,7 @@ export function WorkSurface() {
     isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
     labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
     actorLabel: 'Crew',
+    getTarget: (view) => view === 'schedules' ? useWorkflowStore.getState().workspaceViewTarget?.target : undefined,
   }), [openWorkPresentationView, workspaceView])
   useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)
 
@@ -570,7 +575,11 @@ export function WorkSurface() {
   useEffect(() => {
     let cancelled = false
     void loadAgentProfileUIPanels(WORK_PROFILE_ID, WORK_PROFILE_VERSION).then(panels => {
-      if (!cancelled) setEnabledWorkspacePanels(panels)
+      // An unavailable/mismatched profile must not turn the entire project
+      // workspace into an empty capability set. Crew has a complete local
+      // panel implementation, so retain that safe UI fallback until the
+      // resolved backend feature list is available.
+      if (!cancelled) setEnabledWorkspacePanels(panels.size > 0 ? panels : undefined)
     })
     return () => { cancelled = true }
   }, [])

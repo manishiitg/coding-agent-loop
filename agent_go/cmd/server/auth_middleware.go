@@ -26,11 +26,21 @@ const deprecatedDefaultAuthSecret = "dev-secret-change-in-production"
 
 // UserClaims represents the JWT claims for authenticated users
 type UserClaims struct {
-	AccessToken *accesstokens.Token `json:"-"` // Server-validated PAT restrictions; never read from JWT claims.
-	UserID      string              `json:"user_id"`
-	Username    string              `json:"username"`
-	Email       string              `json:"email,omitempty"`
-	Provider    string              `json:"provider,omitempty"` // Auth provider: "simple", "cognito", "supabase"
+	SlackTrustedApp    bool                `json:"-"` // Set only by the validated server-owned event adapter.
+	ExecutionPrincipal *ExecutionPrincipal `json:"-"`
+	AccessToken        *accesstokens.Token `json:"-"` // Server-validated PAT restrictions; never read from JWT claims.
+	UserID             string              `json:"user_id"`
+	Username           string              `json:"username"`
+	Email              string              `json:"email,omitempty"`
+	Provider           string              `json:"provider,omitempty"` // Auth provider: "simple", "cognito", "supabase"
+	// BotRouteGrant is set only by server-owned connector paths. It lets normal
+	// workflow access resolution treat a configured bot route as the executing
+	// principal while keeping the external sender as audit metadata.
+	BotRouteGrant           string `json:"bot_route_grant,omitempty"`
+	BotRouteWorkflowID      string `json:"bot_route_workflow_id,omitempty"`
+	BotRouteProfileID       string `json:"bot_route_profile_id,omitempty"`
+	BotRouteConversationKey string `json:"bot_route_conversation_key,omitempty"`
+	BotRouteWorkspacePath   string `json:"bot_route_workspace_path,omitempty"`
 	// Scope, when set, narrows a token to one purpose: the middleware admits it
 	// only to the paths scopeAllowsPath names for that scope. A normal session
 	// token has no scope. Today's only scope is "report-preview" (a headless

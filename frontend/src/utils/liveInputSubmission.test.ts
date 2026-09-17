@@ -3,12 +3,22 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   chatUsesStructuredTransport,
   createLiveInputSubmissionCoordinator,
+  isDefinitelyMissingLiveSession,
   shouldRouteChatInputToLiveTransport,
   shouldAppendOptimisticLiveInputMessage,
   shouldRefreshSessionEventStream,
   shouldShowLiveTerminalControl,
   shouldUseRetainedLiveInput,
 } from './liveInputSubmission'
+
+describe('isDefinitelyMissingLiveSession', () => {
+  it('accepts only the pre-delivery missing-session response', () => {
+    expect(isDefinitelyMissingLiveSession({ response: { status: 404, data: 'Session not found\n' } })).toBe(true)
+    expect(isDefinitelyMissingLiveSession({ response: { status: 404, data: 'No running agent for this session\n' } })).toBe(false)
+    expect(isDefinitelyMissingLiveSession({ response: { status: 409, data: 'session_not_active\n' } })).toBe(false)
+    expect(isDefinitelyMissingLiveSession(new Error('network error'))).toBe(false)
+  })
+})
 
 describe('chatUsesStructuredTransport', () => {
   it('keeps Workflow Builder on tmux even when a provider summary says structured', () => {

@@ -173,7 +173,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	if err := hcpo.createRunFolderStructure(ctx, fullRunFolderPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Failed to create run folder structure: %v (continuing)", err))
 	}
-	if executionOpts := hcpo.GetExecutionOptions(); executionOpts != nil && executionOpts.RunKind == "schedule" {
+	if executionOpts := hcpo.GetExecutionOptions(); executionOpts != nil && (executionOpts.RunKind == "schedule" || executionOpts.RunKind == "slack") {
 		executionID := ""
 		if opts != nil {
 			executionID = opts.ExecutionID

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -235,13 +236,7 @@ func (api *StreamingAPI) handleSwitchAgentProfileConversation(w http.ResponseWri
 	if !ok {
 		return
 	}
-	// A chat the registry never listed is accepted when chat_history shows it
-	// belongs to this slot's workspace.
-	verified := false
-	if session, found := chatHistorySessionsByID(userID, slot.binding.WorkspacePath)[strings.TrimSpace(input.SessionID)]; found {
-		verified = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(slot.binding.WorkspacePath)
-	}
-	conversation, err := defaultProductConversationRegistryStore().switchTo(r.Context(), userID, slot.profile, slot.binding, input.SessionID, verified)
+	conversation, err := resumeProductConversation(r.Context(), userID, slot.profile, slot.binding, input.SessionID)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return
@@ -310,4 +305,14 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 		return
 	}
 	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted_paths": result.DeletedPaths})
+}
+
+// resumeProductConversation owns saved-history verification and slot switching
+// for both browser and connector adapters.
+func resumeProductConversation(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding, sessionID string) (ProductConversationRecord, error) {
+	verified := false
+	if session, found := chatHistorySessionsByID(userID, binding.WorkspacePath)[strings.TrimSpace(sessionID)]; found {
+		verified = chatHistorySessionWorkspace(session) == normalizeConversationWorkspace(binding.WorkspacePath)
+	}
+	return defaultProductConversationRegistryStore().switchTo(ctx, userID, profile, binding, sessionID, verified)
 }

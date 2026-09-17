@@ -201,3 +201,6 @@ SHEET_URL="${VAR_SHEET_URL:?missing}"
   tokens; consolidate into a single `execute_shell_command`.
 - Hardcoding variable values inline — fails the next time the value
   changes. Always pass via `sys.argv` / `argparse` / env vars.
+
+
+For Slack messages and cross-step thread continuation, load `read_skill(skills=[{"name":"builder-reference","path":"references/slack-bot-routing.md"}])`. Use the backend-owned `send_slack_message` tool through this bridge with `MCP_AUTH`, a stable idempotency key, and an opaque `thread_ref`. Persist the reference as declared context output and pass it through a downstream context dependency. Never expose bot/app tokens to workflow code.

@@ -46,10 +46,85 @@ func TestInternalBotRequestContextPreservesExistingAuthenticatedClaims(t *testin
 	}
 }
 
+func TestValidateSlackRouteMutationRequiresOwnerForGrantDowngrade(t *testing.T) {
+	current := map[string]ChannelRoute{
+		"C1234567890": {
+			ProfileID:       "work",
+			ConversationKey: "acme",
+			WorkspacePath:   "_users/owner-1/Chats/Work/projects/acme",
+			WorkspaceUserID: "owner-1",
+			BotGrant:        "owner",
+		},
+	}
+	next := map[string]ChannelRoute{
+		"C1234567890": {
+			ProfileID:       "work",
+			ConversationKey: "acme",
+			WorkspacePath:   "_users/owner-1/Chats/Work/projects/acme",
+			BotGrant:        "run",
+		},
+	}
+
+	if err := validateSlackRouteMutationPermissions(context.Background(), nil, next, current); err == nil {
+		t.Fatal("owner -> run grant change did not require destination owner validation")
+	}
+}
+
+func TestValidateSlackRouteMutationPreservesProfileWorkspaceOwner(t *testing.T) {
+	current := map[string]ChannelRoute{
+		"C1234567890": {
+			ProfileID:       "work",
+			ConversationKey: "acme",
+			WorkspacePath:   "_users/owner-1/Chats/Work/projects/acme",
+			WorkspaceUserID: "owner-1",
+			BotGrant:        "owner",
+		},
+	}
+	next := map[string]ChannelRoute{
+		"C1234567890": {
+			ProfileID:       "work",
+			ConversationKey: "acme",
+			WorkspacePath:   "_users/owner-1/Chats/Work/projects/acme",
+			BotGrant:        "owner",
+		},
+	}
+
+	if err := validateSlackRouteMutationPermissions(context.Background(), nil, next, current); err != nil {
+		t.Fatalf("unchanged route required owner validation: %v", err)
+	}
+	if got := next["C1234567890"].WorkspaceUserID; got != "owner-1" {
+		t.Fatalf("workspace owner = %q, want owner-1", got)
+	}
+}
+
+func TestNormalizeSlackChannelRoutingDefaultsNewRoutesToRun(t *testing.T) {
+	routes, err := normalizeSlackChannelRouting(map[string]ChannelRoute{
+		" c1234567890 ": {
+			WorkflowID:    " workflow-1 ",
+			WorkspacePath: " Workflow/demo ",
+		},
+	})
+	if err != nil {
+		t.Fatalf("normalizeSlackChannelRouting: %v", err)
+	}
+	route, ok := routes["C1234567890"]
+	if !ok {
+		t.Fatalf("normalized route missing: %+v", routes)
+	}
+	if route.BotGrant != "run" || route.WorkshopMode != "run" {
+		t.Fatalf("new Slack route mode = grant %q mode %q, want run/run", route.BotGrant, route.WorkshopMode)
+	}
+	if !route.SendFullDetails {
+		t.Fatal("Slack route should keep full details enabled")
+	}
+}
+
 // P0 integration: the bot's follow-up crosses handleQuery and reaches retained
 // Muse delivery while the conversation is running. The terminal delivery
 // boundary is stubbed; no real user chat is messaged.
 func TestBotFollowUpReachesRetainedMuseThroughQueryP0(t *testing.T) {
+	workspace, _ := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	t.Setenv("TRACING_PROVIDER", "noop")
 	const sessionID = "bot-steer-query-p0"
 	const userID = "bot-steer-owner"

@@ -864,6 +864,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		subShellRoot := fsutil.WorkspaceShellRoot()
 		_ = subAgent.AddInstructions(GetWorkspaceMap(subShellRoot, subAgentChatsFolder))
 		_ = subAgent.AddInstructions(GetWorkspaceReference(subShellRoot, subAgentChatsFolder))
+		if projectScopedProfile {
+			_ = subAgent.AddInstructions(governedProjectMemoryInstructions)
+		}
 		log.Printf("[DELEGATION] Added workspace instructions to sub-agent (chats=%s)", subAgentChatsFolder)
 
 		// [BROWSER] Add browser instructions using standardized builder (same as parent chat agent).

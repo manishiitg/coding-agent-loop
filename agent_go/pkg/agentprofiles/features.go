@@ -170,7 +170,7 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Authenticated webhook triggers are enabled. Read the attached `work-schedules-and-bots` skill before managing triggers. A trigger stores one instruction in product.json and sends it to the project chat with the authenticated delivery payload; it does not run workflow routes.",
 	},
 	"bots": {
-		Tools:           []string{"google_workspace_cli", "list_gmail_connections", "update_gmail_connection_grants"},
+		Tools:           []string{"google_workspace_cli", "list_gmail_connections", "update_gmail_connection_grants", "send_slack_message", "get_slack_bot_settings", "test_slack_bot_connection", "create_slack_bot_route", "update_slack_bot_route_permission", "remove_slack_bot_route"},
 		Skills:          []string{"work-schedules-and-bots"},
 		UIPanels:        []string{"bots"},
 		Capabilities:    map[string]CapabilityRequirement{"whatsapp": CapabilityPreferred},

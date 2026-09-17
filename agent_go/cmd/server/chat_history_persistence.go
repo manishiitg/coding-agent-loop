@@ -35,6 +35,12 @@ type ChatHistorySession struct {
 	CanDelete        bool                        `json:"can_delete"`
 	WorkspacePath    string                      `json:"workspace_path,omitempty"`
 	ConversationPath string                      `json:"conversation_path"`
+	BotPlatform      string                      `json:"bot_platform,omitempty"`
+	BotChannelID     string                      `json:"bot_channel_id,omitempty"`
+	BotThreadTS      string                      `json:"bot_thread_ts,omitempty"`
+	BotUserID        string                      `json:"bot_user_id,omitempty"`
+	BotUserName      string                      `json:"bot_user_name,omitempty"`
+	BotUserEmail     string                      `json:"bot_user_email,omitempty"`
 	CreatedAt        string                      `json:"created_at"`
 	UpdatedAt        string                      `json:"updated_at"`
 	MessageCount     int                         `json:"message_count"`
@@ -74,6 +80,78 @@ type ChatHistoryAgentRuntime struct {
 type ChatHistoryPreviewMessage struct {
 	Role string `json:"role"`
 	Text string `json:"text"`
+}
+
+type ChatHistoryBotMetadata struct {
+	Platform  string `json:"bot_platform,omitempty"`
+	ChannelID string `json:"bot_channel_id,omitempty"`
+	ThreadTS  string `json:"bot_thread_ts,omitempty"`
+	UserID    string `json:"bot_user_id,omitempty"`
+	UserName  string `json:"bot_user_name,omitempty"`
+	UserEmail string `json:"bot_user_email,omitempty"`
+}
+
+func chatHistoryBotMetadataFromQuery(req QueryRequest) *ChatHistoryBotMetadata {
+	return normalizeChatHistoryBotMetadata(&ChatHistoryBotMetadata{
+		Platform:  req.BotPlatform,
+		ChannelID: req.BotChannelID,
+		ThreadTS:  req.BotThreadTS,
+		UserID:    req.BotUserID,
+		UserName:  req.BotUserName,
+		UserEmail: req.BotUserEmail,
+	})
+}
+
+func normalizeChatHistoryBotMetadata(meta *ChatHistoryBotMetadata) *ChatHistoryBotMetadata {
+	if meta == nil {
+		return nil
+	}
+	normalized := &ChatHistoryBotMetadata{
+		Platform:  strings.TrimSpace(meta.Platform),
+		ChannelID: strings.TrimSpace(meta.ChannelID),
+		ThreadTS:  strings.TrimSpace(meta.ThreadTS),
+		UserID:    strings.TrimSpace(meta.UserID),
+		UserName:  strings.TrimSpace(meta.UserName),
+		UserEmail: strings.TrimSpace(meta.UserEmail),
+	}
+	if normalized.Platform == "" && normalized.ChannelID == "" && normalized.ThreadTS == "" &&
+		normalized.UserID == "" && normalized.UserName == "" && normalized.UserEmail == "" {
+		return nil
+	}
+	return normalized
+}
+
+func applyChatHistoryBotMetadata(record map[string]interface{}, meta *ChatHistoryBotMetadata) {
+	meta = normalizeChatHistoryBotMetadata(meta)
+	if record == nil || meta == nil {
+		return
+	}
+	if meta.Platform != "" {
+		record["bot_platform"] = meta.Platform
+	}
+	if meta.ChannelID != "" {
+		record["bot_channel_id"] = meta.ChannelID
+	}
+	if meta.ThreadTS != "" {
+		record["bot_thread_ts"] = meta.ThreadTS
+	}
+	if meta.UserID != "" {
+		record["bot_user_id"] = meta.UserID
+	}
+	if meta.UserName != "" {
+		record["bot_user_name"] = meta.UserName
+	}
+	if meta.UserEmail != "" {
+		record["bot_user_email"] = meta.UserEmail
+	}
+}
+
+func stringOrEmpty(meta *ChatHistoryBotMetadata, pick func(*ChatHistoryBotMetadata) string) string {
+	meta = normalizeChatHistoryBotMetadata(meta)
+	if meta == nil || pick == nil {
+		return ""
+	}
+	return strings.TrimSpace(pick(meta))
 }
 
 type ChatHistoryCleanupResult struct {
@@ -251,7 +329,7 @@ func copyChatHistoryConversationIfNeeded(sourcePath, destinationPath string) err
 	return writeRawFileToWorkspace(context.Background(), destinationPath, content)
 }
 
-func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string) {
+func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessionID, terminalSnapshotSessionID, agentMode, userID string, persistedHistory []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, uiEvents []internalevents.Event, conversationPath string, botMetaArg ...*ChatHistoryBotMetadata) {
 	if len(persistedHistory) == 0 {
 		return
 	}
@@ -261,6 +339,10 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	logCtx := newServerLogContext("", "", agentMode, userID, "", sessionID)
 
 	now := time.Now()
+	var botMeta *ChatHistoryBotMetadata
+	if len(botMetaArg) > 0 {
+		botMeta = botMetaArg[0]
+	}
 	convData := map[string]interface{}{
 		"session_id":           sessionID,
 		"user_id":              userID,
@@ -272,6 +354,7 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	if runtime != nil {
 		convData["runtime"] = runtime
 	}
+	applyChatHistoryBotMetadata(convData, botMeta)
 	snapshotSessionID := strings.TrimSpace(terminalSnapshotSessionID)
 	if snapshotSessionID == "" {
 		snapshotSessionID = sessionID
@@ -318,6 +401,15 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 			}
 		}
 	}
+	// A Work tab can be named as soon as the backend assigns its session ID,
+	// before the first agent turn has produced a transcript. In that window the
+	// rename endpoint records the title in the durable project index. Apply it to
+	// the first transcript so the transcript remains authoritative thereafter.
+	if _, titled := convData["title"]; !titled {
+		if title := chatHistoryTitleFromPersistedIndex(userID, sessionID, convPath); title != "" {
+			convData["title"] = title
+		}
+	}
 
 	// The in-memory event store only knows about turns since this process
 	// started. Writing it alone after a restart replaced the whole saved trace
@@ -345,7 +437,7 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
 	}
-	if err := updatePersistedChatHistoryIndex(userID, sessionID, agentMode, persistedHistory, runtime, convPath, int64(len(convJSON)), now); err != nil {
+	if err := updatePersistedChatHistoryIndex(userID, sessionID, agentMode, persistedHistory, runtime, convPath, int64(len(convJSON)), now, botMeta); err != nil {
 		// The transcript remains the source of truth. A missing index entry is
 		// repaired by the compatibility backfill on the next history listing.
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to update metadata index for %s: %v", convPath, err)
@@ -354,7 +446,7 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	logfWithContext(logCtx, "[CHAT_HISTORY] Saved conversation (%d messages) to %s", len(persistedHistory), convPath)
 }
 
-func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, history []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time) error {
+func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, history []llmtypes.MessageContent, runtime *ChatHistoryAgentRuntime, conversationPath string, sourceSize int64, now time.Time, botMeta *ChatHistoryBotMetadata) error {
 	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
 	if indexPath == "" {
 		return fmt.Errorf("cannot derive chat index path from %q", conversationPath)
@@ -409,6 +501,12 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 			Username:         chatHistoryUsername(userID, ""),
 			WorkspacePath:    chatHistoryWorkspacePathFromConversation(conversationPath),
 			ConversationPath: conversationPath,
+			BotPlatform:      stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.Platform }),
+			BotChannelID:     stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.ChannelID }),
+			BotThreadTS:      stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.ThreadTS }),
+			BotUserID:        stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserID }),
+			BotUserName:      stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserName }),
+			BotUserEmail:     stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserEmail }),
 			CreatedAt:        createdAt,
 			UpdatedAt:        now.Format(time.RFC3339),
 			MessageCount:     len(history),
@@ -448,6 +546,26 @@ func chatHistoryIndexTitleForSession(index chatHistoryIndex, sessionID string) s
 		}
 	}
 	return title
+}
+
+func chatHistoryTitleFromPersistedIndex(userID, sessionID, conversationPath string) string {
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	if indexPath == "" {
+		return ""
+	}
+	mutex := chatHistoryIndexMutex(indexPath)
+	mutex.Lock()
+	defer mutex.Unlock()
+	data, exists, err := readFileFromWorkspace(context.Background(), indexPath)
+	if err != nil || !exists {
+		return ""
+	}
+	index := newChatHistoryIndex()
+	if json.Unmarshal([]byte(data), &index) != nil {
+		return ""
+	}
+	index.normalize()
+	return chatHistoryIndexTitleForSession(index, sessionID)
 }
 
 func preserveChatHistorySessionTitle(index *chatHistoryIndex, session *ChatHistorySession) bool {
@@ -1000,6 +1118,19 @@ func mergeNativeContinuationChatHistory(existing, current []llmtypes.MessageCont
 		return merged
 	}
 	return mergeRestoredChatHistory(existing, current)
+}
+
+// mergeCodingAgentFallbackChatHistory removes the historical messages that
+// were injected only to seed a replacement coding-provider session, then joins
+// the genuinely new exchange to the complete durable transcript.
+func mergeCodingAgentFallbackChatHistory(existing, agentHistory []llmtypes.MessageContent, injectedAt, injectedCount int) []llmtypes.MessageContent {
+	if injectedAt < 0 || injectedCount <= 0 || injectedAt+injectedCount > len(agentHistory) {
+		return agentHistory
+	}
+	currentOnly := make([]llmtypes.MessageContent, 0, len(agentHistory)-injectedCount)
+	currentOnly = append(currentOnly, agentHistory[:injectedAt]...)
+	currentOnly = append(currentOnly, agentHistory[injectedAt+injectedCount:]...)
+	return mergeNativeContinuationChatHistory(existing, currentOnly)
 }
 
 // mergeModeChangedChatHistory keeps the canonical UI transcript complete when
@@ -2009,17 +2140,23 @@ func readLocalChatHistorySession(userID, workspaceRoot, workflowPath string, fil
 
 func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackSessionID, data string, fallbackUpdatedAt time.Time) (ChatHistorySession, bool) {
 	var raw struct {
-		SessionID string                    `json:"session_id"`
-		Title     string                    `json:"title,omitempty"`
-		UserID    string                    `json:"user_id,omitempty"`
-		Username  string                    `json:"username,omitempty"`
-		AgentMode string                    `json:"agent_mode"`
-		Status    string                    `json:"status,omitempty"`
-		Runtime   *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
-		Mode      string                    `json:"workshop_mode,omitempty"`
-		History   []llmtypes.MessageContent `json:"conversation_history"`
-		CreatedAt string                    `json:"created_at"`
-		UpdatedAt string                    `json:"updated_at"`
+		SessionID    string                    `json:"session_id"`
+		Title        string                    `json:"title,omitempty"`
+		UserID       string                    `json:"user_id,omitempty"`
+		Username     string                    `json:"username,omitempty"`
+		AgentMode    string                    `json:"agent_mode"`
+		Status       string                    `json:"status,omitempty"`
+		Runtime      *ChatHistoryAgentRuntime  `json:"runtime,omitempty"`
+		Mode         string                    `json:"workshop_mode,omitempty"`
+		BotPlatform  string                    `json:"bot_platform,omitempty"`
+		BotChannelID string                    `json:"bot_channel_id,omitempty"`
+		BotThreadTS  string                    `json:"bot_thread_ts,omitempty"`
+		BotUserID    string                    `json:"bot_user_id,omitempty"`
+		BotUserName  string                    `json:"bot_user_name,omitempty"`
+		BotUserEmail string                    `json:"bot_user_email,omitempty"`
+		History      []llmtypes.MessageContent `json:"conversation_history"`
+		CreatedAt    string                    `json:"created_at"`
+		UpdatedAt    string                    `json:"updated_at"`
 	}
 	if err := json.Unmarshal([]byte(data), &raw); err != nil {
 		return ChatHistorySession{}, false
@@ -2049,6 +2186,14 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 	if len(query) > 200 {
 		query = query[:200] + "..."
 	}
+	botMeta := normalizeChatHistoryBotMetadata(&ChatHistoryBotMetadata{
+		Platform:  raw.BotPlatform,
+		ChannelID: raw.BotChannelID,
+		ThreadTS:  raw.BotThreadTS,
+		UserID:    raw.BotUserID,
+		UserName:  raw.BotUserName,
+		UserEmail: raw.BotUserEmail,
+	})
 
 	ownerID := strings.TrimSpace(raw.UserID)
 	if ownerID == "" {
@@ -2075,6 +2220,12 @@ func parseLocalChatHistorySession(userID, workspaceRoot, workflowPath, fallbackS
 		Username:            chatHistoryUsername(ownerID, raw.Username),
 		WorkspacePath:       workflowPath,
 		ConversationPath:    pathpkg.Join(workspaceRoot, raw.SessionID, "conversation.json"),
+		BotPlatform:         stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.Platform }),
+		BotChannelID:        stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.ChannelID }),
+		BotThreadTS:         stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.ThreadTS }),
+		BotUserID:           stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserID }),
+		BotUserName:         stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserName }),
+		BotUserEmail:        stringOrEmpty(botMeta, func(meta *ChatHistoryBotMetadata) string { return meta.UserEmail }),
 		CreatedAt:           raw.CreatedAt,
 		UpdatedAt:           raw.UpdatedAt,
 		MessageCount:        len(raw.History),
@@ -2498,6 +2649,10 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 	if userID == "" {
 		userID = "default"
 	}
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return fmt.Errorf("conversation not found")
+	}
 	var err error
 	title, err = normalizeChatHistoryTitle(title)
 	if err != nil {
@@ -2508,7 +2663,16 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 	if !found {
-		return fmt.Errorf("conversation not found")
+		// Work creates a tab and assigns its product session before the first
+		// transcript save. Record the requested title in that user's project index
+		// instead of making rename wait for the running turn to finish. Workflow
+		// chats retain the existing author check in the route and are not allowed
+		// through this private Work-only fallback.
+		var workProject bool
+		conversationPath, workProject = workProjectChatHistoryConversationPath(userID, workspacePath, sessionID, time.Now())
+		if !workProject {
+			return fmt.Errorf("conversation not found")
+		}
 	}
 	lock := chatConversationMutex(conversationPath)
 	lock.Lock()
@@ -2518,7 +2682,7 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 	if !exists {
-		return fmt.Errorf("conversation not found")
+		return persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title, 0, true)
 	}
 	var record map[string]interface{}
 	if err := json.Unmarshal([]byte(raw), &record); err != nil {
@@ -2534,6 +2698,10 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return err
 	}
 
+	return persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title, int64(len(encoded)), true)
+}
+
+func persistChatHistoryTitleInIndex(userID, sessionID, conversationPath, title string, sourceSize int64, create bool) error {
 	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
 	if indexPath == "" {
 		return nil
@@ -2543,25 +2711,51 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 	defer mutex.Unlock()
 	index := newChatHistoryIndex()
 	indexRaw, indexExists, err := readFileFromWorkspace(context.Background(), indexPath)
-	if err != nil || !indexExists {
+	if err != nil {
 		return err
 	}
-	if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
-		return fmt.Errorf("decode %s: %w", indexPath, err)
+	if indexExists {
+		if err := json.Unmarshal([]byte(indexRaw), &index); err != nil {
+			return fmt.Errorf("decode %s: %w", indexPath, err)
+		}
 	}
 	index.normalize()
-	// Apply the rename to every dated index row for this durable session. This
-	// prevents an older resumed copy from later reintroducing the previous name.
+	updated := false
 	for indexedPath, entry := range index.Entries {
 		if sanitizeChatHistorySessionID(entry.Session.SessionID) != sessionID {
 			continue
 		}
 		entry.Session.Title = title
-		if indexedPath == conversationPath {
-			entry.SourceSize = int64(len(encoded))
+		if indexedPath == conversationPath && sourceSize > 0 {
+			entry.SourceSize = sourceSize
 		}
 		index.Entries[indexedPath] = entry
+		updated = true
 	}
+	if !updated && create {
+		now := time.Now().Format(time.RFC3339)
+		index.Entries[conversationPath] = chatHistoryIndexEntry{
+			Session: ChatHistorySession{
+				SessionID:        sessionID,
+				Title:            title,
+				AgentMode:        "multi-agent",
+				Status:           "pending",
+				UserID:           userID,
+				Username:         chatHistoryUsername(userID, ""),
+				WorkspacePath:    chatHistoryWorkspacePathFromConversation(conversationPath),
+				ConversationPath: conversationPath,
+				CreatedAt:        now,
+				UpdatedAt:        now,
+			},
+			SourceSize:          sourceSize,
+			AttributionVerified: true,
+		}
+		updated = true
+	}
+	if !updated {
+		return nil
+	}
+	index.Version = chatHistoryIndexVersion
 	index.UpdatedAt = time.Now().Format(time.RFC3339)
 	updatedIndex, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
@@ -3738,6 +3932,7 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 		conversationPath,
 		int64(len(encoded)),
 		time.Now(),
+		botMetadataFromRecord(record),
 	); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update index for %s: %v", conversationPath, err)
 	}
@@ -3747,6 +3942,20 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 func stringFromRecord(record map[string]interface{}, key string) string {
 	value, _ := record[key].(string)
 	return strings.TrimSpace(value)
+}
+
+func botMetadataFromRecord(record map[string]interface{}) *ChatHistoryBotMetadata {
+	if record == nil {
+		return nil
+	}
+	return normalizeChatHistoryBotMetadata(&ChatHistoryBotMetadata{
+		Platform:  stringFromRecord(record, "bot_platform"),
+		ChannelID: stringFromRecord(record, "bot_channel_id"),
+		ThreadTS:  stringFromRecord(record, "bot_thread_ts"),
+		UserID:    stringFromRecord(record, "bot_user_id"),
+		UserName:  stringFromRecord(record, "bot_user_name"),
+		UserEmail: stringFromRecord(record, "bot_user_email"),
+	})
 }
 
 // runtimeFromRecord re-decodes the runtime block the caller deliberately left as

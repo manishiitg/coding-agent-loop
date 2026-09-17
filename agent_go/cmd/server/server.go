@@ -337,6 +337,10 @@ type ActiveSessionInfo struct {
 
 // StreamingAPI represents the streaming API server
 type StreamingAPI struct {
+	postSlackMessage func(context.Context, string, string, string) (string, error) // test seam; production uses SlackService
+
+	botExecutionSessions sync.Map // session -> trusted connector request context
+
 	playwrightLive      playwrightLiveRegistry
 	accessTokenSessions accessTokenSessionRegistry
 	uiControlOnce       sync.Once
@@ -742,6 +746,11 @@ type QueryRequest struct {
 	// conversation so human tools can notify the same Slack/WhatsApp thread.
 	BotChannelID string `json:"bot_channel_id,omitempty"`
 	BotThreadTS  string `json:"bot_thread_ts,omitempty"`
+	// BotUser* identifies the external chat user who created or continued the
+	// bot thread. These fields are display metadata only, not authorization.
+	BotUserID    string `json:"bot_user_id,omitempty"`
+	BotUserName  string `json:"bot_user_name,omitempty"`
+	BotUserEmail string `json:"bot_user_email,omitempty"`
 	// Internal workflow wire field: name of the selected encrypted secret that
 	// contains a Slack Incoming Webhook URL. The URL itself is never serialized.
 	NotificationSlackWebhookSecretName string `json:"notification_slack_webhook_secret_name,omitempty"`
@@ -1748,6 +1757,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Initialize Slack service. Notification delivery is registered through
 	// BotConversationManager.RegisterConnector when Slack bot mode is enabled.
+	configureSlackCredentialCodec()
 	slackSvc, err := services.InitSlackService()
 	if err != nil {
 		log.Printf("⚠️  Failed to initialize Slack service: %v (Slack integration will be disabled)", err)
@@ -2391,6 +2401,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetFollowUpFunc(api.sendFollowUpInternal)
 	botManager.SetResumeTargetFunc(api.resolveBotResumeTarget)
 	botManager.SetResumeListFunc(api.listBotResumeTargets)
+	botManager.SetWorkflowAccessFunc(api.checkBotWorkflowAccess)
 	botManager.SetRunningWorkflowsFunc(func(userID string) []services.BotRunningWorkflow {
 		running := api.listRunningWorkflowExecutions(userID)
 		out := make([]services.BotRunningWorkflow, 0, len(running))
@@ -2494,12 +2505,20 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Register bot routes
 	BotRoutes(router, api)
+	// Product/profile bot routes are shared by Slack and WhatsApp. WhatsApp
+	// has extra default-profile routing below, but Slack profile routes need
+	// this handler even when WhatsApp is disabled.
+	botManager.SetProfileTurnFunc(api.botProfileTurn)
+	botManager.SetWorkflowTurnFunc(api.botWorkflowTurn)
+	virtualtools.SetSlackMessageHandler(api.sendSlackMessageFromTool)
+	if slackSvc != nil {
+		slackSvc.SetTriggerHandler(api.dispatchSlackTrigger)
+	}
 	if api.whatsappManager != nil {
 		WhatsAppRoutes(router, api.whatsappManager, api.whatsappDefaultProfileResolver)
 		// Unrouted WhatsApp messages on a pairing with a default product
 		// profile run in that profile's own conversation; the product's own
 		// @tokens pick one of its other profiles.
-		botManager.SetProfileTurnFunc(api.botProfileTurn)
 		api.whatsappManager.SetProfileRouter(api.whatsappProfileRouter)
 		// A voice note is transcribed on-device before it ever reaches a
 		// conversation — the chat never learns it arrived as audio at all.
@@ -3364,6 +3383,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, errorMsg, http.StatusBadRequest)
 		return
 	}
+	principalContext, principalErr := api.revalidateExecutionPrincipal(r.Context(), req)
+	if principalErr != nil {
+		http.Error(w, principalErr.Error(), http.StatusForbidden)
+		return
+	}
+	r = r.WithContext(principalContext)
+	if err := api.bindSlackInvocation(r.Context(), &req, r.Header.Get("X-Session-ID")); err != nil {
+		http.Error(w, err.Error(), http.StatusForbidden)
+		return
+	}
 	if target, ok := r.Context().Value(resolvedResumeTargetContextKey{}).(*resolvedResumeTarget); ok {
 		req.resolvedResumeTarget = target
 	}
@@ -3466,6 +3495,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	access, accessErr := conversationTargetAccess(r.Context(), req)
+	if accessErr != nil {
+		http.Error(w, accessErr.Error(), http.StatusForbidden)
+		return
+	}
+	currentUserIsReadOnly = access == WorkflowAccessRead
+
 	var resolvedProfileSkills []*llmtypes.Skill
 	if resolvedProfile != nil {
 		identitySkillNames := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
@@ -3477,27 +3513,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
 	api.conversationMux.Unlock()
-	// Per-user workflow access: the list endpoint already hides workflows a
-	// user isn't allowed to see, but that's UX only -- a user who already
-	// knows a workflow's folder name could still open it directly. This is
-	// the actual security boundary. Only the generic (profile-less)
-	// AgentWorks chat path opens a workflow this way; product surfaces like
-	// Dominion never point SelectedFolder at "Workflow/" themselves.
-	if strings.HasPrefix(req.SelectedFolder, "Workflow/") {
-		if manifest, exists, manifestErr := ReadWorkflowManifest(r.Context(), req.SelectedFolder); manifestErr == nil && exists {
-			claims := GetUserFromContext(r.Context())
-			level := workflowAccessForManifest(claims, manifest)
-			if !userAllowedWorkflowID(claims, manifest.ID) || level == WorkflowAccessNone {
-				http.Error(w, "You don't have access to this workflow", http.StatusForbidden)
-				return
-			}
-			// Shared read-only: the same PLAT-262 session a read-only
-			// account gets, but decided per workflow (workflow_access.go).
-			if level == WorkflowAccessRead {
-				currentUserIsReadOnly = true
-			}
-		}
-	}
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
 	api.resolveNotificationSecretForRequest(r.Context(), currentUserID, req.SelectedFolder, &req)
@@ -3616,10 +3631,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// through. Frontend "+ new chat" pre-checks /api/workflow/running and
 	// offers a kill-and-start dialog; this 409 is the backend guard
 	// against races.
-	if req.AgentMode == "workflow_phase" &&
-		req.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
-		strings.TrimSpace(req.SelectedFolder) != "" &&
-		!scheduledRequestBypassesWorkflowBusy(sessionID, req.TriggeredBy) {
+	if workflowBusyGuardApplies(sessionID, req) {
 		if running := api.findRunningTrackedExecutionForWorkspaceWhere(req.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
 			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 		}); running != nil && running.SessionID != sessionID {
@@ -5302,6 +5314,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// workflow_layout.json must go through typed plan-mod tools that serialize
 			// full structs, not raw writes.
 			var fileContextBlockedWriteFolders []string
+			if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, workflowPhaseFolder+"/runs/iteration-0/", workflowPhaseFolder+"/evaluation/runs/iteration-0/")
+			}
 			// PLAT-262: a read-only identity gets none of the whole-workflow write
 			// grant below — effectiveWorkflowPhaseFolderForWrites stays "" for them,
 			// which workflowPhaseWriteFolders() below treats as "no workflow write
@@ -6668,6 +6683,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		replayHistoryToAgent := true
+		codingFallbackConversationPath := ""
+		codingFallbackWorkspace := ""
+		codingFallbackHistoryBase := -1
+		codingFallbackInjectedMessages := 0
 		if underlyingAgent := llmAgent.GetUnderlyingAgent(); underlyingAgent != nil {
 			restoredNativeCodingResume := false
 			restoredConversationPath := strings.TrimSpace(req.RestoredConversationPath)
@@ -6820,11 +6839,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			} else if req.resolvedResumeTarget != nil && req.resolvedResumeTarget.crossesProvider(finalProvider) && restoredConversationPathForFallback != "" {
 				// Provider-native handles cannot cross CLI implementations. Keep the
-				// AgentWorks conversation stable and give the newly selected provider
-				// the trusted, project-owned transcript as read-only context.
-				chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				// AgentWorks conversation stable and make the newly selected coding
+				// provider read the same trusted, project-owned archive used for a
+				// same-provider profile reconnect.
+				if isCodingAgentProvider(finalProvider, finalModelID) {
+					chatQuery = prependCodingAgentContinuityNotice(
+						chatQuery,
+						restoredConversationPathForFallback,
+						restoredConversationWorkspace,
+						len(historyForAgent),
+					)
+				} else {
+					chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				}
 				replayHistoryToAgent = false
-				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with trusted conversation context %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with required complete conversation archive %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
 			} else if restoredConversationPathForFallback != "" {
 				// A conversation JSON is UI state. Never attach it as an ad-hoc
 				// prompt file: native resume is preferred, and an unavailable native
@@ -6838,18 +6867,44 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				replayHistoryToAgent = false
 				logfWithContext(queryLogCtx, "[CONVERSATION] Coding-agent context is owned by its transport/native continuation; UI history will not be replayed")
 			}
+			codingFallbackConversationPath = restoredConversationPathForFallback
+			codingFallbackWorkspace = restoredConversationWorkspace
 		}
 
 		if len(historyForAgent) > 0 && replayHistoryToAgent {
 			historyToReplay := historyForAgent
 			if isCodingAgentProvider(finalProvider, finalModelID) {
-				historyToReplay = boundedChatHistoryTail(historyForAgent, maxCodingAgentFallbackMessages, maxCodingAgentFallbackBytes)
-				logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; replaying bounded fallback of %d/%d UI-history messages", len(historyToReplay), len(historyForAgent))
+				codingFallbackHistoryBase = len(llmAgent.GetHistory())
+				if codingFallbackConversationPath == "" {
+					if path, ok, err := FindChatHistoryConversationPathForSession(currentUserID, sessionID, codingFallbackWorkspace); err != nil {
+						logfWithContext(queryLogCtx, "[CHAT_HISTORY] Could not resolve complete conversation archive for coding-agent fallback: %v", err)
+					} else if ok {
+						codingFallbackConversationPath = path
+					}
+				}
+				if codingFallbackConversationPath != "" {
+					chatQuery = prependCodingAgentContinuityNotice(
+						chatQuery,
+						codingFallbackConversationPath,
+						codingFallbackWorkspace,
+						len(historyForAgent),
+					)
+					historyToReplay = nil
+					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
+				} else {
+					// A missing archive is an exceptional durability failure. Preserve
+					// enough immediate context to answer rather than starting blind.
+					historyToReplay = boundedChatHistoryTail(historyForAgent, maxCodingAgentFallbackMessages, maxCodingAgentFallbackBytes)
+					logfWithContext(queryLogCtx, "[CONVERSATION] Complete conversation archive unavailable; replaying emergency bounded fallback of %d/%d UI-history messages", len(historyToReplay), len(historyForAgent))
+				}
 			} else {
 				logfWithContext(queryLogCtx, "[CONVERSATION] Replaying %d in-memory messages for session %s", len(historyToReplay), sessionID)
 			}
 			for _, msg := range historyToReplay {
 				llmAgent.AppendMessage(msg)
+				if isCodingAgentProvider(finalProvider, finalModelID) {
+					codingFallbackInjectedMessages++
+				}
 			}
 		}
 
@@ -6953,7 +7008,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Agent context after a policy reconnect contains a bounded handoff.
 		// Both the UI cache and disk must retain the complete conversation.
 		finalHistory := llmAgent.GetHistory()
-		if !modeChangedThisTurn && len(historyForAgent) > 0 && !replayHistoryToAgent {
+		if !modeChangedThisTurn && codingFallbackHistoryBase >= 0 && codingFallbackInjectedMessages > 0 &&
+			codingFallbackHistoryBase+codingFallbackInjectedMessages <= len(finalHistory) {
+			// Synthetic archive pointers and emergency replay tails are provider
+			// context, not user messages. Strip them for both same-provider
+			// reconnects and cross-provider resumes before durable persistence.
+			finalHistory = mergeCodingAgentFallbackChatHistory(historyForAgent, finalHistory, codingFallbackHistoryBase, codingFallbackInjectedMessages)
+			log.Printf("[CONVERSATION DEBUG] Coding-agent fallback merge: removed %d injected context messages, retained %d prior messages, final history now %d messages for session %s", codingFallbackInjectedMessages, len(historyForAgent), len(finalHistory), sessionID)
+		} else if !modeChangedThisTurn && len(historyForAgent) > 0 && !replayHistoryToAgent {
 			// Native coding-agent continuation owns model context, so the prior UI
 			// transcript was intentionally not replayed into this wrapper. Merge it
 			// back only for durable/UI history; otherwise every follow-up replaces
@@ -7051,6 +7113,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				sessionID, persistSessionID, persistConversationPath, len(persistedHistoryForDisk))
 		}
 
+		botHistoryMeta := chatHistoryBotMetadataFromQuery(req)
+
 		// Work uses the same workspace-owned transcript layout as AgentWorks.
 		// When an older centrally stored chat is resumed, seed the local file first
 		// so its durable UI events and terminal snapshot survive the move.
@@ -7070,7 +7134,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Work projects which use the project-owned path selected above. Workflow
 		// conversations are persisted below in their workspace Builder folder.
 		if !isWorkflowPhase {
-			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath)
+			api.persistChatConversationToPathWithTerminalSession(persistSessionID, sessionID, req.AgentMode, currentUserID, persistedHistoryForDisk, chatRuntime, uiEvents, persistConversationPath, botHistoryMeta)
 		}
 
 		// Store resolved workflowPhaseFolder so synthetic turns can persist builder conversations
@@ -7098,6 +7162,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if chatRuntime != nil {
 				convData["runtime"] = chatRuntime
 			}
+			applyChatHistoryBotMetadata(convData, botHistoryMeta)
 			if terminalSnapshots := api.captureChatHistoryTerminalSnapshots(sessionID, chatRuntime); len(terminalSnapshots) > 0 {
 				convData["terminal_snapshots"] = terminalSnapshots
 			}
@@ -7122,7 +7187,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					// the transcript without this leaves the chat on disk but absent
 					// from /resume, so the user is offered an older conversation and the
 					// agent legitimately has no memory of the one they were just in.
-					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, req.AgentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now()); err != nil {
+					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, req.AgentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now(), botHistoryMeta); err != nil {
 						log.Printf("[BUILDER LOG] Failed to update chat index for %s: %v", logPath, err)
 					}
 				}
@@ -7347,6 +7412,23 @@ func createLLMLogger() loggerv2.Logger {
 // neither blocks nor is blocked by one.
 func scheduledRequestBypassesWorkflowBusy(sessionID, triggeredBy string) bool {
 	return isScheduledSessionIdentity(sessionID, triggeredBy)
+}
+
+func workflowBusyGuardApplies(sessionID string, req QueryRequest) bool {
+	if req.AgentMode != "workflow_phase" ||
+		req.PhaseID != workflowtypes.WorkflowStatusWorkflowBuilder ||
+		strings.TrimSpace(req.SelectedFolder) == "" ||
+		scheduledRequestBypassesWorkflowBusy(sessionID, req.TriggeredBy) {
+		return false
+	}
+	mode := ""
+	if req.ExecutionOptions != nil {
+		mode = normalizeChatHistoryWorkshopMode(req.ExecutionOptions.WorkshopMode)
+	}
+	// Bot and scheduled workflow traffic use the workflow-builder phase as a
+	// conversational runtime in run mode. The exclusive lock is only for
+	// authoring modes that can mutate workflow design state.
+	return mode != "run"
 }
 
 func isScheduledSessionIdentity(sessionID, triggeredBy string) bool {
@@ -9446,10 +9528,7 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 	baseReq.IsAutoNotification = false
 	baseReq.userID = GetUserIDFromContext(r.Context())
 
-	if baseReq.AgentMode == "workflow_phase" &&
-		baseReq.PhaseID == workflowtypes.WorkflowStatusWorkflowBuilder &&
-		strings.TrimSpace(baseReq.SelectedFolder) != "" &&
-		!scheduledRequestBypassesWorkflowBusy(sessionID, baseReq.TriggeredBy) {
+	if workflowBusyGuardApplies(sessionID, baseReq) {
 		if running := api.findRunningTrackedExecutionForWorkspaceWhere(baseReq.SelectedFolder, func(exec *TrackedWorkflowExecution) bool {
 			return trackedExecutionBlocksNewWorkflowBuilderChat(exec)
 		}); running != nil && running.SessionID != sessionID {
@@ -10006,9 +10085,24 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if invocation, ok := api.webhookInvocations.Load(sessionID); ok {
 		cfg.WebhookInvocation = invocation.(*todo_creation_human.WebhookInvocation)
 	}
-	if invocation, ok := api.scheduleInvocations.Load(sessionID); ok {
-		cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+	for ancestor, visited := sessionID, map[string]bool{}; ancestor != "" && !visited[ancestor]; {
+		visited[ancestor] = true
+		if invocation, ok := api.scheduleInvocations.Load(ancestor); ok {
+			cfg.ScheduleInvocation = invocation.(*todo_creation_human.ScheduleInvocation)
+			cfg.RunFolder = cfg.ScheduleInvocation.RunFolder
+			break
+		}
+		if parent := virtualtools.GetParentChat(ancestor); parent != nil && parent.SessionID != ancestor {
+			ancestor = parent.SessionID
+			continue
+		}
+		active, ok := api.getActiveSession(ancestor)
+		if !ok {
+			break
+		}
+		ancestor = active.ParentSessionID
 	}
+
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()

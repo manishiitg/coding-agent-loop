@@ -1,6 +1,6 @@
 ---
 name: work-workflow-files
-description: Read and interpret files from attached folders or read-only AgentWorks workflow references in Crew, and securely link files from the active Crew project. Use when the user asks what an attached workflow contains, requests data or reports from it, wants files compared across workflows, or asks for a share link to a Crew project file or folder.
+description: Read and interpret files from attached folders or read-only AgentWorks workflow references in Crew, and securely link files from the active Crew project. Use when the user asks what an attached workflow contains, requests data or Dashboards from it, wants files compared across workflows, or asks for a share link to a Crew project file or folder.
 ---
 
 # Read attached workflow files
@@ -10,10 +10,10 @@ description: Read and interpret files from attached folders or read-only AgentWo
 For the project's live Dashboard, call `get_report_link` with no arguments and
 use its returned `url`. Do not pass `db/reports/index.html` to `get_file_link`:
 that would open a restricted generic HTML preview instead of the full Dashboard
-runtime, and the file-link tool rejects that report entry path. The dedicated
-report URL renders the Dashboard full-page and uses the normal AgentWorks SSO;
+runtime, and the file-link tool rejects that Dashboard entry path. The dedicated
+Dashboard URL renders the Dashboard full-page and uses the normal AgentWorks SSO;
 do not add a separate publish password or login to this internal URL. Publicly
-hosted static reports remain a separate publish flow with their own visibility
+hosted static Dashboards remain a separate publish flow with their own visibility
 controls.
 
 Call `get_file_link` with the path relative to the active Crew project. The
@@ -63,9 +63,9 @@ folders can contain large run histories and caches.
 | `knowledgebase/` | Curated source context, notes, and indexes. |
 | `learnings/` | Accumulated global or step-specific lessons. |
 | `db/db.sqlite` | Managed workflow data. Query read-only; never edit SQLite, WAL, or SHM files. |
-| `db/reports/` | Dashboard source, commonly `index.html`, plus report assets. |
+| `db/reports/` | Dashboard source, commonly `index.html`, plus Dashboard assets. |
 | `runs/run_index.json` and `runs/iteration-*` | Run metadata, logs, and per-step execution outputs. Select the relevant/latest run instead of crawling all runs. |
-| `reports/` | Published or user-scoped report artifacts, when present. |
+| `reports/` | Published or user-scoped Dashboard artifacts, when present. |
 
 Folders such as `builder/`, `planning/`, `config/`, `costs/`, `evaluation/`,
 `pulse/`, `scores/`, `soul/`, `backup/`, `versions/`, hidden provider folders,

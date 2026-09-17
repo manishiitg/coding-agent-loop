@@ -3116,7 +3116,7 @@ func (api *StreamingAPI) executeSyntheticTurnWithOutcome(sessionID, syntheticMsg
 					if hasReq {
 						agentMode = req.AgentMode
 					}
-					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, agentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now()); err != nil {
+					if err := updatePersistedChatHistoryIndex(currentUserID, persistSessionID, agentMode, persistedHistoryForDisk, chatRuntime, logPath, int64(len(convJSON)), time.Now(), nil); err != nil {
 						log.Printf("[BG AGENT] Failed to update chat index for %s: %v", logPath, err)
 					}
 				}

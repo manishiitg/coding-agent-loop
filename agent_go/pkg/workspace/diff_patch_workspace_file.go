@@ -34,6 +34,7 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	// The workspace HTTP handler does its own validation with the real docs-dir,
 	// but the filepath goes into the URL path so it must be relative.
 	params.Filepath = stripWorkspacePrefix(params.Filepath)
+	params.Filepath = c.resolveGuardRelativeWorkspacePath(ctx, params.Filepath)
 	if err := c.ValidatePathWithContext(ctx, params.Filepath, true); err != nil {
 		return DiffPatchResult{}, err
 	}
@@ -102,6 +103,50 @@ func (c *Client) DiffPatchWorkspaceFile(ctx context.Context, params DiffPatchWor
 	return DiffPatchResult{
 		Data: apiResp.Data,
 	}, nil
+}
+
+// resolveGuardRelativeWorkspacePath gives file tools the same project-root
+// relative semantics as the coding CLI shell. A project agent runs with its
+// cwd at the sole granted project root, so `MEMORY.md` must resolve to that
+// root for diff_patch_workspace_file as well. Multiple writable roots are
+// intentionally left unresolved because choosing one would be ambiguous.
+func (c *Client) resolveGuardRelativeWorkspacePath(ctx context.Context, input string) string {
+	clean := filepath.Clean(strings.TrimSpace(input))
+	if clean == "." || filepath.IsAbs(clean) || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) {
+		return input
+	}
+	firstPart := strings.SplitN(filepath.ToSlash(clean), "/", 2)[0]
+	switch firstPart {
+	case "_users", "Chats", "Workflow":
+		// These are already workspace-root-qualified. A denied qualified path
+		// must stay denied rather than being smuggled below the project root.
+		return clean
+	}
+	guard := c.resolveEffectiveFolderGuard(ctx)
+	if guard == nil || !guard.Enabled || len(guard.WritePaths) == 0 {
+		return input
+	}
+	if validatePathAgainstGuard(guard, clean, true) == nil {
+		return clean
+	}
+	candidates := make(map[string]struct{})
+	for _, root := range guard.WritePaths {
+		root = filepath.Clean(strings.TrimSpace(root))
+		if root == "." || isExactFolderGuardFilePath(root) {
+			continue
+		}
+		candidate := filepath.Join(root, clean)
+		if validatePathAgainstGuard(guard, candidate, true) == nil {
+			candidates[candidate] = struct{}{}
+		}
+	}
+	if len(candidates) != 1 {
+		return input
+	}
+	for candidate := range candidates {
+		return candidate
+	}
+	return input
 }
 
 func (c *Client) resolveLinkedFolderPath(ctx context.Context, input string) string {

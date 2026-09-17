@@ -640,6 +640,42 @@ func TestMergeRestoredChatHistoryIgnoresChangingSystemPromptWhenBodyIsCumulative
 	}
 }
 
+func TestMergeCodingAgentFallbackHistoryDropsInjectedReplayBeforePersistence(t *testing.T) {
+	message := func(role llmtypes.ChatMessageType, text string) llmtypes.MessageContent {
+		return llmtypes.MessageContent{Role: role, Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: text}}}
+	}
+	existing := []llmtypes.MessageContent{
+		message(llmtypes.ChatMessageTypeHuman, "old request"),
+		message(llmtypes.ChatMessageTypeAI, "old answer"),
+		message(llmtypes.ChatMessageTypeHuman, "recent request"),
+		message(llmtypes.ChatMessageTypeAI, "recent answer"),
+	}
+	agentHistory := []llmtypes.MessageContent{
+		message(llmtypes.ChatMessageTypeSystem, "current product prompt"),
+		message(llmtypes.ChatMessageTypeHuman, "[AGENTWORKS CONVERSATION CONTINUITY] internal"),
+		message(llmtypes.ChatMessageTypeHuman, "recent request"),
+		message(llmtypes.ChatMessageTypeAI, "recent answer"),
+		message(llmtypes.ChatMessageTypeHuman, "new request"),
+		message(llmtypes.ChatMessageTypeAI, "new answer"),
+	}
+	merged := mergeCodingAgentFallbackChatHistory(existing, agentHistory, 1, 3)
+	texts := make([]string, 0, len(merged))
+	for _, msg := range merged {
+		if len(msg.Parts) > 0 {
+			texts = append(texts, chatHistoryPartText(msg.Parts[0]))
+		}
+	}
+	want := []string{"old request", "old answer", "recent request", "recent answer", "current product prompt", "new request", "new answer"}
+	if len(texts) != len(want) {
+		t.Fatalf("merged messages = %q, want %q", texts, want)
+	}
+	for i := range want {
+		if texts[i] != want[i] {
+			t.Fatalf("merged[%d] = %q, want %q; all=%q", i, texts[i], want[i], texts)
+		}
+	}
+}
+
 func TestShouldAttachRestoredConversationFallbackSkipsMatchingCodingAgent(t *testing.T) {
 	runtime := &ChatHistoryAgentRuntime{
 		Kind:              "coding_agent",
@@ -1401,7 +1437,7 @@ func TestUpdatePersistedChatHistoryIndexCarriesTitleAcrossDatedPaths(t *testing.
 		Role:  llmtypes.ChatMessageTypeHuman,
 		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "check again"}},
 	}}
-	if err := updatePersistedChatHistoryIndex("default", "resumed-chat", "workflow", history, nil, newPath, 123, time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)); err != nil {
+	if err := updatePersistedChatHistoryIndex("default", "resumed-chat", "workflow", history, nil, newPath, 123, time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC), nil); err != nil {
 		t.Fatalf("update index: %v", err)
 	}
 
@@ -1918,6 +1954,79 @@ func TestNormalizeChatHistoryTitle(t *testing.T) {
 	}
 	if _, err := normalizeChatHistoryTitle("   "); err == nil {
 		t.Fatal("expected empty title to fail")
+	}
+}
+
+func TestRenameWorkChatBeforeFirstPersistenceRetainsTitle(t *testing.T) {
+	workspace := &mockWorkspaceAPI{files: map[string]string{}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	const (
+		userID        = "rename-before-save-user"
+		sessionID     = "product-rename-before-save"
+		workspacePath = "Chats/Work/projects/new-project"
+		title         = "Latency investigation"
+	)
+
+	if err := RenameChatHistorySession(userID, sessionID, workspacePath, title); err != nil {
+		t.Fatalf("rename before first save: %v", err)
+	}
+	conversationPath, ok := workProjectChatHistoryConversationPath(userID, workspacePath, sessionID, time.Now())
+	if !ok {
+		t.Fatal("expected Work project conversation path")
+	}
+	if _, exists := workspace.files[conversationPath]; exists {
+		t.Fatal("rename must not fabricate a transcript")
+	}
+
+	history := []llmtypes.MessageContent{{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "check this Notion board"}},
+	}}
+	(&StreamingAPI{}).persistChatConversationToPathWithTerminalSession(
+		sessionID, "", "multi-agent", userID, history, nil, nil, conversationPath,
+	)
+
+	raw, exists := workspace.files[conversationPath]
+	if !exists {
+		t.Fatal("first transcript was not persisted")
+	}
+	var record struct {
+		Title string `json:"title"`
+	}
+	if err := json.Unmarshal([]byte(raw), &record); err != nil {
+		t.Fatalf("decode first transcript: %v", err)
+	}
+	if record.Title != title {
+		t.Fatalf("first transcript title = %q, want %q", record.Title, title)
+	}
+
+	indexPath := chatHistoryIndexWorkspacePath(userID, conversationPath)
+	var index chatHistoryIndex
+	if err := json.Unmarshal([]byte(workspace.files[indexPath]), &index); err != nil {
+		t.Fatalf("decode Work chat index: %v", err)
+	}
+	entry, exists := index.Entries[conversationPath]
+	if !exists || entry.Session.SessionID != sessionID || entry.Session.Title != title || entry.Session.Status != "completed" {
+		t.Fatalf("saved index entry = %#v", entry)
+	}
+
+	const updatedTitle = "Notion latency investigation"
+	if err := RenameChatHistorySession(userID, sessionID, workspacePath, updatedTitle); err != nil {
+		t.Fatalf("rename persisted Work chat: %v", err)
+	}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &record); err != nil {
+		t.Fatalf("decode renamed transcript: %v", err)
+	}
+	if record.Title != updatedTitle {
+		t.Fatalf("renamed transcript title = %q, want %q", record.Title, updatedTitle)
+	}
+	if err := json.Unmarshal([]byte(workspace.files[indexPath]), &index); err != nil {
+		t.Fatalf("decode renamed Work chat index: %v", err)
+	}
+	if got := index.Entries[conversationPath].Session.Title; got != updatedTitle {
+		t.Fatalf("renamed index title = %q, want %q", got, updatedTitle)
 	}
 }
 

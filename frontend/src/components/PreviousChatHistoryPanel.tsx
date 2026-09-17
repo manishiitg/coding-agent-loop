@@ -1,3 +1,4 @@
+import './PreviousChatHistoryPanel.css'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
@@ -793,7 +794,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   ].filter(({ filter }) => !recentOnly || filter === 'chat')
 
   return (
-    <div className={`${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
+    <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
       <div className={`${fill ? 'flex min-h-0 flex-1 flex-col' : ''} w-full`}>
         <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : title ? 'justify-between' : 'justify-start'}`}>
           {/* The "Previous … chats" heading is redundant in the compact rail —
@@ -815,7 +816,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     key={filter}
                     aria-label={label}
                     aria-pressed={isActive}
-                    title={label}
+                    title={`${label} (${displayFilterCounts[filter]})`}
                     type="button"
                     onClick={() => setActiveFilter(filter)}
                     className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
@@ -825,8 +826,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     }`}
                   >
                     <Icon className="h-3.5 w-3.5" />
-                    {!compact && <span>{label}</span>}
-                    <span className={`min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
+                    {!compact && <span className="chat-history-filter-label">{label}</span>}
+                    <span className={`chat-history-filter-count min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
                       isActive
                         ? 'bg-muted text-foreground'
                         : 'bg-background/60 text-muted-foreground'

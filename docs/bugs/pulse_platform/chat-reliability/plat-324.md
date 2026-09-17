@@ -410,3 +410,57 @@ frontend HTTP 200 at 07:39 UTC. The Linux backend and production frontend builds
 asset checks and bundle limits passed. The existing Landlock overlap smoke test
 again skipped due to its config-directory permission issue. Live user acceptance
 remains pending; this deployment did not replay or resend the user's failed input.
+
+
+### 2026-09-17 duplicate exchange after live-input — confirmed, unresolved
+
+User screenshot shows `did you trigger webhooks for it` twice. RTS logs show
+one live-input delivery and one HTTP 200 at 07:49:35–07:49:37 UTC for
+`c7d58080-0058-4f6f-a394-feea651f405b` (Workflow/rtsprreviweer).
+Read-only inspection of that saved transcript found the exact human row and
+its same adjacent assistant exchange repeated at different history offsets;
+the copy count grew between reads while background processing continued.
+This is persisted duplication, not merely an optimistic UI bubble. No duplicate
+provider dispatch of that exact input was found in the inspected log.
+
+History reconciliation is the suspected writer boundary: cumulative/native
+snapshot merging can preserve earlier repeated blocks, and the continuation
+merge appends an entire incoming segment when strict prefix/suffix matching
+fails. Exact responsible save sequence still needs a deterministic reproducer.
+No history deletion, production transcript repair or new fix is claimed here.
+
+
+### Duplicate snapshot merge and suppressed-child retry — reproduced
+
+A private replay of the affected production history established the snapshot
+writer failure: with the saved prefix containing the reported message once,
+merging a 114-message source snapshot using the old reversed ordering produced
+two copies; merging the subsequent 126-message source produced three. Keeping
+canonical saved history as the base retained one copy through the 114/126/132
+snapshot sequence. The runtime source snapshots themselves each contained the
+message once. A sanitized regression covers the same long-history/short-snapshot
+shape without committing user conversation data.
+
+A separate real-notification defect was identified: retry sweeping requeued
+completed children marked suppress_auto_notification, even after producer-side
+suppression. Production trace contains full-run, suppressed verify-and-repair
+child, then Basic PR review completion prompts. The child caused an extra
+actual model turn; it is distinct from persisted duplicate blocks.
+
+Fix verification is in progress. Existing corrupt history has not been deleted
+or automatically deduplicated, because text-only deletion would also remove
+legitimate repeated turns.
+
+
+Duplicate follow-up locally verified: both snapshot writers now preserve canonical
+order and full tool content identity. Regression tests cover repeated saves,
+retained tails, opaque metadata and distinct numeric tool payloads. Suppression
+is enforced by retry, delay, batch, steer and atomic claim paths. Focused combined
+snapshot/native/journal/notification Go tests pass. Existing duplicated rows are
+preserved pending a separate verified repair; distinct enclosing run and step
+notifications remain separate under current policy.
+
+The Recent/Schedules/Bots/Webhooks filter header now uses panel-width container
+queries: labels disappear at 560px and counts at 320px, with icon tooltips and
+accessible button names retained. Chrome computed-style checks at 700/530/300px,
+five existing filter tests and TypeScript passed.

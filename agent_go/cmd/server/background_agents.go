@@ -131,10 +131,16 @@ const (
 	completionNotificationSuperseded
 )
 
+// The producer, sweep, timer, and all dispatch lanes must honor the same
+// existing suppression flag. Execution completion events remain unaffected.
+func completionAutoNotificationSuppressed(metadata map[string]string) bool {
+	return metadata["suppress_auto_notification"] == "true"
+}
+
 func (a *BackgroundAgent) beginCompletionNotification() bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	if a.completionNotification != completionNotificationNone {
+	if completionAutoNotificationSuppressed(a.Metadata) || a.completionNotification != completionNotificationNone {
 		return false
 	}
 	a.completionNotification = completionNotificationInFlight
@@ -485,6 +491,11 @@ func (api *StreamingAPI) deferWorkflowStepAutoNotification(sessionID, agentID st
 	if agent == nil {
 		return false
 	}
+	// Treat suppression as consumed at this entry point, without scheduling
+	// a delay or falsely recording the notification as delivered.
+	if completionAutoNotificationSuppressed(agent.GetSnapshot().Metadata) {
+		return true
+	}
 	remaining, scheduleTimer := agent.scheduleMinimumCompletionDelay(time.Now())
 	if remaining <= 0 {
 		return false
@@ -505,7 +516,7 @@ func (api *StreamingAPI) deferWorkflowStepAutoNotification(sessionID, agentID st
 			if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
 				return
 			}
-			if snap.Metadata != nil && snap.Metadata["suppress_auto_notification"] == "true" {
+			if completionAutoNotificationSuppressed(snap.Metadata) {
 				return
 			}
 			api.bgAgentRegistry.NotifyCompletion(sessionID, agentID)
@@ -1782,6 +1793,9 @@ func (api *StreamingAPI) requeueUnnotifiedCompletions(sessionID string) {
 		if snap.Status != BGAgentCompleted && snap.Status != BGAgentFailed {
 			continue
 		}
+		if completionAutoNotificationSuppressed(snap.Metadata) {
+			continue
+		}
 		agent.mu.RLock()
 		notifiedOrInFlight := agent.completionNotification != completionNotificationNone
 		agent.mu.RUnlock()
@@ -2042,6 +2056,9 @@ func (api *StreamingAPI) filterSupersededCompletions(sessionID string, agentIDs 
 			continue
 		}
 		snap := agent.GetSnapshot()
+		if completionAutoNotificationSuppressed(snap.Metadata) {
+			continue
+		}
 		if !api.backgroundNotificationOwnedBySession(sessionID, snap) {
 			continue
 		}
@@ -2536,6 +2553,14 @@ func autoNotificationBracketContext(meta map[string]string) string {
 func (api *StreamingAPI) steerBackgroundAgentCompletion(sessionID, agentID string) bool {
 	if api.autoNotificationSessionUnreachable(sessionID) {
 		return false
+	}
+
+	// Suppressed work is handled even when no retained agent is present;
+	// returning false would put an already suppressed ID back into retries.
+	if api.bgAgentRegistry != nil {
+		if agent := api.bgAgentRegistry.Get(sessionID, agentID); agent != nil && completionAutoNotificationSuppressed(agent.GetSnapshot().Metadata) {
+			return true
+		}
 	}
 
 	api.runningAgentsMux.RLock()

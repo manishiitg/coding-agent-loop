@@ -301,26 +301,10 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 		if owner := stringFromRecord(previous, "user_id"); owner != "" && owner != userID {
 			return
 		}
-		merged := mergeBuilderConversationRecordHistory(convData, incomingConv.ConversationHistory, previousConv.ConversationHistory)
-		// Recovery-only rows may include tool calls that the readable builder
-		// projection omits. Restore their complete canonical raw entries.
-		if original, ok := builderConversationRawHistory(previous); ok && len(original) == len(previousConv.ConversationHistory) {
-			byKey := make(map[string][]json.RawMessage)
-			for i, message := range previousConv.ConversationHistory {
-				key := builderConversationMessageKey(message)
-				byKey[key] = append(byKey[key], original[i])
-			}
-			for i, raw := range merged {
-				var message builderConversationMessage
-				if json.Unmarshal(raw, &message) != nil {
-					continue
-				}
-				key := builderConversationMessageKey(message)
-				if entries := byKey[key]; len(entries) > 0 {
-					merged[i] = entries[0]
-					byKey[key] = entries[1:]
-				}
-			}
+		merged, err := mergeChatConversationSnapshots(previous, convData)
+		if err != nil {
+			logfWithContext(logCtx, "[CHAT_HISTORY] Refusing invalid snapshot merge for %s: %v", convPath, err)
+			return
 		}
 		encoded, err := json.Marshal(merged)
 		if err != nil || json.Unmarshal(encoded, &persistedHistory) != nil {

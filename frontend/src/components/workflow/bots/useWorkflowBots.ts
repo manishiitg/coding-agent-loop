@@ -789,8 +789,10 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       setSlackSuccess('Saved successfully!')
       await loadSlack()
       setTimeout(() => setSlackSuccess(null), 3000)
+      return true
     } catch (err) {
       setSlackError(err instanceof Error ? err.message : 'Failed to save Slack configuration')
+      return false
     } finally { setSlackSaving(false) }
   }
 
@@ -815,7 +817,10 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       setTestResult(null)
       setTestReply(null)
       setPollingForReply(false)
-      // Test against the saved workspace config, not whatever is typed in the form.
+      // The backend tests saved settings; persist form edits before testing.
+      if (JSON.stringify(slackConfig) !== JSON.stringify(slackOriginal) && !await handleSlackSave()) {
+        return
+      }
       const result = await agentApi.testSlackConnection()
       setTestResult(result)
       if (result.success && result.test_id) { setPollingForReply(true); pollForTestReply(result.test_id) }

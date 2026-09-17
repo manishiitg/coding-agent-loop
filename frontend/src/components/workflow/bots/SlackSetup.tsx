@@ -143,11 +143,11 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
 
                 {/* Test Connection */}
                 <div className="space-y-1">
-                  <Button variant="outline" onClick={handleSlackTest} disabled={readOnly || !slackConfig.enabled || slackTesting || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="w-full flex items-center justify-center gap-2">
+                  <Button variant="outline" onClick={handleSlackTest} disabled={readOnly || !slackConfig.enabled || slackTesting || slackSaving || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="w-full flex items-center justify-center gap-2">
                     {slackTesting ? <><Loader2 className="w-4 h-4 animate-spin" />Testing...</> : 'Test Connection'}
                   </Button>
                   <p className="text-xs text-muted-foreground text-center">
-                    Tests the <b>saved</b> config from the workspace — click <b>Save</b> first if you've edited any field above.
+                    Saves your current settings, then tests the connection.
                   </p>
                 </div>
 
@@ -173,7 +173,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
           )}
 
           <div className="flex items-center justify-end gap-2">
-            <Button onClick={handleSlackSave} disabled={readOnly || !slackHasChanges || slackSaving || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="flex items-center gap-2">
+            <Button onClick={handleSlackSave} disabled={readOnly || !slackHasChanges || slackSaving || slackTesting || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="flex items-center gap-2">
               {slackSaving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving...</> : <><CheckCircle className="w-4 h-4" />Save</>}
             </Button>
           </div>

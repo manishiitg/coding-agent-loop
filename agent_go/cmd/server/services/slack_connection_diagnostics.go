@@ -50,9 +50,9 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	} else {
 		add("Bot token", "passed", "Authenticated with Slack")
 		if scopes == nil {
-			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read, chat:write, and reactions:write under OAuth & Permissions.")
+			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read, chat:write, reactions:write, channels:history, and groups:history under OAuth & Permissions.")
 		} else {
-			for _, scope := range []string{"app_mentions:read", "chat:write", "reactions:write"} {
+			for _, scope := range []string{"app_mentions:read", "chat:write", "reactions:write", "channels:history", "groups:history"} {
 				if scopes[scope] {
 					add(scope, "passed", "Permission granted to the installed bot token")
 				} else {
@@ -68,8 +68,8 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	} else {
 		add("Socket Mode token", "passed", "App token can open a Socket Mode connection")
 	}
-	add("Event subscriptions", "manual", "In the same Slack app, first turn on Enable Socket Mode, then refresh Event Subscriptions, enable events, add app_mention under Subscribe to bot events, and click Save Changes. Leave Request URL empty: Socket Mode does not need one. If Save Changes is disabled and a Request URL is shown, check that Socket Mode is enabled in this app. Bot/app tokens cannot read these settings.")
-	add("Mention delivery", "manual", "Invite the bot to the channel and send an @mention to verify incoming events.")
+	add("Event subscriptions", "manual", "In the same Slack app, first turn on Enable Socket Mode, then refresh Event Subscriptions, enable events, add app_mention, message.channels (public channel replies), and message.groups (private channel replies) under Subscribe to bot events, and click Save Changes. Leave Request URL empty: Socket Mode does not need one. If Save Changes is disabled and a Request URL is shown, check that Socket Mode is enabled in this app. Bot/app tokens cannot read these settings.")
+	add("Mention delivery", "manual", "Invite the bot to the channel, send an @mention, then reply in its thread without mentioning the bot. Verify both messages receive replies; app_mention alone does not deliver ordinary thread replies.")
 	if result.Success {
 		result.Message = "Tokens and required permissions verified. Mention delivery still needs verification."
 		if scopes == nil {

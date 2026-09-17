@@ -20,7 +20,8 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 		success                          bool
 		missing                          string
 	}{
-		{name: "granted", scopes: "app_mentions:read, chat:write, reactions:write", header: true, success: true},
+		{name: "granted", scopes: "app_mentions:read, chat:write, reactions:write, channels:history, groups:history", header: true, success: true},
+		{name: "missing private thread permission", scopes: "app_mentions:read,chat:write,reactions:write,channels:history", header: true, missing: "groups:history"},
 		{name: "missing reactions", scopes: "app_mentions:read,chat:write", header: true, missing: "reactions:write"},
 		{name: "missing mentions", scopes: "chat:write", header: true, missing: "app_mentions:read"},
 		{name: "missing replies", scopes: "app_mentions:read", header: true, missing: "chat:write"},
@@ -89,7 +90,7 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 			if checks["Event subscriptions"].Status != "manual" || checks["Mention delivery"].Status != "manual" {
 				t.Fatal("token check incorrectly verified incoming events")
 			}
-			for _, instruction := range []string{"Enable Socket Mode", "Request URL empty", "Save Changes", "same Slack app"} {
+			for _, instruction := range []string{"Enable Socket Mode", "Request URL empty", "Save Changes", "same Slack app", "message.channels", "message.groups"} {
 				if !strings.Contains(checks["Event subscriptions"].Message, instruction) {
 					t.Fatalf("event setup omitted %q", instruction)
 				}

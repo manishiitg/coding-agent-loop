@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `implemented and reachable; PUL-3BD9F422's migration still needs to be designed; runtime reverify` |
-| Last synchronized | `2026-08-29` |
+| Ticket state | `implemented and reachable; user-scoped Work path regression fixed and deployed; direct migration retry pending` |
+| Last synchronized | `2026-09-17` |
 
 - **Priority:** P0 — LinkedIn `PUL-B995BF46` / `PUL-3BD9F422` (per the
   [2026-08-29 triage audit](../../../audits/pulse-platform-triage-2026-08-29.md)).
@@ -272,3 +272,38 @@ Regression coverage proves the broad Builder folder grant cannot read or write
 the database or either sidecar, adjacent DB artifacts remain writable, the
 planning write deny survives DB setup, read-only users stay fail-closed, and
 both workflow-session setup/restore branches install the boundary.
+
+## User-scoped Work path follow-up (2026-09-17)
+
+A Crew/Work project reproduced `apply_workflow_db_migration` failure even with
+`WORKFLOW_DB_ACCESS=read-write` and a valid migration file. The migration tool
+correctly converted the physical project root
+`_users/<user>/Chats/Work/projects/<project>` into the workspace API's public
+`Chats/Work/projects/<project>` form. Its `ReadWorkspaceFile` client then
+compared that public path against the still-physical session Folder Guard and
+denied the read before the workspace API could restore the authenticated user
+prefix.
+
+This is the same two-namespace contract already recorded by
+[PLAT-170](plat-170.md) and the Crew path-identity follow-ups in
+[PLAT-324](../chat-reliability/plat-324.md): trusted runtimes and Folder Guards
+use physical `_users/<id>/...` paths, while authenticated workspace APIs use
+public user-relative paths plus `X-User-ID`. Earlier fixes normalized individual
+call sites in one direction. They did not make the shared Go workspace client's
+Folder Guard comparison understand both representations, so each new Work
+surface could repeat the mismatch.
+
+The workspace client now normalizes public per-user paths and all effective
+guard paths to the same physical user-scoped representation before checking
+read/write and blocked-path policy. The HTTP request remains public and the
+workspace API still owns tenant selection; no folder moved and the API's
+rejection of caller-selected `_users/` database paths remains unchanged.
+
+Regression coverage uses the real MCP migration bridge with a physical
+`_users/<user>/Chats/Work/...` project and public `Chats/Work/...` API path,
+then verifies the migrated table through the live database. Separate checks
+prove blocked subpaths, another project, and another user remain denied.
+
+Implementation commit: `82821a8a7` (`Fix user-scoped workflow migration path checks`).
+RTS release: `82821a8-20260917153631`. A direct retry of the original Work
+migration remains the final runtime acceptance check.

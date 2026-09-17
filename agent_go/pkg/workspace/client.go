@@ -343,7 +343,8 @@ func (c *Client) ValidatePathWithContext(ctx context.Context, inputPath string, 
 	if guard == nil || !guard.Enabled {
 		return nil
 	}
-	if err := validatePathAgainstGuard(guard, inputPath, isWrite); err != nil {
+	validationPath, validationGuard := c.userScopedFolderGuardPath(inputPath, guard)
+	if err := validatePathAgainstGuard(validationGuard, validationPath, isWrite); err != nil {
 		// Deny-only logging: shows which guard source (session / ctx snapshot /
 		// client fallback) denied, so a real learnings/KB denial is diagnosable
 		// without logging every successful file op.
@@ -372,7 +373,65 @@ func (c *Client) ValidatePath(inputPath string, isWrite bool) error {
 	if c.FolderGuard == nil || !c.FolderGuard.Enabled {
 		return nil // No folder guard configured, allow all
 	}
-	return validatePathAgainstGuard(c.FolderGuard, inputPath, isWrite)
+	validationPath, validationGuard := c.userScopedFolderGuardPath(inputPath, c.FolderGuard)
+	return validatePathAgainstGuard(validationGuard, validationPath, isWrite)
+}
+
+// userScopedFolderGuardPath makes the workspace API's public per-user paths
+// comparable with the physical paths stored in session guards. The API accepts
+// Chats/... and resolves it to _users/<user>/Chats/... from X-User-ID, while a
+// session guard intentionally records that physical, user-isolated location.
+// Normalize both the requested path and every guard path to the physical form
+// before authorization so the client-side check and server-side resolution
+// enforce the same location.
+func (c *Client) userScopedFolderGuardPath(inputPath string, guard *FolderGuardConfig) (string, *FolderGuardConfig) {
+	userID := strings.TrimSpace(c.UserID)
+	if guard == nil || userID == "" || !validWorkspaceUserID(userID) {
+		return inputPath, guard
+	}
+	normalize := func(path string) string {
+		clean := filepath.Clean(strings.TrimSpace(path))
+		if clean == "." || clean == "" || filepath.IsAbs(clean) {
+			return clean
+		}
+		parts := strings.Split(filepath.ToSlash(clean), "/")
+		if len(parts) == 0 {
+			return clean
+		}
+		switch parts[0] {
+		case "Chats", "Downloads", "chat_history", "memories":
+			return filepath.Join("_users", userID, clean)
+		default:
+			return clean
+		}
+	}
+	normalized := cloneFolderGuard(guard)
+	for i, path := range normalized.ReadPaths {
+		normalized.ReadPaths[i] = normalize(path)
+	}
+	for i, path := range normalized.WritePaths {
+		normalized.WritePaths[i] = normalize(path)
+	}
+	for i, path := range normalized.BlockedPaths {
+		normalized.BlockedPaths[i] = normalize(path)
+	}
+	for i, path := range normalized.BlockedWritePaths {
+		normalized.BlockedWritePaths[i] = normalize(path)
+	}
+	return normalize(inputPath), normalized
+}
+
+func validWorkspaceUserID(userID string) bool {
+	if len(userID) == 0 || len(userID) > 128 {
+		return false
+	}
+	for _, char := range userID {
+		if (char < 'a' || char > 'z') && (char < 'A' || char > 'Z') &&
+			(char < '0' || char > '9') && char != '-' && char != '_' {
+			return false
+		}
+	}
+	return true
 }
 
 // validatePathAgainstGuard is the core path validation logic used by both

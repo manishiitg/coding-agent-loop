@@ -797,3 +797,48 @@ and webhook-view parity change shipped in `00d63a3ef` and was deployed to RTS
 as `00d63a3-20260917145523`. The active source revision and release symlink,
 agent/workspace/gateway services, local agent/workspace health, and public
 agent health were verified after the final swap.
+
+### Remaining Crew public/physical workspace comparisons
+
+A follow-up boundary audit found two remaining backend comparisons that treated
+the browser's public Crew path (`Chats/Work/projects/...`) and the runtime's
+physical per-user path (`_users/<user>/Chats/Work/projects/...`) as different
+projects. Agent-profile turn authorization could consequently reject a valid
+restored Crew conversation, while Bot Connector resume/status filtering could
+omit the matching active conversation. Dashboard share-link generation also
+passed through a physical path when one reached the restored tab, producing a
+URL the public Dashboard route intentionally rejects.
+
+All three paths now use the same authenticated-user-aware identity rule already
+used by chat persistence. Only `_users/<authenticated-user>/...` is reduced to
+its public form; another user's physical path remains distinct. Dashboard share
+links likewise convert the current user's physical path to the public API form
+and retain the owner UID. Focused Go regressions cover Work turn/bot path
+identity and cross-user rejection; frontend regressions cover public conversion
+and foreign-path preservation.
+
+The cross-component workspace-identity correction shipped in `c0588418f` and
+was deployed to RTS as `c058841-20260917162036`. The production build, release
+asset checks, idle drain, all three services, active release symlink, and public
+agent health passed after activation. User acceptance of a restored Crew turn,
+bot resume, and Dashboard share link remains pending.
+
+### Shared global activity and Ctrl+K across AgentWorks and Crew
+
+AgentWorks and Crew previously mounted separate top-bar shells even though they
+share the same authenticated chat store and header-summary feed. `Ctrl+K` was
+explicitly disabled outside AgentWorks, its switcher removed every product tab,
+and Crew's reduced top bar hid the global activity monitor. Clicking an
+AgentWorks activity while another product was visible also activated a hidden
+tab without changing product surfaces.
+
+The application now mounts one Quick Switcher above the AgentWorks/Crew surface
+boundary and keeps the same Global Activity Monitor visible in both top bars.
+The switcher groups retained Crew chats alongside AgentWorks chats, automations,
+and active work, with an `@crew` filter. A shared navigation router changes the
+product surface before activating a tab, persists the selected Crew project,
+and routes tabless Crew schedules or bots into the corresponding project view
+without creating automatic chat tabs. Other dedicated product surfaces remain
+outside this shared shell. Backend session ownership remains the authenticated
+user boundary; frontend navigation uses stable project and conversation
+identity.

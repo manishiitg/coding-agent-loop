@@ -548,7 +548,7 @@ function App() {
   const [showQuickSwitcher, setShowQuickSwitcher] = useState(false)
   const [quickSwitcherInitialQuery, setQuickSwitcherInitialQuery] = useState('')
   useEffect(() => {
-    if (productSurface !== 'agentworks') setShowQuickSwitcher(false)
+    if (productSurface !== 'agentworks' && productSurface !== 'work') setShowQuickSwitcher(false)
   }, [productSurface])
 
   
@@ -561,7 +561,8 @@ function App() {
 
   useEffect(() => {
     const handleOpenQuickSwitcher = (event: Event) => {
-      if (useProductSurfaceStore.getState().productSurface !== 'agentworks') return
+      const surface = useProductSurfaceStore.getState().productSurface
+      if (surface !== 'agentworks' && surface !== 'work') return
       const detail = (event as CustomEvent<{ query?: string }>).detail
       setQuickSwitcherInitialQuery(detail?.query || '')
       setShowQuickSwitcher(true)
@@ -865,9 +866,10 @@ function App() {
         chatStore.setAutoScroll(!chatStore.autoScroll)
         return
       }
-      // Ctrl/Cmd + K belongs to the AgentWorks quick switcher.
+      // Ctrl/Cmd + K opens the shared AgentWorks/Crew switcher.
       if ((event.ctrlKey || event.metaKey) && event.key === 'k') {
-        if (useProductSurfaceStore.getState().productSurface !== 'agentworks') return
+        const surface = useProductSurfaceStore.getState().productSurface
+        if (surface !== 'agentworks' && surface !== 'work') return
         event.preventDefault()
         setQuickSwitcherInitialQuery('')
         setShowQuickSwitcher(prev => !prev)
@@ -932,6 +934,15 @@ function App() {
         {/* Mounted above the surface switch so toasts raised from the top bar
             render on every surface, not only the ones that mount a chat. */}
         <ToastHost />
+        {showQuickSwitcher && (
+          <Suspense fallback={<LazyModalFallback label="Loading switcher..." />}>
+            <QuickSwitcher
+              isOpen
+              onClose={() => setShowQuickSwitcher(false)}
+              initialQuery={quickSwitcherInitialQuery}
+            />
+          </Suspense>
+        )}
         {productSurface === 'video-studio' ? (
           <Suspense fallback={<FileSurfaceFallback />}><VideoStudioSurface /></Suspense>
         ) : productSurface === 'dominion' ? (
@@ -949,17 +960,6 @@ function App() {
               sidebar was removed; its controls now live in the top bar
               (ModePresetBar → WorkspaceTopBarControls). */}
           <div className="flex-1 flex flex-col min-w-0 min-h-0 relative z-10 overflow-hidden">
-            {/* Quick Switcher (Ctrl+K) - constrained to the main content area */}
-            {showQuickSwitcher && (
-              <Suspense fallback={<LazyModalFallback label="Loading switcher..." />}>
-                <QuickSwitcher
-                  isOpen
-                  onClose={() => setShowQuickSwitcher(false)}
-                  initialQuery={quickSwitcherInitialQuery}
-                />
-              </Suspense>
-            )}
-
             {/* Global Mode & Preset Bar - only above middle content area, not sidebars */}
             <ModePresetBar />
             

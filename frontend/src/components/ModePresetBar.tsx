@@ -713,7 +713,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
           {/* Right: icons */}
           <TooltipProvider delayDuration={400}>
             <div className="flex shrink-0 items-center gap-2">
-              {!reduced && <GlobalActivityMonitor />}
+              <GlobalActivityMonitor />
 
               <ProvidersControl />
 

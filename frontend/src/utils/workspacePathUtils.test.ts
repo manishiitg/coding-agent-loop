@@ -5,6 +5,8 @@ import {
   EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
   getInitialExpandedWorkspaceFolders,
   isIterationFolder,
+  publicWorkspacePathForUser,
+  workspacePathsEqualForUser,
 } from './workspacePathUtils'
 
 describe('shared workspace folder defaults', () => {
@@ -124,5 +126,31 @@ describe('trigger iteration paths', () => {
     }
     expect(isIterationFolder('runs/iteration-1-hook/dev/execution')).toBe(false)
     expect(isIterationFolder('iteration-1-hook/../other')).toBe(false)
+  })
+})
+
+describe('user-scoped workspace path identity', () => {
+  it('maps the current user physical Work path to its public identity', () => {
+    expect(publicWorkspacePathForUser(
+      '_users/user-1/Chats/Work/projects/project-1/',
+      'user-1',
+    )).toBe('Chats/Work/projects/project-1')
+    expect(workspacePathsEqualForUser(
+      'Chats/Work/projects/project-1',
+      '_users/user-1/Chats/Work/projects/project-1',
+      'user-1',
+    )).toBe(true)
+  })
+
+  it('does not collapse another user physical path', () => {
+    expect(publicWorkspacePathForUser(
+      '_users/user-2/Chats/Work/projects/project-1',
+      'user-1',
+    )).toBe('_users/user-2/Chats/Work/projects/project-1')
+    expect(workspacePathsEqualForUser(
+      'Chats/Work/projects/project-1',
+      '_users/user-2/Chats/Work/projects/project-1',
+      'user-1',
+    )).toBe(false)
   })
 })

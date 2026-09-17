@@ -33,8 +33,10 @@ import (
 // visible to a fresh direct connection to the live database.
 func TestApplyWorkflowDBMigrationThroughMCPBridge(t *testing.T) {
 	root := t.TempDir()
-	workspacePath := "Workflow/db-migration-e2e"
-	dbDir := filepath.Join(root, filepath.FromSlash(workspacePath), "db")
+	const userID = "migration-user"
+	workspacePath := "Chats/Work/projects/db-migration-e2e"
+	physicalWorkspacePath := filepath.ToSlash(filepath.Join("_users", userID, workspacePath))
+	dbDir := filepath.Join(root, filepath.FromSlash(physicalWorkspacePath), "db")
 	migrationsDir := filepath.Join(dbDir, "migrations")
 	if err := os.MkdirAll(migrationsDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -89,11 +91,11 @@ COMMIT;
 	defer workspaceAPI.Close()
 
 	const sessionID = "workflow-step-db-migration-bridge-session"
-	common.SetSessionFolderGuard(sessionID, []string{workspacePath}, []string{workspacePath + "/db"})
+	common.SetSessionFolderGuard(sessionID, []string{physicalWorkspacePath}, []string{physicalWorkspacePath + "/db"})
 	common.SetSessionShellEnv(sessionID, map[string]string{"WORKFLOW_DB_ACCESS": "read-write"})
 	defer common.ClearSessionShellConfig(sessionID)
 
-	registry := virtualtools.CreateWorkflowDBToolRegistry(workspaceAPI.URL, "", sessionID)
+	registry := virtualtools.CreateWorkflowDBToolRegistry(workspaceAPI.URL, userID, sessionID)
 	customAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		const prefix = "/tools/custom/"
 		name := strings.TrimPrefix(r.URL.Path, prefix)

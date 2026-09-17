@@ -82,7 +82,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 		if strings.TrimSpace(session.BotPlatform) != "" {
 			continue
 		}
-		if filter.WorkspacePath != "" && strings.TrimSpace(session.WorkspacePath) != filter.WorkspacePath {
+		if filter.WorkspacePath != "" && !workspacePathsMatchForUser(userID, session.WorkspacePath, filter.WorkspacePath) {
 			continue
 		}
 		if filter.PresetQueryID != "" && strings.TrimSpace(session.PresetQueryID) != filter.PresetQueryID {

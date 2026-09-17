@@ -1713,6 +1713,14 @@ func canonicalChatHistoryWorkspacePath(userID, workspacePath string) string {
 	return strings.TrimPrefix(workspacePath, userPrefix)
 }
 
+// workspacePathsMatchForUser compares the public workspace identity used by
+// clients with the per-user physical identity used by the runtime. It only
+// removes the authenticated user's own prefix; a path owned by another user
+// therefore never becomes equivalent to a public path.
+func workspacePathsMatchForUser(userID, left, right string) bool {
+	return canonicalChatHistoryWorkspacePath(userID, left) == canonicalChatHistoryWorkspacePath(userID, right)
+}
+
 // listWorkflowBuilderHistoryFromDisk returns builder chat sessions for a workflow.
 // readBudget caps how many conversation files are actually READ+PARSED (the costly
 // part — preview building): we stat every file (cheap) and dedupe to the latest

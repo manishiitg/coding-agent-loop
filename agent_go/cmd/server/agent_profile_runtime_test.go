@@ -33,6 +33,16 @@ func TestAgentProfileSessionKeyTracksDefinitionAndSkillContent(t *testing.T) {
 	}
 }
 
+func TestWorkspacePathsMatchForUserTreatsOnlyOwnPhysicalPathAsPublic(t *testing.T) {
+	public := "Chats/Work/projects/project-1"
+	if !workspacePathsMatchForUser("user-1", public, "_users/user-1/Chats/Work/projects/project-1") {
+		t.Fatal("expected the caller's public and physical Work paths to match")
+	}
+	if workspacePathsMatchForUser("user-1", public, "_users/user-2/Chats/Work/projects/project-1") {
+		t.Fatal("another user's physical Work path must not match the caller's public path")
+	}
+}
+
 func TestResolveAgentProfileForQueryResolvesGlobalScopeWithoutFolderOrTitle(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
 	profile := agentprofiles.Profile{

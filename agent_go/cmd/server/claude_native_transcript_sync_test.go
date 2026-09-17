@@ -337,6 +337,27 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	if len(restoredEvents) != 1 || !storeevents.IsTranscriptMessage(restoredEvents[0]) {
 		t.Fatalf("restart repair events = %+v, want one transcript message", restoredEvents)
 	}
+
+	// Once that reply is in the durable UI trace, another restart must not
+	// publish it again as a new live message.
+	var durableRecord map[string]interface{}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &durableRecord); err != nil {
+		t.Fatal(err)
+	}
+	durableRecord["ui_events"] = restoredEvents
+	durableContent, err := json.Marshal(durableRecord)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace.files[conversationPath] = string(durableContent)
+	eventStore.RemoveSession(sessionID)
+	eventStore.SetSessionOwner(sessionID, userID)
+	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
+		t.Fatalf("durable restart changed/supported = %v/%v, want false/true", changed, supported)
+	}
+	if got := len(eventStore.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("durable reply was replayed after restart: %d events", got)
+	}
 }
 
 func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsAlreadyVisibleReply(t *testing.T) {
@@ -353,9 +374,41 @@ func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsAlreadyVisibleRep
 	current := []builderConversationMessage{{Role: "human", Parts: []builderConversationPart{{Text: "tell me links"}}}}
 	refreshed := append(current, builderConversationMessage{Role: "ai", Parts: []builderConversationPart{{Text: "Here are the links."}}})
 
-	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current, refreshed)
+	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current, refreshed, nil)
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
 		t.Fatalf("already-visible reply was duplicated: %d events", got)
+	}
+}
+
+func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsDurableReplyAfterRestart(t *testing.T) {
+	store := storeevents.NewEventStore(100)
+	defer store.Stop()
+	api := &StreamingAPI{eventStore: store}
+	const sessionID = "cursor-restarted"
+
+	oldChunk := &agentevents.StreamingChunkEvent{Content: "An older reply.", Source: agentevents.StreamingChunkSourceTranscript}
+	durableUIEvents := []storeevents.Event{{
+		ID: "persisted-old-reply", Type: "streaming_chunk", SessionID: sessionID,
+		ExecutionKind: "main_agent", Data: agentevents.NewAgentEvent(oldChunk),
+	}}
+	refreshed := []builderConversationMessage{
+		{Role: "human", Parts: []builderConversationPart{{Text: "old request"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "An older reply."}}},
+		{Role: "human", Parts: []builderConversationPart{{Text: "new request"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "The newly recovered reply."}}},
+	}
+
+	published := api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, nil, refreshed, durableUIEvents)
+	if published != 1 {
+		t.Fatalf("published = %d, want only the newly recovered reply", published)
+	}
+	events := store.GetAllEventsRaw(sessionID)
+	if len(events) != 1 {
+		t.Fatalf("live events = %d, want one", len(events))
+	}
+	payload := eventPayloadMap(events[0])
+	if got, _ := payload["content"].(string); got != "The newly recovered reply." {
+		t.Fatalf("published content = %q, replayed an older durable reply", got)
 	}
 }
 

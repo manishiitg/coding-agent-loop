@@ -568,3 +568,30 @@ symlink, agent/workspace/gateway services, local health and public health were
 verified. Live acceptance remains pending: create a Work chat, send its first
 message and rename the tab immediately while the turn is still running; the
 rename should succeed without waiting for the first transcript save.
+
+### Native transcript replies replayed after server restart
+
+RTS reproduced a second, separate duplicate-display failure immediately after
+the `624d4a8` deployment restarted the backend. The user's message (`ok when
+will it get pick up do you know`) was accepted once for session
+`7864f623-67fd-4929-88bd-02d8427bfe91`. When the missing native Cursor process
+was relaunched, transcript recovery published dozens of older assistant rows as
+new live events. Logs record recovered history indexes across the retained
+window at 08:57:14 UTC, followed by another recovered batch at 08:58:15 UTC.
+The same replay signature occurred after the earlier 08:26 restart, so the
+rename change did not introduce it; deployment exposed an existing recovery
+defect.
+
+The restart repair gate checked the durable conversation against only the
+in-memory EventStore. That store is empty after process restart, even though
+the conversation file already contains the UI events the browser restores.
+Consequently every recent saved assistant reply appeared absent and was
+republished. Recovery now combines live and durable UI visibility counts,
+taking the larger count so the same event present in both sources is not
+double-counted. A native reply absent from both sources is still published.
+
+Regression coverage clears the live store to simulate a restart and verifies
+that a reply in the durable UI trace is not replayed. A companion case verifies
+that one genuinely missing newer native reply is still recovered while an
+older durable reply is skipped. Existing restart repair behavior for records
+without any durable UI trace remains covered.

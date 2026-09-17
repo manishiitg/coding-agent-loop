@@ -191,6 +191,7 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 			userID, sessionID,
 			nil,
 			recentBuilderConversationMessages(current.ConversationHistory, 50),
+			readPersistedChatHistoryUIEvents(ctx, conversationPath),
 		)
 		// Keep changed=false so the completion scheduler still performs its
 		// short retries. A pre-flush attempt may repair older live rows while the
@@ -235,7 +236,13 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}
-	api.publishOwnedNativeTranscriptRecoveredAssistantMessages(userID, sessionID, current.ConversationHistory, refreshed.ConversationHistory)
+	api.publishOwnedNativeTranscriptRecoveredAssistantMessages(
+		userID,
+		sessionID,
+		current.ConversationHistory,
+		refreshed.ConversationHistory,
+		readPersistedChatHistoryUIEvents(ctx, conversationPath),
+	)
 	return true, true
 }
 
@@ -246,13 +253,22 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 // transcript chunk used by normal CLI streaming. This deliberately is not a
 // second completion event: a completion would settle the next queued retained
 // turn when several user messages were submitted together.
-func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) int {
+func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage, durableUIEvents []storeevents.Event) int {
 	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
 		return 0
 	}
 
 	currentCounts := assistantMessageCounts(current)
 	eventCounts := liveAssistantMessageCounts(api.eventStore.GetAllEventsRaw(sessionID))
+	// The in-memory EventStore starts empty after every server restart. Durable
+	// UI events are what the browser will restore, so include them in the same
+	// visibility gate. Use the larger count rather than adding the two sources:
+	// they normally contain the same reply while the server is running.
+	for key, count := range liveAssistantMessageCounts(durableUIEvents) {
+		if count > eventCounts[key] {
+			eventCounts[key] = count
+		}
+	}
 	refreshedCounts := make(map[string]int)
 	now := time.Now()
 	published := 0
@@ -971,9 +987,9 @@ func extractClaudeTranscriptText(content json.RawMessage) string {
 
 // Startup recovery may run before a browser restores a session. Persist its
 // history, but publish live events only to an already registered matching owner.
-func (api *StreamingAPI) publishOwnedNativeTranscriptRecoveredAssistantMessages(owner, session string, current, refreshed []builderConversationMessage) int {
+func (api *StreamingAPI) publishOwnedNativeTranscriptRecoveredAssistantMessages(owner, session string, current, refreshed []builderConversationMessage, durableUIEvents []storeevents.Event) int {
 	if api == nil || api.eventStore == nil || owner == "" || api.eventStore.GetSessionOwner(session) != owner {
 		return 0
 	}
-	return api.publishNativeTranscriptRecoveredAssistantMessages(session, current, refreshed)
+	return api.publishNativeTranscriptRecoveredAssistantMessages(session, current, refreshed, durableUIEvents)
 }

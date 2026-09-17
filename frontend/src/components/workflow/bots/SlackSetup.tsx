@@ -147,7 +147,27 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 {testResult && (
                   <div className={`p-3 border rounded-lg flex items-start gap-2 ${testResult.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
                     {testResult.success ? <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />}
-                    <p className={`text-sm ${testResult.success ? 'text-green-700 dark:text-green-300' : 'text-red-700 dark:text-red-300'}`}>{testResult.message}</p>
+                    <div className="min-w-0 space-y-2 text-sm">
+                      <p>{testResult.message}</p>
+                      {!!testResult.checks?.length && (
+                        <details open={!testResult.success}>
+                          <summary className="cursor-pointer font-medium">Setup checks</summary>
+                          <ul className="mt-2 space-y-2">
+                            {testResult.checks.map(check => (
+                              <li key={check.name}>
+                                <div className="flex items-center justify-between gap-2">
+                                  <span className="font-medium">{check.name}</span>
+                                  <span className={check.status === 'passed' ? 'text-green-600 dark:text-green-400' : check.status === 'manual' ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}>
+                                    {check.status === 'manual' ? 'Verify manually' : check.status === 'passed' ? 'Passed' : check.status === 'missing' ? 'Missing' : 'Failed'}
+                                  </span>
+                                </div>
+                                {check.status !== 'passed' && <p className="text-xs text-muted-foreground">{check.message}</p>}
+                              </li>
+                            ))}
+                          </ul>
+                        </details>
+                      )}
+                    </div>
                   </div>
                 )}
                 {testResult?.success && pollingForReply && !testReply && (

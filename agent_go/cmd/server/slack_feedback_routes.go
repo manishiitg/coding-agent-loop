@@ -43,9 +43,10 @@ type SlackConfigResponse struct {
 
 // SlackTestResponse represents test connection response
 type SlackTestResponse struct {
-	Success bool   `json:"success"`
-	Message string `json:"message"`
-	TestID  string `json:"test_id,omitempty"` // Unique ID for polling test replies
+	Success bool                            `json:"success"`
+	Message string                          `json:"message"`
+	Checks  []services.SlackConnectionCheck `json:"checks,omitempty"`
+	TestID  string                          `json:"test_id,omitempty"` // Unique ID for polling test replies
 }
 
 // Serializes route read/validate/write transactions shared by the UI and tools.
@@ -477,35 +478,13 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		// If config provided, test with it directly; otherwise use saved config
-		var testUniqueID string
+		var result services.SlackConnectionTestResult
 		if testConfig != nil {
-			testUniqueID, err = slackService.TestConnectionWithConfig(r.Context(), &services.SlackConfig{
-				Enabled:  testConfig.Enabled,
-				BotToken: testConfig.BotToken,
-				AppToken: testConfig.AppToken,
-			})
+			result = slackService.DiagnoseConnectionWithConfig(r.Context(), &services.SlackConfig{Enabled: testConfig.Enabled, BotToken: testConfig.BotToken, AppToken: testConfig.AppToken})
 		} else {
-			// TestConnection will reload config internally
-			err = slackService.TestConnection(r.Context())
-			// For saved config tests, we can't get the test ID easily, so leave it empty
-			testUniqueID = ""
+			result = slackService.DiagnoseConnection(r.Context())
 		}
-
-		if err != nil {
-			response := SlackTestResponse{
-				Success: false,
-				Message: fmt.Sprintf("Connection test failed: %v", err),
-			}
-			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(response)
-			return
-		}
-
-		response := SlackTestResponse{
-			Success: true,
-			Message: "Slack bot and app tokens verified. Socket Mode is available. Add channel routes to receive messages.",
-			TestID:  testUniqueID,
-		}
+		response := SlackTestResponse{Success: result.Success, Message: result.Message, Checks: result.Checks}
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(response)
 	}

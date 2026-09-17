@@ -167,16 +167,13 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 	}); err != nil {
 		return err
 	}
-	if err := register("test_slack_bot_connection", "Test the configured Slack connector without exposing credentials. Operator configuration is in Setup > Bots.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+	if err := register("test_slack_bot_connection", "Check Slack bot/app tokens and granted bot scopes. Returns passed, missing, failed, or manual checks. Event subscriptions and mention delivery require manual verification; token success alone does not verify incoming events. Credentials are never returned.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
 		svc, err := ensureSlackService()
 		if err != nil {
 			return "", fmt.Errorf("Slack connector unavailable; check Setup > Bots")
 		}
-		if err := svc.TestConnection(ctx); err != nil {
-			raw, marshalErr := json.Marshal(map[string]interface{}{"success": false, "message": err.Error()})
-			return string(raw), marshalErr
-		}
-		return `{"success":true}`, nil
+		raw, err := json.Marshal(svc.DiagnoseConnection(ctx))
+		return string(raw), err
 	}); err != nil {
 		return err
 	}

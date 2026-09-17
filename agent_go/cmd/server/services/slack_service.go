@@ -799,18 +799,15 @@ func testAppToken(ctx context.Context, appToken string) error {
 }
 
 func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *SlackConfig) (string, error) {
-	if config == nil || !config.Enabled {
-		return "", fmt.Errorf("enable the Slack bot before testing")
-	}
-	if config.BotToken == "" || config.AppToken == "" {
-		return "", fmt.Errorf("both bot and app tokens are required")
-	}
-	client := slack.New(config.BotToken, slack.OptionAppLevelToken(config.AppToken))
-	if _, err := client.AuthTestContext(ctx); err != nil {
-		return "", fmt.Errorf("bot token validation failed: %w", err)
-	}
-	if err := testAppToken(ctx, config.AppToken); err != nil {
-		return "", fmt.Errorf("app token / Socket Mode validation failed: %w", err)
+	result := s.DiagnoseConnectionWithConfig(ctx, config)
+	if !result.Success {
+		messages := []string{result.Message}
+		for _, check := range result.Checks {
+			if check.Status == "missing" || check.Status == "failed" {
+				messages = append(messages, check.Name+": "+check.Message)
+			}
+		}
+		return "", fmt.Errorf("%s", strings.Join(messages, "; "))
 	}
 	return "", nil
 }

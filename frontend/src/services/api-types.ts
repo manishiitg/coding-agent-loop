@@ -1020,7 +1020,14 @@ export interface SlackConfigResponse {
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
 
+export interface SlackConnectionCheck {
+  name: string
+  status: 'passed' | 'missing' | 'failed' | 'manual'
+  message: string
+}
+
 export interface SlackTestResponse {
+  checks?: SlackConnectionCheck[]
   success: boolean
   message: string
   test_id?: string  // Unique ID for polling test replies

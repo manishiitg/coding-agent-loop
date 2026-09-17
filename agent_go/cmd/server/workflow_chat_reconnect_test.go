@@ -83,7 +83,7 @@ func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
 		"_users/u/Chats/Work/projects/demo",
 		119,
 	)
-	if !strings.Contains(got, "complete 119-message conversation archive") || !strings.Contains(got, "Before answering") {
+	if !strings.Contains(got, "complete 119-message conversation archive") || !strings.Contains(got, "Before answering that message") {
 		t.Fatalf("notice does not require the complete archive read: %s", got)
 	}
 	if !strings.Contains(got, "builder/conversation/2026-09-17/session-chat-conversation.json") {
@@ -91,5 +91,23 @@ func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
 	}
 	if strings.Contains(got, "_users/u/Chats/Work/projects/demo/") {
 		t.Fatalf("notice leaked docs-root path instead of project-relative path: %s", got)
+	}
+}
+
+func TestPrependCodingAgentContinuityNoticeUsesSameVisibleUserTurn(t *testing.T) {
+	got := prependCodingAgentContinuityNotice(
+		"when will it get picked up?",
+		"_users/u/Chats/Work/projects/demo/builder/conversation/session.json",
+		"_users/u/Chats/Work/projects/demo",
+		119,
+	)
+	if !strings.HasPrefix(got, "[AGENTWORKS CONVERSATION CONTINUITY]") {
+		t.Fatalf("combined user turn does not begin with continuity notice: %s", got)
+	}
+	if !strings.HasSuffix(got, "[USER MESSAGE]\nwhen will it get picked up?") {
+		t.Fatalf("combined user turn does not retain the user's message: %s", got)
+	}
+	if strings.Count(got, "[AGENTWORKS CONVERSATION CONTINUITY]") != 1 {
+		t.Fatalf("combined user turn contains duplicate continuity notices: %s", got)
 	}
 }

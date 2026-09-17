@@ -6828,17 +6828,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// provider read the same trusted, project-owned archive used for a
 				// same-provider profile reconnect.
 				if isCodingAgentProvider(finalProvider, finalModelID) {
-					codingFallbackHistoryBase = len(llmAgent.GetHistory())
-					llmAgent.AppendMessage(llmtypes.MessageContent{
-						Role: llmtypes.ChatMessageTypeHuman,
-						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: buildCodingAgentContinuityNotice(
-							restoredConversationPathForFallback,
-							restoredConversationWorkspace,
-							len(historyForAgent),
-						)}},
-					})
-					codingFallbackInjectedMessages++
-					chatQuery = cleanChatHistoryQuery(chatQuery)
+					chatQuery = prependCodingAgentContinuityNotice(
+						chatQuery,
+						restoredConversationPathForFallback,
+						restoredConversationWorkspace,
+						len(historyForAgent),
+					)
 				} else {
 					chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
 				}
@@ -6873,17 +6868,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 				if codingFallbackConversationPath != "" {
-					llmAgent.AppendMessage(llmtypes.MessageContent{
-						Role: llmtypes.ChatMessageTypeHuman,
-						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: buildCodingAgentContinuityNotice(
-							codingFallbackConversationPath,
-							codingFallbackWorkspace,
-							len(historyForAgent),
-						)}},
-					})
-					codingFallbackInjectedMessages++
+					chatQuery = prependCodingAgentContinuityNotice(
+						chatQuery,
+						codingFallbackConversationPath,
+						codingFallbackWorkspace,
+						len(historyForAgent),
+					)
 					historyToReplay = nil
-					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; requiring provider to read complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
+					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
 				} else {
 					// A missing archive is an exceptional durability failure. Preserve
 					// enough immediate context to answer rather than starting blind.

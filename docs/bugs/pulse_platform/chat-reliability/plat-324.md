@@ -702,3 +702,9 @@ cannot reuse the old provider's native session, so the new provider receives
 the identical mandatory full-archive read instruction. The older query suffix
 that merely suggested scanning recent JSON entries remains only for non-coding
 fallbacks.
+
+The archive-read instruction is sent in the same provider user turn as the
+current user message, ahead of a visible `[USER MESSAGE]` delimiter. It is not a
+separate synthetic history row. The combined turn remains visible in durable
+history so operators and users can see when a provider reconnect required an
+archive read; the server does not silently add or later strip that instruction.

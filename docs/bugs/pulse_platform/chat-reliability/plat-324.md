@@ -816,3 +816,9 @@ links likewise convert the current user's physical path to the public API form
 and retain the owner UID. Focused Go regressions cover Work turn/bot path
 identity and cross-user rejection; frontend regressions cover public conversion
 and foreign-path preservation.
+
+The cross-component workspace-identity correction shipped in `c0588418f` and
+was deployed to RTS as `c058841-20260917162036`. The production build, release
+asset checks, idle drain, all three services, active release symlink, and public
+agent health passed after activation. User acceptance of a restored Crew turn,
+bot resume, and Dashboard share link remains pending.

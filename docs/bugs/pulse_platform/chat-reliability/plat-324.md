@@ -744,3 +744,19 @@ These corrections shipped in `39d5cabbb` and were deployed to RTS as
 `39d5cab-20260917141618`. The release symlink, three services, local/public
 health, persisted memory, canonical conversation counts, and zero post-restart
 historical-reply publications were verified.
+
+### Crew workspace panels disappeared after the memory profile bump
+
+The governed-memory rollout intentionally advanced Crew's backend profile from
+version 1 to version 2, but `frontend/src/products/work/workData.ts` still
+pinned version 1. RTS consequently returned 404 for
+`GET /api/agent-profiles/work?version=1`. The frontend capability helper
+translated that request failure into an empty panel set, producing “No
+workspace view is enabled for this product” even though Crew still declares
+and implements all workspace panels.
+
+The frontend now requests Crew profile version 2. Crew also treats an empty or
+temporarily unavailable remote capability set as unresolved and retains its
+local workspace-panel surface instead of disabling the entire workspace. A
+cross-tree contract test compares the frontend constant with the backend
+manifest version so a future profile bump cannot silently repeat this drift.

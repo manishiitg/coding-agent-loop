@@ -570,7 +570,11 @@ export function WorkSurface() {
   useEffect(() => {
     let cancelled = false
     void loadAgentProfileUIPanels(WORK_PROFILE_ID, WORK_PROFILE_VERSION).then(panels => {
-      if (!cancelled) setEnabledWorkspacePanels(panels)
+      // An unavailable/mismatched profile must not turn the entire project
+      // workspace into an empty capability set. Crew has a complete local
+      // panel implementation, so retain that safe UI fallback until the
+      // resolved backend feature list is available.
+      if (!cancelled) setEnabledWorkspacePanels(panels.size > 0 ? panels : undefined)
     })
     return () => { cancelled = true }
   }, [])

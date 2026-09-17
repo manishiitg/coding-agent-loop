@@ -2817,6 +2817,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       fullTurnStreaming,
       turnIsStreaming: freshActiveTab?.isStreaming === true,
       hasSession: Boolean(tabSessionId),
+      // A browser UUID or persisted busy flag is not an active server session.
+      // Cold/new sessions must use the normal request with workspace and resume
+      // context before they can accept retained input.
+      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === tabSessionId),
       hasOneShotContext,
     })
     // A retained CLI delivery can take a few seconds to acknowledge while the
@@ -3377,6 +3381,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       fullTurnStreaming,
       turnIsStreaming: sourceTab?.isStreaming === true,
       hasSession: Boolean(sourceTab?.sessionId),
+      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === sourceTab?.sessionId),
       hasOneShotContext: Boolean(
         sourceTab?.config?.restoredConversationPath?.trim() ||
         sourceTab?.config?.fileContext?.length ||

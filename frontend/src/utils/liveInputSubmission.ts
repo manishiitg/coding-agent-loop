@@ -78,6 +78,7 @@ export interface RetainedLiveInputDecision {
   fullTurnStreaming: boolean
   turnIsStreaming: boolean
   hasSession: boolean
+  sessionKnownToServer: boolean
   hasOneShotContext: boolean
 }
 
@@ -90,9 +91,10 @@ export function shouldUseRetainedLiveInput({
   fullTurnStreaming,
   turnIsStreaming,
   hasSession,
+  sessionKnownToServer,
   hasOneShotContext,
 }: RetainedLiveInputDecision): boolean {
-  if (!requested || !hasSession || hasOneShotContext) return false
+  if (!requested || !hasSession || !sessionKnownToServer || hasOneShotContext) return false
   return !fullTurnStreaming || turnIsStreaming
 }
 

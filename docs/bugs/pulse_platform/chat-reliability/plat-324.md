@@ -363,6 +363,42 @@ for the complete change mapping, validation logs and remaining architecture limi
   services active, public health healthy with zero active sessions and idle
   drain, and frontend HTTP 200 at 06:40 UTC.
 - The service's persistent config root is writable and lives outside releases;
-  chat acceptance and recovery journals survive release replacement.
+  native recovery markers survive release replacement. Acceptance journals live
+  in the persistent user-scoped workspace chat_history/submissions directory.
 - User will perform live chat testing. Multi-tab/provider continuity acceptance
   remains pending; successful deployment and health do not close this ticket.
+
+
+### 2026-09-17 post-deployment live-input regression — hotfix
+
+The user reported an RTS `404 Session not found` at 12:54 IST and a separate
+local workflow live-input failure. RTS logs show a successful normal Work query
+and retained follow-up in `product-6a648cdb-fc00-43cc-b1db-2e200c9b9c7a`, followed
+at 07:24:50 UTC by live-input to unrecognized browser session
+`67007965-e580-4093-8268-0b0b67d86135`. The latter was rejected before dispatch
+or journal acceptance. The exact browser transition remains unverified.
+
+Code review also confirmed the new cold journal project resolver only requested
+history with an empty workspace path, which misses workflow-scoped transcripts.
+This is a regression/gap in commit `1979a25ef`; earlier passing injected-resolver
+tests did not cover real workflow discovery after cache loss.
+
+Follow-up work requires retained input to target a session known to the server,
+and real owner-checked workflow history discovery after restart. Live acceptance
+remains open; the deployed hardening did not yet satisfy the complete contract.
+
+
+Hotfix implementation: retained live-input now requires the exact session to
+appear in the server session cache; provisional/cold sessions use the ordinary
+request carrying workspace and continuation context. Backend project recovery
+now discovers workflow-scoped and private Work transcripts from disk or the
+workspace API, verifies owner/session/path, and rehydrates the project binding.
+Missing optional directories do not block recovery; ambiguous project matches
+fail closed. Terminal authorization is unchanged.
+
+Validation: 69 frontend tests across six files and TypeScript passed. New backend
+regressions invoke the live-input handler with empty project caches and an actual
+saved workflow transcript, verify restored journal attribution, reject another
+owner, and cover workspace-API-only discovery. Focused journal/live-input tests
+passed. These checks cover the previously missed cold-workflow lookup, not the
+unobserved browser transition that produced the RTS provisional UUID.

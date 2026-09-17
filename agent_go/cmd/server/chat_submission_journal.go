@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 )
 
 // The journal is durable acceptance, not a native-CLI exactly-once claim. An
@@ -124,6 +126,14 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 			return w, r, func() {}, false
 		}
 		record.Project = project
+		// Rehydrate the verified binding so the subsequent transcript append
+		// uses the same durable workflow after this server restart.
+		api.sessionWorkspaceMu.Lock()
+		if api.sessionWorkspaceFolders == nil {
+			api.sessionWorkspaceFolders = map[string]string{}
+		}
+		api.sessionWorkspaceFolders[session] = project
+		api.sessionWorkspaceMu.Unlock()
 	}
 	save := func() error {
 		record.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
@@ -270,12 +280,210 @@ func (api *StreamingAPI) handleChatSubmissionStatus(w http.ResponseWriter, r *ht
 }
 
 func durableSubmissionProject(owner, session string) (string, error) {
-	runtime, exists, err := ReadChatHistoryRuntimeForSession(owner, session, "")
-	if err != nil {
-		return "", err
+	if strings.TrimSpace(owner) == "" || strings.TrimSpace(session) == "" {
+		return "", fmt.Errorf("conversation owner and session required")
 	}
-	if !exists || runtime == nil {
-		return "", fmt.Errorf("conversation runtime unavailable")
+	rawCentral, centralErr := ReadChatHistoryConversation(owner, session, "")
+	centralRuntimeFound := false
+	if centralErr == nil && len(rawCentral) > 0 {
+		var central struct {
+			UserID    string                   `json:"user_id"`
+			SessionID string                   `json:"session_id"`
+			Runtime   *ChatHistoryAgentRuntime `json:"runtime"`
+		}
+		if json.Unmarshal(rawCentral, &central) != nil {
+			return "", fmt.Errorf("unreadable central conversation identity")
+		}
+		centralOwner := strings.TrimSpace(central.UserID)
+		if centralOwner == "" {
+			centralOwner = "default"
+		}
+		if centralOwner != owner || central.SessionID != session {
+			return "", fmt.Errorf("central conversation identity mismatch")
+		}
+		centralRuntimeFound = central.Runtime != nil
+		if centralRuntimeFound && strings.TrimSpace(central.Runtime.WorkspacePath) != "" {
+			return canonicalChatHistoryWorkspacePath(owner, central.Runtime.WorkspacePath), nil
+		}
 	}
-	return strings.TrimSpace(runtime.WorkspacePath), nil
+
+	// A workflow's builder transcript is deliberately stored beside the workflow,
+	// not in the user's global chat_history index. Discover those durable folders
+	// when the process-local binding disappeared; never guess from a session name.
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	roots := []string{"Workflow", filepath.ToSlash(filepath.Join("_users", sanitizeUserIDForPath(owner), "Chats/Work/projects"))}
+	projects := map[string]bool{}
+	for _, root := range roots {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		folders, err := submissionProjectFolders(ctx, root)
+		if err != nil {
+			return "", err
+		}
+		for _, folder := range folders {
+			if err := ctx.Err(); err != nil {
+				return "", err
+			}
+			candidates, err := submissionProjectConversationFiles(ctx, folder)
+			if err != nil {
+				return "", err
+			}
+			for _, candidate := range candidates {
+				if err := ctx.Err(); err != nil {
+					return "", err
+				}
+				if filepath.Base(candidate) != chatHistoryConversationFileName(session) {
+					continue
+				}
+				candidate = filepath.ToSlash(filepath.Clean(candidate))
+				if !strings.HasPrefix(candidate, folder+"/builder/") {
+					continue
+				}
+				// User-partitioned workflow paths must agree with the record owner too.
+				marker := "/builder/conversation/users/"
+				if start := strings.Index(candidate, marker); start >= 0 {
+					partition := strings.SplitN(candidate[start+len(marker):], "/", 2)[0]
+					if partition != sanitizeUserIDForPath(owner) {
+						continue
+					}
+				}
+				var raw string
+				if local, ok := resolveLocalWorkflowDir(folder); ok {
+					rel := strings.TrimPrefix(candidate, folder+"/")
+					bytes, err := os.ReadFile(filepath.Join(local, filepath.FromSlash(rel)))
+					if err != nil {
+						return "", err
+					}
+					raw = string(bytes)
+				} else {
+					var found bool
+					raw, found, err = readFileFromWorkspace(ctx, candidate)
+					if err != nil {
+						return "", err
+					}
+					if !found {
+						continue
+					}
+				}
+				var record struct {
+					UserID    string                   `json:"user_id"`
+					SessionID string                   `json:"session_id"`
+					Runtime   *ChatHistoryAgentRuntime `json:"runtime"`
+				}
+				if json.Unmarshal([]byte(raw), &record) != nil {
+					return "", fmt.Errorf("unreadable conversation identity")
+				}
+				recordOwner := strings.TrimSpace(record.UserID)
+				if recordOwner == "" {
+					recordOwner = "default"
+				}
+				if recordOwner != owner || record.SessionID != session {
+					continue
+				}
+
+				project := canonicalChatHistoryWorkspacePath(owner, folder)
+				if record.Runtime != nil && strings.TrimSpace(record.Runtime.WorkspacePath) != "" && canonicalChatHistoryWorkspacePath(owner, record.Runtime.WorkspacePath) != project {
+					return "", fmt.Errorf("conversation project identity mismatch")
+				}
+				projects[project] = true
+			}
+		}
+	}
+	if len(projects) > 1 {
+		return "", fmt.Errorf("conversation session belongs to multiple projects")
+	}
+	for project := range projects {
+		return project, nil
+	}
+	if centralRuntimeFound {
+		return "", nil
+	}
+	if centralErr != nil {
+		return "", centralErr
+	}
+	return "", fmt.Errorf("conversation runtime unavailable")
+}
+
+func submissionProjectFolders(ctx context.Context, root string) ([]string, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	folders := []string{}
+	if local, ok := resolveLocalWorkflowDir(root); ok {
+		entries, err := os.ReadDir(local)
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, err
+		}
+		for _, entry := range entries {
+			if err := ctx.Err(); err != nil {
+				return nil, err
+			}
+			if entry.IsDir() {
+				folders = append(folders, root+"/"+entry.Name())
+			}
+		}
+		return folders, nil
+	}
+	listing, exists, err := listWorkspaceFolder(ctx, root, 1)
+	if err != nil || !exists {
+		return nil, err
+	}
+	// API listings may wrap children in the root or return them directly.
+	var collect func([]virtualtools.WorkspaceFolderItem)
+	collect = func(items []virtualtools.WorkspaceFolderItem) {
+		for _, item := range items {
+			path := strings.Trim(item.FilePath, "/")
+			if item.Type == "folder" && strings.HasPrefix(path, root+"/") && !strings.Contains(strings.TrimPrefix(path, root+"/"), "/") {
+				folders = append(folders, path)
+			}
+			if path == root {
+				collect(item.Children)
+			}
+		}
+	}
+	collect(listing)
+	return folders, nil
+}
+
+func submissionProjectConversationFiles(ctx context.Context, folder string) ([]string, error) {
+	if local, ok := resolveLocalWorkflowDir(folder); ok {
+		paths, err := filepath.Glob(filepath.Join(local, "builder", "session-*-conversation.json"))
+		if err != nil {
+			return nil, err
+		}
+		err = filepath.WalkDir(filepath.Join(local, "builder", "conversation"), func(path string, entry os.DirEntry, walkErr error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			if os.IsNotExist(walkErr) {
+				return nil
+			}
+			if walkErr != nil {
+				return walkErr
+			}
+			if !entry.IsDir() && strings.HasPrefix(entry.Name(), "session-") && strings.HasSuffix(entry.Name(), "-conversation.json") {
+				paths = append(paths, path)
+			}
+			return nil
+		})
+		if err != nil {
+			return nil, err
+		}
+		for i, path := range paths {
+			paths[i] = workflowRelativeConversationPath(folder, local, path)
+		}
+		return paths, nil
+	}
+	listing, exists, err := listWorkspaceFolder(ctx, folder+"/builder", 8)
+	if err != nil || !exists {
+		return nil, err
+	}
+	paths := []string{}
+	collectWorkspaceFilePaths(listing, &paths)
+	return paths, nil
 }

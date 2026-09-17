@@ -177,10 +177,18 @@ func chatHistoryVisibleTo(userID, viewerID string, platformAdmin bool) bool {
 	return userID != "default" || !IsMultiUserMode()
 }
 
+// Called only after workflow workspace access has been authorized. Bot route
+// conversations are workflow activity; human Builder chats remain private.
+func isWorkflowBotHistory(session ChatHistorySession) bool {
+	platform := strings.TrimSpace(session.BotPlatform)
+	return platform != "" && strings.HasPrefix(session.SessionID, "bot-"+platform+"--") &&
+		strings.HasPrefix(session.UserID, "bot-"+platform+"-")
+}
+
 func visibleChatHistorySessions(sessions []ChatHistorySession, viewerID string, platformAdmin bool) []ChatHistorySession {
 	visible := make([]ChatHistorySession, 0, len(sessions))
 	for _, session := range sessions {
-		if chatHistoryVisibleTo(session.UserID, viewerID, platformAdmin) {
+		if chatHistoryVisibleTo(session.UserID, viewerID, platformAdmin) || isWorkflowBotHistory(session) {
 			visible = append(visible, session)
 		}
 	}
@@ -685,7 +693,9 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		if workflowScoped {
 			ownerID, _ := chatHistoryConversationIdentity(data)
-			if !chatHistoryVisibleTo(ownerID, userID, false) {
+			var botHistory ChatHistorySession
+			_ = json.Unmarshal(data, &botHistory)
+			if !chatHistoryVisibleTo(ownerID, userID, false) && !isWorkflowBotHistory(botHistory) {
 				http.Error(w, "Builder chat access denied", http.StatusForbidden)
 				return
 			}

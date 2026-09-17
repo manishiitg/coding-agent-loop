@@ -231,3 +231,20 @@ func TestRestorePersistedTerminalSnapshotCreatesStaticTerminal(t *testing.T) {
 		t.Fatalf("stored terminal tmux/source = %q/%q", stored.TmuxSession, stored.ContentSource)
 	}
 }
+
+func TestWorkflowBotHistoryVisibleButCannotResume(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	sessions := []ChatHistorySession{
+		{SessionID: "bot-slack--session", UserID: "bot-slack-8d3dd8b8e39a5d46", BotPlatform: "slack"},
+		{SessionID: "private", UserID: "other-human"},
+		{SessionID: "bot-slack--fake", UserID: "other-human", BotPlatform: "slack"},
+	}
+	got := visibleChatHistorySessions(sessions, "viewer", false)
+	if len(got) != 1 || got[0].SessionID != sessions[0].SessionID {
+		t.Fatalf("bot history visibility = %#v", got)
+	}
+	decorateChatHistorySessions(got, "viewer", false, true)
+	if got[0].CanResume || got[0].CanDelete || chatHistoryCanResume(got[0].UserID, "viewer", false) {
+		t.Fatal("workflow bot history must be view-only")
+	}
+}

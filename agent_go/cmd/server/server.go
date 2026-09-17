@@ -6824,11 +6824,26 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 			} else if req.resolvedResumeTarget != nil && req.resolvedResumeTarget.crossesProvider(finalProvider) && restoredConversationPathForFallback != "" {
 				// Provider-native handles cannot cross CLI implementations. Keep the
-				// AgentWorks conversation stable and give the newly selected provider
-				// the trusted, project-owned transcript as read-only context.
-				chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				// AgentWorks conversation stable and make the newly selected coding
+				// provider read the same trusted, project-owned archive used for a
+				// same-provider profile reconnect.
+				if isCodingAgentProvider(finalProvider, finalModelID) {
+					codingFallbackHistoryBase = len(llmAgent.GetHistory())
+					llmAgent.AppendMessage(llmtypes.MessageContent{
+						Role: llmtypes.ChatMessageTypeHuman,
+						Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: buildCodingAgentContinuityNotice(
+							restoredConversationPathForFallback,
+							restoredConversationWorkspace,
+							len(historyForAgent),
+						)}},
+					})
+					codingFallbackInjectedMessages++
+					chatQuery = cleanChatHistoryQuery(chatQuery)
+				} else {
+					chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
+				}
 				replayHistoryToAgent = false
-				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with trusted conversation context %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
+				logfWithContext(queryLogCtx, "[CHAT_HISTORY] Resuming across providers saved=%s current=%s with required complete conversation archive %s", req.resolvedResumeTarget.provider(), strings.ToLower(strings.TrimSpace(finalProvider)), restoredConversationPathForFallback)
 			} else if restoredConversationPathForFallback != "" {
 				// A conversation JSON is UI state. Never attach it as an ad-hoc
 				// prompt file: native resume is preferred, and an unavailable native
@@ -6986,7 +7001,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Agent context after a policy reconnect contains a bounded handoff.
 		// Both the UI cache and disk must retain the complete conversation.
 		finalHistory := llmAgent.GetHistory()
-		if !modeChangedThisTurn && len(historyForAgent) > 0 && !replayHistoryToAgent {
+		if !modeChangedThisTurn && codingFallbackHistoryBase >= 0 && codingFallbackInjectedMessages > 0 &&
+			codingFallbackHistoryBase+codingFallbackInjectedMessages <= len(finalHistory) {
+			// Synthetic archive pointers and emergency replay tails are provider
+			// context, not user messages. Strip them for both same-provider
+			// reconnects and cross-provider resumes before durable persistence.
+			finalHistory = mergeCodingAgentFallbackChatHistory(historyForAgent, finalHistory, codingFallbackHistoryBase, codingFallbackInjectedMessages)
+			log.Printf("[CONVERSATION DEBUG] Coding-agent fallback merge: removed %d injected context messages, retained %d prior messages, final history now %d messages for session %s", codingFallbackInjectedMessages, len(historyForAgent), len(finalHistory), sessionID)
+		} else if !modeChangedThisTurn && len(historyForAgent) > 0 && !replayHistoryToAgent {
 			// Native coding-agent continuation owns model context, so the prior UI
 			// transcript was intentionally not replayed into this wrapper. Merge it
 			// back only for durable/UI history; otherwise every follow-up replaces
@@ -6994,16 +7016,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// itself correctly continued the same conversation.
 			finalHistory = mergeNativeContinuationChatHistory(historyForAgent, finalHistory)
 			log.Printf("[CONVERSATION DEBUG] Native continuation merge: retained %d prior messages, final history now %d messages for session %s", len(historyForAgent), len(finalHistory), sessionID)
-		} else if !modeChangedThisTurn && codingFallbackHistoryBase >= 0 && codingFallbackInjectedMessages > 0 &&
-			codingFallbackHistoryBase+codingFallbackInjectedMessages <= len(finalHistory) {
-			// A replacement coding-provider session was seeded with a bounded
-			// historical tail. That tail belongs only to model context: appending
-			// GetHistory wholesale to the canonical transcript persisted those old
-			// turns a second time and native recovery then published the copies as
-			// new live messages. Remove the exact injected segment and merge only
-			// the new exchange back into the complete durable history.
-			finalHistory = mergeCodingAgentFallbackChatHistory(historyForAgent, finalHistory, codingFallbackHistoryBase, codingFallbackInjectedMessages)
-			log.Printf("[CONVERSATION DEBUG] Coding-agent fallback merge: removed %d injected context messages, retained %d prior messages, final history now %d messages for session %s", codingFallbackInjectedMessages, len(historyForAgent), len(finalHistory), sessionID)
 		}
 		// What we write to disk. Defaults to finalHistory; if mode changed
 		// this turn, drop the synthetic handoff message (index 0) and append

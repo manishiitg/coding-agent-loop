@@ -695,3 +695,10 @@ its first message. The 48-message/48-KiB tail remains solely as an emergency
 fallback when the durable archive cannot be resolved. This makes the durable
 conversation the single context source and avoids copying historical messages
 into a new provider transcript at all.
+
+The same protected archive handoff now covers an explicit coding-CLI provider
+change. Claude-to-Codex/Cursor (and other supported coding-provider switches)
+cannot reuse the old provider's native session, so the new provider receives
+the identical mandatory full-archive read instruction. The older query suffix
+that merely suggested scanning recent JSON entries remains only for non-coding
+fallbacks.

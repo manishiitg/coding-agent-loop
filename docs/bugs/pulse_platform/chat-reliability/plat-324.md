@@ -10,6 +10,44 @@
 | Latest regression fix | `eb93a5972` deployed — shared queue ownership for human-decision and generated report chat actions |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
+## Post-incident assessment — 2026-09-17
+
+The broad reliability change `1979a25ef` was too large for one rollout: it
+changed 58 files and added about 3,400 lines across persistence, submission
+receipts, queue ownership, native recovery, multi-user isolation and background
+notifications. It introduced two confirmed regressions:
+
+- workflow-scoped sessions could not recover their project after a backend
+  restart because the new durable fallback began with an empty workspace path;
+- conversation snapshot reconciliation used the shorter incoming runtime
+  snapshot as the merge base, allowing prior history blocks to be appended
+  again.
+
+Two other incidents were pre-existing defects exposed during this rollout:
+
+- the ChatInput live-delivery effect had bypassed the shared queue worker since
+  August. The new durable idempotency journal made that race visible as a 409
+  instead of allowing a possible second delivery. For the observed Strategic
+  Review action, the first request was durably accepted and the conflicting
+  second attempt was rejected;
+- the background completion retry sweep predated this change and did not honor
+  `suppress_auto_notification`, so it could revive a deliberately suppressed
+  child completion.
+
+The architectural failure is split message ownership. Browser storage, React
+effects, the queue worker, `/api/query`, `/live-input`, in-memory session maps
+and durable history were each able to make independent routing or persistence
+decisions. Durability was added around that structure before every entry point
+shared one immutable submission lifecycle.
+
+The targeted corrections have fail-before/pass-after coverage and are deployed,
+but service health is not proof of end-to-end chat correctness. This ticket
+remains open until live acceptance covers two users, multiple tabs, idle and
+running turns, browser reload, backend restart and deployment. Known remaining
+limits are process-local conversation locks, no general exactly-once guarantee
+after an uncertain provider response, and already-corrupted duplicate history
+that has deliberately not been rewritten.
+
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
   fresh agent conversation. The visible transcript remained in the tab, but the
   agent had no knowledge of it and asked the user to restate prior context.
@@ -447,9 +485,9 @@ suppression. Production trace contains full-run, suppressed verify-and-repair
 child, then Basic PR review completion prompts. The child caused an extra
 actual model turn; it is distinct from persisted duplicate blocks.
 
-Fix verification is in progress. Existing corrupt history has not been deleted
-or automatically deduplicated, because text-only deletion would also remove
-legitimate repeated turns.
+The correction is deployed and its focused regression tests pass. Existing
+corrupt history has not been deleted or automatically deduplicated, because
+text-only deletion would also remove legitimate repeated turns.
 
 
 Duplicate follow-up locally verified: both snapshot writers now preserve canonical

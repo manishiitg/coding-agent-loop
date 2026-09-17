@@ -7,6 +7,9 @@ import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codin
 import { withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
+import { acquireBuilderSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
+import { configureChatQueueController } from '../utils/chatQueueController'
+import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import {
   liveInputSubmissionCoordinator,
   shouldRefreshSessionEventStream,
@@ -58,7 +61,6 @@ import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
 import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
-import { resolveWorkSubmissionTab } from '../products/work/workTabs'
 import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
 import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
 
@@ -439,6 +441,35 @@ export interface ChatContentRendererProps {
   onRetryLastMessage?: () => void | Promise<void>
   /** Submit a message on the user's behalf (a suggestion pill, a button in the transcript). */
   onSubmitQuery?: (query: string) => void
+}
+
+function prepareQueuedChatMessages(queuedMessages: string[]) {
+    // Separate human messages from auto-notifications
+    const humanMessages = queuedMessages.filter(m => !m.startsWith(AUTO_NOTIFICATION_PREFIX))
+    const autoMessages = queuedMessages.filter(m => m.startsWith(AUTO_NOTIFICATION_PREFIX))
+    const freshAutoMessages = autoMessages.filter(m => !isStaleQueuedAutoNotification(m))
+
+    // Human messages: combine all as-is
+    // Auto-notifications: if multiple, condense to first line of each to avoid overwhelming the agent
+    const parts: string[] = []
+    if (humanMessages.length > 0) {
+      parts.push(humanMessages.map(m => m.trim()).join('\n\n'))
+    }
+    if (freshAutoMessages.length > 0) {
+      if (freshAutoMessages.length === 1) {
+        parts.push(freshAutoMessages[0].trim())
+      } else {
+        // Multiple auto-notifications: take first line of each and combine into a compact summary
+        const summaryLines = freshAutoMessages.map(m => {
+          const firstLine = m.trim().split('\n')[0]
+          return firstLine
+        })
+        parts.push(`${AUTO_NOTIFICATION_PREFIX} Multiple step completions:\n${summaryLines.map(l => l.replace(AUTO_NOTIFICATION_PREFIX, '').trim()).map(l => `- ${l}`).join('\n')}`)
+      }
+    }
+    const combinedMessage = parts.join('\n\n')
+
+    return { message: combinedMessage, isAutoNotification: humanMessages.length === 0 && freshAutoMessages.length > 0 }
 }
 
 interface ChatAreaProps {
@@ -1536,13 +1567,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
 
   // Get polling management actions from store (before pollEvents callback)
-  const { startPolling, stopPolling, getActiveSessions, connectSSE, disconnectSSE, disconnectAllSSE } = useChatStore(useShallow(state => ({
+  const { startPolling, stopPolling, getActiveSessions, connectSSE, disconnectSSE } = useChatStore(useShallow(state => ({
     startPolling: state.startPolling,
     stopPolling: state.stopPolling,
     getActiveSessions: state.getActiveSessions,
     connectSSE: state.connectSSE,
     disconnectSSE: state.disconnectSSE,
-    disconnectAllSSE: state.disconnectAllSSE,
   })))
   const buildExecutionOptions = useWorkflowStore(state => state.buildExecutionOptions)
 
@@ -2093,20 +2123,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Polling function to get events for ALL active sessions (fallback when SSE unavailable)
   const pollEvents = useCallback(async () => {
-
+    const identity = captureChatIdentity()
     const chatStore = useChatStore.getState()
 
     // Read mode from store directly to avoid stale closure from setInterval capture
-    const currentModeCategory = useModeStore.getState().selectedModeCategory
-
-    // Get all tabs that should be polled (all tabs in current mode)
-    const allTabs = Object.values(chatStore.chatTabs).filter(tab => {
-      // If mode category is null (not yet selected), poll all non-workflow tabs
-      if (!currentModeCategory) {
-        return tab.metadata?.mode !== 'workflow'
-      }
-      return tab.metadata?.mode === currentModeCategory
-    })
+    // Transport ownership follows sessions, including background tabs in
+    // another mode. Switching the visible view cannot pause catch-up.
+    const allTabs = Object.values(chatStore.chatTabs)
 
     // CRITICAL: Only poll tabs that are:
     // 1. Actively streaming (query in progress)
@@ -2177,6 +2200,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Poll each session
     for (const { sessionId, tab } of sessionsToPoll) {
+      if (!isChatIdentityCurrent(identity)) return
       let currentTab = tab
 
       if (tab) {
@@ -2232,11 +2256,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       try {
         const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex)
-
-        // If response has a different session ID, update the tab
-        if (currentTab && response.session_id && response.session_id !== effectiveSessionId) {
-          chatStore.updateTabSessionId(currentTab.tabId, response.session_id)
-        }
+        if (!isChatIdentityCurrent(identity)) return
+        if (response.session_id && response.session_id !== effectiveSessionId) continue
+        if (currentTab && chatStore.getTab(currentTab.tabId)?.sessionId !== effectiveSessionId) continue
 
         processEventsResponse(response, effectiveSessionId, currentTab)
       } catch {
@@ -2588,22 +2610,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   }, [tabsWithActiveSessions, connectSSE, disconnectSSE, handleSSEMessage, handleSSEStatus, handleSSEFallback, pollingInterval, startPolling, stopPolling, pollEvents])
 
-  // Cleanup polling and SSE on unmount
-  useEffect(() => {
-    return () => {
-      // Disconnect all SSE connections
-      disconnectAllSSE()
-      // Use store's stopPolling to clean up
-      if (pollingInterval) {
-        stopPolling()
-      }
-    }
-  }, [pollingInterval, stopPolling, disconnectAllSSE])
+  // The account-scoped store owns session transports. Closing a tab or changing
+  // accounts tears them down there; unmounting a view must not disconnect the
+  // other open conversations or cancel their fallback poller.
 
 
   const stopStreamingInFlightRef = useRef(false)
 
   const stopStreaming = useCallback(async () => {
+    const identity = captureChatIdentity()
     if (stopStreamingInFlightRef.current) return
     stopStreamingInFlightRef.current = true
 
@@ -2623,17 +2638,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       return
     }
 
+    let cancelled = false
     try {
       await agentApi.cancelCurrentTurn(sessionIdToStop)
+      cancelled = true
     } catch (error) {
       logger.error('ChatArea', 'Failed to cancel current turn:', error)
     } finally {
       // Only mark idle after the backend acknowledges cancellation. If we flip
       // this earlier, queued/new messages can auto-send while the old foreground
       // turn is still accepting cancellation.
-      setIsStreaming(false)
-
-      if (activeTab) {
+      if (cancelled && isChatIdentityCurrent(identity) && activeTab &&
+        useChatStore.getState().getTab(activeTab.tabId)?.sessionId === sessionIdToStop) {
+        if (useChatStore.getState().activeTabId === activeTab.tabId) setIsStreaming(false)
         chatStore.setTabStreaming(activeTab.tabId, false)
         chatStore.setTabCompleted(activeTab.tabId, true)
       }
@@ -2657,8 +2674,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const submitQueryImmediately = useCallback(async (
     query: string,
     executionOptions?: ExecutionOptions,
-    options?: { isAutoNotification?: boolean; preferLiveInput?: boolean; sourceTabId?: string },
+    options?: ChatSubmissionOptions,
   ): Promise<boolean> => {
+    const identity = options?.identity ?? captureChatIdentity()
+    if (!isChatIdentityCurrent(identity)) return false
     // Mark that user has interacted — enables auto-notifications
     // (prevents stale notifications from SSE backfill on page load)
     hasUserSentMessageRef.current = true
@@ -2670,16 +2689,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       logger.warn('ChatArea', `Submission source tab ${options.sourceTabId} no longer exists`)
       return false
     }
-    // Rapid sends can still carry the permanent Work Builder's tab ID after
-    // the first send has opened its conversation. Follow the now-active Work
-    // conversation so every queued message reaches the same retained CLI
-    // session instead of creating one chat tab per message.
-    const globallyActiveTab = chatStore.activeTabId
-      ? chatStore.chatTabs[chatStore.activeTabId]
-      : undefined
-    const submissionTab = sourceTab
-      ? resolveWorkSubmissionTab(sourceTab, globallyActiveTab)
-      : activeTab
+    // Delayed delivery owns an exact conversation, even if the tab was reused
+    // or the selected chat changed while waiting in the submission lane.
+    if (options?.sourceSessionId !== undefined && sourceTab?.sessionId !== options.sourceSessionId) {
+      return false
+    }
+    const handoffTabId = options?.builderHandoff?.tabId
+    const submissionTab = handoffTabId ? chatStore.chatTabs[handoffTabId] : (sourceTab ?? activeTab)
+    if (handoffTabId && (!submissionTab || submissionTab.sessionId !== options?.builderHandoff?.sessionId)) return false
     const activeTabModeCategory =
       submissionTab?.metadata?.mode === 'workflow' || submissionTab?.metadata?.mode === 'multi-agent'
         ? submissionTab.metadata.mode
@@ -2708,6 +2725,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // The new tab inherits the Builder composer's config (model, attached
     // files) so the message goes out with what the user just chose.
     if (
+      options?.sourceSessionId === undefined &&
       freshActiveTab?.metadata?.mode === 'workflow' &&
       isBlankWorkflowBuilderTab(freshActiveTab, freshActiveTab.metadata.presetQueryId ?? '', chatStore.tabEvents)
     ) {
@@ -2715,12 +2733,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const chatName = normalized.length > 110 ? `${normalized.slice(0, 110)}...` : normalized
       const builderConfig = freshActiveTab.config
       const chatTabId = await chatStore.createChatTab(chatName, { ...freshActiveTab.metadata })
+      if (!isChatIdentityCurrent(identity)) return false
       if (builderConfig) chatStore.setTabConfig(chatTabId, { ...builderConfig })
       activateTab(chatTabId)
       freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
+      if (options?.builderHandoff) Object.assign(options.builderHandoff, { tabId: chatTabId, sessionId: freshActiveTab?.sessionId })
     }
 
-    if (freshActiveTab?.metadata?.agentProfileBuilder) {
+    if (options?.sourceSessionId === undefined && freshActiveTab?.metadata?.agentProfileBuilder) {
       const normalized = trimmedQuery.replace(/\s+/g, ' ').trim()
       const chatName = normalized.length > 110 ? `${normalized.slice(0, 110)}...` : normalized
       const builderConfig = freshActiveTab.config
@@ -2732,21 +2752,40 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         agentProfileConversationKey: `${projectId}:${globalThis.crypto.randomUUID()}`,
         agentProfileConversationId: undefined,
       })
+      if (!isChatIdentityCurrent(identity)) return false
       if (builderConfig) chatStore.setTabConfig(chatTabId, { ...builderConfig })
       activateTab(chatTabId)
       freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
+      if (options?.builderHandoff) Object.assign(options.builderHandoff, { tabId: chatTabId, sessionId: freshActiveTab?.sessionId })
     }
 
-    if (submitModeCategory === 'workflow' && !isRequiredFolderSelected) {
-      logger.error('ChatArea', 'Workflow folder required for workflow mode')
-      return false
-    }
 
     // Resolve or create tab
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
+    if (!isChatIdentityCurrent(identity)) return false
     if (!resolved) return false
     let { tab: currentTab, sessionId: tabSessionId } = resolved
-    chatSubmissionLane.link(currentTab.tabId, tabSessionId)
+    const stillOwnsSubmission = () => isChatIdentityCurrent(identity) &&
+      useChatStore.getState().getTab(currentTab.tabId)?.sessionId === tabSessionId
+    if (options?.sourceSessionId !== undefined && (
+      currentTab.tabId !== options.sourceTabId ||
+      tabSessionId !== options.sourceSessionId ||
+      useChatStore.getState().getTab(currentTab.tabId)?.sessionId !== options.sourceSessionId
+    )) return false
+    chatSubmissionLane.link(`${identity}:${sourceTab?.sessionId || currentTab.tabId}`, `${identity}:${tabSessionId}`)
+    const receipt = { id: options?.submissionId ?? crypto.randomUUID(), message: trimmedQuery,
+      sessionId: tabSessionId, targetTabId: currentTab.tabId }
+    for (const id of new Set([sourceTab?.tabId, currentTab.tabId])) {
+      if (id) chatStore.setTabConfig(id, { pendingSubmission: receipt })
+    }
+    const acceptReceipt = () => {
+      if (stillOwnsSubmission()) chatStore.setTabConfig(currentTab.tabId, { conversationAcknowledged: true })
+      for (const id of new Set([sourceTab?.tabId, currentTab.tabId])) {
+        if (id && useChatStore.getState().getTabConfig(id)?.pendingSubmission?.id === receipt.id) {
+          chatStore.setTabConfig(id, { pendingSubmission: undefined })
+        }
+      }
+    }
 
     // Capture # references before constructing the request. They are consumed
     // only after the backend accepts this message; failed submissions retain
@@ -2807,8 +2846,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       setTimeout(() => { scrollToBottom('smooth') }, 50)
 
       try {
-        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery)
+        if (!stillOwnsSubmission()) return false
+        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery, { identity, submissionId: receipt.id, continuation: true })
+        if (!isChatIdentityCurrent(identity)) return false
+        if (!stillOwnsSubmission()) return response.success === true
         if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started' || response.delivery_status === 'queued_for_injection') {
+          acceptReceipt()
           useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
             [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
               ? withLiveInputReceipt(event, response.delivery_status!, response.provider)
@@ -2836,41 +2879,44 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           return true
         }
       } catch (error) {
-        // A stale/missing native session is expected after long idle periods.
-        // Continue into the full request path, which resumes or launches the CLI.
-        logger.debug('ChatArea', 'Minimal live input unavailable; using full turn setup', error)
+        if (!isChatIdentityCurrent(identity)) return false
+        // Never resend an ambiguous delivery via a second endpoint. The server
+        // owns cold-session fallback and durable idempotent receipt recovery.
+        chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
+        resetStreamingState(currentTab.tabId)
+        return false
       }
-      useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
-        [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
-          ? withLiveInputReceipt(event, '') : event),
-      } }))
+      // A transport success without an acceptance receipt is still ambiguous.
+      // Retain the submission ID and never send it again through /query here.
+      chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId,
+        new Error('Delivery was not confirmed. Retry with the retained submission to check its status.'))])
+      resetStreamingState(currentTab.tabId)
+      return false
     }
 
     const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
-    const hasLocalSessionEvents = chatStore.getTabEvents(tabSessionId).length > 0
-    const matchingActiveSession = chatStore.activeSessionsCache.find(session => session.session_id === tabSessionId)
-    const shouldStartFreshEmptySession =
-      !options?.isAutoNotification &&
-      !pendingRestoredConversationPath &&
-      !hasLocalSessionEvents &&
-      !matchingActiveSession &&
-      !currentTab.metadata?.agentProfileId
+    const hasLocalSessionEvents = currentTab.config.conversationAcknowledged === true || chatStore.getTabEvents(tabSessionId).some(event =>
+      ['conversation_resumed', 'unified_completion', 'agent_end', 'streaming_chunk'].includes(event.type ?? ''))
+    // An empty transport window is not a new-conversation request. Keep the
+    // tab's allocated identity through startup, retries and deployments.
 
-    if (shouldStartFreshEmptySession) {
-      const freshSessionId = globalThis.crypto.randomUUID()
-      chatStore.updateTabSessionId(currentTab.tabId, freshSessionId)
-      currentTab = {
-        ...currentTab,
-        sessionId: freshSessionId,
-      }
-      tabSessionId = freshSessionId
-      logger.debug('ChatArea', `Rotated empty tab ${currentTab.tabId} to fresh session ${freshSessionId}`)
+    const ownerPresetId = currentTab.metadata?.presetQueryId
+    const presetState = useGlobalPresetStore.getState()
+    const freshWorkflowPreset = submitModeCategory === 'workflow'
+      ? presetState.getPresetsForMode('workflow').find(preset => preset.id === ownerPresetId) : undefined
+    if (submitModeCategory === 'workflow' && !freshWorkflowPreset) {
+      chatStore.addToast('The owning automation is unavailable. Reopen it before sending.', 'error')
+      return false
     }
-
+    const ownsSelectedWorkflow = ownerPresetId === presetState.activePresetIds.workflow
+    const ownedExecutionOptions: ExecutionOptions = ownsSelectedWorkflow ? buildExecutionOptions() : {
+      execution_strategy: 'start_from_beginning_no_human',
+      workshop_mode: currentTab.metadata?.workshopMode ?? 'workshop',
+      enable_knowledgebase: freshWorkflowPreset?.llmConfig?.use_knowledgebase,
+      enable_context_summarization: freshWorkflowPreset?.llmConfig?.enable_context_summarization,
+    }
     const baseExecutionOptions = executionOptions ?? (
-      submitModeCategory === 'workflow' && currentTab?.metadata?.phaseId
-        ? buildExecutionOptions()
-        : undefined
+      submitModeCategory === 'workflow' && currentTab?.metadata?.phaseId ? ownedExecutionOptions : undefined
     )
     // Builder and Run chats can be open concurrently. Their prompt/tool policy
     // belongs to the tab that owns the conversation, not the workflow-wide mode
@@ -2878,7 +2924,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const effectiveExecutionOptions =
       submitModeCategory === 'workflow' && currentTab?.metadata?.workshopMode
         ? {
-            ...(baseExecutionOptions ?? buildExecutionOptions()),
+            ...(baseExecutionOptions ?? ownedExecutionOptions),
             workshop_mode: currentTab.metadata.workshopMode,
           }
         : baseExecutionOptions
@@ -2901,9 +2947,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     // Build file context — read preset fresh from store to avoid stale closure
     // when switching between workflows (the closure's activeWorkflowPreset may lag behind)
-    const freshWorkflowPreset = (submitModeCategory === 'workflow')
-      ? useGlobalPresetStore.getState().getActivePreset('workflow')
-      : null
     // Only include visible/removable file context from tab config. Workflow execution
     // folders still travel through workflow_context_paths; restored conversation files
     // use restoredConversationPath so coding agents can native-resume without a visible
@@ -2978,6 +3021,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
+    if (!stillOwnsSubmission()) return false
     if (submitModeCategory === 'workflow') {
       useAppStore.getState().setCurrentQuery(displayQueryWithContext)
     }
@@ -3009,18 +3053,25 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
     }
 
-    // File context is one-shot: it belongs to the message being submitted, not
-    // the whole conversation. The request payload below already captured it.
-    if (effectiveFileContext.length > 0 || restoredConversationPath) {
-      chatStore.setTabConfig(currentTab.tabId, {
-        fileContext: [],
-        restoredConversationPath: undefined,
-        restoredConversationSummary: undefined,
-        restoredConversationTitle: undefined,
-        restoredConversationWorkshopModeLabel: undefined,
-        restoredConversationRuntimeLabel: undefined,
-        restoredConversationNativeResume: undefined,
-      })
+    // Consume only this request's context after acceptance. Failed sends keep
+    // files/resume bindings; files added during delivery remain attached.
+    const consumeSubmittedFiles = () => {
+      if (!stillOwnsSubmission()) return
+      const config = useChatStore.getState().getTabConfig(currentTab.tabId)
+      if (!config) return
+      const submittedPaths = new Set(effectiveFileContext.map(file => file.path))
+      const remaining = config.fileContext.filter(file => !submittedPaths.has(file.path))
+      const consumedRestore = restoredConversationPath && config.restoredConversationPath === restoredConversationPath
+      if (remaining.length !== config.fileContext.length || consumedRestore) {
+        chatStore.setTabConfig(currentTab.tabId, {
+          fileContext: remaining,
+          ...(consumedRestore ? {
+            restoredConversationPath: undefined, restoredConversationSummary: undefined,
+            restoredConversationTitle: undefined, restoredConversationWorkshopModeLabel: undefined,
+            restoredConversationRuntimeLabel: undefined, restoredConversationNativeResume: undefined,
+          } : {}),
+        })
+      }
     }
 
     // Enable auto-scroll and scroll to bottom
@@ -3030,25 +3081,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Clear query text
     useAppStore.getState().setCurrentQuery('')
 
-    // Preserve final response as completion event if needed
-    const eventsToCheck = chatStore.getTabEvents(tabSessionId)
-    const hasCompletionEvent = eventsToCheck.some(event =>
-      event.type === 'unified_completion' || event.type === 'agent_end'
-    )
-    if (finalResponse && !hasCompletionEvent) {
-      const completionEvent: PollingEvent = {
-        id: `completion-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-        type: 'unified_completion',
-        timestamp: new Date().toISOString(),
-        data: {
-          unified_completion: {
-            content: finalResponse,
-            timestamp: new Date().toISOString()
-          }
-        } as PollingEvent['data']
-      }
-      chatStore.addTabEvents(tabSessionId, [completionEvent])
-    }
+    // A selected view's cached finalResponse is not evidence for this session.
+    // Durable history and session-owned events are the only transcript sources.
 
     // Reset UI state for new query
     chatStore.setFinalResponse('')
@@ -3072,12 +3106,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     try {
       // Get active presets for the current mode
       const presetStore = useGlobalPresetStore.getState()
-      const chatPreset = submitAgentMode === 'multi-agent' ? presetStore.getActivePreset('multi-agent') : null
+      const chatPreset = submitAgentMode === 'multi-agent' && ownerPresetId
+        ? presetStore.getPresetsForMode('multi-agent').find(preset => preset.id === ownerPresetId) : null
       // Read workflow preset fresh from store (not from stale closure)
       // For workflow mode, always try to get the active preset regardless of selectedWorkflowPreset closure value
-      const workflowPreset = (submitAgentMode === 'workflow' || submitModeCategory === 'workflow')
-        ? presetStore.getActivePreset('workflow')
-        : null
+      const workflowPreset = freshWorkflowPreset
       const activePreset = workflowPreset || chatPreset
 
       const presetTools = activePreset?.selectedTools || []
@@ -3103,7 +3136,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // For phase chat: prefer preset LLM if user hasn't explicitly overridden
       // (tab config always has a default from workflowPrimaryConfig, so we also check the preset)
       const phaseChatPreset = isWorkflowPhaseChat
-        ? (presetStore.getActivePreset('workflow'))
+        ? freshWorkflowPreset
         : null
       const presetBuilderLLM = phaseChatPreset?.llmConfig?.builder_llm
       const presetLLMConfig = presetBuilderLLM?.provider && presetBuilderLLM?.model_id
@@ -3137,13 +3170,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         queryWithContext,
         correctAgentMode: submitAgentMode,
         selectedModeCategory: submitModeCategory,
-        enabledTools,
-        effectiveServers,
+        enabledTools: allTools.filter(tool => currentTab.config.selectedServers.includes(tool.server ?? '')),
+        effectiveServers: currentTab.config.selectedServers,
         currentTab,
         effectiveLLMConfig,
         llmConfigWithApiKeys,
         useCodeExecutionMode,
-        executionOptions: executionOptionsRef.current,
+        executionOptions: effectiveExecutionOptions,
         workflowPresetId,
         chatPresetId,
         filteredPresetTools,
@@ -3187,7 +3220,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         requestPayload.disable_live_input_delivery = true
       }
 
+      // Request preparation can await secrets/configuration. Recheck the
+      // captured owner before delivery if the user closed or reused its tab.
+      if (options?.sourceSessionId !== undefined &&
+        useChatStore.getState().getTab(currentTab.tabId)?.sessionId !== options.sourceSessionId) {
+        return false
+      }
       // Set session ID and submit
+      if (!stillOwnsSubmission()) return false
       chatStore.setSessionId(tabSessionId)
       console.log('[WF_DEBUG] 1. Submitting', { tabId: currentTab.tabId, tabSessionId, eventCount: chatStore.getTabEvents(tabSessionId).length, mode: currentTab.metadata?.mode })
       const response = currentTab.metadata?.agentProfileChatContract === 'profile-v1' && currentTab.metadata.agentProfileId
@@ -3195,8 +3235,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             currentTab.metadata.agentProfileId,
             buildAgentProfileChatRequest(requestPayload, currentTab.metadata.agentProfileConversationKey, currentTab.metadata.agentProfileEngine, currentTab.metadata.agentProfileModelID, currentTab.metadata.agentProfileReasoningEffort),
             tabSessionId,
+            { identity, submissionId: receipt.id, continuation: hasLocalSessionEvents || Boolean(pendingRestoredConversationPath) || currentTab.metadata?.isRestored === true },
           )
-        : await agentApi.startQuery(requestPayload, tabSessionId)
+        : await agentApi.startQuery(requestPayload, tabSessionId, { identity, submissionId: receipt.id })
+      if (!isChatIdentityCurrent(identity)) return false
+      if (!stillOwnsSubmission()) return response.status === 'started' || response.status === 'workflow_started' || response.status === 'live_input_delivered'
       console.log('[WF_DEBUG] 2. Response', { status: response.status, responseSessionId: response.session_id || response.query_id, tabSessionId, match: (response.session_id || response.query_id) === tabSessionId })
 
       if (response.status === 'started' || response.status === 'workflow_started') {
@@ -3210,10 +3253,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
 
         consumeSubmittedWorkflowContext()
+        consumeSubmittedFiles()
+        acceptReceipt()
 
         console.log('[WF_DEBUG] 3. Before updateTabSessionId', { old: tabSessionId, new: responseSessionId, changed: responseSessionId !== tabSessionId, oldEvents: chatStore.getTabEvents(tabSessionId).length, newEvents: chatStore.getTabEvents(responseSessionId).length })
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
+        if (options?.builderHandoff) options.builderHandoff.sessionId = responseSessionId
+        chatSubmissionLane.link(`${identity}:${tabSessionId}`, `${identity}:${responseSessionId}`)
         if (currentTab.metadata?.agentProfileRuntimeDirty) {
           chatStore.setTabMetadata(currentTab.tabId, { agentProfileRuntimeDirty: false })
         }
@@ -3229,6 +3276,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
         // Refresh active sessions cache — SSE connection useEffect will pick up the new session
         const connectAfterRefresh = () => {
+          if (!isChatIdentityCurrent(identity)) return
           const store = useChatStore.getState()
           const sid = responseSessionId
           console.log('[WF_DEBUG] 5. connectAfterRefresh', { sid, hasSSE: !!store.sseConnections[sid], events: store.tabEvents[sid]?.length ?? 0, sinceIndex: store.tabEventIndices[sid] })
@@ -3261,6 +3309,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // spinner mid-turn).
         const sid = response.session_id || tabSessionId
         consumeSubmittedWorkflowContext()
+        consumeSubmittedFiles()
+        acceptReceipt()
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
         if (sid && shouldRefreshSessionEventStream(
@@ -3284,6 +3334,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
     } catch (error) {
+      if (!isChatIdentityCurrent(identity)) return false
       console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
       chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
@@ -3297,12 +3348,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // can receive a new React tab ID while an older request is still preparing;
   // session-first keys preserve user order across that remount. New chats use
   // their tab ID until the backend assigns a session.
-  const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: { isAutoNotification?: boolean; preferLiveInput?: boolean; sourceTabId?: string }) => {
+  const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: ChatSubmissionOptions) => {
     const sourceTab = options?.sourceTabId
       ? useChatStore.getState().chatTabs[options.sourceTabId]
       : activeTab
+    if (options?.sourceTabId && !sourceTab) return Promise.resolve(false)
     const laneKey = sourceTab?.sessionId || sourceTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
-    const submit = () => chatSubmissionLane.enqueue(laneKey, () => submitQueryImmediately(query, executionOptions, options))
+    const identity = options?.identity ?? captureChatIdentity()
+    if (!isChatIdentityCurrent(identity)) return Promise.resolve(false)
+    const isBuilder = sourceTab?.metadata?.agentProfileBuilder || (sourceTab?.metadata?.mode === 'workflow' &&
+      isBlankWorkflowBuilderTab(sourceTab, sourceTab.metadata.presetQueryId ?? '', useChatStore.getState().tabEvents))
+    const builder = isBuilder && options?.sourceSessionId === undefined
+      ? acquireBuilderSubmission(`${identity}:${sourceTab?.tabId}:${options?.sourceComposerId ?? 'direct'}`) : undefined
+    const pending = sourceTab?.config?.pendingSubmission
+    const retryTarget = pending?.message === query.trim() && pending.targetTabId
+      ? useChatStore.getState().getTab(pending.targetTabId) : undefined
+    const retry = retryTarget && retryTarget.sessionId === pending?.sessionId ? pending : undefined
+    const captured: ChatSubmissionOptions = { ...options, identity,
+      sourceTabId: sourceTab?.tabId,
+      sourceSessionId: options?.sourceSessionId ?? (!isBuilder ? sourceTab?.sessionId ?? undefined : undefined),
+      submissionId: options?.submissionId ?? retry?.id ?? crypto.randomUUID(),
+      builderHandoff: retry ? { tabId: retry.targetTabId, sessionId: retry.sessionId } : builder?.target,
+    }
+    const submit = () => chatSubmissionLane.enqueue(`${identity}:${laneKey}`, () =>
+      isChatIdentityCurrent(identity) ? submitQueryImmediately(query, executionOptions, captured) : Promise.resolve(false))
     const useRetainedLiveInput = shouldUseRetainedLiveInput({
       requested: options?.preferLiveInput === true,
       fullTurnStreaming,
@@ -3317,9 +3386,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ),
     })
     if (useRetainedLiveInput) {
-      return liveInputSubmissionCoordinator(laneKey, query, submit)
+      return liveInputSubmissionCoordinator(`${identity}:${laneKey}`, query, submit).finally(() => builder?.release())
     }
-    return submit()
+    return submit().finally(() => builder?.release())
   }, [activeTab, selectedModeCategory, submitQueryImmediately, fullTurnStreaming])
 
   const retryLastProductMessage = useCallback(async () => {
@@ -3367,118 +3436,23 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const submitQueryWithQueryRef = useRef(submitQueryWithQuery)
   useEffect(() => { submitQueryWithQueryRef.current = submitQueryWithQuery }, [submitQueryWithQuery])
 
-  const queuedTabId = activeTab?.tabId
-  const queuedTabIsStreaming = activeTab?.isStreaming ?? false
-  const queuedTabMessages = activeTab?.config?.queuedMessages
-  const queuedTabIsProcessing = activeTab?.config?.isQueueProcessing
-
   useEffect(() => {
-    const queuedMessages = queuedTabMessages || []
-
-    // Read the shared lock from the store (fresh, not from closure) to prevent
-    // multiple ChatArea instances from double-processing the same queue.
-    const freshConfig = queuedTabId ? useChatStore.getState().getTabConfig(queuedTabId) : undefined
-    const isProcessing = freshConfig?.isQueueProcessing ?? queuedTabIsProcessing ?? false
-
-    // Process queued messages when agent is idle (not streaming).
-    // Uses !isStreaming instead of isCompleted because workshop step goroutines
-    // may still be running in the background after the main agent turn finishes.
-    if (queuedTabIsStreaming || !queuedTabId || isProcessing || queuedMessages.length === 0) {
-      if (queuedMessages.length > 0) {
-        console.log(`[QUEUE_DEBUG] Not processing: isStreaming=${queuedTabIsStreaming} hasTab=${!!queuedTabId} isProcessing=${isProcessing} queueLen=${queuedMessages.length}`)
-        // SAFETY: If lock is stuck (isProcessing=true) for more than 10 seconds, force-release it.
-        // This can happen if submitQuery promise never resolves or the finally block doesn't run.
-        if (isProcessing && !queuedTabIsStreaming && queuedTabId) {
-          const lockKey = `queue_lock_${queuedTabId}`
-          const lockStore = window as unknown as Record<string, unknown>
-          const lastLockTime = lockStore[lockKey] as number | undefined
-          if (!lastLockTime) {
-            lockStore[lockKey] = Date.now()
-          } else if (Date.now() - lastLockTime > 10000) {
-            console.warn(`[QUEUE_DEBUG] Force-releasing stuck lock after 10s for tab ${queuedTabId}`)
-            useChatStore.getState().setTabConfig(queuedTabId, { isQueueProcessing: false })
-            delete lockStore[lockKey]
-          }
-        }
-      }
-      return
-    }
-
-    const tabId = queuedTabId
-    const chatStore = useChatStore.getState()
-
-    // Claim the store-level lock atomically before any async work.
-    chatStore.setTabConfig(tabId, { isQueueProcessing: true })
-    // Clear stuck-lock tracker
-    const lockStore = window as unknown as Record<string, unknown>
-    delete lockStore[`queue_lock_${tabId}`]
-
-    // Separate human messages from auto-notifications
-    const humanMessages = queuedMessages.filter(m => !m.startsWith(AUTO_NOTIFICATION_PREFIX))
-    const autoMessages = queuedMessages.filter(m => m.startsWith(AUTO_NOTIFICATION_PREFIX))
-    const freshAutoMessages = autoMessages.filter(m => !isStaleQueuedAutoNotification(m))
-    const droppedAutoCount = autoMessages.length - freshAutoMessages.length
-
-    // Human messages: combine all as-is
-    // Auto-notifications: if multiple, condense to first line of each to avoid overwhelming the agent
-    const parts: string[] = []
-    if (humanMessages.length > 0) {
-      parts.push(humanMessages.map(m => m.trim()).join('\n\n'))
-    }
-    if (freshAutoMessages.length > 0) {
-      if (freshAutoMessages.length === 1) {
-        parts.push(freshAutoMessages[0].trim())
-      } else {
-        // Multiple auto-notifications: take first line of each and combine into a compact summary
-        const summaryLines = freshAutoMessages.map(m => {
-          const firstLine = m.trim().split('\n')[0]
-          return firstLine
-        })
-        parts.push(`${AUTO_NOTIFICATION_PREFIX} Multiple step completions:\n${summaryLines.map(l => l.replace(AUTO_NOTIFICATION_PREFIX, '').trim()).map(l => `- ${l}`).join('\n')}`)
-      }
-    }
-    const combinedMessage = parts.join('\n\n')
-
-    // Clear the entire queue
-    chatStore.setTabConfig(tabId, { queuedMessages: [] })
-
-    // Small delay to ensure state is fully processed before sending
-    setTimeout(async () => {
-      try {
-        if (droppedAutoCount > 0) {
-          console.log('[QUEUE_DEBUG] Dropped stale auto-notifications before submit', { droppedAutoCount, tabId })
-        }
-
-        if (!combinedMessage.trim()) {
-          return
-        }
-
-        const isAutoOnly = humanMessages.length === 0 && freshAutoMessages.length > 0
-        await submitQueryWithQueryRef.current(combinedMessage, undefined, { isAutoNotification: isAutoOnly })
-      } catch (error) {
-        logger.error('ChatArea', 'Failed to send queued messages:', error)
-        // Re-add all messages back to the queue
-        const currentChatStore = useChatStore.getState()
-        const currentQueue = currentChatStore.getTabConfig(tabId)?.queuedMessages || []
-        currentChatStore.setTabConfig(tabId, {
-          queuedMessages: [...queuedMessages, ...currentQueue]
-        })
-        addToast('Failed to send queued messages. They have been re-queued.', 'error')
-      } finally {
-        // Release the lock after a delay to allow the new session to start streaming
-        setTimeout(() => {
-          useChatStore.getState().setTabConfig(tabId, { isQueueProcessing: false })
-        }, 500)
-      }
-    }, 200)
-  }, [addToast, queuedTabId, queuedTabIsProcessing, queuedTabIsStreaming, queuedTabMessages])
+    configureChatQueueController(
+      (message, options) => submitQueryWithQueryRef.current(message, undefined, options),
+      prepareQueuedChatMessages,
+      message => addToast(message, 'error'),
+    )
+  }, [addToast])
 
   // Handle new chat for the active tab. Keep this scoped: workflow and
   // multi-agent tabs can coexist, so starting a fresh conversation in one tab
   // must not clear every tab/event/SSE connection in the app.
   const handleNewChat = useCallback(async (targetTabId?: string) => {
+    const identity = captureChatIdentity()
     const chatStore = useChatStore.getState()
     const targetTab = targetTabId ? chatStore.getTab(targetTabId) : activeTab
+    const stillOwnsTarget = () => isChatIdentityCurrent(identity) && (!targetTab ||
+      useChatStore.getState().getTab(targetTab.tabId)?.sessionId === targetTab.sessionId)
     // Stop the previous backend session first (if it exists). This closes any
     // tmux-backed CLI owner before the tab rotates to a fresh AgentWorks
     // session, preventing two pi-cli sessions from sharing the Chats cwd.
@@ -3492,6 +3466,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (sessionIdToClear) {
       try {
         const activeSessions = await getActiveSessions(true)
+        if (!stillOwnsTarget()) return
         const backendKnowsSession = activeSessions.some(session => session.session_id === sessionIdToClear)
         if (backendKnowsSession) {
           await agentApi.stopSession(sessionIdToClear, true)
@@ -3501,6 +3476,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         // Continue with frontend reset even if backend stop fails.
       }
     }
+
+    if (!stillOwnsTarget()) return
 
     // Product profiles own their durable conversation identity on the server.
     // Rotating only this tab's local UUID would be overwritten by the next
@@ -3520,13 +3497,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
+    if (!stillOwnsTarget()) return
+
     // For workflow mode, preserve the selected preset but reset workflow phase
-    if (selectedModeCategory === 'workflow' && selectedWorkflowPreset) {
+    if (useChatStore.getState().activeTabId === targetTab?.tabId && selectedModeCategory === 'workflow' && selectedWorkflowPreset) {
       // Keep the preset selected, just reset the workflow phase to default
       const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
       // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
-    } else {
+    } else if (!targetTab) {
       // For other modes, clear workflow state completely
       clearWorkflowState()
     }

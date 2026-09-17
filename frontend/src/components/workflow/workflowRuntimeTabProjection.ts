@@ -188,8 +188,8 @@ export function workflowRuntimeTabProjection(
   const scheduled = isScheduledSession(identity)
   const external = isExternalReadOnlyWorkflowSession(identity)
 
-  // Bot lanes retain their explicit open-from-activity behavior. A scheduled
-  // run is different: it is a first-class parallel lane beside Chat.
+  // Discovery filters out unopened background runs before projection. Keep
+  // schedule metadata here to refresh run tabs the user already opened.
   if (external && !scheduled) return null
 
   if (scheduled) {

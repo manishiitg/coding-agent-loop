@@ -4,11 +4,120 @@
 
 | Field | Value |
 |---|---|
-| Status | `partially implemented` — **root cause identified in the backend and repaired 2026-08-15** (Codex retained-answer lookup now binds to the exact thread/rollout); frontend ownership guards and the session-switch render reset are also in; runtime verification pending |
+| Status | `runtime_reverify` — original retained-answer and event-isolation repairs retain their pending live-verification requirement; **2026-09-17 notification ownership follow-up implemented and tested locally, not deployed** |
 | Priority | P0 |
 | Owner | frontend session-event ownership and workflow-tab isolation |
 | Reported | 2026-08-15 |
 | Related | [PLAT-020](../coding-agent-bridge/plat-020.md)), [PLAT-095](../scheduler-runs/plat-095.md)), [PLAT-103](../coding-agent-bridge/plat-103.md)), [PLAT-104](plat-104.md) |
+
+## Notification ownership follow-up — 2026-09-17
+
+**Assigned agent:** Codex. **State:** `runtime_reverify` for this follow-up.
+Implementation is local; no commit, deployment, or production reproduction is
+claimed for these changes. Keep the broader ticket open until live acceptance
+passes.
+
+### Report and agreed behavior
+
+The user reports that a background schedule or external trigger can surface an
+auto-notification while they are chatting about unrelated work. A chat should
+receive completion notifications for workflows or steps **that chat launched**,
+including their children. It should keep receiving those results if the user
+starts another question in that same conversation. A schedule/trigger owns its
+own execution session; merely sharing a workflow, workspace, or active tab does
+not make another chat its recipient.
+
+### Findings and scope
+
+The delayed queue drain in `frontend/src/components/ChatArea.tsx` called the
+latest submission callback after a 200 ms timeout without an explicit source
+tab. Changing selection before dispatch could therefore target another chat.
+The queue also removed messages before submission and only restored them on a
+thrown error, losing messages when submission returned `false`.
+
+This is a concrete queue-routing defect and an additional ownership boundary to
+the August retained-answer repair. It is **not proof of the exact mechanism of
+the newly reported live incident**: legacy frontend auto-notification producers
+are disabled in the current code, while the backend normally delivers
+completion turns directly. The tests exercise queued notifications explicitly;
+a real concurrent scheduled run and interactive chat still need verification.
+
+### Implemented locally
+
+- Delayed queue delivery captures the originating tab and session, passes both
+  into submission, and checks ownership again after submission-lane waiting and
+  asynchronous request preparation. Closed/reused tabs cannot fall back to the
+  selected chat. A bound delivery cannot be redirected into another Work chat
+  or rotate into a fresh conversation.
+- Rejected submissions restore non-stale messages only to the original queue;
+  delayed cleanup does not alter the lock of a replacement session.
+- Background-agent registration binds missing legacy owners to the launch
+  session and rejects attempts to register an already-owned execution in a
+  different session.
+- Backend completion filtering (single and batched), live steering, and batched
+  start notifications check the registered session and any known tracked parent
+  session. A known foreign parent is rejected. A completed parent in the same
+  chat remains valid after another human turn starts.
+- Compatibility boundary: older records without a tracked parent still rely on
+  their registered session owner. This is not a new durable provenance store or
+  a migration of historical executions.
+
+Files:
+
+- `frontend/src/components/ChatArea.tsx`
+- `frontend/src/components/ChatArea.queueOwnership.test.ts`
+- `agent_go/cmd/server/background_agents.go`
+- `agent_go/cmd/server/auto_notification_ownership_test.go`
+
+### Validation
+
+Passed locally on 2026-09-17:
+
+```sh
+cd frontend
+./node_modules/.bin/vitest run src/components/ChatArea.queueOwnership.test.ts src/utils/queuedMessageDelivery.test.ts src/stores/useChatStore.sessionIsolation.test.ts src/utils/workflowTabResolution.test.ts
+./node_modules/.bin/tsc -b --pretty false
+```
+
+54 frontend tests passed across these four files. The five new queue tests
+execute the production effect with controlled timers and store state; they are
+not a mounted-browser end-to-end test.
+
+```sh
+cd agent_go
+go test ./cmd/server -run 'Test(BackgroundRegistryCannotRehome|BackgroundNotificationOwnership|ForeignCompletion|Steer|Steered|WorkflowStart|WorkflowStepCompletion|ConversationTurn)' -count=1
+go test ./cmd/server -run 'Test.*(Background|Notification|WorkflowSubAgent)' -count=1
+```
+
+Both backend selections passed. Coverage includes rejection of re-registration
+under another session, a known foreign launch parent, live delivery and queued
+completion filtering, plus preservation of notifications for chat-owned work.
+`git diff --check` also passed.
+
+### Older ticket integration
+
+The 2026-09-17 follow-up is cross-referenced from these existing tickets, with
+their original scope, assigned agent, and completion status preserved:
+
+- [PLAT-095](../scheduler-runs/plat-095.md): exact query-rooted lifecycle.
+- [PLAT-100](../coding-agent-bridge/plat-100.md): launch-parent propagation and live continuations.
+- [PLAT-113](../coding-agent-bridge/plat-113.md): occupancy and notification queues.
+- [PLAT-117](../coding-agent-bridge/plat-117.md): progress mirrors and notification liveness.
+- [PLAT-255](../evaluation/plat-255.md): early pre-validation notification recipients.
+- [PLAT-293](plat-293.md): report requests using the shared chat queue.
+
+### Remaining live acceptance
+
+1. Run a schedule and an unrelated interactive chat concurrently in the same
+   workflow; complete scheduled steps while typing and switching tabs. Only the
+   schedule's session receives its automatic continuation.
+2. Repeat with an external trigger and with a different workflow.
+3. Launch a workflow/step from Chat, then ask a different question in that same
+   chat. Its owned completion must still arrive there, including child results.
+4. Exercise delayed/queued completion, tab closure/reuse, and reload; no
+   notification migrates into the newly selected conversation.
+5. Verify the deployed release and record session/execution IDs before closing
+   this follow-up or the broader PLAT-106 ticket.
 
 ## Problem
 

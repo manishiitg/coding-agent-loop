@@ -1,3 +1,5 @@
+import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
+import { captureChatIdentity, isChatIdentityCurrent, assertChatIdentityCurrent, invalidateChatIdentity, getAccountChatStorageKey, readPersistedChatOwner } from '../utils/chatIdentity'
 import { sessionStreamingState } from '../utils/sessionStreamingState'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
@@ -14,7 +16,6 @@ import { useLLMStore } from './useLLMStore'
 import { MAX_EVENTS_TO_PROCESS, CLEANUP_THRESHOLD } from '../constants/events'
 import { logger } from '../utils/logger'
 import { compareEventsChronologically, compareEventsReverseChronologically } from '../utils/eventOrdering'
-import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 import { appendStreamingText, looksLikeTerminalScreenText, splitStreamingStatusAndText } from '../utils/streamingStatus'
 import { coalesceThinkingDeltas } from '../utils/thinkingDeltas'
 
@@ -347,6 +348,8 @@ export interface PastedAttachment {
 
 // Tab-specific configuration (all settings that should be per-tab)
 export interface ChatTabConfig {
+  conversationAcknowledged?: boolean
+  composerRevision?: number  // Store-owned revision survives composer remounts
   inputText: string  // Chat input text
   useCodeExecutionMode: boolean  // Code execution mode toggle
   selectedServers: string[]  // Selected MCP servers
@@ -373,12 +376,21 @@ export interface ChatTabConfig {
   restoredConversationNativeResume?: boolean  // Whether restore should use the CLI path instead of visible file-context fallback
   queuedMessages: string[]  // Queue of messages to send one by one when chat completes
   pastedAttachments?: PastedAttachment[]  // Long pastes captured as attachment chips, prepended on send
+  pendingSubmission?: { id: string; message: string; sessionId: string; targetTabId?: string; status?: 'pending' | 'uncertain' }
+  queuedSubmission?: { id: string; messages: string[]; sessionId: string; queueIndex?: number; queuePrefix?: string[]; preferLiveInput?: boolean; accepted?: boolean }
+  queueError?: string
   isQueueProcessing?: boolean  // Lock to prevent multiple ChatArea instances from double-processing the queue
   autoRun?: boolean  // Automatically run the chat when tab is loaded
 }
 
 const stripRestoreOnlyTabConfig = (config: ChatTabConfig): ChatTabConfig => {
   const nextConfig: ChatTabConfig = { ...config }
+  delete nextConfig.conversationAcknowledged
+  delete nextConfig.pendingSubmission
+  delete nextConfig.queuedSubmission
+  delete nextConfig.queueError
+  nextConfig.queuedMessages = []
+  nextConfig.isQueueProcessing = false
   const restoredPath = nextConfig.restoredConversationPath?.trim()
   if (restoredPath) {
     nextConfig.fileContext = (nextConfig.fileContext || []).filter(item => item.path !== restoredPath)
@@ -392,7 +404,7 @@ const stripRestoreOnlyTabConfig = (config: ChatTabConfig): ChatTabConfig => {
   return nextConfig
 }
 
-const persistDurableTabConfig = (config: ChatTabConfig): ChatTabConfig => ({ ...config })
+const persistDurableTabConfig = (config: ChatTabConfig): ChatTabConfig => ({ ...config, isQueueProcessing: false })
 
 // Generalized ChatTab interface (works for multi-agent and workflow modes)
 export interface ChatTab {
@@ -844,6 +856,7 @@ const selectDurableChatState = (state: ChatState): DurableChatState => {
   return previousDurableChatState
 }
 
+const legacyPersistedOwner = readPersistedChatOwner()
 const chatPersistStorage = (() => {
   try {
     return typeof globalThis.localStorage === 'undefined'
@@ -1926,6 +1939,7 @@ export const useChatStore = create<ChatState>()(
 
       // SSE connection management
       connectSSE: (sessionId, onMessage, onStatus, onError) => {
+        const identity = captureChatIdentity()
         const state = get()
         // Close existing connection for this session if any
         if (state.sseConnections[sessionId]) {
@@ -1934,9 +1948,10 @@ export const useChatStore = create<ChatState>()(
         const storedLastIndex = state.tabEventIndices[sessionId] ?? 0
         const lastIndex = storedLastIndex < 0 ? 0 : storedLastIndex
         const conn = new SSEConnection(sessionId, lastIndex, {
-          onMessage,
-          onStatusUpdate: onStatus,
+          onMessage: message => { if (isChatIdentityCurrent(identity)) onMessage(message) },
+          onStatusUpdate: message => { if (isChatIdentityCurrent(identity)) onStatus(message) },
           onError: () => {
+            if (!isChatIdentityCurrent(identity)) return
             // Fallback to polling on persistent SSE errors
             logger.warn('ChatStore', `SSE fallback triggered for session ${sessionId}, falling back to polling`)
             // Remove the failed SSE connection
@@ -2121,6 +2136,8 @@ export const useChatStore = create<ChatState>()(
       },
 
       discardChatStateForAccountChange: () => {
+        invalidateChatIdentity()
+        pendingActiveSessionsFetch = null
         const state = get()
 
         // A browser can be handed from one account to another. Close only the
@@ -2137,10 +2154,9 @@ export const useChatStore = create<ChatState>()(
         tabAutoNotificationKeys.clear()
         if (state.activeSessionsPollingInterval !== null) clearInterval(state.activeSessionsPollingInterval)
 
-        // `chat-store` used to be scoped only by workspace. Remove that
-        // legacy cache before writing the empty state so the next account can
-        // never hydrate another account's tabs or their locally retained chat
-        // messages.
+        // Explicit discard removes this owner's cache. switchChatAccount
+        // temporarily suppresses persistence during this reset so changing
+        // accounts preserves the departing owner's saved tabs.
         useChatStore.persist.clearStorage()
         set({
           isStreaming: false,
@@ -2212,6 +2228,7 @@ export const useChatStore = create<ChatState>()(
       
       // Tab management actions
       createChatTab: async (name: string, metadata?: ChatTab['metadata'], existingObserverId?: string) => {
+        const identity = captureChatIdentity()
         // Generate unique tab ID
         const timestamp = Date.now()
         const mode = metadata?.mode || 'multi-agent'
@@ -2307,6 +2324,7 @@ export const useChatStore = create<ChatState>()(
           logger.debug('TabStore', `Generated new session ID for tab ${tabId}: ${sessionIdForTab}`)
         }
         
+        assertChatIdentityCurrent(identity)
         // Get default config from current global state (mode-specific)
         const defaultConfig = getDefaultTabConfig(mode)
         if (metadata?.agentProfileId) {
@@ -2450,7 +2468,8 @@ export const useChatStore = create<ChatState>()(
       },
       
       closeTab: async (tabId: string, stopSession: boolean = true, keepEvents: boolean = false) => {
-        const state = get()
+        const identity = captureChatIdentity()
+        let state = get()
         const tab = state.chatTabs[tabId]
 
         if (!tab) {
@@ -2466,6 +2485,11 @@ export const useChatStore = create<ChatState>()(
             logger.error('SessionStore', `Failed to stop session ${tab.sessionId}:`, error)
           }
         }
+
+        if (!isChatIdentityCurrent(identity)) return
+        // Other tabs and this tab's binding may change while stop is in flight.
+        state = get()
+        if (state.chatTabs[tabId]?.sessionId !== tab.sessionId) return
 
         // Dismiss session so it won't be auto-restored on page refresh (fire-and-forget)
         // Skip dismiss for workflow tabs — their sessions should remain restorable via DB
@@ -2875,7 +2899,10 @@ export const useChatStore = create<ChatState>()(
                 ...freshTab,
                 config: {
                   ...freshTab.config,
-                  ...configUpdate
+                  ...configUpdate,
+                  composerRevision: (['inputText', 'pastedAttachments'] as const).some(
+                    key => key in configUpdate && configUpdate[key] !== freshTab.config[key],
+                  ) ? (freshTab.config.composerRevision ?? 0) + 1 : (freshTab.config.composerRevision ?? 0)
                 }
               }
             }
@@ -2950,6 +2977,7 @@ export const useChatStore = create<ChatState>()(
       
       // Tab session status actions
       fetchTabSessionStatus: async (tabId: string) => {
+        const identity = captureChatIdentity()
         const state = get()
         const tab = state.chatTabs[tabId]
         
@@ -2971,6 +2999,7 @@ export const useChatStore = create<ChatState>()(
             try {
               const { getActiveSessions } = get()
               const activeSessions = await getActiveSessions()
+              if (!isChatIdentityCurrent(identity)) return
               const activeSessionIds = new Set(activeSessions.map(s => s.session_id))
               
               // Only call getSessionStatus if the session is active
@@ -2997,6 +3026,7 @@ export const useChatStore = create<ChatState>()(
                 }
               }
             } catch {
+              if (!isChatIdentityCurrent(identity)) return
               // If active sessions check fails, fall back to calling getSessionStatus
               try {
                 const sessionStatus: SessionStatusResponse = await agentApi.getSessionStatus(tab.sessionId)
@@ -3020,6 +3050,7 @@ export const useChatStore = create<ChatState>()(
             }
           }
           
+          if (!isChatIdentityCurrent(identity)) return
           // Update status in store
           set((state) => ({
             tabSessionStatus: {
@@ -3037,6 +3068,7 @@ export const useChatStore = create<ChatState>()(
             logger.warn('SessionStore', `Failed to fetch session status for tab ${tabId}:`, axiosError.message || 'Unknown error')
           }
           
+          if (!isChatIdentityCurrent(identity)) return
           // Set status to null on error
           set((state) => ({
             tabSessionStatus: {
@@ -3052,10 +3084,12 @@ export const useChatStore = create<ChatState>()(
       },
       
       fetchAllTabSessionStatuses: async (tabIds: string[]) => {
+        const identity = captureChatIdentity()
         // First check if there are any active sessions using cache
         try {
           const { getActiveSessions } = get()
           const activeSessions = await getActiveSessions()
+          if (!isChatIdentityCurrent(identity)) return
           const activeSessionIds = new Set(activeSessions.map(s => s.session_id))
           
           // If no active sessions, skip all status calls (no need to poll)
@@ -3094,6 +3128,7 @@ export const useChatStore = create<ChatState>()(
           const promises = tabsToFetch.map(tabId => fetchTabSessionStatus(tabId))
           await Promise.all(promises)
         } catch (error) {
+          if (!isChatIdentityCurrent(identity)) return
           logger.warn('SessionStore', 'Failed to check active sessions, falling back to fetching all tab statuses:', error)
           // Fallback: fetch status for all tabs if active sessions check fails
           const { fetchTabSessionStatus } = get()
@@ -3108,6 +3143,7 @@ export const useChatStore = create<ChatState>()(
       
       // Active sessions cache actions
       getActiveSessions: async (forceRefresh = false): Promise<ActiveSessionInfo[]> => {
+        const identity = captureChatIdentity()
         const state = get()
         const now = Date.now()
 
@@ -3132,6 +3168,7 @@ export const useChatStore = create<ChatState>()(
         const fetchPromise = (async (): Promise<ActiveSessionInfo[]> => {
           try {
             const response = await agentApi.getHeaderSummary()
+            if (!isChatIdentityCurrent(identity)) return []
             const activeSessions = response.active_sessions || []
             const resolvedAt = Date.now()
 
@@ -3144,11 +3181,12 @@ export const useChatStore = create<ChatState>()(
 
             return activeSessions
           } catch (error) {
+            if (!isChatIdentityCurrent(identity)) return []
             logger.error('SessionStore', 'Failed to fetch active sessions:', error)
             // Return cached data even if stale on error
             return get().activeSessionsCache
           } finally {
-            pendingActiveSessionsFetch = null
+            if (isChatIdentityCurrent(identity)) pendingActiveSessionsFetch = null
           }
         })()
 
@@ -3200,7 +3238,7 @@ export const useChatStore = create<ChatState>()(
       
       }),
       {
-        name: getWorkspaceScopedStorageKey('chat-store'),
+        name: getAccountChatStorageKey(readPersistedChatOwner()),
         storage: chatPersistStorage,
         partialize: selectDurableChatState,
         onRehydrateStorage: () => (_state, error) => {
@@ -3241,6 +3279,10 @@ function normalizeHydratedChatStore(): void {
             : 'none',
         },
       }
+      migratedTabConfig = true
+    }
+    if (nextTab.config?.isQueueProcessing) {
+      nextTab = { ...nextTab, config: { ...nextTab.config, isQueueProcessing: false } }
       migratedTabConfig = true
     }
     freshTabs[tabId] = nextTab
@@ -3306,4 +3348,44 @@ export async function waitForChatStoreHydration(): Promise<void> {
 /** Exposes hydration failures to diagnostics without making callers poll. */
 export function getChatStoreHydrationSnapshot(): HydrationGateSnapshot {
   return chatStoreHydrationGate.snapshot()
+}
+
+/** Save the departing user's tabs, clear memory, then hydrate only the new owner. */
+export function switchChatAccount(owner: string | null, forceRefresh = false): void {
+  const name = getAccountChatStorageKey(owner)
+  if (!forceRefresh && useChatStore.persist.getOptions().name === name) return
+  chatPersistStorage?.flush()
+  // Reset must not overwrite the saved layout of either account.
+  const storage = useChatStore.persist.getOptions().storage
+  if (storage) useChatStore.persist.setOptions({ storage: { ...storage, setItem: () => {}, removeItem: () => {} } })
+  try { useChatStore.getState().discardChatStateForAccountChange() }
+  finally { useChatStore.persist.setOptions({ name, storage }) }
+  // This store uses synchronous localStorage; rehydration completes before any
+  // new account operation can dispatch. No unowned legacy cache is migrated.
+  void useChatStore.persist.rehydrate()
+}
+
+/** Called only after the server verifies the persisted account (or single-user mode). */
+export function migrateLegacyChatStateForVerifiedAccount(owner: string | null): boolean {
+  if (owner !== legacyPersistedOwner) return false
+  const destination = getAccountChatStorageKey(owner)
+  const legacyKey = getWorkspaceScopedStorageKey('chat-store')
+  try {
+    const storage = globalThis.localStorage
+    if (!storage || storage.getItem(destination)) return false
+    const raw = storage.getItem(legacyKey)
+    if (!raw) return false
+    const saved = JSON.parse(raw)
+    if (!saved?.state?.chatTabs || typeof saved.state.chatTabs !== 'object') return false
+    chatPersistStorage?.flush()
+    storage.setItem(destination, raw)
+    storage.removeItem(legacyKey)
+    if (useChatStore.persist.getOptions().name === destination) {
+      switchChatAccount(owner, true)
+    }
+    return true
+  } catch (error) {
+    console.error('[ChatStore] Could not migrate verified account chat tabs', error)
+    return false
+  }
 }

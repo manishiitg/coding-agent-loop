@@ -306,7 +306,7 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 			defer store.Stop()
 
 			sessionID := "live-coding-session-" + string(tt.provider)
-			api := &StreamingAPI{eventStore: store}
+			api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(), eventStore: store}
 			sub := store.Subscribe(sessionID)
 			defer store.Unsubscribe(sessionID, sub)
 
@@ -341,7 +341,7 @@ func TestHandleLiveInputMessageRoutesThroughAgentDelivery(t *testing.T) {
 
 	sessionID := "queued-delivery-session"
 	runningAgent := testCodingAgent(llm.ProviderOpenAI, "gpt-5")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
@@ -378,7 +378,7 @@ func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) 
 	var deliveryCalls atomic.Int32
 	var nextTurnCalls atomic.Int32
 	cancelCalled := false
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
@@ -456,7 +456,7 @@ func TestSyntheticTurnRunningAgentRegistrationDeliversLiveInputAndPreservesRepla
 	var deliveryCalls atomic.Int32
 	var nextTurnCalls atomic.Int32
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{},
 		runningAgentsMux: sync.RWMutex{},
@@ -534,7 +534,7 @@ func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testi
 		var deliveryCalls atomic.Int32
 		var nextTurnCalls atomic.Int32
 		var api *StreamingAPI
-		api = &StreamingAPI{
+		api = &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 			eventStore:       store,
 			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 			runningAgentsMux: sync.RWMutex{},
@@ -569,7 +569,7 @@ func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testi
 		var deliveryCalls atomic.Int32
 		var nextTurnCalls atomic.Int32
 		var api *StreamingAPI
-		api = &StreamingAPI{
+		api = &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 			runningAgentsMux: sync.RWMutex{},
 			agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
@@ -600,7 +600,7 @@ func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testi
 		var deliveryCalls atomic.Int32
 		var nextTurnCalls atomic.Int32
 		nextTurnDone := make(chan struct{})
-		api := &StreamingAPI{
+		api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 			runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 			runningAgentsMux: sync.RWMutex{},
 			agentCancelFuncs: map[string]context.CancelFunc{},
@@ -648,7 +648,7 @@ func TestHandleLiveInputMessageRejectsStaleRetainedCodingAgent(t *testing.T) {
 
 	sessionID := "stale-claude-session"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		terminalStore:    terminals.NewStore(),
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
@@ -679,7 +679,7 @@ func TestHandleLiveInputMessageRejectsStaleRetainedCodingAgent(t *testing.T) {
 func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	sessionID := "foreground-session"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
 		agentCancelFuncs: map[string]context.CancelFunc{},
@@ -701,13 +701,13 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 // A retained agent object without a matching provider-native tmux registration
 // is stale. Live delivery must fail explicitly and let /api/query start a clean
 // resumed turn instead of silently parking the message in a steer queue.
-func TestTryDeliverQueryAsLiveInputBusyStaleCodingAgentFallsThrough(t *testing.T) {
+func TestTryDeliverQueryAsLiveInputUnconfirmedSendDoesNotFallThrough(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
 	sessionID := "busy-coding-session"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
@@ -719,8 +719,11 @@ func TestTryDeliverQueryAsLiveInputBusyStaleCodingAgentFallsThrough(t *testing.T
 	req.Header.Set("X-Session-ID", sessionID)
 	rr := httptest.NewRecorder()
 
-	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_busy") {
-		t.Fatalf("tryDeliverQueryAsLiveInput = true for stale coding-agent registration; want normal-turn fallback. body=%s", rr.Body.String())
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_busy") {
+		t.Fatal("an attempted send must not fall through to a second dispatch")
+	}
+	if rr.Code != http.StatusConflict || !strings.Contains(rr.Body.String(), "delivery_uncertain") {
+		t.Fatalf("want explicit uncertain delivery, got %d %s", rr.Code, rr.Body.String())
 	}
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
 		t.Fatalf("recorded %d events, want 0 for an unconfirmed send", got)
@@ -736,7 +739,7 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithStaleTmuxFallsThrough(
 
 	sessionID := "retained-coding-session"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		terminalStore:    terminals.NewStore(),
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
@@ -775,7 +778,7 @@ func TestTryDeliverQueryAsLiveInputReactivatesSettledRetainedTmux(t *testing.T) 
 		t.Fatal("expected to settle retained terminal before follow-up")
 	}
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		terminalStore:    terminalStore,
 		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
@@ -833,7 +836,7 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithoutLiveTmuxFallsThroug
 
 	sessionID := "retained-coding-no-tmux-session"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
@@ -856,7 +859,7 @@ func TestTryDeliverQueryAsLiveInputNoRetainedAgentFallsThrough(t *testing.T) {
 	defer store.Stop()
 
 	sessionID := "missing-coding-session"
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{},
 		runningAgentsMux: sync.RWMutex{},
@@ -893,7 +896,7 @@ func TestHandleLiveInputMessageDeliversDirectlyToLiveMainTmuxWithoutAgent(t *tes
 		message  string
 	}
 	calls := make(chan liveInputCall, 1)
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		terminalStore:    terminalStore,
 		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
@@ -1014,7 +1017,7 @@ func TestRetainedTerminalDeliveryUsesLiveProviderAfterAutomationSwitch(t *testin
 		time.Now(), sessionID, "main:"+sessionID, "mlp-codex-cli-int-switched",
 	))
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		terminalStore: terminalStore,
 		lastQueryRequests: map[string]QueryRequest{
 			sessionID: {
@@ -1053,7 +1056,7 @@ func TestRetainedTurnCompletionUsesSidecarFinalResponse(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore: store,
 		retainedMainTurns: map[string]time.Time{
 			sessionID: startedAt,
@@ -1109,7 +1112,7 @@ func TestRetainedTurnCompletionSkipsDuplicateForSameTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore: store,
 		retainedMainTurns: map[string]time.Time{
 			sessionID: startedAt,
@@ -1142,7 +1145,7 @@ func TestRetainedTurnCompletionEmitsAgainForANewTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore: store,
 		retainedMainTurns: map[string]time.Time{
 			sessionID: time.Now().Add(-2 * time.Second),
@@ -1178,7 +1181,7 @@ func TestTryDeliverQueryAsLiveInputSkipsNonCodingAgent(t *testing.T) {
 
 	sessionID := "busy-llm-session"
 	runningAgent := testCodingAgent(llm.ProviderOpenAI, "gpt-5")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
@@ -1224,7 +1227,7 @@ func TestRequestLLMConfigOverridesManifestOnlyForAgentProfileSource(t *testing.T
 
 func TestSessionInputLaneSerializesRapidInteractiveSubmits(t *testing.T) {
 	sessionID := "rapid-submit-session"
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		sessionInputLanes: make(map[string]*sessionInputLane),
 	}
 
@@ -1269,7 +1272,7 @@ func TestLiveInputDoesNotWaitForQueryLaunchLane(t *testing.T) {
 
 	const sessionID = "live-input-during-launch"
 	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		eventStore:        store,
 		terminalStore:     terminals.NewStore(),
 		runningAgents:     map[string]*mcpagent.Agent{sessionID: runningAgent},
@@ -1309,7 +1312,7 @@ func TestStartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns(t *testing.T
 	releaseHandler := make(chan struct{})
 	handlerDone := make(chan struct{})
 
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		lastQueryRequests: map[string]QueryRequest{
 			sessionID: {
 				AgentMode: "multi-agent",
@@ -1377,7 +1380,7 @@ func TestStartNextTurnFromLiveInputAcknowledgesBeforeQueuedTurnRuns(t *testing.T
 func TestStartNextTurnFromLiveInputReturnsConflictWhenBuilderChatActuallyBusy(t *testing.T) {
 	const sessionID = "queued-next-turn"
 	now := time.Now().UTC()
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		lastQueryRequests: map[string]QueryRequest{
 			sessionID: {
 				AgentMode:      "workflow_phase",
@@ -1424,7 +1427,7 @@ func TestStartNextTurnFromLiveInputDoesNotBlockScheduledMessageSequence(t *testi
 	const sessionID = "interactive-builder-session"
 	now := time.Now().UTC()
 	handled := make(chan QueryRequest, 1)
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		lastQueryRequests: map[string]QueryRequest{
 			sessionID: {
 				AgentMode:      "workflow_phase",
@@ -1545,7 +1548,7 @@ func TestAgentWorksChatQueriesUseInteractiveInputLane(t *testing.T) {
 
 func TestIdleCompletionDoesNotCompleteStaleBusyTurn(t *testing.T) {
 	sessionID := "stale-busy-session"
-	api := &StreamingAPI{
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
 		sessionBusy:      map[string]bool{sessionID: true},
 		sessionBusySince: map[string]time.Time{sessionID: time.Now().Add(-autoNotificationStaleBusyAfter - time.Second)},
 		sessionBusyMu:    sync.RWMutex{},
@@ -1570,7 +1573,7 @@ func TestDelegationStartEventParentsToBackgroundAgent(t *testing.T) {
 	sessionID := "session-background-owner"
 	backgroundAgentID := "bg-agent-123"
 	delegationID := "delegation-child-456"
-	api := &StreamingAPI{eventStore: store}
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(), eventStore: store}
 
 	api.emitDelegationStartEvent(sessionID, delegationID, 1, "inspect logs", "high", "claude-sonnet-4-6", []string{"api-bridge"}, backgroundAgentID, "worker")
 

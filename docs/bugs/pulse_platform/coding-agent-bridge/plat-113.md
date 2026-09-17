@@ -219,3 +219,11 @@ test. The failure only appears when a real workflow turn runs long enough for
 background agents to complete underneath it. A test that constructs the state
 directly will pass against the broken code — the same trap recorded in
 [PLAT-105](plat-105.md)'s IC-11 anti-requirement.
+
+## 2026-09-17 — Notification delivery ownership integration
+
+The [PLAT-106 notification-ownership follow-up](../frontend-chat/plat-106.md#notification-ownership-follow-up--2026-09-17) checks which session may receive a completion before accepted delivery through live steering or the single/batched completion paths. A busy unrelated chat is never an alternate destination for a scheduled completion. The frontend delayed queue now carries its original tab/session rather than following selection, and rejected submissions restore non-stale messages only to that original queue.
+
+This is delivery isolation, not completion of this ticket's sessionBusy demotion or occupancy redesign. Preserve the input-lane ordering and batching guarantees here. The focused background/notification tests passed locally; live acceptance must combine a busy Chat with its own child work and an unrelated scheduled run. The August outage statement below describes the historical verification environment, not a newly checked current outage.
+
+Follow-up status: **implemented and tested locally; not deployed; runtime re-verification pending**. PLAT-106 remains the canonical implementation/test record. This note does not close the original ticket or change its assigned agent.

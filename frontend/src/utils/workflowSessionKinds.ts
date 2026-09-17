@@ -45,6 +45,12 @@ export function isExternalReadOnlyWorkflowSession(identity: WorkflowSessionIdent
     sessionId.startsWith('bot-')
 }
 
+/** Background activity is visible in the monitor. Discovery may refresh an
+ * already-open run, but only an explicit user action may open its chat tab. */
+export function shouldDiscoverWorkflowChatTab(identity: WorkflowSessionIdentity, hasOpenTab: boolean): boolean {
+  return hasOpenTab || !isExternalReadOnlyWorkflowSession(identity)
+}
+
 /** Prefer the durable session identity for older webhook sessions stamped cron. */
 export function workflowTriggerLabel(identity: WorkflowSessionIdentity): 'Webhook' | 'Scheduled' | 'Manual' | undefined {
   const id = (identity.sessionId || '').toLowerCase()

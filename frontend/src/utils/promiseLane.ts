@@ -1,15 +1,16 @@
 export class PromiseLane {
-  private readonly tails = new Map<string, Promise<void>>()
+  private readonly groups = new Map<string, { tail: Promise<void>; keys: Set<string> }>()
 
   enqueue<T>(key: string, task: () => Promise<T>): Promise<T> {
-    const previous = this.tails.get(key) || Promise.resolve()
+    const group = this.groups.get(key) || { tail: Promise.resolve(), keys: new Set([key]) }
+    this.groups.set(key, group)
+    const previous = group.tail
     const run = previous.catch(() => undefined).then(task)
     const tail = run.then(() => undefined, () => undefined)
-    this.tails.set(key, tail)
+    group.tail = tail
     void tail.finally(() => {
-      if (this.tails.get(key) === tail) {
-        this.tails.delete(key)
-      }
+      if (group.tail !== tail) return
+      for (const alias of group.keys) if (this.groups.get(alias) === group) this.groups.delete(alias)
     })
     return run
   }
@@ -20,16 +21,17 @@ export class PromiseLane {
   // independent queue.
   link(firstKey: string, secondKey: string): void {
     if (!firstKey || !secondKey || firstKey === secondKey) return
-    const pending = [this.tails.get(firstKey), this.tails.get(secondKey)]
-      .filter((tail): tail is Promise<void> => Boolean(tail))
-    if (pending.length === 0) return
-
-    const linked = Promise.all(pending).then(() => undefined, () => undefined)
-    this.tails.set(firstKey, linked)
-    this.tails.set(secondKey, linked)
+    const first = this.groups.get(firstKey)
+    const second = this.groups.get(secondKey)
+    if (first && first === second) return
+    if (!first && !second) return
+    const group = { tail: Promise.all([first?.tail, second?.tail]).then(() => undefined),
+      keys: new Set([firstKey, secondKey, ...(first?.keys ?? []), ...(second?.keys ?? [])]) }
+    for (const key of group.keys) this.groups.set(key, group)
+    const linked = group.tail
     void linked.finally(() => {
-      if (this.tails.get(firstKey) === linked) this.tails.delete(firstKey)
-      if (this.tails.get(secondKey) === linked) this.tails.delete(secondKey)
+      if (group.tail !== linked) return
+      for (const key of group.keys) if (this.groups.get(key) === group) this.groups.delete(key)
     })
   }
 }

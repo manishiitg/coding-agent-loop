@@ -37,6 +37,10 @@ import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { hasActiveSessionWork } from '../utils/activitySessions'
 import { headerStatusLabel, statusTone } from '../utils/globalActivityMonitorStatus'
 import { shouldClearAcceptedChatDraft } from '../utils/chatSubmissionDraft'
+import { sendQueuedChatMessage } from '../utils/chatQueueController'
+import { captureChatDraft, updateOwnedChatDraft } from '../utils/chatDraftOwnership'
+import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
+import type { ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
 import { liveTerminalControlKey } from '../utils/liveTerminalKeys'
 import { chatUsesStructuredTransport, shouldRouteChatInputToLiveTransport, shouldShowLiveTerminalControl } from '../utils/liveInputSubmission'
 import { effectiveLLMUnderLock, effectiveProviderUnderLock, runtimeStatusLLMChoice } from '../utils/effectiveLLM'
@@ -144,7 +148,7 @@ interface ChatInputProps {
   // Handlers (callbacks only)
   onSubmit: (
     query: string,
-    options?: { preferLiveInput?: boolean; sourceTabId?: string }
+    options?: ChatSubmissionOptions
   ) => boolean | void | Promise<boolean | void>
   onStopStreaming: () => void
   onNewChat?: () => void
@@ -429,7 +433,7 @@ const MainAgentRuntimeStatusIndicator = React.memo(function MainAgentRuntimeStat
 
 // Completely isolated input component that doesn't re-render when events change
 const ChatInputComponent: React.FC<ChatInputProps> = ({
-  onSubmit,
+  onSubmit: onSubmitProp,
   onStopStreaming,
   tabId: scopedTabId,
   restoredConversationPending = true,
@@ -715,6 +719,22 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const latestInputTextRef = useRef(inputText)
   latestInputTextRef.current = inputText
   const inputOwnerTabIdRef = useRef(activeTabId)
+  const composerIdentityRef = useRef(captureChatIdentity())
+  const composerIdRef = useRef(crypto.randomUUID())
+  const onSubmit = useCallback((query: string, options?: ChatSubmissionOptions) => {
+    if (!isChatIdentityCurrent(composerIdentityRef.current)) return false
+    return onSubmitProp(query, {
+      ...options,
+      sourceTabId: options?.sourceTabId ?? activeTabId ?? undefined,
+      sourceComposerId: composerIdRef.current,
+      identity: composerIdentityRef.current,
+    })
+  }, [activeTabId, onSubmitProp])
+  const composerMountedRef = useRef(true)
+  useEffect(() => {
+    composerMountedRef.current = true
+    return () => { composerMountedRef.current = false }
+  }, [])
 
   // Debounce ref for syncing to store
   const syncToStoreTimeoutRef = useRef<NodeJS.Timeout | null>(null)
@@ -1134,8 +1154,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const removeQueuedMessageAtIndex = useCallback((index: number) => {
     if (!activeTabId) return
-    const updated = queuedMessages.filter((_: string, i: number) => i !== index)
-    setTabConfig(activeTabId, { queuedMessages: updated })
+    const current = useChatStore.getState().getTabConfig(activeTabId)
+    if (!isChatIdentityCurrent(composerIdentityRef.current) || current?.isQueueProcessing || current?.queuedMessages?.[index] !== queuedMessages[index]) return
+    const updated = (current?.queuedMessages || []).filter((_: string, i: number) => i !== index)
+    // Retain unresolved/accepted receipts while any queue entries remain. A
+    // local deletion must not mint a fresh ID for an already delivered entry.
+    setTabConfig(activeTabId, { queuedMessages: updated, queuedSubmission: updated.length ? current?.queuedSubmission : undefined, queueError: undefined })
   }, [activeTabId, queuedMessages, setTabConfig])
 
   const queueStreamingMessage = useCallback((msg: string) => {
@@ -1157,71 +1181,42 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, setTabConfig])
 
   const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
-    if (!canShowSteer || !tabSessionId) return
-
+    if (!canShowSteer || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
+    const identity = composerIdentityRef.current
+    const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(activeTabId)?.sessionId === tabSessionId
     setSteeringIndex(index)
     try {
-      const response = await agentApi.sendLiveInput(tabSessionId, msg)
+      let delivery: Awaited<ReturnType<typeof agentApi.sendLiveInput>> | undefined
+      const accepted = await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => {
+        const response = await agentApi.sendLiveInput(options.sourceSessionId!, message, {
+          identity: options.identity, submissionId: options.submissionId, continuation: true,
+        })
+        delivery = response
+        return response.delivery_status === 'sent_to_cli' || response.delivery_status === 'queued_for_injection' || response.delivery_status === 'next_turn_started'
+      })
+      if (!owns() || (accepted && !delivery)) return
       setLiveMessageDelivery({
-        status: response.delivery_status || 'queued_for_injection',
-        message: msg,
-        provider: response.provider || effectiveProviderForSteer || undefined,
+        status: accepted ? delivery?.delivery_status || 'sent_to_cli' : 'failed', message: msg,
+        provider: delivery?.provider || effectiveProviderForSteer || undefined,
+        detail: accepted ? undefined : 'Delivery was not confirmed. The message remains queued for retry.',
       })
       scheduleLiveMessageDeliveryClear()
-      removeQueuedMessageAtIndex(index)
-    } catch (err) {
-      const status = getHttpErrorStatus(err)
-      if (isLiveCodingSessionGoneStatus(status)) {
-        if (activeTabId) {
-          const chatStore = useChatStore.getState()
-          chatStore.setTabCanSteer(activeTabId, false)
-          chatStore.setTabStreaming(activeTabId, false)
-        }
-        setLiveMessageDelivery({
-          status: 'queued_locally',
-          message: msg,
-          provider: effectiveProviderForSteer || undefined,
-        })
-        scheduleLiveMessageDeliveryClear()
-        addToast('The live agent turn has ended. The queued message will send as the next turn.', 'info')
-      } else if (isLikelyBackendUnavailableError(err)) {
-        setLiveMessageDelivery({
-          status: 'failed',
-          message: msg,
-          provider: effectiveProviderForSteer || undefined,
-          detail: 'Backend unavailable',
-        })
-        scheduleLiveMessageDeliveryClear()
-        addToast('Backend is unavailable. The queued message is still saved.', 'error')
-      } else {
-        setLiveMessageDelivery({
-          status: 'failed',
-          message: msg,
-          provider: effectiveProviderForSteer || undefined,
-          detail: err instanceof Error ? err.message : 'Unknown error',
-        })
-        scheduleLiveMessageDeliveryClear()
-        addToast('Failed to steer message: ' + (err instanceof Error ? err.message : 'Unknown error'), 'error')
-      }
     } finally {
-      setSteeringIndex(null)
+      if (owns()) setSteeringIndex(null)
     }
-  }, [activeTabId, addToast, canShowSteer, effectiveProviderForSteer, removeQueuedMessageAtIndex, scheduleLiveMessageDeliveryClear, tabSessionId])
+  }, [activeTabId, canShowSteer, effectiveProviderForSteer, scheduleLiveMessageDeliveryClear, tabSessionId])
 
   const handleProductSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
-    if (!showProductSteerAction || !tabSessionId) return
+    if (!showProductSteerAction || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
+    const identity = composerIdentityRef.current
+    const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(activeTabId)?.sessionId === tabSessionId
     setSteeringIndex(index)
-    removeQueuedMessageAtIndex(index)
     try {
-      const accepted = await onSubmit(msg.trim(), { preferLiveInput: true, sourceTabId: activeTabId || undefined })
-      if (accepted === false) {
-        const current = useChatStore.getState().getTabConfig(activeTabId || '')?.queuedMessages || []
-        if (activeTabId) setTabConfig(activeTabId, { queuedMessages: [...current, msg] })
-      }
+      await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => (await onSubmit(message, options)) !== false)
     } finally {
-      setSteeringIndex(null)
+      if (owns()) setSteeringIndex(null)
     }
-  }, [activeTabId, onSubmit, removeQueuedMessageAtIndex, setTabConfig, showProductSteerAction, tabSessionId])
+  }, [activeTabId, onSubmit, showProductSteerAction, tabSessionId])
 
   const queuedSteerHandler = showProductSteerAction && tabSessionId
     ? handleProductSteerQueuedMessage
@@ -2055,13 +2050,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if ((pastedAttachmentsChanged || filesChanged || nextWorkflows.length !== workflowContext.length) && activeTabId) {
       writeComposerText(newValue, { pastedAttachments: nextPastedAttachments, fileContext: nextFiles, workflowContext: nextWorkflows })
     } else {
-      // Debounce sync to Zustand store (300ms delay)
-      syncToStoreTimeoutRef.current = setTimeout(() => {
-        if (activeTabId) {
-          setTabConfig(activeTabId, { inputText: newValue })
-        }
-        syncToStoreTimeoutRef.current = null
-      }, 300)
+      // Publish the draft revision immediately. Browser persistence already
+      // batches disk writes; delaying this lets an old acknowledgement erase
+      // keystrokes typed in a newly mounted composer.
+      if (activeTabId) setTabConfig(activeTabId, { inputText: newValue })
     }
 
     // Auto-resize textarea
@@ -2348,6 +2340,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   //
   // STRUCTURED / NON-INTERACTIVE — keep the ordinary steer-or-queue behavior.
   const routeSubmit = useCallback(async (query: string) => {
+    if (!isChatIdentityCurrent(composerIdentityRef.current)) return
     const trimmed = query?.trim() || ''
     if (!trimmed) return
     if (isUploadingFiles) {
@@ -2381,6 +2374,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // The conversation adds an optimistic user row immediately, so release
         // the composer now instead of leaving the submitted text looking stuck.
         clearInputState()
+        const clearedDraft = captureChatDraft(submittedTabId)
         let accepted: boolean | void
         try {
           accepted = await onSubmit(query, {
@@ -2395,15 +2389,15 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           // Do not overwrite text the user began typing while delivery was in
           // flight, and do not restore a draft into a tab they navigated away
           // from. Otherwise put the original text/attachments back for retry.
-          if (submittedTabId && inputOwnerTabIdRef.current === submittedTabId && !latestQueryToSubmitRef.current.trim()) {
+          if (updateOwnedChatDraft(clearedDraft, submittedDraft) && composerMountedRef.current) {
+            latestInputTextRef.current = submittedDraft.inputText
             setLocalInputText(submittedDraft.inputText)
-            setTabConfig(submittedTabId, submittedDraft)
           }
           setLiveMessageDelivery({
             status: 'failed',
             message: query,
             provider: effectiveProviderForSteer || undefined,
-            detail: 'Not accepted; draft kept',
+            detail: 'Delivery not confirmed; draft retained when unchanged',
           })
           scheduleLiveMessageDeliveryClear()
           return
@@ -2423,6 +2417,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     if (canSubmitImmediately) {
       const submittedTabId = activeTabId || undefined
+      const submittedDraft = captureChatDraft(submittedTabId)
       let accepted: boolean | void
       try {
         accepted = await onSubmit(query, { sourceTabId: submittedTabId })
@@ -2436,8 +2431,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         currentTabId: inputOwnerTabIdRef.current,
         submittedMessage: query,
         currentMessage: latestQueryToSubmitRef.current,
-      })) {
-        clearInputState()
+      }) && updateOwnedChatDraft(submittedDraft, { inputText: '', pastedAttachments: [] })) {
+        if (composerMountedRef.current) {
+          latestInputTextRef.current = ''
+          setLocalInputText('')
+        }
       } else if (accepted === false) {
         addToast('Message was not accepted. Your draft was kept.', 'warning')
       }
@@ -2756,6 +2754,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return
     }
 
+    const uploadIdentity = captureChatIdentity()
+    const uploadSessionId = activeTabId ? useChatStore.getState().getTab(activeTabId)?.sessionId : undefined
+    const stillOwnsUpload = () => isChatIdentityCurrent(uploadIdentity) && Boolean(activeTabId) &&
+      useChatStore.getState().getTab(activeTabId!)?.sessionId === uploadSessionId
     setIsUploadingFiles(true)
     addToast(`Uploading ${files.length} file${files.length > 1 ? 's' : ''}...`, 'info')
     console.info('[CHAT_UPLOAD] starting upload', { count: files.length, target: uploadTargetFolder })
@@ -2763,6 +2765,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const failures: string[] = []
 
     for (const file of files) {
+      if (!stillOwnsUpload()) break
       try {
         console.info('[CHAT_UPLOAD] uploading file', { name: file.name, size: file.size, type: file.type })
         const response = await agentApi.uploadPlannerFile(file, uploadTargetFolder, `Upload ${file.name} from chat input`)
@@ -2785,7 +2788,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       }
     }
 
-    if (uploadedPaths.length > 0) {
+    if (uploadedPaths.length > 0 && stillOwnsUpload()) {
       if (activeTabId) {
         const latestFileContext = useChatStore.getState().getTabConfig(activeTabId)?.fileContext || chatFileContext
         const seenPaths = new Set(latestFileContext.map((item: { path: string }) => item.path))
@@ -2811,9 +2814,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       // fileContext is the attachment. Do not also insert a raw @path into the
       // draft: that duplicates the file in the request and makes an upload by
       // itself look like a standalone user message.
-      const latestInputText = latestInputTextRef.current
-      setLocalInputText(latestInputText)
-      if (activeTabId) setTabConfig(activeTabId, { inputText: latestInputText })
+      // Attaching a file never rewrites the draft. Another composer instance
+      // may have edited it while this upload was in flight.
 
       const ws = useWorkspaceStore.getState()
       ws.fetchFiles(
@@ -3370,6 +3372,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 typed stays visible while it waits. */}
             {queuedMessages.length > 0 && (
               <div className="space-y-1">
+                {tabConfig?.queueError && (
+                  <div role="alert" className="flex items-center gap-2 text-xs text-amber-600">
+                    <span>{tabConfig.queueError}</span>
+                    <button type="button" onClick={() => {
+                      if (activeTabId) setTabConfig(activeTabId, { queueError: undefined })
+                    }}>Retry queue</button>
+                  </div>
+                )}
                 {queuedDisplayItems.map((item, index) => {
                   if (item.type === 'auto-group') {
                     return (

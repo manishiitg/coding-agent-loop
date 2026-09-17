@@ -160,3 +160,11 @@ work merely because it shares the session.
 - The scheduler cannot advance until the full descendant tree is terminal and
   required child completion notifications have been processed.
 - Long-running workshop work remains independent of HTTP request cancellation.
+
+## 2026-09-17 — Notification delivery ownership integration
+
+The [PLAT-106 notification-ownership follow-up](../frontend-chat/plat-106.md#notification-ownership-follow-up--2026-09-17) hardens this ticket's registration and continuation boundary. Background-agent registration binds a missing legacy session owner once and rejects re-registration into a different session. Completion delivery also rejects a known tracked parent whose session differs from the destination.
+
+Keep copying the original parent identity at launch and through child steps. The new checks do not reconstruct missing historical parents; legacy entries without a tracked parent still rely on their registered session. Chat-owned results remain deliverable after a later human turn starts in that chat. Existing live-steered continuation/tree tests and the new ownership tests passed locally. This is not new live evidence for the original scheduling race.
+
+Follow-up status: **implemented and tested locally; not deployed; runtime re-verification pending**. PLAT-106 remains the canonical implementation/test record. This note does not close the original ticket or change its assigned agent.

@@ -1,3 +1,4 @@
+import { captureChatIdentity, assertChatIdentityCurrent } from './chatIdentity'
 import { useChatStore } from '../stores/useChatStore'
 import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { useModeStore } from '../stores/useModeStore'
@@ -66,19 +67,20 @@ export async function restoreSession(
   }
 ): Promise<string> {
   // Async lock: if already restoring this session, return the existing promise
-  const existing = restoreInProgress.get(sessionId)
+  const restoreKey = `${captureChatIdentity()}:${sessionId}`
+  const existing = restoreInProgress.get(restoreKey)
   if (existing) {
     console.log(`${TAG} Dedup hit for ${sessionId} (source=${options?.source}), returning existing promise`)
     return existing
   }
 
   const promise = doRestoreSession(sessionId, options)
-  restoreInProgress.set(sessionId, promise)
+  restoreInProgress.set(restoreKey, promise)
 
   try {
     return await promise
   } finally {
-    restoreInProgress.delete(sessionId)
+    restoreInProgress.delete(restoreKey)
   }
 }
 
@@ -91,6 +93,7 @@ async function doRestoreSession(
     workspacePath?: string
   }
 ): Promise<string> {
+  const identity = captureChatIdentity()
   const src = options?.source || 'unknown'
   console.log(`${TAG} Start session=${sessionId} source=${src} title=${options?.title ?? '(none)'}`)
   const chatStore = useChatStore.getState()
@@ -124,6 +127,7 @@ async function doRestoreSession(
       { mode: tabMode, isRestored: false },
       sessionId,
     )
+    assertChatIdentityCurrent(identity)
     console.log(`${TAG} [${src}] Created tab ${tabId} mode=${tabMode}`)
   }
 
@@ -132,6 +136,7 @@ async function doRestoreSession(
     if (existingEventCount > 0) {
       const currentLastIndex = chatStore.getTabLastEventIndex(sessionId)
       const runtime = await agentApi.getSessionEvents(sessionId, currentLastIndex)
+      assertChatIdentityCurrent(identity)
       applySessionStatus(tabId, {
         status: runtime.session_status,
         hasRunningBackgroundAgents: runtime.has_running_background_agents,
@@ -148,6 +153,7 @@ async function doRestoreSession(
         sessionId,
         options?.workspacePath || existingTab?.metadata?.agentProfileWorkspace,
       )
+      assertChatIdentityCurrent(identity)
       if (conversation) {
         hydrateTabEventsFromConversation(sessionId, conversation, runtime.events)
       } else if (runtime.events.length > 0) {
@@ -165,17 +171,20 @@ async function doRestoreSession(
         workspacePath: options?.workspacePath || existingTab?.metadata?.agentProfileWorkspace,
         fallbackToChatHistory: true,
       })
+      assertChatIdentityCurrent(identity)
       applySessionStatus(tabId, runtime)
       const eventCount = chatStore.getTabEvents(sessionId).length
       console.log(`${TAG} [${src}] Hydrated ${eventCount} events`)
     }
   } catch (err) {
+    assertChatIdentityCurrent(identity)
     const workspacePath = options?.workspacePath || existingTab?.metadata?.agentProfileWorkspace
     // A bounded live cursor can be rejected after a server restart. The
     // durable transcript is independent of that volatile window and applies
     // equally to every product, so recover it before preserving an incomplete
     // local cache.
     const conversation = await tryFetchChatHistoryConversation(sessionId, workspacePath)
+    assertChatIdentityCurrent(identity)
     if (conversation) {
       const restored = hydrateTabEventsFromConversation(sessionId, conversation)
       applySessionStatus(tabId, restored)
@@ -287,12 +296,44 @@ function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEve
   return combined
 }
 
+// Keep the newest accepted durable snapshot independently of request completion
+// order. Source counts and timestamps also catch an older backend replica
+// answering a newer request. Unversioned histories may grow but cannot erase
+// previously durable rows; deletion requires an explicit versioned API contract.
+const durableSnapshots = new Map<string, ChatHistoryConversation>()
+const historyRequestOrder = new WeakMap<ChatHistoryConversation, number>()
+let nextHistoryRequest = 0
+function monotonicConversation(sessionId: string, incoming: ChatHistoryConversation): ChatHistoryConversation {
+  const key = `${captureChatIdentity()}:${sessionId}`
+  const current = useChatStore.getState().getTabEvents(sessionId)
+  const previous = current.length > 0 ? durableSnapshots.get(key) : undefined
+  if (previous) {
+    const previousRevision = previous.revision ?? 0
+    const incomingRevision = incoming.revision ?? 0
+    if (incomingRevision < previousRevision) return previous
+    if (incomingRevision > previousRevision) {
+      durableSnapshots.set(key, incoming)
+      return incoming
+    }
+    const previousTime = Date.parse(previous.updated_at || '')
+    const incomingTime = Date.parse(incoming.updated_at || '')
+    const count = (history: ChatHistoryConversation) => history.history_source_message_count
+      ?? history.history_pagination?.total_turns ?? history.conversation_history.length
+    if ((historyRequestOrder.get(incoming) ?? 0) < (historyRequestOrder.get(previous) ?? 0)
+      || (Number.isFinite(previousTime) && Number.isFinite(incomingTime) && incomingTime < previousTime)
+      || count(incoming) < count(previous)) return previous
+  }
+  durableSnapshots.set(key, incoming)
+  return incoming
+}
+
 function hydrateTabEventsFromConversation(
   sessionId: string,
   conversation: ChatHistoryConversation,
   liveEvents: ReadonlyArray<PollingEvent> = [],
 ): HydratedHistoryRuntimeState {
   const chatStore = useChatStore.getState()
+  conversation = monotonicConversation(sessionId, conversation)
   // There is one transcript-ordering boundary. Persisted UI events, raw events
   // already received by SSE, and the current EventStore window all enter the
   // conversation converter together. It can then anchor progress inside the
@@ -347,10 +388,13 @@ async function tryFetchChatHistoryConversation(
   workspacePath?: string,
   includeUiEvents = true,
 ): Promise<ChatHistoryConversation | null> {
+  const requestOrder = ++nextHistoryRequest
   try {
-    return includeUiEvents
+    const conversation = includeUiEvents
       ? await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS, 0, true)
       : await agentApi.getChatHistoryResumeConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
+    historyRequestOrder.set(conversation, requestOrder)
+    return conversation
   } catch (error) {
     if (isNotFoundError(error)) {
       return null
@@ -378,6 +422,7 @@ export async function hydrateTabEvents(
     includeUiEvents?: boolean
   } = {},
 ): Promise<RuntimeSessionState> {
+  const identity = captureChatIdentity()
   const chatStore = useChatStore.getState()
 
   // These two reads never depend on each other's result -- the durable-history
@@ -395,6 +440,7 @@ export async function hydrateTabEvents(
     options.includeUiEvents,
   )
   const [eventsOutcome, conversation] = await Promise.all([eventsPromise, conversationPromise])
+  assertChatIdentityCurrent(identity)
 
   if (!eventsOutcome.ok) {
     if (isNotFoundError(eventsOutcome.error)) {
@@ -423,7 +469,10 @@ export async function hydrateTabEvents(
   }
 
   if (response.events.length > 0) {
-    chatStore.setTabEvents(sessionId, response.events)
+    // A missing durable-history response must not replace an already restored
+    // transcript with the server's bounded live tail.
+    if (chatStore.getTabEvents(sessionId).length > 0) chatStore.addTabEvents(sessionId, response.events)
+    else chatStore.setTabEvents(sessionId, response.events)
     // This is a live event window, not a paged durable conversation. A cursor
     // left over from an earlier resume must not offer unrelated history here.
     chatStore.setTabHistoryPagination(sessionId, null)
@@ -439,6 +488,7 @@ export async function hydrateTabEvents(
     // this fallback for an explicitly restored chat, so prefer its persisted
     // history whenever the volatile event buffer has no events.
     const fallbackConversation = await tryFetchChatHistoryConversation(sessionId, options.workspacePath, options.includeUiEvents)
+    assertChatIdentityCurrent(identity)
     if (fallbackConversation) {
       const restored = hydrateTabEventsFromConversation(sessionId, fallbackConversation)
       return {

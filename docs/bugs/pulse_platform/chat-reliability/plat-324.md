@@ -1,13 +1,14 @@
 [← Pulse platform issue index](../../pulse_platform_issue_register.md)
 
-# PLAT-324 — open Work chat tabs must retain their conversation across reloads and deployments
+# PLAT-324 — open Work/Crew chat tabs must retain their conversation across reloads and deployments
 
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented, deployed, and production live-verified` |
+| Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
+| Latest regression fix | `1979a25ef` — chat persistence, acceptance and ownership hardening |
+| Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
   fresh agent conversation. The visible transcript remained in the tab, but the
@@ -291,3 +292,77 @@ second live window empty, and verifies that the Cursor completion remains.
   The public health endpoint then reported `healthy`, zero active sessions and
   an idle drain. The later `bdcbb00-20260916184549` release also contains this
   correction.
+
+
+## 2026-09-17 architecture and multi-user/multi-tab hardening
+
+The repeated incidents exposed shared lifecycle gaps: selected-tab state could
+influence delayed submissions, stale saved-history snapshots could replace newer
+answers, CLI delivery could precede durable acceptance, and recovery demand could
+be lost while another reconciliation was running. The earlier production
+verification above applies to earlier releases, not to this new fix set.
+
+Implemented locally:
+
+- Capture account, source tab, session and submission identity through delayed
+  input, queue, Builder handoff and response callbacks. Resolve workflow settings
+  from the owning tab; never use selection as a delivery destination.
+- Namespace persisted tabs, drafts and queues by workspace and user. Invalidate
+  old-account callbacks across login, OAuth, refresh, logout and browser windows.
+- Protect composer drafts with store-owned revisions across remounts. Consume
+  submitted attachments only after acceptance, preserving newer edits.
+- Process queues independently of the selected chat; retain rejected messages,
+  share manual/background delivery locks and reuse stable submission receipts.
+- Reject stale hydration using session/account guards and canonical revisions.
+  Serialize transcript read/merge/write within the backend process and preserve
+  newer persisted answers and structured metadata.
+- Persist interactive acceptance journals before dispatch. Return explicit
+  uncertainty for ambiguous delivery instead of automatically resending through
+  another endpoint. Fail visibly when established Work continuation cannot
+  verify the requested conversation.
+- Persist owner-scoped native recovery demand, retain demand arriving during
+  reconciliation, and retry unresolved native flushes on restart and every
+  30 seconds through a cancellable four-worker scanner.
+- Remove view-owned global SSE teardown and automatic schedule/webhook chat-tab
+  discovery. Explicit access to those runs remains available. The separate
+  agent's auto-notification work was preserved.
+
+### Local verification and release status
+
+- 147 frontend tests across 15 files passed; TypeScript `npx tsc -b` passed.
+- Combined Go suites passed for conversation/profile identity, history writers,
+  native recovery, acceptance journals, live input and session ownership,
+  including existing auto-notification ownership tests.
+- `git diff --check` passed.
+- No commit, deployment or live provider/browser restart matrix was performed
+  for these changes. Keep live acceptance pending: two users with multiple
+  tabs, reload/deployment during delivery, and context-dependent follow-ups
+  through each supported CLI must verify both visible history and provider context.
+- Transcript locking is process-local; concurrent writing replicas still need
+  storage-level coordination. Deployment must preserve the AgentWorks state root
+  containing acceptance/recovery journals. Native adapters lack application
+  turn IDs, so unresolved delivery remains explicit rather than claiming
+  exactly-once provider execution.
+
+See the [implementation report](../../../audits/chat-reliability-implementation-2026-09-17.md)
+for the complete change mapping, validation logs and remaining architecture limits.
+
+
+### RTS deployment — 2026-09-17
+
+- Pushed implementation commit `1979a25ef1176d406f887785b355581374449ffb`
+  to main and deployed release `1979a25-20260917063441` through the standard
+  RTS server-side build and idle-drain activation procedure.
+- Recorded sibling revisions: mcpagent `0220d4294b1fab3168611ed1c2c4263d005c281b`;
+  multi-llm-provider-go `5e625eb6219be2fc5a7622989af1e18d3d0c28ed`.
+- Native Linux backend and production frontend builds passed. Release asset
+  checks and bundle limits passed (JS gzip 975.43 kB, below the 1030 kB limit).
+  The deploy's Landlock overlap smoke test skipped because its config directory
+  was not writable; it is not recorded as verified by this release.
+- Confirmed current release symlink and source revisions, all three user
+  services active, public health healthy with zero active sessions and idle
+  drain, and frontend HTTP 200 at 06:40 UTC.
+- The service's persistent config root is writable and lives outside releases;
+  chat acceptance and recovery journals survive release replacement.
+- User will perform live chat testing. Multi-tab/provider continuity acceptance
+  remains pending; successful deployment and health do not close this ticket.

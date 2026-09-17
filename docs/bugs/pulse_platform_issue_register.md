@@ -34,6 +34,9 @@ already-open tab must rebind its saved application session before its next
 message can reach a provider conversation. Its latest deployed correction also
 prevents a stale second hydration from removing a Cursor final that was already
 visible in the live chat timeline.
+Additional 2026-09-17 multi-user/tab isolation, durable acceptance and recovery
+hardening is deployed to RTS in `1979a25-20260917063441`, with health verified;
+the user live continuity acceptance matrix remains pending. See the ticket for current status.
 
 ## Persistent managed browser ownership — PLAT-322
 
@@ -67,6 +70,20 @@ schedules remain sequential by default, while an independently approved schedule
 can opt into overlap only with the fixed warning that shared workflow state and
 external actions may conflict, overwrite or duplicate. Authenticated approval
 provenance and the complete UI confirmation flow remain open.
+
+## Chat notification ownership — PLAT-106 follow-up
+
+[PLAT-106](pulse_platform/frontend-chat/plat-106.md) records the locally tested,
+not-yet-deployed notification ownership repair. Integration notes are now on
+[PLAT-095](pulse_platform/scheduler-runs/plat-095.md),
+[PLAT-100](pulse_platform/coding-agent-bridge/plat-100.md),
+[PLAT-113](pulse_platform/coding-agent-bridge/plat-113.md),
+[PLAT-117](pulse_platform/coding-agent-bridge/plat-117.md),
+[PLAT-255](pulse_platform/evaluation/plat-255.md), and
+[PLAT-293](pulse_platform/frontend-chat/plat-293.md). Their original lifecycle,
+queueing, early-notice, and report-security acceptance remains separate; none
+is closed by the routing fix. Live concurrent Schedule/trigger + Chat
+verification is still required.
 
 ## Notification duplicate rendering
 
@@ -659,7 +676,7 @@ Rules:
 | [PLAT-103](pulse_platform/coding-agent-bridge/plat-103.md) | Retained turns completed without a structured final response; adjacent user/assistant event races could render duplicate chat messages | Codex | `implemented` (runtime reverify pending) | retained-turn output contract + formatted transcript reconciliation |
 | [PLAT-104](pulse_platform/frontend-chat/plat-104.md) | HTTP acknowledgement and SSE durable events act as competing frontend message producers instead of reconciling one client-generated identity | unassigned | `open` (design recorded; implementation deferred) | frontend chat transport + event-store reconciliation |
 | [PLAT-105](pulse_platform/coding-agent-bridge/plat-105.md) | Retained delivery works through a durable mcpagent Session, but the 2026-08-15 Social Media run proved the per-turn lifecycle is still broken: Codex captured the final response and exited while AgentWorks remained busy and Formatted mode never received the answer. Every accepted turn needs one stable `turn_id`, exactly one canonical completion, host settlement from that event, and a P0 proving the final answer is visible, busy clears, and the same Session remains reusable. | Codex | `p0_blocking` (live regression reproduced; completion producer/bridge boundary must be traced and fixed) | mcpagent ↔ AgentWorks per-turn completion ownership |
-| [PLAT-106](pulse_platform/frontend-chat/plat-106.md) | Concurrent Chat and Schedule tabs for one workflow can render a Schedule event inside Chat, falsely pairing unrelated user and assistant messages | unassigned | `partially implemented` (2026-08-15: root cause was Codex retained-answer lookup resolving by working dir + newest mtime across two sessions sharing a workflow directory — now bound to the exact thread/rollout; frontend ownership guards and session-switch reset added as defence in depth; live verification pending) | codex retained-answer thread binding + frontend session-event ownership |
+| [PLAT-106](pulse_platform/frontend-chat/plat-106.md) | Concurrent Chat and Schedule sessions can leak answers or auto-notifications across conversation boundaries; only the execution's initiating chat/session should receive completion | Codex | `runtime_reverify` — 2026-09-17 follow-up implemented/tested locally, not deployed: delayed queue delivery bound to original tab/session; backend registration and known-parent ownership checks; 54 frontend tests, targeted backend tests and TypeScript checks pass. Exact live incident mechanism and concurrent Schedule/trigger + Chat verification remain pending; preserves prior retained-answer repair history | retained-answer binding, session-event isolation and auto-notification routing |
 | [PLAT-107](pulse_platform/frontend-chat/plat-107.md) | A sequential scheduled main-agent turn can be projected as its own child, auto-selected, and shown as a blank terminal placeholder | unassigned | `partially implemented` (2026-08-15: self-parent turns now collapsed out of the rail entirely; runtime verification pending) | execution-tree terminal projection + selection |
 | [PLAT-108](pulse_platform/coding-agent-bridge/plat-108.md) | Coding-agent transcripts are located by working directory + recency instead of conversation identity; the same defect was fixed independently in Cursor and Codex and is still reachable in Codex completion detection and structured streaming | unassigned | `partially implemented` (2026-08-15: Codex interactive transport fully bound — retained, wrapped, completion detection, streaming; structured transport and the contract capability + certification pending) | coding-agent transcript identity contract + certification |
 | [PLAT-113](pulse_platform/coding-agent-bridge/plat-113.md) | Session turn occupancy was decided by sessionBusy, a display flag never set for workflow turns, so every background-agent completion during a scheduled run skipped its queue and blocked on the input lane — 25 never-started synthetic turns piled behind one 5-hour turn until the idle-wait watchdog killed a healthy run | unassigned | `partially implemented; unverified at runtime` (2026-08-16: lane authoritative + register-after-acquire landed; sessionBusy demotion pending. Backend down since 10:08 IST, so neither fix has executed once — next check is the 15:00 IST slot) | session turn occupancy + auto-notification queueing |

@@ -57,28 +57,6 @@ export function workConversationResumeKey(tab: ChatTab, projectId: string): stri
   return `${projectId}:${sessionId}`
 }
 
-/**
- * A send can remain queued against Work's permanent Builder after the first
- * message has already opened and activated its conversation tab. Route those
- * stale submissions into that conversation. Without this handoff, every
- * queued message sees the Builder again and creates another chat tab.
- *
- * Keeping the Builder active is intentional: it means the user returned to it
- * and wants to start a separate conversation.
- */
-export function resolveWorkSubmissionTab(
-  sourceTab: ChatTab | undefined,
-  activeTab: ChatTab | undefined,
-): ChatTab | undefined {
-  if (sourceTab?.metadata?.agentProfileBuilder !== true) return sourceTab
-  if (!activeTab || activeTab.tabId === sourceTab.tabId) return sourceTab
-  if (activeTab.metadata?.agentProfileBuilder === true) return sourceTab
-
-  const projectId = sourceTab.metadata.agentProfileProjectId
-  if (!projectId || !belongsToWorkProject(activeTab, projectId)) return sourceTab
-  return activeTab
-}
-
 /** Mark every retained chat in a Work project for relaunch on its next turn. */
 export function markWorkProjectRuntimeDirty(projectId: string): void {
   const store = useChatStore.getState()

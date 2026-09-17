@@ -3,6 +3,19 @@ import { describe, expect, it } from 'vitest'
 import { PromiseLane } from './promiseLane'
 
 describe('PromiseLane', () => {
+  it('keeps both aliases serialized after more than one enqueue', async () => {
+    const lane = new PromiseLane()
+    let release!: () => void
+    const blocked = new Promise<void>(resolve => { release = resolve })
+    const order: number[] = []
+    const first = lane.enqueue('tab', async () => { await blocked; order.push(1) })
+    lane.link('tab', 'session')
+    const second = lane.enqueue('session', async () => { order.push(2) })
+    const third = lane.enqueue('tab', async () => { order.push(3) })
+    release()
+    await Promise.all([first, second, third])
+    expect(order).toEqual([1, 2, 3])
+  })
   it('runs rapid submissions for one tab exactly once and in order', async () => {
     const lane = new PromiseLane()
     const executed: number[] = []

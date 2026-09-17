@@ -1437,6 +1437,7 @@ import type { ChatHistoryMessage } from '../../shared/session/types'
 
 export interface ChatHistoryConversation {
   session_id: string;
+  revision?: number;
   agent_mode?: string;
   runtime?: ChatHistoryAgentRuntime;
   workshop_mode?: 'workshop' | 'run' | string;

@@ -197,8 +197,12 @@ func TestRefreshLatestBuilderConversationFromNativeTranscript(t *testing.T) {
 	}
 
 	api := &StreamingAPI{}
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/substack/builder/conversation/2026-08-22/session-b5e39872-conversation.json", string(rawContent))
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/substack/builder/conversation/2026-08-22/session-b5e39872-conversation.json", string(rawContent), conv)
 
+	if refreshed.Revision != 1 {
+		t.Fatalf("recovered canonical revision=%d, want 1", refreshed.Revision)
+	}
 	if len(refreshed.ConversationHistory) != 4 {
 		t.Fatalf("expected 4 messages after catch-up (2 original + 2 from native transcript), got %d: %+v", len(refreshed.ConversationHistory), refreshed.ConversationHistory)
 	}
@@ -227,12 +231,14 @@ func TestRefreshLatestBuilderConversationFromNativeTranscriptNoOpsWithoutClaudeC
 		},
 	}
 	record := map[string]interface{}{
-		"session_id": conv.SessionID,
-		"updated_at": conv.UpdatedAt,
+		"session_id":           conv.SessionID,
+		"updated_at":           conv.UpdatedAt,
+		"conversation_history": conv.ConversationHistory,
 	}
 	rawContent, _ := json.Marshal(record)
 
 	api := &StreamingAPI{}
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/some/path.json", string(rawContent))
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(context.Background(), "Workflow/some/path.json", string(rawContent), conv)
 
 	if len(refreshed.ConversationHistory) != 1 {
@@ -286,6 +292,7 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 
 	eventStore := storeevents.NewEventStore(100)
 	defer eventStore.Stop()
+	eventStore.SetSessionOwner(sessionID, userID)
 	api := &StreamingAPI{eventStore: eventStore}
 	changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
 	if !supported || !changed {
@@ -321,6 +328,8 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	// Simulate a backend restart restoring an older UI trace: durable history is
 	// already current, but the live EventStore no longer contains the answer.
 	eventStore.RemoveSession(sessionID)
+	// The restored browser/session re-registers its authenticated owner.
+	eventStore.SetSessionOwner(sessionID, userID)
 	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
 		t.Fatalf("restart repair changed/supported = %v/%v, want false/true", changed, supported)
 	}
@@ -453,6 +462,7 @@ func TestRefreshLatestBuilderConversationIgnoresLiveInputUpdatedAtAsTranscriptCu
 		t.Fatal(err)
 	}
 
+	setupNativeRecoveryCanonicalFixture(t, "Workflow/test/builder/conversation/session.json", string(rawContent))
 	refreshed := (&StreamingAPI{}).refreshLatestBuilderConversationFromNativeTranscript(
 		context.Background(), "Workflow/test/builder/conversation/session.json", string(rawContent), conv,
 	)

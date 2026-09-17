@@ -679,3 +679,12 @@ journal and queue-ownership tests pass. The full server suite has one unrelated
 environment-dependent failure in `TestBotFollowUpReachesRetainedMuseThroughQueryP0`
 because its durable submission-journal workspace is unavailable in the local
 test environment; the relevant focused suite passes.
+
+The fix shipped in `dcac66a6e` and was deployed to RTS as
+`dcac66a-20260917102738` at 10:33 UTC. Agent, workspace and gateway services,
+local health and public health were verified. The affected production
+conversation was backed up, then repaired from 230 to 140 canonical messages:
+90 rows belonging to the two verified replay blocks and the 36 recovery events
+published together at 10:09:08 UTC were removed. Its project chat index was
+updated, and the partial native handle was invalidated so the next user message
+performs one clean provider reconnect with the new continuity notice.

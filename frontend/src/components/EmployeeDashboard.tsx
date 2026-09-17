@@ -11,6 +11,7 @@ import { OrgDashboard } from './org/OrgDashboard'
  */
 export const EmployeeDashboard: React.FC = () => {
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
+  const activityWorkflowPath = useAppStore(state => state.activityWorkflowPath)
   const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
   const workflowPresetsLoaded = useGlobalPresetStore(state => state.workflowPresetsLoaded)
   const presetsLoading = useGlobalPresetStore(state => state.loading)
@@ -49,7 +50,7 @@ export const EmployeeDashboard: React.FC = () => {
     return <div className="flex h-full min-h-[320px] items-center justify-center text-muted-foreground"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading activity…</div>
   }
 
-  return <div className="h-full min-h-0 overflow-hidden bg-background"><OrgDashboard embedded workflows={workflows} onOpenWorkflow={handleOpenWorkflow} /></div>
+  return <div className="h-full min-h-0 overflow-hidden bg-background"><OrgDashboard embedded workflows={workflows} selectedWorkflowPath={activityWorkflowPath} onOpenWorkflow={handleOpenWorkflow} /></div>
 }
 
 export default EmployeeDashboard

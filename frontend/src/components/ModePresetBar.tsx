@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react'
 import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { useShallow } from 'zustand/react/shallow'
-import { Settings, Copy, LayoutDashboard, ArrowLeft, Eye, CalendarClock } from 'lucide-react'
+import { Settings, Copy, ArrowLeft, Eye, CalendarClock } from 'lucide-react'
 import { useAuthStore } from '../stores/useAuthStore'
 import { hasWorkflowCreateAccess, isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { useModeStore } from '../stores/useModeStore'
@@ -25,6 +25,7 @@ import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import ProvidersControl from './topbar/ProvidersControl'
 import { TopBarEntitySelector } from './topbar/TopBarEntitySelector'
+import { GlobalActivityButton } from './topbar/GlobalActivityButton'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
@@ -118,6 +119,9 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
     ? null
     : getActivePreset(presetModeCategory)
   const activeWorkspacePath = activePreset?.selectedFolder?.filepath?.replace(/\/+$/, '')
+  const workflowActivityPaths = React.useMemo(() => workflowPresets
+    .map(preset => preset.selectedFolder?.filepath?.replace(/\/+$/, ''))
+    .filter((path): path is string => Boolean(path)), [workflowPresets])
   const activeWorkflowAccess = useWorkflowManifestStore(state =>
     activeWorkspacePath ? state.workflows.find(workflow => workflow.workspace_path === activeWorkspacePath)?.my_access : undefined,
   )
@@ -145,6 +149,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   const setShowWorkflowsOverview = useAppStore(s => s.setShowWorkflowsOverview)
   const showSchedulesOverview = useAppStore(s => s.showSchedulesOverview)
   const setShowSchedulesOverview = useAppStore(s => s.setShowSchedulesOverview)
+  const setActivityWorkflowPath = useAppStore(s => s.setActivityWorkflowPath)
   const setSelectedFile = useWorkspaceStore(state => state.setSelectedFile)
   const setShowFileContent = useWorkspaceStore(state => state.setShowFileContent)
   const showProviders = useLLMStore(state => state.showLLMModal)
@@ -712,27 +717,16 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
 
               <ProvidersControl />
 
-              {!reduced && <Tooltip>
-                <TooltipTrigger asChild>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      useLLMStore.getState().setShowLLMModal(false)
-                      setShowSchedulesOverview(false)
-                      setShowWorkflowsOverview(true)
-                    }}
-                    data-tour="global-activity"
-                    aria-label="Activity"
-                    aria-pressed={showWorkflowsOverview && !showProviders && !showSchedulesOverview}
-                    className={`rounded-md p-1.5 transition-colors ${showWorkflowsOverview && !showProviders && !showSchedulesOverview
-                      ? 'bg-primary/10 text-primary'
-                      : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  >
-                    <LayoutDashboard className="h-4 w-4" />
-                  </button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Activity · Updates</TooltipContent>
-              </Tooltip>}
+              {!reduced && <GlobalActivityButton
+                workspacePaths={workflowActivityPaths}
+                active={showWorkflowsOverview && !showProviders && !showSchedulesOverview}
+                onOpen={() => {
+                  useLLMStore.getState().setShowLLMModal(false)
+                  setShowSchedulesOverview(false)
+                  setActivityWorkflowPath(null)
+                  setShowWorkflowsOverview(true)
+                }}
+              />}
 
               {!reduced && <Tooltip>
                 <TooltipTrigger asChild>

@@ -30,6 +30,9 @@ import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
 import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
+import { WorkflowActivityButton } from '../../topbar/WorkflowActivityButton'
+import { useAppStore } from '../../../stores/useAppStore'
+import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
@@ -520,6 +523,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </TooltipTrigger>
                   <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
                 </Tooltip>
+                <WorkflowActivityButton
+                  workspacePath={workspacePath}
+                  onOpen={() => {
+                    useLLMStore.getState().setShowLLMModal(false)
+                    const app = useAppStore.getState()
+                    app.setShowSchedulesOverview(false)
+                    app.setActivityWorkflowPath(workspacePath)
+                    app.setShowWorkflowsOverview(true)
+                  }}
+                />
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
                   const active = view === activeWorkspaceView
                   const viewButton = (

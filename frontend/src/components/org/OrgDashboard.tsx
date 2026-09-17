@@ -22,6 +22,7 @@ interface WorkflowDashEntry {
 interface OrgDashboardProps {
   embedded?: boolean
   workflows: Array<{ workspacePath: string; label: string }>
+  selectedWorkflowPath?: string | null
   onOpenWorkflow: (workspacePath: string) => void
 }
 
@@ -162,11 +163,11 @@ const WorkflowSummaryRow: React.FC<{
   )
 }
 
-export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWorkflow, embedded = false }) => {
+export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, selectedWorkflowPath, onOpenWorkflow, embedded = false }) => {
   const [entries, setEntries] = useState<WorkflowDashEntry[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const [selectedPath, setSelectedPath] = useState<string | null>(selectedWorkflowPath ?? null)
   const [search, setSearch] = useState('')
   const [decisionsOnly, setDecisionsOnly] = useState(false)
 
@@ -199,6 +200,10 @@ export const OrgDashboard: React.FC<OrgDashboardProps> = ({ workflows, onOpenWor
   }, [workflows])
 
   useEffect(() => { void load() }, [load])
+
+  useEffect(() => {
+    if (selectedWorkflowPath) setSelectedPath(selectedWorkflowPath)
+  }, [selectedWorkflowPath])
 
 
   const sortedEntries = useMemo(() => [...entries].sort((a, b) =>

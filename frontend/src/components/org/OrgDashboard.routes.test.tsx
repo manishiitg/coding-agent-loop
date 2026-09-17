@@ -11,6 +11,32 @@ import { agentApi } from '../../services/api'
 import { OrgDashboard } from './OrgDashboard'
 
 describe('Activity route summaries', () => {
+  it('opens on the workflow requested by the per-workflow activity shortcut', async () => {
+    Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+    const update: OrgDashboardNotification = { id: 'publish-update', workspace_path: 'Workflow/publish', kind: 'run_summary',
+      status: 'completed', title: 'Publishing ready', message: 'Drafts saved.', created_at: '2026-09-05T00:00:00Z' }
+    vi.mocked(agentApi.listReportHumanInputsAggregate).mockResolvedValue({ success: true, inputs: [] })
+    vi.mocked(agentApi.getOrgDashboardNotifications).mockResolvedValue({ success: true, workflows: [
+      { workspace_path: 'Workflow/research', recent: [] },
+      { workspace_path: 'Workflow/publish', run_summary: update, recent: [update] },
+    ] })
+    const container = document.createElement('div')
+    document.body.append(container)
+    const root = createRoot(container)
+    try {
+      await act(async () => root.render(<OrgDashboard
+        workflows={[{ workspacePath: 'Workflow/research', label: 'Research' }, { workspacePath: 'Workflow/publish', label: 'Publish' }]}
+        selectedWorkflowPath="Workflow/publish"
+        onOpenWorkflow={vi.fn()}
+      />))
+      expect(container.querySelector('[aria-label="Publish activity"]')?.textContent).toContain('Publishing ready')
+      expect(container.querySelector('[aria-label="View Publish activity"]')?.getAttribute('aria-pressed')).toBe('true')
+    } finally {
+      await act(async () => root.unmount())
+      container.remove()
+    }
+  })
+
   it('keeps verbose Pulse evidence collapsed until requested', async () => {
     Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
     const pulse: OrgDashboardNotification = { id: 'pulse-digest', workspace_path: 'Workflow/demo', kind: 'pulse_summary',

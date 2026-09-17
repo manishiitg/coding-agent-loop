@@ -32,5 +32,7 @@ describe('workflow Ask AI placement', () => {
     expect(toolbar).toContain("playbooks: 'Playbooks'")
     expect(toolbar).toContain('PRIMARY_TOOLBAR_VIEW_IDS.has(view.id)')
     expect(toolbar.indexOf('<ReportDocumentSwitcher')).toBeLessThan(toolbar.indexOf('aria-label={pendingDecisionCount'))
+    expect(toolbar.indexOf('<WorkflowActivityButton')).toBeGreaterThan(toolbar.indexOf('aria-label={pendingDecisionCount'))
+    expect(toolbar.indexOf('<WorkflowActivityButton')).toBeLessThan(toolbar.indexOf('workspaceViewDefinitions.map'))
   })
 })

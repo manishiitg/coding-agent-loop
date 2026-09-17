@@ -595,3 +595,12 @@ that a reply in the durable UI trace is not replayed. A companion case verifies
 that one genuinely missing newer native reply is still recovered while an
 older durable reply is skipped. Existing restart repair behavior for records
 without any durable UI trace remains covered.
+
+The correction shipped in `e03b1baba` and was deployed to RTS as
+`e03b1ba-20260917090545` at 09:12 UTC. The release symlink, agent/workspace/
+gateway services and public health endpoint were verified. The deployment
+restart restored the affected session's SSE subscription without any
+`Published recovered native assistant reply` entries afterward. For comparison,
+the prior release logged another ten-row replay for a separate Work session at
+09:08:05 UTC, confirming this was a shared recovery-path defect rather than a
+single corrupted tab.

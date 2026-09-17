@@ -78,10 +78,10 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	} else {
 		add("Socket Mode token", "passed", "App token can open a Socket Mode connection")
 	}
-	add("Event subscriptions", "manual", "In the same Slack app, first turn on Enable Socket Mode, then refresh Event Subscriptions, enable events, add app_mention, message.channels (public channel replies), and message.groups (private channel replies) under Subscribe to bot events, and click Save Changes. Leave Request URL empty: Socket Mode does not need one. If Save Changes is disabled and a Request URL is shown, check that Socket Mode is enabled in this app. Bot/app tokens cannot read these settings.")
-	add("Mention delivery", "manual", "Invite the bot to the channel, send an @mention, then reply in its thread without mentioning the bot. Verify both messages receive replies; app_mention alone does not deliver ordinary thread replies.")
+	add("Event subscriptions", "manual", "Required for full delivery: in the same Slack app, first turn on Enable Socket Mode, then refresh Event Subscriptions, enable events, add app_mention, message.channels (public channel replies), and message.groups (private channel replies) under Subscribe to bot events, and click Save Changes. Leave Request URL empty: Socket Mode does not need one. If Save Changes is disabled and a Request URL is shown, check that Socket Mode is enabled in this app. Bot/app tokens cannot read these settings.")
+	add("Mention delivery", "manual", "Required delivery verification: invite the bot to the channel, send an @mention, then reply in its thread without mentioning the bot. Verify both messages receive replies; app_mention alone does not deliver ordinary thread replies.")
 	if result.Success {
-		result.Message = "Tokens and required permissions verified. Mention delivery still needs verification."
+		result.Message = "Token checks passed. Setup is incomplete until required event subscriptions, an @mention, and a thread reply are verified."
 		if scopes == nil {
 			result.Message = "Tokens verified. Bot permissions and event subscriptions need manual verification."
 		}

@@ -10,7 +10,7 @@ describe('bot and notification settings separation', () => {
   it('keeps workflow webhooks out of the Bots panel but allows account-level Gmail', () => {
     const bots = readFileSync('src/components/workflow/WorkflowBotsPanel.tsx', 'utf8')
     expect(bots).not.toContain('Slack Incoming Webhook')
-    expect(bots).toContain('This workflow answers on')
+    expect(bots).toContain('This {scopeNoun} answers on')
     expect(bots).toContain('Gmail')
   })
 
@@ -29,9 +29,9 @@ describe('bot and notification settings separation', () => {
     // attribute is no longer a JSX literal; the hook itself must still be in
     // the toolbar and nowhere near the global header.
     expect(workflowToolbar).toContain("'data-tour': 'bot-connector'")
-    expect(workflowToolbar).toContain("openWorkspaceView('notify')")
+    expect(workflowToolbar).toContain("openFromToolbarMenu('notify')")
     expect(host).toContain('<WorkflowNotificationView')
-    expect(workflowToolbar).toContain('<BellRing')
+    expect(workflowToolbar).toContain('Icon={BellRing}')
     expect(notifications).toContain('Agentic notification delivery')
     expect(notifications).toContain('Workflow Slack webhook')
     expect(notifications).toContain('Gmail account channel')

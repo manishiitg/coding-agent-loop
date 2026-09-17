@@ -130,7 +130,7 @@ describe('CodingProvidersPanel', () => {
       expect(Array.from(dialog.querySelectorAll('span')).filter(span => span.textContent === 'Connected')).toHaveLength(1)
 
       await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Check usage'))!.click())
-      expect(llmConfigService.startProviderSetup).toHaveBeenCalledWith('codex-cli', 'usage', 100, 24)
+      expect(llmConfigService.startProviderSetup).toHaveBeenCalledWith('codex-cli', 'usage', 100, 24, undefined, false)
       expect(dialog.querySelector('[data-testid="guided-terminal"]')?.textContent).toBe('Terminal usage-1')
     } finally {
       await act(async () => root.unmount())

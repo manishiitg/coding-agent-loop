@@ -98,13 +98,8 @@ func botRouteProfileAccessForRequest(claims *UserClaims, req QueryRequest) (Work
 	return WorkflowAccessRead, true
 }
 
-// checkBotWorkflowAccess decides whether an external chat user may drive a
-// routed workflow. Unlike the web paths it deliberately fails CLOSED at every
-// step: a browser caller has already authenticated into the account before any
-// permission is resolved, whereas a bot caller has only proved that they are in
-// a Slack channel. The legacy "no ownership record means the account tier
-// applies" fallback (workflow_access.go rule 3) is therefore not honoured here
-// — bot access must be granted explicitly or not at all.
+// checkBotWorkflowAccess resolves the explicitly configured route grant. Slack
+// sender identity is audit metadata; channel members need no AgentWorks account.
 func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUserID, userEmail string, route services.ChannelRoute) (string, bool, error) {
 	fallbackID := strings.TrimSpace(workspaceUserID)
 
@@ -129,17 +124,8 @@ func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUs
 		}
 	}
 
-	// 1. An unowned workflow grants the account tier on the web. Over a bot that
-	// would hand every channel member write access to any manifest the builder
-	// wrote without a created_by stamp, so require a real ownership record.
-	if !manifest.hasOwnershipRecord() {
-		log.Printf("[BOT_ACCESS] Denied: workflow %s has no owner recorded; claim or share it before routing a bot to it", manifest.ID)
-		return fallbackID, false, nil
-	}
-
-	// 2. The configured route grant is resolved through the same manifest access
-	// function used by AgentWorks chat. Slack sender identity stays audit
-	// metadata and does not alter the route principal's authority.
+	// Route creation already requires destination management authority. A Run
+	// grant also applies to legacy manifests without ownership metadata.
 	claims := botRouteUserClaims(fallbackID, route)
 	if workflowAccessForManifest(claims, manifest) == WorkflowAccessNone {
 		log.Printf("[BOT_ACCESS] Denied: route principal %s has no access to workflow %s", claims.UserID, manifest.ID)

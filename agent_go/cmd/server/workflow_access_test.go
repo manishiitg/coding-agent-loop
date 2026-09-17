@@ -168,3 +168,20 @@ func TestSetWorkflowAccessValidation(t *testing.T) {
 		t.Fatalf("directory: %d %s", rec.Code, rec.Body.String())
 	}
 }
+
+func TestRunBotRouteAccessForLegacyUnownedWorkflow(t *testing.T) {
+	manifest := &WorkflowManifest{ID: "legacy-workflow"}
+	claims := &UserClaims{UserID: "bot:slack:channel", Provider: "bot_route", BotRouteWorkflowID: manifest.ID, BotRouteGrant: "run"}
+	if got := workflowAccessForManifest(claims, manifest); got != WorkflowAccessRead {
+		t.Fatalf("explicit Run route rejected legacy workflow: %s", got)
+	}
+	claims.BotRouteWorkflowID = "other-workflow"
+	if got := workflowAccessForManifest(claims, manifest); got != WorkflowAccessNone {
+		t.Fatalf("route granted access to another workflow: %s", got)
+	}
+	claims.BotRouteWorkflowID = manifest.ID
+	claims.BotRouteGrant = "owner"
+	if got := workflowAccessForManifest(claims, manifest); got != WorkflowAccessNone {
+		t.Fatalf("legacy workflow granted bot authoring access: %s", got)
+	}
+}

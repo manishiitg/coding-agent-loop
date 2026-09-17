@@ -112,14 +112,14 @@ func workflowAccessForBotRouteClaims(claims *UserClaims, m *WorkflowManifest) (W
 	if m == nil {
 		return WorkflowAccessRead, true
 	}
-	if !m.hasOwnershipRecord() {
-		return WorkflowAccessNone, true
-	}
 	target := strings.TrimSpace(claims.BotRouteWorkflowID)
 	if target == "" || !strings.EqualFold(target, strings.TrimSpace(m.ID)) {
 		return WorkflowAccessNone, true
 	}
 	if strings.EqualFold(strings.TrimSpace(claims.BotRouteGrant), "owner") {
+		if !m.hasOwnershipRecord() {
+			return WorkflowAccessNone, true
+		}
 		return WorkflowAccessOwner, true
 	}
 	return WorkflowAccessRead, true

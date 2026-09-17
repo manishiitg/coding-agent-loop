@@ -884,7 +884,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 	}
 	log.Printf("[BOT_MANAGER] Workflow access denied for %s user=%s email=%s workflow=%s", msg.Platform, msg.UserID, msg.UserEmail, strings.TrimSpace(route.WorkflowID))
 	if msg.IsMention {
-		m.sendWorkflowAccessDenied(msg.Platform, threadID, "You don't have access to this workflow. Ask a workflow owner to share it with you in AgentWorks.")
+		m.sendWorkflowAccessDenied(msg.Platform, threadID, "This channel's bot route cannot access its configured workflow. Ask a workflow owner to check the route and workflow settings.")
 	}
 	return false
 }

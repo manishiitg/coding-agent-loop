@@ -26,11 +26,13 @@ type ChatCapabilityPolicy struct {
 	ReadOnly []string            `yaml:"read_only"`
 }
 
-// ChatModeDefinition selects prompt files and built-in skill bundles. Capability
+// ChatModeDefinition selects prompt files and built-in skill bundles, and declares
+// the default workflow-phase tool surface for integration checks. Capability
 // admission remains separate: selecting documentation never grants tools.
 type ChatModeDefinition struct {
 	Prompt ChatPromptSource `yaml:"prompt"`
 	Skills []string         `yaml:"skills"`
+	Tools  []string         `yaml:"tools,omitempty"`
 }
 
 type ChatPromptSource struct {
@@ -39,10 +41,13 @@ type ChatPromptSource struct {
 }
 
 type ProductManifest struct {
-	Chat          map[string]ChatModeDefinition `yaml:"chat,omitempty"`
-	ChatPolicy    *ChatCapabilityPolicy         `yaml:"chat_policy,omitempty"`
-	SchemaVersion int                           `yaml:"schema_version"`
-	Dependencies  productdeps.Manifest          `yaml:"dependencies"`
+	// InstructionSections declares the shared server prompt-section registry for
+	// integration checks; each section still decides when it applies at runtime.
+	InstructionSections []string                      `yaml:"instruction_sections,omitempty"`
+	Chat                map[string]ChatModeDefinition `yaml:"chat,omitempty"`
+	ChatPolicy          *ChatCapabilityPolicy         `yaml:"chat_policy,omitempty"`
+	SchemaVersion       int                           `yaml:"schema_version"`
+	Dependencies        productdeps.Manifest          `yaml:"dependencies"`
 	// Prompt is the primary profile's prompt source.
 	Prompt PromptSource `yaml:"prompt"`
 	// Profile is the primary profile (the one the product surface opens).

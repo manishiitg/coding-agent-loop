@@ -168,3 +168,17 @@ workflows:
   enabled: []
   selected_skills: []
   browser_mode: ""
+
+# Shared runtime instruction sections admitted by this product.
+# A new section must be declared here before it is attached to chat.
+instruction_sections:
+  - workspace-map
+  - project-memory
+  - product-features
+  - llm-capability
+  - workflow-context
+  - work-folders
+  - channel-formatting
+  - browser-pointer
+  - grants
+  - cli-tool-environment

@@ -334,3 +334,25 @@ Steps 1 and 2 independently close a shipped bug class and can land separately.
 3. MCP bridge tools carry their own `MCPToolPolicy`
    (`productdeps/dependencies.go:89`). Verify whether that is a fourth
    registration path needing the same gate.
+
+
+## Product surface integration checks
+
+Run `go test ./cmd/server -run ProductSurface` from `agent_go`.
+`product_surface_e2e_test.go` exercises the production workflow tool and skill
+registration for AgentWorks builder and run modes, and Crew profile tool
+registration. It uses a local workspace fixture and does not call an LLM or Slack.
+
+AgentWorks declares its default workflow-phase tools in `chat.<mode>.tools` in
+`product.yaml`; Crew declares tools through profile features and bindings.
+The checks compare registration against these declarations independently of
+runtime gate mutations. They also compare core skills and registered system
+prompt templates against the manifest sources, and require both products to
+declare the shared prompt-section registry in `instruction_sections`.
+Negative cases verify rejection of undeclared tools, skills, prompt sections,
+and extra base prompt instructions.
+
+This contract covers default product-owned surfaces. User-selected skills, MCP
+servers, provider-native tools, and dynamic request-specific instructions have
+separate policies; this test does not claim to scan arbitrary Go instruction text.
+A new shared prompt section must be declared in each affected product manifest.

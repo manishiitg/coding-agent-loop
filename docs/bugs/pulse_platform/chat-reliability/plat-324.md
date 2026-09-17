@@ -7,7 +7,7 @@
 | Assigned agent | Codex |
 | Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
 | Last synchronized | `2026-09-17` |
-| Latest regression fix | `b90b02639` deployed — duplicate snapshots, notification suppression and responsive history filters; report queue race follow-up in progress |
+| Latest regression fix | `eb93a5972` deployed — shared queue ownership for human-decision and generated report chat actions |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 - **Priority:** P0 — a follow-up sent from an already-open Work chat reached a
@@ -490,3 +490,16 @@ The preceding duplicate-history/responsive release is now live on RTS as
 4ad83b2-20260917080551 (includes b90b02639). Agent, workspace and gateway services
 are active and local API health is healthy. Existing duplicate history remains
 preserved; the fixes prevent the identified new duplicates.
+
+
+Report queue follow-up deployed to RTS as eb93a59-20260917081444 at
+2026-09-17 08:19 UTC. The current release symlink was verified, all three user
+services (agent/workspace/gateway) are active, and the public /api/health is
+healthy. The additional report-frame/bootstrap/decision-refresh checks passed
+(13 tests), for 56 focused frontend tests overall; production frontend build,
+release assets and bundle budget passed. Existing non-blocking Go lint warnings
+remain; the unrelated Landlock deployment smoke skipped because its configured
+GOG_HOME could not be created. No authenticated production actions were replayed.
+User acceptance remains pending after a browser refresh: one decision question
+and one generated report chat action during an active turn should each deliver
+once to the intended interactive conversation with context intact.

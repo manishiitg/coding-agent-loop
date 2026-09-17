@@ -50,7 +50,8 @@ chat_policy:
       - knowledgebase_maintenance
       - improvement_proposals
       - workspace_ui
-    run: [workspace_ui]
+      - bot_management
+    run: [workspace_ui, bot_management]
   origins:
     interactive: *builder_capabilities
     scheduled: *builder_capabilities
@@ -59,7 +60,7 @@ chat_policy:
     child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
     bot: *builder_capabilities
     notification: *builder_capabilities
-  read_only: [workspace_ui]
+  read_only: [workspace_ui, bot_management]
 
 # Prompt text stays in Markdown. Includes contain named Go-template definitions;
 # the entry file chooses which definitions to render. Runtime values stay in Go.

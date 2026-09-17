@@ -32,3 +32,16 @@ func TestChatPolicyManifestRejectsUnknownCapabilities(t *testing.T) {
 		t.Fatal("typo silently accepted")
 	}
 }
+
+func TestBotManagementAdmissionIsDeclaredByProductManifest(t *testing.T) {
+	for _, mode := range []string{"builder", "run"} {
+		for _, readOnly := range []bool{false, true} {
+			if !ChatCapabilities(mode, "interactive", readOnly)["bot_management"] {
+				t.Fatal("interactive bot inspection was not declared")
+			}
+			if ChatCapabilities(mode, "pulse", readOnly)["bot_management"] {
+				t.Fatal("pulse admitted undeclared bot management")
+			}
+		}
+	}
+}

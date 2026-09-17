@@ -137,3 +137,20 @@ func containsString(values []string, want string) bool {
 	}
 	return false
 }
+
+func TestBotsFeatureControlsSlackCredentialTools(t *testing.T) {
+	for _, enabled := range []bool{false, true} {
+		profile := Profile{ToolPolicy: ToolPolicy{Mode: ToolPolicyModeAllowlist}}
+		if enabled {
+			profile.Features = []FeatureBinding{{ID: "bots"}}
+		}
+		if err := ResolveFeatures(&profile); err != nil {
+			t.Fatal(err)
+		}
+		for _, name := range []string{"configure_slack_bot", "get_slack_bot_credentials", "test_slack_bot_connection", "create_slack_bot_route"} {
+			if containsString(profile.ToolPolicy.Enabled, name) != enabled {
+				t.Fatalf("%s admission does not follow bots feature", name)
+			}
+		}
+	}
+}

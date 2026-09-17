@@ -68,7 +68,7 @@ Reuse an Idempotency-Key for retries of the same event; GitHub uses its delivery
 
 ## Configuration and management API
 
-API triggers are stored beside time schedules in `workflow.json.schedules`, with `schedule_type="webhook"`, `route_selections`, `group_names`, constrained run mode, and a `webhook` configuration containing auth mode and encrypted secret. The scheduler does not register clock ticks or missed occurrences for them. Each API trigger has a separate collision lock. A webhook can overlap schedules and other triggers; two deliveries to the same trigger remain serialized.
+API triggers are stored beside time schedules in `workflow.json.schedules`, with `schedule_type="webhook"`, `route_selections`, `group_names`, constrained run mode, and a `webhook` configuration containing auth mode and encrypted secret. The scheduler does not register clock ticks or missed occurrences for them. A webhook can overlap schedules and other triggers. Each trigger accepts up to four concurrent deliveries; every delivery owns a separate runtime state, durable lease, session, input file, and immutable hook folder.
 
 Authenticated management endpoints are `GET/POST /api/workflow-webhooks` and `PUT/DELETE /api/workflow-webhooks/{id}`. Supply `workspace_path` in mutation JSON or GET/DELETE query parameters. Writes require workflow ownership/write access; readers may inspect bindings but receive no secrets. POST/PUT accept `name`, `enabled`, `auth_mode` (`bearer`/`github`), `route_selections`, `group_names`, and optional `rotate_secret`. Responses include the relative endpoint `path`; a plaintext `secret` appears only when newly issued. The inbound endpoint and its run-result/artifact endpoints bypass user JWT authentication and perform their own trigger-specific authentication.
 
@@ -219,8 +219,9 @@ percentage or denominator that counts unused branches. Builder can read this wit
 Cleanup retains the latest 10 terminal webhook runs independently of schedules,
 plus all active runs. After expiration, history/status remains accessible with
 `artifacts_expired=true`; artifact requests return 410 Gone. CI should archive
-assets promptly. The same trigger remains serialized (503 while busy); hooks and
-schedules otherwise share provider capacity but have separate run locks. Shared
+assets promptly. A fifth concurrent delivery receives 503 with `Retry-After: 30`;
+retry with the same delivery ID for idempotent recovery. Hooks and schedules
+otherwise share provider capacity but have separate run locks. Shared
 KB/scripts, database semantics and external effects are not isolated by folders:
 use transactional DB tools, existing resource locks and idempotent route actions.
 

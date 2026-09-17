@@ -594,8 +594,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 					return
 				}
 				log.Printf("[BROWSER_TRACKER] Auto-evicting session %q to free slot for %q", evictSession, session)
-				killSessionRuntime(evictSession)
-				removeSessionFiles(evictSession)
+				killSessionRuntimeFully(evictSession)
 				tracker.Remove(evictSession)
 			}
 
@@ -986,8 +985,7 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			clearCDPTabSelectionsForPort(cdpPort)
 			clearCDPExclusiveFeaturesForPort(cdpPort)
 		} else {
-			killSessionRuntime(session)
-			removeSessionFiles(session)
+			killSessionRuntimeFully(session)
 		}
 		if isHeadless {
 			tracker.Remove(session)
@@ -995,6 +993,12 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		return `{"success":true,"message":"session reset — ready for fresh open"}`, nil
 	}
 
+	if isHeadless && session != SharedSessionName && !isBrowserOpenCommand(command) {
+		// Baseline reading for whatever command is about to run against an
+		// already-open session, so a "dead session" failure a moment later can
+		// be compared against what was actually alive right before the attempt.
+		logPreKillDiagnostics(session)
+	}
 	output, err := e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
 
 	// After a successful open/navigate, record Chrome's PID so killSessionRuntime can
@@ -1005,17 +1009,23 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	}
 
 	// isDeadSession returns true for errors that mean the browser session no longer
-	// exists and we need to start fresh. Both error strings come from agent-browser itself:
+	// exists and we need to start fresh. Error strings come from agent-browser/Chrome:
 	//   "CDP response channel closed"   — Chrome crashed while connected
 	//   "No such file or directory"     — daemon socket was deleted (e.g. after a reset
 	//                                     that ran concurrently with this command)
+	//   "ProcessSingleton"              — Chrome refused to launch because a stale
+	//                                     SingletonLock/SingletonSocket/SingletonCookie
+	//                                     was left behind by a previous crash of THIS
+	//                                     session's own Chrome (the old process is
+	//                                     already gone, only its lock files remain)
 	isDeadSession := func(e error) bool {
 		if e == nil {
 			return false
 		}
 		msg := e.Error()
 		return strings.Contains(msg, "CDP response channel closed") ||
-			strings.Contains(msg, "No such file or directory")
+			strings.Contains(msg, "No such file or directory") ||
+			strings.Contains(msg, "ProcessSingleton")
 	}
 
 	// Auto-recover from dead sessions — Chrome crashed or the daemon socket was removed.
@@ -1031,8 +1041,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		}
 		if canRecover {
 			log.Printf("[BROWSER] Dead session detected for %q (%v), killing stale runtime and retrying", session, err)
-			killSessionRuntime(session)
-			removeSessionFiles(session)
+			logPreKillDiagnostics(session)
+			killSessionRuntimeFully(session)
 			if isCdpMode {
 				clearCDPActiveTabForPort(cdpPort)
 				clearCDPExclusiveFeaturesForPort(cdpPort)
@@ -1067,6 +1077,25 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 			// On successful retry, record Chrome PID for the fresh session.
 			if err == nil && isOpenCommand {
 				captureChromePID(session)
+			}
+			// A ProcessSingleton failure on the retry itself (not just the
+			// original error) means 2s wasn't enough for the OS to finish
+			// tearing down the just-killed Chrome/daemon before this profile's
+			// singleton files were recreated -- confirmed live on SparkQuill:
+			// the automatic retry failed with the identical error, but a
+			// manual retry moments later against the same profile succeeded
+			// immediately. One bounded extra attempt with a longer pause
+			// covers that timing gap instead of surfacing a transient race as
+			// a hard failure the user has to retry by hand.
+			if err != nil && strings.Contains(err.Error(), "ProcessSingleton") {
+				log.Printf("[BROWSER] Retry for %q still hit ProcessSingleton, giving the OS more time and trying once more", session)
+				logPreKillDiagnostics(session)
+				killSessionRuntimeFully(session)
+				time.Sleep(5 * time.Second)
+				output, err = e.Client.ExecuteCommand(ctx, cmdArgs, commandOpts)
+				if err == nil && isOpenCommand {
+					captureChromePID(session)
+				}
 			}
 		}
 	}
@@ -1663,9 +1692,49 @@ func isCDPRuntimeStartupError(err error) bool {
 }
 
 // sessionDirs returns the directories where agent-browser stores session files.
+// sessionDirs returns every directory that might hold agent-browser's own
+// per-session bookkeeping files (.pid, .chrome-pid, .sock, ...), in the same
+// order agent-browser itself would resolve them.
+//
+// When AGENT_BROWSER_NAMESPACE is set (every fixed-workspace product with a
+// persistent shared profile sets this, to isolate daemon sockets/state from
+// other products on the same shared host -- see browserconfig.SharedProfile),
+// agent-browser puts these files under a namespaces/$NAMESPACE/run/
+// subdirectory instead of flat under $HOME/.agent-browser or
+// /tmp/.agent-browser. The base directory for that subtree depends on
+// whether XDG_RUNTIME_DIR is visible to the process that actually spawns
+// agent-browser: the real production path -- execute_shell_command's
+// Landlock-sandboxed subprocess, invoked from sparkquill-workspace -- does
+// not propagate it even though sparkquill-workspace's own environment has it
+// set, so agent-browser falls back to /tmp there. Confirmed directly:
+// running the identical command through /api/execute (the real path) wrote
+// to /tmp/.agent-browser/namespaces/$NS/run/, not
+// $XDG_RUNTIME_DIR/agent-browser/namespaces/$NS/run/, even though
+// XDG_RUNTIME_DIR was set on sparkquill-workspace.service itself. Both are
+// checked, in that order, since an interactive shell (which does get
+// XDG_RUNTIME_DIR from the login session) uses the XDG one.
+//
+// Before this fix, this function checked neither namespaced location at
+// all: captureChromePID could never find a daemon PID to read, so it never
+// recorded Chrome's PID; and killSessionRuntime's force-kill fallback
+// (steps 2-4, the path specifically meant to catch an already-hung or
+// already-crashed daemon that can't gracefully close itself) silently
+// found nothing to kill every single time, on every namespaced deployment,
+// since the namespace was introduced. gracefulCloseSession still worked
+// (it shells out to agent-browser's own `close` command, which resolves
+// its own namespace correctly), which is exactly why this went unnoticed:
+// the happy path recovered fine, and only the fallback -- the one case
+// that matters most, a daemon too dead to close itself -- was silently
+// broken.
 func sessionDirs() []string {
-	homeDir, _ := os.UserHomeDir()
 	dirs := []string{}
+	if ns := strings.TrimSpace(os.Getenv("AGENT_BROWSER_NAMESPACE")); ns != "" {
+		if runtimeDir := strings.TrimSpace(os.Getenv("XDG_RUNTIME_DIR")); runtimeDir != "" {
+			dirs = append(dirs, filepath.Join(runtimeDir, "agent-browser", "namespaces", ns, "run"))
+		}
+		dirs = append(dirs, filepath.Join("/tmp/.agent-browser", "namespaces", ns, "run"))
+	}
+	homeDir, _ := os.UserHomeDir()
 	if homeDir != "" {
 		dirs = append(dirs, filepath.Join(homeDir, ".agent-browser"))
 	}
@@ -1722,6 +1791,70 @@ func killChromePID(chromePID int, session string) {
 	} else {
 		log.Printf("[BROWSER] Killed Chrome process group PGID=%d for session %q", chromePID, session)
 	}
+}
+
+// logPreKillDiagnostics captures the exact state we're about to destroy,
+// right before killSessionRuntimeFully runs, so a live incident can show
+// whether Chrome was actually already dead or whether recovery is about to
+// kill a session that was still working fine. Added while chasing a
+// recurring SparkQuill failure where `open` succeeds but the very next
+// command (`snapshot`) immediately reports the session dead -- this answers
+// the open question of whether that's a real Chrome crash or a false
+// positive from whatever decides the session needs a fresh launch.
+func logPreKillDiagnostics(session string) {
+	var daemonPID, chromePID int
+	var daemonAlive, chromeAlive bool
+	for _, dir := range sessionDirs() {
+		if daemonPID == 0 {
+			if b, err := os.ReadFile(filepath.Join(dir, session+".pid")); err == nil {
+				if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 {
+					daemonPID = p
+					daemonAlive = isProcessAlive(p)
+				}
+			}
+		}
+		if chromePID == 0 {
+			if b, err := os.ReadFile(filepath.Join(dir, session+".chrome-pid")); err == nil {
+				if p, err := strconv.Atoi(strings.TrimSpace(string(b))); err == nil && p > 0 {
+					chromePID = p
+					chromeAlive = isProcessAlive(p)
+				}
+			}
+		}
+	}
+
+	lockState := "no-shared-profile"
+	if profile := ProfilePathForSession(session); profile != "" {
+		var present []string
+		for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+			path := filepath.Join(profile, name)
+			if info, err := os.Lstat(path); err == nil {
+				age := time.Since(info.ModTime()).Round(time.Millisecond)
+				present = append(present, fmt.Sprintf("%s(age=%s)", name, age))
+			}
+		}
+		if len(present) == 0 {
+			lockState = "none-present"
+		} else {
+			lockState = strings.Join(present, ",")
+		}
+	}
+
+	// Independent of the stored PID files above, which can go stale if the
+	// daemon respawned Chrome under a new PID (a known race — see the
+	// comment on killSessionRuntime's step 2). This catches that case.
+	liveMatches := "?"
+	if out, err := runCommand("pgrep", "-af", session); err == nil {
+		lines := strings.Split(strings.TrimSpace(out), "\n")
+		if strings.TrimSpace(out) == "" {
+			liveMatches = "none"
+		} else {
+			liveMatches = strconv.Itoa(len(lines))
+		}
+	}
+
+	log.Printf("[BROWSER_DIAG] state snapshot for %q: daemonPID=%d daemonAlive=%v chromePID=%d chromeAlive=%v lockFiles=[%s] liveProcessesMatchingSession=%s",
+		session, daemonPID, daemonAlive, chromePID, chromeAlive, lockState, liveMatches)
 }
 
 // killSessionRuntime closes the agent-browser session and kills all associated
@@ -1913,6 +2046,27 @@ func runCommand(name string, args ...string) (string, error) {
 	return string(out), err
 }
 
+// killSessionRuntimeFully is the complete teardown sequence for a session
+// whose runtime is being stopped: kill the daemon/Chrome processes, remove
+// agent-browser's own bookkeeping files, and clear any stale Chrome
+// ProcessSingleton lock left in the profile directory.
+//
+// Use this instead of calling killSessionRuntime/removeSessionFiles directly.
+// Before this helper existed, three separate call sites each reimplemented
+// the first two steps but not the third -- the idle reaper, auto-eviction
+// (freeing a session slot for a new open), and KillAllTrackedSessions (every
+// server SIGTERM, i.e. every deploy). Confirmed live on SparkQuill: any one
+// of those killing a session with an active Chrome left its SingletonLock/
+// SingletonSocket/SingletonCookie behind, and the next launch attempt against
+// that persistent profile -- sometimes tens of minutes later, on the very
+// first try -- failed with "Failed to create a ProcessSingleton for your
+// profile directory" even though nothing was actually still running.
+func killSessionRuntimeFully(session string) {
+	killSessionRuntime(session)
+	removeSessionFiles(session)
+	removeStaleChromeSingletonLock(session)
+}
+
 // removeSessionFiles removes agent-browser session state files (.pid, .sock, etc.)
 // so the next command starts a fresh runtime + Chrome instead of connecting to a
 // dead one. Call killSessionRuntime first to stop the daemon before removing its files.
@@ -1931,5 +2085,33 @@ func removeSessionFiles(session string) {
 		if removed {
 			log.Printf("[BROWSER] Removed stale session files for %q in %s", session, dir)
 		}
+	}
+}
+
+// removeStaleChromeSingletonLock clears Chrome's own ProcessSingleton lock
+// files (SingletonLock/SingletonSocket/SingletonCookie) from a persistent
+// shared profile after this session's runtime has just been killed. Chrome
+// does not always clean these up on an unclean exit, and their mere presence
+// makes the NEXT launch attempt refuse to start at all -- "Failed to create
+// ProcessSingleton for your profile directory ... Aborting now to avoid
+// profile corruption" -- even though the old process is provably gone (we
+// just killed it above). removeSessionFiles only cleans agent-browser's own
+// daemon bookkeeping files (.pid/.sock/...), never Chrome's, so every single
+// auto-recovery retry after a crash was guaranteed to hit this immediately.
+// Confirmed live on SparkQuill: a crashed session's every recovery attempt
+// failed with exactly this error until the lock was removed by hand.
+func removeStaleChromeSingletonLock(session string) {
+	profile := ProfilePathForSession(session)
+	if profile == "" {
+		return
+	}
+	removed := false
+	for _, name := range []string{"SingletonLock", "SingletonSocket", "SingletonCookie"} {
+		if err := os.Remove(filepath.Join(profile, name)); err == nil {
+			removed = true
+		}
+	}
+	if removed {
+		log.Printf("[BROWSER] Removed stale Chrome singleton lock for %q in %s", session, profile)
 	}
 }

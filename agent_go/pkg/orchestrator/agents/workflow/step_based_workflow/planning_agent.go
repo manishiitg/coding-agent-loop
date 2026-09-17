@@ -5881,7 +5881,16 @@ func createCreatePlanExecutor(workspacePath string, logger loggerv2.Logger, read
 		}
 
 		logger.Info(fmt.Sprintf("🆕 Created new empty plan.json at %s", planPath))
-		return fmt.Sprintf("Created empty plan.json at %s. Add steps with add_scripted_step / add_message_sequence_step / add_human_input_step / add_todo_task_step / add_routing_step. For the first step, pass insert_after_step_id=\"\" to insert at the beginning.", planPath), nil
+		return fmt.Sprintf(`Created empty plan.json at %s. For the first step, pass insert_after_step_id="" to insert at the beginning.
+
+Before adding it, decide the step type by who decides the work, not by habit:
+- add_message_sequence_step is the DEFAULT for conversational/judgment work, including one-turn work. Default to one large message_sequence per shared-context span; split only for a concrete boundary (distinct durable output, independent retry/failure domain, different credentials/tools, a downstream consumer needing the intermediate artifact, or a human checkpoint) — not because there are several known sub-tasks or many tool calls.
+- add_scripted_step only for deterministic, no-judgment work (fixed API/CLI/data fetch, parsing, mechanical writes). A known list of actions sharing one context is still ONE message_sequence, not one scripted/agentic step per action.
+- add_todo_task_step (orchestrator) only when the parent must interpret runtime evidence and change its own strategy — a fixed child set/order does not qualify.
+- add_routing_step / add_branch_step only for a real fixed branch choice (routing: one major sub-workflow fork per plan; branch: a small in-flow decision).
+- add_human_input_step only for a free-form value the workflow cannot otherwise obtain.
+
+For the full decision playbook and anti-patterns, call read_skill(skills=[{"name":"builder-reference","path":"references/plan-design.md"}]) before adding the first step.`, planPath), nil
 	}
 }
 

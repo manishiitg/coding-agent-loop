@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -10,11 +11,14 @@ import (
 	"strings"
 	"time"
 
+	agentevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/pathidentity"
+
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 // claudeNativeTranscriptRuntime is the minimal subset of a persisted builder
@@ -51,8 +55,10 @@ type claudeTranscriptContentBlock struct {
 // scheduleWorkflowBuilderNativeTranscriptSync closes the persistence gap for
 // retained live-input turns. The turn-completion observer must stay fast, so
 // transcript I/O runs off-path and is coalesced per session. Claude normally
-// flushes its JSONL before it signals completion; the short retries cover the
-// small race where the completion event wins that flush.
+// usually flushes its native transcript before it signals completion. Cursor
+// can acknowledge completion first and flush the final assistant message a few
+// seconds later, so keep reconciling for a bounded window even when an earlier
+// attempt recovered progress messages.
 func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID string) {
 	if api == nil || strings.TrimSpace(sessionID) == "" {
 		return
@@ -62,6 +68,20 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 	api.sessionWorkspaceMu.RUnlock()
 	if workspacePath == "" {
 		return
+	}
+	userID := ""
+	if api.eventStore != nil {
+		userID = strings.TrimSpace(api.eventStore.GetSessionOwner(sessionID))
+	}
+	if userID == "" {
+		api.activeSessionsMux.RLock()
+		if session := api.activeSessions[sessionID]; session != nil {
+			userID = strings.TrimSpace(session.UserID)
+		}
+		api.activeSessionsMux.RUnlock()
+	}
+	if userID == "" {
+		userID = "default"
 	}
 
 	api.nativeTranscriptSyncMu.Lock()
@@ -82,15 +102,18 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 			api.nativeTranscriptSyncMu.Unlock()
 		}()
 
-		for attempt, delay := range []time.Duration{0, 300 * time.Millisecond, time.Second} {
+		delays := []time.Duration{0, 300 * time.Millisecond, time.Second, 2 * time.Second, 4 * time.Second, 8 * time.Second}
+		for attempt, delay := range delays {
 			if delay > 0 {
 				time.Sleep(delay)
 			}
-			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), sessionID, workspacePath)
-			if changed || !supported {
+			changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
+			if !supported {
 				return
 			}
-			log.Printf("[CHAT_HISTORY] Native transcript sync found no completed assistant reply yet; retrying session=%s attempt=%d", sessionID, attempt+1)
+			if attempt+1 < len(delays) {
+				log.Printf("[CHAT_HISTORY] Native transcript sync reconciliation complete; scheduling follow-up session=%s attempt=%d changed=%t", sessionID, attempt+1, changed)
+			}
 		}
 	}()
 }
@@ -100,12 +123,15 @@ func (api *StreamingAPI) scheduleWorkflowBuilderNativeTranscriptSync(sessionID s
 // The returned supported value is false for providers without a transcript
 // reader (see nativeTranscriptSyncSupportedProvider), avoiding needless
 // retries for formats this package cannot parse.
-func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx context.Context, sessionID, workspacePath string) (changed, supported bool) {
-	raw, err := ReadChatHistoryConversation("default", sessionID, workspacePath)
+func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx context.Context, userID, sessionID, workspacePath string) (changed, supported bool) {
+	if strings.TrimSpace(userID) == "" {
+		userID = "default"
+	}
+	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(raw) == 0 || !claudeNativeTranscriptSyncSupported(raw) {
 		return false, false
 	}
-	conversationPath, found, err := findWorkflowBuilderConversationPathForSession(ctx, sessionID, workspacePath)
+	conversationPath, found, err := findWorkflowBuilderConversationPathForSession(ctx, userID, sessionID, workspacePath)
 	if err != nil || !found || strings.TrimSpace(conversationPath) == "" {
 		return false, true
 	}
@@ -116,13 +142,25 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	}
 	refreshed := api.refreshLatestBuilderConversationFromNativeTranscript(ctx, conversationPath, string(raw), current)
 	if builderConversationHistoriesEqual(refreshed.ConversationHistory, current.ConversationHistory) && refreshed.UpdatedAt == current.UpdatedAt {
+		// A restart can restore an older UI-event trace even though the durable
+		// conversation is already complete. Repair the recent live window from
+		// that canonical history as well; otherwise refresh keeps omitting final
+		// replies that transcript catch-up persisted before the restart.
+		api.publishNativeTranscriptRecoveredAssistantMessages(
+			sessionID,
+			nil,
+			recentBuilderConversationMessages(current.ConversationHistory, 50),
+		)
+		// Keep changed=false so the completion scheduler still performs its
+		// short retries. A pre-flush attempt may repair older live rows while the
+		// current provider answer has not reached the native transcript yet.
 		return false, true
 	}
 
 	// refreshLatest... writes the full record while preserving runtime and other
 	// opaque fields. Re-read that canonical result before rebuilding the index.
 	// If the write failed, do not advertise a transcript we did not persist.
-	persistedRaw, err := ReadChatHistoryConversation("default", sessionID, workspacePath)
+	persistedRaw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(persistedRaw) == 0 {
 		return false, true
 	}
@@ -154,15 +192,165 @@ func (api *StreamingAPI) syncWorkflowBuilderConversationFromNativeTranscript(ctx
 	); err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript sync: cannot update index for %s: %v", conversationPath, err)
 	}
+	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current.ConversationHistory, refreshed.ConversationHistory)
 	return true, true
+}
+
+// publishNativeTranscriptRecoveredAssistantMessages closes the live-display
+// half of transcript recovery. Persisting a provider-native reply makes it
+// visible after refresh, but an already-open Chat only observes EventStore.
+// Publish each recovered assistant message as the same whole-message
+// transcript chunk used by normal CLI streaming. This deliberately is not a
+// second completion event: a completion would settle the next queued retained
+// turn when several user messages were submitted together.
+func (api *StreamingAPI) publishNativeTranscriptRecoveredAssistantMessages(sessionID string, current, refreshed []builderConversationMessage) int {
+	if api == nil || api.eventStore == nil || strings.TrimSpace(sessionID) == "" {
+		return 0
+	}
+
+	currentCounts := assistantMessageCounts(current)
+	eventCounts := liveAssistantMessageCounts(api.eventStore.GetAllEventsRaw(sessionID))
+	refreshedCounts := make(map[string]int)
+	now := time.Now()
+	published := 0
+	for index, message := range refreshed {
+		if !builderConversationRoleIsAssistant(message.Role) {
+			continue
+		}
+		text := builderConversationMessageText(message)
+		key := normalizedAssistantMessageText(text)
+		if key == "" {
+			continue
+		}
+		refreshedCounts[key]++
+		ordinal := refreshedCounts[key]
+		if ordinal <= currentCounts[key] || ordinal <= eventCounts[key] {
+			continue
+		}
+
+		chunk := &agentevents.StreamingChunkEvent{
+			BaseEventData: agentevents.BaseEventData{
+				Timestamp: now,
+				SessionID: sessionID,
+				Component: "coding_agent",
+				Metadata: map[string]interface{}{
+					"source":         "native_transcript_sync",
+					"recovered_live": true,
+				},
+			},
+			Content:    text,
+			ChunkIndex: index,
+			Source:     agentevents.StreamingChunkSourceTranscript,
+		}
+		agentEvent := agentevents.NewAgentEvent(chunk)
+		agentEvent.SessionID = sessionID
+		agentEvent.Component = "coding_agent"
+		api.eventStore.AddEvent(sessionID, storeevents.Event{
+			ID:              fmt.Sprintf("native-transcript-sync-%s-%d", sessionID, index),
+			Type:            string(agentevents.StreamingChunk),
+			Timestamp:       now,
+			SessionID:       sessionID,
+			ExecutionKind:   "main_agent",
+			TerminalOwnerID: "main:" + sessionID,
+			Data:            agentEvent,
+		})
+		eventCounts[key]++
+		published++
+		log.Printf("[CHAT_HISTORY] Published recovered native assistant reply to live chat session=%s history_index=%d chars=%d", sessionID, index, len(text))
+	}
+	return published
+}
+
+func recentBuilderConversationMessages(messages []builderConversationMessage, limit int) []builderConversationMessage {
+	if limit <= 0 {
+		return nil
+	}
+	start := len(messages)
+	seen := 0
+	for start > 0 && seen < limit {
+		start--
+		message := messages[start]
+		role := strings.ToLower(strings.TrimSpace(message.Role))
+		if builderConversationMessageText(message) == "" || (role != "human" && role != "user" && !builderConversationRoleIsAssistant(role)) {
+			continue
+		}
+		seen++
+	}
+	return messages[start:]
+}
+
+func builderConversationRoleIsAssistant(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "ai", "assistant":
+		return true
+	default:
+		return false
+	}
+}
+
+func normalizedAssistantMessageText(text string) string {
+	return strings.Join(strings.Fields(text), " ")
+}
+
+func assistantMessageCounts(messages []builderConversationMessage) map[string]int {
+	counts := make(map[string]int)
+	for _, message := range messages {
+		if !builderConversationRoleIsAssistant(message.Role) {
+			continue
+		}
+		if key := normalizedAssistantMessageText(builderConversationMessageText(message)); key != "" {
+			counts[key]++
+		}
+	}
+	return counts
+}
+
+func liveAssistantMessageCounts(events []storeevents.Event) map[string]int {
+	counts := make(map[string]int)
+	for _, event := range events {
+		if event.ExecutionKind != "" && event.ExecutionKind != "main_agent" {
+			continue
+		}
+		payload := eventPayloadMap(event)
+		if len(payload) == 0 {
+			continue
+		}
+		var text string
+		switch event.Type {
+		case "streaming_chunk":
+			if source, _ := payload["source"].(string); !strings.EqualFold(strings.TrimSpace(source), agentevents.StreamingChunkSourceTranscript) {
+				continue
+			}
+			text, _ = payload["content"].(string)
+		case "llm_generation_end":
+			text, _ = payload["content"].(string)
+			if strings.TrimSpace(text) == "" {
+				text, _ = payload["result"].(string)
+			}
+		case "unified_completion", "conversation_end":
+			text, _ = payload["final_result"].(string)
+			if strings.TrimSpace(text) == "" {
+				text, _ = payload["result"].(string)
+			}
+		default:
+			continue
+		}
+		if key := normalizedAssistantMessageText(text); key != "" {
+			counts[key]++
+		}
+	}
+	return counts
 }
 
 // findWorkflowBuilderConversationPathForSession normally resolves through the
 // history index. The folder-list fallback covers a newly written transcript
 // before that index exists (and remote workspace deployments without the local
 // directory fast path).
-func findWorkflowBuilderConversationPathForSession(ctx context.Context, sessionID, workspacePath string) (string, bool, error) {
-	if path, found, err := FindChatHistoryConversationPathForSession("default", sessionID, workspacePath); err != nil || found {
+func findWorkflowBuilderConversationPathForSession(ctx context.Context, userID, sessionID, workspacePath string) (string, bool, error) {
+	if strings.TrimSpace(userID) == "" {
+		userID = "default"
+	}
+	if path, found, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath); err != nil || found {
 		return path, found, err
 	}
 	listing, exists, err := listWorkspaceFolder(ctx, strings.Trim(strings.TrimSpace(workspacePath), "/")+"/builder/conversation", 5)

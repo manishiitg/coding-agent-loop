@@ -516,6 +516,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	if kbAccessAllowsWrite(kbAccess) {
 		notesPath := fmt.Sprintf("%s/notes", getKnowledgebasePath(baseWorkspacePath))
 		writePaths = append(writePaths, notesPath)
+		// A "write" knowledgebase_source grants the same notes/-only write,
+		// just in a resolved external workflow's KB instead of this one's own.
+		writePaths = append(writePaths, writableExternalKBNotesPaths(baseWorkspacePath)...)
 	}
 
 	// User-supplied runtime context lives under knowledgebase/context/

@@ -30,11 +30,14 @@ import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
 import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
+import { WorkflowActivityButton } from '../../topbar/WorkflowActivityButton'
+import { useAppStore } from '../../../stores/useAppStore'
+import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const WORKFLOW_SCHEDULE_TOOLBAR_LIMIT = 10_000
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'webhooks', 'schedules', 'execution-logs'])
 const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
@@ -520,6 +523,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                   </TooltipTrigger>
                   <TooltipContent side="bottom"><p>{pendingDecisionCount > 0 ? `Pulse · ${pendingDecisionCount} ${pendingDecisionCount === 1 ? 'decision needs' : 'decisions need'} your input` : 'Pulse'}</p></TooltipContent>
                 </Tooltip>
+                <WorkflowActivityButton
+                  workspacePath={workspacePath}
+                  onOpen={() => {
+                    useLLMStore.getState().setShowLLMModal(false)
+                    const app = useAppStore.getState()
+                    app.setShowSchedulesOverview(false)
+                    app.setActivityWorkflowPath(workspacePath)
+                    app.setShowWorkflowsOverview(true)
+                  }}
+                />
                 {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
                   const active = view === activeWorkspaceView
                   const viewButton = (
@@ -554,7 +567,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                       <span className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full border border-background ${scheduleStatusDotClass}`} />
                     </button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom"><p>{scheduleTooltip} · Webhooks</p></TooltipContent>
+                  <TooltipContent side="bottom"><p>{scheduleTooltip}</p></TooltipContent>
                 </Tooltip>
               </div>
           )}

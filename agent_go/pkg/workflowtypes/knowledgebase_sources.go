@@ -7,6 +7,9 @@ import (
 )
 
 // KnowledgebaseSource attaches only another workflow's local KB, never its attachments.
+// Access is "read" (read-only, the default) or "write" (read+write into the
+// source's knowledgebase/notes/ only -- write implies read, so a contributor
+// can see existing notes before adding its own; there is no write-only value).
 type KnowledgebaseSource struct {
 	WorkflowID string `json:"workflow_id"`
 	Alias      string `json:"alias"`
@@ -27,8 +30,8 @@ func ValidateKnowledgebaseSources(sources []KnowledgebaseSource, ownID string) e
 		if source.WorkflowID == "" || strings.TrimSpace(source.WorkflowID) != source.WorkflowID || source.WorkflowID == ownID {
 			return fmt.Errorf("KB source requires another workflow's ID")
 		}
-		if source.Access != "read" {
-			return fmt.Errorf("shared knowledgebase access must be read")
+		if source.Access != "read" && source.Access != "write" {
+			return fmt.Errorf("shared knowledgebase access must be read or write")
 		}
 		if aliases[source.Alias] || ids[source.WorkflowID] {
 			return fmt.Errorf("duplicate KB source or alias")

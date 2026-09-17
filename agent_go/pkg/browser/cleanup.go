@@ -36,8 +36,7 @@ func KillAllTrackedSessions() {
 	log.Printf("[BROWSER_CLEANUP] SIGTERM: killing %d tracked browser session(s): %v", len(sessions), sessions)
 	for i, session := range sessions {
 		log.Printf("[BROWSER_CLEANUP] Killing browser session %d/%d: %s", i+1, len(sessions), session)
-		killSessionRuntime(session)
-		removeSessionFiles(session)
+		killSessionRuntimeFully(session)
 		log.Printf("[BROWSER_CLEANUP] Finished browser session %d/%d: %s", i+1, len(sessions), session)
 	}
 	tracker.Clear()

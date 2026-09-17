@@ -511,12 +511,13 @@ type StreamingAPI struct {
 	// instead of guessing activity solely from the latest rendered spinner text.
 	retainedMainTurns            map[string]time.Time
 	retainedMainTurnExecutionIDs map[string]string
-	// A retained CLI turn can receive a live-steered child completion while it
-	// is already processing a user/schedule message. Both exact lifecycle nodes
-	// end at the same idle-composer boundary; keep the additional IDs instead of
-	// replacing the original message root.
-	retainedMainTurnAdditionalExecutionIDs map[string]map[string]struct{}
-	retainedMainTurnWatchCancels           map[string]context.CancelFunc
+	// A retained CLI can accept another message while its current response is
+	// still running. Coding providers queue that input as a distinct turn, so
+	// preserve the corresponding execution roots in submission order. Settling
+	// the current answer must promote the next root instead of completing every
+	// message at the first idle boundary.
+	retainedMainTurnPendingExecutionIDs map[string][]string
+	retainedMainTurnWatchCancels        map[string]context.CancelFunc
 	// retainedMainTurnCompletionEmitted guards emitRetainedMainTurnStreamCompletion
 	// against firing twice for one logical turn. Idle-composer detection
 	// (observeRetainedMainTurnStream) and a closed control stream that already
@@ -1915,29 +1916,29 @@ func runServer(cmd *cobra.Command, args []string) {
 		// Initialize workflow step ID storage
 		workflowStepIDs: make(map[string]string),
 		// Initialize background agent infrastructure
-		bgAgentRegistry:                        NewBackgroundAgentRegistry(),
-		sessionBusy:                            make(map[string]bool),
-		sessionBusySince:                       make(map[string]time.Time),
-		retainedMainTurns:                      make(map[string]time.Time),
-		retainedMainTurnExecutionIDs:           make(map[string]string),
-		retainedMainTurnAdditionalExecutionIDs: make(map[string]map[string]struct{}),
-		retainedMainTurnWatchCancels:           make(map[string]context.CancelFunc),
-		nativeTranscriptSyncInFlight:           make(map[string]bool),
-		pendingCompletions:                     make(map[string][]string),
-		completionRetryScheduled:               make(map[string]bool),
-		pendingStartNotifications:              make(map[string][]string),
-		startNotificationRetryScheduled:        make(map[string]bool),
-		lastQueryRequests:                      make(map[string]QueryRequest),
-		sessionWorkspaceFolders:                make(map[string]string),
-		sessionAgents:                          make(map[string]*agent.LLMAgentWrapper),
-		runningAgents:                          make(map[string]*mcpagent.Agent),
-		sessionInputLanes:                      make(map[string]*sessionInputLane),
-		completionLoopStarted:                  make(map[string]bool),
-		lastWorkshopModeBySession:              make(map[string]string),
-		lastChatPolicyBySession:                make(map[string]string),
-		lastAgentProfileKeyBySession:           make(map[string]string),
-		stoppedSessions:                        make(map[string]bool),
-		interruptedTurns:                       make(map[string]bool),
+		bgAgentRegistry:                     NewBackgroundAgentRegistry(),
+		sessionBusy:                         make(map[string]bool),
+		sessionBusySince:                    make(map[string]time.Time),
+		retainedMainTurns:                   make(map[string]time.Time),
+		retainedMainTurnExecutionIDs:        make(map[string]string),
+		retainedMainTurnPendingExecutionIDs: make(map[string][]string),
+		retainedMainTurnWatchCancels:        make(map[string]context.CancelFunc),
+		nativeTranscriptSyncInFlight:        make(map[string]bool),
+		pendingCompletions:                  make(map[string][]string),
+		completionRetryScheduled:            make(map[string]bool),
+		pendingStartNotifications:           make(map[string][]string),
+		startNotificationRetryScheduled:     make(map[string]bool),
+		lastQueryRequests:                   make(map[string]QueryRequest),
+		sessionWorkspaceFolders:             make(map[string]string),
+		sessionAgents:                       make(map[string]*agent.LLMAgentWrapper),
+		runningAgents:                       make(map[string]*mcpagent.Agent),
+		sessionInputLanes:                   make(map[string]*sessionInputLane),
+		completionLoopStarted:               make(map[string]bool),
+		lastWorkshopModeBySession:           make(map[string]string),
+		lastChatPolicyBySession:             make(map[string]string),
+		lastAgentProfileKeyBySession:        make(map[string]string),
+		stoppedSessions:                     make(map[string]bool),
+		interruptedTurns:                    make(map[string]bool),
 	}
 	// Terminal Center's Formatted view and the runtime coordinator now consume
 	// the same accepted structured events. The terminal observer updates the
@@ -2594,6 +2595,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/variable-groups", api.handleGetVariableGroups).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/variable-groups", requireWorkflowWriteAccess(api.handleUpdateVariableGroups)).Methods("POST", "PUT", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs", api.handleGetExecutionLogs).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/workflow/logs/webhook-payload", api.handleGetExecutionWebhookPayload).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
@@ -7768,18 +7770,23 @@ func (api *StreamingAPI) markRetainedMainCodingTurnRunningWithOwner(sessionID st
 		if api.retainedMainTurnExecutionIDs == nil {
 			api.retainedMainTurnExecutionIDs = make(map[string]string)
 		}
-		if api.retainedMainTurnAdditionalExecutionIDs == nil {
-			api.retainedMainTurnAdditionalExecutionIDs = make(map[string]map[string]struct{})
+		if api.retainedMainTurnPendingExecutionIDs == nil {
+			api.retainedMainTurnPendingExecutionIDs = make(map[string][]string)
 		}
 		if _, alreadyTracked := api.retainedMainTurns[sessionID]; alreadyTracked {
 			primaryID := strings.TrimSpace(api.retainedMainTurnExecutionIDs[sessionID])
 			if executionID != "" && executionID != primaryID {
-				aliases := api.retainedMainTurnAdditionalExecutionIDs[sessionID]
-				if aliases == nil {
-					aliases = make(map[string]struct{})
-					api.retainedMainTurnAdditionalExecutionIDs[sessionID] = aliases
+				pending := api.retainedMainTurnPendingExecutionIDs[sessionID]
+				alreadyPending := false
+				for _, pendingID := range pending {
+					if pendingID == executionID {
+						alreadyPending = true
+						break
+					}
 				}
-				aliases[executionID] = struct{}{}
+				if !alreadyPending {
+					api.retainedMainTurnPendingExecutionIDs[sessionID] = append(pending, executionID)
+				}
 			}
 			api.retainedMainTurnsMu.Unlock()
 			watchCancel()
@@ -8113,22 +8120,41 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 	api.retainedMainTurnsMu.Lock()
 	currentStart, stillTracked := api.retainedMainTurns[sessionID]
 	executionID := strings.TrimSpace(api.retainedMainTurnExecutionIDs[sessionID])
-	executionIDs := make([]string, 0, 1+len(api.retainedMainTurnAdditionalExecutionIDs[sessionID]))
-	if executionID != "" {
-		executionIDs = append(executionIDs, executionID)
-	}
-	for additionalID := range api.retainedMainTurnAdditionalExecutionIDs[sessionID] {
-		if additionalID = strings.TrimSpace(additionalID); additionalID != "" && additionalID != executionID {
-			executionIDs = append(executionIDs, additionalID)
-		}
-	}
 	var watchCancel context.CancelFunc
+	var nextWatchCtx context.Context
+	var nextSnapshot terminals.Snapshot
+	var nextProvider llmproviders.Provider
+	promotedExecutionID := ""
+	failedPendingExecutionIDs := []string(nil)
 	if stillTracked && currentStart.Equal(startedAt) {
-		delete(api.retainedMainTurns, sessionID)
-		delete(api.retainedMainTurnExecutionIDs, sessionID)
-		delete(api.retainedMainTurnAdditionalExecutionIDs, sessionID)
 		watchCancel = api.retainedMainTurnWatchCancels[sessionID]
-		delete(api.retainedMainTurnWatchCancels, sessionID)
+		pending := api.retainedMainTurnPendingExecutionIDs[sessionID]
+		if len(pending) > 0 && !strings.EqualFold(strings.TrimSpace(snapshot.State), "failed") {
+			promotedExecutionID = strings.TrimSpace(pending[0])
+			api.retainedMainTurnPendingExecutionIDs[sessionID] = append([]string(nil), pending[1:]...)
+			api.retainedMainTurnExecutionIDs[sessionID] = promotedExecutionID
+			// The provider accepted this input while the previous response was
+			// active and begins it immediately after that response completes.
+			// Move the boundary forward so the prior completion cannot settle it.
+			api.retainedMainTurns[sessionID] = time.Now()
+			// The mcpagent Session owns only the response that was active when
+			// delivery began. Once it emits that completion its bridge can close,
+			// while the CLI continues with already-queued input. Observe the live
+			// terminal for every promoted turn so its later response is not lost.
+			var nextCancel context.CancelFunc
+			nextWatchCtx, nextCancel = context.WithCancel(context.Background())
+			api.retainedMainTurnWatchCancels[sessionID] = nextCancel
+			nextSnapshot = snapshot
+			nextProvider = llmproviders.Provider(retainedCodingAgentProvider(snapshot))
+		} else {
+			if strings.EqualFold(strings.TrimSpace(snapshot.State), "failed") {
+				failedPendingExecutionIDs = append(failedPendingExecutionIDs, pending...)
+			}
+			delete(api.retainedMainTurns, sessionID)
+			delete(api.retainedMainTurnExecutionIDs, sessionID)
+			delete(api.retainedMainTurnPendingExecutionIDs, sessionID)
+			delete(api.retainedMainTurnWatchCancels, sessionID)
+		}
 	} else {
 		stillTracked = false
 	}
@@ -8140,16 +8166,31 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 		watchCancel()
 	}
 
-	api.setSessionBusy(sessionID, false)
 	if strings.EqualFold(strings.TrimSpace(snapshot.State), "failed") {
+		api.setSessionBusy(sessionID, false)
 		api.updateSessionStatus(sessionID, "error")
-		for _, id := range executionIDs {
-			api.completeTrackedExecution(id, trackedExecutionStatusFailed, "retained coding-agent turn failed", nil)
+		if executionID != "" {
+			api.completeTrackedExecution(executionID, trackedExecutionStatusFailed, "retained coding-agent turn failed", nil)
+		}
+		for _, pendingID := range failedPendingExecutionIDs {
+			if pendingID = strings.TrimSpace(pendingID); pendingID != "" && pendingID != executionID {
+				api.completeTrackedExecution(pendingID, trackedExecutionStatusFailed, "retained coding-agent turn failed", nil)
+			}
 		}
 	} else {
-		api.updateSessionStatus(sessionID, "completed")
-		for _, id := range executionIDs {
-			api.completeTrackedExecution(id, trackedExecutionStatusCompleted, "", nil)
+		if executionID != "" {
+			api.completeTrackedExecution(executionID, trackedExecutionStatusCompleted, "", nil)
+		}
+		if promotedExecutionID != "" {
+			api.terminalStore.MarkTurnRunning(snapshot.TerminalID)
+			api.setSessionBusy(sessionID, true)
+			api.updateSessionStatus(sessionID, "running")
+			if nextWatchCtx != nil {
+				go api.observeRetainedMainTurnStream(nextWatchCtx, sessionID, nextSnapshot, nextProvider)
+			}
+		} else {
+			api.setSessionBusy(sessionID, false)
+			api.updateSessionStatus(sessionID, "completed")
 		}
 	}
 	// A live retained CLI turn bypasses handleQuery's normal final-save block.
@@ -8157,8 +8198,8 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 	// into the durable workflow conversation before a later restart can expose
 	// a user-only snapshot.
 	api.scheduleWorkflowBuilderNativeTranscriptSync(sessionID)
-	log.Printf("[RETAINED_TURN] Settled retained main-agent turn from structured %s event session=%s terminal=%s state=%s",
-		eventType, sessionID, snapshot.TerminalID, snapshot.State)
+	log.Printf("[RETAINED_TURN] Settled retained main-agent turn from structured %s event session=%s terminal=%s state=%s next_execution=%s",
+		eventType, sessionID, snapshot.TerminalID, snapshot.State, promotedExecutionID)
 }
 
 // deliverRetainedMainTerminalInput sends directly to a live main coding-agent
@@ -10078,14 +10119,19 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				if len(sched.RouteSelections) > 0 {
 					sb.WriteString(fmt.Sprintf("- **Route selections**: %v\n", sched.RouteSelections))
 				}
-				if strings.TrimSpace(sched.CollisionPolicy) != "" {
-					sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
+				if scheduleType == "webhook" {
+					sb.WriteString(fmt.Sprintf("- **Delivery concurrency**: parallel, up to %d active deliveries (server-enforced)\n", maxWebhookConcurrency))
+					sb.WriteString("- **Overflow policy**: retryable busy response (HTTP 503 with Retry-After)\n")
+				} else {
+					if strings.TrimSpace(sched.CollisionPolicy) != "" {
+						sb.WriteString(fmt.Sprintf("- **Collision policy**: %s\n", sched.CollisionPolicy))
+					}
+					concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
+					if concurrencyMode == "" {
+						concurrencyMode = "sequential"
+					}
+					sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
 				}
-				concurrencyMode := strings.TrimSpace(sched.ConcurrencyMode)
-				if concurrencyMode == "" {
-					concurrencyMode = "sequential"
-				}
-				sb.WriteString(fmt.Sprintf("- **Concurrency mode**: %s\n", concurrencyMode))
 				if sched.MaxStartDelayMinutes > 0 {
 					sb.WriteString(fmt.Sprintf("- **Maximum start delay**: %d minutes\n", sched.MaxStartDelayMinutes))
 				}

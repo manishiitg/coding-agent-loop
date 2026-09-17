@@ -66,6 +66,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 	}
 	if kbAccessAllowsWrite(kbAccessForGuard) {
 		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
+		// A "write" knowledgebase_source grants the same notes/-only write,
+		// just in a resolved external workflow's KB instead of this one's own.
+		writePaths = append(writePaths, writableExternalKBNotesPaths(baseWorkspacePath)...)
 	}
 	readPaths = appendAdditionalWorkflowReadPaths(readPaths, baseWorkspacePath, skillStepConfig)
 	readPaths = common.DeduplicateStrings(readPaths)

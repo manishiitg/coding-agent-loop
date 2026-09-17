@@ -11,3 +11,7 @@ func HeadlessLaunchArgsForSession(session string) []string {
 	return browserconfig.HeadlessArgsForSession(session)
 }
 func IsUserBrowserSession(session string) bool { return browserconfig.IsUserSession(session) }
+
+// ProfilePathForSession returns the persistent Chrome profile directory this
+// session launches with, or "" in session-isolated/ephemeral mode.
+func ProfilePathForSession(session string) string { return browserconfig.ProfilePathForSession(session) }

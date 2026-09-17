@@ -79,6 +79,12 @@ confirm the failure is actually visible — otherwise a fix cannot be verified.
 |---|---|
 | [hybrid_profile_told_it_has_no_shell.md](hybrid_profile_told_it_has_no_shell.md) | The house pattern at two layers at once, exposed by the first profile to combine `agent_tools: hybrid`, `api_transport: native_shell`, and a `tool_policy` allow-list. **The tool gate guarded execution but not advertisement**: `defaultBridgeToolDef` synthesizes a definition for an unregistered core tool, so the bridge kept offering `execute_shell_command` — described as *"use this to call HTTP endpoints with curl"* — after the profile removed it. Claude Code absorbed the failed call and fell back to `Bash`, which is why it read as "the allow-list working" for six weeks. **And a second prompt source contradicted the first**: `BuildCLIToolEnvironmentPrompt` asserts "your native tools are **disabled**" to any CLI provider, never asking the profile, though `resolvedProfile` is in scope 118 lines above. Both fixed and verified. A third defect — Codex reporting no native shell while every flag says it has one — is recorded **unresolved with the contradiction intact**, plus the `functions.exec` vs `exec_command` naming trap that makes two comments in this repo appear to disagree. |
 
+## SparkQuill production deployment (2026-09-16)
+
+| Document | What it establishes |
+|---|---|
+| [chrome_process_singleton_lock_survives_auto_recovery.md](chrome_process_singleton_lock_survives_auto_recovery.md) | A family's real SparkQuill session kept failing forever after one Chrome crash, even with only one daemon confirmed running. Chrome's own `SingletonLock`/`SingletonSocket`/`SingletonCookie` files survive an unclean exit; the existing dead-session auto-recovery path cleared agent-browser's own bookkeeping but never Chrome's lock files, and didn't even trigger for the `ProcessSingleton` error text in the first place. Fixed in `executor.go` + `browserconfig/launch.go`. **Code fixed, build clean, not yet deployed or verified against a real crash.** |
+
 ## Earlier incidents
 
 - [voice_dictation_mic_captures_silence.md](voice_dictation_mic_captures_silence.md) — **OPEN**, environment-level, not yet root-caused. A dev machine's mic reads real silence through every app (not just this one) despite a correctly-granted, unmuted device; the STT pipeline itself was independently proven correct via a raw WAV file and a synthetic-tone browser test.

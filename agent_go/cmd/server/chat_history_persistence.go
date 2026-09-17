@@ -436,6 +436,12 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 		}
 		title = strings.TrimSpace(existing.Session.Title)
 	}
+	// A resumed conversation can move to a new date-bucket path while keeping
+	// the same durable session ID. Custom titles belong to that session, not to
+	// one dated file, so inherit the title from any older index entry.
+	if title == "" {
+		title = chatHistoryIndexTitleForSession(index, sessionID)
+	}
 	workshopMode := ""
 	if runtime != nil {
 		workshopMode = normalizeChatHistoryWorkshopMode(runtime.WorkshopMode)
@@ -479,6 +485,47 @@ func updatePersistedChatHistoryIndex(userID, sessionID, agentMode string, histor
 		return fmt.Errorf("encode %s: %w", indexPath, err)
 	}
 	return writeRawFileToWorkspace(context.Background(), indexPath, string(data))
+}
+
+func chatHistoryIndexTitleForSession(index chatHistoryIndex, sessionID string) string {
+	sessionID = sanitizeChatHistorySessionID(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	title := ""
+	updatedAt := ""
+	for _, entry := range index.Entries {
+		if sanitizeChatHistorySessionID(entry.Session.SessionID) != sessionID {
+			continue
+		}
+		candidate := strings.TrimSpace(entry.Session.Title)
+		if candidate == "" {
+			continue
+		}
+		if title == "" || entry.Session.UpdatedAt > updatedAt {
+			title = candidate
+			updatedAt = entry.Session.UpdatedAt
+		}
+	}
+	return title
+}
+
+func preserveChatHistorySessionTitle(index *chatHistoryIndex, session *ChatHistorySession) bool {
+	if index == nil || session == nil || strings.TrimSpace(session.Title) != "" {
+		return false
+	}
+	title := chatHistoryIndexTitleForSession(*index, session.SessionID)
+	if title == "" {
+		return false
+	}
+	session.Title = title
+	entry, ok := index.Entries[session.ConversationPath]
+	if ok {
+		entry.Session.Title = title
+		index.Entries[session.ConversationPath] = entry
+		index.UpdatedAt = time.Now().Format(time.RFC3339)
+	}
+	return true
 }
 
 func newChatHistoryIndex() chatHistoryIndex {
@@ -1466,6 +1513,7 @@ func listChatHistorySessionsFromDisk(userID, workspaceRoot, workflowPath string,
 			}
 		}
 		if ok {
+			preserveChatHistorySessionTitle(&index, &session)
 			sessions = append(sessions, session)
 		}
 	}
@@ -1681,6 +1729,7 @@ func listWorkflowBuilderHistoryFromDisk(userID, workflowPath string, readBudget 
 			putLocalChatHistoryIndexEntry(&index, sr.ref, session)
 		}
 		session.AgentMode = "workflow"
+		preserveChatHistorySessionTitle(&index, &session)
 		sessions = append(sessions, session)
 	}
 	index.Complete = true
@@ -2577,13 +2626,18 @@ func RenameChatHistorySession(userID, sessionID, workspacePath, title string) er
 		return fmt.Errorf("decode %s: %w", indexPath, err)
 	}
 	index.normalize()
-	entry, ok := index.Entries[conversationPath]
-	if !ok {
-		return nil
+	// Apply the rename to every dated index row for this durable session. This
+	// prevents an older resumed copy from later reintroducing the previous name.
+	for indexedPath, entry := range index.Entries {
+		if sanitizeChatHistorySessionID(entry.Session.SessionID) != sessionID {
+			continue
+		}
+		entry.Session.Title = title
+		if indexedPath == conversationPath {
+			entry.SourceSize = int64(len(encoded))
+		}
+		index.Entries[indexedPath] = entry
 	}
-	entry.Session.Title = title
-	entry.SourceSize = int64(len(encoded))
-	index.Entries[conversationPath] = entry
 	index.UpdatedAt = time.Now().Format(time.RFC3339)
 	updatedIndex, err := json.MarshalIndent(index, "", "  ")
 	if err != nil {
@@ -3666,10 +3720,14 @@ func (api *StreamingAPI) persistLiveInputUserMessage(ctx context.Context, sessio
 		api.internalLiveInputPersistenceHandler(userID, sessionID, message)
 		return
 	}
-	api.appendLiveInputToPersistedChatHistory(userID, sessionID, message)
+	workspacePath := ""
+	api.sessionWorkspaceMu.RLock()
+	workspacePath = strings.TrimSpace(api.sessionWorkspaceFolders[sessionID])
+	api.sessionWorkspaceMu.RUnlock()
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, message)
 }
 
-func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, message string) {
+func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, message string) {
 	message = strings.TrimSpace(message)
 	if api == nil || sessionID == "" || message == "" {
 		return
@@ -3679,13 +3737,16 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	}
 	logCtx := newServerLogContext("", "", "", userID, "", sessionID)
 
-	raw, err := ReadChatHistoryConversation(userID, sessionID, "")
+	raw, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
 	if err != nil || len(bytes.TrimSpace(raw)) == 0 {
 		// No transcript for this session yet, or it is unreadable. Either way there
 		// is nothing to safely append to.
 		return
 	}
-	conversationPath, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, "")
+	conversationPath, ok, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
+	if strings.TrimSpace(workspacePath) != "" && (err != nil || !ok || strings.TrimSpace(conversationPath) == "") {
+		conversationPath, ok, err = findWorkflowBuilderConversationPathForSession(context.Background(), userID, sessionID, workspacePath)
+	}
 	if err != nil || !ok || strings.TrimSpace(conversationPath) == "" {
 		return
 	}

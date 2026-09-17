@@ -20,6 +20,10 @@ const isIterationZeroRunFolder = (folder: string) => (
   folder === 'iteration-0' || folder.startsWith('iteration-0/')
 )
 
+export const isWebhookRunFolder = (folder: string | null | undefined) => (
+  /^iteration-\d+-hook(?:\/|$)/.test((folder || '').trim())
+)
+
 export const getDefaultRunFolder = (initialRunFolder: string | null | undefined, runFolders: string[]) => {
   if (initialRunFolder && initialRunFolder !== 'new' && initialRunFolder.includes('/')) return initialRunFolder
   const groupedRunFolder = runFolders.find(folder => folder.includes('/'))

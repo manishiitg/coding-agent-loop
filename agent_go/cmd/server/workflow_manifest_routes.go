@@ -180,6 +180,11 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 
 type UpdateWorkflowManifestRequest struct {
 	KnowledgebaseSources       *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
+	// KBWriteGrants replaces the complete list of other workflow IDs allowed to
+	// write into THIS workflow's knowledgebase/notes/ via their own "write"
+	// knowledgebase_source. The consent step a consumer's write source depends
+	// on; an empty (non-nil) slice revokes all external write access.
+	KBWriteGrants              *[]string                                    `json:"kb_write_grants,omitempty"`
 	WorkspacePath              string                                       `json:"workspace_path"`
 	Label                      *string                                      `json:"label,omitempty"`
 	Capabilities               *WorkflowCapabilities                        `json:"capabilities,omitempty"`
@@ -309,6 +314,18 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 			return
 		}
 		manifest.KnowledgebaseSources = append([]workflowtypes.KnowledgebaseSource{}, (*req.KnowledgebaseSources)...)
+	}
+	if req.KBWriteGrants != nil {
+		for _, id := range *req.KBWriteGrants {
+			if strings.TrimSpace(id) == "" {
+				http.Error(w, "kb_write_grants entries must be non-empty workflow IDs", http.StatusBadRequest)
+				return
+			}
+		}
+		if manifest.Access == nil {
+			manifest.Access = &WorkflowAccess{}
+		}
+		manifest.Access.AllowedKBWriters = append([]string{}, (*req.KBWriteGrants)...)
 	}
 	previousFolderAccess := append([]workflowtypes.WorkflowFolderGrant(nil), manifest.FolderAccess...)
 

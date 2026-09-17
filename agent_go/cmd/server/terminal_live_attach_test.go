@@ -34,7 +34,7 @@ func TestLiveAttachEnabled(t *testing.T) {
 	}
 }
 
-func TestRetainedTurnKeepsOriginalRootWhenSteeredContinuationArrives(t *testing.T) {
+func TestRetainedTurnQueuesAnotherExecutionWhenMessageArrivesWhileBusy(t *testing.T) {
 	const sessionID = "retained-turn-multiple-owners"
 	terminalStore := terminals.NewStore()
 	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
@@ -46,19 +46,19 @@ func TestRetainedTurnKeepsOriginalRootWhenSteeredContinuationArrives(t *testing.
 	}
 
 	api := &StreamingAPI{
-		terminalStore:                          terminalStore,
-		activeSessions:                         map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
-		retainedMainTurns:                      make(map[string]time.Time),
-		retainedMainTurnExecutionIDs:           make(map[string]string),
-		retainedMainTurnAdditionalExecutionIDs: make(map[string]map[string]struct{}),
-		retainedMainTurnWatchCancels:           make(map[string]context.CancelFunc),
+		terminalStore:                       terminalStore,
+		activeSessions:                      map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		retainedMainTurns:                   make(map[string]time.Time),
+		retainedMainTurnExecutionIDs:        make(map[string]string),
+		retainedMainTurnPendingExecutionIDs: make(map[string][]string),
+		retainedMainTurnWatchCancels:        make(map[string]context.CancelFunc),
 	}
 	api.markRetainedMainCodingTurnRunning(sessionID, "scheduled-message-root")
 	api.markRetainedMainCodingTurnRunning(sessionID, "live-completion-continuation")
 
 	api.retainedMainTurnsMu.Lock()
 	primary := api.retainedMainTurnExecutionIDs[sessionID]
-	_, hasContinuation := api.retainedMainTurnAdditionalExecutionIDs[sessionID]["live-completion-continuation"]
+	pending := api.retainedMainTurnPendingExecutionIDs[sessionID]
 	cancel := api.retainedMainTurnWatchCancels[sessionID]
 	api.retainedMainTurnsMu.Unlock()
 	if cancel != nil {
@@ -67,8 +67,8 @@ func TestRetainedTurnKeepsOriginalRootWhenSteeredContinuationArrives(t *testing.
 	if primary != "scheduled-message-root" {
 		t.Fatalf("primary retained execution = %q, want scheduled-message-root", primary)
 	}
-	if !hasContinuation {
-		t.Fatal("live completion continuation replaced the original root instead of joining its idle boundary")
+	if len(pending) != 1 || pending[0] != "live-completion-continuation" {
+		t.Fatalf("pending retained executions = %#v, want queued continuation", pending)
 	}
 }
 
@@ -431,6 +431,83 @@ func TestMCPAgentSessionCompletionSettlesWithoutHostTmuxObserver(t *testing.T) {
 	}
 }
 
+func TestRetainedTurnCompletionPromotesQueuedMessageAndWaitsForItsAnswer(t *testing.T) {
+	const sessionID = "mcpagent-owned-two-message-retained-completion"
+	const tmuxSession = "mlp-claude-int-two-message-retained"
+	terminalID := sessionID + ":main:" + sessionID
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		time.Now(), sessionID, "main:"+sessionID, tmuxSession,
+	))
+	if _, ok := terminalStore.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("could not prepare retained main terminal")
+	}
+
+	api := &StreamingAPI{
+		terminalStore:                       terminalStore,
+		activeSessions:                      map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		retainedMainTurns:                   make(map[string]time.Time),
+		retainedMainTurnExecutionIDs:        make(map[string]string),
+		retainedMainTurnPendingExecutionIDs: make(map[string][]string),
+		retainedMainTurnWatchCancels:        make(map[string]context.CancelFunc),
+		retainedMainTurnCompletionEmitted:   make(map[string]time.Time),
+		nativeTranscriptSyncInFlight:        make(map[string]bool),
+	}
+
+	api.markMCPAgentSessionTurnRunning(sessionID, "live-turn:first")
+	api.markMCPAgentSessionTurnRunning(sessionID, "live-turn:second")
+
+	completionEvent := func(id string, at time.Time) internalevents.Event {
+		completion := unifiedevents.NewUnifiedCompletionEvent("coding_agent", "retained", "upgrade", "done", "completed", time.Second, 1)
+		completion.SessionID = sessionID
+		completion.Metadata["source"] = "mcpagent_session"
+		return internalevents.Event{
+			ID:          id,
+			Type:        "unified_completion",
+			Timestamp:   at,
+			SessionID:   sessionID,
+			ExecutionID: id,
+			Data: &unifiedevents.AgentEvent{
+				Type:      unifiedevents.EventType("unified_completion"),
+				Timestamp: at,
+				SessionID: sessionID,
+				Data:      completion,
+			},
+		}
+	}
+
+	api.observeRetainedMainTurnEvent(sessionID, completionEvent("first-completion", time.Now().Add(time.Second)))
+	if !api.isSessionBusy(sessionID) {
+		t.Fatal("first completion settled the session while a second submitted message was still pending")
+	}
+	api.retainedMainTurnsMu.Lock()
+	promoted := api.retainedMainTurnExecutionIDs[sessionID]
+	pending := append([]string(nil), api.retainedMainTurnPendingExecutionIDs[sessionID]...)
+	nextWatchCancel := api.retainedMainTurnWatchCancels[sessionID]
+	api.retainedMainTurnsMu.Unlock()
+	if promoted != "live-turn:second" || len(pending) != 0 {
+		t.Fatalf("after first completion promoted=%q pending=%#v, want second execution active", promoted, pending)
+	}
+	if nextWatchCancel == nil {
+		t.Fatal("queued turn was promoted without a retained terminal completion observer")
+	}
+	// Keep this unit test deterministic; the real watcher is covered by the
+	// retained-stream tests and would inspect a tmux pane that does not exist in
+	// this fixture.
+	nextWatchCancel()
+
+	api.observeRetainedMainTurnEvent(sessionID, completionEvent("second-completion", time.Now().Add(2*time.Second)))
+	if api.isSessionBusy(sessionID) {
+		t.Fatal("second completion did not settle the retained session")
+	}
+	api.retainedMainTurnsMu.Lock()
+	_, stillTracked := api.retainedMainTurns[sessionID]
+	api.retainedMainTurnsMu.Unlock()
+	if stillTracked {
+		t.Fatal("retained lifecycle remained tracked after every queued message completed")
+	}
+}
+
 func TestRetainedMainTurnSettlesWhenControlStreamClosesAfterFinalResponse(t *testing.T) {
 	const sessionID = "retained-stream-closed-after-response"
 	const tmuxSession = "mlp-codex-cli-int-stream-closed"
@@ -443,15 +520,13 @@ func TestRetainedMainTurnSettlesWhenControlStreamClosesAfterFinalResponse(t *tes
 	defer eventStore.Stop()
 	startedAt := time.Now().Add(-time.Second)
 	api := &StreamingAPI{
-		eventStore:                   eventStore,
-		terminalStore:                terminalStore,
-		activeSessions:               map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "running"}},
-		retainedMainTurns:            map[string]time.Time{sessionID: startedAt},
-		retainedMainTurnExecutionIDs: map[string]string{sessionID: "main:" + sessionID},
-		retainedMainTurnAdditionalExecutionIDs: map[string]map[string]struct{}{
-			sessionID: {},
-		},
-		retainedMainTurnWatchCancels: map[string]context.CancelFunc{},
+		eventStore:                          eventStore,
+		terminalStore:                       terminalStore,
+		activeSessions:                      map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "running"}},
+		retainedMainTurns:                   map[string]time.Time{sessionID: startedAt},
+		retainedMainTurnExecutionIDs:        map[string]string{sessionID: "main:" + sessionID},
+		retainedMainTurnPendingExecutionIDs: map[string][]string{sessionID: {}},
+		retainedMainTurnWatchCancels:        map[string]context.CancelFunc{},
 		internalRetainedTurnFinalResponseReader: func(llmproviders.Provider, string, time.Time) string {
 			return "durable answer"
 		},

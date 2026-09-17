@@ -98,11 +98,29 @@ func scheduleRuntimeKey(sctx *ScheduleContext) string {
 	if sctx == nil {
 		return ""
 	}
+	if sctx.WebhookInput != nil && strings.TrimSpace(sctx.WebhookInput.RunID) != "" {
+		// Parallel deliveries need independent lifecycle state. Keep the schedule
+		// ID last so scheduleRuntimeKeyHasID and schedule status aggregation still
+		// recognize every delivery lane.
+		return strings.Join([]string{"workflow", filepath.Clean(strings.TrimSpace(sctx.WorkspacePath)), "webhook-run", strings.TrimSpace(sctx.WebhookInput.RunID), strings.TrimSpace(sctx.Schedule.ID)}, scheduleScopeSeparator)
+	}
 	return workflowScheduleRuntimeKey(sctx.WorkspacePath, sctx.Schedule.ID)
 }
 
 func scheduleRuntimeKeyHasID(key, scheduleID string) bool {
 	return strings.HasSuffix(key, scheduleScopeSeparator+strings.TrimSpace(scheduleID))
+}
+
+func activeWebhookDeliveryCount(states map[string]*ScheduleRuntimeState, workspacePath, scheduleID string) int {
+	active := 0
+	wantWorkspace := filepath.Clean(strings.TrimSpace(workspacePath))
+	for key, state := range states {
+		parts := strings.Split(key, scheduleScopeSeparator)
+		if len(parts) >= 3 && parts[1] == wantWorkspace && scheduleRuntimeKeyHasID(key, scheduleID) && state != nil && state.LastStatus == "running" {
+			active++
+		}
+	}
+	return active
 }
 
 // scheduleStateLockKeyFromRuntimeKey retains the legacy sequential/Pulse key
@@ -123,6 +141,9 @@ func scheduleStateScope(sctx *ScheduleContext) (scopeType, scopeID, lockKey stri
 	if sctx != nil {
 		scopeID = filepath.Clean(strings.TrimSpace(sctx.WorkspacePath))
 		if sctx.Schedule.ScheduleType == "webhook" {
+			if sctx.WebhookInput != nil && strings.TrimSpace(sctx.WebhookInput.RunID) != "" {
+				return "workflow", scopeID, strings.Join([]string{"workflow-hook-run", scopeID, sctx.Schedule.ID, strings.TrimSpace(sctx.WebhookInput.RunID)}, scheduleScopeSeparator)
+			}
 			return "workflow", scopeID, strings.Join([]string{"workflow-hook", scopeID, sctx.Schedule.ID}, scheduleScopeSeparator)
 		}
 		if sctx.Schedule.ID == manualWorkflowPulseScheduleID {
@@ -1355,7 +1376,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 
 	// Reserve the in-memory run and cancellation handle atomically, then claim
 	// the durable lease without holding the global runtime-state mutex.
-	runtimeKey := workflowScheduleRuntimeKey(workspacePath, scheduleID)
+	runtimeKey := scheduleRuntimeKey(sctx)
 	workflowRuntimeKeys := make([]string, 0, len(manifest.Schedules))
 	for i := range manifest.Schedules {
 		if input == nil && manifest.Schedules[i].ScheduleType != "webhook" && !scheduleAllowsParallel(manifest.Schedules[i]) {
@@ -1367,6 +1388,13 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		runID = input.RunID
 	}
 	s.runtimeStatesMu.Lock()
+	if input != nil {
+		activeDeliveries := activeWebhookDeliveryCount(s.runtimeStates, workspacePath, scheduleID)
+		if activeDeliveries >= maxWebhookConcurrency {
+			s.runtimeStatesMu.Unlock()
+			return "", fmt.Errorf("webhook concurrency limit reached (%d active deliveries)", activeDeliveries)
+		}
+	}
 	state := s.getRuntimeStateLocked(runtimeKey)
 	if state.LastStatus == "running" {
 		s.runtimeStatesMu.Unlock()

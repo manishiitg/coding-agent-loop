@@ -1,6 +1,6 @@
 # Shared knowledge bases through workflow references
 
-Status: deployed to RTS; fresh real-workflow attachment acceptance remains unverified in this deployment check. Updated 2026-09-12. See [PLAT-310](../bugs/pulse_platform/learnings-knowledge/plat-310.md).
+Status: deployed to RTS; fresh real-workflow attachment acceptance remains unverified in this deployment check. Updated 2026-09-17: write access shipped (not yet deployed to RTS) — see [PLAT-325](../bugs/pulse_platform/learnings-knowledge/plat-325.md), a follow-up to [PLAT-310](../bugs/pulse_platform/learnings-knowledge/plat-310.md).
 
 ## Purpose
 
@@ -26,8 +26,10 @@ Each consumer would retain its own local investigation notes.
 - Make source knowledge accessible to the builder as well as eligible execution
   and review agents. Preserve ordinary shell use, including `cat`, `rg`, and scripts.
 - Attach only the source workflow's own KB. Attachments are not transitive.
-- Start with read-only attachments on the same execution host. Shared contribution
-  and access across servers are later extensions.
+- Started with read-only attachments on the same execution host (first release).
+  `access: "write"` (PLAT-325) adds notes/-only shared contribution, gated by an
+  explicit grant from the source workflow's own owner — see "Write access"
+  below. Access across servers remains a later extension.
 - Existing workflows retain their current local knowledge and behavior when the
   new configuration field is absent.
 
@@ -56,7 +58,7 @@ Configure `workflow.json` through the workflow configuration API or builder tool
 | --- | --- |
 | `workflow_id` | Stable ID of the source workflow, resolved through the authorized workflow registry |
 | `alias` | Local name for this attachment; use lowercase letters, digits, and underscores, starting with a letter |
-| `access` | `read` in the first release; unknown access modes are rejected |
+| `access` | `read` (default) or `write` (PLAT-325); unknown access modes are rejected |
 
 Reject duplicate aliases, duplicate source IDs, self-references, inaccessible source
 workflows, and sources on another execution host. Do not accept arbitrary filesystem
@@ -93,14 +95,28 @@ Relevant implementation entry points:
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go`:
   local KB path and access mode resolution.
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_agent_factory.go`:
-  agent read/write paths and KB access.
+  agent read/write paths and KB access (`setupExecutionFolderGuard`).
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_message_sequence.go`:
+  message_sequence item write paths (`setupMessageSequenceFolderGuard`).
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_orchestrator.go`:
+  orchestrator's own top-level turn write paths (`setupOrchestratorFolderGuard`).
 - `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/workflow_folder_access.go`:
-  attached-folder resolution, environment variables, prompts, and session refresh.
+  attached-folder resolution, environment variables, prompts, session refresh, and
+  (PLAT-325) `writableExternalKBNotesPaths`.
+- `agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go`:
+  `update_workflow_config(knowledgebase_sources=..., kb_write_grants=...)` and
+  `get_workflow_config` surfacing.
 - `agent_go/pkg/common/types.go`: shell session grant reconciliation.
 - `agent_go/pkg/workflowtypes/knowledgebase_sources.go`: configuration and syntax validation.
-- `agent_go/pkg/workflowkb/`: local ID discovery, audience checks, canonical resolution, and confined file reads.
+- `agent_go/pkg/workflowkb/`: local ID discovery, audience checks (`AudienceCanRead`,
+  PLAT-325's `AudienceCanWrite`), canonical resolution, and confined file reads.
+- `agent_go/cmd/server/workflow_access.go`: `WorkflowAccess.AllowedKBWriters` (PLAT-325).
 - `agent_go/cmd/server/workflow_knowledgebase_routes.go`: consumer-scoped browsing API.
+- `agent_go/cmd/server/workflow_manifest_routes.go`: manifest update endpoint, including
+  (PLAT-325) `kb_write_grants`.
 - `frontend/src/components/workflow/KnowledgebaseView.tsx`: knowledge browsing UI.
+- `frontend/src/components/workflow/KnowledgebaseSources.tsx`: attach/detach UI and
+  (PLAT-325) the write-access choice and grantor-side `KBWriteGrants` panel.
 
 Session grant reconciliation recognizes both `WORKFLOW_FOLDER_*` and
 `WORKFLOW_KB_*`. Each subsequent session policy lookup rebuilds these grants from
@@ -110,8 +126,11 @@ authorized folder access. Copied child sessions retain grant provenance too.
 ## Runtime access
 
 At session creation, resolve every authorized source ID to its current canonical
-KB folder on the execution host. Add only that folder to the relevant read grants
-and explicitly keep it out of write grants. Expose one environment variable per
+KB folder on the execution host. Add only that folder to the relevant read grants;
+a `"write"` source (PLAT-325) additionally adds the source's `notes/` subfolder —
+never the KB root — to the relevant write grants, gated by the same
+`knowledgebase_access` check that gates local KB writes. A `"read"` source is
+kept out of write grants entirely. Expose one environment variable per
 attachment:
 
 ```text
@@ -130,13 +149,39 @@ The runtime applies these grants to the command path guard, session shell
 environment, and operating-system sandbox. An environment variable alone is not
 a permission grant. Explicit KB opt-out removes both source grants and variables.
 
-| Consumer | Access in the first release |
+| Consumer | Access |
 | --- | --- |
 | Builder | Read every authorized attached KB through shell and supported file reads |
-| Execution agent | Read attached KBs when its KB access mode permits reading; explicit `knowledgebase_access: none` opts out |
-| Scripted execution | Receive the same eligible read grants and environment variables as agent execution |
-| Strategic and architecture reviewers | Discover and read attached KBs within their review profile; no additional write authority |
+| Execution agent | Read attached KBs when its KB access mode permits reading; write into a `"write"` source's `notes/` when the step's own `knowledgebase_access` permits writing (PLAT-325); explicit `knowledgebase_access: none` opts out of both |
+| message_sequence item | Same read/write rule as execution agents, narrowed further by the item's own `write_access.knowledgebase`/`kind: "knowledgebase"` (PLAT-325) |
+| Scripted execution | Receive the same eligible read/write grants and environment variables as agent execution |
+| Strategic and architecture reviewers | Discover and read attached KBs within their review profile; no write authority |
 | KB maintenance/consolidation | Continue maintaining local notes only; do not reorganize source KBs |
+
+## Write access (PLAT-325)
+
+A consumer attaches a source with `access: "write"` (which also grants read).
+This alone grants nothing: the source workflow's own owner must separately name
+the consumer's workflow ID in `access.allowed_kb_writers` on the source's own
+manifest, set via `update_workflow_config(kb_write_grants=[...])` or the
+workflow manifest API's `kb_write_grants` field. `workflowkb.AudienceCanWrite`
+requires both the ordinary read-audience check and this explicit grant; a
+`"write"` source without a grant resolves as unavailable with a reason
+distinct from an ordinary access-denied read.
+
+Writes are confined to the source's `notes/` folder — never `context/`, never
+the KB root, never `notes/_index.json` unless a step's normal note-authoring
+flow would write it anyway. Contributed notes should tag the writing
+workflow's ID (a frontmatter field, by convention) so the source workflow's own
+agents can distinguish self-authored notes from contributed ones.
+
+**Not built:** concurrency serialization. If two workflows' sessions write into
+the same target `notes/` folder at the same moment, one write can be lost or
+the file corrupted — this was an explicit scope cut, not an oversight. The
+precedent to mirror if this needs solving later is
+`learningsGlobalFileMutex` (`agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/learnings_direct.go`):
+an in-process mutex keyed by the target's canonical `notes/` path, held for
+the duration of the write turn.
 
 Shell reads, supported file-read tools, and subprocesses use the session grants.
 The Knowledge UI reads through `GET /api/workflows/knowledgebase-sources`, scoped
@@ -225,7 +270,11 @@ that preserves evidence and updates references.
   read an update saved by the source without copying files.
 - Eligible agent and scripted runs, plus both reviewer types, discover the same
   sources; a step with KB access disabled receives no KB-derived grants.
-- Writes to attached KBs fail even if the consumer has write access to its local KB.
+- Writes to a `"read"` attached KB fail even if the consumer has write access to
+  its local KB. Writes to a `"write"` source succeed only in `notes/`, and only
+  once the source workflow has granted this consumer in `kb_write_grants`
+  (PLAT-325); before that grant exists, the same write attempt fails exactly
+  like a `"read"` source.
 - A source attachment never grants its sibling folders or transitive attachments.
 - Invalid IDs, aliases, ownership, host placement, and symlink escapes are rejected.
 - Detach and revocation refresh live sessions and remove obsolete KB-derived access
@@ -238,10 +287,11 @@ that preserves evidence and updates references.
 
 ## Later extensions
 
-Shared contribution would require an explicit contribution mode, eligible writers,
-notes-only write paths, provenance, conflict handling, and serialization keyed to
-the source KB across workflows. Do not expose unrestricted shared writes before
-those semantics exist; the source workflow maintains its KB in the first release.
+Shared contribution (explicit contribution mode, eligible writers, notes-only
+write paths, provenance) shipped as PLAT-325 — see "Write access" above.
+Conflict handling and cross-workflow write serialization did not: PLAT-325
+explicitly left concurrent-writer locking unbuilt, so two workflows writing
+into the same target `notes/` at once can still race. That remains open.
 
 Cross-server sharing needs an authenticated transport or shared storage with defined
 freshness and access semantics. A workflow ID pointing to another server is not

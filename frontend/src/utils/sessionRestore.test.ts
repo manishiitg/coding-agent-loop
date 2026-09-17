@@ -41,7 +41,7 @@ import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore
 
 describe('hydrateTabEvents restored chat fallback', () => {
   beforeEach(() => {
-    vi.clearAllMocks()
+    vi.resetAllMocks()
     mocks.getTabEvents.mockReturnValue([])
   })
 
@@ -100,7 +100,12 @@ describe('hydrateTabEvents restored chat fallback', () => {
   })
 
   it('keeps the in-memory live tail when durable history is older', async () => {
-    const liveTail = { id: 'latest-codex-answer', type: 'unified_completion' }
+    const liveTail = {
+      id: 'latest-codex-answer',
+      type: 'unified_completion',
+      timestamp: '2026-09-15T12:41:23Z',
+      data: { data: { final_result: 'Latest live answer', result: 'Latest live answer' } },
+    }
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [liveTail],
       session_status: 'completed',
@@ -114,9 +119,65 @@ describe('hydrateTabEvents restored chat fallback', () => {
 
     await hydrateTabEvents('active-codex-session', { workspacePath: '/workspace/workflow' })
 
-    expect(mocks.setTabEvents).toHaveBeenCalledWith('active-codex-session', expect.any(Array))
-    expect(mocks.addTabEvents).toHaveBeenCalledWith('active-codex-session', [liveTail])
+    expect(mocks.setTabEvents).toHaveBeenCalledWith(
+      'active-codex-session',
+      expect.arrayContaining([expect.objectContaining({ id: 'latest-codex-answer' })]),
+    )
+    expect(mocks.addTabEvents).not.toHaveBeenCalled()
     expect(mocks.setTabLastEventIndex).toHaveBeenLastCalledWith('active-codex-session', 7)
+  })
+
+  it('orders an older live progress tail before the newer durable final answer', async () => {
+    const currentPrompt = 'Create the dedicated Linear and GitHub reporting step.'
+    const finalAnswer = 'I created finalize-linear-qa and connected it directly to end.'
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [
+        {
+          id: 'current-user',
+          type: 'user_message',
+          timestamp: '2026-09-16T08:00:00Z',
+          data: { data: { content: currentPrompt } },
+        },
+        {
+          id: 'progress-before-final',
+          type: 'conversation_thinking',
+          timestamp: '2026-09-16T08:07:00Z',
+          data: { data: { content: 'Testing the implementation' } },
+        },
+      ],
+      session_status: 'completed',
+      last_processed_index: 84,
+      has_more: false,
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'post-deploy-ordering-regression',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Earlier question' }], resume_order: 0 },
+        { Role: 'ai', Parts: [{ Text: 'Earlier answer' }], resume_order: 1 },
+        { Role: 'human', Parts: [{ Text: currentPrompt }], resume_order: 2 },
+        { Role: 'ai', Parts: [{ Text: finalAnswer }], resume_order: 3 },
+      ],
+      history_source_message_count: 4,
+      ui_events: [
+        {
+          id: 'older-persisted-turn',
+          type: 'user_message',
+          timestamp: '2026-09-16T07:30:00Z',
+          data: { data: { content: 'Earlier question' } },
+        },
+      ],
+    })
+
+    await hydrateTabEvents('post-deploy-ordering-regression', { workspacePath: '/workspace/workflow' })
+
+    const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string; data?: unknown }>]
+    const progressIndex = events.findIndex(event => event.id === 'progress-before-final')
+    const finalIndex = events.findIndex(event => {
+      if (event.type !== 'unified_completion') return false
+      return JSON.stringify(event.data).includes(finalAnswer)
+    })
+    expect(progressIndex).toBeGreaterThan(-1)
+    expect(finalIndex).toBeGreaterThan(progressIndex)
   })
 
   it('does not erase a user message and completion that arrive while history hydration is in flight', async () => {
@@ -162,6 +223,95 @@ describe('hydrateTabEvents restored chat fallback', () => {
     )
   })
 
+  it('keeps a live completion across a second stale-history hydration', async () => {
+    const finalAnswer = 'The Cursor review finished successfully.'
+    const liveCompletion = {
+      id: 'cursor-live-completion',
+      type: 'unified_completion',
+      timestamp: '2026-09-16T18:18:58Z',
+      data: { data: { final_result: finalAnswer } },
+    }
+    let storedEvents: Array<Record<string, unknown>> = []
+    mocks.getTabEvents.mockImplementation(() => storedEvents)
+    mocks.setTabEvents.mockImplementation((_sessionId, events) => {
+      storedEvents = events
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'cursor-stale-history',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'Review the pull request.' }], resume_order: 0 },
+      ],
+      history_source_message_count: 1,
+    })
+    mocks.getRecentSessionEvents
+      .mockResolvedValueOnce({
+        events: [liveCompletion],
+        session_status: 'completed',
+        last_processed_index: 12,
+        has_more: false,
+      })
+      .mockResolvedValueOnce({
+        events: [],
+        session_status: 'completed',
+        last_processed_index: 12,
+        has_more: false,
+      })
+
+    await hydrateTabEvents('cursor-stale-history', { workspacePath: '/workspace/workflow' })
+    expect(storedEvents.some(event => event.id === liveCompletion.id)).toBe(true)
+
+    await hydrateTabEvents('cursor-stale-history', { workspacePath: '/workspace/workflow' })
+    expect(storedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: liveCompletion.id, type: 'unified_completion' }),
+    ]))
+    expect(JSON.stringify(storedEvents)).toContain(finalAnswer)
+  })
+
+  it('does not replace a live retained turn with an eager stale-history paint', async () => {
+    let resolveHistory!: (value: unknown) => void
+    let resolveEvents!: (value: unknown) => void
+    const storedEvents: Array<Record<string, unknown>> = [{
+      id: 'optimistic-retained-user',
+      type: 'user_message',
+      timestamp: '2026-09-16T13:06:45Z',
+      data: { data: { content: 'what do you do this delegation' } },
+    }]
+    mocks.getTabEvents.mockImplementation(() => storedEvents)
+    mocks.setTabEvents.mockImplementation((_sessionId, events) => {
+      storedEvents.splice(0, storedEvents.length, ...events)
+    })
+    mocks.getChatHistoryResumeConversation.mockReturnValue(new Promise(resolve => { resolveHistory = resolve }))
+    mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveEvents = resolve }))
+
+    const hydration = hydrateTabEvents('retained-resume-race', { workspacePath: '/workspace/work' })
+    resolveHistory({
+      session_id: 'retained-resume-race',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'older question' }] },
+        { Role: 'ai', Parts: [{ Text: 'older answer' }] },
+      ],
+    })
+    await Promise.resolve()
+    await Promise.resolve()
+
+    // History resolving first must not overwrite the optimistic message while
+    // the live event window is still loading. A second projection treats the
+    // first projection as restored trace and would otherwise discard this row.
+    expect(storedEvents.some(event => event.id === 'optimistic-retained-user')).toBe(true)
+
+    resolveEvents({
+      events: [],
+      session_status: 'completed',
+      last_processed_index: 328,
+      has_more: false,
+    })
+    await hydration
+
+    expect(storedEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: 'optimistic-retained-user', type: 'user_message' }),
+    ]))
+  })
+
   it('does not append a live completion that durable history already restored', async () => {
     const answer = 'The project has seven planned shots and no generated clips yet.'
     mocks.getRecentSessionEvents.mockResolvedValue({
@@ -187,6 +337,25 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.setTabEvents).toHaveBeenCalledWith('duplicate-response-session', expect.any(Array))
     expect(mocks.addTabEvents).not.toHaveBeenCalled()
     expect(mocks.setTabLastEventIndex).toHaveBeenLastCalledWith('duplicate-response-session', 8)
+  })
+
+  it('deduplicates a flat live user envelope against the durable user carrier', () => {
+    const prompt = 'Create the launch teaser.'
+    const events = conversationToRestoredEvents({
+      session_id: 'flat-live-user-envelope',
+      conversation_history: [
+        { Role: 'user', Parts: [{ Text: prompt }] },
+        { Role: 'assistant', Parts: [{ Text: 'The finished teaser is ready.' }] },
+      ],
+      ui_events: [{
+        id: 'live-user-only',
+        type: 'user_message',
+        timestamp: '2026-08-17T00:00:00Z',
+        data: { content: prompt } as never,
+      }],
+    })
+
+    expect(events.filter(event => event.type === 'user_message')).toHaveLength(1)
   })
 
   it('keeps every meaningful assistant update from one tool-heavy turn', () => {
@@ -380,8 +549,11 @@ describe('hydrateTabEvents restored chat fallback', () => {
 })
 
 describe('lazy history hydration', () => {
-  beforeEach(() => vi.clearAllMocks())
-  it('shows recent history before live status finishes and keeps the older-page cursor', async () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocks.getTabEvents.mockReturnValue([])
+  })
+  it('reconciles recent history and live status once while keeping the older-page cursor', async () => {
     let resolveLive!: (value: unknown) => void
     mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveLive = resolve }))
     mocks.getChatHistoryResumeConversation.mockResolvedValue({
@@ -393,7 +565,9 @@ describe('lazy history hydration', () => {
       history_pagination: { has_more: true, next_offset: 20 },
     })
     const restoring = hydrateTabEvents('paged', { workspacePath: 'Workflow/test' })
-    await vi.waitFor(() => expect(mocks.setTabEvents).toHaveBeenCalled())
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(mocks.setTabEvents).not.toHaveBeenCalled()
     expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith('paged', 'Workflow/test', 20, 0, true)
     resolveLive({ events: [{ id: 'live', type: 'conversation_end' }], session_status: 'completed', has_more: false })
     await restoring

@@ -1,18 +1,21 @@
-import React from 'react'
+import React, { useEffect, useMemo, useState } from 'react'
 import {
   Loader2,
   AlertCircle,
   FileText,
   Route as RouteIcon,
   ArrowLeft,
+  Braces,
 } from 'lucide-react'
 import type { RunFolderInfo, StepExecutionLogs } from '../../services/api-types'
+import { agentApi } from '../../services/api'
 import InspectorShell from './InspectorShell'
 import { PulseReviewsPanel } from './executionLogs/LogPrimitives'
 import { LogsHeader } from './executionLogs/LogsHeader'
 import { StepContent } from './executionLogs/StepContent'
 import { StepList } from './executionLogs/StepList'
 import { useExecutionLogsData } from './executionLogs/useExecutionLogsData'
+import { formatLogFileContent, isWebhookRunFolder } from './executionLogs/helpers'
 
 const headerRowClass = (embedded: boolean) =>
   `flex items-center justify-between gap-3 border-b border-border ${embedded ? 'px-3 py-2' : 'px-4 py-3 sm:px-6 sm:py-4'}`
@@ -79,6 +82,57 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     toggleFileExpansion,
   } = useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders })
 
+  const webhookRun = isWebhookRunFolder(selectedRunFolder)
+  const [webhookPayloadOpen, setWebhookPayloadOpen] = useState(false)
+  const [webhookPayload, setWebhookPayload] = useState<string | null>(null)
+  const [webhookPayloadLoading, setWebhookPayloadLoading] = useState(false)
+  const [webhookPayloadError, setWebhookPayloadError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setWebhookPayloadOpen(false)
+    setWebhookPayload(null)
+    setWebhookPayloadError(null)
+  }, [selectedRunFolder])
+
+  useEffect(() => {
+    if (!webhookPayloadOpen || !webhookRun || !workspacePath || !selectedRunFolder || webhookPayload !== null || webhookPayloadLoading || webhookPayloadError !== null) return
+    setWebhookPayloadLoading(true)
+    setWebhookPayloadError(null)
+    agentApi.getExecutionWebhookPayload(workspacePath, selectedRunFolder)
+      .then(result => setWebhookPayload(formatLogFileContent(result.raw_payload)))
+      .catch(err => {
+        const responseBody = (err as { response?: { data?: unknown } })?.response?.data
+        const detail = typeof responseBody === 'string' ? responseBody.trim() : err instanceof Error ? err.message : ''
+        setWebhookPayloadError(detail || 'Webhook payload could not be loaded.')
+      })
+      .finally(() => setWebhookPayloadLoading(false))
+  }, [webhookPayloadOpen, webhookRun, workspacePath, selectedRunFolder, webhookPayload, webhookPayloadLoading, webhookPayloadError])
+
+  const webhookPayloadPanel = useMemo(() => {
+    if (!webhookRun || !webhookPayloadOpen) return null
+    return (
+      <section className="overflow-hidden rounded-lg border border-border bg-card" aria-label="Webhook payload">
+        <div className="flex items-center gap-2 border-b border-border px-3 py-2 text-xs font-medium text-foreground">
+          <Braces className="h-3.5 w-3.5 text-primary" />
+          Webhook payload
+          <span className="font-normal text-muted-foreground">Raw request JSON for this run</span>
+        </div>
+        {webhookPayloadLoading ? (
+          <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
+            <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading payload…
+          </div>
+        ) : webhookPayloadError ? (
+          <div className="flex items-center justify-between gap-3 px-3 py-3 text-xs text-destructive">
+            <span>{webhookPayloadError}</span>
+            <button type="button" onClick={() => setWebhookPayloadError(null)} className="shrink-0 rounded border border-border px-2 py-1 text-foreground hover:bg-muted">Retry</button>
+          </div>
+        ) : (
+          <pre className="max-h-80 overflow-auto whitespace-pre-wrap break-words bg-muted/25 p-3 font-mono text-[11px] leading-5 text-foreground">{webhookPayload || ''}</pre>
+        )}
+      </section>
+    )
+  }, [webhookRun, webhookPayloadOpen, webhookPayloadLoading, webhookPayloadError, webhookPayload])
+
   // Recursive render function for step content
   const renderStepContent = (stepId: string, stepLogs: StepExecutionLogs) => (
     <StepContent
@@ -120,6 +174,9 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           loadLogs={loadLogs}
           onRefreshRunFolders={onRefreshRunFolders}
           headerAction={headerAction}
+          showWebhookPayload={webhookRun}
+          webhookPayloadOpen={webhookPayloadOpen}
+          onToggleWebhookPayload={() => setWebhookPayloadOpen(open => !open)}
         />
       }
     >
@@ -156,6 +213,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
             </div>
           ) : (
             <div className="space-y-4">
+              {webhookPayloadPanel}
+
               {focusedStepId && (
                 <div
                   className={`sticky top-0 z-20 -mx-1 flex items-center border-b border-border/80 bg-background/95 px-1 backdrop-blur-sm transition-[padding] duration-150 ${

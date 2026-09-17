@@ -1104,6 +1104,40 @@ func TestListWorkProjectChatHistoryResolvesOwnedProjectStorage(t *testing.T) {
 	}
 }
 
+func TestAppendLiveInputUsesOwnedWorkProjectConversation(t *testing.T) {
+	const (
+		userID        = "alice"
+		workspacePath = "_users/alice/Chats/Work/projects/demo-12345678"
+		sessionID     = "product-chat-live-input"
+	)
+	conversationPath := workspacePath + "/builder/conversation/2026-09-16/" + chatHistoryConversationFileName(sessionID)
+	conversation := `{
+  "session_id": "product-chat-live-input",
+  "agent_mode": "multi-agent",
+  "conversation_history": [{"Role":"human","Parts":[{"Text":"original question"}]}],
+  "runtime": {"provider":"claude-code","workspace_path":"_users/alice/Chats/Work/projects/demo-12345678"},
+  "user_id": "alice",
+  "updated_at": "2026-09-16T05:00:00Z"
+}`
+	workspace := &mockWorkspaceAPI{files: map[string]string{conversationPath: conversation}}
+	workspaceServer := httptest.NewServer(workspace)
+	defer workspaceServer.Close()
+	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
+
+	api := &StreamingAPI{}
+	api.appendLiveInputToPersistedChatHistory(userID, sessionID, workspacePath, "resumed follow-up")
+
+	var record struct {
+		ConversationHistory []llmtypes.MessageContent `json:"conversation_history"`
+	}
+	if err := json.Unmarshal([]byte(workspace.files[conversationPath]), &record); err != nil {
+		t.Fatalf("decode Work conversation: %v", err)
+	}
+	if len(record.ConversationHistory) != 2 || len(record.ConversationHistory[1].Parts) != 1 || chatHistoryPartText(record.ConversationHistory[1].Parts[0]) != "resumed follow-up" {
+		t.Fatalf("persisted Work history = %#v, want resumed follow-up appended", record.ConversationHistory)
+	}
+}
+
 func TestWorkProjectChatHistoryConversationPathUsesProjectBuilderFolder(t *testing.T) {
 	timestamp := time.Date(2026, 9, 14, 12, 0, 0, 0, time.UTC)
 
@@ -1342,6 +1376,99 @@ func TestPersistChatConversationUpdatesMetadataIndex(t *testing.T) {
 	}
 	if !entry.AttributionVerified {
 		t.Fatal("newly persisted conversation must have verified attribution")
+	}
+}
+
+func TestUpdatePersistedChatHistoryIndexCarriesTitleAcrossDatedPaths(t *testing.T) {
+	workspace := &mockWorkspaceAPI{files: map[string]string{}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	oldPath := "Workflow/demo/builder/conversation/2026-09-15/session-resumed-chat-conversation.json"
+	newPath := "Workflow/demo/builder/conversation/2026-09-16/session-resumed-chat-conversation.json"
+	indexPath := "Workflow/demo/builder/conversation/" + chatHistoryIndexFileName
+	index := newChatHistoryIndex()
+	index.Entries[oldPath] = chatHistoryIndexEntry{Session: ChatHistorySession{
+		SessionID: "resumed-chat",
+		Title:     "Release follow-up",
+		UpdatedAt: "2026-09-15T10:00:00Z",
+	}}
+	encoded, _ := json.Marshal(index)
+	workspace.files[indexPath] = string(encoded)
+
+	history := []llmtypes.MessageContent{{
+		Role:  llmtypes.ChatMessageTypeHuman,
+		Parts: []llmtypes.ContentPart{llmtypes.TextContent{Text: "check again"}},
+	}}
+	if err := updatePersistedChatHistoryIndex("default", "resumed-chat", "workflow", history, nil, newPath, 123, time.Date(2026, 9, 16, 10, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("update index: %v", err)
+	}
+
+	workspace.mu.Lock()
+	updated := workspace.files[indexPath]
+	workspace.mu.Unlock()
+	var got chatHistoryIndex
+	if err := json.Unmarshal([]byte(updated), &got); err != nil {
+		t.Fatalf("decode updated index: %v", err)
+	}
+	if got.Entries[newPath].Session.Title != "Release follow-up" {
+		t.Fatalf("new dated entry title = %q, want inherited custom title", got.Entries[newPath].Session.Title)
+	}
+}
+
+func TestListWorkflowHistoryRepairsMissingTitleFromOlderDatedEntry(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	workflowPath := "Workflow/demo"
+	conversationRoot := filepath.Join(root, filepath.FromSlash(workflowPath), "builder", "conversation")
+	oldDir := filepath.Join(conversationRoot, "2026-09-15")
+	newDir := filepath.Join(conversationRoot, "2026-09-16")
+	if err := os.MkdirAll(oldDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(newDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fileName := "session-resumed-chat-conversation.json"
+	oldLocalPath := filepath.Join(oldDir, fileName)
+	newLocalPath := filepath.Join(newDir, fileName)
+	if err := os.WriteFile(oldLocalPath, []byte(`{"session_id":"resumed-chat"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(newLocalPath, []byte(`{"session_id":"resumed-chat"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	oldTime := time.Date(2026, 9, 15, 10, 0, 0, 0, time.UTC)
+	newTime := oldTime.Add(24 * time.Hour)
+	if err := os.Chtimes(oldLocalPath, oldTime, oldTime); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chtimes(newLocalPath, newTime, newTime); err != nil {
+		t.Fatal(err)
+	}
+	oldInfo, _ := os.Stat(oldLocalPath)
+	newInfo, _ := os.Stat(newLocalPath)
+	oldWorkspacePath := workflowPath + "/builder/conversation/2026-09-15/" + fileName
+	newWorkspacePath := workflowPath + "/builder/conversation/2026-09-16/" + fileName
+	index := newChatHistoryIndex()
+	putLocalChatHistoryIndexEntry(&index, localChatHistoryFile{sessionID: "resumed-chat", convPath: oldLocalPath, workspacePath: oldWorkspacePath, modTime: oldInfo.ModTime(), size: oldInfo.Size()}, ChatHistorySession{SessionID: "resumed-chat", Title: "Release follow-up", UpdatedAt: oldTime.Format(time.RFC3339)})
+	putLocalChatHistoryIndexEntry(&index, localChatHistoryFile{sessionID: "resumed-chat", convPath: newLocalPath, workspacePath: newWorkspacePath, modTime: newInfo.ModTime(), size: newInfo.Size()}, ChatHistorySession{SessionID: "resumed-chat", Query: "check again", UpdatedAt: newTime.Format(time.RFC3339)})
+	if err := writeLocalChatHistoryIndex(filepath.Join(conversationRoot, chatHistoryIndexFileName), &index); err != nil {
+		t.Fatal(err)
+	}
+
+	sessions, ok := listWorkflowBuilderHistoryFromDisk("default", workflowPath, 10, "chat")
+	if !ok || len(sessions) != 1 {
+		t.Fatalf("list ok=%v sessions=%#v", ok, sessions)
+	}
+	if sessions[0].Title != "Release follow-up" {
+		t.Fatalf("listed title = %q, want title from older dated entry", sessions[0].Title)
+	}
+	repaired, exists := readLocalChatHistoryIndex(filepath.Join(conversationRoot, chatHistoryIndexFileName))
+	if !exists || repaired.Entries[newWorkspacePath].Session.Title != "Release follow-up" {
+		t.Fatalf("newest index entry was not repaired: %#v", repaired.Entries[newWorkspacePath])
 	}
 }
 

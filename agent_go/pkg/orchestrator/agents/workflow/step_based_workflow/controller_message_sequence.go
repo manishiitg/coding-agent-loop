@@ -1522,6 +1522,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	writePaths = append(writePaths, stepFolderPath, downloadsPath)
 	if itemWriteAccess.Knowledgebase && kbAccessAllowsWrite(kbAccess) {
 		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
+		// A "write" knowledgebase_source grants the same notes/-only write,
+		// just in a resolved external workflow's KB instead of this one's own.
+		writePaths = append(writePaths, writableExternalKBNotesPaths(baseWorkspacePath)...)
 	}
 	if itemWriteAccess.Learnings && learningsAccess == LearningsAccessReadWrite {
 		writePaths = append(writePaths, filepath.Join(baseWorkspacePath, LearningsFolderName, GlobalLearningID))

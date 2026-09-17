@@ -9,6 +9,10 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	agentevents "github.com/manishiitg/mcpagent/events"
+
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 )
 
 func TestClaudeNativeTranscriptProjectSlugMatchesEscapingScheme(t *testing.T) {
@@ -239,7 +243,8 @@ func TestRefreshLatestBuilderConversationFromNativeTranscriptNoOpsWithoutClaudeC
 func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationAndIndex(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	const workspacePath = "Workflow/salesoutreach"
+	const userID = "alice"
+	const workspacePath = "_users/alice/Chats/Work/projects/salesoutreach"
 	const sessionID = "retained-live-input"
 	const nativeSessionID = "native-retained-live-input"
 	workingDir := filepath.Join(home, "workspace-docs", "Workflow", "salesoutreach")
@@ -255,6 +260,7 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	conversationPath := workspacePath + "/builder/conversation/2026-08-30/session-" + sessionID + "-conversation.json"
 	record := map[string]interface{}{
 		"session_id": sessionID,
+		"user_id":    userID,
 		"agent_mode": "workflow_phase",
 		"updated_at": "2026-08-30T05:00:00Z",
 		"conversation_history": []map[string]interface{}{
@@ -278,8 +284,10 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	defer workspaceServer.Close()
 	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
 
-	api := &StreamingAPI{}
-	changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), sessionID, workspacePath)
+	eventStore := storeevents.NewEventStore(100)
+	defer eventStore.Stop()
+	api := &StreamingAPI{eventStore: eventStore}
+	changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath)
 	if !supported || !changed {
 		t.Fatalf("sync changed/supported = %v/%v, want true/true", changed, supported)
 	}
@@ -294,6 +302,51 @@ func TestSyncWorkflowBuilderConversationFromNativeTranscriptUpdatesConversationA
 	indexPath := workspacePath + "/builder/conversation/" + chatHistoryIndexFileName
 	if _, found := workspace.files[indexPath]; !found {
 		t.Fatalf("native sync did not update %s", indexPath)
+	}
+	events := eventStore.GetAllEventsRaw(sessionID)
+	if len(events) != 1 || !storeevents.IsTranscriptMessage(events[0]) {
+		t.Fatalf("live recovery events = %+v, want one transcript message", events)
+	}
+	payload := eventPayloadMap(events[0])
+	if got, _ := payload["content"].(string); got != "first live reply" {
+		t.Fatalf("live recovered content = %q, want first live reply", got)
+	}
+	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
+		t.Fatalf("second sync changed/supported = %v/%v, want false/true", changed, supported)
+	}
+	if got := len(eventStore.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("second sync published duplicate live reply: %d events", got)
+	}
+
+	// Simulate a backend restart restoring an older UI trace: durable history is
+	// already current, but the live EventStore no longer contains the answer.
+	eventStore.RemoveSession(sessionID)
+	if changed, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(context.Background(), userID, sessionID, workspacePath); !supported || changed {
+		t.Fatalf("restart repair changed/supported = %v/%v, want false/true", changed, supported)
+	}
+	restoredEvents := eventStore.GetAllEventsRaw(sessionID)
+	if len(restoredEvents) != 1 || !storeevents.IsTranscriptMessage(restoredEvents[0]) {
+		t.Fatalf("restart repair events = %+v, want one transcript message", restoredEvents)
+	}
+}
+
+func TestPublishNativeTranscriptRecoveredAssistantMessagesSkipsAlreadyVisibleReply(t *testing.T) {
+	store := storeevents.NewEventStore(100)
+	defer store.Stop()
+	api := &StreamingAPI{eventStore: store}
+	const sessionID = "cursor-retained"
+
+	chunk := &agentevents.StreamingChunkEvent{Content: "Here are the links.", Source: agentevents.StreamingChunkSourceTranscript}
+	store.AddEvent(sessionID, storeevents.Event{
+		ID: "already-live", Type: "streaming_chunk", SessionID: sessionID,
+		ExecutionKind: "main_agent", Data: agentevents.NewAgentEvent(chunk),
+	})
+	current := []builderConversationMessage{{Role: "human", Parts: []builderConversationPart{{Text: "tell me links"}}}}
+	refreshed := append(current, builderConversationMessage{Role: "ai", Parts: []builderConversationPart{{Text: "Here are the links."}}})
+
+	api.publishNativeTranscriptRecoveredAssistantMessages(sessionID, current, refreshed)
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
+		t.Fatalf("already-visible reply was duplicated: %d events", got)
 	}
 }
 

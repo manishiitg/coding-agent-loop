@@ -22,6 +22,7 @@ import {
   Server,
   ShieldCheck,
   Table2,
+  Webhook,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -80,6 +81,7 @@ const VIEWS = [
   { id: 'knowledgebase', kind: 'inspector', label: 'Knowledgebase', icon: Database, toolbarGroup: 'views', pane: true },
   { id: 'database', kind: 'inspector', label: 'Database', icon: Table2, toolbarGroup: 'views', pane: true },
   { id: 'evaluation', kind: 'inspector', label: 'Evaluation', icon: ClipboardCheck, toolbarGroup: 'views', pane: true },
+  { id: 'webhooks', kind: 'inspector', label: 'Webhooks', icon: Webhook, toolbarGroup: 'views', pane: true },
   { id: 'schedules', kind: 'inspector', label: 'Schedules', icon: CalendarClock, toolbarGroup: 'views', pane: true },
   // -- files (last button of the "views" cluster) --------------------------
   { id: 'files', kind: 'files', label: 'Files', icon: Files, toolbarGroup: 'views', pane: false },
@@ -186,7 +188,7 @@ const LEGACY_VIEW_IDS: Record<string, WorkspaceViewId | null> = {
   log: 'report',
   plan: 'flow',
   builder: null,
-  'api-triggers': 'schedules',
+  'api-triggers': 'webhooks',
 }
 
 /** Coerce a persisted/unknown value to a view id, or null. Legacy ids are

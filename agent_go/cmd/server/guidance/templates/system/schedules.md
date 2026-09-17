@@ -4,7 +4,7 @@ For the operational cheat sheet on creating / editing / deleting schedules
 (cron syntax and workshop run payload shape), see this section.
 
 - **Tools**: `list_schedules`, `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
-- To view existing schedules, call `list_schedules`; it includes schedule IDs, type, mode, workshop mode, cron/calendar shape, timezone, enabled state, groups, and recent runtime state. `get_workflow_config` also includes a Schedules section when you are already inspecting broader workflow settings.
+- To view existing schedules, call `list_schedules`; it includes schedule IDs, type, mode, workshop mode, cron/calendar shape, timezone, enabled state, groups, recent runtime state, and the server-enforced delivery concurrency for webhook triggers. `get_workflow_config` also includes a Schedules section when you are already inspecting broader workflow settings.
 - **Entry shape**:
   ```
   { "id": "...", "name": "...", "description": "...",
@@ -49,6 +49,12 @@ Every schedule in `workflow.json` has a `schedule_type` — `"cron"` (default), 
 Workflow schedules always use the workshop builder execution path. Do not create direct `mode="workflow"` schedules; legacy manifests with that value are normalized to workshop execution.
 
 Every workflow-producing cron/calendar occurrence is bound by the server to one immutable `runs/iteration-N-sched` folder before its agent starts. Builder chats and interactive runs continue to own `iteration-0`; webhooks own `iteration-N-hook`. Agents must use the server-bound folder and must never rotate or substitute `iteration-0` during a scheduled invocation. This prevents scheduled run outputs and logs from overwriting one another, but it does not isolate shared DB/KB/learnings/planning/browser/external state.
+
+Each webhook trigger accepts up to four simultaneous deliveries. Every accepted
+delivery gets its own runtime state, durable lease, input file, session, and
+immutable `iteration-N-hook` folder. When four are already active, the receiver
+returns HTTP 503 with `Retry-After: 30`; retry with the same delivery ID so
+idempotency prevents duplicate execution.
 
 `workflow.json::run_retention_count` applies uniformly: the server keeps that many completed plain Builder archives, that many completed `-sched` runs, and that many completed `-hook` runs as independent families (default 10). Schedule/webhook pruning removes the paired `runs/` and `evaluation/runs/` folder and preserves durable history with `artifacts_expired=true`; active runs are never pruned.
 

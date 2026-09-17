@@ -31,6 +31,12 @@ import (
 type WorkflowAccess struct {
 	Owners  []string `json:"owners"`
 	Readers []string `json:"readers"`
+	// AllowedKBWriters lists workflow IDs explicitly permitted to write into
+	// this workflow's knowledgebase/notes/ via a "write" knowledgebase_source
+	// (see pkg/workflowkb). Distinct from Readers/Owners: audience overlap is
+	// enough to read another workflow's KB, but a mutating grant needs this
+	// workflow's own owner to explicitly name the consumer workflow.
+	AllowedKBWriters []string `json:"allowed_kb_writers,omitempty"`
 }
 
 // WorkflowAccessNone is "may not see this workflow at all".

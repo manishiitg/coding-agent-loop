@@ -70,6 +70,17 @@ const fetchErrors: string[] = []
 let frame: HTMLIFrameElement | null = null
 let currentTheme: ReportHostTheme = initialTheme
 
+// "ResizeObserver loop completed with undelivered notifications." is a
+// Chromium-only diagnostic, not a real failure: it fires whenever a
+// ResizeObserver callback itself triggers another layout change within the
+// same frame, which report dashboards full of auto-sizing widgets do
+// constantly. Left uncaptured, every clean report review carries this noise
+// in page_errors, forcing every reviewer (human or agent) to re-derive that
+// it's benign instead of preview_report ever being able to say so itself.
+function isBenignWindowError(message: string): boolean {
+  return message.includes('ResizeObserver loop completed with undelivered notifications')
+}
+
 function setPreviewState(state: PreviewLifecycle) {
   document.documentElement.setAttribute('data-preview-state', state)
 }
@@ -212,7 +223,11 @@ async function start() {
   setTheme(initialTheme)
   setWidth(initialWidth)
 
-  window.addEventListener('error', (e) => consoleErrors.push(String((e as ErrorEvent).message || 'error')))
+  window.addEventListener('error', (e) => {
+    const message = String((e as ErrorEvent).message || 'error')
+    if (isBenignWindowError(message)) return
+    consoleErrors.push(message)
+  })
   window.addEventListener('unhandledrejection', (e) => consoleErrors.push(String((e as PromiseRejectionEvent).reason?.message || e.reason || 'rejection')))
   ;(window as unknown as { __reportPreview: unknown }).__reportPreview = { getState: snapshot, setTheme, setWidth }
 

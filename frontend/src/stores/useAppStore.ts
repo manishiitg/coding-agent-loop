@@ -17,6 +17,7 @@ interface AppState {
   workspaceMinimizedByMode: Record<'workflow' | 'multi-agent', boolean>
   showWorkflowsOverview: boolean
   showSchedulesOverview: boolean
+  activityWorkflowPath: string | null
   
   // Code execution mode (for multi-agent mode when no preset is active)
   useCodeExecutionMode: boolean
@@ -39,6 +40,7 @@ interface AppState {
   setWorkspaceMinimizedForLayout: (minimized: boolean) => void
   setShowWorkflowsOverview: (show: boolean) => void
   setShowSchedulesOverview: (show: boolean) => void
+  setActivityWorkflowPath: (workspacePath: string | null) => void
   setUseCodeExecutionMode: (enabled: boolean) => void
   // Last-used tab settings — inherited by new tabs
   lastSelectedSkills: string[]
@@ -65,6 +67,7 @@ export const useAppStore = create<AppState>()(
         },
         showWorkflowsOverview: false,
         showSchedulesOverview: false,
+        activityWorkflowPath: null,
         useCodeExecutionMode: true, // Default to enabled
         // Actions
         setAgentMode: (mode) => {
@@ -149,6 +152,10 @@ export const useAppStore = create<AppState>()(
 
         setShowSchedulesOverview: (show) => {
           set({ showSchedulesOverview: show })
+        },
+
+        setActivityWorkflowPath: (workspacePath) => {
+          set({ activityWorkflowPath: workspacePath })
         },
 
         setUseCodeExecutionMode: (enabled) => {

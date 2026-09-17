@@ -70,6 +70,14 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
+      "id": "webhooks",
+      "label": "Webhooks",
+      "actions": [
+        "open"
+      ],
+      "targets": []
+    },
+    {
       "id": "schedules",
       "label": "Schedules",
       "target_kind": "view_section",

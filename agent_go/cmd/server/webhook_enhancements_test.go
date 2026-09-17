@@ -114,6 +114,24 @@ func TestWebhookLeasesIndependentFromSchedules(t *testing.T) {
 	if err := svc.claimScheduleRun(ctx, hook, "second-hook", time.Now()); err == nil {
 		t.Fatal("same trigger overlap allowed")
 	}
+	parallelSchedule := WorkflowSchedule{ID: "parallel-hook", ScheduleType: "webhook"}
+	parallelOne := &ScheduleContext{
+		WorkspacePath: normal.WorkspacePath, Schedule: parallelSchedule,
+		WebhookInput: &WorkflowWebhookDelivery{RunID: "parallel-one"}, TriggerSource: "webhook",
+	}
+	parallelTwo := &ScheduleContext{
+		WorkspacePath: normal.WorkspacePath, Schedule: parallelSchedule,
+		WebhookInput: &WorkflowWebhookDelivery{RunID: "parallel-two"}, TriggerSource: "webhook",
+	}
+	if scheduleRuntimeKey(parallelOne) == scheduleRuntimeKey(parallelTwo) {
+		t.Fatal("parallel webhook deliveries shared runtime state")
+	}
+	if err := svc.claimScheduleRun(ctx, parallelOne, "parallel-one", time.Now()); err != nil {
+		t.Fatalf("first parallel webhook claim: %v", err)
+	}
+	if err := svc.claimScheduleRun(ctx, parallelTwo, "parallel-two", time.Now()); err != nil {
+		t.Fatalf("second parallel webhook claim: %v", err)
+	}
 	hook.Schedule.ID = "other-hook"
 	if err := svc.claimScheduleRun(ctx, hook, "other-hook-run", time.Now()); err != nil {
 		t.Fatal(err)
@@ -121,6 +139,24 @@ func TestWebhookLeasesIndependentFromSchedules(t *testing.T) {
 	normal.Schedule.ID = "other-cron"
 	if err := svc.claimScheduleRun(ctx, normal, "other-normal-run", time.Now()); err == nil {
 		t.Fatal("schedule lock lost")
+	}
+}
+
+func TestActiveWebhookDeliveryCountIsScopedToTrigger(t *testing.T) {
+	states := map[string]*ScheduleRuntimeState{}
+	for i := 0; i < maxWebhookConcurrency; i++ {
+		sctx := &ScheduleContext{
+			WorkspacePath: "Workflow/test",
+			Schedule:      WorkflowSchedule{ID: "review-hook", ScheduleType: "webhook"},
+			WebhookInput:  &WorkflowWebhookDelivery{RunID: fmt.Sprintf("run-%d", i)},
+		}
+		states[scheduleRuntimeKey(sctx)] = &ScheduleRuntimeState{LastStatus: "running"}
+	}
+	states[workflowScheduleRuntimeKey("Workflow/test", "other-hook")] = &ScheduleRuntimeState{LastStatus: "running"}
+	states[workflowScheduleRuntimeKey("Workflow/test", "review-hook")] = &ScheduleRuntimeState{LastStatus: "completed"}
+	states[workflowScheduleRuntimeKey("Workflow/other", "review-hook")] = &ScheduleRuntimeState{LastStatus: "running"}
+	if got := activeWebhookDeliveryCount(states, "Workflow/test", "review-hook"); got != maxWebhookConcurrency {
+		t.Fatalf("active review deliveries = %d, want %d", got, maxWebhookConcurrency)
 	}
 }
 func TestWebhookRetentionUsesWorkflowRunRetentionCountAndPreservesActiveRuns(t *testing.T) {

@@ -57,6 +57,7 @@ type ScheduledJobResponse struct {
 	CollisionPolicy          string     `json:"collision_policy,omitempty"`
 	ConcurrencyMode          string     `json:"concurrency_mode,omitempty"`
 	ParallelRiskAcknowledged bool       `json:"parallel_risk_acknowledged,omitempty"`
+	MaxConcurrency           int        `json:"max_concurrency,omitempty"`
 	MaxStartDelayMinutes     int        `json:"max_start_delay_minutes,omitempty"`
 	AfterScheduleID          string     `json:"after_schedule_id,omitempty"`
 	AfterScheduleIDs         []string   `json:"after_schedule_ids,omitempty"`
@@ -149,6 +150,14 @@ type TriggerPulseRequest struct {
 }
 
 func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule, state ScheduleRuntimeState, missed WorkflowScheduleMissedStatus) ScheduledJobResponse {
+	maxConcurrency := 0
+	collisionPolicy := sched.CollisionPolicy
+	concurrencyMode := sched.ConcurrencyMode
+	if sched.ScheduleType == "webhook" {
+		maxConcurrency = maxWebhookConcurrency
+		collisionPolicy = ""
+		concurrencyMode = ""
+	}
 	return ScheduledJobResponse{
 		StepID:                   workflowWebhookDTO(sched).StepID,
 		ID:                       sched.ID,
@@ -181,9 +190,10 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		RunCount:                 state.RunCount,
 		ConsecutiveFailures:      state.ConsecutiveFailures,
 		ExecutionMode:            sched.ExecutionMode,
-		CollisionPolicy:          sched.CollisionPolicy,
-		ConcurrencyMode:          sched.ConcurrencyMode,
+		CollisionPolicy:          collisionPolicy,
+		ConcurrencyMode:          concurrencyMode,
 		ParallelRiskAcknowledged: sched.ParallelRiskAcknowledged,
+		MaxConcurrency:           maxConcurrency,
 		MaxStartDelayMinutes:     sched.MaxStartDelayMinutes,
 		AfterScheduleID:          sched.AfterScheduleID,
 		AfterScheduleIDs:         sched.AfterScheduleIDs,

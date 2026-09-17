@@ -35,8 +35,9 @@ it('shows endpoint, saved route, authentication and group', async () => {
   const host = await mount()
   expect(host.textContent).toContain('https://agent.example/api/hooks/workflow/trigger-1')
   expect(host.textContent).toContain('Choose work → Process issues')
-  expect(host.textContent).toContain('GitHub signature · Groups: prod')
-  expect(host.textContent).toContain('Time triggers run on a schedule')
+  expect(host.textContent).toContain('GitHub signature')
+  expect(host.textContent).toContain('Groups: prod')
+  expect(host.textContent).toContain('up to 4 concurrent deliveries')
 })
 it('shows payload mappings configured by the builder', async () => {
   vi.mocked(workflowWebhooksApi.list).mockResolvedValue({
@@ -53,7 +54,7 @@ it('shows payload mappings configured by the builder', async () => {
 })
 it('disables a trigger while retaining its route binding', async () => {
   const host = await mount()
-  await act(async () => button(host, 'Disable').click())
+  await act(async () => button(host, 'Pause').click())
   expect(workflowWebhooksApi.save).toHaveBeenCalledWith(expect.objectContaining({ workspace_path: 'Workflow/test', enabled: false, route_selections: { router: 'issues' } }), 'trigger-1')
 })
 it('rotates and displays a secret only until dismissed', async () => {
@@ -77,10 +78,20 @@ it('lets a reader inspect but not change triggers', async () => {
 })
 it('directs creation and configuration to the builder chat without a manual form', async () => {
   const host = await mount()
-  expect(host.textContent).toContain('through the workflow builder chat')
+  expect(host.textContent).toContain('by asking Builder')
   expect(host.textContent).not.toContain('Add API trigger')
   expect(host.querySelector('form')).toBeNull()
   expect([...host.querySelectorAll('button')].some(node => node.textContent === 'Edit')).toBe(false)
+})
+it('renders older webhooks whose optional maps were stored as null', async () => {
+  vi.mocked(workflowWebhooksApi.list).mockResolvedValue({
+    triggers: [{ ...trigger, route_selections: null, group_names: null, payload_mappings: { routes: { legacy: { source: 'kind', values: null } } } } as unknown as typeof trigger],
+    groups: [],
+    routes: [],
+  })
+  const host = await mount()
+  expect(host.textContent).toContain('Full workflow')
+  expect(host.textContent).toContain('Default access')
 })
 it('removes only the selected trigger', async () => {
   const host = await mount()

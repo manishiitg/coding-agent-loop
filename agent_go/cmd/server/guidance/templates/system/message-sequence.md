@@ -147,7 +147,7 @@ An item override can narrow but never exceed the step-level permissions. Write a
 **Persistent stores and scratch space (the hard allow-list).** Access still depends on the current step/item grants. DB rows use managed tools; file grants do not authorize opening the live database:
 
 - DB rows via `mutate_workflow_db` (never direct SQLite access from an agentic step); `db/assets/` for durable **files** of any format (PDF, image, CSV, JSON, txt, zip). A downloaded or generated file that later steps or the builder must reach goes in `db/assets/` with a reference row in `db.sqlite`. This is the ONLY step-writable home for an arbitrary file.
-- `knowledgebase/notes/` — workflow-discovered narrative facts (KB direct-write only).
+- `knowledgebase/notes/` — workflow-discovered narrative facts (KB direct-write only). An item with `write_access.knowledgebase` and an attached `access: "write"` knowledgebase_source can also write that source's `notes/` — same notes/-only boundary, same item-level grant, just in a resolved external workflow's KB. Requires the source workflow to have separately granted this workflow write access via its own `kb_write_grants`; see `references/stores.md`'s "Attached knowledge bases" section for the two-sided consent model and its known concurrency limitation.
 - `learnings/_global/` — reusable HOW-to-run knowledge.
 - the step's own execution folder + `Downloads/` — volatile per-run scratch (wiped on re-run).
 

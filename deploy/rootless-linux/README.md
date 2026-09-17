@@ -1,0 +1,77 @@
+# Rootless Linux product deployments
+
+A repeatable redeploy pipeline for fixed-workspace products running as their
+own isolated Linux account on a shared rootless-systemd host, generalized
+from `deploy/cf/` (confida). One host can run several products, each under
+its own system account (`sparkquill`, `confida`, `dominion`, ...); this
+pipeline only ever touches the one account and `$PRODUCT-*` systemd units
+named on the command line.
+
+`deploy/cf/`, `deploy/aws-ec2/` (video-studio), and dominion's deploy path
+still have their own copies of this same shape and keep working as-is.
+Migrating them onto this template is a deliberate later step per product,
+not automatic.
+
+## How it works
+
+1. `deploy.sh <product>` runs on your machine. It reads
+   `products/<product>/product.env`, installs/updates the product's CLI
+   dependencies over SSH, then ships `bootstrap-build.sh` plus the branch
+   name and repo URLs to `<product>@<host>`. **It never builds anything
+   itself** — no local go/node/npm required to trigger a deploy.
+2. `bootstrap-build.sh` runs on the server. It takes a `flock` on
+   `/srv/<product>/deploy.lock` (refuses a second concurrent deploy), clones
+   fresh depth-1 checkouts of all three repos at the requested branch, then
+   hands off to `build-and-activate.sh` **from that fresh checkout** — so the
+   build logic always matches whatever is on the deployed branch, never a
+   stale copy cached on the triggering machine.
+3. `build-and-activate.sh` builds the four Go binaries and the frontend,
+   assembles a new immutable release under `/srv/<product>/releases/<rev>-<timestamp>/`
+   (with a `SOURCE_REVISIONS` file recording the exact commit of every repo),
+   waits for the current release to drain in-flight turns, swaps the
+   `current` symlink, restarts the three systemd units, verifies the
+   running processes actually received the expected environment, health
+   checks both loopback ports and the public domain, then prunes old
+   releases (only ones with no process still referencing them, and only
+   after a health check confirms the new release is up).
+
+## Adding a new product
+
+Copy `products/sparkquill/` as a starting point:
+
+- `product.env` — ports, provider/model, which CLIs to install, and any
+  `EXTRA_ENV` the systemd units need beyond what's already in
+  `/srv/<product>/.env`. See the comments in `products/sparkquill/product.env`
+  for what each field means and which ones are safe to leave at their
+  defaults.
+- `runtime-config.js` — the frontend's `window.__APP_RUNTIME_CONFIG__`.
+- `mcp-servers.json` — installed as `configs/mcp_servers_<product>.json`.
+
+Requirements this template assumes:
+
+- The product's systemd units are already installed and enabled (one-time
+  account/unit/Caddy-site bootstrap is out of scope for this script, same as
+  `deploy/cf/`) — `<product>-agent`, `<product>-workspace`, `<product>-gateway`,
+  each `WorkingDirectory=/srv/<product>/current` and loading
+  `/srv/<product>/.env` via `EnvironmentFile=`.
+- `/srv/<product>/.env` already has whatever secrets and product-specific
+  settings the deployment needs (`WORKSPACE_DOCS_PATH`,
+  `AGENT_BROWSER_SHARED_PROFILE`, provider API keys, ...) — this pipeline
+  only ever rewrites the `PATH=` line in that file (see the comment in
+  `build-and-activate.sh` for why: `EnvironmentFile=` wins over a systemd
+  drop-in's `Environment=` for the same key, so a stale `PATH=` there would
+  otherwise silently outrank the managed one).
+- Product-specific one-time migrations or catalog copies (Workflow Builder
+  chat migration, playbook catalog) are optional per product via
+  `RUN_WORKFLOW_BUILDER_MIGRATION` / `COPY_PLAYBOOKS` in `product.env` — leave
+  both `false` for a fixed single-workspace product like SparkQuill that has
+  neither concept.
+
+## Usage
+
+```
+./deploy.sh sparkquill
+```
+
+Env overrides (all default from `product.env`): `HOST_IP`, `SSH_PORT`,
+`SSH_KEY_PATH`, `DEPLOY_BRANCH` (defaults to `main`).

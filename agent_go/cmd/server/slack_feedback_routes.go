@@ -28,8 +28,7 @@ type SlackConfigRequest struct {
 	Enabled        bool                    `json:"enabled"`
 	BotToken       string                  `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
 	AppToken       string                  `json:"app_token"` // App-level token (xapp-...) for Socket Mode
-	ChannelID      string                  `json:"channel_id"`
-	BotMode        bool                    `json:"bot_mode"` // Enable @mention bot mode (starts agent sessions from Slack)
+	BotMode        bool                    `json:"bot_mode"`  // Enable @mention bot mode (starts agent sessions from Slack)
 	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
 }
 
@@ -38,7 +37,6 @@ type SlackConfigResponse struct {
 	Enabled        bool                    `json:"enabled"`
 	BotToken       string                  `json:"bot_token,omitempty"` // Masked in GET
 	AppToken       string                  `json:"app_token,omitempty"` // Masked in GET
-	ChannelID      string                  `json:"channel_id,omitempty"`
 	BotMode        bool                    `json:"bot_mode"`
 	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
 }
@@ -226,25 +224,6 @@ func requireSlackRouteProfileOwner(ctx context.Context, api *StreamingAPI, route
 	return userID, nil
 }
 
-func migrateLegacySlackRouteToDefaultChannel(routes map[string]ChannelRoute, defaultChannelID string) (map[string]ChannelRoute, bool) {
-	defaultChannelID = strings.ToUpper(strings.TrimSpace(defaultChannelID))
-	if !slackChannelIDPattern.MatchString(defaultChannelID) || len(routes) != 1 {
-		return nil, false
-	}
-	for rawKey, route := range routes {
-		if slackChannelIDPattern.MatchString(strings.ToUpper(strings.TrimSpace(rawKey))) || strings.TrimSpace(route.WorkflowID) == "" {
-			return nil, false
-		}
-		route.WorkflowID = strings.TrimSpace(route.WorkflowID)
-		route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-		route.BotGrant = services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
-		route.WorkshopMode = services.WorkshopModeForBotGrant(route.BotGrant)
-		route.SendFullDetails = true
-		return map[string]ChannelRoute{defaultChannelID: route}, true
-	}
-	return nil, false
-}
-
 // Webhook types removed - using Socket Mode for real-time events
 
 // SlackFeedbackRoutes sets up Slack feedback API routes
@@ -302,24 +281,7 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 				var normalizeErr error
 				channelRouting, normalizeErr = normalizeSlackChannelRouting(channelRouting)
 				if normalizeErr != nil {
-					var rawRouting map[string]ChannelRoute
-					_ = json.Unmarshal([]byte(botCfg.AllowedChannels), &rawRouting)
-					if migratedRouting, migrated := migrateLegacySlackRouteToDefaultChannel(rawRouting, config.ChannelID); migrated {
-						channelRouting = migratedRouting
-						if data, err := json.Marshal(channelRouting); err == nil {
-							if _, saveErr := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
-								ID:              "slack",
-								Enabled:         config.Enabled,
-								BotMode:         botMode,
-								ConfigJSON:      botCfg.ConfigJSON,
-								AllowedChannels: string(data),
-							}); saveErr != nil {
-							} else {
-							}
-						}
-					} else {
-						channelRouting = nil
-					}
+					channelRouting = nil
 				}
 			}
 		}
@@ -328,7 +290,6 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			Enabled:        config.Enabled,
 			BotToken:       config.BotToken,
 			AppToken:       config.AppToken,
-			ChannelID:      config.ChannelID,
 			BotMode:        botMode,
 			ChannelRouting: channelRouting,
 		}
@@ -364,10 +325,9 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		config := &services.SlackConfig{
-			Enabled:   req.Enabled,
-			BotToken:  req.BotToken,
-			AppToken:  req.AppToken,
-			ChannelID: req.ChannelID,
+			Enabled:  req.Enabled,
+			BotToken: req.BotToken,
+			AppToken: req.AppToken,
 		}
 
 		var existingRouting map[string]ChannelRoute
@@ -397,7 +357,7 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		botMode := currentBotConfig != nil && currentBotConfig.BotMode
-		connectorChanged := req.Enabled != currentConfig.Enabled || req.ChannelID != currentConfig.ChannelID || req.BotMode != botMode || req.BotToken != currentConfig.BotToken || req.AppToken != currentConfig.AppToken
+		connectorChanged := req.Enabled != currentConfig.Enabled || req.BotMode != botMode || req.BotToken != currentConfig.BotToken || req.AppToken != currentConfig.AppToken
 		if connectorChanged {
 			claims := GetUserFromContext(r.Context())
 			if claims == nil || claims.Provider == "bot_route" || !currentUserIsAdmin(r) {
@@ -426,17 +386,8 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 				var existingNormalizeErr error
 				channelRouting, existingNormalizeErr = normalizeSlackChannelRouting(channelRouting)
 				if existingNormalizeErr != nil {
-					var rawRouting map[string]ChannelRoute
-					_ = json.Unmarshal([]byte(allowedChannelsJSON), &rawRouting)
-					if migratedRouting, migrated := migrateLegacySlackRouteToDefaultChannel(rawRouting, config.ChannelID); migrated {
-						channelRouting = migratedRouting
-						if data, err := json.Marshal(channelRouting); err == nil {
-							allowedChannelsJSON = string(data)
-						}
-					} else {
-						channelRouting = nil
-						allowedChannelsJSON = ""
-					}
+					http.Error(w, "existing Slack routes are invalid; configure channel IDs on routes", http.StatusBadRequest)
+					return
 				} else if data, err := json.Marshal(channelRouting); err == nil {
 					allowedChannelsJSON = string(data)
 				}
@@ -485,7 +436,6 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 
 		response := SlackConfigResponse{
 			Enabled:        config.Enabled,
-			ChannelID:      config.ChannelID,
 			BotMode:        req.BotMode,
 			ChannelRouting: channelRouting,
 		}
@@ -530,10 +480,9 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 		var testUniqueID string
 		if testConfig != nil {
 			testUniqueID, err = slackService.TestConnectionWithConfig(r.Context(), &services.SlackConfig{
-				Enabled:   testConfig.Enabled,
-				BotToken:  testConfig.BotToken,
-				AppToken:  testConfig.AppToken,
-				ChannelID: testConfig.ChannelID,
+				Enabled:  testConfig.Enabled,
+				BotToken: testConfig.BotToken,
+				AppToken: testConfig.AppToken,
 			})
 		} else {
 			// TestConnection will reload config internally
@@ -554,7 +503,7 @@ func testSlackConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 
 		response := SlackTestResponse{
 			Success: true,
-			Message: "Slack connection test successful! A test message has been sent to your Slack channel. Reply to it in a thread to test Socket Mode.",
+			Message: "Slack bot and app tokens verified. Socket Mode is available. Add channel routes to receive messages.",
 			TestID:  testUniqueID,
 		}
 		w.Header().Set("Content-Type", "application/json")

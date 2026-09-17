@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -24,7 +23,7 @@ import (
 )
 
 // Slack state is persisted as two small JSON files under <workspace-docs>/config/:
-// slack-config.json (bot_token/app_token/channel/enabled) and
+// slack-config.json (bot_token/app_token/enabled) and
 // slack-feedback-messages.json (uniqueID → Slack message ts/channel mapping).
 // Legacy _system file locations are still read and migrated forward on load.
 // Both are loaded into memory on first access and mutated under a
@@ -190,10 +189,9 @@ func SetFeedbackStoreFuncs(createFn FeedbackStoreFunc) {
 
 // SlackConfig represents Slack configuration (Socket Mode only)
 type SlackConfig struct {
-	Enabled   bool   `json:"enabled"`
-	BotToken  string `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
-	AppToken  string `json:"app_token"` // App-level token (xapp-...) for Socket Mode
-	ChannelID string `json:"channel_id"`
+	Enabled  bool   `json:"enabled"`
+	BotToken string `json:"bot_token"` // Bot User OAuth Token (xoxb-...)
+	AppToken string `json:"app_token"` // App-level token (xapp-...) for Socket Mode
 }
 
 // SlackService handles Slack integration for human feedback. It implements
@@ -205,7 +203,6 @@ type SlackService struct {
 	socketClient   *socketmode.Client // Socket Mode client for WebSocket connection
 	config         *SlackConfig
 	enabled        bool
-	channelID      string
 	useSocketMode  bool
 	socketCtx      context.Context
 	socketCancel   context.CancelFunc
@@ -349,11 +346,10 @@ func (s *SlackService) ReloadConfig(ctx context.Context) error {
 		return err
 	}
 
-	// Only enable if all required fields are present (Socket Mode requires bot token, app token, and channel)
-	if s.config != nil && s.config.Enabled && s.config.BotToken != "" && s.config.AppToken != "" && s.config.ChannelID != "" {
+	// Socket Mode connects the app; destinations belong to channel routes.
+	if s.config != nil && s.config.Enabled && s.config.BotToken != "" && s.config.AppToken != "" {
 		s.client = slack.New(s.config.BotToken)
 		s.enabled = true
-		s.channelID = s.config.ChannelID
 		s.useSocketMode = true
 
 		// Start Socket Mode connection
@@ -362,16 +358,15 @@ func (s *SlackService) ReloadConfig(ctx context.Context) error {
 			s.enabled = false
 			s.useSocketMode = false
 		} else {
-			log.Printf("[SLACK] Service enabled with Socket Mode: channel=%s", s.channelID)
+			log.Printf("[SLACK] Service enabled with Socket Mode")
 		}
 	} else {
 		s.client = nil
 		s.enabled = false
-		s.channelID = ""
 		s.useSocketMode = false
 		if s.config != nil {
-			log.Printf("[SLACK] Service disabled: enabled=%v, hasBotToken=%v, hasAppToken=%v, hasChannelID=%v",
-				s.config.Enabled, s.config.BotToken != "", s.config.AppToken != "", s.config.ChannelID != "")
+			log.Printf("[SLACK] Service disabled: enabled=%v, hasBotToken=%v, hasAppToken=%v",
+				s.config.Enabled, s.config.BotToken != "", s.config.AppToken != "")
 		}
 	}
 
@@ -380,16 +375,15 @@ func (s *SlackService) ReloadConfig(ctx context.Context) error {
 
 // IsEnabled checks if Slack notifications are enabled
 func (s *SlackService) IsEnabled() bool {
-	return s.enabled && s.client != nil && s.channelID != ""
+	return s.enabled && s.client != nil
 }
 
 // pickDestination resolves where this Slack feedback notification should land.
 // Precedence:
 //  1. dest.Slack (explicit per-request hint)
 //  2. per-user preference (looked up via dest.UserID)
-//  3. workspace-wide default (s.channelID)
 //
-// Returns ("", "") only if Slack is disabled or has no default and no hint —
+// Returns ("", "") if no explicit destination or user preference exists —
 // the caller should treat that as "skip silently".
 func (s *SlackService) pickDestination(dest *NotificationDestination) (channelID, threadTS string) {
 	if dest != nil && dest.Slack != nil && dest.Slack.ChannelID != "" {
@@ -400,7 +394,7 @@ func (s *SlackService) pickDestination(dest *NotificationDestination) (channelID
 			return pref.SlackChannelID, ""
 		}
 	}
-	return s.channelID, ""
+	return "", ""
 }
 
 func (s *SlackService) pickUserNotificationDestination(dest *NotificationDestination) (channelID, threadTS string) {
@@ -761,8 +755,6 @@ func (s *SlackService) GetUniqueIDFromThread(
 	return "", fmt.Errorf("unique_id not found - message may not be a feedback request")
 }
 
-// TestConnectionWithConfig tests Slack connection with provided config (without saving)
-// Returns the test unique ID so the frontend can poll for replies
 // testAppToken validates a Slack app-level token by calling apps.connections.open.
 // This is the same endpoint Socket Mode uses to establish a WebSocket connection.
 func testAppToken(ctx context.Context, appToken string) error {
@@ -807,185 +799,29 @@ func testAppToken(ctx context.Context, appToken string) error {
 }
 
 func (s *SlackService) TestConnectionWithConfig(ctx context.Context, config *SlackConfig) (string, error) {
-	// Validate config
-	if config == nil {
-		return "", fmt.Errorf("config is required")
+	if config == nil || !config.Enabled {
+		return "", fmt.Errorf("enable the Slack bot before testing")
 	}
-	if !config.Enabled {
-		return "", fmt.Errorf("slack service is not enabled in the provided config")
+	if config.BotToken == "" || config.AppToken == "" {
+		return "", fmt.Errorf("both bot and app tokens are required")
 	}
-	if config.BotToken == "" {
-		return "", fmt.Errorf("slack bot token is missing in the provided config")
+	client := slack.New(config.BotToken, slack.OptionAppLevelToken(config.AppToken))
+	if _, err := client.AuthTestContext(ctx); err != nil {
+		return "", fmt.Errorf("bot token validation failed: %w", err)
 	}
-	if config.ChannelID == "" {
-		return "", fmt.Errorf("slack channel ID is missing in the provided config")
+	if err := testAppToken(ctx, config.AppToken); err != nil {
+		return "", fmt.Errorf("app token / Socket Mode validation failed: %w", err)
 	}
-
-	// Step 1: Validate bot token via auth.test
-	client := slack.New(config.BotToken)
-	authResp, err := client.AuthTestContext(ctx)
-	if err != nil {
-		var slackErr slack.SlackErrorResponse
-		if errors.As(err, &slackErr) {
-			switch slackErr.Err {
-			case "invalid_auth":
-				return "", fmt.Errorf("Bot Token invalid: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
-			case "not_authed":
-				return "", fmt.Errorf("Bot Token expired or revoked: please regenerate it in Slack App settings → OAuth & Permissions")
-			case "token_revoked":
-				return "", fmt.Errorf("Bot Token has been revoked: please reinstall the Slack app and get a new token")
-			default:
-				return "", fmt.Errorf("Bot Token error: %s", slackErr.Err)
-			}
-		}
-		return "", fmt.Errorf("Bot Token validation failed: %w", err)
-	}
-	log.Printf("[SLACK] Bot token valid — team=%s, bot=%s", authResp.Team, authResp.User)
-
-	// Step 2: Validate channel access
-	_, err = client.GetConversationInfoContext(ctx, &slack.GetConversationInfoInput{
-		ChannelID:         config.ChannelID,
-		IncludeLocale:     false,
-		IncludeNumMembers: false,
-	})
-	if err != nil {
-		var slackErr slack.SlackErrorResponse
-		if errors.As(err, &slackErr) {
-			switch slackErr.Err {
-			case "channel_not_found":
-				return "", fmt.Errorf("Channel not found: please check that the channel ID '%s' is correct and the bot is a member of the channel", config.ChannelID)
-			case "missing_scope":
-				return "", fmt.Errorf("Missing scope: the bot needs 'channels:read' scope. Please add it in OAuth & Permissions and reinstall the app")
-			default:
-				return "", fmt.Errorf("Channel access error: %s", slackErr.Err)
-			}
-		}
-		return "", fmt.Errorf("Channel validation failed: %w", err)
-	}
-
-	// Step 3: Validate app token (Socket Mode) if provided
-	if config.AppToken != "" {
-		if err := testAppToken(ctx, config.AppToken); err != nil {
-			return "", err
-		}
-		log.Printf("[SLACK] App token valid — Socket Mode connection OK")
-	}
-
-	// Send a test message with webhook testing instructions
-	testUniqueID := fmt.Sprintf("test-connection-%d", time.Now().Unix())
-
-	testBlocks := formatSlackMessage(
-		testUniqueID,
-		"🧪 **Connection Test Message**",
-		"This is a test message to verify Slack integration.\n\n**To test webhook:** Reply to this message in a thread. Your reply will be captured by the webhook and logged in the server.",
-		nil, // No button options for test message
-	)
-
-	_, messageTS, err := client.PostMessage(config.ChannelID, slack.MsgOptionBlocks(testBlocks...))
-	if err != nil {
-		return "", fmt.Errorf("failed to send test message: %w", err)
-	}
-
-	// Create a feedback request so we can track replies
-	// Note: We use a function variable to avoid import cycle with virtual-tools
-	// This will be set by the caller if needed
-	if createFeedbackRequest != nil {
-		if err := createFeedbackRequest(testUniqueID, "Test connection message"); err != nil {
-			log.Printf("[SLACK] Warning: Failed to create feedback request for test: %v", err)
-		}
-	}
-
-	// Store the message mapping so Socket Mode replies can look it up later.
-	if err := s.StoreMessageMapping(ctx, testUniqueID, messageTS, config.ChannelID); err != nil {
-		log.Printf("[SLACK] Warning: Failed to store test message mapping: %v", err)
-	}
-
-	return testUniqueID, nil
+	return "", nil
 }
 
 // TestConnection tests if Slack connection is working
 func (s *SlackService) TestConnection(ctx context.Context) error {
-	// Reload config first to ensure we have the latest state
 	if err := s.ReloadConfig(ctx); err != nil {
-		return fmt.Errorf("failed to reload configuration: %w", err)
+		return fmt.Errorf("failed to reload Slack configuration: %w", err)
 	}
-
-	if !s.IsEnabled() {
-		// Provide more detailed error message
-		if s.config == nil {
-			return fmt.Errorf("slack configuration not found, please save your configuration first")
-		}
-		if !s.config.Enabled {
-			return fmt.Errorf("slack service is not enabled, please enable it in the configuration")
-		}
-		if s.config.BotToken == "" {
-			return fmt.Errorf("slack bot token is missing, please configure it in the settings")
-		}
-		if s.config.ChannelID == "" {
-			return fmt.Errorf("slack channel ID is missing, please configure it in the settings")
-		}
-		if s.client == nil {
-			return fmt.Errorf("slack client not initialized, please check your bot token")
-		}
-		return fmt.Errorf("slack service is not enabled (enabled=%v, hasClient=%v, channelID=%q)",
-			s.enabled, s.client != nil, s.channelID)
-	}
-
-	// Test by getting channel info
-	_, err := s.client.GetConversationInfo(&slack.GetConversationInfoInput{
-		ChannelID:         s.channelID,
-		IncludeLocale:     false,
-		IncludeNumMembers: false,
-	})
-
-	if err != nil {
-		// Provide more helpful error messages based on Slack API errors
-		var slackErr slack.SlackErrorResponse
-		if errors.As(err, &slackErr) {
-			switch slackErr.Err {
-			case "invalid_auth":
-				return fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions, not the App-Level Token")
-			case "channel_not_found":
-				return fmt.Errorf("channel not found: please check that the channel ID is correct and the bot is a member of the channel")
-			case "not_authed":
-				return fmt.Errorf("authentication failed: the bot token is invalid or expired. Please regenerate it in Slack App settings")
-			case "missing_scope":
-				return fmt.Errorf("missing required scope: the bot needs 'channels:read' scope. Please add it in OAuth & Permissions and reinstall the app")
-			default:
-				return fmt.Errorf("Slack API error: %s", slackErr.Err)
-			}
-		}
-		return fmt.Errorf("failed to connect to Slack: %w", err)
-	}
-
-	// Send a test message with @channel notification
-	testBlocks := []slack.Block{
-		slack.NewSectionBlock(
-			slack.NewTextBlockObject("mrkdwn", "<!channel>\n\n✅ Slack integration test successful!", false, false),
-			nil, nil,
-		),
-	}
-
-	_, _, err = s.client.PostMessage(s.channelID, slack.MsgOptionBlocks(testBlocks...))
-	if err != nil {
-		// Provide helpful error messages for message sending errors too
-		var slackErr slack.SlackErrorResponse
-		if errors.As(err, &slackErr) {
-			switch slackErr.Err {
-			case "invalid_auth":
-				return fmt.Errorf("invalid bot token: please check that your bot token is correct and starts with 'xoxb-'. Make sure you copied the 'Bot User OAuth Token' from OAuth & Permissions")
-			case "missing_scope":
-				return fmt.Errorf("missing required scope: the bot needs 'chat:write' scope. Please add it in OAuth & Permissions and reinstall the app")
-			case "channel_not_found":
-				return fmt.Errorf("channel not found: please check that the channel ID is correct and the bot is a member of the channel")
-			default:
-				return fmt.Errorf("Slack API error: %s", slackErr.Err)
-			}
-		}
-		return fmt.Errorf("failed to send test message: %w", err)
-	}
-
-	return nil
+	_, err := s.TestConnectionWithConfig(ctx, s.config)
+	return err
 }
 
 // isMaskedToken returns true when the string is a display-only placeholder
@@ -1832,41 +1668,7 @@ func (s *SlackService) resolveSlackChannelWorkflow(channelID string) *ChannelRou
 		return route
 	}
 
-	defaultChannelID := ""
-	if s.config != nil {
-		defaultChannelID = strings.ToUpper(strings.TrimSpace(s.config.ChannelID))
-	}
-	if defaultChannelID != "" && strings.EqualFold(defaultChannelID, channelID) && len(routes) == 1 {
-		for rawKey, route := range routes {
-			legacyKey := strings.ToUpper(strings.TrimSpace(rawKey))
-			if slackChannelIDLike(legacyKey) || strings.TrimSpace(route.WorkflowID) == "" {
-				continue
-			}
-			route.WorkflowID = strings.TrimSpace(route.WorkflowID)
-			route.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
-			route.WorkshopMode = NormalizeBotWorkshopMode(route.WorkshopMode)
-			route.SendFullDetails = true
-			return &route
-		}
-	}
 	return nil
-}
-
-func slackChannelIDLike(channelID string) bool {
-	if len(channelID) < 3 {
-		return false
-	}
-	switch channelID[0] {
-	case 'C', 'D', 'G':
-	default:
-		return false
-	}
-	for _, r := range channelID[1:] {
-		if (r < 'A' || r > 'Z') && (r < '0' || r > '9') {
-			return false
-		}
-	}
-	return true
 }
 
 func slackUserChatUploadFolder(userID string) string {

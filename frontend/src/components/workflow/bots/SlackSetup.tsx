@@ -90,7 +90,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                     </div>
                     <div>
                       <p className="font-semibold">6. Invite the bot &amp; get Channel ID</p>
-                      <p className="mt-1">In Slack, invite the bot to a channel: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">/invite @YourBot</code>. Then right-click the channel → <b>View channel details</b> → scroll to the bottom — the <b>Channel ID</b> starts with <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">C</code>.</p>
+                      <p className="mt-1">In Slack, invite the bot to a channel: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">/invite @YourBot</code>. Add its channel ID as a bot route after connecting. Find it in <b>View channel details</b>; it starts with <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">C</code>.</p>
                     </div>
                     <p className="pt-1 italic opacity-80">If you re-add scopes or events later, you must re-install the app for changes to take effect.</p>
                   </div>
@@ -120,13 +120,6 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                     </button>
                   </div>
                   <p className="text-xs text-muted-foreground mt-1">OAuth & Permissions → Bot User OAuth Token (starts with xoxb-)</p>
-                </Card>
-
-                {/* Channel ID */}
-                <Card className="p-4">
-                  <label className="block text-sm font-medium text-foreground mb-2">Channel ID <span className="text-red-500">*</span></label>
-                  <input type="text" value={slackConfig.channel_id || ''} onChange={e => setSlackConfig({ ...slackConfig, channel_id: e.target.value })} disabled={readOnly} placeholder="C1234567890" className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
-                  <p className="text-xs text-muted-foreground mt-1">Right-click channel → View channel details → Channel ID (starts with C)</p>
                 </Card>
 
                 {/* App Token */}

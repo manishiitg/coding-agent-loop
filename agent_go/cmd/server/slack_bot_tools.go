@@ -156,7 +156,6 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 		}
 		if config != nil {
 			result["enabled"] = config.Enabled
-			result["default_channel_id"] = config.ChannelID
 			result["bot_token_configured"] = config.BotToken != ""
 			result["app_token_configured"] = config.AppToken != ""
 		}

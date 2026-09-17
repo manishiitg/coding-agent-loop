@@ -1000,7 +1000,6 @@ export interface SlackConfig {
   enabled: boolean
   bot_token?: string  // Masked in GET response
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
-  channel_id?: string
   bot_mode?: boolean  // Enable @mention bot mode
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
@@ -1009,7 +1008,6 @@ export interface SlackConfigRequest {
   enabled: boolean
   bot_token: string  // Bot User OAuth Token (xoxb-...)
   app_token: string  // App-level token (xapp-...) for Socket Mode
-  channel_id: string
   bot_mode: boolean  // Enable @mention bot mode
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }
@@ -1018,7 +1016,6 @@ export interface SlackConfigResponse {
   enabled: boolean
   bot_token?: string  // Masked in GET
   app_token?: string  // Masked in GET
-  channel_id?: string
   bot_mode?: boolean
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
 }

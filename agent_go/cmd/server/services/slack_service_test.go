@@ -1,9 +1,14 @@
 package services
 
-import "testing"
+import (
+	"encoding/json"
+	"github.com/slack-go/slack"
+	"strings"
+	"testing"
+)
 
 func TestSlackUserNotificationDestinationRequiresExplicitSlackDestination(t *testing.T) {
-	svc := &SlackService{channelID: "CDEFAULT"}
+	svc := &SlackService{}
 
 	channelID, threadTS := svc.pickUserNotificationDestination(nil)
 	if channelID != "" || threadTS != "" {
@@ -23,11 +28,29 @@ func TestSlackUserNotificationDestinationRequiresExplicitSlackDestination(t *tes
 	}
 }
 
-func TestSlackFeedbackNotificationDestinationKeepsDefaultFallback(t *testing.T) {
-	svc := &SlackService{channelID: "CDEFAULT"}
+func TestSlackFeedbackNotificationHasNoDefaultFallback(t *testing.T) {
+	svc := &SlackService{}
 
 	channelID, threadTS := svc.pickDestination(nil)
-	if channelID != "CDEFAULT" || threadTS != "" {
-		t.Fatalf("feedback notification destination = %q/%q, want CDEFAULT/empty", channelID, threadTS)
+	if channelID != "" || threadTS != "" {
+		t.Fatalf("feedback notification destination = %q/%q, want empty/empty", channelID, threadTS)
+	}
+}
+
+func TestSlackConnectionDoesNotRequireDefaultChannel(t *testing.T) {
+	svc := &SlackService{enabled: true, client: slack.New("test")}
+	if !svc.IsEnabled() {
+		t.Fatal("connector requires a legacy channel")
+	}
+	var cfg SlackConfig
+	if err := json.Unmarshal([]byte(`{"enabled":true,"channel_id":"CLEGACY"}`), &cfg); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "channel_id") {
+		t.Fatal("legacy default channel survived serialization")
 	}
 }

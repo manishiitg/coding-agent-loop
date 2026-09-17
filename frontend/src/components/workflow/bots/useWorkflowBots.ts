@@ -91,7 +91,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [addError, setAddError] = useState<Partial<Record<ChannelKind, string>>>({})
 
   // ── Slack ─────────────────────────────────────────────────────────────────
-  const [slackConfig, setSlackConfig] = useState<SlackConfig>({ enabled: false, bot_token: '', app_token: '', channel_id: '' })
+  const [slackConfig, setSlackConfig] = useState<SlackConfig>({ enabled: false, bot_token: '', app_token: '' })
   const [slackOriginal, setSlackOriginal] = useState<SlackConfig>(slackConfig)
   const [slackLoading, setSlackLoading] = useState(true)
   const [slackSaving, setSlackSaving] = useState(false)
@@ -623,7 +623,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       enabled: slackOriginal.enabled,
       bot_token: slackOriginal.bot_token || '',
       app_token: slackOriginal.app_token || '',
-      channel_id: slackOriginal.channel_id || '',
       bot_mode: slackOriginal.bot_mode || false,
       channel_routing: next,
     }
@@ -782,7 +781,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       setSlackSuccess(null)
       const request: SlackConfigRequest = {
         enabled: slackConfig.enabled, bot_token: slackConfig.bot_token || '',
-        app_token: slackConfig.app_token || '', channel_id: slackConfig.channel_id || '',
+        app_token: slackConfig.app_token || '',
         bot_mode: slackConfig.enabled,
         channel_routing: slackOriginal.channel_routing || {},
       }

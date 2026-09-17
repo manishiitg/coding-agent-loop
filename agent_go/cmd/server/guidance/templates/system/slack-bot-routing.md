@@ -2,7 +2,7 @@
 
 Call `get_slack_bot_settings` before changing a route and again afterward to confirm the saved state. Use exact Slack channel IDs (for example `C1234567890`), never display names. The tools are bound to the current workflow or Work project; they cannot manage another target.
 
-`create_slack_bot_route(channel_id, bot_grant)` creates a route; `update_slack_bot_route_permission(channel_id, bot_grant)` changes its grant; `remove_slack_bot_route(channel_id)` revokes it. `test_slack_bot_connection` checks the connector. Global enablement, default channel, and credentials remain operator configuration in Setup > Bots. Use `open_workspace_view(view="bots")` when the user needs that visual surface.
+`create_slack_bot_route(channel_id, bot_grant)` creates a route; `update_slack_bot_route_permission(channel_id, bot_grant)` changes its grant; `remove_slack_bot_route(channel_id)` revokes it. `test_slack_bot_connection` checks the connector. Global enablement and credentials remain operator configuration in Setup > Bots. Use `open_workspace_view(view="bots")` when the user needs that visual surface.
 
 A grant authorizes the bot integration itself: `run` gives runtime/read-only authority; `owner` gives authoring authority. The Slack sender is audit metadata and never supplies execution permissions. Only an authenticated interactive owner may create, upgrade, downgrade, or revoke a grant. A Slack-origin session cannot manage grants even if its bot has an `owner` grant. Read-only sessions receive inspection tools, not mutation tools. Permission changes invalidate running bot work and are rechecked on every turn.
 

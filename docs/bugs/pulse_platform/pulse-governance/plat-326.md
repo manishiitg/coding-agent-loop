@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Unassigned |
-| Ticket state | `recommended; explicitly deferred — do not implement yet` |
-| Last synchronized | `2026-09-17` |
+| Ticket state | `schema-v2 + reviewer prompt/tool cutover complete locally; deployment rollout pending` |
+| Last synchronized | `2026-09-18` |
 | Priority | `P2 simplification / migration` |
 
 ## Problem
@@ -154,8 +154,105 @@ second independently authored Pulse summary.
 - Migration is reversible during the rollback window and never silently drops
   an active issue or pending human decision.
 
-## Explicit deferral
+## Implementation status — 2026-09-18
 
-This ticket records the recommended direction only. Do not begin the schema,
-tool, prompt or UI migration until it is separately prioritized. Current Pulse
-storage remains authoritative in the meantime.
+The reversible schema and data-migration phase is implemented locally:
+
+- every server startup scans available workflow `db/db.sqlite` files before
+  schedules start, while each Pulse database open also performs the same
+  idempotent version check for laptops or deployments that were offline;
+- schema version 1 creates `pulse_reviews`, `pulse_issues` and
+  `pulse_decisions`, backfills their product truth, validates invariants and
+  records the version only after the transaction commits;
+- databases with legacy Pulse data receive a consistent, integrity-checked,
+  read-only backup under `db/migrations/.backups/` before mutation;
+- partial/old schemas do not abort the fleet-wide scan, and a failure is
+  isolated to that database and retried on its next open;
+- temporary compatibility projections keep the compact records current while
+  legacy tables remain available for one rollback window.
+
+This is phase 1, not permission to drop legacy data. Gate/UI/Activity cutover,
+legacy tool removal, and final table deletion remain the next rollout phase
+after representative databases have been compared successfully.
+
+## Canary and broader local rollout
+
+The first single-workflow canary completed on 2026-09-18. No other workflow
+database was migrated.
+
+- schema version 1 is recorded and a second targeted run is a no-op;
+- both the current database and its read-only pre-migration backup pass
+  `PRAGMA integrity_check`;
+- the schema-v1 canary exposed a filtering defect: eight retired
+  health/reviewer module identities were initially copied into
+  `pulse_reviews` alongside `technical_review` and `strategic_review`;
+- schema v2 now admits only the four current review identities and maps the
+  supported Technical and Strategic legacy aliases to their current names;
+- the corrected testing canary contains only `technical_review` and
+  `strategic_review`; its currently available legacy data also produced one
+  canonical issue and one linked decision.
+
+The corrected migration was then applied to the broader local workspace:
+
+- 14 real database paths were scanned;
+- 11 additional workflow databases migrated, `Workflow/testing` was already
+  current, and two unrelated databases were skipped;
+- all 12 migrated workflow databases are at schema version 2, pass
+  `PRAGMA integrity_check`, contain zero retired reviewer identities, and pass
+  a second idempotency run with no additional migrations;
+- 29 temporary test databases under `workspace-docs/var` and three duplicated
+  absolute-path artifacts under `workspace-docs/Users` are now excluded from
+  deployment scans.
+
+This completes the local data rollout. RTS, other laptops and deployments such
+as Confida will migrate through the same startup and lazy-open guards only
+after this code is deployed there; they have not been changed by the local run.
+
+## Reviewer skill and tool cutover
+
+The reviewer-facing contract is also updated locally:
+
+- Plan Drift, Technical, Architecture and Strategic skills now persist one
+  concise terminal review result and canonical issues; they do not ask for
+  separate focus, recommendation, verification, impact, assessment or
+  publication records;
+- Strategic Review keeps optional strategic focus areas as reasoning lenses,
+  not a focus-history ledger. Technical and Architecture select scope from the
+  evidence in front of them;
+- Gate writes only its small platform scheduling receipt. Workflow/evaluation
+  steps and collectors own metric observations;
+- `record_pulse_result` is the user-visible Activity summary, removing the need
+  for a second publish/update action;
+- `record_pulse_impact` is no longer registered in the reviewer or Workshop
+  tool surface. Its implementation remains temporarily as rollback-window code
+  while legacy tables still exist;
+- the old `focuses` result field and `focus_agenda` read remain accepted only as
+  compatibility data for this rollback window and are explicitly excluded from
+  new reviewer instructions.
+
+The repair executor still translates changed files, immediate checks and the
+canonical issue outcome through legacy lifecycle fields behind the compact
+contract. Removing that compatibility translation, switching every UI/read
+path to the three compact tables, and dropping the retired tables remain the
+post-deployment cutover.
+
+## Expected product effect
+
+The compact schema is an enabler, not the complete reviewer improvement. It
+reduces bookkeeping only after Gate, reviewer prompts, tools, Activity and the
+Pulse UI stop asking reviewers to maintain the legacy focus, disposition,
+verification, impact and publication records.
+
+After that cutover, a reviewer should have only three persistence actions:
+
+1. record one concise review result;
+2. open or update a canonical issue when action is needed;
+3. record a human decision only when work genuinely requires one.
+
+This should leave more model context and tool turns for inspecting run evidence,
+reasoning about goals and making or validating changes. Strategic Review should
+benefit most, because it can spend its run comparing outcomes with goals rather
+than maintaining lifecycle receipts. The skill/tool cutover should reduce that
+bookkeeping immediately, but its effect on review quality must still be measured
+after deployment. Compatibility writes remain behind the compact contract until
+the rollback window closes.

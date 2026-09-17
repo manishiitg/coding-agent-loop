@@ -30,12 +30,10 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    and Strategic Review, and do not change another module's cadence. If the
    due claim is refused because a scheduled Pulse pass is already reviewing
    `technical_review`, stop and report that collision instead of retrying or
-   overwriting its state. Then read
-   `get_pulse_state(view="focus_agenda", module="technical_review", route_scope=<relevant route>)`, perform a
-   lightweight scan for critical regressions, reproduced defects, answered
-   decisions, plan routes, and retained run selectors, then choose the smallest
-   sufficient route-aware technical focus set using priority plus durable
-   rotation history. Route size is evidence, not a mechanical quota. Then read the retained active backlog and newly reproduced defects,
+   overwriting its state. Then perform a lightweight scan for critical
+   regressions, reproduced defects, answered decisions, plan routes, and
+   retained run selectors. Choose the smallest sufficient correctness question
+   from current evidence; do not maintain a focus rotation ledger. Then read the retained active backlog and newly reproduced defects,
    `get_pulse_state(view="backlog", detail="compact")` exactly once, plus the
    latest meaningful outputs and summaries. Inspect affected plan/store state
    and cost/runtime evidence only as needed. Rank issues by impact on required
@@ -68,9 +66,8 @@ Use `{{.RunFolder}}` as the primary retained run.{{end}}
    engineering repairs use `fixer_handoff` and do not consume operator attention.
 4. Deduplicate by root cause and leave one compact, ordered canonical repair
    queue. Do not apply repairs. Call
-   `record_pulse_result(module="technical_review", result="done", focuses=[...], ...)`
-   exactly once with the truthful review outcome, evidence, and actual focus
-   coverage. The same retained Review+Fix task may later add a supplemental changed result with repair
+   `record_pulse_result(module="technical_review", result="done", reason=<concise conclusion>, evidence=[...])`
+   exactly once with the truthful review outcome and evidence. The same retained Review+Fix task may later add a supplemental changed result with repair
    dispositions; it must not invent a separate completion handshake.
 5. Finish with a concise summary of what was reviewed, promoted, linked,
    rejected, already verified, awaiting evidence, or blocked. State whether at

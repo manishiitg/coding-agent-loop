@@ -710,7 +710,7 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 		"Feedback and outcome context",
 		"Execution detail only by exception",
 		"No obligatory raw-log pass or per-step log inventory",
-		"categories are optional lenses",
+		"optional reasoning lenses",
 		"Deferred or unexamined areas are unassessed",
 		"An empty evaluation_plan.json is not a prerequisite failure",
 		"Successful report production or ticket reconciliation alone does not establish strategic effectiveness",
@@ -1095,13 +1095,13 @@ func TestPulseSpecialistsReturnStructuredPacketsAndParentOwnsHTML(t *testing.T) 
 	commonWants := []string{"recommended_fix", "verification", "user_judgment_required"}
 	kinds := map[string][]string{
 		"design-plan":           append([]string{"finding_id", "target_key"}, commonWants...),
-		"ops-review":            append([]string{"no invented identifier"}, commonWants...),
-		"strategy-auditor":      append([]string{"no invented identifier"}, commonWants...),
-		"review-artifact-drift": append([]string{"no invented identifier"}, commonWants...),
+		"ops-review":            {"no invented identifier", "canonical issue roots", "Do not create a separate recommendation"},
+		"strategy-auditor":      {"no invented identifier", "canonical issues", "Do not create separate focus"},
+		"review-artifact-drift": {"no invented identifier", "Do not create separate recommendation"},
 		"improve-learnings":     append([]string{"finding_id", "target_key"}, commonWants...),
 		"improve-knowledge":     append([]string{"finding_id", "target_key"}, commonWants...),
 		"improve-database":      append([]string{"finding_id", "target_key"}, commonWants...),
-		"improve-evaluation":    append([]string{"finding_id", "target_key"}, commonWants...),
+		"improve-evaluation":    {"finding_id", "target_key", "smallest useful action", "user_judgment_required"},
 		"improve-report":        append([]string{"finding_id", "target_key"}, commonWants...),
 	}
 	for kind, wants := range kinds {
@@ -1136,14 +1136,14 @@ func TestStandalonePulseReviewCommandsUsePersistedReviewerPipeline(t *testing.T)
 		if kind == "ops-review" {
 			wants = []string{
 				"Do the review directly in this agent",
-				"typed Pulse findings, verification guidance",
+				"only canonical issues and one terminal review result",
 				`module="technical_review"`,
 				"record_pulse_result",
 			}
 		} else if kind == "strategy-auditor" {
 			wants = []string{
 				"perform the review directly",
-				"typed Pulse finding",
+				"canonical issues",
 				`module=strategic_review`,
 				"record_pulse_result",
 			}
@@ -1540,14 +1540,14 @@ func TestPulseStoreFreshnessTriggerAndReviewerPass(t *testing.T) {
 // templates still emitted the old form, so every call was schema-rejected until
 // the templates caught up.
 //
-// The eight-tool Pulse surface was consolidated to four
-// (get_pulse_state / record_pulse_worklist / record_pulse_result /
-// record_pulse_impact). A template naming a removed tool instructs an agent to
+// The reviewer-facing Pulse surface is compact: state, one Gate receipt, one
+// result, and canonical issue writes. A template naming a removed tool instructs an agent to
 // call something that no longer exists, and the failure surfaces as a broken
 // tool rather than a stale prompt. This walks every embedded template, not only
 // the registered kinds, so a template added outside a registry is covered too.
 func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 	removed := []string{
+		"record_pulse_impact",
 		"get_pulse_module_state",
 		"get_pulse_finding_backlog",
 		"get_pulse_review_result",
@@ -1570,8 +1570,8 @@ func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 		visited++
 		for _, name := range removed {
 			if strings.Contains(string(body), name) {
-				t.Errorf("%s still instructs agents to call removed Pulse tool %q; "+
-					"the surface is get_pulse_state(view=...), record_pulse_worklist, record_pulse_result, record_pulse_impact",
+					t.Errorf("%s still instructs agents to call removed Pulse tool %q; "+
+						"the surface is get_pulse_state(view=...), record_pulse_worklist, record_pulse_result, and canonical issue writes",
 					path, name)
 			}
 		}

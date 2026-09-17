@@ -406,21 +406,15 @@ receipt**, not a review plan. Each decision may contain only `module`, `due`,
 `reason`, `evidence`, `next_check_at`, `next_check_after_run_id`, and
 `cooldown_runs`, and optional `defer_reason`. Do **not** put `focuses`, `route_scope`, `issue_ids`,
 `deferred_focuses`, `decision`, or any review-plan field in this call. Explain
-the selected scope in `reason` and `evidence`; the later reviewer includes its
-actual focus coverage in the terminal `record_pulse_result` after inspecting
-the evidence. An unknown field rejects the whole worklist and prevents all review
+the selected scope in `reason` and `evidence`; the later reviewer records one
+terminal review result after inspecting the evidence. An unknown field rejects the whole worklist and prevents all review
 and repair work from starting.
 
-After the worklist, optionally record trustworthy comparable success-criterion
-measurements with `record_pulse_impact`. Use stable criterion IDs, producing run
-IDs, route/environment, exact evidence provenance, and an honest value or
-qualitative status. If trustworthy evidence does not exist, record nothing;
-missing evidence is not zero or healthy. Gate never creates interventions or
-impact assessments.
-
-The later retained module tasks own selected architecture, technical and
-strategic work, lifecycle updates, verification, and terminal receipts. Stop
-after recording the worklist and any honest impact observations.
+Workflow steps and evaluation/collector steps own metric observations. Gate
+must not duplicate them through an impact ledger. The later retained module
+tasks own selected architecture, technical and strategic work, canonical issue
+updates, genuine decisions and one terminal review result. Stop after recording
+the worklist.
 
 ## Goal progress context
 When missing or inadequate measurements prevent a material strategic decision,

@@ -83,12 +83,11 @@ No mandatory Markdown checkpoint, per-turn notebook updates, or reporting-only
 turn. Optional note_only=true with result=running preserves working context only
 when a long investigation needs it. Runtime owns timestamps and interruption state.
 
-Before each due Architecture, Technical or Strategic deep review, read
-`get_pulse_state(view="focus_agenda")` for that module and each materially relevant
-route scope. Do a lightweight safety scan for critical regressions, matured
+Before each due Architecture, Technical or Strategic deep review, do a
+lightweight safety scan for critical regressions, matured
 strategic experiment evidence, answered unapplied decisions, plan routes, and retained run
-selectors, then choose the smallest sufficient coherent focus set. Rotation is agentic:
-the compact agenda informs judgment but does not require blind round-robin.
+selectors, then choose the smallest sufficient coherent question. Do not
+maintain a focus rotation ledger.
 For `technical_review`, use `execution_health` when Gate cites a cadence-threatening
 run or evidence of incorrect execution, retries, tool/runtime failure, schedule
 recovery, or another malfunction with material effect on required outputs or
@@ -114,15 +113,10 @@ consolidation and unnecessary orchestration are Architecture questions.
 Technical may record the concrete failure they caused, but must not redesign
 those surfaces or send that redesign to the Fixer as an ordinary correctness
 repair.
-When that module's review is complete, include one `focuses` entry on its
-terminal `record_pulse_result` for every focus actually investigated, including
-its stable route/group/sub-workflow scope unless the conclusion is genuinely
-workflow-wide. Record the priority class, selection reason, compact evidence
-references, and deferred focus keys.
-There is no mechanical focus quota: a small route may justify one, while
-distinct large routes may justify several. Stop when another focus would repeat
-evidence or could not change a decision, repair, or next check. This is durable
-coverage history for the next Pulse pass; do not copy it into a separate report.
+When that module's review is complete, record one concise terminal result with
+the conclusion and evidence. Stop when another question would repeat evidence
+or could not change a decision, repair, or next check. Do not create a separate
+coverage record or report.
 
 1. **Recurrence + Technical Review** — an applied repair is closed
    immediately; a later run may rediscover and reopen the same root, but is not
@@ -155,8 +149,8 @@ coverage history for the next Pulse pass; do not copy it into a separate report.
    dispatch/read-only wrapper; do not launch another Operations reviewer.
 4. **Classify observations** — for every selected workflow observation, link it
    to an existing issue, promote it with evidence, or reject it as non-issue.
-5. **Finish** — record findings as the work happens and selected focus coverage.
-   After bounded repairs and checks, save one terminal result with the brief
+5. **Finish** — update canonical issues as the work happens. After bounded
+   repairs and checks, save one terminal result with the brief
    conclusion and optional new reasoning. Do not add a consolidation or reporting turn.
 
 When `strategic_review` is due, launch one separate executor sequence:
@@ -166,8 +160,8 @@ When `strategic_review` is due, launch one separate executor sequence:
    reports and actual outputs as their recipient would, then the plan, feedback,
    and relevant prior work; execution logs are exception-only evidence for a specific
    unresolved discrepancy. Challenge assumptions and follow promising
-   questions within or beyond the current approach. Focus history is context;
-   categories are optional labels, not the agenda or a quota. Clearly separate
+   questions within or beyond the current approach. Categories are optional
+   reasoning lenses, not a persisted agenda or quota. Clearly separate
    supported observations, hypotheses, and exploratory opportunities.
 2. **Opportunity development** — deepen promising ideas and materially different
    approaches when useful. No proven ceiling or separate Gate permission is
@@ -178,9 +172,9 @@ When `strategic_review` is due, launch one separate executor sequence:
    to test proposals. Classify findings individually; a mixed review need not
    choose one global result. Keep, improve, propose an alternative, experiment,
    or wait as appropriate for each question. Never force ideas to fill a quota.
-4. **Finish in the same turn** — record investigated focus coverage and the terminal
-   `strategic_review` result with optional review_note. Findings, decisions and impact
-   records are saved as work happens; this is not a separate reporting message.
+4. **Finish in the same turn** — record one terminal `strategic_review` result
+   with optional review_note. Canonical issues and genuine decisions are saved
+   as work happens; this is not a separate reporting message.
 
 Strategic Review owns its typed writes and terminal result in the same task;
 reasoning phases need separate messages only when useful, not for persistence.
@@ -594,15 +588,10 @@ from completed children and never mutates workflow artifacts. Neither reviewer
 nor executor writes a separate Pulse presentation artifact; the Pulse popup reads
 the typed records directly.
 
-Before finishing, call `record_pulse_impact` once when there is an intervention,
-a matured assessment, or a trustworthy observation Gate did not already store.
-Load the retained impact ledger first; do not duplicate Gate's current-run
-observations. Create or advance one intervention per coherent verified repair
-bundle or approved strategy experiment, and append an assessment only when its
-comparable evidence window matured. Classify operational repairs as `reliability`, instrumentation
-as `measurement`, and dashboard-only work as `presentation_maintenance`; none
-may claim `direct_goal` impact. Use `inconclusive` or `confounded` rather than
-inventing attribution when observations are missing or interventions overlap.
+Do not create a separate impact or assessment record. Workflow steps and
+evaluation/collector steps own metric observations. A later review compares
+outcomes at the named evidence boundary and updates the same canonical issue or
+records the conclusion in its single review result.
 
 Record `record_pulse_result` once after each due module's child work has actually
 finished. A running child with no checkpoint is not a failed reviewer. If a

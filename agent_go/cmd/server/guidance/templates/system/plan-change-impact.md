@@ -44,13 +44,17 @@ For each affected dependent:
 
 **Never leave a plan change with a silently broken dependent.**
 
-## 4. Record structured dependency closure and impact
+## 4. Record structured dependency closure
 When closing inspected changelog entries, call `mark_changelog_artifact_reviewed` with one evidence-backed disposition for every required surface: `downstream_steps`, `validation`, `evaluation`, `reporting`, `database`, and `learnings_and_knowledge`. Use only `updated`, `already_compatible`, `not_applicable`, `blocked`, or `broken`. A cosmetic change can honestly use `not_applicable`, with a short reason explaining why the surface is unaffected; do not run six audits just to populate these fields. Every `blocked` or `broken` surface must include the durable Pulse `issue_ids` that own the unresolved repair. If broader evidence is unavailable, leave that entry open for Pulse instead of expanding the interactive check or inventing evidence. A bare `artifact_review.done=true` is no longer sufficient. Recording audit closure is not a prerequisite for the targeted test once its affected dependencies are compatible.
 
-When the change has a defensible measurable effect, also record a typed Pulse impact intervention: what should change, the comparable baseline, and the future checkpoint. Link it back to each changelog entry with `sources=[{"source_type":"review","source_id":"<change_id>"}]`; this existing impact ledger is the effects log. Do not claim the change worked until later runs bound to the expected plan revision provide enough evidence.
+When the change is intended to affect a goal or metric, state that expectation and
+the future comparison boundary in the canonical issue or concise review result.
+Workflow steps, evaluation steps and collectors own the actual measurements. Do not
+create a parallel Pulse impact record, and do not claim the change worked until a
+later Strategic Review has comparable outcome evidence.
 
 ## The changelog is your work-list — keep it lean
-Every plan-mod tool call is auto-written to `planning/changelog/changelog-*.json` (tool, `reason`, affected step ids, old/new values). Treat entries without `artifact_review.done=true` as the **ledger of changes whose blast radius may not be reconciled yet** — your work-list. When you reconcile a change (steps 1–3), record its typed Pulse impact summary.
+Every plan-mod tool call is auto-written to `planning/changelog/changelog-*.json` (tool, `reason`, affected step ids, old/new values). Treat entries without `artifact_review.done=true` as the **ledger of changes whose blast radius may not be reconciled yet** — your work-list. When you reconcile a change (steps 1–3), record its concrete compatibility result.
 
 Do **not** edit or delete changelog files directly. The read-only Artifact Review agent returns exact inspected entries plus all six surface dispositions and evidence; the parent writer records typed findings/dispositions and then marks those entries through the dedicated `mark_changelog_artifact_reviewed` tool. Pulse uses that metadata to skip future no-op review turns.
 

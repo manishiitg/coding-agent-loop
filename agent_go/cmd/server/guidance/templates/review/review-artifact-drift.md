@@ -216,8 +216,9 @@ Return one compact review package containing:
 - changelog files and zero-based entry indexes fully inspected
 - affected steps inspected
 - findings ordered by severity; each includes no invented identifier, a plain-
-  language root-cause summary, exact evidence, bounded `recommended_fix`,
-  verification, recommended owner, and `user_judgment_required` with reason
+  language root-cause summary, exact evidence, recommended owner, and
+  `user_judgment_required` with reason. Do not create separate recommendation,
+  verification, impact, or disposition records
 - clean checks
 - exact proposed marks grouped as `clean`, `findings`, or `cursor-backfill`
 - for every proposed non-backfill mark, `surface_reviews` covering

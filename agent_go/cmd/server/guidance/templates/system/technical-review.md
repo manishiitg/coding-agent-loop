@@ -5,8 +5,8 @@ Spend the review on investigation and useful action. Read
 `get_pulse_state(view="review_notes", module="technical_review")` once for relevant
 recent reasoning (default latest 3); use pulse_run_id only for a specific run.
 Read compact findings and fetch detail only for relevant IDs. Do not repeatedly
-scan history. Existing decisions, findings and impact records remain authoritative.
-Record those as the work happens; do not defer all findings to a final report.
+scan history. Existing decisions and canonical issues remain authoritative.
+Update those as the work happens; do not defer all issues to a final report.
 Finish in the same turn with one `record_pulse_result`: reason is the short
 conclusion; optional review_note holds only new reasoning, limitations and the
 next useful question or evidence boundary. Evidence and existing records need
@@ -69,10 +69,11 @@ Validate changed contracts through the affected consumers. Record exact changed
 files, immediate checks and finding dispositions. Successfully applied fixes
 close as fixed_verified or changed_unverified; do not invent a future QA
 verification queue solely because no normal run has happened yet. A new
-reproduction may reopen the same issue. Measured improvement outcomes belong
-to the improvement ledger and do not reopen healthy technical repairs.
+reproduction may reopen the same issue. Later outcome comparisons belong in
+Strategic Review and do not reopen healthy technical repairs unless new evidence
+shows that the same issue has returned.
 
-Persist selected
-focus coverage, typed findings/repair results and a terminal module receipt.
+Persist canonical issues, concrete actions taken by repairs, and one terminal
+review result. Do not create a separate focus, impact, or verification ledger.
 Do not back up, publish, notify or dispatch Architecture/Strategy; the scheduler
 owns the later sequential stages and their independent completion contracts.

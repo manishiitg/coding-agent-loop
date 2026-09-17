@@ -128,12 +128,11 @@ func TestDecisionDrainTreatsSafeProofAsPartOfApplying(t *testing.T) {
 		"call validate_plan_change",
 		"Treat passed=true as the required deterministic receipt",
 		"if any unexplained old reference remains or the proof still fails, do not consume",
-		"IMPACT FOLLOW-THROUGH",
-		"record_pulse_impact",
-		"human_input_id=<the exact decision id>",
-		"it does not prove the decision worked",
-		"Do not invent an impact record",
-		"Later Pulse passes will append observations and an assessment",
+		"ISSUE FOLLOW-THROUGH",
+		"canonical Pulse issue",
+		"record the concrete action taken and close that issue",
+		"Do not create a separate impact, verification, assessment, or monitoring record",
+		"later Strategic Review can compare outcome evidence",
 	} {
 		if !strings.Contains(turn.query, want) {
 			t.Fatalf("decision drain missing structural-application requirement %q:\n%s", want, turn.query)

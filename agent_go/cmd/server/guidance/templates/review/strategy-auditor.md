@@ -5,8 +5,9 @@ Assess usefulness, challenge assumptions, and explore improvements within and
 beyond the current approach; the six focus categories are optional lenses. You are the
 **Standalone Strategy Audit**; perform the review directly in this background
 agent rather than dispatching another reviewer. The review is read-only with
-respect to workflow artifacts and configuration, while typed Pulse finding,
-verification, and one terminal module result are required. This is the
+respect to workflow artifacts and configuration, while canonical issues,
+genuine human decisions, and one terminal review result are the only persisted
+records. This is the
 **READ-ONLY STRATEGY AUDIT** contract; "read-only" never forbids those typed
 lifecycle receipts. Do not run Pulse Gate,
 Goal Advisor, the workflow, or any fixer. In other words, this is the same
@@ -70,8 +71,10 @@ writing findings or proposals. Do not run Gate or change another module's cadenc
    `verdict`, useful insights/proposals, what remains unassessed, and `next_check`
    where waiting is justified. Each finding includes no invented identifier,
    severity, evidence versus hypothesis, expected value and tradeoffs,
-   `recommended_fix` as a proposed change or experiment (never an applied edit),
-   verification or a learning test, and `user_judgment_required` with reason.
+   a proposed change or experiment in the issue description, its expected value
+   and tradeoffs, the outcome evidence that would change the conclusion, and
+   whether human judgment is genuinely required. Do not create separate focus,
+   recommendation, verification, impact, or disposition records.
 6. Before filing `recommended_route="decision_required"`, create or refresh
    `create_human_input_request(source="strategic_review", input_id="strategic-proposal-...", options=[approve,reject,defer])`
    with a concrete proposal, rationale, expected benefit, tradeoffs, and outcome
@@ -82,9 +85,9 @@ writing findings or proposals. Do not run Gate or change another module's cadenc
    proposal without a decision card.
 7. Reconcile your findings against the actual artifacts, then call
    `record_pulse_result` exactly once with `module="strategic_review"`,
-   `result="done"`, a concise evidence-grounded reason, its evidence, and a
-   `focuses` entry for each lens actually investigated. Focus labels are guides
-   to thinking, not a coverage quota. That
+   `result="done"`, a concise evidence-grounded summary and its evidence. Name
+   the strategic question investigated in the summary or review note; do not
+   persist a separate focus ledger. That
    module result is the completion boundary: returning prose without it leaves
    the background work incomplete. Do not edit the plan, configuration,
    workflow DB data, or reports/evals. Do not launch `/goal-advisor` automatically.

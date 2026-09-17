@@ -18,6 +18,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulseintake"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsestore"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -859,6 +860,10 @@ func openPulseModuleStateDB(ctx context.Context, workspacePath string, create bo
 		if err := ensurePulseModuleStateSchema(ctx, db); err != nil {
 			_ = db.Close()
 			return "", nil, err
+		}
+		if err := pulsestore.RefreshCompatibility(ctx, db); err != nil {
+			_ = db.Close()
+			return "", nil, fmt.Errorf("install compact Pulse compatibility: %w", err)
 		}
 	}
 	return normalized, db, nil
@@ -2646,12 +2651,12 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 	}
 	recordFindingTool := llmtypes.Tool{Type: "function", Function: &llmtypes.FunctionDefinition{
 		Name:        "record_pulse_finding",
-		Description: "Persist one complete Pulse reviewer finding directly to the SQLite lifecycle. First inspect the compact active and closed issue index and reason about semantic sameness; request targeted full detail only for candidate issue_ids. For an existing root cause, including a closed one, supply its issue_id and update/reopen it; do not create a second issue because wording, evidence paths, or symptoms differ. Omit issue_id only for a genuinely distinct root cause with a different repair or owner. Do not encode findings in the final response. Backup, publish, and notify waiting for their ordered finalizer stage are not findings; report only a real terminal failure after that command ran.",
+		Description: "Open or update one canonical Pulse issue. First inspect the compact active and closed issue index and reason about semantic sameness; request targeted full detail only for candidate issue_ids. For an existing root cause, including a closed one, supply its issue_id and update/reopen it; do not create a second issue because wording, evidence paths, or symptoms differ. Omit issue_id only for a genuinely distinct root cause with a different repair or owner. Put the problem, evidence, and any useful next action in this issue rather than creating separate recommendation, verification, impact, or disposition records. Backup, publish, and notify waiting for their ordered finalizer stage are not issues; report only a real terminal failure after that command ran.",
 		Parameters:  llmtypes.NewParameters(map[string]interface{}{"type": "object", "additionalProperties": false, "properties": findingProperties, "required": []string{"workspace_path", "pulse_run_id", "module", "concern", "issue_kind", "classification", "severity", "summary", "impact", "evidence"}}),
 	}}
 	mergeIssuesTool := llmtypes.Tool{Type: "function", Function: &llmtypes.FunctionDefinition{
 		Name:        "merge_pulse_issues",
-		Description: "Merge symptom-level duplicate Pulse issues into one canonical root-cause issue after a semantic backlog review. This never deletes history: it retires each duplicate from the active queue, links it to the canonical PUL issue, and preserves all attempts, events, and verification records. Use only when the issues share the same causal defect and compatible repair/verification boundary; never merge merely because they involve the same file or module.",
+		Description: "Merge symptom-level duplicate Pulse issues into one canonical root-cause issue after a semantic backlog review. The canonical PUL issue remains visible and each duplicate is retired without losing its existing audit history. Use only when the issues share the same causal defect and one action would address them; never merge merely because they involve the same file or module.",
 		Parameters: llmtypes.NewParameters(map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{
 			"workspace_path":      map[string]interface{}{"type": "string"},
 			"canonical_issue_id":  map[string]interface{}{"type": "string", "description": "The one visible PUL issue that remains active."},
@@ -2663,7 +2668,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name:        "record_pulse_worklist",
-			Description: fmt.Sprintf("Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after choosing the agent-owned pass mode and deciding which perspectives are due or skipped. backlog_drain verifies and repairs retained issues without broad discovery; discovery investigates materially new evidence; strategy is for selected product/goal work; observe runs no reviewer or fixer. Go validates the declared mode but never selects it. The decisions array must contain exactly one entry for each current Pulse module: %s. This is a small scheduling receipt, not a review-plan payload: in each decision use only module, due, reason, evidence, next_check_at, next_check_after_run_id, and cooldown_runs. Never send focuses, route_scope, issue_ids, deferred_focuses, decision, or other review-plan fields; unknown fields reject the whole worklist. State scope and lower-priority deferrals in reason/evidence and the next-check boundary. The later reviewer independently selects and persists actual focus coverage after it has inspected evidence. Do not pass retired module names. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value.", strings.Join(pulseModuleOrder, ", ")),
+			Description: fmt.Sprintf("Record the dynamic Pulse worklist for this run in the workflow's db/db.sqlite. Pulse Gate must call this exactly once after choosing the agent-owned pass mode and deciding which perspectives are due or skipped. backlog_drain verifies and repairs retained issues without broad discovery; discovery investigates materially new evidence; strategy is for selected product/goal work; observe runs no reviewer or fixer. Go validates the declared mode but never selects it. The decisions array must contain exactly one entry for each current Pulse module: %s. This is a small platform scheduling receipt, not a review plan: in each decision use only module, due, reason, evidence, next_check_at, next_check_after_run_id, and cooldown_runs. Never send focuses, route_scope, issue_ids, deferred_focuses, decision, or other review-plan fields; unknown fields reject the whole worklist. State scope and lower-priority deferrals in reason/evidence and the next-check boundary. Do not pass retired module names. Every skipped module must include next_check_at, next_check_after_run_id, or a positive cooldown_runs value.", strings.Join(pulseModuleOrder, ", ")),
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -2700,12 +2705,12 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Function: &llmtypes.FunctionDefinition{
 			Name: "get_pulse_state",
 			Description: fmt.Sprintf("Read Pulse state from the workflow's db/db.sqlite. One read tool with bounded views; typed SQLite state is the only source of truth.\n"+
-				"view=\"module\": per-module cadence and results so Pulse Gate can decide what is due, plus the complete active concern backlog, externally owned suppressed concerns, plan-change backlog, reviewer history, impact ledger, and read-only loop-closure facts. Read this before record_pulse_worklist. Loop-closure findings are evidence Gate may weigh; they do not mandate a module or authorize mutation. A concern with a high seen_count has been reported on that many runs and should weigh heavily.\n"+
+				"view=\"module\": per-module cadence and concise review results so Pulse Gate can decide what is due, plus active issues and read-only scheduling facts. Read this before record_pulse_worklist. Scheduling signals are evidence Gate may weigh; they do not mandate a module or authorize mutation.\n"+
 				"view=\"backlog\": a compact active issue/observation index plus the closed canonical issue index by default. Read it once to select or semantically reuse public PUL ids. To inspect lifecycle evidence, call again with detail=\"full\" and 1-20 exact issue_ids; broad full-history reads are rejected. Optional module filter.\n"+
 				"view=\"review\": one compact reviewer receipt as JSON with validated structured verifications. Requires the stored pulse-run receipt id and module; for concise reasoning use review_notes.\n"+
-				"view=\"focus_agenda\": the compact durable deep-review coverage agenda for technical_review, architecture_review or strategic_review — every canonical focus, global and route-specific review counts, last verdict, due boundary, and deferred history. Requires module. Pass route_scope when reviewing one route/group/sub-workflow. Read this after view=\"module\"/\"backlog\" and before agentically choosing the smallest sufficient focus set; it is not blind round-robin.\n"+
+				"view=\"focus_agenda\": legacy rollback-window coverage data. New reviewers do not read or write this view; they choose the useful scope from current evidence and summarize it in the review result.\n"+
 				"view=\"review_notes\": latest concise review notes and conclusions (default 3, maximum 50), optionally filtered by module and pulse_run_id. Read once for continuity; absence is normal for older reviews. Incomplete notes are not completed assessments.\n"+
-				"Close a real finding only through a verified finding_disposition on record_pulse_result; resolve_run_concern is limited to acknowledgment or rejection. Modules: %s.", pulseModuleList()),
+				"Reviewers normally read module/backlog/review_notes, record canonical issues, and finish with one record_pulse_result. resolve_run_concern is limited to acknowledgment or rejection. Modules: %s.", pulseModuleList()),
 			Parameters: llmtypes.NewParameters(map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -2732,7 +2737,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		Type: "function",
 		Function: &llmtypes.FunctionDefinition{
 			Name: "record_pulse_result",
-			Description: fmt.Sprintf("Record one Pulse outcome in the workflow's db/db.sqlite. Pass exactly one of module or command. A terminal module result is also projected automatically into the workflow's Pulse Activity; do not publish or restate it through another tool. Make reason useful to the workflow owner: say what was checked, the conclusion or change, and the important limitation or next action in one compact plain-language sentence. Include optional review_note for deeper reasoning, limitations and next steps not already in findings; no Markdown file or separate reporting turn is required. For a manual UI/command review, start with module, manual=true, note_only=true, result=running, and reason; this collision-safe claim replaces a separate due tool. For any other optional working note, omit manual. A working note does not complete a review or apply dispositions. Include actual focus coverage in focuses on the terminal module result; this replaces a separate focus tool.\n"+
+			Description: fmt.Sprintf("Record one concise Pulse outcome in the workflow's db/db.sqlite. Pass exactly one of module or command. A terminal module result is also the workflow owner's Pulse Activity entry; do not publish or restate it through another tool. Make reason say what was checked, the conclusion or completed change, and the important limitation or next action in one compact plain-language sentence. Include optional review_note only for useful reasoning not already present in canonical issues. For a manual UI/command review, start with module, manual=true, note_only=true, result=running, and reason; this collision-safe claim replaces a separate due tool. For any other optional working note, omit manual. A working note does not complete a review. Do not create separate focus, recommendation, impact, assessment, or publication records.\n"+
 				"module (%s): the terminal result of a selected Pulse module after its review and Fixer work complete — done, changed, blocked, failed, or skipped. This writes the module audit and per-finding lifecycle atomically. For result=changed, changed_files, verification, and finding_dispositions are required.\n"+
 				"Never declare a review failed merely because a checkpoint or receipt is absent while its child executor is active. Wait for terminal child evidence. An evidenced same-run correction from failed/blocked/timed_out to done/changed requires verification plus evidence or finding_dispositions; changed still requires its full repair proof. Accepted corrections update live state and audit together and retain prior receipts in history.\n"+
 				"command (%s): the live or final status of one Pulse final command — running, done, skipped, blocked, or failed. The combined Pulse finalizer marks each command running before work and then terminal immediately after it finishes.\n"+
@@ -2752,7 +2757,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 					"manual":         map[string]interface{}{"type": "boolean", "description": "Manual UI/command reviews only. On the initial result=running, note_only=true call, atomically claims this module for the current conversation and refuses a collision with an active scheduled review. Omit for scheduled Pulse."},
 					"evidence":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Module results only."},
 					"focuses": map[string]interface{}{
-						"type": "array", "description": "Coverage actually investigated in this module. Submit it with the terminal module result instead of a separate bookkeeping call.",
+						"type": "array", "description": "Deprecated rollback-window field. New reviewers must omit it and summarize meaningful scope in reason or review_note.",
 						"items": map[string]interface{}{"type": "object", "additionalProperties": false, "properties": map[string]interface{}{
 							"focus_key": map[string]interface{}{"type": "string", "maxLength": 64}, "route_scope": map[string]interface{}{"type": "string"},
 							"priority_class":   map[string]interface{}{"type": "string", "enum": []string{"critical_regression", "matured_verification", "answered_decision", "new_or_changed", "overdue", "oldest_remaining"}},
@@ -2809,8 +2814,6 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 			}),
 		},
 	}
-	impactTool, impactExecutor := createRecordPulseImpactTool()
-
 	executors := map[string]interface{}{
 		"record_pulse_finding": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			workspacePath, _ := args["workspace_path"].(string)
@@ -2916,7 +2919,6 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"record_pulse_result": func(ctx context.Context, args map[string]interface{}) (string, error) {
 			return recordPulseResultFromToolArgs(ctx, args)
 		},
-		"record_pulse_impact": impactExecutor,
 	}
 	categories := map[string]string{
 		"record_pulse_finding":  "workflow",
@@ -2924,7 +2926,6 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		"record_pulse_worklist": "workflow",
 		"get_pulse_state":       "workflow",
 		"record_pulse_result":   "workflow",
-		"record_pulse_impact":   "workflow",
 		"resolve_run_concern":   "workflow",
 	}
 	resolveConcernTool := llmtypes.Tool{
@@ -2962,7 +2963,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		return fmt.Sprintf("Issue %s marked %s.", step_based_workflow.NewPulseIssue(finding).ID, status), nil
 	}
 
-	return []llmtypes.Tool{recordFindingTool, mergeIssuesTool, recordTool, stateTool, resultTool, impactTool, resolveConcernTool}, executors, categories
+	return []llmtypes.Tool{recordFindingTool, mergeIssuesTool, recordTool, stateTool, resultTool, resolveConcernTool}, executors, categories
 }
 
 func stringToolArg(args map[string]interface{}, key string) string {

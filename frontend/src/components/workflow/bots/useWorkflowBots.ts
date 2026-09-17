@@ -3,8 +3,8 @@ import { agentApi } from '../../../services/api'
 import { useWorkflowManifestStore } from '../../../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import type {
-	  BotRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
-	  GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
+    BotRoute, GmailConfigRequest, GmailConfigResponse, GmailConnection, GmailOAuthClient, GmailTestResponse,
+    GoogleServiceGrant, SlackConfig, SlackConfigRequest, SlackTestResponse, ChannelRoute, WhatsAppRoute, WhatsAppStatus,
 } from '../../../services/api-types'
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
@@ -599,31 +599,31 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   }, [waStatus?.devices])
 
   // ── Routes for this workflow ──────────────────────────────────────────────
-	const myRoutes = useMemo<WorkflowRoute[]>(() => {
-	  if (!workflowId) return []
-	  const slack = Object.entries(slackOriginal.channel_routing || {})
-	    .filter(([, r]) => routeMatchesTarget(r))
-	    .map(([key, r]) => ({ kind: 'slack' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
-	  const wa = Object.entries(waRouting)
-	    .filter(([, r]) => routeMatchesTarget(r))
-	    .map(([key, r]) => ({ kind: 'whatsapp' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
-	  return [...slack, ...wa]
-	}, [slackOriginal.channel_routing, waRouting, workflowId, routeMatchesTarget])
+  const myRoutes = useMemo<WorkflowRoute[]>(() => {
+    if (!workflowId) return []
+    const slack = Object.entries(slackOriginal.channel_routing || {})
+      .filter(([, r]) => routeMatchesTarget(r))
+      .map(([key, r]) => ({ kind: 'slack' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details, blocked_emails: 'blocked_emails' in r ? r.blocked_emails : undefined }))
+    const wa = Object.entries(waRouting)
+      .filter(([, r]) => routeMatchesTarget(r))
+      .map(([key, r]) => ({ kind: 'whatsapp' as const, key, workshop_mode: r.workshop_mode, send_full_details: r.send_full_details }))
+    return [...slack, ...wa]
+  }, [slackOriginal.channel_routing, waRouting, workflowId, routeMatchesTarget])
 
-	// Slack channel routing writes: base on the last loaded config so unsaved
-	// setup-screen token edits cannot ride along. Masked tokens round-trip as
-	// "no change" server-side.
-	const saveSlackRouting = useCallback(async (next: Record<string, BotRoute>) => {
-	  const request: SlackConfigRequest = {
-	    enabled: slackOriginal.enabled,
-	    bot_token: slackOriginal.bot_token || '',
-	    app_token: slackOriginal.app_token || '',
-	    channel_id: slackOriginal.channel_id || '',
-	    bot_mode: slackOriginal.bot_mode || false,
-	    channel_routing: next,
-	  }
-	  await agentApi.updateSlackFeedbackConfig(request)
-	  await loadSlack()
+  // Slack channel routing writes: base on the last loaded config so unsaved
+  // setup-screen token edits cannot ride along. Masked tokens round-trip as
+  // "no change" server-side.
+  const saveSlackRouting = useCallback(async (next: Record<string, BotRoute>) => {
+    const request: SlackConfigRequest = {
+      enabled: slackOriginal.enabled,
+      bot_token: slackOriginal.bot_token || '',
+      app_token: slackOriginal.app_token || '',
+      channel_id: slackOriginal.channel_id || '',
+      bot_mode: slackOriginal.bot_mode || false,
+      channel_routing: next,
+    }
+    await agentApi.updateSlackFeedbackConfig(request)
+    await loadSlack()
   }, [loadSlack, slackOriginal])
 
   // WhatsApp routing writes: PUT replaces the whole map, so always send the
@@ -659,79 +659,80 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     if (expandedChip === routeId(route)) setExpandedChip(null)
   })
 
-	const updateRoute = (route: WorkflowRoute, patch: { workshop_mode?: string; send_full_details?: boolean }) => withRouteSaving(routeId(route), async () => {
-	  if (route.kind === 'slack') {
-	    const current = slackOriginal.channel_routing?.[route.key]
-	    if (!current) return
-	    const nextRoute: BotRoute = { ...current }
-	    if ('workshop_mode' in patch) {
-	      if (patch.workshop_mode === 'workshop') {
-	        nextRoute.workshop_mode = 'workshop'
-	        nextRoute.bot_grant = 'owner'
-	      } else {
-	        nextRoute.workshop_mode = 'run'
-	        nextRoute.bot_grant = 'run'
-	      }
-	    }
-	    if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
-	    await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [route.key]: nextRoute })
-	  } else {
-	    const current = waRouting[route.key]
-	    if (!current) return
-	    const nextRoute: WaRoute = { ...current }
-	    if ('workshop_mode' in patch) nextRoute.workshop_mode = 'run'
-	    if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
-	    await saveWaRouting({ ...waRouting, [route.key]: nextRoute })
-	  }
-	})
+  const updateRoute = (route: WorkflowRoute, patch: { workshop_mode?: string; send_full_details?: boolean; blocked_emails?: string[] }) => withRouteSaving(routeId(route), async () => {
+    if (route.kind === 'slack') {
+      const current = slackOriginal.channel_routing?.[route.key]
+      if (!current) return
+      const nextRoute: BotRoute = { ...current }
+      if ('workshop_mode' in patch) {
+        if (patch.workshop_mode === 'workshop') {
+          nextRoute.workshop_mode = 'workshop'
+          nextRoute.bot_grant = 'owner'
+        } else {
+          nextRoute.workshop_mode = 'run'
+          nextRoute.bot_grant = 'run'
+        }
+      }
+      if ('blocked_emails' in patch) nextRoute.blocked_emails = patch.blocked_emails
+    if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
+      await saveSlackRouting({ ...(slackOriginal.channel_routing || {}), [route.key]: nextRoute })
+    } else {
+      const current = waRouting[route.key]
+      if (!current) return
+      const nextRoute: WaRoute = { ...current }
+      if ('workshop_mode' in patch) nextRoute.workshop_mode = 'run'
+      if ('send_full_details' in patch) nextRoute.send_full_details = !!patch.send_full_details
+      await saveWaRouting({ ...waRouting, [route.key]: nextRoute })
+    }
+  })
 
-	const addSlackRoute = () => {
-	  if (!workflowId) return
-	  const channels = Array.from(new Set(
-	    newSlackChannel
-	      .split(/[\s,;]+/)
-	      .map(value => value.trim().toUpperCase())
-	      .filter(Boolean),
-	  ))
-	  if (channels.length === 0) return
-	  const invalid = channels.find(channel => !SLACK_CHANNEL_RE.test(channel))
-	  if (invalid) {
-	    setAddError(e => ({ ...e, slack: `Slack channel ID "${invalid}" is invalid. Use IDs like C1234567890 or G1234567890.` }))
-	    return
-	  }
-	  const existingOther = channels.find(channel => {
-	    const existing = slackOriginal.channel_routing?.[channel]
-	    return existing && !routeMatchesTarget(existing)
-	  })
-	  if (existingOther) {
-	    const existing = slackOriginal.channel_routing?.[existingOther]
-	    setAddError(e => ({ ...e, slack: `${existingOther} is already routed to ${existing?.profile_label || workflowLabel(existing?.workflow_id || '')}.` }))
-	    return
-	  }
-	  const existingSame = channels.find(channel => {
-	    const existing = slackOriginal.channel_routing?.[channel]
-	    return existing && routeMatchesTarget(existing)
-	  })
-	  if (existingSame) {
-	    setAddError(e => ({ ...e, slack: `${existingSame} is already routed to this ${target ? 'project' : 'workflow'}.` }))
-	    return
-	  }
-	  setAddError(e => ({ ...e, slack: undefined }))
-	  void withRouteSaving(`slack:${channels.join(',')}`, async () => {
-	    const next = { ...(slackOriginal.channel_routing || {}) }
-	    const baseRoute = routeForTarget()
-	    for (const channel of channels) {
-	      next[channel] = {
-	        ...baseRoute,
-	        workshop_mode: 'run',
-	        bot_grant: 'run',
-	        send_full_details: true,
-	      }
-	    }
-	    await saveSlackRouting(next)
-	    setNewSlackChannel('')
-	  })
-	}
+  const addSlackRoute = () => {
+    if (!workflowId) return
+    const channels = Array.from(new Set(
+      newSlackChannel
+        .split(/[\s,;]+/)
+        .map(value => value.trim().toUpperCase())
+        .filter(Boolean),
+    ))
+    if (channels.length === 0) return
+    const invalid = channels.find(channel => !SLACK_CHANNEL_RE.test(channel))
+    if (invalid) {
+      setAddError(e => ({ ...e, slack: `Slack channel ID "${invalid}" is invalid. Use IDs like C1234567890 or G1234567890.` }))
+      return
+    }
+    const existingOther = channels.find(channel => {
+      const existing = slackOriginal.channel_routing?.[channel]
+      return existing && !routeMatchesTarget(existing)
+    })
+    if (existingOther) {
+      const existing = slackOriginal.channel_routing?.[existingOther]
+      setAddError(e => ({ ...e, slack: `${existingOther} is already routed to ${existing?.profile_label || workflowLabel(existing?.workflow_id || '')}.` }))
+      return
+    }
+    const existingSame = channels.find(channel => {
+      const existing = slackOriginal.channel_routing?.[channel]
+      return existing && routeMatchesTarget(existing)
+    })
+    if (existingSame) {
+      setAddError(e => ({ ...e, slack: `${existingSame} is already routed to this ${target ? 'project' : 'workflow'}.` }))
+      return
+    }
+    setAddError(e => ({ ...e, slack: undefined }))
+    void withRouteSaving(`slack:${channels.join(',')}`, async () => {
+      const next = { ...(slackOriginal.channel_routing || {}) }
+      const baseRoute = routeForTarget()
+      for (const channel of channels) {
+        next[channel] = {
+          ...baseRoute,
+          workshop_mode: 'run',
+          bot_grant: 'run',
+          send_full_details: true,
+        }
+      }
+      await saveSlackRouting(next)
+      setNewSlackChannel('')
+    })
+  }
 
   const addWaRoute = () => {
     const slug = newWaSlug.trim().toLowerCase()

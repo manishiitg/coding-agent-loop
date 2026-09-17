@@ -31,3 +31,21 @@ func ResolveChannelRoute(encoded, channelID string) *ChannelRoute {
 	}
 	return nil
 }
+
+// Slack email exclusions narrow a deployed route without changing its grant.
+// If exclusions exist, unverifiable human identities cannot bypass them.
+func SlackRouteAllowsEmail(route ChannelRoute, email string) bool {
+	if len(route.BlockedEmails) == 0 {
+		return true
+	}
+	email = strings.ToLower(strings.TrimSpace(email))
+	if email == "" {
+		return false
+	}
+	for _, blocked := range route.BlockedEmails {
+		if strings.EqualFold(strings.TrimSpace(blocked), email) {
+			return false
+		}
+	}
+	return true
+}

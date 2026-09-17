@@ -10,6 +10,7 @@ export type WorkflowRoute = {
   key: string
   workshop_mode?: 'run' | 'workshop' | string
   send_full_details?: boolean
+  blocked_emails?: string[]
 }
 
 export const routeId = (route: { kind: ChannelKind; key: string }) => `${route.kind}:${route.key}`

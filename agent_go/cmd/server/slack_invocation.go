@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
@@ -112,7 +113,7 @@ func (api *StreamingAPI) revokeChangedBotSessions(routes map[string]ChannelRoute
 	api.botExecutionSessions.Range(func(key, value interface{}) bool {
 		binding := value.(botExecutionSession)
 		route, found := routes[binding.Request.BotChannelID]
-		if !found || !sameSlackRouteDestination(route, binding.Claims.ExecutionPrincipal.Target) || route.BotGrant != binding.Claims.BotRouteGrant {
+		if !found || !sameSlackRouteDestination(route, binding.Claims.ExecutionPrincipal.Target) || route.BotGrant != binding.Claims.BotRouteGrant || (!binding.Claims.SlackTrustedApp && !services.SlackRouteAllowsEmail(route, binding.Request.BotUserEmail)) {
 			api.cancelSessionRuntimeWork(key.(string), "bot route grant changed or revoked", runtimePhaseCanceled)
 		}
 		return true

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"net/mail"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -72,6 +73,25 @@ func normalizeSlackChannelRouting(routes map[string]ChannelRoute) (map[string]Ch
 		if channelID == "" || hasWorkflowRoute == hasProfileRoute || (route.WorkflowID != "" && route.ProfileID != "") {
 			return nil, fmt.Errorf("Slack route %q requires exactly one complete workflow or profile destination", rawChannelID)
 		}
+		if strings.TrimSpace(route.WorkshopMode) != "" && services.NormalizeBotWorkshopMode(route.WorkshopMode) == "" {
+			return nil, fmt.Errorf("Slack route %q has an unknown workshop_mode; use run or workshop", rawChannelID)
+		}
+		seenEmails := map[string]bool{}
+		emails := []string{}
+		for _, email := range route.BlockedEmails {
+			email = strings.ToLower(strings.TrimSpace(email))
+			parsed, err := mail.ParseAddress(email)
+			if err != nil || parsed.Address != email {
+				return nil, fmt.Errorf("invalid blocked email on channel %s", channelID)
+			}
+			if !seenEmails[email] {
+				emails = append(emails, email)
+				seenEmails[email] = true
+			}
+		}
+		if route.BlockedEmails != nil {
+			route.BlockedEmails = emails
+		}
 		if route.BotGrant != "" && route.BotGrant != "run" && route.BotGrant != "owner" {
 			return nil, fmt.Errorf("Slack route %q requires a run or owner bot_grant", rawChannelID)
 		}
@@ -105,7 +125,7 @@ func validateSlackRouteMutationPermissions(ctx context.Context, api *StreamingAP
 		old, existed := current[channelID]
 		newGrant := services.NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 		oldGrant := services.NormalizeBotRouteGrant(old.BotGrant, old.WorkshopMode)
-		needsOwner := !existed || !sameSlackRouteDestination(old, route) || newGrant != oldGrant || !reflect.DeepEqual(old.Trigger, route.Trigger)
+		needsOwner := !existed || !sameSlackRouteDestination(old, route) || newGrant != oldGrant || !reflect.DeepEqual(old.Trigger, route.Trigger) || !reflect.DeepEqual(old.BlockedEmails, route.BlockedEmails)
 		// Resource ownership is server authored, never editable through a route payload.
 		route.WorkspaceUserID = old.WorkspaceUserID
 		next[channelID] = route

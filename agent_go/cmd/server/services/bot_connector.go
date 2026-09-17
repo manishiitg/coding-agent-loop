@@ -112,6 +112,7 @@ func multiAgentChatPrimaryLLM(preset *workflowtypes.PresetLLMConfig) *workflowty
 // the workspace path so the bot can read the workflow manifest without scanning
 // all workspaces.
 type ChannelRoute struct {
+	BlockedEmails []string      `json:"blocked_emails,omitempty"`
 	Trigger       *SlackTrigger `json:"trigger,omitempty"`
 	WorkflowID    string        `json:"workflow_id,omitempty"`
 	WorkspacePath string        `json:"workspace_path"`
@@ -140,7 +141,7 @@ func NormalizeBotWorkshopMode(mode string) string {
 	case "build", "builder", "workshop":
 		return "workshop"
 	default:
-		return "workshop"
+		return ""
 	}
 }
 
@@ -802,6 +803,12 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 	if route == nil || (strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) == "") {
 		// Not workflow-routed: generic chat, governed by the allowed_emails filter.
 		return true
+	}
+	if msg.Platform == "slack" && !SlackRouteAllowsEmail(*route, msg.UserEmail) {
+		if msg.IsMention {
+			m.sendWorkflowAccessDenied(msg.Platform, threadID, "This route blocks your email, or your email could not be verified.")
+		}
+		return false
 	}
 	if strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) != "" {
 		workspaceUserID := routeWorkspaceUserID(*route, strings.TrimSpace(msg.WorkspaceUserID))

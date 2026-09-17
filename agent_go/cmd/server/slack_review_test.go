@@ -463,3 +463,67 @@ func TestSlackAllocatorAcrossProcesses(t *testing.T) {
 		}
 	}
 }
+
+func TestSlackUnknownModesCannotGrantOwner(t *testing.T) {
+	for _, mode := range []string{"banana", "optimizer", "workshoop"} {
+		if services.NormalizeBotRouteGrant("", mode) != "run" {
+			t.Fatalf("unknown mode %q escalated", mode)
+		}
+		if _, err := normalizeSlackChannelRouting(map[string]ChannelRoute{"C123": {WorkflowID: "demo", WorkspacePath: "Workflow/demo", WorkshopMode: mode}}); err == nil {
+			t.Fatalf("unknown mode %q accepted", mode)
+		}
+	}
+}
+
+func TestSlackEmailExclusionsAreOwnerControlled(t *testing.T) {
+	old := ChannelRoute{WorkflowID: "demo", WorkspacePath: "Workflow/demo", BotGrant: "run"}
+	changed := old
+	changed.BlockedEmails = []string{"person@example.com"}
+	if err := validateSlackRouteMutationPermissions(context.Background(), nil, map[string]ChannelRoute{"C123": changed}, map[string]ChannelRoute{"C123": old}); err == nil {
+		t.Fatal("unauthenticated caller changed exclusions")
+	}
+	if _, err := normalizeSlackChannelRouting(map[string]ChannelRoute{"C123": {WorkflowID: "demo", WorkspacePath: "Workflow/demo", BlockedEmails: []string{"invalid"}}}); err == nil {
+		t.Fatal("invalid email accepted")
+	}
+}
+
+func TestSlackBotProductPolicyIsTargetScoped(t *testing.T) {
+	claims := botRouteUserClaims("bot", services.ChannelRoute{ProfileID: "work", ConversationKey: "acme", WorkspacePath: "Chats/Work/projects/acme", BotGrant: "owner"})
+	if !userAllowedProduct(claims, "work") || userAllowedProduct(claims, "video-studio") {
+		t.Fatal("bot product scope leaked")
+	}
+	if access := userAccessForClaims(claims); !access.ProductsRestricted || access.Admin || access.CanCreate {
+		t.Fatalf("account authority: %+v", access)
+	}
+}
+
+func TestSlackEmailBlockTakesEffectOnNextTurn(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{WorkflowID: "demo", WorkspacePath: "Workflow/demo", BotGrant: "run", BlockedEmails: []string{"blocked@example.com"}}
+	encoded, _ := json.Marshal(map[string]ChannelRoute{"C123": route})
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: true, BotMode: true, AllowedChannels: string(encoded)}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{chatStore: store}
+	claims := botRouteUserClaims("bot", route)
+	ctx := context.WithValue(context.Background(), UserContextKey, claims)
+	req := QueryRequest{PresetQueryID: "demo", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserEmail: "blocked@example.com"}
+	if _, err := api.revalidateExecutionPrincipal(ctx, req); err == nil {
+		t.Fatal("blocked actor admitted")
+	}
+	req.BotUserEmail = "other@example.com"
+	if _, err := api.revalidateExecutionPrincipal(ctx, req); err != nil {
+		t.Fatal(err)
+	}
+	req.BotUserEmail = ""
+	if _, err := api.revalidateExecutionPrincipal(ctx, req); err == nil {
+		t.Fatal("unverifiable actor admitted")
+	}
+	claims.SlackTrustedApp = true
+	if _, err := api.revalidateExecutionPrincipal(ctx, req); err != nil {
+		t.Fatalf("trusted app treated as human: %v", err)
+	}
+}

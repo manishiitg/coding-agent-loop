@@ -45,6 +45,9 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 	if route.BotGrant != "run" && route.BotGrant != "owner" {
 		return ctx, fmt.Errorf("Slack bot route has no explicit grant; save it in Setup > Bots")
 	}
+	if !claims.SlackTrustedApp && !services.SlackRouteAllowsEmail(route, req.BotUserEmail) {
+		return ctx, fmt.Errorf("Slack email is blocked or unverifiable")
+	}
 	expected := services.ChannelRoute{WorkflowID: claims.BotRouteWorkflowID, ProfileID: claims.BotRouteProfileID, ConversationKey: claims.BotRouteConversationKey, WorkspacePath: claims.BotRouteWorkspacePath}
 	if !sameSlackRouteDestination(route, expected) {
 		return ctx, fmt.Errorf("bot route target changed; start a new conversation")

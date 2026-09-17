@@ -363,7 +363,7 @@ func accessForRecord(rec *UserRecord) UserAccess {
 // record is Unknown and keeps today's env-driven behavior.
 func userAccessForClaims(claims *UserClaims) UserAccess {
 	if claims != nil && claims.Provider == "bot_route" {
-		return UserAccess{Known: true}
+		return UserAccess{Known: true, ProductsRestricted: true, Products: []string{claims.BotRouteProfileID}}
 	}
 	if rec := directoryUserForClaims(claims); rec != nil {
 		return accessForRecord(rec)

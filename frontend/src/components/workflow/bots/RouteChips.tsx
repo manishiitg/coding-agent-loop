@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { ChevronDown, Loader2, MessageSquare, Phone, PlayCircle, Trash2, Wrench } from 'lucide-react'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import { routeId, type WorkflowRoute } from './types'
@@ -10,6 +11,7 @@ type RouteChipBots = Pick<WorkflowBots, 'readOnly' | 'expandedChip' | 'setExpand
 export function RouteChip({ bots, route }: { bots: RouteChipBots; route: WorkflowRoute }) {
   const { readOnly, expandedChip, setExpandedChip, routeSaving, removeRoute, updateRoute } = bots
 
+  const [blockedEmails, setBlockedEmails] = useState((route.blocked_emails || []).join(", "))
   const id = routeId(route)
   const expanded = expandedChip === id
   const saving = routeSaving === id
@@ -82,6 +84,14 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
       {expanded && (
         <div className="mt-1.5 flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
           <span className="text-muted-foreground">This grant authorizes the bot route. Slack senders do not change its permissions.</span>
+          {route.kind === 'slack' && (
+            <label className="w-full text-muted-foreground">
+              Blocked email addresses
+              <input aria-label="Blocked email addresses" className="mt-1 w-full rounded border border-border bg-background px-2 py-1" value={blockedEmails} disabled={readOnly || saving} onChange={e => setBlockedEmails(e.target.value)} placeholder="person@example.com, another@example.com" />
+              <button type="button" className="mt-1 rounded border border-border px-2 py-1" disabled={readOnly || saving} onClick={() => void updateRoute(route, { blocked_emails: blockedEmails.split(',').map(email => email.trim()).filter(Boolean) })}>Save exclusions</button>
+              <span className="mt-1 block">When exclusions exist, Slack must provide a verified email. Removing all exclusions allows everyone in the channel.</span>
+            </label>
+          )}
           <label className="flex items-center gap-1.5 text-muted-foreground" title="Send detailed automation step/runtime messages to this channel">
             <input
               type="checkbox"

@@ -51,6 +51,7 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 	claims.BotRouteGrant = grant
 	claims.BotRouteWorkflowID = strings.TrimSpace(stringFromRequestMap(reqMap, "preset_query_id"))
 	claims.BotRouteProfileID = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_id"))
+	claims.SlackTrustedApp, _ = reqMap["_trusted_slack_app"].(bool)
 	claims.BotRouteConversationKey = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_conversation_key"))
 	claims.BotRouteWorkspacePath = strings.TrimSpace(stringFromRequestMap(reqMap, "selected_folder"))
 }
@@ -180,6 +181,7 @@ func (api *StreamingAPI) startSessionInternal(
 	// Marshal the request map to JSON
 	wireRequest := maps.Clone(reqMap)
 	delete(wireRequest, "_trusted_resume_target")
+	delete(wireRequest, "_trusted_slack_app")
 	body, err := json.Marshal(wireRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal query request: %w", err)
@@ -261,6 +263,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 	}
 	wireRequest := maps.Clone(reqMap)
 	delete(wireRequest, "_trusted_resume_target")
+	delete(wireRequest, "_trusted_slack_app")
 	body, err := json.Marshal(wireRequest)
 	if err != nil {
 		return fmt.Errorf("failed to marshal follow-up request: %w", err)

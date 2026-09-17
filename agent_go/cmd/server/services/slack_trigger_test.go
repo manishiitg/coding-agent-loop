@@ -129,3 +129,18 @@ func TestSlackOwnBotMessageIgnoredWithoutUserField(t *testing.T) {
 		t.Fatal("own bot message entered routing")
 	}
 }
+
+func TestSlackEmailExclusions(t *testing.T) {
+	route := ChannelRoute{BlockedEmails: []string{"person@example.com"}}
+	for _, tc := range []struct {
+		email   string
+		allowed bool
+	}{{"PERSON@example.com", false}, {"", false}, {"other@example.com", true}} {
+		if SlackRouteAllowsEmail(route, tc.email) != tc.allowed {
+			t.Fatalf("email %q", tc.email)
+		}
+	}
+	if !SlackRouteAllowsEmail(ChannelRoute{}, "") {
+		t.Fatal("open route requires email")
+	}
+}

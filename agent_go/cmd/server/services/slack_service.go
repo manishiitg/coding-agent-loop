@@ -1226,6 +1226,9 @@ func (s *SlackService) handleConfiguredSlackTrigger(ev *slackevents.MessageEvent
 	if route == nil || s.triggerHandler == nil || !SlackTriggerMatches(route.Trigger, ev, s.botUserID) {
 		return false
 	}
+	if ev.BotID == "" && len(route.BlockedEmails) > 0 && !SlackRouteAllowsEmail(*route, s.resolveUserEmail(ev.User)) {
+		return true
+	}
 	if !s.isDuplicateMessage(ev.Channel + ":" + ev.TimeStamp) {
 		if err := s.triggerHandler(context.Background(), ev.Channel, ev); err != nil {
 			log.Printf("[SLACK_TRIGGER] %v", err)
@@ -1331,6 +1334,9 @@ func (s *SlackService) routeSlackWorkflowMessage(_ context.Context, userID, user
 	if route == nil {
 		return text, nil, false
 	}
+	if !SlackRouteAllowsEmail(*route, userEmail) {
+		return text, route, true
+	}
 	return text, route, false
 }
 
@@ -1359,6 +1365,10 @@ func (s *SlackService) handleSocketModeInteractive(evt socketmode.Event) {
 
 	// Only handle button actions
 	if callback.Type != slack.InteractionTypeBlockActions {
+		return
+	}
+
+	if route := s.resolveSlackChannelWorkflow(callback.Channel.ID); route != nil && len(route.BlockedEmails) > 0 && !SlackRouteAllowsEmail(*route, s.resolveUserEmail(callback.User.ID)) {
 		return
 	}
 
@@ -2064,3 +2074,6 @@ func (s *SlackService) PostRouteMessage(ctx context.Context, channel, thread, me
 	_, ts, err := s.client.PostMessageContext(ctx, channel, slack.MsgOptionText(convertMarkdownToSlackMrkdwn(message), false), slack.MsgOptionTS(thread))
 	return ts, err
 }
+
+// UserEmailForRoute resolves the authenticated Slack actor for exclusions.
+func (s *SlackService) UserEmailForRoute(user string) string { return s.resolveUserEmail(user) }

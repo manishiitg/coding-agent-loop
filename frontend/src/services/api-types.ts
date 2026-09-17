@@ -916,6 +916,7 @@ export interface SlackRouteTrigger {
 }
 
 export interface ChannelRoute {
+  blocked_emails?: string[]
   trigger?: SlackRouteTrigger
   workflow_id?: string
   workspace_path: string

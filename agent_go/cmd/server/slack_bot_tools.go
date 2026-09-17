@@ -93,6 +93,9 @@ func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRou
 		if !found {
 			return fmt.Errorf("route not found")
 		}
+		if target.BlockedEmails != nil {
+			existing.BlockedEmails = target.BlockedEmails
+		}
 		existing.BotGrant = grant
 		routes[channel] = existing
 	case "remove_slack_bot_route":
@@ -179,6 +182,9 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 	}
 	for _, name := range []string{"create_slack_bot_route", "update_slack_bot_route_permission", "remove_slack_bot_route"} {
 		properties := map[string]interface{}{"channel_id": map[string]interface{}{"type": "string", "description": "Exact Slack channel ID, e.g. C1234567890"}}
+		if name != "remove_slack_bot_route" {
+			properties["blocked_emails"] = map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Emails excluded from this channel route. Empty array clears exclusions."}
+		}
 		required := []string{"channel_id"}
 		if name == "create_slack_bot_route" {
 			properties["trigger"] = map[string]interface{}{"type": "object", "additionalProperties": false, "required": []string{"type"}, "properties": map[string]interface{}{
@@ -200,6 +206,15 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 			target, err := api.slackToolTarget(ctx, workspace, profile)
 			if err != nil {
 				return "", err
+			}
+			if value, present := args["blocked_emails"]; present {
+				raw, err := json.Marshal(value)
+				if err != nil {
+					return "", err
+				}
+				if err := json.Unmarshal(raw, &target.BlockedEmails); err != nil {
+					return "", err
+				}
 			}
 			if name == "create_slack_bot_route" && args["trigger"] != nil {
 				raw, err := json.Marshal(args["trigger"])

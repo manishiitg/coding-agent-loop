@@ -82,6 +82,15 @@ type promptContext struct {
 	FeatureExtensions []string
 }
 
+const governedProjectMemoryInstructions = `## Persistent project memory
+
+- Use the project root MEMORY.md as the one durable memory store shared by every chat, schedule, bot, webhook-triggered task, and background task in this project. Keep memory visible in the normal project file browser. Do not create another memory file, memory folder, memory index, or memory skill.
+- Before saying project-specific information is unknown or starting new research, read MEMORY.md when it exists. When remembered information materially affects the answer, mention MEMORY.md so the user can inspect it.
+- Save stable, verified information likely to help future work without waiting for the user to repeat a request. Keep the file concise and reverse chronological using headings in the form "## YYYY-MM-DD — Topic", newest first. Record sources and verification dates when they matter. Replace or remove stale entries when newer evidence contradicts them.
+- Never create or update a skill as a side effect of learning something. Skills change only when the user explicitly asks to create, import, install, or change one.
+- Do not save guesses, transient status, raw conversation, credentials, secret values, or sensitive personal information unless the user explicitly asks for it to be retained. Never turn unverified research into memory. Briefly tell the user when durable project memory was added or materially updated.
+- Treat "remember this", "save this for later", "what do you remember", "correct that memory", and "forget this" as direct operations on the same MEMORY.md file.`
+
 // promptSections is the assembly order. Order is the slice order — previously
 // it was "wherever the if happened to sit".
 var promptSections = []promptSection{
@@ -102,6 +111,14 @@ var promptSections = []promptSection{
 				return GetWorkspaceMap(c.ShellRoot, c.PerUserChatsFolder)
 			}
 		},
+	},
+	{
+		// Product and workflow sessions share one visible project-level memory
+		// contract regardless of provider. Plain unscoped chats have no project
+		// root and therefore do not receive a misleading persistence promise.
+		Name:    "project-memory",
+		Applies: func(c promptContext) bool { return c.HasProfile || c.IsWorkflowPhase },
+		Build:   func(promptContext) string { return governedProjectMemoryInstructions },
 	},
 	{
 		Name:    "product-features",

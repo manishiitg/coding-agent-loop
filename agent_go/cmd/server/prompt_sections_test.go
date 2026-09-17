@@ -107,6 +107,38 @@ func TestWorkspaceMapPicksOneVariantPerMode(t *testing.T) {
 	}
 }
 
+func TestProjectMemoryIsSharedByEveryProductAndWorkflow(t *testing.T) {
+	section := sectionByName(t, "project-memory")
+	for _, ctx := range []promptContext{
+		{HasProfile: true, ProfileID: "work"},
+		{HasProfile: true, ProfileID: "video-studio"},
+		{IsWorkflowPhase: true},
+	} {
+		if !section.Applies(ctx) {
+			t.Fatalf("project memory did not apply to %+v", ctx)
+		}
+	}
+	if section.Applies(promptContext{}) {
+		t.Fatal("an unscoped chat has no project root for project memory")
+	}
+	text := section.Build(promptContext{HasProfile: true})
+	for _, required := range []string{
+		"project root MEMORY.md",
+		"one durable memory store",
+		"chat, schedule, bot, webhook-triggered task, and background task",
+		"normal project file browser",
+		"reverse chronological",
+		"YYYY-MM-DD — Topic",
+		"Never create or update a skill",
+		`"remember this"`,
+		`"forget this"`,
+	} {
+		if !strings.Contains(text, required) {
+			t.Fatalf("shared project-memory instructions are missing %q", required)
+		}
+	}
+}
+
 func TestWorkWorkspaceMapDoesNotLeakAgentWorksStorageConcepts(t *testing.T) {
 	text := sectionByName(t, "workspace-map").Build(promptContext{
 		HasProfile: true, ProfileID: "work", ProfileWorkspace: "/srv/repos/site",

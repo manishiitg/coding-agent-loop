@@ -20,7 +20,8 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 		success                          bool
 		missing                          string
 	}{
-		{name: "granted", scopes: "app_mentions:read, chat:write, reactions:write, channels:history, groups:history", header: true, success: true},
+		{name: "granted", scopes: "app_mentions:read, chat:write, reactions:write, channels:history, groups:history, channels:read, groups:read, users:read, users:read.email", header: true, success: true},
+		{name: "missing email permission", scopes: "app_mentions:read,chat:write,reactions:write,channels:history,groups:history,channels:read,groups:read,users:read", header: true, missing: "users:read.email"},
 		{name: "missing private thread permission", scopes: "app_mentions:read,chat:write,reactions:write,channels:history", header: true, missing: "groups:history"},
 		{name: "missing reactions", scopes: "app_mentions:read,chat:write", header: true, missing: "reactions:write"},
 		{name: "missing mentions", scopes: "chat:write", header: true, missing: "app_mentions:read"},

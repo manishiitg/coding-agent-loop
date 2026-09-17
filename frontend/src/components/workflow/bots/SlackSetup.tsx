@@ -70,10 +70,11 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                       <ul className="mt-1 ml-4 list-disc space-y-0.5">
                         <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mentions:read</code></li>
                         <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">channels:history</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">groups:history</code></li>
+                        <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">channels:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">groups:read</code> (channel information)</li>
                         <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">chat:write.public</code></li>
                         <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">reactions:write</code> (for the hourglass "bot is working" indicator)</li>
                         <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">users:read.email</code> (required for per-user memory)</li>
-                        <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:read</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:write</code> (optional, for attachments)</li>
+                        <li><code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">files:read</code> (optional, for incoming attachments)</li>
                       </ul>
                     </div>
                     <div>
@@ -82,7 +83,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                     </div>
                     <div>
                       <p className="font-semibold">4. Enable Event Subscriptions</p>
-                      <p className="mt-1"><b>Event Subscriptions</b> (sidebar) → toggle <b>Enable Events</b> ON. Under <b>Subscribe to bot events</b>, add: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mention</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.channels</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.groups</code>. Save changes.</p>
+                      <p className="mt-1"><b>Event Subscriptions</b> (sidebar) → toggle <b>Enable Events</b> ON. Under <b>Subscribe to bot events</b>, add: <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">app_mention</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.channels</code>, <code className="bg-blue-100 dark:bg-blue-800/40 px-1 rounded font-mono">message.groups</code>. Leave Request URL empty after enabling Socket Mode. If Save Changes is disabled and a URL field appears, verify Socket Mode is on in this same app and refresh. Save changes.</p>
                     </div>
                     <div>
                       <p className="font-semibold">5. Install to workspace &amp; copy Bot Token</p>

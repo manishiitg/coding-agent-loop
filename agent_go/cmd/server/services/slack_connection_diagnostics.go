@@ -50,14 +50,24 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 	} else {
 		add("Bot token", "passed", "Authenticated with Slack")
 		if scopes == nil {
-			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read, chat:write, reactions:write, channels:history, and groups:history under OAuth & Permissions.")
+			add("Bot permissions", "manual", "Slack did not return granted scopes. Verify app_mentions:read, chat:write, reactions:write, channels:history, groups:history, channels:read, groups:read, users:read, and users:read.email under OAuth & Permissions.")
 		} else {
-			for _, scope := range []string{"app_mentions:read", "chat:write", "reactions:write", "channels:history", "groups:history"} {
+			for _, scope := range []string{"app_mentions:read", "chat:write", "reactions:write", "channels:history", "groups:history", "channels:read", "groups:read", "users:read", "users:read.email"} {
 				if scopes[scope] {
 					add(scope, "passed", "Permission granted to the installed bot token")
 				} else {
 					result.Success = false
 					add(scope, "missing", "Add this bot scope under OAuth & Permissions, then reinstall the Slack app.")
+				}
+			}
+			for _, optional := range []struct{ scope, feature string }{
+				{"files:read", "reading incoming attachments"},
+				{"chat:write.public", "posting to public channels without joining them"},
+			} {
+				if scopes[optional.scope] {
+					add(optional.scope, "passed", "Optional permission granted for "+optional.feature)
+				} else {
+					add(optional.scope, "manual", "Optional: add this scope and reinstall only if you need "+optional.feature+".")
 				}
 			}
 		}

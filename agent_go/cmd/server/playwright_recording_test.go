@@ -21,6 +21,9 @@ func TestPlaywrightReplayPlaybackDownloadAndDelete(t *testing.T) {
 	if _, err := exec.LookPath("ffmpeg"); err != nil {
 		t.Skip("ffmpeg required for real replay encoding")
 	}
+	if err := exec.Command("ffmpeg", "-version").Run(); err != nil {
+		t.Skipf("ffmpeg required for real replay encoding: %v", err)
+	}
 	api, server := playwrightTestServer(t)
 	producer, _, err := websocket.DefaultDialer.Dial(strings.Replace(server.URL, "http", "ws", 1)+"/s/run/tools/browser/live", http.Header{"Authorization": []string{"Bearer producer-secret"}})
 	if err != nil {

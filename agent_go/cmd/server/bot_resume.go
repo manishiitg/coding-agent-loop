@@ -52,7 +52,9 @@ func (api *StreamingAPI) resolveBotResumeTarget(ctx context.Context, userID, sel
 }
 
 func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string, filter services.BotResumeFilter) ([]services.BotResumeTarget, error) {
-	_ = ctx
+	if filter.ProfileID != "" && filter.WorkspaceUserID != "" {
+		userID = filter.WorkspaceUserID
+	}
 	api.activeSessionsMux.RLock()
 	candidates := make([]ActiveSessionInfo, 0, len(api.activeSessions))
 	for _, session := range api.activeSessions {
@@ -72,6 +74,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 		return candidates[i].LastActivity.After(candidates[j].LastActivity)
 	})
 	targets := make([]services.BotResumeTarget, 0, len(candidates))
+	updated := map[string]time.Time{}
 	for _, session := range candidates {
 		if !botResumeCandidateStatus(session.Status) || !botResumeCandidateMode(session.AgentMode) {
 			continue
@@ -86,9 +89,36 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 			continue
 		}
 		if target := botResumeTargetFromActive(&session); target != nil {
+			if filter.ProfileID != "" {
+				target.ProfileRoute = &services.ProfileRoute{ProfileID: filter.ProfileID, ConversationKey: filter.ConversationKey, WorkspaceUserID: userID, UploadFolder: filter.WorkspacePath}
+			}
+			updated[target.SessionID] = session.LastActivity
 			targets = append(targets, *target)
 		}
 	}
+	if filter.WorkspacePath != "" {
+		seen := map[string]bool{}
+		for _, target := range targets {
+			seen[target.SessionID] = true
+		}
+		for _, saved := range chatHistorySessionsByID(userID, filter.WorkspacePath) {
+			if seen[saved.SessionID] || chatHistorySessionWorkspace(saved) != normalizeConversationWorkspace(filter.WorkspacePath) {
+				continue
+			}
+			target := services.BotResumeTarget{SessionID: saved.SessionID, UserID: userID, AgentMode: saved.AgentMode, Status: "completed", Query: firstNonEmptyTrimmed(saved.Title, saved.Query), WorkspacePath: filter.WorkspacePath, PresetQueryID: filter.PresetQueryID, WorkshopMode: saved.WorkshopMode}
+			if filter.ProfileID != "" {
+				target.ProfileRoute = &services.ProfileRoute{ProfileID: filter.ProfileID, ConversationKey: filter.ConversationKey, WorkspaceUserID: userID, UploadFolder: filter.WorkspacePath}
+			}
+			updated[target.SessionID], _ = time.Parse(time.RFC3339Nano, saved.UpdatedAt)
+			targets = append(targets, target)
+		}
+	}
+	sort.SliceStable(targets, func(i, j int) bool {
+		if updated[targets[i].SessionID].Equal(updated[targets[j].SessionID]) {
+			return targets[i].SessionID < targets[j].SessionID
+		}
+		return updated[targets[i].SessionID].After(updated[targets[j].SessionID])
+	})
 	return targets, nil
 }
 

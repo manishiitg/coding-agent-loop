@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/mcpagent/events"
 )
 
@@ -104,6 +105,78 @@ func TestRoutedMessageBypassesTheDefaultProfile(t *testing.T) {
 	case sessionID := <-started:
 		if sessionID == "" {
 			t.Fatal("no session id")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session never started")
+	}
+}
+
+func TestSlackProfileRouteUsesConfiguredWorkspaceOwner(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{
+		ID:              "slack",
+		Enabled:         true,
+		BotMode:         true,
+		AllowedChannels: `{"C1234567890":{"profile_id":"work","conversation_key":"acme","workspace_path":"_users/owner-1/Chats/Work/projects/acme","bot_grant":"owner"}}`,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	manager := NewBotConversationManager(store, "", "")
+	manager.RegisterConnector(&testBotConnector{name: "slack", supportsThreads: true})
+	manager.SetProfileTurnFunc(func(_ context.Context, userID string, msg BotIncomingMessage, _ ThreadID) (map[string]interface{}, string, bool, error) {
+		if userID != "owner-1" {
+			t.Fatalf("profile turn userID = %q, want route workspace owner owner-1", userID)
+		}
+		if msg.WorkspaceUserID != "owner-1" {
+			t.Fatalf("message workspace user = %q, want owner-1", msg.WorkspaceUserID)
+		}
+		if msg.PresetProfile == nil || msg.PresetProfile.WorkspaceUserID != "owner-1" {
+			t.Fatalf("preset profile = %+v, want workspace owner owner-1", msg.PresetProfile)
+		}
+		return map[string]interface{}{
+			"agent_profile_id":               msg.PresetProfile.ProfileID,
+			"agent_profile_conversation_key": msg.PresetProfile.ConversationKey,
+			"selected_folder":                msg.PresetProfile.UploadFolder,
+			"query":                          msg.Text,
+		}, "conv-work-acme", true, nil
+	})
+
+	started := make(chan struct {
+		sessionID string
+		userID    string
+		req       map[string]interface{}
+	}, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, sessionID, userID string, _ func(*events.AgentEvent)) error {
+		started <- struct {
+			sessionID string
+			userID    string
+			req       map[string]interface{}
+		}{sessionID: sessionID, userID: userID, req: req}
+		return nil
+	})
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:  "slack",
+		UserID:    "U999",
+		UserName:  "Slack Sender",
+		ChannelID: "C1234567890",
+		ThreadTS:  "1720000000.000100",
+		Text:      "status?",
+		IsMention: true,
+	})
+
+	select {
+	case got := <-started:
+		if got.sessionID != "conv-work-acme" || got.userID != "owner-1" {
+			t.Fatalf("started session = %q userID=%q, want conv-work-acme owner-1", got.sessionID, got.userID)
+		}
+		if got.req["bot_platform"] != "slack" || got.req["bot_route_grant"] != "owner" {
+			t.Fatalf("request bot metadata = %#v", got.req)
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("session never started")

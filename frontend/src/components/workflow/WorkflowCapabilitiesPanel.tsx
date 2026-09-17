@@ -7,6 +7,7 @@ import PlaybooksPanel from '../playbooks/PlaybooksPanel'
 import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'
 import WorkflowBotsPanel from './WorkflowBotsPanel'
+import WorkflowEmailPanel from './WorkflowEmailPanel'
 import ConnectorsBrowser from '../connectors/ConnectorsBrowser'
 import { agentApi, workflowManifestApi } from '../../services/api'
 import type { WorkflowCapabilities } from '../../services/api-types'
@@ -80,9 +81,14 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
     // only ever show "nothing to save".
     savesViaManifest: false,
   },
+  email: {
+    title: 'Email',
+    description: 'Gmail accounts, default recipients, and email access settings. Connections are shared across AgentWorks.',
+    savesViaManifest: false,
+  },
   bots: {
     title: 'Workflow bots',
-    description: 'Slack channels and WhatsApp slugs this workflow answers on. Connections are shared by all workflows.',
+    description: 'Slack and WhatsApp slugs this workflow answers on. Connections are shared by all workflows.',
     savesViaManifest: false,
   },
 }
@@ -405,6 +411,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
             {/* Bots write straight to the shared connector config (routes
                 already carry workflow_id), so nothing here goes through the
                 manifest Save below. */}
+            {section === 'email' && <WorkflowEmailPanel workspacePath={workspacePath} />}
             {section === 'bots' && <WorkflowBotsPanel workspacePath={workspacePath} />}
           </>
         )}

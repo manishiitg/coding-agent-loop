@@ -136,3 +136,6 @@ Each saved-script attempt is retained in the execution log directory as `scripte
   when the parent must reason about the investigation or strategy.
 - Missing or weak `validation_schema` — every step needs one strong enough that a
   bad/absent output fails it.
+
+
+For Slack messages and cross-step thread continuation, load `read_skill(skills=[{"name":"builder-reference","path":"references/slack-bot-routing.md"}])`. Use the backend-owned `send_slack_message` tool through this bridge with `MCP_AUTH`, a stable idempotency key, and an opaque `thread_ref`. Persist the reference as declared context output and pass it through a downstream context dependency. Never expose bot/app tokens to workflow code.

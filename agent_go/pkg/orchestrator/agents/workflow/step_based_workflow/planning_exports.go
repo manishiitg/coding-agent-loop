@@ -787,8 +787,8 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 	}
 	if cfg.ScheduleInvocation != nil {
 		controller.SetExecutionOptions(&ExecutionOptions{
-			SelectedRunFolder: cfg.ScheduleInvocation.RunFolder,
-			RunKind:           "schedule", ScheduleRunID: cfg.ScheduleInvocation.RunID,
+			SelectedRunFolder: cfg.ScheduleInvocation.BoundRunFolder(),
+			RunKind:           cfg.ScheduleInvocation.RunKind(), ScheduleRunID: cfg.ScheduleInvocation.BoundRunID(),
 			ScheduleID: cfg.ScheduleInvocation.ScheduleID, TriggerSource: cfg.ScheduleInvocation.TriggerSource,
 			ScheduledFor: cfg.ScheduleInvocation.ScheduledFor,
 		})
@@ -1364,7 +1364,7 @@ func RegisterRunFullEvaluationTool(
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			iteration := currentWorkflowRunFolder
 			if session.config != nil && session.config.ScheduleInvocation != nil {
-				iteration = session.config.ScheduleInvocation.RunFolder
+				iteration = session.config.ScheduleInvocation.BoundRunFolder()
 			}
 			groupName, _ := args["group_name"].(string)
 			if groupName == "" {
@@ -1945,7 +1945,7 @@ func RegisterRunFullWorkflowTool(
 			if cfg.WebhookInvocation != nil {
 				iteration = cfg.WebhookInvocation.RunFolder
 			} else if cfg.ScheduleInvocation != nil {
-				iteration = cfg.ScheduleInvocation.RunFolder
+				iteration = cfg.ScheduleInvocation.BoundRunFolder()
 			}
 			strategy := "start_from_beginning_no_human"
 
@@ -2066,7 +2066,7 @@ func RegisterRunFullWorkflowTool(
 			}
 
 			if cfg.WebhookInvocation != nil {
-				if !regexp.MustCompile(`^iteration-[0-9]+-hook$`).MatchString(iteration) {
+				if !regexp.MustCompile(`^iteration-[0-9]+-(?:hook|slack-[a-f0-9]+)$`).MatchString(iteration) {
 					return "webhook run folder unavailable", nil
 				}
 				if err := cfg.WebhookInvocation.ClaimGroup(groupName); err != nil {
@@ -2076,6 +2076,17 @@ func RegisterRunFullWorkflowTool(
 
 			execToken := workflowExecutionIDToken()
 			execID := fmt.Sprintf("workflow-full-%s", execToken)
+			if cfg.ScheduleInvocation != nil && cfg.ScheduleInvocation.Next != nil {
+				next, err := cfg.ScheduleInvocation.Next(ctx, execID)
+				if err != nil {
+					return "", err
+				}
+				snapshot := *cfg
+				snapshot.ScheduleInvocation = next
+				cfg = &snapshot
+				iteration = next.RunFolder
+			}
+
 			execCtx, cancel := context.WithCancel(session.sessionCtx)
 			execCtx = withWorkshopExecutionParent(execCtx, ctx)
 
@@ -2267,8 +2278,8 @@ func RegisterRunFullWorkflowTool(
 					DisableEval:       disableEval,
 				}
 				if cfg.ScheduleInvocation != nil {
-					execOpts.RunKind = "schedule"
-					execOpts.ScheduleRunID = cfg.ScheduleInvocation.RunID
+					execOpts.RunKind = cfg.ScheduleInvocation.RunKind()
+					execOpts.ScheduleRunID = cfg.ScheduleInvocation.BoundRunID()
 					execOpts.ScheduleID = cfg.ScheduleInvocation.ScheduleID
 					execOpts.TriggerSource = cfg.ScheduleInvocation.TriggerSource
 					execOpts.ScheduledFor = cfg.ScheduleInvocation.ScheduledFor

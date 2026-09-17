@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   chat: {} as Record<string, any>,
@@ -19,6 +19,7 @@ function chat(tabId: string, extra = {}) {
 }
 
 beforeEach(() => {
+  vi.useFakeTimers()
   vi.clearAllMocks()
   mocks.select.mockReturnValue(true)
   mocks.presets = { workflowPresets: [{ id: 'one', selectedFolder: { filepath: 'Workflow/one' } }], refreshPresets: vi.fn() }
@@ -89,4 +90,9 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(patch).not.toHaveProperty('inputText')
   })
 
+})
+
+afterEach(() => {
+  vi.runOnlyPendingTimers()
+  vi.useRealTimers()
 })

@@ -190,6 +190,12 @@
       "targets": []
     },
     {
+      "id": "email",
+      "label": "Email",
+      "actions": ["open"],
+      "targets": []
+    },
+    {
       "id": "bots",
       "label": "Workflow bots",
       "actions": [

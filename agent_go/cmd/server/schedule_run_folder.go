@@ -1,21 +1,34 @@
 package server
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io/fs"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 var scheduledRunFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)-sched$`)
-var numberedRunFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)(?:-(?:hook|sched))?$`)
+var numberedRunFolderPattern = regexp.MustCompile(`^iteration-([0-9]+)(?:-(?:hook|sched|slack-[a-f0-9]+))?$`)
 
 // allocateScheduledRunFolder binds one saved-schedule occurrence to an
 // immutable folder. Exclusive mkdir is the cross-process arbiter. The marker
 // makes restart/capacity resume idempotent for the same durable run ID.
 func allocateScheduledRunFolder(workspace, runID string) (string, error) {
+	return allocateImmutableRunFolder(workspace, runID, "sched", ".schedule-run-id")
+}
+
+func allocateSlackRunFolder(workspace, runID string) (string, error) {
+	sum := sha256.Sum256([]byte(runID))
+	return allocateImmutableRunFolder(workspace, runID, fmt.Sprintf("slack-%x", sum[:8]), ".slack-run-id")
+}
+
+// Exclusive mkdir and a durable producer marker are shared by non-interactive
+// producers. The monotonically increasing sequence includes every run family.
+func allocateImmutableRunFolder(workspace, runID, suffix, markerName string) (string, error) {
 	if strings.TrimSpace(runID) == "" {
 		return "", fmt.Errorf("schedule run id is required")
 	}
@@ -28,6 +41,18 @@ func allocateScheduledRunFolder(workspace, runID string) (string, error) {
 		return "", err
 	}
 	defer root.Close()
+	// Serialize marker lookup and allocation across server processes as well.
+	// Exclusive mkdir alone lets a retry race past a just-created marker and
+	// incorrectly allocate a second folder for the same delivery.
+	allocationLock, err := root.OpenFile(".run-allocation.lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return "", err
+	}
+	defer allocationLock.Close()
+	if err := syscall.Flock(int(allocationLock.Fd()), syscall.LOCK_EX); err != nil {
+		return "", err
+	}
+	defer syscall.Flock(int(allocationLock.Fd()), syscall.LOCK_UN)
 	if err = root.MkdirAll("runs", 0700); err != nil {
 		return "", err
 	}
@@ -42,8 +67,8 @@ func allocateScheduledRunFolder(workspace, runID string) (string, error) {
 		}
 	}
 	for _, entry := range entries {
-		if match := scheduledRunFolderPattern.FindStringSubmatch(entry.Name()); len(match) > 0 {
-			raw, readErr := root.ReadFile("runs/" + entry.Name() + "/.schedule-run-id")
+		if strings.HasSuffix(entry.Name(), "-"+suffix) {
+			raw, readErr := root.ReadFile("runs/" + entry.Name() + "/" + markerName)
 			if readErr == nil && string(raw) == runID {
 				return entry.Name(), nil
 			}
@@ -56,7 +81,7 @@ func allocateScheduledRunFolder(workspace, runID string) (string, error) {
 	}
 	for {
 		n++
-		folder := fmt.Sprintf("iteration-%d-sched", n)
+		folder := fmt.Sprintf("iteration-%d-%s", n, suffix)
 		err = root.Mkdir("runs/"+folder, 0700)
 		if os.IsExist(err) {
 			continue
@@ -64,7 +89,7 @@ func allocateScheduledRunFolder(workspace, runID string) (string, error) {
 		if err != nil {
 			return "", err
 		}
-		marker, openErr := root.OpenFile("runs/"+folder+"/.schedule-run-id", os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+		marker, openErr := root.OpenFile("runs/"+folder+"/"+markerName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 		if openErr != nil {
 			return "", openErr
 		}

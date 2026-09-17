@@ -26,6 +26,7 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   mcp: "Help me add or configure an MCP server for this workflow. Ask which app or service I want to connect, then help me find and set up the right integration.",
   browser: "Help me configure browser access for this workflow. Ask which sites, accounts, and browser tasks it needs to handle.",
   llm: "Help me choose or configure the LLMs for this workflow. Explain the current setup and ask about quality, speed, and cost requirements.",
+  email: "Help me connect or configure Gmail, default recipients, and email access settings.",
   bots: "Help me connect a bot channel to this workflow. Ask which channel, conversation, and behavior I need.",
   folders: "Help me attach a folder to this workflow. Ask which folder it needs, why, and whether access should be read-only or writable.",
 } satisfies Record<WorkspaceViewId, string>

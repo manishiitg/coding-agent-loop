@@ -155,10 +155,10 @@ func buildPulseTestMCPBridge(t *testing.T) string {
 	if !ok {
 		t.Fatal("resolve test source path")
 	}
-	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", "..", ".."))
+	moduleRoot := filepath.Clean(filepath.Join(filepath.Dir(filename), "..", ".."))
 	// Resolve the module selected by go.work, including isolated worktrees.
 	resolve := exec.Command("go", "list", "-m", "-f", "{{.Dir}}", "github.com/manishiitg/mcpagent")
-	resolve.Dir = repoRoot
+	resolve.Dir = moduleRoot
 	moduleDir, err := resolve.Output()
 	if err != nil {
 		t.Fatalf("resolve mcpagent module: %v", err)

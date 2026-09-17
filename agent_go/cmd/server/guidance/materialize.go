@@ -286,7 +286,7 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 	// Generate the compact discovery list from the same references as the
 	// detailed TOC so new topics remain discoverable without duplicating the
 	// entire reference catalog into every agent's initial context.
-	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + ". Read matching files under references/."
+	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + ". Files: references/."
 
 	return &llmtypes.Skill{
 		Name:            spec.Name,

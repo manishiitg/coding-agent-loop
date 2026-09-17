@@ -33,12 +33,12 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_UI_PRESENTATION_VIEWS = {
   report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', schedules: 'schedules', files: 'files',
-  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', folders: 'folders',
+  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', email: 'email', folders: 'folders',
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
   report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', schedules: 'Schedules', files: 'Files',
-  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', folders: 'Attached folders',
+  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Email', folders: 'Attached folders',
 }
 
 function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {

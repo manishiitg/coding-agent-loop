@@ -49,7 +49,8 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
             </div>
           </Card>
 
-          {/* Allowed Emails */}
+          {/* Allowed Emails — the bot manager rejects any sender outside this
+              list, so it is the first gate in front of every workflow route. */}
           <Card className="p-4">
             <div className="flex flex-col gap-1.5">
               <div className="flex items-center justify-between">
@@ -73,7 +74,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 placeholder="user@example.com, user2@example.com"
                 className="w-full px-2.5 py-1.5 text-xs bg-secondary border border-border rounded focus:outline-none focus:ring-1 focus:ring-primary"
               />
-              <span className="text-[10px] text-muted-foreground">Comma-separated email addresses. Leave empty to allow everyone.</span>
+              <span className="text-[10px] text-muted-foreground">Comma-separated email addresses. Leave empty to allow everyone in the channel.</span>
             </div>
           </Card>
 
@@ -84,7 +85,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 <div className="flex items-center justify-between">
                   <div>
                     <h3 className="text-sm font-medium text-foreground">Bot Mode (@mention)</h3>
-                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack. Required for channel routing.</p>
+                    <p className="text-xs text-muted-foreground mt-0.5">Users can @mention the bot to start agent sessions directly from Slack.</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input type="checkbox" checked={slackConfig.bot_mode || false} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, bot_mode: e.target.checked })} className="sr-only peer" />

@@ -48,10 +48,16 @@ export interface MCPConnectResponse {
 }
 
 export class MCPConfigApi {
-  private baseUrl: string;
+  private configuredBaseUrl?: string;
 
-  constructor(baseUrl: string = '') {
-    this.baseUrl = baseUrl;
+  constructor(baseUrl?: string) {
+    this.configuredBaseUrl = baseUrl;
+  }
+
+  // Resolve the active workspace at request time. Eager initialization creates
+  // an api/store import cycle and holds the previous workspace after switching.
+  private get baseUrl(): string {
+    return this.configuredBaseUrl ?? getApiBaseUrl();
   }
 
   /**
@@ -179,4 +185,4 @@ export class MCPConfigApi {
 }
 
 // Export a default instance
-export const mcpConfigApi = new MCPConfigApi(getApiBaseUrl());
+export const mcpConfigApi = new MCPConfigApi();

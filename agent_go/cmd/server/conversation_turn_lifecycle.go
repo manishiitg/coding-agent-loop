@@ -51,6 +51,14 @@ func (api *StreamingAPI) trackConversationTurnStart(queryID, sessionID string, r
 	if api == nil || strings.TrimSpace(queryID) == "" || strings.TrimSpace(sessionID) == "" {
 		return
 	}
+	metadata := map[string]string{
+		"parent_execution_id": "session:" + strings.TrimSpace(sessionID),
+	}
+	if req.ExecutionOptions != nil {
+		if mode := normalizeChatHistoryWorkshopMode(req.ExecutionOptions.WorkshopMode); mode != "" {
+			metadata["workshop_mode"] = mode
+		}
+	}
 	kind := "conversation_turn"
 	phaseID := strings.TrimSpace(req.PhaseID)
 	phaseName := "Conversation"
@@ -74,9 +82,7 @@ func (api *StreamingAPI) trackConversationTurnStart(queryID, sessionID string, r
 		Title:         strings.TrimSpace(req.SessionTitle),
 		TriggeredBy:   strings.TrimSpace(req.TriggeredBy),
 		StartedAt:     time.Now().UTC(),
-		Metadata: map[string]string{
-			"parent_execution_id": "session:" + strings.TrimSpace(sessionID),
-		},
+		Metadata:      metadata,
 	})
 }
 

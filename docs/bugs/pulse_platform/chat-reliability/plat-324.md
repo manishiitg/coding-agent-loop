@@ -760,3 +760,10 @@ temporarily unavailable remote capability set as unresolved and retains its
 local workspace-panel surface instead of disabling the entire workspace. A
 cross-tree contract test compares the frontend constant with the backend
 manifest version so a future profile bump cannot silently repeat this drift.
+
+This correction shipped in `bb0d6182d` and was force-activated on RTS as
+`bb0d618-20260917142749`. The normal drain remained occupied by a scheduled
+workflow rather than an interactive chat, so the operator explicitly chose an
+immediate swap. The active release symlink, agent/workspace/gateway services,
+release source revision, runtime configuration, local agent/workspace health,
+and public agent health were verified after activation.

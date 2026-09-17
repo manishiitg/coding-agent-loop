@@ -311,6 +311,25 @@ func (api *StreamingAPI) handleGetActiveSessions(w http.ResponseWriter, r *http.
 	}
 }
 
+// Bot route principals own their runtime independently from browser accounts.
+// Expose workflow bot activity only to viewers with access to that workflow;
+// this does not grant permission to resume, stop, or mutate another session.
+func monitorSessionVisibleTo(ctx context.Context, session *ActiveSessionInfo) bool {
+	if session == nil {
+		return false
+	}
+	claims := GetUserFromContext(ctx)
+	if sessionVisibleTo(session.UserID, claims) {
+		return true
+	}
+	if !isWorkflowBotHistory(ChatHistorySession{SessionID: session.SessionID, UserID: session.UserID, BotPlatform: session.BotPlatform}) ||
+		!strings.HasPrefix(strings.TrimSpace(session.WorkspacePath), "Workflow/") {
+		return false
+	}
+	access, manifest := workflowAccessForWorkspacePath(ctx, claims, session.WorkspacePath)
+	return manifest != nil && manifest.ID == session.PresetQueryID && access != WorkflowAccessNone && userAllowedWorkflowID(claims, manifest.ID)
+}
+
 // collectActiveSessions returns the user-scoped active session list, including
 // synthesized entries for tracked workflow executions that outlived their chat
 // row. Shared by handleGetActiveSessions and handleGetHeaderSummary so both
@@ -327,7 +346,7 @@ func (api *StreamingAPI) collectActiveSessions(ctx context.Context) []*ActiveSes
 	seenSessionIDs := make(map[string]struct{}, len(allActiveSessions))
 	for _, session := range allActiveSessions {
 		// Include session if it belongs to this user (or if UserID is empty for backwards compat)
-		if sessionVisibleTo(session.UserID, GetUserFromContext(ctx)) {
+		if monitorSessionVisibleTo(ctx, session) {
 			activeSessions = append(activeSessions, api.buildActiveSessionInfoSummary(session))
 			seenSessionIDs[session.SessionID] = struct{}{}
 		}

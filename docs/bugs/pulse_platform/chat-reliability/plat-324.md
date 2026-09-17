@@ -604,3 +604,34 @@ restart restored the affected session's SSE subscription without any
 the prior release logged another ten-row replay for a separate Work session at
 09:08:05 UTC, confirming this was a shared recovery-path defect rather than a
 single corrupted tab.
+
+### Stale retained session routed a new message to live input after deployment
+
+RTS reproduced a related send failure after the 09:50 UTC deployment. The
+browser retained session `product-a159a050-a710-49f6-837d-ba149cb1a2e1` in its
+active-session cache after the server process had stopped it. UI-control polling
+then returned `409 session_not_active` every three seconds, but the composer
+still classified the next message as retained live input. At 09:51:35 UTC it
+posted to `/live-input`, whose pre-delivery ownership check returned the exact
+`404 Session not found` response. The message never reached the durable
+submission journal or a provider.
+
+The client now treats only that exact pre-delivery 404 as proof that retry is
+safe. It removes the stale session from the active cache, removes the temporary
+optimistic row, and submits the same message and submission receipt through the
+normal turn endpoint. Other 404 and 409 responses remain non-retriable because
+they may follow durable acceptance or uncertain provider delivery.
+
+The same release moved project-memory behavior into the shared AgentWorks prompt
+assembly. Every project product and workflow now uses one visible project-root
+`MEMORY.md` across chats, schedules, bots, webhook-triggered tasks, background
+work, and delegated project agents. Claude's provider-private auto-memory is
+disabled at the shared root/delegated launch boundary. The affected Work project
+now has a visible root `MEMORY.md`; the previous hidden provider files were left
+untouched as backup.
+
+Focused live-input routing tests (22), TypeScript, shared prompt tests, Crew
+profile tests, and the relevant server tests passed. The changes shipped in
+`be77ed4d3` and were deployed to RTS as `be77ed4-20260917095842` at 10:04 UTC.
+The release symlink, agent/workspace/gateway services, visible memory-file
+ownership, and public health endpoint were verified.

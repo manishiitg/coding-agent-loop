@@ -1,3 +1,14 @@
+## Cross-workflow knowledgebase write access — PLAT-325 (PLAT-310 follow-up)
+
+Implemented locally, not yet deployed to RTS: `knowledgebase_sources` now
+accepts `access: "write"` (confined to the source's `notes/` folder), gated
+by an explicit `kb_write_grants` consent from the source workflow's own
+owner rather than the audience-overlap check read relies on. Concurrent
+writers into the same target are explicitly not serialized in this pass —
+a known, accepted gap, not an oversight. See
+[PLAT-325](pulse_platform/learnings-knowledge/plat-325.md) and the updated
+[shared KB contract](../workflow/shared_knowledgebase_sources.md).
+
 ## Builder MCP installation admission and persistence — PLAT-307 follow-up
 
 Deployed to RTS as `009b0d6c1`: AgentWorks `product.yaml` chat capability

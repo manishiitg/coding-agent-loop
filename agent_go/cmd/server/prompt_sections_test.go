@@ -93,7 +93,7 @@ func TestWorkspaceMapPicksOneVariantPerMode(t *testing.T) {
 	}{
 		{"workflow phase", promptContext{IsWorkflowPhase: true, ShellRoot: "/root", WorkflowPhaseFolder: "Workflow/demo"}, "Workflow/demo"},
 		{"product profile", promptContext{HasProfile: true, ShellRoot: "/root", ProfileWorkspace: "Chats/Video Studio/projects/x"}, "Chats/Video Studio/projects/x"},
-		{"work profile", promptContext{HasProfile: true, ProfileID: "work", ShellRoot: "/root", ProfileWorkspace: "/srv/repos/site"}, "/srv/repos/site/"},
+		{"work profile", promptContext{HasProfile: true, ProfileID: "work", ShellRoot: "/root", PerUserChatsFolder: "_users/alice/Chats", ProfileWorkspace: "/srv/repos/site"}, "/srv/repos/site/"},
 		{"plain chat", promptContext{ShellRoot: "/root", PerUserChatsFolder: "_users/default/Chats"}, "_users/default/Chats"},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
@@ -144,12 +144,15 @@ func TestProjectMemoryIsSharedByEveryProductAndWorkflow(t *testing.T) {
 
 func TestWorkWorkspaceMapDoesNotLeakAgentWorksStorageConcepts(t *testing.T) {
 	text := sectionByName(t, "workspace-map").Build(promptContext{
-		HasProfile: true, ProfileID: "work", ProfileWorkspace: "/srv/repos/site",
+		HasProfile: true, ProfileID: "work", ShellRoot: "/srv/docs", PerUserChatsFolder: "_users/alice/Chats", ProfileWorkspace: "/srv/repos/site",
 	})
 	for _, forbidden := range []string{"Chats", "Workflow", "Pulse", "docs root"} {
 		if strings.Contains(text, forbidden) {
 			t.Fatalf("Work workspace map leaked %q:\n%s", forbidden, text)
 		}
+	}
+	if !strings.Contains(text, "/srv/docs/_users/alice/chat_history/") || !strings.Contains(text, "another Crew belonging to the same account") {
+		t.Fatalf("Work workspace map does not expose the signed-in user's conversation memory:\n%s", text)
 	}
 }
 

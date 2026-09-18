@@ -9,6 +9,7 @@ import { activateTab } from '../../../utils/activateTab'
 import { selectWorkflowPreset } from '../../../utils/workflowNavigation'
 import { scheduleTabLabel } from '../../../utils/scheduleTabLabel'
 import { resolveWorkflowTabForSession } from '../../../utils/workflowTabResolution'
+import { hydrateTabEvents } from '../../../utils/sessionRestore'
 import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../../services/api-types'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import {
@@ -642,40 +643,30 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       }
     }
 
-    // A tab with events in memory catches up incrementally; a fresh or
-    // rebound one loads the recent window.
+    // Restore through the shared durable-history path. The polling event store
+    // is process-local and may be empty after a deployment even though the
+    // scheduled conversation is safely persisted on disk.
     try {
-      const existingEvents = chatStore.getTabEvents(sessionId)
-      const response = existingEvents.length === 0
-        ? await agentApi.getRecentSessionEvents(sessionId)
-        : await agentApi.getSessionEvents(sessionId, chatStore.getTabLastEventIndex(sessionId))
-      if (response.events.length > 0) {
-        if (existingEvents.length === 0) {
-          chatStore.setTabEvents(sessionId, response.events)
-        } else {
-          chatStore.addTabEvents(sessionId, response.events)
-        }
-      }
-      if (response.last_processed_index !== undefined) {
-        chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
-      }
-      if (response.has_more !== undefined) {
-        chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
-      }
-      const isDone = response.session_status === 'completed' || response.session_status === 'stopped'
-      const isError = response.session_status === 'error'
-      chatStore.setTabCompleted(tabId, isDone)
-      chatStore.setTabStreaming(tabId, !isDone && !isError && response.session_status === 'running')
-      chatStore.setTabHasRunningBgAgents(tabId, !!response.has_running_background_agents)
-      chatStore.setTabSyntheticTurn(tabId, !!response.is_synthetic_turn)
-      chatStore.setTabCanSteer(tabId, !!response.can_steer)
+      const workspacePath = stableScope?.workspacePath
+        || (effectivePresetQueryId ? presetMap.get(effectivePresetQueryId)?.workspacePath : undefined)
+        || undefined
+      const runtime = await hydrateTabEvents(sessionId, {
+        workspacePath,
+        fallbackToChatHistory: true,
+        preferChatHistory: true,
+      })
+      chatStore.setTabCompleted(tabId, runtime.status !== 'running')
+      chatStore.setTabStreaming(tabId, runtime.status === 'running')
+      chatStore.setTabHasRunningBgAgents(tabId, !!runtime.hasRunningBackgroundAgents)
+      chatStore.setTabSyntheticTurn(tabId, !!runtime.isSyntheticTurn)
+      chatStore.setTabCanSteer(tabId, false)
     } catch {
-      // Scheduled run sessions are in-memory only; after a restart there may
-      // be nothing to hydrate. Leave the tab attached either way.
+      chatStore.addToast('Could not load the saved schedule conversation.', 'error')
+      return
     }
     activateTab(tabId)
     onClose()
-  }, [onClose])
+  }, [onClose, presetMap, stableScope?.workspacePath])
 
   const deleteScheduledRunSession = useCallback(async (run: ScheduledJobRun) => {
     const sessionId = run.session_id

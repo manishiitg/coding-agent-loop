@@ -72,8 +72,8 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if !strings.EqualFold(manifest.Profile.Runtime.AgentTools.Mode, "mcp_only") {
 		t.Fatalf("work must route coding operations through governed MCP tools, got agent_tools.mode=%q", manifest.Profile.Runtime.AgentTools.Mode)
 	}
-	if !manifest.Profile.Runtime.Sandbox.IsStrict() || manifest.Profile.Runtime.Sandbox.ChatHistory != agentprofiles.SandboxChatHistoryNone {
-		t.Fatalf("work MCP tools must be strictly workspace-confined: %+v", manifest.Profile.Runtime.Sandbox)
+	if !manifest.Profile.Runtime.Sandbox.IsStrict() || manifest.Profile.Runtime.Sandbox.ChatHistoryDenied() {
+		t.Fatalf("work MCP tools must stay strict while retaining the signed-in user's chat-history memory: %+v", manifest.Profile.Runtime.Sandbox)
 	}
 	if !manifest.Profile.ToolPolicy.IsAllowlist() {
 		t.Fatal("work must declare tool_policy.mode: allowlist -- fail-open would silently reach workflow/schedule/pulse tools")

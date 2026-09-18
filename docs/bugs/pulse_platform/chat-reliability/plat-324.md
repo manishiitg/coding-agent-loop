@@ -956,4 +956,28 @@ the complete production frontend build, report-preview build, release-asset
 check, and bundle-budget check passed. The full frontend suite passed 1,402
 tests and retained nine unrelated baseline failures in provider-account mocks
 and a notification-copy source assertion; none of those failing files changed
-in this refactor. This refactor has not been deployed.
+in this refactor. The persistent-chat series through `f7e49005e` was deployed
+to RTS as `f7e4900-20260918081402`; service and public health checks passed.
+
+### Crew history access and blank scheduled conversations
+
+Live verification on 2026-09-18 showed two remaining mismatches. Crew told the
+user it could not search any chat JSON, including another Crew owned by the
+same signed-in account. Its product manifest explicitly set
+`sandbox.chat_history: none`, so that answer accurately reflected the folder
+guard even though account-scoped conversation recall is part of the intended
+persistent-memory model. Crew now retains the platform's per-user
+`chat_history/` grant and its workspace instructions give the exact authorized
+path. The grant remains below `_users/<authenticated-user>/`; another user's
+history is never included. `MEMORY.md` remains the curated project memory, while
+conversation JSON is read as historical reference.
+
+Separately, opening a run from the global AgentWorks Schedules page hydrated
+the read-only tab only from the process-local polling event store. A restart or
+deployment emptied that store and therefore rendered a blank chat even when
+the durable conversation JSON existed. The opener now uses the shared
+`hydrateTabEvents` path, which reconciles the live buffer with durable history
+and falls back to the persisted conversation after restart. Product/prompt
+tests, focused restore tests, TypeScript, ESLint, and the production build pass.
+These two corrections are implemented locally and are not deployed pending
+explicit operator approval.

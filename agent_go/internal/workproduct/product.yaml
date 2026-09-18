@@ -133,7 +133,9 @@ profile:
       mode: strict
       network: allowed
       read_only: []
-      chat_history: none
+      # Keep the platform default so a Crew can search the signed-in user's
+      # durable chat JSON as shared memory across that user's Crew projects.
+      # The per-user chat-history root still prevents access to other users.
     workspace:
       # New projects are created below this per-user root, exactly like the
       # AgentWorks folder lifecycle with workflow.json as the shared runtime manifest.

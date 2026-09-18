@@ -105,7 +105,8 @@ var promptSections = []promptSection{
 			case c.IsWorkflowPhase:
 				return getWorkflowPhaseWorkspaceMapForMode(c.ShellRoot, c.WorkflowPhaseFolder, c.WorkflowMode)
 			case c.ProfileID == "work":
-				return GetWorkWorkspaceMap(c.ProfileWorkspace)
+				chatHistory := newWorkspacePaths(c.ShellRoot, c.PerUserChatsFolder).ChatHistory
+				return GetWorkWorkspaceMap(c.ProfileWorkspace, chatHistory)
 			case c.HasProfile:
 				return GetWorkspaceMap(c.ShellRoot, c.ProfileWorkspace)
 			default:

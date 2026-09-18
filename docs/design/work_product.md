@@ -19,7 +19,7 @@ Work is not a workflow builder. Its primary entities are users, servers, project
 - **User:** An authenticated person with assigned permissions, limits, preferences, and private session history.
 - **Server:** A managed machine or execution environment with supported coding-agent runtimes installed.
 - **Project:** A user-owned folder created automatically under the Work projects root, using the same folder-creation model as AgentWorks workflows but without a workflow manifest.
-- **Agent session:** A persistent conversation and execution context using a selected runtime, model, project folder, and permitted tools.
+- **Agent session:** The project's canonical persistent conversation and execution context using a selected runtime, model, project folder, and permitted tools. Older conversations remain available as read-only history; users do not create parallel active chats inside one Crew project.
 - **Project agent identity:** An optional compact icon, name, role, and instruction set that keeps the project agent consistent across chat, schedules, bots, and background work. Users set or clear it conversationally; it changes behavior, not access.
 - **Attached folder:** An optional administrator-authorized external server folder that a project may access in addition to its own folder.
 - **Artifact:** A file, preview, diff, image, or other output produced during a session.
@@ -32,7 +32,7 @@ Work is not a workflow builder. Its primary entities are users, servers, project
 4. The user describes the task conversationally, attaches relevant files, or invokes a skill.
 5. The native coding agent works inside the created project folder using terminal, file, browser, and tool capabilities. Optional external folders remain subject to server authorization.
 6. Work streams messages, commands, file changes, approvals, usage, and artifacts.
-7. The user can interrupt, steer, approve, resume, or start another session without creating a workflow or plan.
+7. The user can interrupt, steer, approve, and resume the same persistent project conversation without creating a workflow, plan, or parallel active chat.
 
 The default layout is a conversation on the left and contextual work on the right. The right side can show files, diffs, terminal output, browser activity, artifacts, logs, and usage without exposing workflow concepts.
 
@@ -152,10 +152,12 @@ Audit logs should record sign-ins, session lifecycle events, commands, file chan
 - Authentication and user profiles.
 - Administrator-managed user-to-server assignments and optional external-folder permissions.
 - Automatic project-folder creation under the per-user Work projects root.
-- Multiple persistent, resumable agent sessions.
-- The exact AgentWorks conversation workflow inside each project: one permanent
-  Builder tab that starts separate Chat tabs, with the same tab visuals,
-  switching, close behavior, streaming state, and queued-message steering.
+- One canonical persistent, resumable chat per project. Existing historical
+  conversations remain visible as read-only reference material, but Workshop
+  does not create another active chat and the canonical Chat cannot be closed.
+- The shared AgentWorks conversation engine and presentation: the same
+  streaming, retained-session, queued-message steering, transcript, composer,
+  terminal switch, persistence, resume, interruption, and approval behavior.
 - Globally installed Claude Code and Codex CLIs with thin launch/control integrations and runtime selection.
 - Streaming conversation with attachments, steering, interruption, approvals, and requests for user input.
 - Background coding tasks reuse AgentWorks' `run_in_background` lifecycle: the
@@ -206,6 +208,14 @@ An excluded capability may return later in a Work-native form—for example, wor
 
 Work should be a thin product surface over AgentWorks, not a parallel implementation. The default is to reuse existing AgentWorks behavior and add only the product definition, system prompt, curated skills, branding, runtime configuration, and authorization rules that are genuinely specific to Work.
 
+Treat **99% shared code** as the engineering direction, not as a literal line
+count target. Product-specific code may select capabilities, translate project
+identity and authorization, persist project settings, and compose shared
+surfaces. The behavior-bearing implementation of a platform capability belongs
+in shared AgentWorks code. A feature correction made for chat, browser,
+automation, files, database, Dashboard, costs, bots, skills, secrets, MCP, or
+split-pane behavior should normally fix AgentWorks and Crew together.
+
 Before adding Work-specific code, check whether AgentWorks already provides the capability. Prefer configuration, composition, small adapters, and additional props over copied components or forked services. If a reusable primitive is missing, extract it into the shared platform rather than placing a generic implementation under `products/work`.
 
 Reuse existing AgentWorks infrastructure wherever its data model fits Work:
@@ -220,6 +230,13 @@ Reuse existing AgentWorks infrastructure wherever its data model fits Work:
 - Authentication and product-surface infrastructure where it enforces the required backend authorization.
 
 Work should not introduce its own transcript renderer, file viewer, terminal, browser, provider selector, skill manager, or project/session format when the platform already has one that can be configured or generalized. New Work-specific code is justified only where the product has different authorization or data semantics.
+
+The frontend reuse contract is checked by
+`frontend/src/products/work/WorkSharedPlatformContract.test.ts`. Keep that test
+focused on architectural ownership: Crew imports shared components, while its
+own folder contains only the shell, identity/creation UI, project persistence,
+runtime-selection adapters, and tests. Do not satisfy the contract by copying a
+shared component under a different name.
 
 ### Configuration Ownership
 
@@ -385,10 +402,11 @@ All visible copy in Work should use server, workspace, session, task, tool, or s
   `product.json` project/session manifest. Work keeps only identity and stable
   selections there; MCP definitions, skill contents, credentials, and runtime
   installations remain in their platform stores.
-- `agent_go/cmd/server/product_conversation_registry.go` binds each project and
-  chat key to durable AgentWorks chat history. Native interactive chats use the
-  shared retained tmux path, while background work and workflow steps keep the
-  shared structured lifecycle.
+- `agent_go/cmd/server/product_conversation_registry.go` binds each project to
+  its canonical durable AgentWorks chat history. Native interactive chat uses
+  the shared retained tmux path, while background work and workflow steps keep
+  the shared structured lifecycle. Older conversation files are reference
+  history and are not parallel active project chats.
 - Work's workspace shell is `frontend/src/products/work/WorkSurface.tsx` and
   `WorkWorkspacePane.tsx`, but its chat, tabs, files, terminal, browser,
   database, dashboard, costs, schedules, bots, skills, secrets, MCPs, and split

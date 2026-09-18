@@ -150,8 +150,9 @@ profile:
           - Keep project metadata, documentation, and platform-managed folders at the project root when appropriate.
           - Preserve an existing repository layout; do not move established files merely to satisfy the default.
     conversation:
-      # A project owns a permanent Builder plus independent chat keys. Each
-      # chat may move or the live CLI may be reaped without changing identity.
+      # A project owns one canonical persistent chat. Older conversation files
+      # remain read-only history; runtime replacement or live CLI reaping does
+      # not change the project's conversation identity.
       mode: keyed
       key_type: project
     capabilities:

@@ -103,8 +103,11 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   ))
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
 
+  expect(host.textContent).not.toContain('Delete old')
+  expect(host.querySelector('button[aria-label="Rename chat"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Open"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Open read-only conversation"]')).toBeNull()
   expect(host.querySelector('button[aria-label="History"]')).not.toBeNull()
   expect(host.querySelector('button[aria-label="Recent"]')).toBeNull()
   const title = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Earlier project discussion'))

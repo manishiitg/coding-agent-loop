@@ -38,6 +38,26 @@ func TestCreateFolderStillReturnsOtherWorkspaceErrors(t *testing.T) {
 	}
 }
 
+func TestDeleteFolderForwardsUserAndConfirmsPermanentDeletion(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodDelete || r.URL.Path != "/api/folders/Chats/Work/projects/demo" {
+			t.Fatalf("unexpected request %s %s", r.Method, r.URL.Path)
+		}
+		if r.URL.Query().Get("confirm") != "true" {
+			t.Fatal("folder deletion was not explicitly confirmed")
+		}
+		if got := r.Header.Get("X-User-ID"); got != "crew-owner" {
+			t.Fatalf("X-User-ID=%q, want crew-owner", got)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	if err := NewClient(server.URL, WithUserID("crew-owner")).DeleteFolder(context.Background(), "Chats/Work/projects/demo"); err != nil {
+		t.Fatal(err)
+	}
+}
+
 // TestValidatePathAgainstGuard_BlockedWritePaths verifies the write-only deny
 // semantic on the Go-side path validator:
 //

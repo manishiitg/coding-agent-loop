@@ -351,10 +351,10 @@ All visible copy in Work should use server, workspace, session, task, tool, or s
   model setup, skill lifecycle, message-only schedules, project-chat bots, and
   background work. These skills document the existing shared tools and UI
   boundaries; they do not introduce parallel stores or services.
-- Each Work project uses AgentWorks' Builder-to-Chat interaction: Builder is a
-  permanent blank home tab, its first message creates and selects an independent
-  Chat tab, and additional chats keep separate native CLI conversation state in
-  the same project workspace.
+- Each Work project has one canonical persistent Chat. Changing providers
+  relaunches the native runtime behind that same application conversation;
+  historical conversations remain read-only reference rather than additional
+  live tabs.
 - The project workspace now uses the shared AgentWorks Views and Setup toolbar primitives. Its reduced set exposes a general project Dashboard, Database, browser, costs/usage, message-only schedules, files, skills, secrets, MCP servers, model setup, project-chat bots, and attached folders while omitting workflow-only controls and workflow reporting semantics. Views and Setup remain open because this reduced toolbar is intentionally compact.
 - The shared Files workspace keeps its root visible but starts every first-level
   folder collapsed across all products. Work additionally hides send-to-chat
@@ -372,6 +372,12 @@ All visible copy in Work should use server, workspace, session, task, tool, or s
 - Concurrent folder updates are serialized to avoid lost grants.
 - Multiple Work projects use the same generic product-project persistence helper already used by other AgentWorks products. The Work-specific transcript renderer was removed, folder grant rows were extracted into a shared component, and product-surface type validation now has one source of truth.
 - Clicking **New project** creates `Chats/Work/projects/<generated-project>` through the shared generic product-project helper, without asking the user to select or authorize a folder.
+- The Crew selector also offers permanent project deletion behind the shared
+  danger confirmation. Deletion stops retained work, removes the authenticated
+  project folder and its schedules/triggers/bots/files/database, clears the
+  durable conversation slot and transcript index, closes local projections,
+  and selects the next Crew. Deleting a folder alone is insufficient because it
+  would leave a stale product-conversation registry binding.
 - New projects also receive `code/` as the default home for newly created
   application and source files. The runtime placement policy preserves an
   existing repository layout, and the server idempotently backfills `code/`

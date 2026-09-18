@@ -97,3 +97,7 @@ export async function createWorkSession(title: string, description: string, icon
   )
   return project
 }
+
+export async function deleteWorkSession(session: WorkSession): Promise<void> {
+  await agentApi.deleteAgentProfileProject(WORK_PROFILE_ID, session.id)
+}

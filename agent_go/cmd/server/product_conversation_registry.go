@@ -140,6 +140,32 @@ func (store productConversationRegistryStore) history(ctx context.Context, userI
 	return current, ok, previous, nil
 }
 
+// removeSlot forgets the live and historical conversation identities for one
+// product resource. Project deletion owns this operation; deleting an ordinary
+// historical chat continues to use forget so it cannot remove the live slot.
+func (store productConversationRegistryStore) removeSlot(ctx context.Context, userID string, profile agentprofiles.Profile, binding productConversationBinding) ([]ProductConversationRecord, error) {
+	path := productConversationRegistryPath(userID)
+	mutex := productConversationRegistryMutex(path)
+	mutex.Lock()
+	defer mutex.Unlock()
+	document, err := store.loadDocument(ctx, path)
+	if err != nil {
+		return nil, err
+	}
+	entryKey := productConversationRegistryEntryKey(profile.ID, binding.ConversationKey)
+	records := append([]ProductConversationRecord(nil), document.Previous[entryKey]...)
+	if current, ok := document.Entries[entryKey]; ok {
+		records = append([]ProductConversationRecord{current}, records...)
+	}
+	delete(document.Entries, entryKey)
+	delete(document.Previous, entryKey)
+	document.Version = productConversationRegistryVersion
+	if err := store.writeDocument(ctx, path, document); err != nil {
+		return nil, err
+	}
+	return records, nil
+}
+
 // liveSessionIDs is every session a profile's slots currently point at — its
 // main chat and any isolated ones (a check-in, a second phone).
 func (store productConversationRegistryStore) liveSessionIDs(ctx context.Context, userID, profileID string) (map[string]bool, error) {

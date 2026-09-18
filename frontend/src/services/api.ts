@@ -1121,6 +1121,13 @@ export const agentApi = {
     return response.data
   },
 
+  deleteAgentProfileProject: async (profileId: string, projectId: string): Promise<{ success: boolean }> => {
+    const response = await api.delete(
+      `/api/agent-profiles/${encodeURIComponent(profileId)}/projects/${encodeURIComponent(projectId)}`,
+    )
+    return response.data
+  },
+
   /** Makes an earlier conversation of the slot live again (the current one stays in history). */
   switchAgentProfileConversation: async (
     profileId: string,

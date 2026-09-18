@@ -3,9 +3,10 @@ import { describe, expect, it, vi } from 'vitest'
 const updatePlannerFile = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 const getPlannerFileContent = vi.hoisted(() => vi.fn())
 const createPlannerFolder = vi.hoisted(() => vi.fn().mockResolvedValue({}))
+const deleteAgentProfileProject = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true }))
 
 vi.mock('../../services/api', () => ({
-  agentApi: { createPlannerFolder, getPlannerFileContent, updatePlannerFile },
+  agentApi: { createPlannerFolder, deleteAgentProfileProject, getPlannerFileContent, updatePlannerFile },
   getApiBaseUrl: () => '',
   getAuthToken: () => null,
 }))
@@ -26,7 +27,7 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
 }))
 
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
-import { createWorkSession, parseSessionManifest, sessionSlug, workLLMConfigFromSelection, workLLMSelectionFromConfig } from './workSessions'
+import { createWorkSession, deleteWorkSession, parseSessionManifest, sessionSlug, workLLMConfigFromSelection, workLLMSelectionFromConfig } from './workSessions'
 
 describe('sessionSlug', () => {
   it('slugifies titles and falls back', () => {
@@ -108,6 +109,22 @@ describe('createWorkSession', () => {
       `${session.workspacePath}/code`,
       expect.stringContaining('Initialize Work project code folder'),
     )
+  })
+})
+
+describe('deleteWorkSession', () => {
+  it('deletes the authenticated durable Crew project through its profile', async () => {
+    const session = parseSessionManifest(JSON.stringify({
+      schema_version: 1,
+      product: 'work',
+      id: 'crew-1',
+      title: 'Research',
+      session_id: 'work:project:crew-1',
+    }), 'Chats/Work/projects/research-crew-1')!
+
+    await deleteWorkSession(session)
+
+    expect(deleteAgentProfileProject).toHaveBeenCalledWith('work', 'crew-1')
   })
 })
 

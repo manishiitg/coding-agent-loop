@@ -64,6 +64,15 @@ describe('Crew shared AgentWorks platform contract', () => {
     expect(switcher).not.toContain('label: tab.metadata?.agentProfileBuilder ? project : tab.name')
   })
 
+  it('offers permanent Crew deletion with the shared confirmation dialog', () => {
+    const surface = read('src/products/work/WorkSurface.tsx')
+
+    expect(surface).toContain('title="Delete Crew"')
+    expect(surface).toContain('confirmText="Delete Crew"')
+    expect(surface).toContain('onDelete={setDeleteCandidate}')
+    expect(surface).toContain('await remove(deleteCandidate.id)')
+  })
+
   it('does not add product-local replacements for shared platform surfaces', () => {
     const files = readdirSync('src/products/work')
     const forbiddenProductForks = [

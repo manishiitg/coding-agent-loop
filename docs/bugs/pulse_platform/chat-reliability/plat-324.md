@@ -1114,3 +1114,26 @@ Focused frontend tests (26 tests), TypeScript, targeted ESLint, the production
 frontend build, report-preview build, release-asset validation and bundle hard
 limit all pass. The commit is on `main`; deployment and live visual acceptance
 remain pending explicit operator approval.
+
+### Crew project deletion must remove its durable conversation (2026-09-18)
+
+Crew now exposes a delete action beside each project in the shared top-bar
+selector, with the same danger-confirmation pattern used for Automation
+deletion. The operation stops retained work before deleting, then removes the
+authenticated per-user project folder, its schedules/triggers/bots/files/
+dashboard/database, the live and historical product-conversation registry slot,
+durable transcript index entries, local chat projections and saved pane
+preferences. The next Crew is selected, or the first-use Dashboard is shown
+when none remain.
+
+The server owns deletion through the keyed agent-profile project boundary;
+calling the generic folder API alone is deliberately insufficient because it
+would strand the registry's live conversation binding. The workspace client
+forwards the authenticated user id so `Chats/Work/...` resolves beneath the
+correct `_users/<id>` root. Active work produces a conflict until stopped.
+
+Focused registry, workspace-client and Crew frontend tests pass, along with
+TypeScript, ESLint and the complete production frontend build. The broader
+server suite retains its unrelated existing assembled-prompt size failure
+(24,153 bytes against a 24,000-byte ceiling). Deployment and live deletion
+acceptance remain pending explicit operator approval.

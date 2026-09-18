@@ -78,6 +78,30 @@ func TestProductConversationRegistrySeparatesUsersAndKeys(t *testing.T) {
 	}
 }
 
+func TestProductConversationRegistryRemovesCompleteProjectSlot(t *testing.T) {
+	store, _ := memoryProductConversationStore()
+	profile := singletonConversationProfile()
+	binding, _ := resolveProductConversationBinding(context.Background(), "user-1", profile, "main")
+	first, err := store.resolveOrCreate(context.Background(), "user-1", profile, binding, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := store.rotate(context.Background(), "user-1", profile, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	removed, err := store.removeSlot(context.Background(), "user-1", profile, binding)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(removed) != 2 || removed[0].SessionID != second.SessionID || removed[1].SessionID != first.SessionID {
+		t.Fatalf("removed records=%+v, want live then previous", removed)
+	}
+	if current, ok, previous, err := store.history(context.Background(), "user-1", profile, binding); err != nil || ok || current.SessionID != "" || len(previous) != 0 {
+		t.Fatalf("slot survived deletion: current=%+v ok=%v previous=%+v err=%v", current, ok, previous, err)
+	}
+}
+
 func TestShouldRebindWorkConversationOnlyForVerifiedTabSpecificSession(t *testing.T) {
 	profile := agentprofiles.Profile{ID: "work"}
 	binding := productConversationBinding{

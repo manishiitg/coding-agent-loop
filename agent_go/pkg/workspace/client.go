@@ -745,3 +745,22 @@ func (c *Client) CreateFolder(ctx context.Context, folderPath string) error {
 	}
 	return err
 }
+
+// DeleteFolder permanently removes a workspace folder through the authenticated
+// workspace API. The user id on the client is forwarded so per-user product
+// paths resolve under the same _users/<id> root used when they were created.
+func (c *Client) DeleteFolder(ctx context.Context, folderPath string) error {
+	if err := c.ValidatePathWithContext(ctx, folderPath, true); err != nil {
+		return err
+	}
+	segments := strings.Split(filepath.ToSlash(folderPath), "/")
+	for index, segment := range segments {
+		segments[index] = url.PathEscape(segment)
+	}
+	_, err := c.request(ctx, http.MethodDelete, "/api/folders/"+strings.Join(segments, "/")+"?confirm=true", nil)
+	var statusErr *httpStatusError
+	if errors.As(err, &statusErr) && statusErr.statusCode == http.StatusNotFound {
+		return nil
+	}
+	return err
+}

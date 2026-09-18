@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, MessageSquare, PanelLeftOpen, PanelRightOpen, Plus, Sparkles } from 'lucide-react'
+import { Loader2, MessageSquare, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import ChatArea from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
@@ -15,7 +15,7 @@ import { useLLMStore } from '../../stores/useLLMStore'
 import { hydrateTabEvents } from '../../utils/sessionRestore'
 import { activateTab } from '../../utils/activateTab'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
-import { createWorkSession, loadWorkSessions, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
+import { createWorkSession, deleteWorkSession, loadWorkSessions, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { WorkspaceSplitRail } from '../../components/workspace/WorkspaceSplitDivider'
@@ -30,6 +30,7 @@ import { usePresentationEvents } from '../../platform/presentations/usePresentat
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
+import ConfirmationDialog from '../../components/ui/ConfirmationDialog'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   readReportPreviewPreference,
@@ -161,6 +162,33 @@ function useWorkSessions() {
     return session
   }, [setSelectedId])
 
+  const remove = useCallback(async (projectId: string) => {
+    const project = sessions.find(item => item.id === projectId)
+    if (!project) throw new Error('This Crew project is no longer available.')
+    try {
+      await agentApi.stopSession(project.sessionId, true)
+    } catch (cause) {
+      const status = (cause as { response?: { status?: number } })?.response?.status
+      if (status !== 404) throw cause
+    }
+    await deleteWorkSession(project)
+
+    const chatStore = useChatStore.getState()
+    const projectTabs = Object.values(chatStore.chatTabs).filter(tab => belongsToWorkProject(tab, projectId))
+    for (const tab of projectTabs) await useChatStore.getState().closeTab(tab.tabId, false)
+
+    try {
+      window.localStorage.removeItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`)
+      window.localStorage.removeItem(`${WORK_SPLIT_PREFERENCE_KEY}:${projectId}`)
+    } catch { /* UI preferences only. */ }
+
+    const remaining = sessions.filter(item => item.id !== projectId)
+    setSessions(remaining)
+    if (useProductSurfaceStore.getState().selectedWorkProjectId === projectId) {
+      setSelectedId(remaining[0]?.id ?? null)
+    }
+  }, [sessions, setSelectedId])
+
   const updateLLMConfig = useCallback(async (projectId: string, selection: WorkRuntimeSelection) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
@@ -187,6 +215,7 @@ function useWorkSessions() {
     selected: sessions.find((session) => session.id === selectedId) ?? null,
     select: setSelectedId,
     create,
+    remove,
     updateLLMConfig,
     updateSelections,
     refresh,
@@ -333,13 +362,17 @@ function WorkTopBarControl({
   selected,
   onSelect,
   onNewProject,
+  onDelete,
   creating,
+  deletingProjectId,
 }: {
   sessions: WorkSession[]
   selected: WorkSession | null
   onSelect: (id: string) => void
   onNewProject: () => void
+  onDelete: (session: WorkSession) => void
   creating: boolean
+  deletingProjectId: string | null
 }) {
   const [open, setOpen] = useState(false)
 
@@ -372,24 +405,38 @@ function WorkTopBarControl({
         {sessions.length === 0 ? (
           <div className="p-2 text-center text-sm text-gray-500 dark:text-gray-400">No projects yet. Create one to get started.</div>
         ) : sessions.map(session => (
-          <button
+          <div
             key={session.id}
-            type="button"
-            role="menuitemradio"
-            aria-checked={session.id === selected?.id}
-            onClick={() => { onSelect(session.id); setOpen(false) }}
-            className={`w-full rounded-md p-2 text-left text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
+            className={`flex items-center rounded-md text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
           >
-            <span className="flex items-center gap-2">
-              <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
-              <span className="min-w-0">
-                <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
-                {session.identity?.name && session.identity.name !== session.title
-                  ? <span className="block truncate text-xs text-muted-foreground">{session.title}</span>
-                  : null}
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={session.id === selected?.id}
+              onClick={() => { onSelect(session.id); setOpen(false) }}
+              className="min-w-0 flex-1 p-2 text-left"
+            >
+              <span className="flex items-center gap-2">
+                <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
+                <span className="min-w-0">
+                  <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
+                  {session.identity?.name && session.identity.name !== session.title
+                    ? <span className="block truncate text-xs text-muted-foreground">{session.title}</span>
+                    : null}
+                </span>
               </span>
-            </span>
-          </button>
+            </button>
+            <button
+              type="button"
+              aria-label={`Delete Crew ${session.identity?.name || session.title}`}
+              title="Delete Crew"
+              disabled={deletingProjectId !== null}
+              onClick={() => { setOpen(false); onDelete(session) }}
+              className="mr-1 rounded p-2 text-gray-400 transition-colors hover:bg-red-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+            >
+              {deletingProjectId === session.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            </button>
+          </div>
         ))}
       </div>
     </TopBarEntitySelector>
@@ -397,7 +444,7 @@ function WorkTopBarControl({
 }
 
 export function WorkSurface() {
-  const { sessions, selected, select, create, updateLLMConfig, updateSelections, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const { sessions, selected, select, create, remove, updateLLMConfig, updateSelections, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
   const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected) return
@@ -441,6 +488,8 @@ export function WorkSurface() {
   }, [projectConfigRefreshToken, refresh])
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [deleteCandidate, setDeleteCandidate] = useState<WorkSession | null>(null)
+  const [deletingProjectId, setDeletingProjectId] = useState<string | null>(null)
   const [chatOpen, setChatOpen] = useState(true)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>(() => readWorkWorkspaceView(selected?.id))
@@ -635,15 +684,32 @@ export function WorkSurface() {
     setCreateOpen(true)
   }, [])
 
+  const deleteProject = useCallback(async () => {
+    if (!deleteCandidate || deletingProjectId) return
+    setDeletingProjectId(deleteCandidate.id)
+    try {
+      await remove(deleteCandidate.id)
+      setDeleteCandidate(null)
+      useChatStore.getState().addToast(`Deleted Crew “${deleteCandidate.identity?.name || deleteCandidate.title}”.`, 'success')
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : 'Could not delete Crew.'
+      useChatStore.getState().addToast(`Failed to delete Crew: ${message}`, 'error')
+    } finally {
+      setDeletingProjectId(null)
+    }
+  }, [deleteCandidate, deletingProjectId, remove])
+
   const topBarControl = useMemo(() => (
     <WorkTopBarControl
       sessions={sessions}
       selected={selected}
       onSelect={select}
       onNewProject={openCreateProject}
+      onDelete={setDeleteCandidate}
       creating={creating}
+      deletingProjectId={deletingProjectId}
     />
-  ), [creating, openCreateProject, select, selected, sessions])
+  ), [creating, deletingProjectId, openCreateProject, select, selected, sessions])
 
   const error = sessionsError || chatError
 
@@ -660,6 +726,19 @@ export function WorkSurface() {
           error={createError}
         />
       ) : null}
+      <ConfirmationDialog
+        isOpen={deleteCandidate !== null}
+        onClose={() => { if (!deletingProjectId) setDeleteCandidate(null) }}
+        onConfirm={() => { void deleteProject() }}
+        title="Delete Crew"
+        message={deleteCandidate
+          ? `Delete Crew “${deleteCandidate.identity?.name || deleteCandidate.title}” and permanently remove its project files, chat history, schedules, triggers, bots, dashboard, and database? This cannot be undone.`
+          : ''}
+        confirmText="Delete Crew"
+        loadingText="Deleting Crew…"
+        type="danger"
+        isLoading={deletingProjectId !== null}
+      />
       <div
         data-ui-workspace={selected?.workspacePath}
         data-ui-view={selected ? workPresentationView(workspaceView) : undefined}

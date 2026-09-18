@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 // A product's earlier conversations. The registry remembers every
@@ -305,6 +306,65 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 		return
 	}
 	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted_paths": result.DeletedPaths})
+}
+
+// handleDeleteAgentProfileProject permanently removes one authenticated keyed
+// product project, including its workspace and durable conversation slot. It is
+// intentionally separate from deleting an earlier chat: the live slot may only
+// disappear together with the project that owns it.
+func (api *StreamingAPI) handleDeleteAgentProfileProject(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodOptions {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if api.agentProfiles == nil {
+		writeAgentProfileError(w, http.StatusServiceUnavailable, "agent profiles are unavailable")
+		return
+	}
+	userID := productWorkspaceUserID(r.Context())
+	profile, err := api.agentProfiles.Resolve(strings.TrimSpace(mux.Vars(r)["id"]), 0, userID)
+	if err != nil || !userAllowedProduct(GetUserFromContext(r.Context()), profile.Product) {
+		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
+		return
+	}
+	projectID := strings.TrimSpace(mux.Vars(r)["project_id"])
+	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, projectID)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	store := defaultProductConversationRegistryStore()
+	current, hasCurrent, previous, err := store.history(r.Context(), userID, profile, binding)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	records := append([]ProductConversationRecord(nil), previous...)
+	if hasCurrent {
+		records = append([]ProductConversationRecord{current}, records...)
+	}
+	for _, record := range records {
+		if api.sessionHasActiveWork(record.SessionID) {
+			writeAgentProfileError(w, http.StatusConflict, "Crew is still working; stop it before deleting the project")
+			return
+		}
+	}
+	client := workspace.NewClient(getWorkspaceAPIURL(), workspace.WithUserID(userID))
+	if err := client.DeleteFolder(r.Context(), binding.WorkspacePath); err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, "delete project folder: "+err.Error())
+		return
+	}
+	removed, err := store.removeSlot(r.Context(), userID, profile, binding)
+	if err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, "remove project conversation binding: "+err.Error())
+		return
+	}
+	for _, record := range removed {
+		// The project folder deletion normally removed the transcript itself;
+		// this also clears any durable index or compatibility copy elsewhere.
+		_, _ = DeleteChatHistorySession(userID, record.SessionID, "")
+	}
+	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 
 // resumeProductConversation owns saved-history verification and slot switching

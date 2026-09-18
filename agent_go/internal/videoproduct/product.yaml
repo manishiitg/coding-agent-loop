@@ -140,7 +140,7 @@ profile:
     # are product capabilities, so they are explicitly admitted below.
     #
     # This list does not govern mcpagent's intrinsic tools
-    # (get_api_spec, get_prompt, get_resource, read_skill), which it injects
+    # (get_api_spec, read_skill), which it injects
     # itself. Video Studio is deliberately MCP-only: terminal-native Claude
     # interactions cannot be represented in the browser chat, whereas MCP tool
     # calls have structured progress and results. Product HTTP APIs therefore

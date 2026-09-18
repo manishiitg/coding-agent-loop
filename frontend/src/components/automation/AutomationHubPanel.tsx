@@ -29,10 +29,10 @@ type AutomationHubPanelProps = {
 }
 
 const SECTION_DEFS = [
-  { id: 'chats', label: 'Chats', icon: MessageSquareText },
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
   { id: 'triggers', label: 'Triggers', icon: Webhook },
   { id: 'bots', label: 'Bots', icon: Bot },
+  { id: 'chats', label: 'Chats', icon: MessageSquareText },
 ] as const
 
 export function AutomationHubPanel({

@@ -40,14 +40,14 @@ describe('AutomationHubPanel', () => {
       expect(host.textContent).toContain('🚀')
       expect(host.textContent).toContain('Release Crew')
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
-      expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Chats', 'Schedules', 'Triggers', 'Bots'])
+      expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Schedules', 'Triggers', 'Bots', 'Chats'])
       expect(host.querySelector('[data-testid="chats"]')).not.toBeNull()
 
-      await act(async () => { tabs[1]!.click(); await Promise.resolve() })
+      await act(async () => { tabs[0]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="schedules"]')).not.toBeNull()
-      await act(async () => { tabs[2]!.click(); await Promise.resolve() })
+      await act(async () => { tabs[1]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="triggers"]')).not.toBeNull()
-      await act(async () => { tabs[3]!.click(); await Promise.resolve() })
+      await act(async () => { tabs[2]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="bots"]')).not.toBeNull()
       expect(openWorkspaceView).toHaveBeenLastCalledWith('workshop', 'bots')
     } finally {

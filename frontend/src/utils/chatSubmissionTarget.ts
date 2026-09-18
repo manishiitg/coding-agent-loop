@@ -25,3 +25,11 @@ export function acquireBuilderSubmission(key: string) {
     if (--owned.count === 0 && pendingBuilders.get(key) === owned) pendingBuilders.delete(key)
   } }
 }
+
+// Only an authoritative reconciled rejection proves that a retry can use a
+// fresh receipt. Network failures, conflicts and uncertainty retain identity.
+export function isConfirmedUndeliveredSubmission(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null || !('response' in error)) return false
+  const response = (error as { response?: { status?: number; data?: { error?: string } } }).response
+  return response?.status === 409 && response.data?.error === 'delivery_not_sent'
+}

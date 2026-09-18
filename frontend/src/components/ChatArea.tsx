@@ -7,7 +7,7 @@ import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codin
 import { withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
-import { acquireBuilderSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
+import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
 import { configureChatQueueController } from '../utils/chatQueueController'
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import {
@@ -2864,6 +2864,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       } catch (error) {
         if (!isChatIdentityCurrent(identity)) return false
+        if (isConfirmedUndeliveredSubmission(error)) acceptReceipt()
         if (isDefinitelyMissingLiveSession(error)) {
           // The process that owned this retained session has gone away (most
           // commonly during a deployment). Authorization rejects this before
@@ -3341,6 +3342,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     } catch (error) {
       if (!isChatIdentityCurrent(identity)) return false
+
+      // A reconciled, authoritative no-delivery outcome is safe to release.
+      // Keep receipts for uncertain delivery and identity conflicts.
+      if (isConfirmedUndeliveredSubmission(error)) acceptReceipt()
       console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
       chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])

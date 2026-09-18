@@ -304,3 +304,39 @@ func TestChatSubmissionDiscoversWorkflowThroughWorkspaceAPI(t *testing.T) {
 		t.Fatalf("remote durable discovery = %q, %v", got, err)
 	}
 }
+
+func TestLegacyEmptyProjectReceiptRequiresVerifiedWorkflowBinding(t *testing.T) {
+	store := newTestChatSubmissionStore()
+	store.resolveProject = func(string, string) (string, error) { return "Workflow/test", nil }
+	api := &StreamingAPI{internalChatSubmissionStore: store}
+	request := func() *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+		r.Header.Set("Idempotency-Key", "legacy-project")
+		return r
+	}
+	result := httptest.NewRecorder()
+	w, _, finish, ok := api.beginChatSubmission(result, request(), "chat", "", "hello")
+	if !ok {
+		t.Fatal("initial acceptance failed")
+	}
+	_ = json.NewEncoder(w).Encode(map[string]string{"delivery_status": "sent_to_cli"})
+	finish()
+	for _, tc := range []struct {
+		project, message string
+		status           int
+	}{
+		{"Workflow/test", "hello", http.StatusOK},
+		{"Workflow/another", "hello", http.StatusConflict},
+		{"Workflow/test", "different", http.StatusConflict},
+	} {
+		replay := httptest.NewRecorder()
+		if _, _, _, dispatch := api.beginChatSubmission(replay, request(), "chat", tc.project, tc.message); dispatch || replay.Code != tc.status {
+			t.Fatalf("project=%s dispatch=%v code=%d want=%d", tc.project, dispatch, replay.Code, tc.status)
+		}
+	}
+	store.resolveProject = func(string, string) (string, error) { return "", errors.New("cannot verify") }
+	rejected := httptest.NewRecorder()
+	if _, _, _, dispatch := api.beginChatSubmission(rejected, request(), "chat", "Workflow/test", "hello"); dispatch || rejected.Code != http.StatusConflict {
+		t.Fatal("unverified legacy receipt was replayed")
+	}
+}

@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented` — focused regression tests and build pass; live reverify pending |
-| Last synchronized | `2026-08-12` |
+| Ticket state | `implemented_pending_live_reverify` — Confida recurrence repaired; submission-route correction awaiting deployment and live acceptance |
+| Last synchronized | `2026-09-18` |
 
 - **Priority:** P0 — a user cannot continue an otherwise healthy live workflow-builder chat after changing its coding agent.
 - **Owner:** retained coding-agent live-input routing and continuation metadata.
@@ -55,3 +55,56 @@ submission defect.
 - Start/retain the new provider's terminal in the existing chat.
 - A subsequent user message is delivered to the live provider without a 409,
   "Could not submit live input", or a provider-mismatch error.
+
+## Confida recurrence — 2026-09-18
+
+After deleting a private Claude account and saving Gemini for `confida-login`,
+the existing Builder chat still launched Claude. The CLI displayed onboarding
+and login; the generic classifier interpreted its “billing” text as exhausted
+quota. A subsequent live-input submission targeted a Claude tmux that was no
+longer registered and became durably uncertain.
+
+The first repair (`452b3687b`, deployed to Confida) adds provider/model/account
+comparison before retained delivery and propagates the manifest's connection
+ID into runtime construction, including clearing a stale private binding when
+selecting the server account. Shared provider commit `c732ebb` identifies the
+Claude login menu as authentication failure and excludes captured pane-tail
+text from generic quota classification. Focused regression tests pass.
+
+Live retry exposed another boundary: workflow-phase `/query` payloads resolve
+workspace from `preset_query_id`, but the receipt and retained-policy checks ran
+before that resolved folder was assigned to the request. `/live-input` had saved
+`Workflow/confida-login`; `/query` compared an empty project and returned
+“Idempotency-Key already belongs to another submission.” The earlier provider
+repair alone therefore did not fully unblock the conversation.
+
+The follow-up assigns the preset-resolved workflow folder before journal and
+retained-policy admission. Legacy empty-project receipts can replay only after
+verifying the same owner's durable session belongs to that workflow. Different
+messages, owners, sessions and explicit projects remain conflicts. Unknown or
+uncertain delivery never triggers automatic resend. The frontend releases a
+receipt only for the explicit reconciled `delivery_not_sent` response; a later
+user retry can obtain a new receipt.
+
+### Recovery evidence and limits
+
+The workflow conversation retained 350 messages. The former Gemini native
+transcript ended during tool work without a completed final answer. The
+specific blocked submission `86410322-f505-4bc1-986d-016255c12a96` was backed up
+and reconciled as rejected/not delivered: the adapter reported no registered
+Claude session and native transcript inspection found no exact user-message
+match. No user message was resent during recovery. This incident-specific
+reconciliation is not a general exactly-once delivery guarantee.
+
+### Remaining live acceptance
+
+1. Delete a private Claude connection, save Gemini, and continue the existing
+   Builder conversation through both `/query` and `/live-input`.
+2. Confirm Gemini actually receives the new turn, with prior history available.
+3. Switch private account A to B on the same provider and verify exact binding.
+4. Repeat across browser refresh/backend restart; retry a proven rejected
+   receipt with a new receipt while preserving uncertain-delivery protection.
+5. Confirm repeated accepted submissions replay their outcome without a second
+   native delivery, including legacy empty-project receipts.
+
+Related persistence and durable-submission tracking: [PLAT-324](../chat-reliability/plat-324.md).

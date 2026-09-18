@@ -128,7 +128,19 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 		if queuedDelivery {
 			sameMessage = normalizeQueuedChatSubmission(previous.Message) == normalizeQueuedChatSubmission(message)
 		}
-		if previous.Owner != owner || previous.Project != project || previous.Session != session || !sameMessage {
+		projectMatches := previous.Project == project
+		// Older /query receipts omitted the preset-resolved workflow folder.
+		// Prove that legacy binding from the same owner's durable conversation;
+		// never let a key move to a different explicit project or session.
+		if !projectMatches && previous.Owner == owner && previous.Session == session && sameMessage && previous.Project == "" && strings.HasPrefix(project, "Workflow/") {
+			resolver := store.resolveProject
+			if resolver == nil {
+				resolver = durableSubmissionProject
+			}
+			verified, resolveErr := resolver(owner, session)
+			projectMatches = resolveErr == nil && verified == project
+		}
+		if previous.Owner != owner || !projectMatches || previous.Session != session || !sameMessage {
 			lock.Unlock()
 			http.Error(w, "Idempotency-Key already belongs to another submission", http.StatusConflict)
 			return w, r, func() {}, false

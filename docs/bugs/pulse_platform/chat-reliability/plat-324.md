@@ -1040,3 +1040,20 @@ Compatibility audit: SDK Session.Send still owns unchanged warm delivery; no sec
 ### Follow-up: restored Run mode after owner promotion (2026-09-18)
 
 Confida release `confida-f75a304b-20260918150257` correctly admitted Builder tools, but a restored request still carried `execution_options.workshop_mode=run`. Session metadata, reconnect notices and the private native CLI directory continued using that stale value. Normalize the workflow-builder conversational request from resolved current access before those consumers run, preserving other execution options and leaving Crew profiles and headless execution unchanged. Regression checks cover owner promotion, reader demotion, missing options, private directory mode selection and the exclusive authoring guard.
+
+## Confida provider-switch submission recurrence — 2026-09-18
+
+See [PLAT-099](../coding-agent-bridge/plat-099.md) for the provider/account
+routing repair and the subsequent `/query` versus `/live-input` receipt-project
+mismatch. The saved workflow had Gemini while its retained runtime had Claude.
+A reconciled failed receipt then hit a project conflict because the query route
+had not assigned its preset-resolved workspace before journal acceptance.
+
+The follow-up canonicalizes the workflow project before acceptance, verifies
+legacy empty-project bindings against the owner's durable conversation, and
+preserves identity conflict and uncertain-delivery checks. The original blocked
+receipt was backed up before a narrowly evidenced not-delivered reconciliation;
+no message was resent. 350 saved messages remained, but the interrupted Gemini
+turn had no completed final reply in its native transcript. Full live acceptance
+of retry, refresh and provider switching remains pending; health checks alone
+do not close this reliability ticket.

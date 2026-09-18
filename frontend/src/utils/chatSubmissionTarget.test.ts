@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { acquireBuilderSubmission } from './chatSubmissionTarget'
+import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission } from './chatSubmissionTarget'
 
 describe('Builder submission destination', () => {
   it('binds already queued sends to the created conversation, independent of selection', () => {
@@ -26,5 +26,14 @@ describe('Builder submission destination', () => {
     expect(next.target.tabId).toBeUndefined()
     expect(other.target).not.toBe(next.target)
     next.release(); other.release()
+  })
+})
+
+describe('reconciled submission retry', () => {
+  it('releases only the server-confirmed not-delivered receipt', () => {
+    expect(isConfirmedUndeliveredSubmission({ response: { status: 409, data: { error: 'delivery_not_sent' } } })).toBe(true)
+    for (const error of [new Error('network failed'), { response: { status: 409, data: { error: 'delivery_uncertain' } } }, { response: { status: 409, data: 'Idempotency-Key already belongs to another submission' } }, { response: { status: 500, data: { error: 'delivery_not_sent' } } }]) {
+      expect(isConfirmedUndeliveredSubmission(error)).toBe(false)
+    }
   })
 })

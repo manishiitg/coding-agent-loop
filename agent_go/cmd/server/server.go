@@ -3546,6 +3546,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			selected = strings.Trim(strings.TrimSpace(resolved), "/")
 		}
 	}
+	// Workflow phase payloads identify the workspace through their preset.
+	// Resolve it before both journal acceptance and retained-policy admission.
+	if req.AgentMode == "workflow_phase" && strings.HasPrefix(selected, "Workflow/") {
+		req.SelectedFolder = selected
+	}
 	bindConversationBrowserIsolation(sessionID, currentUserID, selected, resolvedProfile)
 	common.SetSessionBrowserMode(sessionID, getBrowserMode(req))
 	// Keep configured browser intent on the request. In auto mode,

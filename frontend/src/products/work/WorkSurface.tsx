@@ -34,12 +34,12 @@ import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
 const WORK_UI_PRESENTATION_VIEWS = {
-  report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', schedules: 'schedules', files: 'files',
-  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', email: 'email', folders: 'folders',
+  report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', workshop: 'schedules', schedules: 'schedules', files: 'files',
+  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'schedules', email: 'email', folders: 'folders',
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
-  report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', schedules: 'Automations', files: 'Files',
+  report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', workshop: 'Automation', schedules: 'Automation', files: 'Files',
   skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
 }
 
@@ -53,7 +53,7 @@ function readWorkWorkspaceView(projectId?: string): WorkWorkspaceView {
   if (typeof window === 'undefined' || !projectId) return 'dashboard'
   try {
     const saved = window.localStorage.getItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`)
-    if (saved === 'history') return 'schedules'
+    if (saved === 'history' || saved === 'bots') return 'schedules'
     return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'
   } catch {
     return 'dashboard'
@@ -459,7 +459,8 @@ export function WorkSurface() {
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
     if (enabledWorkspacePanels && !enabledWorkspacePanels.has(panel)) return
     if (panel === 'schedules') {
-      useWorkflowStore.getState().openWorkspaceView('schedules', target === 'webhooks' ? 'webhooks' : 'schedules')
+      const automationTarget = view === 'bots' ? 'bots' : target === 'webhooks' ? 'triggers' : target || 'schedules'
+      useWorkflowStore.getState().openWorkspaceView('workshop', automationTarget)
     }
     setPanelOpen(true)
     selectWorkspaceView(panel)
@@ -476,7 +477,7 @@ export function WorkSurface() {
     isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
     labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
     actorLabel: 'Crew',
-    getTarget: (view) => view === 'schedules' ? useWorkflowStore.getState().workspaceViewTarget?.target : undefined,
+    getTarget: (view) => view === 'workshop' || view === 'schedules' ? useWorkflowStore.getState().workspaceViewTarget?.target : undefined,
   }), [openWorkPresentationView, workspaceView])
   useWorkspaceUIControl(activeSessionId ?? undefined, workUIAdapter)
 

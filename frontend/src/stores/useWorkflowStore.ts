@@ -1219,22 +1219,31 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       openWorkspaceView: (view: WorkspaceViewId, target?: string) => {
-        const kind = getWorkspaceView(view).kind
-        if (target && target.trim()) {
-          set(state => ({ workspaceViewTarget: { view, target: target.trim(), token: (state.workspaceViewTarget?.token ?? 0) + 1 } }))
+        const automationTarget = view === 'schedules'
+          ? 'schedules'
+          : view === 'webhooks'
+            ? 'triggers'
+            : view === 'bots'
+              ? 'bots'
+              : undefined
+        const resolvedView: WorkspaceViewId = automationTarget ? 'workshop' : view
+        const resolvedTarget = target?.trim() || automationTarget
+        const kind = getWorkspaceView(resolvedView).kind
+        if (resolvedTarget) {
+          set(state => ({ workspaceViewTarget: { view: resolvedView, target: resolvedTarget, token: (state.workspaceViewTarget?.token ?? 0) + 1 } }))
         }
-        if ((kind === 'canvas' || kind === 'preview') && isCanvasView(view)) {
+        if ((kind === 'canvas' || kind === 'preview') && isCanvasView(resolvedView)) {
           const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-          persistWorkflowUIStateForPreset(presetId ?? null, { lastCanvasView: view })
-          set({ lastCanvasView: view })
+          persistWorkflowUIStateForPreset(presetId ?? null, { lastCanvasView: resolvedView })
+          set({ lastCanvasView: resolvedView })
         }
-        get().setWorkflowWorkspaceView(view)
+        get().setWorkflowWorkspaceView(resolvedView)
         get().setShowWorkspacePane(true)
         // Narrow workflow layouts show one content pane at a time. Selecting
         // any workspace destination should reveal that pane; md+ ignores this
         // focus for visibility and continues to show the split layout.
         get().setFocusedPane('preview')
-        useAppStore.getState().setWorkspaceMinimized(view !== 'files')
+        useAppStore.getState().setWorkspaceMinimized(resolvedView !== 'files')
       },
 
       refreshWorkspaceView: (target?: string) => {

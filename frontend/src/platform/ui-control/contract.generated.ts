@@ -204,6 +204,21 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
+      "id": "workshop",
+      "label": "Automation",
+      "target_kind": "view_section",
+      "actions": [
+        "open",
+        "refresh"
+      ],
+      "targets": [
+        "chats",
+        "schedules",
+        "triggers",
+        "bots"
+      ]
+    },
+    {
       "id": "llm",
       "label": "Workflow LLM configuration",
       "actions": [

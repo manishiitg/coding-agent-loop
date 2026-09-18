@@ -14,7 +14,6 @@ import {
   FileText,
   FolderOpen,
   Globe,
-  History,
   KeyRound,
   LayoutDashboard,
   Mail,
@@ -25,6 +24,7 @@ import {
   ShieldCheck,
   Table2,
   Webhook,
+  Zap,
   type LucideIcon,
 } from 'lucide-react'
 
@@ -107,7 +107,7 @@ const VIEWS = [
   { id: 'secrets', kind: 'capability', label: 'Workflow secrets', icon: KeyRound, toolbarGroup: 'capabilities', pane: true },
   { id: 'mcp', kind: 'capability', label: 'Integrations', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
-  { id: 'workshop', kind: 'inspector', label: 'Workshop', icon: History, toolbarGroup: 'views', pane: true },
+  { id: 'workshop', kind: 'inspector', label: 'Automation', icon: Zap, toolbarGroup: 'views', pane: true },
   { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
   { id: 'email', kind: 'capability', label: 'Gmail', icon: Mail, toolbarGroup: 'capabilities', pane: true },
   { id: 'bots', kind: 'capability', label: 'Connectors', icon: Bot, toolbarGroup: 'capabilities', pane: true },
@@ -192,7 +192,10 @@ const LEGACY_VIEW_IDS: Record<string, WorkspaceViewId | null> = {
   log: 'report',
   plan: 'flow',
   builder: null,
-  'api-triggers': 'webhooks',
+  'api-triggers': 'workshop',
+  schedules: 'workshop',
+  webhooks: 'workshop',
+  bots: 'workshop',
 }
 
 /** Coerce a persisted/unknown value to a view id, or null. Legacy ids are

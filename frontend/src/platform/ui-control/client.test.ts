@@ -5,7 +5,7 @@ import { UI_CONTROL_CONTRACT } from './contract.generated'
 const base = { request_id: 'test', expires_at: '2030-01-01T00:00:00Z' }
 describe('closed semantic UI control contract', () => {
   it('accounts for all views but never advertises placeholder deep actions', () => {
-    expect(UI_CONTROL_CONTRACT.views).toHaveLength(25)
+    expect(UI_CONTROL_CONTRACT.views).toHaveLength(26)
     for (const { id } of UI_CONTROL_CONTRACT.views) {
       expect(supportedAction({ ...base, view: id, action: 'open' })).toBe(true)
       expect(supportedAction({ ...base, view: id, action: 'send' })).toBe(false)
@@ -23,6 +23,12 @@ describe('closed semantic UI control contract', () => {
     expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'schedules' })).toBe(true)
     expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'webhooks' })).toBe(true)
     expect(supportedAction({ ...base, view: 'schedules', action: 'open', target: 'guessed' })).toBe(false)
+  })
+  it('opens the bounded sections of the Automation center', () => {
+    for (const target of ['chats', 'schedules', 'triggers', 'bots']) {
+      expect(supportedAction({ ...base, view: 'workshop', action: 'open', target })).toBe(true)
+    }
+    expect(supportedAction({ ...base, view: 'workshop', action: 'open', target: 'guessed' })).toBe(false)
   })
   it('only expands the two known notification instruction disclosures', () => {
     expect(supportedAction({ ...base, view: 'notify', action: 'expand', target: 'run_summary' })).toBe(true)

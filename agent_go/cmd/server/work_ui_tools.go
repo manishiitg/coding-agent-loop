@@ -12,6 +12,7 @@ var workUIControlContract = uiContract{
 		{ID: "database", Label: "Database", Actions: []string{"open", "refresh"}},
 		{ID: "browser", Label: "Browser", Actions: []string{"open", "refresh"}},
 		{ID: "costs", Label: "Costs and usage", Actions: []string{"open", "refresh"}},
+		{ID: "workshop", Label: "Automation", TargetKind: "view_section", Actions: []string{"open", "refresh"}, Targets: []string{"chats", "schedules", "triggers", "bots"}},
 		{ID: "schedules", Label: "Schedules", TargetKind: "view_section", Actions: []string{"open", "refresh"}, Targets: []string{"schedules", "webhooks"}},
 		{ID: "files", Label: "Files", Actions: []string{"open", "refresh"}},
 		{ID: "skills", Label: "Skills", Actions: []string{"open", "refresh"}},

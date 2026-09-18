@@ -34,6 +34,9 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	if !strings.Contains(capabilities, `"targets":["schedules","webhooks"]`) {
 		t.Fatalf("Crew schedule sections missing from capabilities: %s", capabilities)
 	}
+	if !strings.Contains(capabilities, `"targets":["chats","schedules","triggers","bots"]`) {
+		t.Fatalf("Crew Automation center sections missing from capabilities: %s", capabilities)
+	}
 	for _, workflowOnly := range []string{`"id":"flow"`, `"id":"pulse"`, `"id":"evaluation"`, `"id":"playbooks"`} {
 		if strings.Contains(capabilities, workflowOnly) {
 			t.Fatalf("Work advertised workflow-only capability %s: %s", workflowOnly, capabilities)
@@ -44,6 +47,9 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "schedules", "action": "open", "target": "webhooks"}); err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("webhooks open=%s err=%v", out, err)
+	}
+	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "workshop", "action": "open", "target": "bots"}); err != nil || !strings.Contains(out, "browser_disconnected") {
+		t.Fatalf("Automation bots open=%s err=%v", out, err)
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
 		t.Fatalf("workflow-only view was accepted: %s err=%v", out, err)

@@ -47,6 +47,9 @@ import {
   writeWorkflowSplitPreference,
 } from '../../utils/reportPreviewPreference'
 import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../workspace/WorkspaceSplitDivider'
+import { AutomationHubPanel } from '../automation/AutomationHubPanel'
+
+const WorkflowBotsPanel = React.lazy(() => import('./WorkflowBotsPanel'))
 
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
@@ -262,7 +265,8 @@ const WorkflowPreviousChatsPanel: React.FC<{
   onHasChatsChange?: (hasChats: boolean) => void
   // When true the panel fills the right-side Workshop workspace view.
   primary?: boolean
-}> = ({ workspacePath, onHasChatsChange, primary = false }) => {
+  chatOnly?: boolean
+}> = ({ workspacePath, onHasChatsChange, primary = false, chatOnly = false }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -461,6 +465,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       compact={!primary}
       fill={primary}
       showAll={primary}
+      recentOnly={chatOnly}
     />
   )
 }
@@ -2242,10 +2247,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       sharedToolbar={showChatArea && workspacePaneVisible}
       chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded /> : undefined}
       workshopPanel={workspacePath ? (
-        <WorkflowPreviousChatsPanel
+        <AutomationHubPanel
           key={`${activePresetId || 'workflow'}:${workspacePath}`}
-          primary
+          entityType="workflow"
           workspacePath={workspacePath}
+          entityLabel={activeWorkflowPreset?.label || 'Workflow'}
+          entityIcon={activeWorkflowPreset?.icon}
+          workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
+          chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
+          botContent={<div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel workspacePath={workspacePath} /></div>}
         />
       ) : undefined}
       paneClassName={canvasPaneClassName}

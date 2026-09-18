@@ -73,8 +73,8 @@ func workspaceViewAction(view, workspacePath, action, target string) (*orchestra
 
 // registerOpenWorkspaceViewTool gives the workflow agent the toolbar: it can
 // open any workspace view on the right for the user (the report after
-// building it, the costs when asked about spend, the schedules after adding
-// one) instead of describing where to click.
+// building it, the costs when asked about spend, or the Automation center
+// after adding a schedule, trigger, or bot) instead of describing where to click.
 func (api *StreamingAPI) registerOpenWorkspaceViewTool(registrar definitionToolRegistrar, sessionID, workspacePath string) error {
 	return api.registerUIControlTools(registrar, sessionID, workspacePath)
 }

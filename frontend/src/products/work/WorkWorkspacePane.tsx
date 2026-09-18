@@ -1,8 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import {
   BrainCircuit,
-  Bot,
-  CalendarClock,
   Database,
   DollarSign,
   Files,
@@ -13,6 +11,7 @@ import {
   Monitor,
   Puzzle,
   Server,
+  Zap,
   type LucideIcon,
 } from 'lucide-react'
 import { FileWorkspacePane } from '../../components/FileWorkspacePane'
@@ -40,9 +39,10 @@ import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type { WorkRuntimeSelection } from './workTabs'
 import type { ProductIdentity } from '../../platform/chat/productProjects'
 import { loadWorkSessions } from './workSessions'
+import { PreviousChatHistoryPanel } from '../../components/PreviousChatHistoryPanel'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
-const WorkflowScheduleRunsPanel = lazy(() => import('../../components/scheduler/WorkflowScheduleRunsPanel'))
+const AutomationHubPanel = lazy(() => import('../../components/automation/AutomationHubPanel').then(module => ({ default: module.AutomationHubPanel })))
 const ReportView = lazy(() => import('../../components/workflow/ReportViewer').then(module => ({ default: module.ReportView })))
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 
@@ -56,7 +56,7 @@ const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIc
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
-  { id: 'schedules', label: 'Automations', icon: CalendarClock },
+  { id: 'schedules', label: 'Automation', icon: Zap },
 ]
 
 const OPS_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
@@ -70,7 +70,6 @@ const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideI
   { id: 'mcp', label: 'Integrations', icon: Server },
   { id: 'models', label: 'Agent configuration', icon: BrainCircuit },
   { id: 'email', label: 'Gmail', icon: Mail },
-  { id: 'bots', label: 'Connectors', icon: Bot },
   { id: 'folders', label: 'Attached folders', icon: FolderOpen },
 ]
 
@@ -356,6 +355,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
 
 export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
+  const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
   const toggleSkill = async (folderName: string) => {
     const next = selectedSkills.includes(folderName)
@@ -427,13 +427,25 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           {view === 'database' && <DatabaseView workspacePath={workspacePath} />}
           {view === 'browser' && <WorkBrowserPanel tabId={tabId} projectId={projectId} workspacePath={workspacePath} />}
           {view === 'costs' && <CostsPopup isOpen embedded projectMode onClose={() => onViewChange('files')} workspacePath={workspacePath} runFolders={[]} selectedRunFolder={null} emptyHint="Send a message to see this project's usage here." />}
-          {view === 'schedules' && <WorkflowScheduleRunsPanel
-            embedded
-            active
+          {view === 'schedules' && <AutomationHubPanel
             entityType="product"
+            workspacePath={workspacePath}
+            entityLabel={projectIdentity?.name || projectTitle}
+            entityIcon={projectIdentity?.icon}
             canManage
             scopeNoun="project"
             productTriggerScope={enabledPanels?.has('triggers') === false ? undefined : { profileId: 'work', projectId }}
+            chatContent={<PreviousChatHistoryPanel
+              workspacePath={workspacePath}
+              activeSessionId={activeSessionId}
+              title=""
+              emptyText="No earlier chats for this Crew member."
+              recentOnly
+              readOnly
+              fill
+              showAll
+              onSelectSession={() => {}}
+            />}
             botContent={enabledPanels?.has('bots') === false ? undefined : <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
               workspacePath={workspacePath}
               scopeNoun="project"
@@ -441,10 +453,15 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
             /></div>}
             workflowScope={{ workflowId: projectId, workspacePath, label: projectTitle }}
-            onClose={() => onViewChange('files')}
-            headerAction={<AskAIButton
+            scheduleHeaderAction={<AskAIButton
               workspacePath={workspacePath}
               message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
+              onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
+              iconOnly
+            />}
+            triggerHeaderAction={<AskAIButton
+              workspacePath={workspacePath}
+              message="Help me manage this project's authenticated triggers. Each trigger sends one saved instruction to this Crew project."
               onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
               iconOnly
             />}

@@ -29,9 +29,10 @@ interface WorkflowScheduleRunsPanelProps {
   scopeNoun?: 'automation' | 'project'
   productTriggerScope?: ProductTriggerScope
   botContent?: React.ReactNode
+  showAutomationTabs?: boolean
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent, showAutomationTabs = true }) => {
   const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType, canManage, active })
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
   const hasWorkflowWebhooks = entityType === 'workflow' && Boolean(workflowScope?.workspacePath)
@@ -99,7 +100,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         ? 'flex h-full min-h-0 w-full flex-col bg-card text-card-foreground'
         : 'mx-4 flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl'}>
 
-        {(hasWebhooks || botContent) && (
+        {showAutomationTabs && (hasWebhooks || botContent) && (
           <div className="flex shrink-0 items-center gap-1 border-b border-border px-4 py-2 sm:px-6" role="tablist" aria-label="Automation channels">
             <button type="button" role="tab" aria-selected={automationSection === 'schedules'}
               onClick={() => setAutomationSection('schedules')}

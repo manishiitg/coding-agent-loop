@@ -30,11 +30,15 @@ describe('primary workspace toolbar views', () => {
       'webhooks',
       'files',
       'browser',
+      'workshop',
     ])
   })
 
-  it('maps the former API trigger id to the dedicated webhook view', () => {
+  it('maps former standalone automation destinations into the Automation center', () => {
     expect(WORKSPACE_VIEWS.map(view => view.id)).not.toContain('api-triggers')
-    expect(normalizeWorkspaceViewId('api-triggers')).toBe('webhooks')
+    expect(normalizeWorkspaceViewId('api-triggers')).toBe('workshop')
+    expect(normalizeWorkspaceViewId('schedules')).toBe('workshop')
+    expect(normalizeWorkspaceViewId('webhooks')).toBe('workshop')
+    expect(normalizeWorkspaceViewId('bots')).toBe('workshop')
   })
 })

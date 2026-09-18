@@ -34,7 +34,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'schedules', 'execution-logs'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'execution-logs'])
 const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'evaluation', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
@@ -189,7 +189,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => PRIMARY_TOOLBAR_VIEW_IDS.has(view.id) && view.id !== 'report')
   const operationsWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => OPERATIONS_TOOLBAR_VIEW_IDS.has(view.id))
   const capabilityViewDefinitions = useMemo(
-    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
+    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'bots'),
     [],
   )
 

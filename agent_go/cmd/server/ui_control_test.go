@@ -102,7 +102,7 @@ func boundUI(t *testing.T) (*uiControlBroker, *uiBinding) {
 	return b, c
 }
 func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
-	if len(uiControlContract.Views) != 25 {
+	if len(uiControlContract.Views) != 26 {
 		t.Fatal("registry coverage changed")
 	}
 	for _, v := range uiControlContract.Views {
@@ -129,6 +129,14 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 	}
 	if validateUIAction("schedules", "open", "guessed") == nil {
 		t.Fatal("unknown schedule section accepted")
+	}
+	for _, section := range []string{"chats", "schedules", "triggers", "bots"} {
+		if validateUIAction("workshop", "open", section) != nil {
+			t.Fatalf("automation section missing: %q", section)
+		}
+	}
+	if validateUIAction("workshop", "open", "guessed") == nil {
+		t.Fatal("unknown automation section accepted")
 	}
 	for _, invalid := range []string{"/etc/passwd", "../other/file", `code\\file.py`} {
 		if err := validateUIAction("files", "open", invalid); err == nil {

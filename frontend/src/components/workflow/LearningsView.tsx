@@ -360,11 +360,11 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background text-foreground">
       <div className="flex items-start justify-between gap-3 border-b border-border flex-shrink-0 p-3 sm:p-4">
-        <div className="flex min-w-0 items-center gap-2">
+        <div className="flex min-w-0 flex-1 items-center gap-2">
           <BookOpen className="w-5 h-5 text-primary" />
           <h2 className="truncate text-lg font-semibold">Automation Learnings</h2>
         </div>
-        {headerAction}
+        <div className="ml-auto flex shrink-0 items-center gap-2">{headerAction}</div>
       </div>
 
       <div className="flex-1 overflow-y-auto p-4">

@@ -52,7 +52,7 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
       <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
-        <div className="min-w-0">
+        <div className="min-w-0 flex-1">
           <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
             <ShieldCheck className="h-4 w-4 text-primary" />
             Access
@@ -63,7 +63,7 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
               : 'Accounts, roles and passwords for this deployment.'}
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="ml-auto flex shrink-0 items-center gap-2">
           {workflowTab && usersTab && (
             <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Access sections">
               <button type="button" role="tab" aria-selected={tab === 'workflow'} className={tabClass(tab === 'workflow')} onClick={() => setTab('workflow')}>

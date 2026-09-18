@@ -81,7 +81,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
     <div className="h-full overflow-y-auto bg-background">
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
+          <div className="min-w-0 flex-1">
             <div className="flex items-center gap-2">
               <Webhook className="h-4 w-4 text-muted-foreground" />
               <h2 className="text-base font-semibold">Webhooks</h2>
@@ -89,9 +89,9 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
             </div>
             <p className="mt-1 text-xs text-muted-foreground">External events that start this workflow.</p>
           </div>
-          <div className="flex items-center gap-2">
-            <button type="button" aria-label="Refresh webhooks" title="Refresh webhooks" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
+          <div className="ml-auto flex shrink-0 items-center gap-2">
             {headerAction}
+            <button type="button" aria-label="Refresh webhooks" title="Refresh webhooks" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
           </div>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">

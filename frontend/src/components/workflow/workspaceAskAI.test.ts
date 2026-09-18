@@ -10,6 +10,8 @@ describe('workspace Ask AI', () => {
       expect(message).toContain('read_skill')
       expect(message).toContain('references/workflow-guide.md')
       expect(message).toContain(`${view.label} view`)
+      expect(message).toContain(`use the ${view.label} view as context`)
+      expect(message).not.toMatch(/help me with the .* view\. Help me/i)
     }
   })
 })

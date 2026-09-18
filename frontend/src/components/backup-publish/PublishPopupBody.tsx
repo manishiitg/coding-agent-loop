@@ -237,14 +237,25 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
   return (
         <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
           <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
                 <Globe className="h-4 w-4 text-primary" />
                 Publish
               </h2>
               <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
             </div>
-            {headerAction}
+            <div className="ml-auto flex shrink-0 items-center gap-2">
+              {headerAction}
+              <button
+                onClick={() => { void load() }}
+                disabled={loading}
+                className={iconButtonClass}
+                aria-label="Refresh publish status"
+                title="Refresh publish status"
+              >
+                <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              </button>
+            </div>
           </div>
 
           {error && (
@@ -287,9 +298,6 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
                       {info?.status?.last_error && <p className="mt-2 text-xs text-destructive">{info.status.last_error}</p>}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button onClick={() => { void load() }} disabled={loading} className={iconButtonClass} aria-label="Refresh publish status">
-                        <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                      </button>
                       {setupControl}
                     </div>
                   </div>

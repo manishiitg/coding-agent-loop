@@ -50,11 +50,11 @@ export default function ProductAPITriggersView({ scope, onViewRuns, headerAction
 
   return <div className="h-full overflow-y-auto space-y-5 p-4">
     <div className="flex items-start justify-between gap-3">
-      <div>
+      <div className="min-w-0 flex-1">
         <h2 className="flex items-center gap-2 text-base font-semibold"><Webhook size={17} />Webhooks</h2>
         <p className="mt-1 text-xs text-muted-foreground">Send one saved message to this project when an external service sends authenticated JSON.</p>
       </div>
-      <div className="flex items-center gap-2"><button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button>{headerAction}</div>
+      <div className="ml-auto flex shrink-0 items-center gap-2">{headerAction}<button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button></div>
     </div>
     <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Both use the same durable Builder conversation. Webhooks do not run AgentWorks routes or workflow steps. {onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View runs</button>}</p>
     <p className="text-xs text-muted-foreground">Ask the project chat to create a webhook or change its saved message and authentication.</p>

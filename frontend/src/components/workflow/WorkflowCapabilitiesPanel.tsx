@@ -268,7 +268,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">{copy.description}</p>
         </div>
-        <div className="self-center">
+        <div className="ml-auto self-center">
           <WorkspaceViewActions
             workspacePath={workspacePath}
             message={getWorkspaceAskAIMessage(section)}

@@ -182,11 +182,11 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
   return (
         <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
           <div className="flex items-start justify-between border-b border-border px-5 py-4">
-            <div>
+            <div className="min-w-0 flex-1">
               <h2 className="text-base font-semibold text-foreground">Attached folders</h2>
               <p className="mt-1 text-xs text-muted-foreground">Folders and shared knowledge bases this workflow can access.</p>
             </div>
-            <div className="flex shrink-0 items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               {!canWriteWorkflow && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
               {headerAction}
             </div>

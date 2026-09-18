@@ -19,7 +19,7 @@ describe('Workflow MCP panel layout', () => {
     expect(source).toMatch(/onToolChange=\{\(selected_tools\)[\s\S]*?void persist\(next\)/)
   })
 
-  it('places Refresh and Ask AI in capability headers without rendering a second workspace title bar', () => {
+  it('places Ask AI and Refresh in capability headers without rendering a second workspace title bar', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
 

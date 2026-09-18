@@ -628,7 +628,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
       >
         {/* Fixed Header */}
         <div className={`flex items-center justify-between ${variant === 'pane' ? 'px-3' : 'px-4'} py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0`}>
-          <div className="flex items-center gap-3 min-w-0 flex-1">
+          <div className="flex min-w-0 flex-1 items-center gap-3">
             <button
               onClick={() => {
                 if (getHasUnsavedChanges()) {
@@ -648,7 +648,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <div className="flex flex-col min-w-0 cursor-help gap-0.5">
+                  <div className="flex min-w-0 flex-1 flex-col cursor-help gap-0.5">
                     {selectedFile?.path && (
                       <>
                         <div className="flex items-center gap-2">
@@ -674,7 +674,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
               </Tooltip>
             </TooltipProvider>
           </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
+          <div className="ml-auto flex flex-shrink-0 items-center gap-2">
             {headerAction}
             {!isEditMode ? (
               <div className="flex items-center gap-0.5">

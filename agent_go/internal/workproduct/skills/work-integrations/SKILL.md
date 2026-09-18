@@ -26,7 +26,9 @@ from selection for this project. MCP setup has its own `work-mcp` skill.
   credential across projects, an administrator must explicitly promote the
   source project/workflow secret with `manage_global_secret(action="promote")`
   or **Make global** in Setup > Secrets. Then explicitly select that global
-  name in each destination Crew. Crew persists this allowlist in
+  name in each destination Crew with
+  `update_project_global_secret_selection(action="select", name="NAME")`.
+  Call `list_secrets` first and use an exact name from `global.names`. Crew persists this allowlist in
   `capabilities.selected_global_secret_names`; it never inherits newly created
   globals automatically.
 - Never print, echo, store in project files, or otherwise reveal a secret

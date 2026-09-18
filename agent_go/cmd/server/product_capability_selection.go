@@ -226,6 +226,43 @@ func productSelectedGlobalSecrets(ctx context.Context, profileID, workspacePath 
 	return &names, nil
 }
 
+func updateProductSelectedGlobalSecrets(ctx context.Context, profileID, workspacePath string, mutate func([]string) []string) error {
+	raw, manifestPath, err := ensureProjectRuntimeManifest(ctx, profileID, workspacePath)
+	if err != nil {
+		return err
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return fmt.Errorf("decode product manifest: %w", err)
+	}
+	capabilities, _ := manifest["capabilities"].(map[string]interface{})
+	if capabilities == nil {
+		capabilities = map[string]interface{}{}
+	}
+	current := []string{}
+	if items, ok := capabilities["selected_global_secret_names"].([]interface{}); ok {
+		for _, item := range items {
+			if name, ok := item.(string); ok {
+				current = appendUniqueStrings(current, strings.TrimSpace(name))
+			}
+		}
+	}
+	next := mutate(current)
+	canonical := make([]string, 0, len(next))
+	for _, name := range next {
+		canonical = appendUniqueStrings(canonical, strings.TrimSpace(name))
+	}
+	sort.Strings(canonical)
+	capabilities["selected_global_secret_names"] = canonical
+	manifest["capabilities"] = capabilities
+	manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+	encoded, err := json.MarshalIndent(manifest, "", "  ")
+	if err != nil {
+		return fmt.Errorf("encode product manifest: %w", err)
+	}
+	return writeFileToWorkspace(ctx, manifestPath, string(encoded)+"\n")
+}
+
 func updateProductSelectedSecrets(ctx context.Context, profileID, workspacePath string, mutate func([]string) []string) error {
 	raw, manifestPath, err := ensureProjectRuntimeManifest(ctx, profileID, workspacePath)
 	if err != nil {

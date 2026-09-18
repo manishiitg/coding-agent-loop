@@ -143,7 +143,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 					"source":    "per-user encrypted store",
 					"names":     userNames,
 				},
-				"note": "Secret VALUES are never returned by any tool. In a workflow builder, attach an existing name with update_workflow_config(add_secrets=[...]); it is then available immediately to the builder shell and workflow steps as SECRET_<name>.",
+				"note": "Secret VALUES are never returned by any tool. In a workflow builder, attach an existing name with update_workflow_config(add_secrets=[...]). In an active Crew project, select an existing global with update_project_global_secret_selection(action=\"select\", name=\"...\").",
 			}, "", "  ")
 			return string(out), nil
 		},

@@ -8,6 +8,8 @@ import {
   statusTone,
   visibleActivitySessions,
 } from '../utils/globalActivityMonitorStatus'
+import { crewActivityTitle, showsActivityTypeIcon } from '../utils/globalActivityPresentation'
+import type { ChatTab } from '../stores/useChatStore'
 
 function minimalSession(overrides: Partial<ActiveSessionInfo> = {}): ActiveSessionInfo {
   return {
@@ -84,6 +86,29 @@ describe('global activity monitor status', () => {
 
     expect(headerStatusLabel(session)).toBe('running')
     expect(statusTone(session)).toBe('running')
+  })
+})
+
+describe('global activity monitor labels', () => {
+  it('shows the Crew identity name instead of the generic Chat tab name', () => {
+    const tab = {
+      name: 'Chat',
+      metadata: {
+        agentProfileId: 'work',
+        agentProfileIdentityName: 'Release crew',
+        agentProfileProjectTitle: 'testing',
+      },
+    } as ChatTab
+
+    expect(crewActivityTitle(tab, 'Agent chat')).toBe('Release crew')
+  })
+
+  it('reserves activity type icons for schedules and triggers', () => {
+    expect(showsActivityTypeIcon('Scheduled')).toBe(true)
+    expect(showsActivityTypeIcon('Webhook')).toBe(true)
+    expect(showsActivityTypeIcon('Chat')).toBe(false)
+    expect(showsActivityTypeIcon('Bot')).toBe(false)
+    expect(showsActivityTypeIcon('Manual')).toBe(false)
   })
 })
 

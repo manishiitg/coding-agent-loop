@@ -1,6 +1,6 @@
 import { useLLMStore } from '../stores/useLLMStore'
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { AlertCircle, Bot, CalendarClock, Clock, Loader2, MessageSquare, MousePointerClick, Pause, Webhook } from 'lucide-react'
+import { AlertCircle, CalendarClock, Clock, Loader2, Pause, Webhook } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -24,14 +24,13 @@ import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '
 import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
+import { crewActivityTitle, showsActivityTypeIcon, type ActivityType } from '../utils/globalActivityPresentation'
 
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 
 type ActivityMonitorItem =
   | { type: 'session'; id: string; session: ActiveSessionInfo }
   | { type: 'builder-tab'; id: string; tab: ChatTab }
-
-type ActivityType = 'Scheduled' | 'Webhook' | 'Manual' | 'Bot' | 'Chat'
 
 function activityType(session: ActiveSessionInfo): ActivityType {
   const triggerLabel = workflowTriggerLabel({ sessionId: session.session_id, triggeredBy: session.triggered_by })
@@ -45,15 +44,8 @@ function activityType(session: ActiveSessionInfo): ActivityType {
 }
 
 function ActivityTypeIcon({ type }: { type: ActivityType }) {
-  const Icon = type === 'Scheduled'
-    ? CalendarClock
-    : type === 'Webhook'
-      ? Webhook
-      : type === 'Manual'
-        ? MousePointerClick
-        : type === 'Bot'
-          ? Bot
-          : MessageSquare
+  if (!showsActivityTypeIcon(type)) return null
+  const Icon = type === 'Scheduled' ? CalendarClock : Webhook
   return (
     <span className="inline-flex opacity-75" title={type} aria-label={type}>
       <Icon className="h-3 w-3" aria-hidden="true" />
@@ -123,6 +115,10 @@ function displaySessionTitle(
       return tab.name
     }
     return sessionTitle(session, workflow, fallbackWorkflowName)
+  }
+
+  if (isWorkProductSession(session)) {
+    return crewActivityTitle(tab, sessionTitle(session, workflow))
   }
 
   return tab?.name || sessionTitle(session, workflow)

@@ -740,7 +740,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
           data-testid="tour-workflow-canvas-pane"
           className={`${gridToolbar ? 'flex-1 col-start-1 row-start-2 md:col-start-2' : 'flex-1'} ${paneClassName} flex min-h-0 flex-col ${isInspectorKind ? 'overflow-hidden border-l border-border' : ''}`}
         >
-          <div className="min-h-0 flex-1">{body}</div>
+          <div className={`min-h-0 flex-1 ${effectiveView === 'workshop' ? 'flex overflow-hidden' : ''}`}>{body}</div>
           {!isInspectorKind && !toolbarOnly && <span hidden data-ui-view-mounted />}
         </div>
       </div>

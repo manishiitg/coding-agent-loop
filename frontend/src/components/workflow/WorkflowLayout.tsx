@@ -460,6 +460,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       onSelectSession={handleResumePreviousChat}
       compact={!primary}
       fill={primary}
+      showAll={primary}
     />
   )
 }

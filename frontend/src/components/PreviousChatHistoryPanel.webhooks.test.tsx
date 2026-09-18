@@ -112,6 +112,26 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   expect(agentApi.getChatHistoryConversation).toHaveBeenCalledWith('old-chat', 'Workflow/test', expect.any(Number))
 })
 
+it('shows every fetched Workshop chat without a load-more control', async () => {
+  vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({
+    sessions: Array.from({ length: 6 }, (_, index) => ({
+      session_id: `chat-${index}`,
+      title: `Saved chat ${index + 1}`,
+      message_count: 2,
+      created_at: `2026-09-${String(10 + index).padStart(2, '0')}T10:00:00Z`,
+    })),
+  })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel workspacePath="Workflow/test" fill showAll onSelectSession={vi.fn()} />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.textContent).toContain('Saved chat 6')
+  expect(host.textContent).not.toContain('Load 5 more')
+})
+
 it('loads and formats the webhook body when delivery details are opened', async () => {
   const { host } = await mount()
   await select(host, 'Webhooks')

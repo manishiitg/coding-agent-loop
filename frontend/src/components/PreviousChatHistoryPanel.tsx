@@ -424,6 +424,8 @@ interface PreviousChatHistoryPanelProps {
   compact?: boolean
   /** Fill the available chat surface for landing dashboards. */
   fill?: boolean
+  /** Render every history row already fetched instead of paginating the UI. */
+  showAll?: boolean
   /** Keep the shared history UI while hiding automation-only filters. */
   recentOnly?: boolean
   /** History browser only: expand stored messages in place without making an
@@ -441,6 +443,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   onSelectSession,
   compact = false,
   fill = false,
+  showAll = false,
   recentOnly = false,
   readOnly = false,
 }) => {
@@ -597,8 +600,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   )
 
   const displayedSessions = useMemo(
-    () => filteredSessions.slice(0, visibleCount),
-    [filteredSessions, visibleCount]
+    () => showAll ? filteredSessions : filteredSessions.slice(0, visibleCount),
+    [filteredSessions, showAll, visibleCount]
   )
 
   const scheduleDataMatchesWorkspace = sameWorkspace(scheduleJobsWorkspacePath, workspacePath)
@@ -621,7 +624,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const webhookRuns = flattenedScheduleRuns.filter(isWebhookRun)
   const scheduledRuns = flattenedScheduleRuns.filter(item => !isWebhookRun(item))
   const filteredRuns = activeFilter === 'webhook' ? webhookRuns : scheduledRuns
-  const displayedScheduleRuns = filteredRuns.slice(0, visibleCount)
+  const displayedScheduleRuns = showAll ? filteredRuns : filteredRuns.slice(0, visibleCount)
   const filteredJobs = scheduleJobs.filter(job => (job.schedule_type === 'webhook') === (activeFilter === 'webhook'))
 
   const displayFilterCounts = {
@@ -1127,7 +1130,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           </div>
         )}
 
-        {!isLoading && totalForActiveFilter > displayedCountForActiveFilter && (
+        {!showAll && !isLoading && totalForActiveFilter > displayedCountForActiveFilter && (
           <div className="border-t border-border px-3 py-2">
             <button
               type="button"

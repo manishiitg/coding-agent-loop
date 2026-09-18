@@ -79,3 +79,12 @@ func TestWorkflowBrowserUsesPersistentProfile(t *testing.T) {
 		t.Fatalf("workflow profile was not isolated: %v", args)
 	}
 }
+
+func TestProductWorkspaceBrowserUsesPersistentIsolatedProfile(t *testing.T) {
+	t.Setenv(ProfileEnv, "/data/profile")
+	session := "video-prod--workspace-0123456789abcdef--browser"
+	args := HeadlessArgsForSession(session)
+	if !IsUserSession(session) || args[1] != "/data/profile-users/"+session {
+		t.Fatalf("product workspace profile was not isolated: %v", args)
+	}
+}

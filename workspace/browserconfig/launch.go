@@ -25,9 +25,10 @@ func SharedEnabled() bool { return SharedProfile() != "" }
 // Managed Chrome keeps its native user agent and uses a persistent profile.
 func HeadlessArgs() []string { return HeadlessArgsForSession("") }
 
-// IsUserSession recognizes persistent managed user, guest and workflow browsers,
-// including an optional deployment prefix. The name is retained for compatibility.
-var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:user|guest|workflow)-[a-f0-9]{16}--browser$`)
+// IsUserSession recognizes persistent managed user, guest, workflow, and
+// owner-scoped product-workspace browsers, including an optional deployment
+// prefix. The name is retained for compatibility.
+var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:user|guest|workflow|workspace)-[a-f0-9]{16}--browser$`)
 var workflowSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?workflow-[a-f0-9]{16}--browser$`)
 
 func IsUserSession(session string) bool { return userSession.MatchString(session) }

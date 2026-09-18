@@ -67,6 +67,36 @@ func TestWorkflowBrowserCommandsShareGateAcrossUsersAndChatAliases(t *testing.T)
 	other()
 }
 
+func TestProductWorkspaceBrowserIsNotCollapsedIntoSharedBrowser(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
+	const owner = "crew-chat"
+	common.BindSessionBrowserIsolationForUserWorkspace(owner, "alice", "Chats/Work/projects/crew-a")
+	defer common.ClearSessionShellConfig(owner)
+	expected := common.ResolveBrowserSessionID(owner, "default")
+	defer GetSessionTracker().Remove(expected)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req ShellExecuteRequest
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		if !strings.Contains(req.Command, "--session "+expected) || strings.Contains(req.Command, "--session "+SharedSessionName) {
+			t.Errorf("Crew browser collapsed into shared runtime: %s", req.Command)
+		}
+		if !strings.Contains(req.Command, "/data/browser-profile-users/"+expected) {
+			t.Errorf("Crew browser did not receive an isolated persistent profile: %s", req.Command)
+		}
+		_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{Stdout: `{"success":true}`, ExitCode: 0}})
+	}))
+	defer server.Close()
+
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, owner)
+	if _, err := NewExecutor(NewClient(server.URL)).HandleAgentBrowser(ctx, map[string]interface{}{
+		"session": "default", "command": "open", "args": []interface{}{"https://example.com"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestWorkflowBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")

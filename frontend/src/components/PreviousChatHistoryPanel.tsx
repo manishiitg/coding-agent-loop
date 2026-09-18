@@ -370,10 +370,17 @@ const mergeSessions = (current: ChatHistorySession[], next: ChatHistorySession[]
 const PreviousChatEmptyState: React.FC<{
   filter: PreviousChatFilter
   hasAnySessions: boolean
+  hasCurrentSession?: boolean
   fallbackText: string
   recentOnly?: boolean
-}> = ({ filter, hasAnySessions, fallbackText, recentOnly = false }) => {
-  const content = hasAnySessions
+}> = ({ filter, hasAnySessions, hasCurrentSession = false, fallbackText, recentOnly = false }) => {
+  const content = hasCurrentSession && filter === 'chat'
+    ? {
+        ...emptyStateContent.chat,
+        title: 'Current chat is open',
+        body: 'Continue in the main Chat. Earlier saved conversations will appear here for reference.',
+      }
+    : hasAnySessions
     ? emptyStateContent[filter]
     : { ...emptyStateContent[filter], body: emptyStateContent[filter].body || fallbackText }
   const Icon = content.icon
@@ -389,8 +396,8 @@ const PreviousChatEmptyState: React.FC<{
             <div className="text-sm font-medium text-foreground">{content.title}</div>
             <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">{content.body || fallbackText}</p>
 
-            {!hasAnySessions && (
-              <div className="mt-3 grid gap-x-4 gap-y-2 border-t border-border/70 pt-3 sm:grid-cols-3">
+            {!hasAnySessions && !hasCurrentSession && (
+              <div className={`mt-3 grid gap-x-4 gap-y-2 border-t border-border/70 pt-3 ${recentOnly ? 'grid-cols-1' : 'sm:grid-cols-3'}`}>
                 {firstRunHints
                   .filter(({ label }) => !recentOnly || label === 'Chat')
                   .map(({ icon: HintIcon, label, body }) => (
@@ -575,6 +582,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
     [activeSessionId, sessions]
+  )
+  const hasCurrentSession = useMemo(
+    () => !!activeSessionId && sessions.some(session => session.session_id === activeSessionId),
+    [activeSessionId, sessions],
   )
 
   const filterCounts = useMemo(() => {
@@ -945,6 +956,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           <PreviousChatEmptyState
             filter={activeFilter}
             hasAnySessions={false}
+            hasCurrentSession={hasCurrentSession}
             fallbackText={emptyText}
             recentOnly={recentOnly}
           />

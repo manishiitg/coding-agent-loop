@@ -3,11 +3,13 @@ import { Users, Plus, ShieldCheck, UserRound, Pencil, Trash2, LogIn, Loader2, X 
 import GuidedProviderTerminal from './GuidedProviderTerminal'
 import { llmConfigService, type ProviderSetupSession, type ProviderConnection } from '../../services/llm-config-api'
 
-export default function ProviderAccounts({ provider, selectedId, onSelect, disabled = false }: {
+export default function ProviderAccounts({ provider, selectedId, onSelect, disabled = false, addRequest = 0, formOnly = false }: {
   provider: string
   selectedId?: string
   onSelect?: (id: string) => void
   disabled?: boolean
+  addRequest?: number
+  formOnly?: boolean
 }) {
   const [connections, setConnections] = useState<ProviderConnection[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -28,8 +30,18 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
     refresh();window.addEventListener('provider-connections-changed',refresh)
     return () => { cancelled = true;window.removeEventListener('provider-connections-changed',refresh) }
   }, [provider])
+  useEffect(() => {
+    if (!addRequest) return
+    setAdding(true)
+    setEditingId(null)
+    setName('')
+    setCredential('')
+    setAuthMethod('api_key')
+    setError(null)
+  }, [addRequest])
   const personalAllowed=connections.find(record=>record.scope==='global')?.personal_accounts_allowed!==false
  const save = async () => {
+    if (disabled || !personalAllowed) return
     setBusy(true); setError(null)
     try {
       const record = editingId ? await (async()=>{await llmConfigService.updateProviderConnection(editingId,{display_name:name,...(credential ? {credential}: {})});return {...connections.find(item=>item.id===editingId)!,display_name:name}})() : await llmConfigService.addProviderConnection({ provider, display_name: name, ...(authMethod === 'cli_login' ? { auth_method: 'cli_login' } : { credential }), ...(provider === 'pi-cli' ? { underlying_provider: underlyingProvider } : {}) })
@@ -57,8 +69,8 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
   const cancel = () => { setAdding(false); setEditingId(null); setName(''); setCredential(''); setError(null) }
 
   return (
-    <section className="mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className={formOnly ? "p-3" : "mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700"}>
+      {!formOnly && <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-violet-600 dark:text-violet-300" />
@@ -71,9 +83,9 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
             <Plus className="h-3.5 w-3.5" /> Add account
           </button>
         )}
-      </div>
+      </div>}
 
-      {onSelect && (
+      {onSelect && !formOnly && (
         <label className="mt-4 block text-xs font-medium text-gray-700 dark:text-gray-300">
           Account to use
           <select aria-label="Provider account" disabled={disabled || busy} value={selectedId || `global:${provider}`} onChange={event => onSelect(event.target.value)} className={inputClass}>
@@ -83,7 +95,7 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
         </label>
       )}
 
-      <ul className="mt-4 divide-y divide-gray-200 dark:divide-gray-700">
+      {!formOnly && <ul className="mt-4 divide-y divide-gray-200 dark:divide-gray-700">
         {connections.filter(record => !onSelect || record.scope === 'user').map(record => (
           <li key={record.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
             <div className="flex min-w-0 items-center gap-3">
@@ -107,11 +119,11 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
             )}
           </li>
         ))}
-      </ul>
+      </ul>}
 
       {session && <div className="mt-4"><GuidedProviderTerminal session={session} onFinished={value => { setSession(value); window.dispatchEvent(new Event('provider-connections-changed')) }} onClose={() => setSession(null)} /></div>}
       {adding && (
-        <form className="mt-4 space-y-4 border-t border-gray-200 pt-4 dark:border-gray-700" onSubmit={event => { event.preventDefault(); void save() }}>
+        <form className={formOnly ? "space-y-4" : "mt-4 space-y-4 border-t border-gray-200 pt-4 dark:border-gray-700"} onSubmit={event => { event.preventDefault(); void save() }}>
           <div className="flex items-center justify-between">
             <h4 className="text-sm font-medium text-gray-900 dark:text-gray-100">{editingId ? 'Edit private account' : 'Add a private account'}</h4>
             <button disabled={busy} type="button" aria-label="Cancel account form" className="rounded-lg p-1 text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800" onClick={cancel}><X className="h-4 w-4" /></button>
@@ -123,7 +135,7 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
           {provider === 'pi-cli' && <label className="block text-xs font-medium text-gray-700 dark:text-gray-300">Pi provider ID<input required value={underlyingProvider} onChange={event => setUnderlyingProvider(event.target.value)} className={inputClass} /></label>}
           <p className="text-xs leading-5 text-gray-500 dark:text-gray-400">Credentials are encrypted and private to your user.</p>
           <div className="flex items-center gap-2">
-            <button disabled={busy} type="submit" className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{busy ? 'Saving…' : editingId ? 'Update account' : authMethod === 'cli_login' ? 'Save and sign in' : 'Save account'}</button>
+            <button disabled={busy || disabled || !personalAllowed} type="submit" className="inline-flex items-center gap-2 rounded-lg bg-violet-600 px-3 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-500 disabled:cursor-not-allowed disabled:opacity-50">{busy && <Loader2 className="h-4 w-4 animate-spin" />}{busy ? 'Saving…' : editingId ? 'Update account' : authMethod === 'cli_login' ? 'Save and sign in' : 'Save account'}</button>
             <button disabled={busy} type="button" className={secondaryButtonClass} onClick={cancel}>Cancel</button>
           </div>
         </form>

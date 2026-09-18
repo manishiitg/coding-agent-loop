@@ -2,7 +2,7 @@ import ProviderAccounts from '../providers/ProviderAccounts'
 import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, RefreshCw, Search } from 'lucide-react'
+import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, Plus, RefreshCw, Search, UserRound, ShieldCheck } from 'lucide-react'
 import LLMRoleSelector from '../LLMRoleSelector'
 import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialField'
 import { CodingAgentSection } from '../llm/CodingAgentSection'
@@ -148,6 +148,7 @@ const STATUS_ACTION_TEXT: Record<string, string> = {
   'Needs key': 'Add API key',
   'Not installed': 'Not installed',
   'Setup needed': 'Needs setup',
+  'Account unavailable': 'Account unavailable',
 }
 
 function statusActionText(label: string): string | null {
@@ -238,6 +239,11 @@ export default function WorkflowLLMConfigurationPanel({
   const [activeProviderId, setActiveProviderId] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [tokenOpen, setTokenOpen] = useState(false)
+  const [accountAddRequest, setAccountAddRequest] = useState(0)
+  const [accountSelectionError, setAccountSelectionError] = useState<string | null>(null)
+  const [accountFormProvider, setAccountFormProvider] = useState<string | null>(null)
+  const [expandedAccountProviders, setExpandedAccountProviders] = useState<Set<string>>(() => new Set())
+  const [accountRecords, setAccountRecords] = useState<import('../../services/llm-config-api').ProviderConnection[]>([])
   const [refreshing, setRefreshing] = useState(false)
   const [rowUsing, setRowUsing] = useState<string | null>(null)
   const [piCliModels, setPiCliModels] = useState<DynamicModelEntry[]>([])
@@ -294,7 +300,7 @@ export default function WorkflowLLMConfigurationPanel({
   useEffect(() => {
     let cancelled = false
     const refreshAccounts = () => { void llmConfigService.getProviderConnections().then(records => {
-      if (!cancelled) {setPrivateProviderIds(records.filter(record => record.scope === 'user').map(record => record.provider));setPrivateConnections(records.filter(record=>record.scope==='user'))}
+      if (!cancelled) {setAccountRecords(records);setPrivateProviderIds(records.filter(record => record.scope === 'user').map(record => record.provider));setPrivateConnections(records.filter(record=>record.scope==='user'))}
     }).catch(() => undefined) }
     refreshAccounts()
     window.addEventListener('provider-connections-changed', refreshAccounts)
@@ -487,6 +493,15 @@ export default function WorkflowLLMConfigurationPanel({
     return { provider: 'pi-cli', model: row.modelId, label: row.name, section: 'published_model' }
   }, [])
 
+  const selectedConnectionID = llmConfig?.mode === 'provider_profile'
+    ? llmConfig.connection_id
+    : llmConfig?.builder_llm?.connection_id || llmConfig?.connection_id
+  const selectedPrivateAccount = selectedConnectionID && !selectedConnectionID.startsWith('global:')
+    ? privateConnections.find(record => record.id === selectedConnectionID && record.provider === selectedProfile?.provider)
+    : undefined
+  const selectedAccountUnavailable = Boolean(selectedConnectionID && !selectedConnectionID.startsWith('global:') && !selectedPrivateAccount)
+  const canAddSelectedAccount = selectedProfile && !readOnly && accountRecords.find(record => record.id === `global:${selectedProfile.provider}`)?.personal_accounts_allowed !== false
+
   // Role defaults to compare against / reset to. For a pi backend that's the
   // backend's model for every role; otherwise the provider profile's manifest
   // defaults.
@@ -501,12 +516,12 @@ export default function WorkflowLLMConfigurationPanel({
   // The workflow-level config a row stands for: a Pi group pins every role
   // to that family's defaults (a provider profile can't say "pi-cli, but
   // only Gemini"); any other coding agent is a plain provider profile.
-  const configForRow = (row: ProviderRow): PresetLLMConfig | null => {
+  const configForRow = (row: ProviderRow, accountID?: string): PresetLLMConfig | null => {
     if (!row.selectable) return null
-    if (row.entry.integration_kind === 'coding_agent' && !providerIsReadyForUse(row)) return null
+    if (!accountID && row.entry.integration_kind === 'coding_agent' && !providerIsReadyForUse(row)) return null
     const existingID=llmConfig?.provider===row.entry.id ? llmConfig.connection_id : llmConfig?.builder_llm?.provider===row.entry.id ? llmConfig.builder_llm.connection_id : undefined
  const personal=privateConnections.find(record=>record.provider===row.entry.id && (!row.groupFilter || row.modelId?.startsWith(record.underlying_provider+"/")))
- const connection_id=existingID || (!row.entry.usable ? personal?.id : undefined)
+ const connection_id=accountID || existingID || (!row.entry.usable ? personal?.id : undefined)
  if (row.groupFilter) {
       const option = piGroupOption(row)
       if (!option) return null
@@ -707,9 +722,58 @@ export default function WorkflowLLMConfigurationPanel({
 
   // ---- Main view ----------------------------------------------------------
 
+  const openAccountForm = (row: ProviderRow) => {
+    setExpandedAccountProviders(current => new Set([...current, row.id]))
+    setAccountFormProvider(row.id)
+    setAccountAddRequest(request => request + 1)
+  }
+
+  const applyAccountToWorkflow = async (row: ProviderRow, connectionID: string) => {
+    const config = configForRow(row, connectionID)
+    if (!config || readOnly) return
+    setRowUsing(row.id)
+    setAccountSelectionError(null)
+    try {
+      onChange(stripRetiredLLMFallbacks(config))
+      if (onUseProvider) await onUseProvider(config)
+    } catch {
+      setAccountSelectionError('Could not save account selection. Try again.')
+    } finally { setRowUsing(null) }
+  }
+
+  const renderAccountTree = (row: ProviderRow) => {
+    const global = accountRecords.find(record => record.id === `global:${row.entry.id}`)
+    const accounts = [global || { id: `global:${row.entry.id}`, provider: row.entry.id, display_name: 'Server account', scope: 'global' as const, auth_method: 'server' }, ...privateConnections.filter(record => record.provider === row.entry.id && (!row.groupFilter || row.modelId?.startsWith(`${record.underlying_provider}/`)))]
+    const selectedProvider = selectedRow?.entry.id === row.entry.id && (!row.groupFilter || selectedRow?.groupFilter === row.groupFilter)
+    const activeID = selectedConnectionID || `global:${row.entry.id}`
+    return (
+      <div className="ml-5 border-l border-border py-1 pl-3 pr-3">
+        {accounts.map(account => {
+          const inUse = selectedProvider && activeID === account.id
+          const available = row.entry.runtime_available !== false && (account.scope === 'user' ? global?.personal_accounts_allowed !== false : Boolean(row.entry.usable))
+          return <div key={account.id} className="flex flex-wrap items-center gap-2 py-2">
+            {account.scope === 'global' ? <ShieldCheck className="h-3.5 w-3.5 text-muted-foreground" /> : <UserRound className="h-3.5 w-3.5 text-muted-foreground" />}
+            <span className="min-w-0 break-words text-xs font-medium text-foreground">{account.display_name}</span>
+            <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{account.scope === 'global' ? 'Shared' : 'Private'}</span>
+            {inUse && <span className="text-[10px] font-medium text-primary">In use</span>}
+            <span className="min-w-0 flex-1" />
+            <button type="button" disabled={readOnly || !available || inUse || rowUsing === row.id} onClick={() => void applyAccountToWorkflow(row, account.id)} className="rounded-md border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed" title={!available ? 'Account needs setup or CLI is unavailable' : `Use ${account.display_name}`} aria-label={`Use ${row.name} account ${account.display_name}`}>{inUse ? 'Selected' : 'Use account'}</button>
+          </div>
+        })}
+        {selectedProvider && selectedAccountUnavailable && <p role="alert" className="py-2 text-xs text-amber-600 dark:text-amber-400">The selected account is unavailable. Choose another account or add one.</p>}
+        {!readOnly && global?.personal_accounts_allowed !== false && <button type="button" onClick={() => openAccountForm(row)} className="inline-flex items-center gap-1.5 py-2 text-xs font-medium text-primary"><Plus className="h-3.5 w-3.5" /> Add account</button>}
+        {accountFormProvider === row.id && <ProviderAccounts key={row.id} provider={row.entry.id} formOnly addRequest={accountAddRequest} disabled={readOnly} onSelect={connectionID => { void applyAccountToWorkflow(row, connectionID) }} />}
+      </div>
+    )
+  }
+
   const renderStatusLine = () => {
     if (selectedRow) {
-      const status = providerStatus(selectedRow.entry, isProviderLocked(selectedRow.id))
+      const status = selectedAccountUnavailable
+        ? { label: 'Account unavailable' }
+        : selectedPrivateAccount && selectedRow.entry.runtime_available !== false
+          ? { label: 'Ready' }
+          : providerStatus(selectedRow.entry, isProviderLocked(selectedRow.id))
       const tone = statusTone(status.label)
       const usable = status.label === 'Ready' || status.label === 'Managed'
       return (
@@ -721,6 +785,9 @@ export default function WorkflowLLMConfigurationPanel({
           </span>
           {selectedRow.groupFilter && selectedRow.modelId && (
             <span className="truncate font-mono text-[11px] text-muted-foreground">{selectedRow.modelId}</span>
+          )}
+          {selectedPrivateAccount && (
+            <span className="text-xs text-muted-foreground">· {selectedPrivateAccount.display_name} (private)</span>
           )}
           {globalLockApplies && (
             <span className="inline-flex items-center gap-1 rounded-full border border-border px-2 py-0.5 text-[11px] text-muted-foreground" title={`Every ${scopeNoun} on this deployment uses this provider`}>
@@ -735,13 +802,17 @@ export default function WorkflowLLMConfigurationPanel({
               <button
                 type="button"
                 onClick={() => selectedRow.entry.integration_kind === 'coding_agent'
-                  ? setShowLLMModal(true)
+                  ? openAccountForm(selectedRow)
                   : setActiveProviderId(selectedRow.id)}
+                disabled={readOnly || (selectedRow.entry.integration_kind === 'coding_agent' && !canAddSelectedAccount)}
                 className="rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               >
-                {selectedRow.entry.integration_kind === 'coding_agent' ? 'Set up in Providers' : 'Set up'}
+                {selectedRow.entry.integration_kind === 'coding_agent' ? 'Add account' : 'Set up'}
               </button>
             </>
+          )}
+          {usable && canAddSelectedAccount && (
+            <button type="button" onClick={() => openAccountForm(selectedRow)} className="rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted">Add account</button>
           )}
           {!readOnly && (
             <button
@@ -780,6 +851,7 @@ export default function WorkflowLLMConfigurationPanel({
   }
 
   const renderTokenLine = () => {
+    if (selectedConnectionID && !selectedConnectionID.startsWith('global:')) return null
     if (selectedBaseProvider !== 'claude-code' && selectedBaseProvider !== 'cursor-cli') return null
     const isClaude = selectedBaseProvider === 'claude-code'
     return (
@@ -838,7 +910,7 @@ export default function WorkflowLLMConfigurationPanel({
   }
 
   const renderRow = (row: ProviderRow) => {
-    const status = providerStatus(row.entry, isProviderLocked(row.id))
+    const status = row.id === selectedRowId && selectedAccountUnavailable ? { label: 'Account unavailable' } : providerStatus(row.entry, isProviderLocked(row.id))
     const tone = statusTone(status.label)
     const selected = row.id === selectedRowId
     const inlineActions = row.entry.integration_kind === 'coding_agent' && !row.groupFilter
@@ -846,10 +918,17 @@ export default function WorkflowLLMConfigurationPanel({
       // Sign-in CLI: authentication and diagnostics live in the platform-level
       // Providers panel. This workflow-level row only reports that state and
       // lets the user choose which connected CLI to use.
-      const connected = providerIsReadyForUse(row)
+      const connected = selected
+        ? !selectedAccountUnavailable && (selectedPrivateAccount ? row.entry.runtime_available !== false : Boolean(row.entry.usable) || isProviderLocked(row.id))
+        : providerIsReadyForUse(row)
+      const open = expandedAccountProviders.has(row.id) || selected || accountFormProvider === row.id
       return (
-        <div key={row.id} className={`flex items-center gap-2 px-3 py-2 ${selected ? 'bg-primary/5' : ''}`}>
-          <span className={`shrink-0 text-sm ${selected ? 'font-semibold' : 'font-medium'} text-foreground`}>{row.name}</span>
+        <div key={row.id}>
+        <div className={`flex items-center gap-2 px-3 py-2 ${selected ? 'bg-primary/5' : ''}`}>
+          <button type="button" aria-expanded={open} aria-label={`Show ${row.name} accounts`} onClick={() => setExpandedAccountProviders(current => { const next = new Set(current); if (next.has(row.id)) next.delete(row.id); else next.add(row.id); return next })} className="inline-flex items-center gap-2 text-left">
+            <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground ${open ? 'rotate-90' : ''}`} />
+            <span className={`text-sm ${selected ? 'font-semibold' : 'font-medium'} text-foreground`}>{row.name}</span>
+          </button>
           {selected && (
             <span className="shrink-0 rounded-full bg-primary/15 px-1.5 py-0.5 text-[10px] font-medium text-primary">
               In use
@@ -857,8 +936,8 @@ export default function WorkflowLLMConfigurationPanel({
           )}
           <span className="min-w-0 flex-1" />
           {connected ? (
-            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title="Signed in on this server and ready to use">
-              <CheckCircle2 className="h-3 w-3" /> Connected
+            <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium text-emerald-600 dark:text-emerald-400" title={selectedPrivateAccount && selected ? "Private account configured; authentication is checked when it runs" : "Provider account configured"}>
+              <CheckCircle2 className="h-3 w-3" /> {selected && selectedPrivateAccount ? 'Account configured' : 'Connected'}
             </span>
           ) : (
             <span
@@ -882,13 +961,15 @@ export default function WorkflowLLMConfigurationPanel({
           ) : (
             <button
               type="button"
-              onClick={() => setShowLLMModal(true)}
-              title={`Set up ${row.name} in global Providers`}
+              onClick={() => openAccountForm(row)}
+              title={`Add a private ${row.name} account`}
               className="inline-flex shrink-0 items-center rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
             >
-              Set up in Providers
+              Add account
             </button>
           )}
+        </div>
+        {open && renderAccountTree(row)}
         </div>
       )
     }
@@ -1011,6 +1092,7 @@ export default function WorkflowLLMConfigurationPanel({
               {connected ? 'Providers' : 'Set up in Providers'} <ChevronRight className="h-3 w-3" />
             </button>
           </div>
+          {open && renderAccountTree(selectedInGroup || head)}
           {open && models.map(row => {
             const selected = row.id === selectedRowId
             const saving = rowUsing === row.id
@@ -1104,22 +1186,13 @@ export default function WorkflowLLMConfigurationPanel({
 
   return (
     <div className="space-y-4">
-      {selectedProfile && <ProviderAccounts key={selectedProfile.provider} provider={selectedProfile.provider} selectedId={llmConfig?.connection_id || llmConfig?.builder_llm?.connection_id} disabled={readOnly} onSelect={connection_id => {
-        if (!llmConfig) return
-        onChange({ ...llmConfig, connection_id, ...(llmConfig.mode === 'explicit' ? {
-          builder_llm: llmConfig.builder_llm ? { ...llmConfig.builder_llm, connection_id } : undefined,
-          pulse_llm: llmConfig.pulse_llm?.provider === selectedProfile.provider ? { ...llmConfig.pulse_llm, connection_id } : llmConfig.pulse_llm,
-          tiered_config: llmConfig.tiered_config ? {
-            tier_1: { ...llmConfig.tiered_config.tier_1, ...(llmConfig.tiered_config.tier_1.provider === selectedProfile.provider ? { connection_id } : {}) },
-            tier_2: { ...llmConfig.tiered_config.tier_2, ...(llmConfig.tiered_config.tier_2.provider === selectedProfile.provider ? { connection_id } : {}) },
-            tier_3: { ...llmConfig.tiered_config.tier_3, ...(llmConfig.tiered_config.tier_3.provider === selectedProfile.provider ? { connection_id } : {}) },
-          } : undefined,
-        } : {}) })
-      }} />}
       <div className="rounded-lg border border-border bg-muted/20 p-3">
         {renderStatusLine()}
         {renderTokenLine()}
       </div>
+      {!changing && selectedRow && selectedRow.entry.integration_kind === 'coding_agent' && <div className="rounded-lg border border-border">{renderAccountTree(selectedRow)}</div>}
+      {accountSelectionError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{accountSelectionError}</p>}
+      {selectedPrivateAccount && <p className="text-xs text-muted-foreground">New runs use this account. Start a new Builder conversation to switch an existing chat.</p>}
 
       {((!selectedRow && !advanced) || changing || globalLockApplies) && (
       <>
@@ -1163,7 +1236,7 @@ export default function WorkflowLLMConfigurationPanel({
           <>
             {renderGroup(
               'Coding agent CLIs',
-              `Authentication is managed in Providers. Choose which connected CLI this ${scopeNoun} uses.`,
+              `Open a provider to choose a shared or private account, or add your own.`,
               visibleRows.filter(row => row.entry.integration_kind === 'coding_agent' && !row.groupFilter),
             )}
             {renderGroup(

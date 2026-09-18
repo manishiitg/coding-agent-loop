@@ -41,13 +41,14 @@ vi.mock('../../hooks/useCanWriteWorkflow', () => ({
   useCanWriteWorkflow: () => true,
 }))
 vi.mock('../../services/llm-config-api', () => ({
-  llmConfigService: { getModelMetadata: vi.fn(async () => ({ models: [] })) },
+  llmConfigService: { getModelMetadata: vi.fn(async () => ({ models: [] })), getProviderConnections: vi.fn(async () => [] as import('../../services/llm-config-api').ProviderConnection[]) },
 }))
 vi.mock('../llm/CodingAgentSection', () => ({ CodingAgentSection: () => null }))
 vi.mock('../llm/APIProviderSection', () => ({ APIProviderSection: () => null }))
 vi.mock('../WorkflowProviderCredentialField', () => ({ WorkflowProviderCredentialField: () => null }))
 
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'
+import { llmConfigService } from '../../services/llm-config-api'
 
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
@@ -81,6 +82,7 @@ afterEach(() => {
   storeState.llmConfigLocked = false
   storeState.savedLLMs = []
   storeState.setShowLLMModal.mockReset()
+  vi.mocked(llmConfigService.getProviderConnections).mockResolvedValue([])
   document.body.innerHTML = ''
 })
 
@@ -119,11 +121,11 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       expect(host.textContent).toContain('Needs setup')
       expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Test')).toBe(false)
       expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(1)
-      const setupButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Set up in Providers')
+      const setupButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Add account')
       expect(setupButton).toBeDefined()
       await act(async () => setupButton?.click())
-      expect(storeState.setShowLLMModal).toHaveBeenCalledWith(true)
-      expect(host.textContent).toContain('Authentication is managed in Providers')
+      expect(storeState.setShowLLMModal).not.toHaveBeenCalled()
+      expect(host.textContent).toContain('Add a private account')
     } finally {
       await act(async () => root.unmount())
       host.remove()
@@ -198,5 +200,47 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       await act(async () => root.unmount())
       host.remove()
     }
+  })
+})
+
+
+describe('workflow account tree', () => {
+  it('uses the selected private account when shared authentication is absent and persists another child account', async () => {
+    storeState.providerManifest = [provider({ usable: false, auth_configured: false })]
+    vi.mocked(llmConfigService.getProviderConnections).mockResolvedValue([
+      { id: 'global:claude-code', provider: 'claude-code', display_name: 'Server account', scope: 'global', auth_method: 'server' },
+      { id: 'account-a', provider: 'claude-code', display_name: 'Personal A', scope: 'user', auth_method: 'api_key' },
+      { id: 'account-b', provider: 'claude-code', display_name: 'Personal B', scope: 'user', auth_method: 'api_key' },
+    ])
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host); const persist = vi.fn()
+    try {
+      await act(async () => root.render(<WorkflowLLMConfigurationPanel workspacePath="/workflow" llmConfig={{ schema_version: 2, mode: 'provider_profile', provider: 'claude-code', connection_id: 'account-b' }} onChange={vi.fn()} onUseProvider={persist} />))
+      await act(async () => Promise.resolve())
+      expect(host.textContent).not.toContain('Needs setup')
+      expect(host.textContent).toContain('Personal B (private)')
+      const selected = host.querySelector<HTMLButtonElement>('[aria-label="Use Claude Code account Personal B"]')
+      expect(selected?.textContent).toBe('Selected'); expect(selected?.disabled).toBe(true)
+      await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Use Claude Code account Personal A"]')?.click())
+      expect(persist).toHaveBeenCalledWith(expect.objectContaining({ provider: 'claude-code', connection_id: 'account-a' }))
+      const add = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Add account')
+      await act(async () => add?.click())
+      expect(host.querySelector('input[placeholder="e.g. Personal account"]')).not.toBeNull()
+      expect(host.textContent).toContain('Start a new Builder conversation')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('does not substitute another available account for a deleted selected account', async () => {
+    storeState.providerManifest = [provider({})]
+    vi.mocked(llmConfigService.getProviderConnections).mockResolvedValue([{ id: 'other-account', provider: 'claude-code', display_name: 'Other account', scope: 'user', auth_method: 'api_key' }])
+    const host = document.createElement('div'); document.body.append(host)
+    const root = createRoot(host); const persist = vi.fn()
+    try {
+      await act(async () => root.render(<WorkflowLLMConfigurationPanel workspacePath="/workflow" llmConfig={{ schema_version: 2, mode: 'provider_profile', provider: 'claude-code', connection_id: 'deleted-account' }} onChange={vi.fn()} onUseProvider={persist} />))
+      await act(async () => Promise.resolve())
+      expect(host.textContent).toContain('Account unavailable')
+      expect(host.textContent).toContain('The selected account is unavailable')
+      expect(persist).not.toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()); host.remove() }
   })
 })

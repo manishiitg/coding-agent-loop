@@ -1,3 +1,7 @@
+## Manual workflow contract preflight — PLAT-332
+
+[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Implementation and local regression coverage are complete; deployment is pending.
+
 ## Concurrent webhook route isolation — PLAT-331
 
 [PLAT-331](pulse_platform/step-execution/plat-331.md) records the proven RTS PR Reviewer race where #87's eligible run branched correctly, then its review step reread a shared `db/assets/route_selection.json` overwritten by #82's closed delivery. Routing and branch steps now persist their resolved decision in their own iteration execution folder, plan mutations reject that specific shared-mirror pattern when a prior run-scoped producer exists, and contract v1.0.42 migrates all workflows through the trusted `migrate_run_scoped_routes` tool. Intentional shared route inputs remain supported. Release `e63b6c7-20260918161036` is deployed and RTS PR Reviewer is migrated to v1.0.42; overlapping-delivery live acceptance remains pending.

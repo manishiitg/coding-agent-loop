@@ -55,6 +55,15 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	if check := api.scheduleCollisionCheck(phaseWorkspacePath, sessionID, syntheticReq.TriggeredBy); check != nil {
 		definitionAgent = scheduleGuardRegistrar{definitionAgent, todo_creation_human.GuardScheduleTools(definitionAgent, check)}
 	}
+	// Schedules already run their own blocking contract-upgrade turns. Manual
+	// Run Workflow / Run Step requests must enforce the same prerequisite even
+	// when the workflow has no schedule at all.
+	if !isScheduledSessionIdentity(sessionID, syntheticReq.TriggeredBy) {
+		definitionAgent = workflowContractExecutionGuardRegistrar{
+			definitionRegistrar: definitionAgent,
+			workspacePath:       phaseWorkspacePath,
+		}
+	}
 	active, _ := api.getActiveSession(sessionID)
 	policy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, syntheticReq, active, readOnly)
 	if err := api.registerWebhookTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {

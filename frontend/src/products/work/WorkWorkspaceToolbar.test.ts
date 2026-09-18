@@ -29,4 +29,13 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain('landingContent={<WorkNewChatGuide />}')
     expect(source).toContain('This is the persistent conversation for this Crew project.')
   })
+
+  it('opens Dashboard for a Crew project only when no saved view exists', () => {
+    const source = readFileSync('src/products/work/WorkSurface.tsx', 'utf8')
+
+    expect(source).toContain("const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'")
+    expect(source).toContain("return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'")
+    expect(source).toContain('writeWorkWorkspaceView(selected?.id, view)')
+    expect(source).toContain('setWorkspaceView(readWorkWorkspaceView(selected?.id))')
+  })
 })

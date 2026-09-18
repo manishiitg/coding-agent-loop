@@ -35,4 +35,12 @@ describe('workflow Ask AI placement', () => {
     expect(toolbar.indexOf('<WorkflowActivityButton')).toBeGreaterThan(toolbar.indexOf('aria-label={pendingDecisionCount'))
     expect(toolbar.indexOf('<WorkflowActivityButton')).toBeLessThan(toolbar.indexOf('workspaceViewDefinitions.map'))
   })
+
+  it('uses Dashboard for first-time AgentWorks users while preserving saved views', () => {
+    const store = readFileSync('src/stores/useWorkflowStore.ts', 'utf8')
+
+    expect(store).toContain("normalizeCanvasViewId(getWorkflowStorageItem(LEGACY_CANVAS_VIEW_MODE_KEY)) ?? 'report'")
+    expect(store).toContain("loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'")
+    expect(store).toContain('persistedUIState.workflowWorkspaceView ??')
+  })
 })

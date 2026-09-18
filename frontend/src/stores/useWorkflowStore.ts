@@ -556,9 +556,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // (switchToPreset) overrides it from the ui-state map.
       lastCanvasView: (() => {
         try {
-          return normalizeCanvasViewId(getWorkflowStorageItem(LEGACY_CANVAS_VIEW_MODE_KEY)) ?? 'flow'
+          return normalizeCanvasViewId(getWorkflowStorageItem(LEGACY_CANVAS_VIEW_MODE_KEY)) ?? 'report'
         } catch {
-          return 'flow'
+          return 'report'
         }
       })(),
 
@@ -1701,7 +1701,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               showWorkspacePane: true,
               workflowWorkspaceView:
                 persistedUIState.workflowWorkspaceView ??
-                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'pulse'),
+                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'),
               focusedPane: 'preview',
               ...(persistedUIState.lastCanvasView ? { lastCanvasView: persistedUIState.lastCanvasView } : {}),
               workshopMode: restoredWorkshopMode,
@@ -1723,7 +1723,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             restored.workflowWorkspaceView !== null
               ? restored.workflowWorkspaceView
               : (persistedUIState.workflowWorkspaceView ??
-                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'pulse'))
+                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'))
           // New adaptive layout: workflows always open with BOTH the chat rail
           // and the preview canvas visible (focus-follows-click sizes them).
           // Force them on so a stale persisted showChatArea:false from the

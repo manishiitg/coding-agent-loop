@@ -32,6 +32,7 @@ import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
+const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
 const WORK_UI_PRESENTATION_VIEWS = {
   history: 'history',
   report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', schedules: 'schedules', files: 'files',
@@ -45,7 +46,24 @@ const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
 }
 
 function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {
-  return (Object.entries(WORK_UI_PRESENTATION_VIEWS).find(([, panel]) => panel === view)?.[0] ?? 'files') as WorkUIPresentationView
+  return (Object.entries(WORK_UI_PRESENTATION_VIEWS).find(([, panel]) => panel === view)?.[0] ?? 'report') as WorkUIPresentationView
+}
+
+const WORKSPACE_VIEW_IDS = new Set<WorkWorkspaceView>(Object.values(WORK_UI_PRESENTATION_VIEWS))
+
+function readWorkWorkspaceView(projectId?: string): WorkWorkspaceView {
+  if (typeof window === 'undefined' || !projectId) return 'dashboard'
+  try {
+    const saved = window.localStorage.getItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`)
+    return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'
+  } catch {
+    return 'dashboard'
+  }
+}
+
+function writeWorkWorkspaceView(projectId: string | undefined, view: WorkWorkspaceView) {
+  if (typeof window === 'undefined' || !projectId) return
+  try { window.localStorage.setItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`, view) } catch { /* UI preference only. */ }
 }
 
 function clampWorkSplitRatio(ratio: number, width: number): number {
@@ -419,7 +437,7 @@ export function WorkSurface() {
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
   const [panelOpen, setPanelOpen] = useState(true)
-  const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>('files')
+  const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>(() => readWorkWorkspaceView(selected?.id))
   const pendingWorkView = useProductSurfaceStore(state => state.pendingWorkView)
   const setPendingWorkView = useProductSurfaceStore(state => state.setPendingWorkView)
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
@@ -433,6 +451,10 @@ export function WorkSurface() {
   const activeSessionId = useChatStore(state => tabId ? state.chatTabs[tabId]?.sessionId : undefined)
   const legacyViewEvents = usePresentationEvents(activeSessionId ?? undefined, ['workflow.view'])
   const handledLegacyViewEvents = useRef<{ session?: string; count: number }>({ session: activeSessionId ?? undefined, count: legacyViewEvents.length })
+  const selectWorkspaceView = useCallback((view: WorkWorkspaceView) => {
+    setWorkspaceView(view)
+    writeWorkWorkspaceView(selected?.id, view)
+  }, [selected?.id])
   const openWorkPresentationView = useCallback((view: string, target?: string) => {
     if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
@@ -441,8 +463,8 @@ export function WorkSurface() {
       useWorkflowStore.getState().openWorkspaceView('schedules', target === 'webhooks' ? 'webhooks' : 'schedules')
     }
     setPanelOpen(true)
-    setWorkspaceView(panel)
-  }, [enabledWorkspacePanels])
+    selectWorkspaceView(panel)
+  }, [enabledWorkspacePanels, selectWorkspaceView])
   useEffect(() => {
     if (!pendingWorkView) return
     openWorkPresentationView(pendingWorkView)
@@ -517,11 +539,15 @@ export function WorkSurface() {
   }, [])
 
   useEffect(() => {
+    setWorkspaceView(readWorkWorkspaceView(selected?.id))
+  }, [selected?.id])
+
+  useEffect(() => {
     if (workspaceView !== 'history' && enabledWorkspacePanels && !enabledWorkspacePanels.has(workspaceView)) {
-      const fallback = enabledWorkspacePanels.has('files') ? 'files' : [...enabledWorkspacePanels][0]
-      if (fallback) setWorkspaceView(fallback as WorkWorkspaceView)
+      const fallback = enabledWorkspacePanels.has('dashboard') ? 'dashboard' : enabledWorkspacePanels.has('files') ? 'files' : [...enabledWorkspacePanels][0]
+      if (fallback) selectWorkspaceView(fallback as WorkWorkspaceView)
     }
-  }, [enabledWorkspacePanels, workspaceView])
+  }, [enabledWorkspacePanels, selectWorkspaceView, workspaceView])
 
   useEffect(() => {
     if (!selected) return
@@ -680,7 +706,7 @@ export function WorkSurface() {
               >
                 <WorkspaceTopToolbar className={`${panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
                   {tabId ? <WorkChatLabel /> : <div className="min-w-0 flex-1" />}
-                  {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={setWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
+                  {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
                   {tabId ? (
@@ -728,7 +754,7 @@ export function WorkSurface() {
                         tabId={tabId}
                         onClose={() => setPanelOpen(false)}
                         view={workspaceView}
-                        onViewChange={setWorkspaceView}
+                        onViewChange={selectWorkspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}

@@ -785,7 +785,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       addToast('This run has no restorable conversation record', 'info')
       return
     }
-    void onSelectSession(session)
+    void onSelectSession({ ...session, run_folder: item.run?.run_folder || session.run_folder })
   }, [addToast, onSelectSession, sessionsByID])
 
 

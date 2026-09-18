@@ -25,10 +25,9 @@ export const isWebhookRunFolder = (folder: string | null | undefined) => (
 )
 
 export const getDefaultRunFolder = (initialRunFolder: string | null | undefined, runFolders: string[]) => {
-  if (initialRunFolder && initialRunFolder !== 'new' && initialRunFolder.includes('/')) return initialRunFolder
+  if (initialRunFolder && initialRunFolder !== 'new') return initialRunFolder
   const groupedRunFolder = runFolders.find(folder => folder.includes('/'))
   if (groupedRunFolder) return groupedRunFolder
-  if (initialRunFolder && initialRunFolder !== 'new') return initialRunFolder
   const iterationZeroFolder = runFolders.find(isIterationZeroRunFolder)
   if (iterationZeroFolder) return iterationZeroFolder
   return ITERATION_ZERO_DEFAULT_FOLDER

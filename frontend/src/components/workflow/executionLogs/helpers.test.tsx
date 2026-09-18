@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { isWebhookRunFolder } from './helpers'
+import { getDefaultRunFolder, isWebhookRunFolder } from './helpers'
 
 describe('isWebhookRunFolder', () => {
   it('recognizes webhook iteration roots and group folders', () => {
@@ -11,5 +11,11 @@ describe('isWebhookRunFolder', () => {
     expect(isWebhookRunFolder('iteration-6/default')).toBe(false)
     expect(isWebhookRunFolder('iteration-6-sched/default')).toBe(false)
     expect(isWebhookRunFolder(null)).toBe(false)
+  })
+})
+
+describe('execution log run selection', () => {
+  it('keeps an explicitly opened run even when another grouped run is available', () => {
+    expect(getDefaultRunFolder('iteration-85-slack-one', ['iteration-84/default'])).toBe('iteration-85-slack-one')
   })
 })

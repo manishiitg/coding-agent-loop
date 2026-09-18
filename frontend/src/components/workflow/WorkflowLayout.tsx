@@ -1,3 +1,4 @@
+import { openHistoryExecutionLogs } from '../../utils/historyExecutionLogs'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -423,6 +424,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
 
       activateTab(targetTabId)
       setShowChatArea(true)
+      openHistoryExecutionLogs(session)
       return
     }
 

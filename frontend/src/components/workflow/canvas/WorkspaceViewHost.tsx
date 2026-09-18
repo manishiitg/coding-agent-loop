@@ -134,6 +134,7 @@ function FilesBody({ workspacePath }: { workspacePath: string | null }) {
 function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const refreshToken = useWorkflowStore(state => state.workspaceViewRefreshToken)
+  const historyLogsTarget = useWorkflowStore(state => state.workspaceViewTarget?.view === 'execution-logs' && state.workspaceViewTarget.target.startsWith('history:') ? state.workspaceViewTarget : null)
   const { planData, selectedRunFolder, runFolderNames, workspace, pulse } = useWorkspaceViewData()
   const plan = planData.plan
   const refreshWorkspaceState = workspace.refresh
@@ -177,6 +178,8 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             onClose={closeInspector}
             workspacePath={workspacePath}
             runFolder={selectedRunFolder}
+            allowDefaultRunFolder={!historyLogsTarget}
+            key={historyLogsTarget?.token ?? 'execution-logs'}
             runFolders={runFolderNames}
             runFolderInfos={workspace.state?.run_folders || []}
             onRefreshRunFolders={refreshWorkspaceState}

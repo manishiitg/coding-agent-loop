@@ -24,6 +24,7 @@ interface ExecutionLogsPopupProps {
   isOpen: boolean
   onClose: () => void
   workspacePath: string | null
+  allowDefaultRunFolder?: boolean
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
   runFolderInfos?: RunFolderInfo[] // Lifecycle timestamps for dropdown labels
@@ -46,6 +47,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
   workspacePath,
   runFolder: initialRunFolder,
   runFolders,
+  allowDefaultRunFolder = true,
   runFolderInfos = [],
   startedAt,
   embedded = false,
@@ -80,7 +82,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     toggleExecution,
     toggleArchived,
     toggleFileExpansion,
-  } = useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders })
+  } = useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder })
 
   const webhookRun = isWebhookRunFolder(selectedRunFolder)
   const [webhookPayloadOpen, setWebhookPayloadOpen] = useState(false)

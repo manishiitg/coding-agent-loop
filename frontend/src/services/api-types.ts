@@ -1541,6 +1541,7 @@ export interface ChatHistorySession {
   /** Workflow owners may remove shared history; other users only their own. */
   can_delete?: boolean;
   workspace_path?: string;
+  run_folder?: string;
   conversation_path?: string;
   bot_platform?: string;
   bot_channel_id?: string;

@@ -8,15 +8,16 @@ export interface UseExecutionLogsDataArgs {
   isOpen: boolean
   workspacePath: string | null
   initialRunFolder: string | null | undefined
+  allowDefaultRunFolder?: boolean
   runFolders: string[]
 }
 
-export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders }: UseExecutionLogsDataArgs) {
+export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder = true }: UseExecutionLogsDataArgs) {
+  const defaultRunFolder = !allowDefaultRunFolder && !initialRunFolder ? '' : getDefaultRunFolder(initialRunFolder, runFolders)
   const runFolderOptions = useMemo(() => {
-    const defaultRunFolder = getDefaultRunFolder(initialRunFolder, runFolders)
     if (!defaultRunFolder || runFolders.includes(defaultRunFolder)) return runFolders
     return [defaultRunFolder, ...runFolders]
-  }, [initialRunFolder, runFolders])
+  }, [defaultRunFolder, runFolders])
 
   const [loading, setLoading] = useState(false)
   const [logs, setLogs] = useState<ExecutionLogsResponse | null>(null)
@@ -25,7 +26,7 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
   const [expandedValidations, setExpandedValidations] = useState<Set<string>>(new Set())
   const [expandedExecutions, setExpandedExecutions] = useState<Set<string>>(new Set())
   const [expandedArchived, setExpandedArchived] = useState<Set<string>>(new Set())
-  const [selectedRunFolder, setSelectedRunFolder] = useState<string>(() => getDefaultRunFolder(initialRunFolder, runFolders))
+  const [selectedRunFolder, setSelectedRunFolder] = useState<string>(defaultRunFolder)
   const [stepSearchQueries, setStepSearchQueries] = useState<Record<string, string>>({})
   // Route-wise grouping (PLAT-259 follow-up): distinct routing/branch
   // ("route" major-fork concept) routes actually taken in this run, so
@@ -73,8 +74,8 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
 
   // Update selected run folder when prop changes
   useEffect(() => {
-    setSelectedRunFolder(getDefaultRunFolder(initialRunFolder, runFolders))
-  }, [initialRunFolder, runFolders, isOpen])
+    setSelectedRunFolder(defaultRunFolder)
+  }, [defaultRunFolder, isOpen])
 
   // A route filter from one run's routes rarely means anything for another run
   useEffect(() => {

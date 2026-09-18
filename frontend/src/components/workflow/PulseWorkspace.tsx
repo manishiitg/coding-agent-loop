@@ -9,7 +9,7 @@ import {
 import { agentApi } from '../../services/api'
 import { playbooksApi } from '../../api/playbooks'
 import { useChatStore } from '../../stores/useChatStore'
-import { sendWorkflowMessageToChat } from '../../utils/reportHumanInputChat'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type {
   PulseFinalCommandState,
   PulseFindingLifecycle,
@@ -235,7 +235,7 @@ export function PulseWorkspace({
     if (manualReviewStarting) return
     setManualReviewStarting(module)
     try {
-      await sendWorkflowMessageToChat({ workspacePath, message: manualPulseReviewMessage(module, workspacePath) })
+      await sendWorkspacePaneMessageToChat({ workspacePath, message: manualPulseReviewMessage(module, workspacePath) })
       useChatStore.getState().addToast(`${module === 'strategic_review' ? 'Strategic' : module === 'architecture_review' ? 'Architecture' : module === 'technical_review' ? 'Technical' : 'Plan Drift'} Review opened in chat`, 'success')
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not start the review', 'error')

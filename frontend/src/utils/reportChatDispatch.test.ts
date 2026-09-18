@@ -12,7 +12,8 @@ vi.mock('../stores/useGlobalPresetStore', () => ({ useGlobalPresetStore: { getSt
 vi.mock('../stores/useWorkflowStore', () => ({ useWorkflowStore: { getState: () => mocks.workflow } }))
 vi.mock('./workflowNavigation', () => ({ selectWorkflowPreset: mocks.select }))
 vi.mock('./activateTab', () => ({ activateTab: mocks.activate }))
-import { sendWorkflowMessageToChat, sendReportHumanInputQuestionToChat } from './reportHumanInputChat'
+import { sendReportHumanInputQuestionToChat } from './reportHumanInputChat'
+import { sendWorkspacePaneMessageToChat } from './workspacePaneChat'
 
 function chat(tabId: string, extra = {}) {
   return { tabId, isStreaming: false, metadata: { mode: 'workflow', presetQueryId: 'one' }, ...extra }
@@ -44,7 +45,7 @@ describe('shared Ask in chat dispatch for reports', () => {
       scheduled: chat('scheduled', { isStreaming: true, metadata: { mode: 'workflow', presetQueryId: 'one', isScheduledRun: true } }),
       other: chat('other', { metadata: { mode: 'workflow', presetQueryId: 'other' } }),
     }
-    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })
+    const result = await sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })
     expect(result).toEqual({ tabId: 'running', reused: true, queuedBehindRunningTurn: true })
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
     expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('running', { queuedMessages: ['earlier request', 'Apply finding 42'] })
@@ -56,7 +57,7 @@ describe('shared Ask in chat dispatch for reports', () => {
 
   it('reuses an idle interactive chat rather than opening another', async () => {
     mocks.chat.chatTabs.existing = chat('existing')
-    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
+    const result = await sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
     expect(result).toEqual({ tabId: 'existing', reused: true, queuedBehindRunningTurn: false })
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
     expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('existing', { queuedMessages: ['earlier request', 'Run visual QA'] })
@@ -65,18 +66,31 @@ describe('shared Ask in chat dispatch for reports', () => {
   })
 
   it('creates a chat when this automation has none', async () => {
-    const result = await sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
+    const result = await sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
     expect(result).toEqual({ tabId: 'fresh', reused: false, queuedBehindRunningTurn: false })
     expect(mocks.chat.createChatTab).toHaveBeenCalledExactlyOnceWith('Automation Builder', expect.objectContaining({ presetQueryId: 'one', phaseId: 'workflow-builder' }))
   })
 
   it('creates a chat when only a view-only schedule exists', async () => {
     mocks.chat.chatTabs.scheduled = chat('scheduled', { metadata: { mode: 'workflow', presetQueryId: 'one', isViewOnly: true } })
-    await expect(sendWorkflowMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })).resolves.toMatchObject({ tabId: 'fresh', reused: false })
+    await expect(sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })).resolves.toMatchObject({ tabId: 'fresh', reused: false })
+  })
+
+  it('uses the same dispatcher for a pane that already owns a project chat tab', async () => {
+    mocks.presets.workflowPresets = []
+    mocks.chat.chatTabs.project = chat('project', { metadata: { mode: 'multi-agent' } })
+
+    const result = await sendWorkspacePaneMessageToChat({ tabId: 'project', message: 'Explain this dashboard' })
+
+    expect(result).toEqual({ tabId: 'project', reused: true, queuedBehindRunningTurn: false })
+    expect(mocks.select).not.toHaveBeenCalled()
+    expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
+    expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('project', { queuedMessages: ['earlier request', 'Explain this dashboard'] })
+    expect(mocks.activate).toHaveBeenCalledWith('project')
   })
 
   it('does not submit when the automation cannot be resolved', async () => {
-    await expect(sendWorkflowMessageToChat({ workspacePath: 'Workflow/missing', message: 'Apply finding 42' })).rejects.toThrow('Could not find')
+    await expect(sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/missing', message: 'Apply finding 42' })).rejects.toThrow('Could not find')
     expect(mocks.chat.setTabConfig).not.toHaveBeenCalled()
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
   })

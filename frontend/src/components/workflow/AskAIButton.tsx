@@ -1,6 +1,6 @@
 import { MessageCircle } from 'lucide-react'
 import { useChatStore } from '../../stores/useChatStore'
-import { sendWorkflowMessageToChat } from '../../utils/reportHumanInputChat'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 
 /**
@@ -11,7 +11,8 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
  * something new, or explain what's possible beyond that fixed list. This is
  * the fix for that, meant to be dropped into any such panel's header.
  *
- * Reuses sendWorkflowMessageToChat, the same delivery Pulse's "Ask in chat"
+ * Reuses sendWorkspacePaneMessageToChat, the single delivery path for every
+ * right-pane action
  * uses for a Needs-your-decision card (utils/reportHumanInputChat.ts): it
  * finds or opens the right interactive tab for this workflow, queues
  * correctly behind a running turn, and switches focus to chat. A prefilled
@@ -47,7 +48,7 @@ export function AskAIButton({
       return
     }
     if (!workspacePath) return
-    void sendWorkflowMessageToChat({ workspacePath, message, viewMode: 'formatted' }).catch(err => {
+    void sendWorkspacePaneMessageToChat({ workspacePath, message }).catch(err => {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open chat.', 'error')
     })
   }

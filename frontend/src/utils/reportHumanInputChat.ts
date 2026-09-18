@@ -1,56 +1,6 @@
 import type { ReportHumanInput } from '../services/api-types'
-import type { ChatTab, EventViewMode } from '../stores/useChatStore'
-import { useChatStore } from '../stores/useChatStore'
-import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
-import { useWorkflowStore } from '../stores/useWorkflowStore'
-import { activateTab } from './activateTab'
-import { selectWorkflowPreset } from './workflowNavigation'
-
-function normalizeWorkspacePath(value?: string | null): string {
-  return (value || '').trim().replace(/^\/+|\/+$/g, '').toLowerCase()
-}
-
-function tabRecency(tab: ChatTab): number {
-  return tab.lastAccessedAt ?? tab.createdAt ?? 0
-}
-
-function isInteractiveWorkflowTab(tab: ChatTab, presetId: string): boolean {
-  return tab.metadata?.mode === 'workflow' &&
-    tab.metadata?.presetQueryId === presetId &&
-    tab.metadata?.isViewOnly !== true &&
-    tab.metadata?.isScheduledRun !== true &&
-    tab.metadata?.isBotRun !== true
-}
-
-/**
- * Pick the conversational lane for a Pulse question. Read-only schedule/bot
- * tabs are deliberately excluded so asking a question can never take over the
- * schedule observer session.
- */
-export function selectReportDiscussionTab(
-  tabs: Record<string, ChatTab>,
-  target: { mode: 'workflow'; presetId: string },
-  activeTabId?: string | null,
-): ChatTab | undefined {
-  const candidates = Object.values(tabs).filter(tab => isInteractiveWorkflowTab(tab, target.presetId))
-
-  return candidates.sort((left, right) => {
-    // A right-pane action should start in an idle conversational lane when one
-    // exists. Preferring a retained tab merely because it reported streaming
-    // could activate a stale/busy chat and leave the action sitting in its
-    // visible queue even though another interactive Builder tab was ready.
-    // Background agents do not own the foreground lane and therefore do not
-    // make a tab busy for this choice.
-    if (left.isStreaming !== right.isStreaming) return left.isStreaming ? 1 : -1
-    if ((left.tabId === activeTabId) !== (right.tabId === activeTabId)) {
-      return left.tabId === activeTabId ? -1 : 1
-    }
-    const leftBuilder = left.metadata?.phaseId === 'workflow-builder'
-    const rightBuilder = right.metadata?.phaseId === 'workflow-builder'
-    if (leftBuilder !== rightBuilder) return leftBuilder ? -1 : 1
-    return tabRecency(right) - tabRecency(left)
-  })[0]
-}
+import type { WorkspacePaneChatResult } from './workspacePaneChat'
+import { sendWorkspacePaneMessageToChat } from './workspacePaneChat'
 
 function sourceName(source: string): string {
   if (['technical_review', 'engineering_review', 'ops_review'].includes(source)) return 'Technical Review'
@@ -133,113 +83,6 @@ export function buildReportHumanInputDelegatedActionMessage(
   return lines.join('\n')
 }
 
-export type ReportHumanInputChatResult = {
-  tabId: string
-  reused: boolean
-  queuedBehindRunningTurn: boolean
-}
-
-async function findWorkflowPreset(workspacePath: string) {
-  const find = () => {
-    const normalizedTarget = normalizeWorkspacePath(workspacePath)
-    return useGlobalPresetStore.getState().workflowPresets.find(preset =>
-      normalizeWorkspacePath(preset.selectedFolder?.filepath) === normalizedTarget)
-  }
-
-  let preset = find()
-  if (!preset) {
-    await useGlobalPresetStore.getState().refreshPresets()
-    preset = find()
-  }
-  return preset
-}
-
-/**
- * Open the appropriate interactive chat and enqueue a contextual question.
- * Enqueueing uses the same durable per-tab lane as ChatInput: idle/new chats
- * send immediately when ChatArea mounts, while a running chat keeps the message
- * queued for its next turn. Scheduled runs remain independent and untouched.
- */
-export async function sendWorkflowMessageToChat({
-  workspacePath,
-  message,
-  viewMode = 'formatted',
-}: {
-  workspacePath: string
-  message: string
-  /** Right-pane actions are ordinary user messages and share the formatted
-   *  chat presentation. A caller may explicitly request the raw terminal for
-   *  a terminal-specific action. */
-  viewMode?: EventViewMode
-}): Promise<ReportHumanInputChatResult> {
-  if (!message.trim()) throw new Error('Write a message before opening chat.')
-  let targetTab: ChatTab | undefined
-  let tabId: string
-  let reused = false
-
-  const preset = await findWorkflowPreset(workspacePath)
-  if (!preset) throw new Error(`Could not find the automation for ${workspacePath}.`)
-
-  if (!selectWorkflowPreset(preset)) throw new Error('Failed to open the automation.')
-
-  const latestChatStore = useChatStore.getState()
-  targetTab = selectReportDiscussionTab(
-    latestChatStore.chatTabs,
-    { mode: 'workflow', presetId: preset.id },
-    latestChatStore.activeTabId,
-  )
-  if (targetTab) {
-    tabId = targetTab.tabId
-    reused = true
-  } else {
-    tabId = await latestChatStore.createChatTab('Automation Builder', {
-      mode: 'workflow',
-      phaseId: 'workflow-builder',
-      phaseName: 'Automation Builder',
-      presetQueryId: preset.id,
-    })
-    targetTab = useChatStore.getState().getTab(tabId)
-  }
-
-  if (!targetTab) throw new Error('Failed to open a chat for this question.')
-
-  // Background agents do not block a new foreground turn; ChatArea only holds
-  // the queue while the foreground tab itself is streaming.
-  const queuedBehindRunningTurn = targetTab.isStreaming
-  const finalChatStore = useChatStore.getState()
-  const existingQueue = finalChatStore.getTabConfig(tabId)?.queuedMessages || []
-  finalChatStore.setTabConfig(tabId, {
-    // An external report request must not erase an unsent draft in this chat.
-    queuedMessages: [...existingQueue, message],
-  })
-  finalChatStore.setTabViewMode(tabId, viewMode)
-  finalChatStore.setAutoScroll(true)
-  activateTab(tabId)
-
-  // A server restart or missed completion event can leave a retained tab
-  // marked as streaming after it is actually idle. Refresh immediately for
-  // pane-originated actions so the shared queue controller can drain the
-  // message; do not make the click wait on this diagnostic request.
-  if (queuedBehindRunningTurn) {
-    void finalChatStore.getActiveSessions(true).catch(error => {
-      console.warn('[WorkflowChatAction] Failed to refresh the target chat session', error)
-    })
-  }
-
-  if (targetTab.metadata?.mode === 'workflow') {
-    const workflowStore = useWorkflowStore.getState()
-    workflowStore.setShowChatArea(true)
-    workflowStore.setShowWorkspacePane(true)
-    workflowStore.setFocusedPane('chat')
-  }
-
-  window.setTimeout(() => {
-    window.dispatchEvent(new CustomEvent('chat-scroll-to-bottom'))
-  }, 50)
-
-  return { tabId, reused, queuedBehindRunningTurn }
-}
-
 export async function sendReportHumanInputQuestionToChat({
   input,
   workspacePath,
@@ -248,10 +91,10 @@ export async function sendReportHumanInputQuestionToChat({
   input: ReportHumanInput
   workspacePath: string
   userQuestion: string
-}): Promise<ReportHumanInputChatResult> {
+}): Promise<WorkspacePaneChatResult> {
   const question = userQuestion.trim()
   if (!question) throw new Error('Write a question before opening chat.')
-  return sendWorkflowMessageToChat({
+  return sendWorkspacePaneMessageToChat({
     workspacePath,
     message: buildReportHumanInputChatMessage(input, workspacePath, question),
   })
@@ -263,8 +106,8 @@ export async function delegateReportHumanInputActionToChat({
 }: {
   input: ReportHumanInput
   workspacePath: string
-}): Promise<ReportHumanInputChatResult> {
-  return sendWorkflowMessageToChat({
+}): Promise<WorkspacePaneChatResult> {
+  return sendWorkspacePaneMessageToChat({
     workspacePath,
     message: buildReportHumanInputDelegatedActionMessage(input, workspacePath),
   })

@@ -1,7 +1,7 @@
-import type { ReportHumanInputChatResult } from '../../../utils/reportHumanInputChat'
+import type { WorkspacePaneChatResult } from '../../../utils/workspacePaneChat'
 import type { ReportChatOptions, ReportChatReceipt } from './reportEmbedContext'
 
-type Dispatch = (request: { workspacePath: string; message: string }) => Promise<ReportHumanInputChatResult>
+type Dispatch = (request: { workspacePath: string; message: string }) => Promise<WorkspacePaneChatResult>
 type PendingRequest = {
   message: string
   requestId?: string

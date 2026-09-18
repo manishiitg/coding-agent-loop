@@ -4,8 +4,8 @@ import type { ChatTab } from '../stores/useChatStore'
 import {
   buildReportHumanInputChatMessage,
   buildReportHumanInputDelegatedActionMessage,
-  selectReportDiscussionTab,
 } from './reportHumanInputChat'
+import { selectWorkspacePaneWorkflowTab } from './workspacePaneChat'
 
 function tab(tabId: string, overrides: Partial<ChatTab> = {}): ChatTab {
   return {
@@ -53,9 +53,9 @@ describe('Pulse decision chat routing', () => {
       metadata: { mode: 'workflow', presetQueryId: 'workflow-one', phaseId: 'workflow-builder' },
     })
 
-    expect(selectReportDiscussionTab(
+    expect(selectWorkspacePaneWorkflowTab(
       { schedule, chat },
-      { mode: 'workflow', presetId: 'workflow-one' },
+      'workflow-one',
     )?.tabId).toBe('chat')
   })
 
@@ -63,9 +63,9 @@ describe('Pulse decision chat routing', () => {
     const idle = tab('idle', { createdAt: 20 })
     const running = tab('running', { isStreaming: true, createdAt: 10 })
 
-    expect(selectReportDiscussionTab(
+    expect(selectWorkspacePaneWorkflowTab(
       { idle, running },
-      { mode: 'workflow', presetId: 'workflow-one' },
+      'workflow-one',
       'idle',
     )?.tabId).toBe('idle')
   })

@@ -36,6 +36,7 @@ import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
 import WorkflowEmailPanel from '../../components/workflow/WorkflowEmailPanel'
 import type { BrowserAutomationMode } from '../../components/BrowserAutomationSettings'
 import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type { WorkRuntimeSelection } from './workTabs'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
@@ -44,22 +45,6 @@ const ReportView = lazy(() => import('../../components/workflow/ReportViewer').t
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 
 export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
-
-function queueWorkMessage(tabId: string, message: string) {
-  const chatStore = useChatStore.getState()
-  const tab = chatStore.getTab(tabId)
-  if (!tab) throw new Error('This project chat is not available.')
-  const queuedMessages = chatStore.getTabConfig(tabId)?.queuedMessages || []
-  chatStore.setTabConfig(tabId, { queuedMessages: [...queuedMessages, message] })
-  chatStore.switchTab(tabId)
-  chatStore.setTabViewMode(tabId, 'formatted')
-  chatStore.setAutoScroll(true)
-  return {
-    tabId,
-    reused: true,
-    queuedBehindRunningTurn: Boolean(tab.isStreaming),
-  }
-}
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -222,8 +207,8 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
       store.setTabMetadata(tab.tabId, { agentProfileMCPSelectionInitialized: true, agentProfileRuntimeDirty: true })
     }
   }
-  const askAI = (message: string) => {
-    queueWorkMessage(tabId, message)
+  const askAI = async (message: string) => {
+    await sendWorkspacePaneMessageToChat({ tabId, message })
   }
 
   return (
@@ -326,7 +311,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
         <AskAIButton
           workspacePath={workspacePath}
           message="Help me configure browser access for this project. Ask what site or task it is for before changing anything."
-          onAsk={message => { queueWorkMessage(tabId, message) }}
+          onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
           iconOnly
           className="flex items-center gap-1.5 rounded p-1.5 text-muted-foreground hover:bg-muted"
         />
@@ -387,19 +372,19 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
           allowGlobalPromotion={false}
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
-        {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={message => queueWorkMessage(tabId, message)} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
+        {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
         {view === 'email' && <div className="h-full overflow-y-auto p-4"><WorkflowEmailPanel workspacePath={workspacePath} /></div>}
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
           workspacePath={workspacePath}
           scopeNoun="project"
-          onAsk={message => { queueWorkMessage(tabId, message) }}
+          onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
           target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
         /></div>}
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
             emptyDescription="Ask Crew to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
-            sendChatMessage={async (message) => ({ status: 'queued', ...queueWorkMessage(tabId, `From this project's dashboard:\n\n${message}`) })}
+            sendChatMessage={async (message) => ({ status: 'queued', ...await sendWorkspacePaneMessageToChat({ tabId, message: `From this project's dashboard:\n\n${message}` }) })}
           />}
           {view === 'database' && <DatabaseView workspacePath={workspacePath} />}
           {view === 'browser' && <WorkBrowserPanel tabId={tabId} workspacePath={workspacePath} />}
@@ -416,7 +401,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             headerAction={<AskAIButton
               workspacePath={workspacePath}
               message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
-              onAsk={message => { queueWorkMessage(tabId, message) }}
+              onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
               iconOnly
             />}
           />}

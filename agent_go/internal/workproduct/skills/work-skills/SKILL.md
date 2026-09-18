@@ -9,7 +9,10 @@ description: Discover, install, import, create, select, and remove reusable skil
   creating another skill. Use `search_skills` to discover an existing skill.
 - Use `install_skill` for a discovered skill and `import_skill` for a supplied
   skill source. Installation is account-level; selecting it for this project is
-  a separate action in **Setup > Skills**.
+  a separate action. Call `update_project_skill_selection(action="select",
+  skill="folder-name")` with the exact folder returned by `list_skills`.
+  Use `action="deselect"` to remove only this project's selection. The same
+  selection remains editable in **Setup > Skills**.
 - When the user explicitly asks to preserve or improve a repeatable procedure,
   create or update a focused custom skill under
   `skills/custom/<skill-name>/SKILL.md`. Inspect the names and descriptions of

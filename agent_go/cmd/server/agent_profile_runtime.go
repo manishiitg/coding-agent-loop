@@ -611,6 +611,11 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
+	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "skills") {
+		if err := api.registerWorkSkillSelectionTool(registrar, userID, workspacePath); err != nil {
+			return err
+		}
+	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		var input QueryRequest
 		if len(req) > 0 {

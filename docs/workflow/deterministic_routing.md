@@ -60,6 +60,13 @@ routing step logic (pure Go, no LLM):
   6. if there is no usable default → hard error (surfaced to caller)
 ```
 
+After resolving the route, every routing and branch step persists its selected
+route in its own run-scoped execution folder. This is execution evidence for
+that iteration even when the input came from a deliberately shared
+`route_source_file`. Dynamic decisions produced by an earlier step must remain
+run-scoped and be connected with `context_dependencies`; do not mirror them
+through `db/assets`.
+
 The step keeps its existing shape (`routes[]`, `default_route_id`,
 `next_step_id` per route). What is removed is the LLM evaluation
 (`routing_question` is no longer evaluated by a model). A routing step's

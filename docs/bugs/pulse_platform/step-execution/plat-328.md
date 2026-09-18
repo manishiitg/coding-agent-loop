@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented locally; deploy and RTS live reverify` |
+| Ticket state | `deployed as ancestor of f7c5f632b; RTS run-scoped live reverify pending` |
 | Last synchronized | `2026-09-18` |
 
 - **Priority:** P1 — valid webhook runs reached their routing branch, then
@@ -35,6 +35,13 @@ the routing file to `db/assets/route_selection.json`; `iteration-43-hook`
 then completed the skip route and `iteration-44-hook` crossed the eligible
 branch. That workaround avoids the failing boundary but does not repair it.
 
+The workaround later caused the separate concurrent-run race documented in
+[PLAT-331](plat-331.md): iteration 68 branched for PR #87, then its review step
+reread the shared mirror after iteration 69 overwrote it with PR #82. The
+PLAT-328 code fix is present in deployed commit `f7c5f632b` through ancestor
+`073245d6e`; the workflow mirror can now be removed, and the remaining live
+acceptance should use the run-scoped dependency directly.
+
 ## Fix
 
 `BaseOrchestrator.resolveWorkspacePath` now converts absolute paths beneath a
@@ -56,4 +63,3 @@ RTS run-path shape and an outside path (`/etc/passwd`).
   `db/assets` mirror.
 - Confirm deterministic routing reads it and Folder Guard still rejects an
   absolute path outside the workflow roots.
-

@@ -162,6 +162,7 @@ func TestBranchPlanStepMarshalJSONAlwaysSetsType(t *testing.T) {
 // fail-open, warn-only handling of those secondary writes.
 func TestExecuteRoutingStepRunsRealBranchExecution(t *testing.T) {
 	var writtenRoutingEvaluationJSON string
+	var writtenRouteSelectionJSON string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
@@ -181,6 +182,14 @@ func TestExecuteRoutingStepRunsRealBranchExecution(t *testing.T) {
 			}
 			_ = json.NewDecoder(r.Body).Decode(&body)
 			writtenRoutingEvaluationJSON = body.Content
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"success":true}`))
+		case (r.Method == http.MethodPut || r.Method == http.MethodPost) && strings.Contains(r.URL.Path, "route_selection.json"):
+			var body struct {
+				Content string `json:"content"`
+			}
+			_ = json.NewDecoder(r.Body).Decode(&body)
+			writtenRouteSelectionJSON = body.Content
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"success":true}`))
 		default:
@@ -283,6 +292,20 @@ func TestExecuteRoutingStepRunsRealBranchExecution(t *testing.T) {
 	}
 	if got, _ := persisted["step_type"].(string); got != "branch" {
 		t.Fatalf("routing-evaluation.json step_type = %q, want %q", got, "branch")
+	}
+
+	if writtenRouteSelectionJSON == "" {
+		t.Fatal("expected branch to persist its resolved route_selection.json in the run-scoped execution folder")
+	}
+	var persistedSelection map[string]interface{}
+	if err := json.Unmarshal([]byte(writtenRouteSelectionJSON), &persistedSelection); err != nil {
+		t.Fatalf("route_selection.json is not valid JSON: %v\n%s", err, writtenRouteSelectionJSON)
+	}
+	if got, _ := persistedSelection["select_route"].(string); got != "route-search" {
+		t.Fatalf("route_selection.json select_route = %q, want %q", got, "route-search")
+	}
+	if got, _ := persistedSelection["source_kind"].(string); got != "default_route_id" {
+		t.Fatalf("route_selection.json source_kind = %q, want %q", got, "default_route_id")
 	}
 }
 

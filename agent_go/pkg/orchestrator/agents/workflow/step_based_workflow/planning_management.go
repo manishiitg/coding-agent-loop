@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -336,6 +337,48 @@ func ValidatePlanStructure(plan *PlanningResponse) error {
 	if err := validateLoadedPlanStructure(&validationPlan); err != nil {
 		return &PlanValidationError{Cause: err}
 	}
+	if err := validateRunScopedRouteSources(&validationPlan); err != nil {
+		return &PlanValidationError{Cause: err}
+	}
+	return nil
+}
+
+// validateRunScopedRouteSources prevents a per-run route decision from being
+// mirrored through mutable workflow state. Shared route_source_file values are
+// still supported when they are intentional durable inputs. The unsafe case is
+// narrower: a prior step in the same plan already declares route_selection.json
+// as its output, while the router points at a shared db/assets copy instead of
+// depending on that run-scoped output.
+//
+// This check runs on persisted mutations, not legacy plan loading, so existing
+// workflows remain repairable through the Builder without being made
+// unopenable by a new validator.
+func validateRunScopedRouteSources(plan *PlanningResponse) error {
+	if plan == nil {
+		return nil
+	}
+
+	priorRunScopedProducer := ""
+	for _, step := range plan.Steps {
+		if step == nil {
+			continue
+		}
+
+		if router, ok := step.(routeSwitchStep); ok && priorRunScopedProducer != "" {
+			source := filepath.ToSlash(strings.TrimSpace(router.GetRouteSourceFile()))
+			if filepath.Base(source) == routeSelectionFileName && strings.HasPrefix(source, "db/assets/") {
+				return fmt.Errorf(
+					"routing step %q points at shared %q even though prior step %q produces run-scoped %s; use context_dependencies [%q] so parallel runs cannot overwrite one another",
+					router.GetID(), source, priorRunScopedProducer, routeSelectionFileName, routeSelectionFileName,
+				)
+			}
+		}
+
+		if contextOutputMatchesDependency(step.GetContextOutput().String(), routeSelectionFileName) {
+			priorRunScopedProducer = step.GetID()
+		}
+	}
+
 	return nil
 }
 

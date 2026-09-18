@@ -79,6 +79,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutingStep(
 	routingResponse := selection.routingResponse()
 	selectedRouteID := routingResponse.SelectedRouteID
 
+	// Routing and branch decisions are execution outputs, so persist the
+	// resolved decision beside every other step artifact under the current run.
+	// A shared route_source_file may be used as an input, but it must never be
+	// the only record of what this particular iteration selected.
+	resolvedSelection := map[string]interface{}{
+		"select_route":      selectedRouteID,
+		"selected_route_id": selectedRouteID,
+		"source_kind":       selection.SourceKind,
+		"source_path":       selection.SourcePath,
+		"raw_value":         selection.RawValue,
+		"resolved_at":       time.Now().UTC().Format(time.RFC3339),
+	}
+	resolvedSelectionJSON, err := json.MarshalIndent(resolvedSelection, "", "  ")
+	if err != nil {
+		return "", "", fmt.Errorf("failed to marshal run-scoped route selection: %w", err)
+	}
+	resolvedSelectionPath := fmt.Sprintf("%s/%s", stepExecutionPath, routeSelectionFileName)
+	if err := hcpo.WriteWorkspaceFile(ctx, resolvedSelectionPath, string(resolvedSelectionJSON)+"\n"); err != nil {
+		return "", "", fmt.Errorf("failed to persist run-scoped route selection: %w", err)
+	}
+
 	// Store result on step struct
 	routingStep.SetSelectedRouteID(selectedRouteID)
 	routingStep.SetRoutingResponse(routingResponse)

@@ -42,9 +42,28 @@ type chatSubmissionContextKey struct{}
 type chatSubmissionContext struct{ ID, Owner, Session, Message string }
 type chatSubmissionUnknownProjectKey struct{}
 
+const queuedChatSubmissionDedupeWindow = 2 * time.Minute
+
 func submissionDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
+}
+
+func normalizeQueuedChatSubmission(message string) string {
+	message = strings.TrimSpace(message)
+	if !strings.HasPrefix(message, "#") {
+		return message
+	}
+	colon := strings.IndexByte(message, ':')
+	if colon < 2 {
+		return message
+	}
+	for _, r := range message[1:colon] {
+		if r < '0' || r > '9' {
+			return message
+		}
+	}
+	return strings.TrimSpace(message[colon+1:])
 }
 
 // beginChatSubmission must run after ownership authorization and before any
@@ -68,7 +87,16 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 	}
 	w.Header().Set("X-Submission-ID", id)
 	r.Header.Set("Idempotency-Key", id)
-	path := filepath.ToSlash(filepath.Join(chatHistoryRoot(owner), "submissions", submissionDigest(id)+".json"))
+	queuedDelivery := strings.EqualFold(strings.TrimSpace(r.Header.Get("X-Queued-Chat-Delivery")), "true")
+	journalIdentity := id
+	if queuedDelivery {
+		// Queue workers in separate browser tabs cannot share an in-memory lock
+		// or random idempotency key. Give the same owner/session/message one
+		// durable receipt for a bounded window. The queue batch transport may
+		// prefix a single message with "#1:"; that is presentation, not identity.
+		journalIdentity = "queued:" + session + ":" + normalizeQueuedChatSubmission(message)
+	}
+	path := filepath.ToSlash(filepath.Join(chatHistoryRoot(owner), "submissions", submissionDigest(journalIdentity)+".json"))
 	lock := productConversationRegistryMutex(path)
 	lock.Lock()
 	store := chatSubmissionStore{read: readFileFromWorkspace, write: writeRawFileToWorkspace, resolveProject: durableSubmissionProject}
@@ -96,23 +124,40 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 		if r.Context().Value(chatSubmissionUnknownProjectKey{}) == true {
 			project = previous.Project
 		}
-		lock.Unlock()
-		if previous.Owner != owner || previous.Project != project || previous.Session != session || previous.Message != message {
+		sameMessage := previous.Message == message
+		if queuedDelivery {
+			sameMessage = normalizeQueuedChatSubmission(previous.Message) == normalizeQueuedChatSubmission(message)
+		}
+		if previous.Owner != owner || previous.Project != project || previous.Session != session || !sameMessage {
+			lock.Unlock()
 			http.Error(w, "Idempotency-Key already belongs to another submission", http.StatusConflict)
 			return w, r, func() {}, false
 		}
-		if previous.State == "delivery_uncertain" {
-			writeSubmissionUncertain(w, id)
+		// A queue action is semantically idempotent only around its delivery
+		// race. Permit a deliberate identical action after the bounded window,
+		// while never overwriting an uncertain dispatch.
+		if queuedDelivery && previous.State != "delivery_uncertain" {
+			if updatedAt, parseErr := time.Parse(time.RFC3339Nano, previous.UpdatedAt); parseErr == nil && time.Since(updatedAt) > queuedChatSubmissionDedupeWindow {
+				exists = false
+			}
+		}
+		if !exists {
+			// Keep the path lock and replace the expired semantic receipt below.
+		} else {
+			lock.Unlock()
+			if previous.State == "delivery_uncertain" {
+				writeSubmissionUncertain(w, id)
+				return w, r, func() {}, false
+			}
+			if previous.HTTPStatus < 100 || previous.HTTPStatus > 599 || previous.Response == "" {
+				http.Error(w, "Incomplete durable submission outcome", http.StatusServiceUnavailable)
+				return w, r, func() {}, false
+			}
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(previous.HTTPStatus)
+			_, _ = w.Write([]byte(previous.Response))
 			return w, r, func() {}, false
 		}
-		if previous.HTTPStatus < 100 || previous.HTTPStatus > 599 || previous.Response == "" {
-			http.Error(w, "Incomplete durable submission outcome", http.StatusServiceUnavailable)
-			return w, r, func() {}, false
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(previous.HTTPStatus)
-		_, _ = w.Write([]byte(previous.Response))
-		return w, r, func() {}, false
 	}
 	if r.Context().Value(chatSubmissionUnknownProjectKey{}) == true {
 		resolver := store.resolveProject

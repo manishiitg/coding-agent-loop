@@ -895,7 +895,15 @@ Queue delivery now uses one in-process lane per authenticated identity and
 conversation session. It also retains a bounded accepted-message receipt for
 two minutes, so a delayed projection consumes its stale queue copy without
 calling the backend again. Acceptance is recorded before checking whether the
-originating tab still exists, covering close/replace races. Focused regressions
-cover both concurrent and delayed duplicate projections of the same session.
-This correction is locally verified and has not been deployed pending explicit
+originating tab still exists, covering close/replace races. Because separate
+browser windows do not share JavaScript memory, queued UI submissions also
+carry an explicit transport marker. The server journals one semantic receipt
+per authenticated owner, conversation session, and normalized queued message
+for the same two-minute race window. A numbered single-item batch (`#1:`) and
+its plain-message fallback therefore replay one durable outcome even when the
+windows generated different client idempotency keys; ordinary typed input keeps
+its existing per-submission semantics. Focused frontend regressions cover both
+concurrent and delayed duplicate projections, and backend regressions cover
+cross-client durable replay without suppressing intentional typed repeats. This
+correction is locally verified and has not been deployed pending explicit
 operator approval.

@@ -61,6 +61,49 @@ func TestChatSubmissionDurableAcceptanceAndReplay(t *testing.T) {
 	}
 }
 
+func TestQueuedChatSubmissionDeduplicatesAcrossClientReceipts(t *testing.T) {
+	files := map[string]string{}
+	store := &chatSubmissionStore{
+		read:  func(_ context.Context, p string) (string, bool, error) { v, ok := files[p]; return v, ok, nil },
+		write: func(_ context.Context, p, v string) error { files[p] = v; return nil },
+	}
+	request := func(id string, queued bool) *http.Request {
+		r := httptest.NewRequest("POST", "/api/query", nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
+		r.Header.Set("Idempotency-Key", id)
+		if queued {
+			r.Header.Set("X-Queued-Chat-Delivery", "true")
+		}
+		return r
+	}
+	api := &StreamingAPI{internalChatSubmissionStore: store}
+	first := httptest.NewRecorder()
+	w, _, finish, ok := api.beginChatSubmission(first, request("tab-one", true), "session-a", "project-a", "#1: run architecture review")
+	if !ok {
+		t.Fatal("first queued delivery was not accepted")
+	}
+	_, _ = w.Write([]byte(`{"delivery_status":"sent_to_cli"}`))
+	finish()
+
+	second := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(second, request("tab-two", true), "session-a", "project-a", "run architecture review"); ok {
+		t.Fatal("another tab dispatched the same queued action")
+	}
+	if second.Code != http.StatusOK || second.Body.String() != first.Body.String() {
+		t.Fatalf("queued result was not replayed: %d %s", second.Code, second.Body.String())
+	}
+	if len(files) != 1 {
+		t.Fatalf("queued duplicates created %d durable receipts", len(files))
+	}
+
+	// Typed messages retain ordinary idempotency semantics and may deliberately
+	// repeat the same text.
+	ordinary := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(ordinary, request("typed-turn", false), "session-a", "project-a", "run architecture review"); !ok {
+		t.Fatal("queued semantic dedupe leaked into ordinary chat input")
+	}
+}
+
 func TestChatSubmissionPersistenceFailuresNeverInviteResend(t *testing.T) {
 	files := map[string]string{}
 	fail := true

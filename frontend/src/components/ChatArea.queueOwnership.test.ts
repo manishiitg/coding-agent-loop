@@ -123,7 +123,7 @@ describe('queued notification and human message ownership', () => {
     state.tabs.B.config.queuedMessages = ['same', 'middle', 'same', 'tail']
     const send = vi.fn(async (_message: string, _options: unknown) => true)
     await sendQueuedChatMessage('B', 2, 'same', send)
-    expect(send).toHaveBeenCalledWith('same', expect.objectContaining({ sourceTabId: 'B', sourceSessionId: 'chat-B', preferLiveInput: true }))
+    expect(send).toHaveBeenCalledWith('same', expect.objectContaining({ sourceTabId: 'B', sourceSessionId: 'chat-B', preferLiveInput: true, queuedDelivery: true }))
     expect(state.tabs.B.config.queuedMessages).toEqual(['same', 'middle', 'tail'])
   })
   it('retains the selected receipt across failure and retries the same ID', async () => {

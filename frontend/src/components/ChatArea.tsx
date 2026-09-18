@@ -2854,7 +2854,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
       try {
         if (!stillOwnsSubmission()) return false
-        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery, { identity, submissionId: receipt.id, continuation: true })
+        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery, { identity, submissionId: receipt.id, continuation: true, queuedDelivery: options?.queuedDelivery })
         if (!isChatIdentityCurrent(identity)) return false
         if (!stillOwnsSubmission()) return response.success === true
         if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started' || response.delivery_status === 'queued_for_injection') {
@@ -3264,9 +3264,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             currentTab.metadata.agentProfileId,
             buildAgentProfileChatRequest(requestPayload, currentTab.metadata.agentProfileConversationKey, currentTab.metadata.agentProfileEngine, currentTab.metadata.agentProfileModelID, currentTab.metadata.agentProfileReasoningEffort),
             tabSessionId,
-            { identity, submissionId: receipt.id, continuation: hasLocalSessionEvents || Boolean(pendingRestoredConversationPath) || currentTab.metadata?.isRestored === true },
+            { identity, submissionId: receipt.id, continuation: hasLocalSessionEvents || Boolean(pendingRestoredConversationPath) || currentTab.metadata?.isRestored === true, queuedDelivery: options?.queuedDelivery },
           )
-        : await agentApi.startQuery(requestPayload, tabSessionId, { identity, submissionId: receipt.id })
+        : await agentApi.startQuery(requestPayload, tabSessionId, { identity, submissionId: receipt.id, queuedDelivery: options?.queuedDelivery })
       if (!isChatIdentityCurrent(identity)) return false
       if (!stillOwnsSubmission()) return response.status === 'started' || response.status === 'workflow_started' || response.status === 'live_input_delivered'
       console.log('[WF_DEBUG] 2. Response', { status: response.status, responseSessionId: response.session_id || response.query_id, tabSessionId, match: (response.session_id || response.query_id) === tabSessionId })

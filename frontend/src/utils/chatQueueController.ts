@@ -62,7 +62,7 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
     const deliveryAccepted = alreadyAccepted || !built.message.trim() || await send(built.message, {
       sourceTabId: tabId, sourceSessionId: sessionId, identity,
       submissionId: receipt.id, isAutoNotification: built.isAutoNotification,
-      preferLiveInput: receipt.preferLiveInput,
+      preferLiveInput: receipt.preferLiveInput, queuedDelivery: true,
     })
     // Remember server acceptance before checking whether this particular UI
     // projection still owns the tab. A second projection must not resend an

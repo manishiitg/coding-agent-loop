@@ -6086,6 +6086,20 @@ func registerNativePlanModificationTools(
 		return fmt.Errorf("failed to register migrate_orchestrator_step_type tool: %w", err)
 	}
 
+	migrateRunScopedRoutesParams, err := parseSchemaForToolParameters(`{"type":"object","properties":{}}`)
+	if err != nil {
+		return fmt.Errorf("failed to parse migrate_run_scoped_routes schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"migrate_run_scoped_routes",
+		"Product-managed workflow-version migration for contract v1.0.42 (PLAT-331). When a prior step produces route_selection.json but a later routing/branch step reads db/assets/route_selection.json, replaces that shared mirror with the producer's run-scoped context dependency, adds the same dependency to each route destination, and removes shared-path instructions from the affected step descriptions. Other shared route_source_file inputs remain unchanged. Idempotent. Call only during the v1.0.42 workflow preflight.",
+		migrateRunScopedRoutesParams,
+		createMigrateRunScopedRoutesExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register migrate_run_scoped_routes tool: %w", err)
+	}
+
 	migrateDeclaredModeParams, err := parseSchemaForToolParameters(`{"type":"object","properties":{}}`)
 	if err != nil {
 		return fmt.Errorf("failed to parse migrate_declared_execution_mode schema: %w", err)

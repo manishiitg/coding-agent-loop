@@ -43,6 +43,7 @@ var consolidatedMaintenance = map[string]string{
 	"cleanup_orphan_configs":        "cleanup_orphan_step_configs",
 	"migrate_message_sequence_code": "migrate_message_sequence_code_items",
 	"migrate_orchestrator_types":    "migrate_orchestrator_step_type",
+	"migrate_run_scoped_routes":     "migrate_run_scoped_routes",
 	"migrate_execution_modes":       "migrate_declared_execution_mode",
 	"strip_execution_modes":         "strip_declared_execution_mode",
 }

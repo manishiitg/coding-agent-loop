@@ -4,7 +4,7 @@
 
 | Coordination | Value |
 |---|---|
-| State | Implemented and regression-tested locally; workflow migration, deployment, and live acceptance pending |
+| State | Implemented and regression-tested locally with contract v1.0.42 migration; deployment and live acceptance pending |
 | Date | 2026-09-18 |
 | Owner | step execution / deterministic routing |
 | Related | [PLAT-328](plat-328.md) |
@@ -40,13 +40,28 @@ case where a prior step declares run-scoped `route_selection.json` but the
 router points at `db/assets/route_selection.json`. Legacy plans remain loadable
 so Builder can repair them.
 
+Contract v1.0.42 runs the trusted, idempotent
+`migrate_run_scoped_routes` migration for every workflow. It rewires each
+proven shared-mirror pattern to `context_dependencies`, gives every route
+destination the same run-scoped dependency, and removes the obsolete shared
+path from affected step instructions. Other `route_source_file` values remain
+unchanged, including deliberately shared operator-controlled routing inputs.
+The managed migration turn then removes obsolete compatibility writes and
+fallback reads from affected scripted steps while preserving the producer's
+run output and append-only database audit.
+
+A read-only production census on 2026-09-18 found one unsafe plan,
+`rtsprreviweer/pr-review-branch`. Three explicit route sources in
+`automationtesting` use the ordinary `route_selection.json` contract and are
+left unchanged. All other workflows take the idempotent no-op path.
+
 ## RTS migration and acceptance
 
-- Remove the gate's write to `db/assets/route_selection.json`.
-- Change `pr-review-branch` from shared `route_source_file` to
-  `context_dependencies: ["route_selection.json"]`.
-- Give `record-skip` and `basic-pr-review` the same dependency and remove all
-  instructions to read the shared mirror.
+- Run the v1.0.42 migration; it changes `pr-review-branch`, `record-skip`, and
+  `basic-pr-review` together and removes their shared-path instructions.
+- Remove the gate script's now-unused compatibility write to
+  `db/assets/route_selection.json` after verifying no non-plan consumer reads
+  it; the route data flow no longer depends on that mirror.
 - Keep append-only `pr_gate_decisions` rows in SQLite as durable audit history.
 - Deploy only after user approval, then send two overlapping eligible/skip
   webhook deliveries and verify each downstream step retains its own PR and

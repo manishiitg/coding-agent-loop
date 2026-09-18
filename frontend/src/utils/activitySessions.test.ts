@@ -89,14 +89,22 @@ describe('isVisibleActivitySession', () => {
     }), now)).toBe(true)
   })
 
-  it('includes a completed interactive turn while its retained terminal is alive', () => {
-    expect(isVisibleActivitySession(session({ has_retained_tmux_session: true }), now)).toBe(true)
+  it('excludes a completed interactive turn whose retained terminal is only idle', () => {
+    expect(isVisibleActivitySession(session({ has_retained_tmux_session: true }), now)).toBe(false)
   })
 
   it('does not resurrect a completed scheduled run because it retained a terminal', () => {
     expect(isVisibleActivitySession(session({
       triggered_by: 'cron',
       has_retained_tmux_session: true,
+    }), now)).toBe(false)
+  })
+
+  it('excludes an idle scheduled session that is not waiting for the user', () => {
+    expect(isVisibleActivitySession(session({
+      triggered_by: 'cron',
+      status: 'running',
+      display_status: 'idle',
     }), now)).toBe(false)
   })
 

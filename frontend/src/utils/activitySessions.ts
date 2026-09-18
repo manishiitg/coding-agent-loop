@@ -78,14 +78,9 @@ export function nonWorkflowActivityTitle(
   return session.query?.trim() || 'Agent chat'
 }
 
-// A main-agent coding CLI keeps its tmux pane alive after a turn finishes so the
-// user can send a follow-up without relaunching. The backend flips such an idle,
-// non-steerable session to status "completed" (so chat streaming state clears and
-// the next message starts a fresh turn), which would otherwise drop it from the
-// activity monitor. But the agent is still ALIVE and waiting — it should stay
-// visible, distinctly from an actively-processing one (clock vs spinner). Bounded
-// to a window after the last activity so a truly-forgotten pane eventually clears;
-// matches the 30-min abandonment window the backend uses for background agents.
+// A main-agent coding CLI may retain its tmux pane after a turn finishes so the
+// next message can reuse it. This helper describes process liveness; a ready idle
+// pane is not active work and therefore does not belong in the global monitor.
 export const RETAINED_TMUX_ACTIVE_WINDOW_MS = 30 * 60 * 1000
 export function hasIdleAliveCodingAgent(
   session: Pick<ActiveSessionInfo, 'has_retained_tmux_session' | 'last_activity'>,
@@ -106,22 +101,17 @@ export function hasIdleAliveCodingAgent(
  */
 export function isVisibleActivitySession(
   session: ActiveSessionInfo,
-  now: number = Date.now(),
+  _now: number = Date.now(),
 ): boolean {
   const status = sessionRuntimeStatus(session)
 
   // Scheduled runs disappear once settled. A retained terminal from an old
   // schedule is not an interactive session the user can resume.
   if (isScheduledSession({ sessionId: session.session_id, triggeredBy: session.triggered_by })) {
-    return status === 'busy' || status === 'idle' || hasLiveBackgroundAgents(session)
+    return runtimeNeedsUserInput(session) || status === 'busy' || hasLiveBackgroundAgents(session)
   }
-
-  // Interactive coding sessions remain useful after a completed turn while
-  // their retained terminal is alive and ready for a follow-up.
-  if (hasIdleAliveCodingAgent(session, now)) return true
 
   return runtimeNeedsUserInput(session) ||
     hasLiveBackgroundAgents(session) ||
-    status === 'busy' ||
-    status === 'idle'
+    status === 'busy'
 }

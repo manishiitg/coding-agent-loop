@@ -378,6 +378,9 @@ export const GlobalActivityMonitor: React.FC = () => {
                 {isCrewBuilder
                   ? <EntityIdentityIcon icon={item.tab.metadata?.agentProfileProjectIcon} label={builderWorkflowName || 'Crew'} />
                   : <WorkflowIcon icon={builderPreset?.icon} label={builderWorkflowName || 'Automation'} />}
+                <span className="hidden max-w-24 truncate sm:inline">
+                  {shortText(builderWorkflowName || 'Automation', nameCharLimit)}
+                </span>
               </button>
             </React.Fragment>
           )
@@ -423,6 +426,9 @@ export const GlobalActivityMonitor: React.FC = () => {
                 : crewSession
                   ? <EntityIdentityIcon icon={tab?.metadata?.agentProfileProjectIcon} label={tab?.metadata?.agentProfileIdentityName || title} />
                   : <span className="whitespace-nowrap">{name}</span>}
+              {(isWorkflowSession(session) || crewSession) && (
+                <span className="hidden max-w-24 truncate sm:inline">{name}</span>
+              )}
               <ActivityTypeIcon type={type} />
             </button>
           </React.Fragment>

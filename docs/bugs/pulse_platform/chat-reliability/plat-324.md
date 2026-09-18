@@ -981,3 +981,11 @@ and falls back to the persisted conversation after restart. Product/prompt
 tests, focused restore tests, TypeScript, ESLint, and the production build pass.
 These two corrections are implemented locally and are not deployed pending
 explicit operator approval.
+
+The persistent Crew chat also exposed a global-monitor presentation mismatch:
+an idle retained CLI was treated as active work and rendered as an unexplained
+clock + identity initial + chat icon pill. Retained process liveness now remains
+separate from activity visibility, so an idle conversation leaves the monitor
+while running, background, and user-waiting work remains. Visible activity
+pills include a short responsive identity label and collapse back to icons on
+narrow layouts.

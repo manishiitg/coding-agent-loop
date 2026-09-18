@@ -36,7 +36,6 @@ import { resolveChatSurface, resolveWorkflowChatSurface } from './resolveChatSur
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
-import { isBlankWorkflowBuilderTab } from '../utils/workflowTabResolution'
 import type { CustomPreset } from '../types/preset'
 import { conversationToRestoredEvents, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
@@ -2719,28 +2718,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       return false
     }
 
-    // The workflow's Builder tab is a fixed, permanently blank home base --
-    // a message typed there starts a conversation in a NEW Chat tab (titled
-    // from the message, the way the Recent list titles a session) and the
-    // Builder stays as it is. It used to be renamed and become the chat
-    // itself, which made the Builder vanish from the strip on first send.
-    // The new tab inherits the Builder composer's config (model, attached
-    // files) so the message goes out with what the user just chose.
-    if (
-      options?.sourceSessionId === undefined &&
-      freshActiveTab?.metadata?.mode === 'workflow' &&
-      isBlankWorkflowBuilderTab(freshActiveTab, freshActiveTab.metadata.presetQueryId ?? '', chatStore.tabEvents)
-    ) {
-      const normalized = trimmedQuery.replace(/\s+/g, ' ').trim()
-      const chatName = normalized.length > 110 ? `${normalized.slice(0, 110)}...` : normalized
-      const builderConfig = freshActiveTab.config
-      const chatTabId = await chatStore.createChatTab(chatName, { ...freshActiveTab.metadata })
-      if (!isChatIdentityCurrent(identity)) return false
-      if (builderConfig) chatStore.setTabConfig(chatTabId, { ...builderConfig })
-      activateTab(chatTabId)
-      freshActiveTab = useChatStore.getState().chatTabs[chatTabId]
-      if (options?.builderHandoff) Object.assign(options.builderHandoff, { tabId: chatTabId, sessionId: freshActiveTab?.sessionId })
-    }
+    // AgentWorks has one persistent interactive Chat. Sending the first turn
+    // uses the existing tab/session; it must never fork a second Chat from an
+    // empty Builder tab. Workshop is now a separate read-only history panel.
 
     if (options?.sourceSessionId === undefined && freshActiveTab?.metadata?.agentProfileBuilder) {
       const normalized = trimmedQuery.replace(/\s+/g, ' ').trim()
@@ -3385,8 +3365,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const laneKey = sourceTab?.sessionId || sourceTab?.tabId || `${selectedModeCategory || 'unknown'}:pending-tab`
     const identity = options?.identity ?? captureChatIdentity()
     if (!isChatIdentityCurrent(identity)) return Promise.resolve(false)
-    const isBuilder = sourceTab?.metadata?.agentProfileBuilder || (sourceTab?.metadata?.mode === 'workflow' &&
-      isBlankWorkflowBuilderTab(sourceTab, sourceTab.metadata.presetQueryId ?? '', useChatStore.getState().tabEvents))
+    const isBuilder = sourceTab?.metadata?.agentProfileBuilder === true
     const builder = isBuilder && options?.sourceSessionId === undefined
       ? acquireBuilderSubmission(`${identity}:${sourceTab?.tabId}:${options?.sourceComposerId ?? 'direct'}`) : undefined
     const pending = sourceTab?.config?.pendingSubmission
@@ -3898,11 +3877,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         </div>
       </div>
 
-      {/* Input Area - Completely isolated from event updates, hidden in workflow mode.
-          Shown on the workflow landing panel (Recent/Schedules/Bots) too: the
-          Builder tab that backs it is a permanent, always-present, never-closed
-          tab now, and typing here is how you start a genuinely new conversation
-          from it -- there's no separate "New Chat" action that reveals this. */}
+      {/* Input Area - completely isolated from event updates. AgentWorks keeps
+          this composer on its one persistent Chat; Workshop history is rendered
+          outside ChatArea and therefore never exposes a composer. */}
       {!hideInput && (
         <ChatInput
           // The composer owns tab-local draft, paste, upload and submit state.

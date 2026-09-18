@@ -144,10 +144,33 @@ function idleWorkflowBuilderTabId(
         meta.phaseId === 'workflow-builder' &&
         meta.isViewOnly !== true &&
         meta.presetQueryId === presetQueryId &&
-        !tab.isStreaming &&
-        !isBlankWorkflowBuilderTab(tab, presetQueryId, tabEvents)
+        !tab.isStreaming
     })
-    .sort((a, b) => (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0))[0]?.tabId ?? null
+    .sort((a, b) => {
+      const aBlank = isBlankWorkflowBuilderTab(a, presetQueryId, tabEvents)
+      const bBlank = isBlankWorkflowBuilderTab(b, presetQueryId, tabEvents)
+      if (aBlank !== bBlank) return aBlank ? 1 : -1
+      return (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0)
+    })[0]?.tabId ?? null
+}
+
+/** The workflow's one persistent interactive Chat, whether idle or running. */
+function persistentWorkflowBuilderTabId(
+  tabs: Record<string, ChatTab>,
+  presetQueryId: string,
+  tabEvents: TabEvents,
+): string | null {
+  return Object.values(tabs)
+    .filter(tab => tab.metadata?.mode === 'workflow' &&
+      tab.metadata.phaseId === 'workflow-builder' &&
+      tab.metadata.isViewOnly !== true &&
+      tab.metadata.presetQueryId === presetQueryId)
+    .sort((a, b) => {
+      const aBlank = isBlankWorkflowBuilderTab(a, presetQueryId, tabEvents)
+      const bBlank = isBlankWorkflowBuilderTab(b, presetQueryId, tabEvents)
+      if (aBlank !== bBlank) return aBlank ? 1 : -1
+      return (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0)
+    })[0]?.tabId ?? null
 }
 
 // Keyed by presetQueryId, only for the no-sessionId case below (ensuring a
@@ -220,7 +243,7 @@ export async function resolveWorkflowTabForSession(args: ResolveWorkflowTabArgs)
   const tabs = args.getTabs()
 
   if (args.sessionId === undefined) {
-    const existing = blankWorkflowBuilderTabId(tabs, args.presetQueryId, args.getTabEvents?.() ?? {})
+    const existing = persistentWorkflowBuilderTabId(tabs, args.presetQueryId, args.getTabEvents?.() ?? {})
     if (existing) return { tabId: existing, via: 'existing' }
 
     const pending = pendingBuilderTabCreation.get(args.presetQueryId)

@@ -231,11 +231,11 @@ describe("resolveWorkflowTabForSession -- one Chat tab per workflow", () => {
     return { result, createChatTab, updateTabSessionId }
   }
 
-  it('never opens a conversation into the Builder tab -- it stays blank, the chat opens beside it', async () => {
+  it('opens a conversation in the persistent Chat instead of creating a second tab', async () => {
     const { result, createChatTab, updateTabSessionId } = open([chat({})], {})
-    expect(await result).toEqual({ tabId: 'new-tab', via: 'created' })
-    expect(updateTabSessionId).not.toHaveBeenCalled()
-    expect(createChatTab).toHaveBeenCalledTimes(1)
+    expect(await result).toEqual({ tabId: 'chat', via: 'lane' })
+    expect(updateTabSessionId).toHaveBeenCalledWith('chat', 'new-session')
+    expect(createChatTab).not.toHaveBeenCalled()
   })
 
   it('rebinds an idle Chat tab that already has a conversation -- a different past chat replaces it', async () => {
@@ -268,7 +268,7 @@ describe("resolveWorkflowTabForSession -- one Chat tab per workflow", () => {
   })
 })
 
-describe('resolveWorkflowTabForSession -- no sessionId (ensure a blank builder tab)', () => {
+describe('resolveWorkflowTabForSession -- no sessionId (ensure the persistent Chat)', () => {
   const chat = (overrides: Partial<ChatTab>): ChatTab => ({
     tabId: 'chat', name: 'Automation Builder', sessionId: 'existing-session',
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
@@ -296,11 +296,10 @@ describe('resolveWorkflowTabForSession -- no sessionId (ensure a blank builder t
     expect(createChatTab).not.toHaveBeenCalled()
   })
 
-  it('creates one when no blank tab exists, minting a fresh session id (no third createChatTab arg)', async () => {
+  it('reuses a Chat that already has content instead of creating another one', async () => {
     const { result, createChatTab } = ensure([chat({ metadata: { ...builder } })], { 'existing-session': [{ type: 'user_message' } as never] })
-    expect(await result).toEqual({ tabId: 'new-tab', via: 'created' })
-    expect(createChatTab).toHaveBeenCalledWith('Automation Builder', builder)
-    expect(createChatTab).toHaveBeenCalledTimes(1)
+    expect(await result).toEqual({ tabId: 'chat', via: 'existing' })
+    expect(createChatTab).not.toHaveBeenCalled()
   })
 
   it('never mistakes a different workflow\'s blank tab for this one\'s', async () => {

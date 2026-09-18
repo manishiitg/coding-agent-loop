@@ -56,7 +56,7 @@ const emptyStateContent: Record<PreviousChatFilter, {
   chat: {
     icon: MessageSquare,
     title: 'No chats yet',
-    body: 'Start a chat from the composer below. After the first saved turn, it will appear here so you can resume it later.',
+    body: 'Use the Chat tab to send the first message. Saved conversations will appear here for reference.',
   },
   schedule: {
     icon: CalendarClock,

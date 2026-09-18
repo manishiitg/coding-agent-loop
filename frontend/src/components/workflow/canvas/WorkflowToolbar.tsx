@@ -8,6 +8,7 @@ import {
   BellRing,
   ChevronDown,
   Gauge,
+  History,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
@@ -129,6 +130,8 @@ interface WorkflowToolbarProps {
   // workflow chat tabs + new-chat share one row with the status/tools instead of
   // sitting in a separate bar below.
   chatTabsSlot?: React.ReactNode
+  workshopOpen?: boolean
+  onToggleWorkshop?: () => void
   // Whether Pulse review is enabled for this workflow -- owned by the host
   // (shared with the pane's PulseView), just read here for the badge.
   monitorOn: boolean
@@ -142,6 +145,8 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   variablesManifest,
   isLoadingWorkspaceState = false,
   chatTabsSlot,
+  workshopOpen = false,
+  onToggleWorkshop,
   monitorOn,
   className = ''
 }) => {
@@ -377,10 +382,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   return (
     <>
     <WorkspaceTopToolbar className={className}>
-      {/* Left side - chat tab strip (grows). Per-tab status dot + Stop live
-          inside each tab pill (WorkflowChatTabs), not as a separate badge here.
-          No separate "New Chat" action here: the Builder tab (WorkflowChatTabs)
-          is a permanent, always-first, never-closed tab -- it IS that action. */}
+      {/* Left side - the single persistent Chat. */}
       <div className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
         {chatTabsSlot}
       </div>
@@ -404,6 +406,22 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       {/* Right side - View controls */}
       <div data-tour="workflow-tools" data-testid="tour-workflow-tools" className="ml-auto flex shrink-0 items-center gap-1">
         <TooltipProvider delayDuration={150}>
+          {onToggleWorkshop && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button
+                  type="button"
+                  onClick={onToggleWorkshop}
+                  className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${workshopOpen ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+                  aria-label="Workshop"
+                  aria-pressed={workshopOpen}
+                >
+                  <History className="h-3.5 w-3.5" />
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="bottom"><p>Workshop</p></TooltipContent>
+            </Tooltip>
+          )}
           {/* Report stays visible while the remaining tools use two compact groups. */}
           {workspacePath && <ReportDocumentSwitcher workspacePath={workspacePath} active={activeWorkspaceView === 'report'} onOpen={() => openWorkspaceView('report')} />}
 

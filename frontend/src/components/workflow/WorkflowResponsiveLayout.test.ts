@@ -23,4 +23,18 @@ describe('workflow responsive pane contract', () => {
     expect(layout).toContain("if (window.innerWidth < 768) setFocusedPane('chat')")
     expect(store).toContain("get().setFocusedPane('preview')")
   })
+
+  it('keeps Workshop in the right toolbar and outside the persistent Chat composer', () => {
+    const layout = readFileSync('src/components/workflow/WorkflowLayout.tsx', 'utf8')
+    const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
+    const tabs = readFileSync('src/components/workflow/WorkflowChatTabs.tsx', 'utf8')
+    const chatArea = readFileSync('src/components/ChatArea.tsx', 'utf8')
+
+    expect(toolbar).toContain('aria-label="Workshop"')
+    expect(layout).toContain('workshopOpen && workspacePath ? (')
+    expect(layout).toContain('onOpenChat={() => setWorkshopOpen(false)}')
+    expect(tabs).toContain("displayName={isPersistentChat ? 'Chat'")
+    expect(tabs).toContain('canClose={!isPersistentChat')
+    expect(chatArea).not.toContain('a message typed there starts a conversation in a NEW Chat tab')
+  })
 })

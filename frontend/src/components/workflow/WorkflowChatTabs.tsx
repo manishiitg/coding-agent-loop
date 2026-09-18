@@ -24,9 +24,10 @@ interface WorkflowChatTabsProps {
   // When true, render inline (no bordered/background bar wrapper) so the strip can
   // be embedded inside the WorkflowToolbar row instead of being its own bar.
   embedded?: boolean
+  onSelectChat?: () => void
 }
 
-export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = false }) => {
+export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = false, onSelectChat }) => {
   const {
     chatTabs,
     activeTabId,
@@ -88,25 +89,55 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
           tab.metadata?.phaseId === 'workflow-builder' &&
           !tab.metadata?.presetQueryId
         )
-    // The blank Builder tab is this workflow's permanent home base: always
-    // first in the strip, never sorted by when it happened to be created.
-    return visible.sort((a, b) => {
-      const aBlank = isBlankWorkflowBuilderTab(a, activePresetId || '', tabEvents)
-      const bBlank = isBlankWorkflowBuilderTab(b, activePresetId || '', tabEvents)
-      if (aBlank !== bBlank) return aBlank ? -1 : 1
-      return a.createdAt - b.createdAt
-    })
+    const candidates = visible
+    const interactive = candidates
+      .filter(tab => tab.metadata?.isViewOnly !== true && tab.metadata?.phaseId === 'workflow-builder')
+      .sort((a, b) => {
+        const aBlank = isBlankWorkflowBuilderTab(a, activePresetId || '', tabEvents)
+        const bBlank = isBlankWorkflowBuilderTab(b, activePresetId || '', tabEvents)
+        if (aBlank !== bBlank) return aBlank ? 1 : -1
+        if (a.tabId === activeTabId) return -1
+        if (b.tabId === activeTabId) return 1
+        return (b.lastAccessedAt ?? b.createdAt) - (a.lastAccessedAt ?? a.createdAt)
+      })[0]
+    const activeReadOnly = activeWorkflowTab?.metadata?.isViewOnly ? activeWorkflowTab : undefined
+
+    // AgentWorks owns one persistent interactive Chat. Old duplicate tabs may
+    // remain in persisted browser state, but they are no longer presented as
+    // separate conversations. A read-only run appears only when explicitly
+    // opened and never accumulates in the strip.
+    return [interactive, activeReadOnly]
+      .filter((tab): tab is ChatTab => Boolean(tab))
+      .filter((tab, index, tabs) => tabs.findIndex(item => item.tabId === tab.tabId) === index)
   }, [chatTabs, activePresetId, activeTabId, tabEvents])
+
+  // Migrate a browser that persisted the old Workshop + Chat pair: if its
+  // hidden blank Workshop tab is still active, move focus to the retained
+  // conversation so the visible Chat and the rendered transcript agree.
+  useEffect(() => {
+    const persistentChat = activeWorkflowTabs.find(tab =>
+      tab.metadata?.phaseId === 'workflow-builder' && tab.metadata?.isViewOnly !== true,
+    )
+    const current = activeTabId ? chatTabs[activeTabId] : undefined
+    const currentIsInteractiveDuplicate = current?.metadata?.mode === 'workflow' &&
+      current.metadata.presetQueryId === activePresetId &&
+      current.metadata.phaseId === 'workflow-builder' &&
+      current.metadata.isViewOnly !== true
+    if (persistentChat && currentIsInteractiveDuplicate && persistentChat.tabId !== activeTabId) {
+      activateTab(persistentChat.tabId)
+    }
+  }, [activePresetId, activeTabId, activeWorkflowTabs, chatTabs])
 
   // Skip auto-close on initial mount
   const hasRenderedRef = useRef(false)
 
   const handleTabClick = useCallback((tabId: string) => {
     activateTab(tabId)
+    onSelectChat?.()
     // On narrow screens the toolbar stays visible while only one content pane
     // is shown. A chat-tab selection must therefore bring the chat pane back.
     if (window.innerWidth < 768) setFocusedPane('chat')
-  }, [setFocusedPane])
+  }, [onSelectChat, setFocusedPane])
 
   const handleCloseTab = useCallback((tabId: string) => {
     const nextWorkflowTabId = activeTabId === tabId
@@ -188,16 +219,16 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
         <div className="flex min-w-0 items-center gap-1 overflow-x-auto">
           {activeWorkflowTabs.map((tab) => {
             const isBlank = isBlankWorkflowBuilderTab(tab, activePresetId || '', tabEvents)
+            const isPersistentChat = tab.metadata?.isViewOnly !== true && tab.metadata?.phaseId === 'workflow-builder'
             return (
               <AgentWorksChatTabItem
                 key={tab.tabId}
                 tab={tab}
                 isActive={tab.tabId === activeTabId}
-                // Builder is this workflow's permanent home base -- never
-                // closeable, regardless of how many other tabs are open.
-                canClose={!isBlank && activeWorkflowTabs.length > 1}
-                isBlank={isBlank}
-                displayName={workflowTabDisplayName(tab, isBlank)}
+                // The persistent Chat is never closeable.
+                canClose={!isPersistentChat && activeWorkflowTabs.length > 1}
+                isBlank={false}
+                displayName={isPersistentChat ? 'Chat' : workflowTabDisplayName(tab, isBlank)}
                 onTabClick={handleTabClick}
                 onCloseTab={handleCloseTab}
                 onMakeInteractive={handleMakeInteractive}

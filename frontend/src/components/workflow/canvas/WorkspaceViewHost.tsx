@@ -310,6 +310,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     toolbarOnly = false,
     sharedToolbar = false,
     chatTabsSlot,
+    workshopOpen = false,
+    onToggleWorkshop,
     paneClassName = '',
     className = '',
     hideToolbar = false,
@@ -722,6 +724,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
               onToggleChatArea={onToggleChatArea}
               onExport={onExport}
               chatTabsSlot={chatTabsSlot}
+              workshopOpen={workshopOpen}
+              onToggleWorkshop={onToggleWorkshop}
               monitorOn={monitorOn}
             />
           </div>

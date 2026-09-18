@@ -241,10 +241,11 @@ function activeSessionToRunningWorkflowInfo(session: ActiveSessionInfo): Running
 const WorkflowPreviousChatsPanel: React.FC<{
   workspacePath: string
   onHasChatsChange?: (hasChats: boolean) => void
+  onOpenChat?: () => void
   // When true the panel fills the chat pane as the primary landing surface
   // (mirrors the multi-agent landing panel) instead of the compact top strip.
   primary?: boolean
-}> = ({ workspacePath, onHasChatsChange, primary = false }) => {
+}> = ({ workspacePath, onHasChatsChange, onOpenChat, primary = false }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -425,6 +426,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       activateTab(targetTabId)
       setShowChatArea(true)
       openHistoryExecutionLogs(session)
+      onOpenChat?.()
       return
     }
 
@@ -433,7 +435,8 @@ const WorkflowPreviousChatsPanel: React.FC<{
       return
     }
     await resumeChatSessionIntoTab(session, activeTabId, disposition)
-  }, [activeTabId, addToast, resumeChatSessionIntoTab, setShowChatArea, workspacePath, activePresetId])
+    onOpenChat?.()
+  }, [activeTabId, addToast, onOpenChat, resumeChatSessionIntoTab, setShowChatArea, workspacePath, activePresetId])
 
   return (
     <PreviousChatHistoryPanel
@@ -909,6 +912,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   // Get active workflow preset (file-backed manifests, not DB presets)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
+  const [workshopOpen, setWorkshopOpen] = useState(false)
+  useEffect(() => setWorkshopOpen(false), [activePresetId])
   const activeWorkflowPreset = useGlobalPresetStore(state => {
     const presetId = state.activePresetIds.workflow
     return presetId ? state.workflowPresets.find(preset => preset.id === presetId) ?? null : null
@@ -2163,7 +2168,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       // first grid item. Spanning a non-existent second column would otherwise
       // leave the full-width chat occupying only half of a desktop viewport.
       sharedToolbar={showChatArea && workspacePaneVisible}
-      chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded /> : undefined}
+      chatTabsSlot={showChatArea ? <WorkflowChatTabs embedded onSelectChat={() => setWorkshopOpen(false)} /> : undefined}
+      workshopOpen={workshopOpen}
+      onToggleWorkshop={() => setWorkshopOpen(open => !open)}
       paneClassName={canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
@@ -2235,25 +2242,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            {/* The previous-automation-chats list now renders inside ChatArea's
-                content area (workflowPreviousChatsPanel below) so it fills the
-                pane above the chat input, mirroring the multi-agent landing
-                panel — instead of a compact strip stacked on top of the chat. */}
-
             <div className="min-h-0 flex-1 overflow-hidden">
-              <ChatAreaWithObserverId
-                ref={chatAreaCallbackRef}
-                onNewChat={onNewChat}
-                hideHeader
-                compact
-                workflowPreviousChatsPanel={workspacePath ? (
-                  <WorkflowPreviousChatsPanel
-                    key={`${activePresetId || 'workflow'}:${workspacePath}`}
-                    primary
-                    workspacePath={workspacePath}
-                  />
-                ) : undefined}
-              />
+              {workshopOpen && workspacePath ? (
+                <WorkflowPreviousChatsPanel
+                  key={`${activePresetId || 'workflow'}:${workspacePath}`}
+                  primary
+                  workspacePath={workspacePath}
+                  onOpenChat={() => setWorkshopOpen(false)}
+                />
+              ) : (
+                <ChatAreaWithObserverId
+                  ref={chatAreaCallbackRef}
+                  onNewChat={onNewChat}
+                  hideHeader
+                  compact
+                />
+              )}
             </div>
           </div>
         )}

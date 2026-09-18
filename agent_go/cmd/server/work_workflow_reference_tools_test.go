@@ -46,8 +46,12 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	}
 
 	out, err := registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "hdfc"})
-	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/hdfc-personal"`) || strings.Contains(out, "Private Bank") {
+	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/hdfc-personal"`) || !strings.Contains(out, `"name": "HDFC Bank Personal Accounts"`) || !strings.Contains(out, `"icon": "H"`) || strings.Contains(out, "Private Bank") {
 		t.Fatalf("accessible search out=%s err=%v", out, err)
+	}
+	out, err = registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "banking"})
+	if err != nil || !strings.Contains(out, `"crews":`) || !strings.Contains(out, `"name": "Banking"`) || !strings.Contains(out, `"icon": "B"`) || !strings.Contains(out, `"workspace_path": "Chats/Work/projects/banking"`) {
+		t.Fatalf("Crew discovery out=%s err=%v", out, err)
 	}
 	if _, err := registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/private-bank"}); err == nil {
 		t.Fatal("unauthorized workflow was attached")
@@ -98,8 +102,9 @@ func TestBuilderAccessibleWorkflowListUsesCurrentUserAccessWithoutCrewMutationTo
 		Access: &WorkflowAccess{Owners: []string{"owner"}},
 	})
 	workspace := &mockWorkspaceAPI{files: map[string]string{
-		manifestPath("Workflow/shared"):  string(shared),
-		manifestPath("Workflow/private"): string(private),
+		manifestPath("Workflow/shared"):                           string(shared),
+		manifestPath("Workflow/private"):                          string(private),
+		"_users/builder/Chats/Work/projects/release/product.json": `{"schema_version":1,"product":"work","id":"release","title":"Release project","identity":{"name":"Release Crew","icon":"🚀"}}`,
 	}}
 	host := httptest.NewServer(workspace)
 	defer host.Close()
@@ -114,7 +119,7 @@ func TestBuilderAccessibleWorkflowListUsesCurrentUserAccessWithoutCrewMutationTo
 		t.Fatalf("builder discovery registered %d tools, want only list_accessible_workflows", len(registrar.tools))
 	}
 	out, err := registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{})
-	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/shared"`) || strings.Contains(out, "Private workflow") || strings.Contains(out, `"attached"`) {
+	if err != nil || !strings.Contains(out, `"workspace_path": "Workflow/shared"`) || !strings.Contains(out, `"name": "Shared workflow"`) || !strings.Contains(out, `"crews":`) || !strings.Contains(out, `"name": "Release project"`) || !strings.Contains(out, `"name": "Release Crew"`) || !strings.Contains(out, `"icon": "🚀"`) || strings.Contains(out, "Private workflow") || strings.Contains(out, `"attached"`) {
 		t.Fatalf("builder discovery out=%s err=%v", out, err)
 	}
 }

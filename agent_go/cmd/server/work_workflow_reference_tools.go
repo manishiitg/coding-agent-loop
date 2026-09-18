@@ -4,12 +4,92 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
+
+type accessibleProjectIdentity struct {
+	Name string `json:"name"`
+	Icon string `json:"icon"`
+}
+
+func accessibleProjectIcon(icon, name string) string {
+	if icon = strings.TrimSpace(icon); icon != "" {
+		return icon
+	}
+	for _, char := range strings.TrimSpace(name) {
+		return strings.ToUpper(string(char))
+	}
+	return "?"
+}
+
+func listAccessibleCrewProjects(ctx context.Context, userID, query string) ([]map[string]interface{}, error) {
+	root := agentProfileRuntimeWorkspace(userID, "Chats/Work/projects")
+	store := defaultProductProjectStore()
+	paths, exists, err := store.listPaths(ctx, root)
+	if err != nil {
+		return nil, fmt.Errorf("list Crew projects: %w", err)
+	}
+	if !exists {
+		return []map[string]interface{}{}, nil
+	}
+	rootPrefix := strings.TrimSuffix(filepath.ToSlash(root), "/") + "/"
+	seen := map[string]bool{}
+	items := make([]map[string]interface{}, 0)
+	for _, candidate := range paths {
+		candidate = filepath.ToSlash(strings.TrimSpace(candidate))
+		if !strings.HasPrefix(candidate, rootPrefix) || !strings.HasSuffix(candidate, "/product.json") || seen[candidate] {
+			continue
+		}
+		seen[candidate] = true
+		raw, found, readErr := store.read(ctx, candidate)
+		if readErr != nil {
+			return nil, fmt.Errorf("read Crew manifest %s: %w", candidate, readErr)
+		}
+		if !found {
+			continue
+		}
+		var manifest productProjectManifest
+		if json.Unmarshal([]byte(raw), &manifest) != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
+			continue
+		}
+		id := strings.TrimSpace(manifest.ID)
+		name := strings.TrimSpace(manifest.Title)
+		if id == "" || name == "" {
+			continue
+		}
+		identityName := strings.TrimSpace(manifest.Identity.Name)
+		if identityName == "" {
+			identityName = name
+		}
+		workspacePath := canonicalChatHistoryWorkspacePath(userID, filepath.ToSlash(filepath.Dir(candidate)))
+		identityIcon := accessibleProjectIcon(manifest.Identity.Icon, identityName)
+		haystack := strings.ToLower(strings.Join([]string{id, name, identityName, identityIcon, workspacePath}, "\n"))
+		if query != "" && !strings.Contains(haystack, query) {
+			continue
+		}
+		items = append(items, map[string]interface{}{
+			"id":   id,
+			"name": name,
+			"identity": accessibleProjectIdentity{
+				Name: identityName,
+				Icon: identityIcon,
+			},
+			"workspace_path": workspacePath,
+			"access":         "owner",
+		})
+	}
+	sort.Slice(items, func(i, j int) bool {
+		left := strings.ToLower(fmt.Sprint(items[i]["name"], "\n", items[i]["workspace_path"]))
+		right := strings.ToLower(fmt.Sprint(items[j]["name"], "\n", items[j]["workspace_path"]))
+		return left < right
+	})
+	return items, nil
+}
 
 func updateWorkSessionWorkflowGuard(sessionID string, add []string, remove ...string) {
 	cfg := common.GetSessionShellConfig(sessionID)
@@ -47,10 +127,10 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read. Use this before referring to, suggesting, or attaching another workflow; an empty query lists all accessible workflows.", map[string]interface{}{
+	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read and Crew projects owned by the signed-in user. Each result includes its project name and display identity (identity name and icon). Use a workflow's exact workspace_path before referring to, suggesting, or attaching it; Crew results are informational and cannot be attached as workflow references. An empty query lists everything accessible.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"query": map[string]interface{}{"type": "string", "description": "Optional case-insensitive name, id, or path search."},
+			"query": map[string]interface{}{"type": "string", "description": "Optional case-insensitive workflow/Crew project name, identity, id, icon, or path search."},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		ctx = withClaims(ctx)
@@ -77,13 +157,14 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 			label := strings.TrimSpace(workflow.Manifest.Label)
 			id := strings.TrimSpace(workflow.Manifest.ID)
 			path := strings.TrimSuffix(strings.TrimSpace(workflow.WorkspacePath), "/")
-			haystack := strings.ToLower(strings.Join([]string{label, id, path}, "\n"))
+			haystack := strings.ToLower(strings.Join([]string{label, id, path, workflow.Manifest.Icon}, "\n"))
 			if query != "" && !strings.Contains(haystack, query) {
 				continue
 			}
 			item := map[string]interface{}{
-				"id": id, "label": label, "workspace_path": path,
-				"access": string(workflow.MyAccess),
+				"id": id, "name": label, "label": label, "workspace_path": path,
+				"identity": accessibleProjectIdentity{Name: label, Icon: accessibleProjectIcon(workflow.Manifest.Icon, label)},
+				"access":   string(workflow.MyAccess),
 			}
 			if attachedPaths != nil {
 				item["attached"] = attachedSet[path]
@@ -95,7 +176,11 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 			right := strings.ToLower(fmt.Sprint(items[j]["label"], "\n", items[j]["workspace_path"]))
 			return left < right
 		})
-		encoded, err := json.MarshalIndent(map[string]interface{}{"workflows": items}, "", "  ")
+		crews, err := listAccessibleCrewProjects(ctx, userID, query)
+		if err != nil {
+			return "", err
+		}
+		encoded, err := json.MarshalIndent(map[string]interface{}{"workflows": items, "crews": crews}, "", "  ")
 		return string(encoded), err
 	})
 }

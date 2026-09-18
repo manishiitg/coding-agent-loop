@@ -277,6 +277,7 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"general-purpose",
 		"tasks, notes, plans, status, research",
 		"use `create_crew`",
+		"both the project name and display identity",
 	} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Crew prompt is missing %q", required)

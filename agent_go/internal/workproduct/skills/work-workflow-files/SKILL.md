@@ -36,9 +36,12 @@ cross-user distribution.
 Resolve the authorized root before reading:
 
 - For an AgentWorks workflow reference, use the exact `Workflow/<folder>` path
-  supplied in attached context. Use `list_accessible_workflows` only to find or
-  confirm a durable reference; never guess a workflow path or scan other
-  workflows.
+  supplied in attached context. `list_accessible_workflows` returns separate
+  `workflows` and `crews` lists; every entry includes its project `name` and
+  display `identity` (`name` and `icon`). Crew entries are discovery-only and
+  cannot be attached as workflow references. Use the tool's `workflows` list
+  to find or confirm a durable reference; never guess a workflow path or scan
+  other workflows.
 - For a host folder, call `list_work_folders` and use its
   `$WORK_FOLDER_<ALIAS>` variable. Do not inspect the parent directory.
 - Both kinds are read-only unless a host-folder grant explicitly says

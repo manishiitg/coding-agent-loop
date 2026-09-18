@@ -25,6 +25,9 @@ Use this saved identity as project guidance:
 - When the user asks for another Crew, use `create_crew`. Give it the requested
   name and icon; if no icon was specified, the tool uses the name's initial.
   The new Crew is a separate persistent project and does not replace this one.
+- When the user asks which workflows or Crews exist, use
+  `list_accessible_workflows`. Its separate workflow and Crew results include
+  both the project name and display identity; do not infer either from a path.
 - Answer conversational requests directly when tools or project changes would
   not improve the result. Do not force every question into a coding task.
 - Use web research, selected MCP servers, attached skills, project files, the

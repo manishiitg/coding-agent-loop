@@ -680,15 +680,19 @@ func (store productConversationRegistryStore) writeDocument(ctx context.Context,
 }
 
 type productProjectManifest struct {
-	SchemaVersion        int                        `json:"schema_version"`
-	Product              string                     `json:"product,omitempty"`
-	ID                   string                     `json:"id"`
-	Title                string                     `json:"title,omitempty"`
-	Label                string                     `json:"label,omitempty"`
-	Description          string                     `json:"description,omitempty"`
-	SessionID            string                     `json:"session_id,omitempty"`
-	CreatedAt            string                     `json:"created_at,omitempty"`
-	UpdatedAt            string                     `json:"updated_at,omitempty"`
+	SchemaVersion int    `json:"schema_version"`
+	Product       string `json:"product,omitempty"`
+	ID            string `json:"id"`
+	Title         string `json:"title,omitempty"`
+	Label         string `json:"label,omitempty"`
+	Description   string `json:"description,omitempty"`
+	SessionID     string `json:"session_id,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
+	Identity      struct {
+		Name string `json:"name,omitempty"`
+		Icon string `json:"icon,omitempty"`
+	} `json:"identity,omitempty"`
 	Schedules            []productschedule.Schedule `json:"schedules,omitempty"`
 	Triggers             []productWebhookTrigger    `json:"triggers,omitempty"`
 	WorkflowContextPaths []string                   `json:"workflow_context_paths,omitempty"`

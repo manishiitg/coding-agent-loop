@@ -500,12 +500,9 @@ interface ChatAreaProps {
   // This avoids hiding history when a permanent launch tab retained a stale
   // session id after an upgrade or browser restore.
   forcePreviousChats?: boolean
-  // Workflow landing previous-chats panel. WorkflowLayout owns the panel + its
-  // resume handler (so the workflow-scoped history logic isn't duplicated here)
-  // and passes the rendered node only when a fresh automation chat should show
-  // the list. When present, ChatArea renders it as the primary surface (mirroring
-  // the multi-agent landing panel) and suppresses its own workflow empty states.
-  workflowPreviousChatsPanel?: React.ReactNode
+  // Content shown above the composer when a workflow's persistent Chat has no
+  // saved conversation yet.
+  workflowLandingContent?: React.ReactNode
   // Product surfaces can replace the default previous-chat landing
   // without forking the shared stream, terminal, event, and composer stack.
   landingContent?: React.ReactNode
@@ -559,7 +556,7 @@ let globalHasRestored = false
 
 // Inner component for chat area
 const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAreaRef>) => {
-  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, forcePreviousChats = false, workflowPreviousChatsPanel, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
+  const { onNewChat, hideInput = false, compact = false, tabId, previousChatsCompact = false, previousChatsWorkspacePath, previousChatsRecentOnly = false, forcePreviousChats = false, workflowLandingContent, landingContent, contentRenderer: ContentRenderer, inputVariant = 'default', fullTurnStreaming = false, showConversationUsage = false, hideRuntimeStatus = false, showCompactRuntimeLoading = false, showProductSteerAction = false, showProductTerminalControl = false, showNewChatAction = false , composerPlaceholder} = props
   // Product mode is a complete shared surface, not just a simplified composer.
   // Products may still supply a renderer for domain-specific presentation, but
   // every new product gets the durable transcript and normalized error UI by
@@ -3629,20 +3626,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Multi-agent landing surface = the previous-chats panel (mirrors the old
   // showNormalPreviousChatsPanel).
   const showNormalPreviousChatsPanel = selectedModeCategory === 'multi-agent' && multiAgentSurface === 'landing'
-  // Workflow landing panel: WorkflowLayout passes the rendered node only when a
-  // fresh automation chat should show the previous-chats list. When present we
-  // make it the primary surface (mirrors the multi-agent landing panel) and
-  // suppress the workflow empty states / terminal / event display below it.
-  const showWorkflowPreviousChatsPanel =
+  // A first-time workflow Chat shows its getting-started guide above the
+  // composer. Saved histories live in the separate Workshop workspace view.
+  const showWorkflowLandingContent =
     selectedModeCategory === 'workflow' &&
     visibleWorkflowSurface === 'landing' &&
-    !!workflowPreviousChatsPanel
+    !!workflowLandingContent
   const hasActiveTranscript =
     (selectedModeCategory === 'workflow' && visibleWorkflowSurface === 'active') ||
     (selectedModeCategory === 'multi-agent' && multiAgentSurface === 'active')
   // A product-supplied content renderer owns the whole pane, so it is always
   // full height regardless of which transcript surface is active.
-  const shouldUseFullHeightContent = forcePreviousChats || !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowPreviousChatsPanel
+  const shouldUseFullHeightContent = forcePreviousChats || !!EffectiveContentRenderer || hasActiveTranscript || showNormalPreviousChatsPanel || showWorkflowLandingContent
 
   return (
     <div className="flex flex-col h-full min-w-0" data-testid="chat-area-container">
@@ -3807,13 +3802,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
                   />
             )}
 
-            {/* landing — fresh automation chat. Prefer the previous-chats panel
-                (WorkflowLayout supplies the node + resume handler so the
-                workflow-scoped history logic lives in one place). TerminalCenter
-                is intentionally not rendered on landing: "Waiting for terminal"
-                is only for an active/pending turn after a message was sent. */}
+            {/* Fresh workflow Chat. TerminalCenter is intentionally not rendered
+                until a message starts a real turn. */}
             {visibleWorkflowSurface === 'landing' && (
-              workflowPreviousChatsPanel ?? null
+              workflowLandingContent ?? null
             )}
           </WorkflowModeHandler>
         ) : (

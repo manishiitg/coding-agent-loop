@@ -217,6 +217,10 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         )
       case 'folders':
         return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('folders')} />
+      case 'workshop':
+        // WorkspaceViewHost renders the caller-supplied Workshop panel before
+        // reaching InspectorBody. Keep this branch for registry exhaustiveness.
+        return null
       case 'pulse':
         return (
           <PulseView
@@ -310,8 +314,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     toolbarOnly = false,
     sharedToolbar = false,
     chatTabsSlot,
-    workshopOpen = false,
-    onToggleWorkshop,
+    workshopPanel,
     paneClassName = '',
     className = '',
     hideToolbar = false,
@@ -698,6 +701,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     body = null
   } else if (kind === 'preview') {
     body = <ReportBody workspacePath={workspacePath} />
+  } else if (effectiveView === 'workshop') {
+    body = workshopPanel ?? null
   } else if (kind === 'files') {
     body = <FilesBody workspacePath={workspacePath} />
   } else {
@@ -724,8 +729,6 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
               onToggleChatArea={onToggleChatArea}
               onExport={onExport}
               chatTabsSlot={chatTabsSlot}
-              workshopOpen={workshopOpen}
-              onToggleWorkshop={onToggleWorkshop}
               monitorOn={monitorOn}
             />
           </div>

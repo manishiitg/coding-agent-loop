@@ -25,6 +25,7 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   secrets: "Help me configure a secret for this workflow. Ask which credential is needed and where it should come from without asking me to reveal it in chat.",
   mcp: "Help me add or configure an MCP server for this workflow. Ask which app or service I want to connect, then help me find and set up the right integration.",
   browser: "Help me configure browser access for this workflow. Ask which sites, accounts, and browser tasks it needs to handle.",
+  workshop: "Help me review this workflow's saved conversations and automated runs. Ask which history item or behavior I want to understand.",
   llm: "Help me choose or configure the LLMs for this workflow. Explain the current setup and ask about quality, speed, and cost requirements.",
   email: "Help me connect or configure Gmail, default recipients, and email access settings.",
   bots: "Load builder-reference/references/slack-bot-routing.md and help me connect Slack or WhatsApp to this workflow. Inspect current settings, explain the connection and route setup, and ask which channel I need; use run mode without asking for a grant. Never request tokens in chat.",

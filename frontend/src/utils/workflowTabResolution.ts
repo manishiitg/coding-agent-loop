@@ -80,11 +80,10 @@ type TabEvents = Record<string, PollingEvent[]>
 export const WORKFLOW_BUILDER_TAB_NAME = 'Automation Builder'
 
 /**
- * The one definition of the workflow's "Builder" tab: the fixed, blank,
- * never-closed first tab that shows the Recent/Schedules/Bots landing view
- * and the composer. No conversation ever lands in it -- typing here opens a
- * Chat tab, a resume goes to a Chat tab -- so it stays blank for the life of
- * the workflow. Four near-copies of this used to disagree (one keyed on a
+ * Recognize the legacy blank "Builder" tab persisted by older releases.
+ * Current releases reuse it as the first persistent Chat; this predicate is
+ * retained for migration and duplicate selection. Four near-copies once
+ * disagreed (one keyed on a
  * different event set, one skipped the preset check, one skipped the
  * restored-conversation check), which is how a restore could land beside an
  * identical-looking empty tab instead of in it.
@@ -113,7 +112,7 @@ export function isBlankWorkflowBuilderTab(
   return !hasWorkflowChatContent(tabEvents[tab.sessionId])
 }
 
-/** The workflow's Builder tab, if it exists. */
+/** The workflow's legacy blank Builder tab, if one is persisted. */
 export function blankWorkflowBuilderTabId(
   tabs: Record<string, ChatTab>,
   presetQueryId: string,
@@ -125,12 +124,9 @@ export function blankWorkflowBuilderTabId(
 }
 
 /**
- * The workflow's idle Chat tab that an opened conversation should land in:
- * the most recently used interactive tab that isn't streaming and isn't the
- * Builder. A streaming tab is a live conversation and is never taken over;
- * the Builder is never taken over either -- it stays blank. This is the
- * "one Chat tab per workflow" rule -- opening a different past conversation
- * rebinds the idle Chat tab rather than opening a second one beside it.
+ * The workflow's idle persistent Chat that an opened conversation should
+ * land in. A streaming Chat is never rebound. A legacy blank Builder is a
+ * valid first-time Chat and is reused rather than kept as a separate launcher.
  */
 function idleWorkflowBuilderTabId(
   tabs: Record<string, ChatTab>,
@@ -173,12 +169,12 @@ function persistentWorkflowBuilderTabId(
     })[0]?.tabId ?? null
 }
 
-// Keyed by presetQueryId, only for the no-sessionId case below (ensuring a
-// blank builder tab exists). Two independent callers discovering "this
+// Keyed by presetQueryId, only for the no-sessionId case below (ensuring the
+// persistent Chat exists). Two independent callers discovering "this
 // workflow has no interactive tab yet" in the same window (a cold-boot race
 // between the preset-restore retry and the reconnect fallback, seen live:
-// two blank builder tabs, 4 seconds apart) would otherwise each pass the
-// blank-tab check before either has created one. There is no `await`
+// two tabs, 4 seconds apart) would otherwise each pass the
+// existing-tab check before either has created one. There is no `await`
 // between that check and this map registration in the branch below, so the
 // first caller to run always finishes registering before a second caller's
 // synchronous prefix can start -- JS's run-to-completion model, not a lock

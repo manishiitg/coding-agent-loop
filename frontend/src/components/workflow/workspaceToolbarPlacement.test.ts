@@ -27,7 +27,7 @@ describe('workflow Ask AI placement', () => {
   it('keeps report separate, Knowledgebase visible, Costs in Ops, and Playbooks in Setup', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
-    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'schedules', 'execution-logs'])")
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'files', 'browser', 'workshop', 'schedules', 'execution-logs'])")
     expect(toolbar).toContain("new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'evaluation', 'backup', 'publish', 'notify'])")
     expect(toolbar).toContain("playbooks: 'Playbooks'")
     expect(toolbar).toContain('PRIMARY_TOOLBAR_VIEW_IDS.has(view.id)')

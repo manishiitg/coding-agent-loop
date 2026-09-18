@@ -145,8 +145,7 @@ export interface WorkflowCanvasProps {
   toolbarOnly?: boolean  // When true, only render the toolbar (skip React Flow canvas for performance)
   sharedToolbar?: boolean
   chatTabsSlot?: React.ReactNode  // Chat tab strip rendered inline in the toolbar (shared-toolbar mode)
-  workshopOpen?: boolean
-  onToggleWorkshop?: () => void
+  workshopPanel?: React.ReactNode
   paneClassName?: string
   className?: string
   hideToolbar?: boolean

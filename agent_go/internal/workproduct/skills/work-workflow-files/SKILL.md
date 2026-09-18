@@ -35,19 +35,19 @@ cross-user distribution.
 
 Resolve the authorized root before reading:
 
-- For an AgentWorks workflow reference, use the exact `Workflow/<folder>` path
+- For an AgentWorks workflow or another Crew reference, use the exact path
   supplied in attached context. `list_accessible_workflows` returns separate
   `workflows` and `crews` lists; every entry includes its project `name` and
-  display `identity` (`name` and `icon`). Crew entries are discovery-only and
-  cannot be attached as workflow references. Use the tool's `workflows` list
-  to find or confirm a durable reference; never guess a workflow path or scan
-  other workflows.
+  display `identity` (`name` and `icon`). Another Crew can be attached only
+  when it belongs to the same signed-in account. Use the exact returned path;
+  never guess a project path or scan unattached projects.
 - For a host folder, call `list_work_folders` and use its
   `$WORK_FOLDER_<ALIAS>` variable. Do not inspect the parent directory.
 - Both kinds are read-only unless a host-folder grant explicitly says
   `read_write`. Never edit or execute a referenced workflow.
 
-A `#` workflow selection applies only to that message. For durable access, use
+A `#` workflow selection applies only to that message. For durable access to a
+workflow or another same-account Crew, use
 `list_accessible_workflows`, disambiguate by its exact returned path, and call
 `attach_workflow_reference` only when the user asks to keep it attached. Use
 the exact saved path for `detach_workflow_reference`. Durable references live

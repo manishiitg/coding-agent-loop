@@ -57,6 +57,35 @@ func TestWorkflowContextAccess(t *testing.T) {
 	}
 }
 
+func TestCrewContextAccessIsSameAccountAndReadOnly(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","products":[]},{"id":"bob","username":"bob","products":[]}]}`)
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		"_users/alice/Chats/Work/projects/research/product.json": `{"schema_version":1,"product":"work","id":"research","title":"Research"}`,
+		"_users/bob/Chats/Work/projects/private/product.json":    `{"schema_version":1,"product":"work","id":"private","title":"Private"}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice", Username: "alice"})
+	logical, roots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{"Chats/Work/projects/research", "Chats/Work/projects/research/"})
+	if err != nil || !reflect.DeepEqual(logical, []string{"Chats/Work/projects/research"}) || !reflect.DeepEqual(roots, []string{"_users/alice/Chats/Work/projects/research"}) {
+		t.Fatalf("Crew context logical=%v roots=%v err=%v", logical, roots, err)
+	}
+	writes, reads := collectSplitFolderGuardFolders("", roots)
+	if len(writes) != 0 || !reflect.DeepEqual(reads, roots) {
+		t.Fatalf("Crew context must grant only read access: writes=%v reads=%v", writes, reads)
+	}
+	if got, err := authorizeWorkflowContextPaths(ctx, []string{"Chats/Work/projects/research"}); err == nil || got != nil {
+		t.Fatalf("workflow-only authorizer accepted Crew path: %v %v", got, err)
+	}
+	for _, path := range []string{"Chats/Work/projects/private", "_users/bob/Chats/Work/projects/private", "Chats/Work/projects/research/code"} {
+		if got, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{path}); err == nil || got != nil || readRoots != nil {
+			t.Fatalf("unauthorized Crew reference accepted: %q => %v %v %v", path, got, readRoots, err)
+		}
+	}
+}
+
 func TestWorkflowContextAccessFailsClosedWhenWorkspaceUnavailable(t *testing.T) {
 	host := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)

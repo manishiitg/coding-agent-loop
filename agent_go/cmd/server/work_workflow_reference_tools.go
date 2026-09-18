@@ -127,7 +127,7 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read and Crew projects owned by the signed-in user. Each result includes its project name and display identity (identity name and icon). Use a workflow's exact workspace_path before referring to, suggesting, or attaching it; Crew results are informational and cannot be attached as workflow references. An empty query lists everything accessible.", map[string]interface{}{
+	return register("list_accessible_workflows", "Search AgentWorks workflows the current user may read and Crew projects owned by the signed-in user. Each result includes its project name and display identity (identity name and icon). In Crew, pass an exact returned workspace_path to attach_workflow_reference for durable read-only access. An empty query lists everything accessible.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"query": map[string]interface{}{"type": "string", "description": "Optional case-insensitive workflow/Crew project name, identity, id, icon, or path search."},
@@ -180,6 +180,12 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 		if err != nil {
 			return "", err
 		}
+		if attachedPaths != nil {
+			for _, crew := range crews {
+				path, _ := crew["workspace_path"].(string)
+				crew["attached"] = attachedSet[path]
+			}
+		}
 		encoded, err := json.MarshalIndent(map[string]interface{}{"workflows": items, "crews": crews}, "", "  ")
 		return string(encoded), err
 	})
@@ -208,16 +214,20 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		return context.WithValue(ctx, UserContextKey, &copy)
 	}
 
-	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow to this Work project as durable read-only context. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
+	if err := register("attach_workflow_reference", "Attach one accessible AgentWorks workflow or same-account Crew project to this Crew as durable read-only context. Pass only an exact workspace_path returned by list_accessible_workflows, and call only after the user explicitly asks to attach it.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
-			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact Workflow/<folder> path returned by list_accessible_workflows."},
+			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact workflow or Crew workspace_path returned by list_accessible_workflows."},
 		},
 		"required": []string{"workspace_path"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		ctx = withClaims(ctx)
 		path, _ := args["workspace_path"].(string)
-		authorized, err := authorizeWorkflowContextPaths(ctx, []string{path})
+		canonicalCurrent := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+		if strings.TrimSuffix(strings.TrimSpace(path), "/") == canonicalCurrent {
+			return "", fmt.Errorf("a Crew cannot attach itself as reference context")
+		}
+		authorized, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(ctx, []string{path})
 		if err != nil || len(authorized) != 1 {
 			if err != nil {
 				return "", err
@@ -230,18 +240,18 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
-		updateWorkSessionWorkflowGuard(sessionID, paths)
+		updateWorkSessionWorkflowGuard(sessionID, readRoots)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
 		encoded, err := json.MarshalIndent(map[string]interface{}{
 			"workflow_context_paths": paths,
-			"note":                   "The workflow is saved as read-only project context and file access is active now.",
+			"note":                   "The project is saved as read-only project context and file access is active now.",
 		}, "", "  ")
 		return string(encoded), err
 	}); err != nil {
 		return err
 	}
 
-	return register("detach_workflow_reference", "Detach one durable AgentWorks workflow reference from this Work project. Pass the exact saved workspace_path.", map[string]interface{}{
+	return register("detach_workflow_reference", "Detach one durable AgentWorks workflow or Crew reference from this Crew. Pass the exact saved workspace_path.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"workspace_path": map[string]interface{}{"type": "string"},
@@ -251,6 +261,10 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		ctx = withClaims(ctx)
 		path, _ := args["workspace_path"].(string)
 		path = strings.TrimSuffix(strings.TrimSpace(path), "/")
+		removedReadRoot, validReference := contextReferenceReadRoot(userID, path)
+		if !validReference {
+			return "", fmt.Errorf("project reference is unavailable")
+		}
 		paths, err := updateWorkWorkflowReferences(ctx, workspacePath, func(existing []string) ([]string, error) {
 			kept := make([]string, 0, len(existing))
 			found := false
@@ -269,9 +283,9 @@ func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definition
 		if err != nil {
 			return "", err
 		}
-		updateWorkSessionWorkflowGuard(sessionID, paths, path)
+		updateWorkSessionWorkflowGuard(sessionID, nil, removedReadRoot)
 		api.emitAgentProfileEvent(sessionID, map[string]interface{}{"type": "work_workflow_references_updated", "workflow_context_paths": paths})
-		return "Workflow reference detached. Access is revoked now.", nil
+		return "Project reference detached. Access is revoked now.", nil
 	})
 }
 

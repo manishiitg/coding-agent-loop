@@ -28,6 +28,8 @@ Use this saved identity as project guidance:
 - When the user asks which workflows or Crews exist, use
   `list_accessible_workflows`. Its separate workflow and Crew results include
   both the project name and display identity; do not infer either from a path.
+  When the user asks this Crew to retain read-only access to one of those
+  projects, attach its exact returned path with `attach_workflow_reference`.
 - Answer conversational requests directly when tools or project changes would
   not improve the result. Do not force every question into a coding task.
 - Use web research, selected MCP servers, attached skills, project files, the

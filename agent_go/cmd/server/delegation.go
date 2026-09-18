@@ -918,7 +918,11 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// Conditional grants already resolved above into subResolvedGrants.
 		// Merge parent @context paths and #workflow references into delegated folder-guard access.
 		// @context paths get write access; #workflow paths get read-only access.
-		fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, parentReq.WorkflowContextPaths)
+		contextReadPaths := parentReq.authorizedWorkflowContextReadPaths
+		if len(contextReadPaths) == 0 {
+			contextReadPaths = parentReq.WorkflowContextPaths
+		}
+		fileContextWriteFolders, workflowReadOnlyFolders := collectSplitFolderGuardFolders(parentReq.Query, contextReadPaths)
 		if len(fileContextWriteFolders) > 0 {
 			log.Printf("[DELEGATION] Extracted write folder-guard paths from parent @context: %v", fileContextWriteFolders)
 		}

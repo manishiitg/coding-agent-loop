@@ -792,6 +792,10 @@ type QueryRequest struct {
 	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
 	// Workspace paths of workflows to inject context for (via # selector in chat)
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	// authorizedWorkflowContextReadPaths are server-resolved folder-guard roots.
+	// They differ from WorkflowContextPaths for same-account Crew references,
+	// whose durable logical path resolves below _users/<id>/ at authorization.
+	authorizedWorkflowContextReadPaths []string `json:"-"`
 	// Conversation JSON selected from /resume or previous chats. Used to seed
 	// native coding-agent resume state from its saved runtime metadata.
 	RestoredConversationPath string `json:"restored_conversation_path,omitempty"`
@@ -3418,12 +3422,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// with one-message # references before the common authorization boundary so
 	// both forms receive identical access checks and folder guards.
 	req.WorkflowContextPaths = mergeDurableWorkflowContextPaths(r.Context(), req.SelectedFolder, req.WorkflowContextPaths)
-	contextPaths, contextErr := authorizeWorkflowContextPaths(r.Context(), req.WorkflowContextPaths)
+	contextPaths, contextReadPaths, contextErr := authorizeWorkflowContextPathsWithReadRoots(r.Context(), req.WorkflowContextPaths)
 	if contextErr != nil {
 		http.Error(w, contextErr.Error(), http.StatusForbidden)
 		return
 	}
 	req.WorkflowContextPaths = contextPaths
+	req.authorizedWorkflowContextReadPaths = contextReadPaths
 
 	// Handle alias: Map Message to Query if Query is empty
 	if req.Query == "" && req.Message != "" {
@@ -5223,7 +5228,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		// Extract #workflow read-only folders early — needed both inside isChatMode block
 		// (for folder guard setup) and in the workflow_phase block (for shell isolator).
-		_, workflowReadOnlyFolders := collectSplitFolderGuardFolders(req.Query, req.WorkflowContextPaths)
+		_, workflowReadOnlyFolders := collectSplitFolderGuardFolders(req.Query, req.authorizedWorkflowContextReadPaths)
 
 		if isChatMode && llmAgent.GetUnderlyingAgent() != nil {
 			// Handle browser access: when enabled, add agent-browser skill
@@ -5971,7 +5976,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				promptCtx.FeatureExtensions = agentprofiles.FeaturePromptExtensions(resolvedProfile.Definition)
 			}
 			if len(req.WorkflowContextPaths) > 0 {
-				promptCtx.WorkflowContext = buildWorkflowContextPrompt(req.WorkflowContextPaths, getWorkspaceAPIURL())
+				promptPaths := req.authorizedWorkflowContextReadPaths
+				if len(promptPaths) == 0 {
+					promptPaths = req.WorkflowContextPaths
+				}
+				promptCtx.WorkflowContext = buildWorkflowContextPrompt(promptPaths, getWorkspaceAPIURL())
 			}
 			if resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
 				promptCtx.WorkFolders = workproduct.BuildAttachedFoldersPrompt(workFolderGrantsForClaims(r.Context(), GetUserFromContext(r.Context())))

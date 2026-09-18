@@ -23,10 +23,12 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	})
 	productPath := "_users/reader/Chats/Work/projects/banking/product.json"
 	runtimePath := "_users/reader/Chats/Work/projects/banking/workflow.json"
+	researchProductPath := "_users/reader/Chats/Work/projects/research/product.json"
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		manifestPath("Workflow/hdfc-personal"): string(shared),
 		manifestPath("Workflow/private-bank"):  string(private),
 		productPath:                            `{"schema_version":1,"product":"work","id":"banking","title":"Banking","custom":"keep","capabilities":{"selected_skills":["work-dashboard"]}}`,
+		researchProductPath:                    `{"schema_version":1,"product":"work","id":"research","title":"Research","identity":{"name":"Research Crew","icon":"🔎"}}`,
 	}}
 	host := httptest.NewServer(workspace)
 	defer host.Close()
@@ -56,12 +58,23 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	if _, err := registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/private-bank"}); err == nil {
 		t.Fatal("unauthorized workflow was attached")
 	}
+	if _, err := registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Chats/Work/projects/banking"}); err == nil {
+		t.Fatal("Crew attached itself")
+	}
 	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/hdfc-personal"})
 	if err != nil || !strings.Contains(out, "read-only project context") {
 		t.Fatalf("attach out=%s err=%v", out, err)
 	}
 	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || !containsWorkReferencePath(cfg.ReadPaths, "Workflow/hdfc-personal") || containsWorkReferencePath(cfg.WritePaths, "Workflow/hdfc-personal") {
 		t.Fatalf("attached workflow was not granted immediately as read-only: %+v", cfg)
+	}
+	out, err = registrar.tools["attach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Chats/Work/projects/research"})
+	if err != nil || !strings.Contains(out, "read-only project context") {
+		t.Fatalf("attach Crew out=%s err=%v", out, err)
+	}
+	crewReadRoot := "_users/reader/Chats/Work/projects/research"
+	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || !containsWorkReferencePath(cfg.ReadPaths, crewReadRoot) || containsWorkReferencePath(cfg.WritePaths, crewReadRoot) {
+		t.Fatalf("attached Crew was not granted immediately as read-only: %+v", cfg)
 	}
 	workspace.mu.Lock()
 	productSaved := workspace.files[productPath]
@@ -71,12 +84,27 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	if json.Unmarshal([]byte(productSaved), &productMetadata) != nil || productMetadata["custom"] != "keep" || strings.Contains(productSaved, `Workflow/hdfc-personal`) {
 		t.Fatalf("product metadata was changed: %s", productSaved)
 	}
-	if !strings.Contains(saved, `"Workflow/hdfc-personal"`) || !strings.Contains(saved, `"selected_skills"`) {
+	if !strings.Contains(saved, `"Workflow/hdfc-personal"`) || !strings.Contains(saved, `"Chats/Work/projects/research"`) || !strings.Contains(saved, `"selected_skills"`) {
 		t.Fatalf("workflow runtime manifest was not migrated and updated: %s", saved)
 	}
 	out, err = registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "personal"})
 	if err != nil || !strings.Contains(out, `"attached": true`) {
 		t.Fatalf("attached state out=%s err=%v", out, err)
+	}
+	out, err = registrar.tools["list_accessible_workflows"].exec(context.Background(), map[string]interface{}{"query": "research"})
+	if err != nil || !strings.Contains(out, `"attached": true`) || !strings.Contains(out, `"name": "Research"`) {
+		t.Fatalf("attached Crew state out=%s err=%v", out, err)
+	}
+	// A deleted or otherwise unavailable reference must still be detachable so
+	// a stale durable grant cannot trap the project in a permanently failing turn.
+	workspace.mu.Lock()
+	delete(workspace.files, researchProductPath)
+	workspace.mu.Unlock()
+	if _, err := registrar.tools["detach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Chats/Work/projects/research"}); err != nil {
+		t.Fatalf("detach Crew: %v", err)
+	}
+	if cfg := common.GetSessionShellConfig("session-1"); cfg == nil || containsWorkReferencePath(cfg.ReadPaths, crewReadRoot) {
+		t.Fatalf("detached Crew remained in active read guard: %+v", cfg)
 	}
 	if _, err := registrar.tools["detach_workflow_reference"].exec(context.Background(), map[string]interface{}{"workspace_path": "Workflow/hdfc-personal"}); err != nil {
 		t.Fatalf("detach: %v", err)

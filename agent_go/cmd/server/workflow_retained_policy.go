@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
@@ -16,7 +17,10 @@ type workflowPolicyRefreshKey struct{}
 // Do not publish the new key here: the reconnect path still needs the old key
 // to rebuild the definition and preserve the conversation with a handoff.
 func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, session string, req QueryRequest) (bool, error) {
-	if req.AgentProfileID != "" || !strings.HasPrefix(req.SelectedFolder, "Workflow/") {
+	if req.AgentProfileID != "" {
+		return api.agentProfileRetainedPolicyCompatible(ctx, session, req)
+	}
+	if !strings.HasPrefix(req.SelectedFolder, "Workflow/") {
 		return true, nil
 	}
 	validated, err := api.revalidateExecutionPrincipal(ctx, req)
@@ -129,4 +133,25 @@ func (api *StreamingAPI) prepareWorkflowRetainedDelivery(ctx context.Context, se
 		api.interruptWorkflowPolicySession(session, req.Provider)
 	}
 	return compatible, err
+}
+
+// Live-input requests carry no fresh product configuration. Resolve it from
+// current trusted project state before allowing the native CLI to receive input.
+func (api *StreamingAPI) agentProfileRetainedPolicyCompatible(ctx context.Context, session string, req QueryRequest) (bool, error) {
+	user := GetUserIDFromContext(ctx)
+	profile, err := api.resolveAgentProfileForQuery(ctx, &req, user, session)
+	if err != nil {
+		return false, err
+	}
+	if profile == nil {
+		return false, fmt.Errorf("product profile is unavailable")
+	}
+	names := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
+	attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, names)
+	key := agentProfileSessionKey(profile, attached)
+	runtime, found, err := ReadChatHistoryRuntimeForSession(user, session, req.SelectedFolder)
+	if err != nil {
+		return false, err
+	}
+	return found && runtime != nil && runtime.AgentProfileKey == key, nil
 }

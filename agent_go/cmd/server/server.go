@@ -3612,6 +3612,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
 	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
+	if !retainedProfileCompatible && !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) {
+		api.interruptWorkflowPolicySession(sessionID, req.Provider)
+	}
 	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible
 	retainedWorkflowCompatible, policyErr := api.prepareWorkflowRetainedDelivery(r.Context(), sessionID, req, retainedDeliveryEligible)
 	if policyErr != nil {
@@ -9120,7 +9123,7 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 // built by this process and can still be steered immediately; an idle retained
 // session must carry the same persisted profile fingerprint as this request.
 func (api *StreamingAPI) agentProfileAllowsRetainedLiveInput(userID, sessionID, workspacePath string, hasProfile bool) bool {
-	if api == nil || !hasProfile || api.hasActiveTurnCancel(sessionID) {
+	if api == nil || !hasProfile {
 		return true
 	}
 	api.conversationMux.RLock()

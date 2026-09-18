@@ -2753,6 +2753,7 @@ func TestAgentProfileAllowsRetainedLiveInputRequiresMatchingPersistedKey(t *test
 	}
 
 	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"product-chat": "profile-sha256:current"}}
+	api.agentCancelFuncs = map[string]context.CancelFunc{"product-chat": func() {}}
 	writeRuntime("profile-sha256:old")
 	if api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
 		t.Fatal("stale product runtime must not accept retained live input")

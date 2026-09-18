@@ -621,3 +621,59 @@ func TestCleanAgentProfileWorkspaceRejectsCrossUserPaths(t *testing.T) {
 		})
 	}
 }
+
+func TestAgentProfileSessionKeyTracksMCPSelection(t *testing.T) {
+	profile := &resolvedAgentProfile{Definition: agentprofiles.Profile{ID: "work", Version: 1}}
+	before := agentProfileSessionKey(profile, nil)
+	profile.SelectedServers = []string{"Notion"}
+	selected := agentProfileSessionKey(profile, nil)
+	if before == selected {
+		t.Fatal("adding Notion retained stale native tool scope")
+	}
+	profile.SelectedServers = []string{"Linear", "Notion"}
+	ordered := agentProfileSessionKey(profile, nil)
+	profile.SelectedServers = []string{"Notion", "Linear"}
+	if agentProfileSessionKey(profile, nil) != ordered {
+		t.Fatal("selection order changed native scope")
+	}
+	profile.SelectedServers = nil
+	if agentProfileSessionKey(profile, nil) != before {
+		t.Fatal("removing all servers retained native tool scope")
+	}
+}
+
+func TestResolveAgentProfileUsesSavedMCPScopeBeforeRetainedDelivery(t *testing.T) {
+	const folder = "Chats/Video Studio/projects/scope"
+	workspace := &mockWorkspaceAPI{files: map[string]string{folder + "/product.json": `{"capabilities":{"selected_servers":["Notion"]}}`}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+	registry := agentprofiles.NewRegistry()
+	if err := registry.RegisterProfile(agentprofiles.Profile{ID: "video-studio", Name: "Video Studio", Version: 1, BuiltIn: true, SystemPromptTemplate: "{{.ProjectTitle}}", Features: []agentprofiles.FeatureBinding{{ID: "mcp"}}}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{agentProfiles: registry}
+	request := func() QueryRequest {
+		return QueryRequest{AgentMode: "multi-agent", AgentProfileID: "video-studio", SelectedFolder: folder, EnabledServers: []string{"Linear"}, AgentProfileContext: agentprofiles.PromptContext{ProjectTitle: "Scope"}}
+	}
+	req := request()
+	profile, err := api.resolveAgentProfileForQuery(context.Background(), &req, "user-1", "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(req.EnabledServers, ",") != "Notion" {
+		t.Fatalf("stale request won over saved selection: %v", req.EnabledServers)
+	}
+	previous := agentProfileSessionKey(profile, nil)
+	workspace.mu.Lock()
+	workspace.files[folder+"/product.json"] = `{"capabilities":{"selected_servers":[]}}`
+	workspace.mu.Unlock()
+	req = request()
+	profile, err = api.resolveAgentProfileForQuery(context.Background(), &req, "user-1", "chat")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(req.EnabledServers) != 0 || previous == agentProfileSessionKey(profile, nil) {
+		t.Fatal("deselection retained previous scope or native fingerprint")
+	}
+}

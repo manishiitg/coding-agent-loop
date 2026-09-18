@@ -22,8 +22,9 @@ import (
 )
 
 type resolvedAgentProfile struct {
-	Definition agentprofiles.Profile
-	Prompt     string
+	Definition      agentprofiles.Profile
+	SelectedServers []string
+	Prompt          string
 	// APIKeys carries the project-scoped credential this resolver loaded from the
 	// encrypted per-user/workspace store. It is returned on the resolver's own
 	// result rather than handed back through req.LLMConfig so the query path can
@@ -63,10 +64,13 @@ func agentProfileSessionKey(profile *resolvedAgentProfile, attachedSkills []*llm
 		})
 	}
 	sort.Slice(fingerprints, func(i, j int) bool { return fingerprints[i].Name < fingerprints[j].Name })
+	servers := append([]string(nil), profile.SelectedServers...)
+	sort.Strings(servers)
 	payload, err := json.Marshal(struct {
-		Definition agentprofiles.Profile `json:"definition"`
-		Skills     []skillFingerprint    `json:"skills,omitempty"`
-	}{Definition: profile.Definition, Skills: fingerprints})
+		Definition      agentprofiles.Profile `json:"definition"`
+		Skills          []skillFingerprint    `json:"skills,omitempty"`
+		SelectedServers []string              `json:"selected_servers,omitempty"`
+	}{Definition: profile.Definition, Skills: fingerprints, SelectedServers: servers})
 	if err != nil {
 		return fmt.Sprintf("%s@%d", profile.Definition.ID, profile.Definition.Version)
 	}
@@ -460,7 +464,19 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 	if strings.TrimSpace(req.SessionTitle) == "" {
 		req.SessionTitle = promptContext.ProjectTitle
 	}
-	return &resolvedAgentProfile{Definition: profile, Prompt: rendered, APIKeys: resolvedKeys}, nil
+	selectedServers := append([]string(nil), req.EnabledServers...)
+	if !isGlobalScope && agentprofiles.HasFeature(profile, "mcp") {
+		selected, initialized, err := productSelectedServers(ctx, profile.ID, workspacePath)
+		if err != nil {
+			return nil, fmt.Errorf("load product MCP selection: %w", err)
+		}
+		if initialized {
+			selectedServers = selected
+			req.EnabledServers = append([]string(nil), selected...)
+			req.Servers = nil
+		}
+	}
+	return &resolvedAgentProfile{Definition: profile, Prompt: rendered, APIKeys: resolvedKeys, SelectedServers: selectedServers}, nil
 }
 
 func profileRuntimeEventType(event any) string {

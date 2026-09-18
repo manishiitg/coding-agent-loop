@@ -6,17 +6,38 @@ RTS Video Studio box the same day. Kept as the reference for the model.
 `docs/bugs/pulse_platform/security-sandbox/plat-262.md` (read-only enforcement, reused as is),
 `deploy/aws-ec2/server/auth-gateway.go` (Video Studio gateway).
 
-## What this changes, in one paragraph
+## Current behavior
 
-Today authentication knows several kinds of identity (an env-var user list,
-OAuth, a credential-free single user, and a per-product gateway identity that
-makes every Video Studio visitor the same person) but there is no user
-directory, no per-workflow ownership, and read-only is a site-wide tier set
-through env vars. This design adds one user directory as a JSON file, gives
-every workflow an owner and read-only grants, lets an admin enable products
-per user, and makes Video Studio users log in as themselves. The runtime's
-existing read-only enforcement is kept exactly as it is and simply keyed on
-"is this user an owner of this workflow" instead of a global tier.
+Reviewed against the implementation on 2026-09-18. Account permissions live in
+`config/users.json`; workflow sharing lives in each workflow's `workflow.json`.
+Platform administration, workflow ownership, product access, and conversational
+mode are separate concepts. Making someone a workflow owner does not make them
+a platform administrator.
+
+## Roles at a glance
+
+The admin UI offers four account roles. These are combinations of permission
+flags, not a `role` claim stored in a JWT.
+
+| Account role | `admin` | `can_create` | `can_edit` | Meaning |
+|---|---|---|---|---|
+| Platform administrator (Admin in the UI) | true | true | true | Manages users, product access and shared integrations; owner access to all workflows |
+| Member | false | true | true | Creates workflows; edits workflows they own |
+| Contributor | false | false | true | Edits assigned workflows they own; cannot create or duplicate workflows |
+| Read-only | false | false | false | Views, chats and runs workflows shared with them; cannot author workflows |
+
+Workflow sharing has only **Owner**, **Reader**, and **No access**. Owner allows
+edit, run, share and delete; Reader allows chat, run, trigger, stop and inspect.
+There is no separate workflow editor role. An account with `can_edit=false`
+remains a reader even if its ID appears in the owners list. Platform admins
+have owner access regardless of the workflow sharing lists. Product access
+and any additional workflow allowlist are checked separately.
+
+Read-only sessions can submit a requested improvement through
+`submit_workflow_suggestion`. It creates a durable owner-review item without
+changing the workflow. Only an interactive workflow owner can answer, dismiss
+or consume that suggestion; accepting it does not automatically implement it.
+See [PLAT-330](../bugs/pulse_platform/security-sandbox/plat-330.md).
 
 ## The model
 
@@ -36,7 +57,7 @@ Two places a permission can live, nothing else.
   user may open. A member with the list absent gets all products; a
   read-only user with it absent gets none.
 
-**On the workflow** (`Workflow/<id>/manifest.json`, `access` block):
+**On the workflow** (`Workflow/<folder>/workflow.json`, `access` block):
 - `owners: [user_id, ...]`. The creator is the first owner. Owners edit, run,
   share, transfer, delete. There is deliberately no editor tier: to let a
   colleague edit, add them as an owner.
@@ -45,9 +66,19 @@ Two places a permission can live, nothing else.
   shell writes. Added either by an owner (sharing) or by an admin (assigning
   a specific workflow to a user).
 
-Workshop vs run mode is unrelated to permissions and is left untouched.
+Builder and Run are conversational modes, not account roles. In the
+workflow-builder chat, current effective workflow access determines the mode:
+writable owners use Builder (stored as `workshop`), readers use Run (stored as
+`run`). A restored request's old mode cannot override current access. Direct
+headless workflow execution remains Run. Native-session admission is refreshed
+when its existing ChatPolicyKey changes, while preserving the durable chat ID
+and conversation history. See [PLAT-262](../bugs/pulse_platform/security-sandbox/plat-262.md).
 
-Products have no roles of their own. Video Studio projects are per user
+Products have no account roles of their own. Crew (`work` in the product
+allowlist) projects are scoped to the authenticated user's private project
+workspace; this is not a separate platform-admin role. Their selected MCP
+servers are stored in the project's `workflow.json` under
+`capabilities.selected_servers`. Video Studio projects are per user
 (under `_users/<id>/Chats/Video Studio/projects`) and not shareable in this
 phase; a project manifest can carry the same `access` block later if wanted.
 
@@ -86,12 +117,25 @@ Workflow manifest gains:
 "access": { "owners": ["3f9a..."], "readers": ["a1b2..."] }
 ```
 
-Migration: a manifest without `access` gets `owners: [created_by]` on first
-read, or `[<first admin>]` when `created_by` is empty. Existing
-`config/workflow-user-permissions.json` and `config/user-product-access.json`
-are read once into the new shapes and then ignored. `AUTH_USERS` keeps
-working as a bootstrap: its users are imported into `users.json` on first
-start (password hashed at import) and the env var can then be dropped.
+Compatibility: older workflow manifests with `created_by` use that creator as
+the owner. A manifest with neither an access block nor a creator retains the
+legacy account-tier behavior. Legacy tier/product files still load for
+identities not found in the user directory. `AUTH_USERS` remains a bootstrap:
+users are imported into `users.json`, with passwords hashed.
+
+## Shared integrations versus workflow/project selection
+
+A shared MCP connection is server-wide. Removing it with `remove_mcp_server`
+requires platform-administrator authorization and affects workflows and Crew
+projects that use it. Workflow ownership alone does not authorize that action.
+
+A workflow owner can detach a server from their workflow using
+`update_workflow_config` with `remove_servers`. A Crew project user can select
+or deselect an already connected server through
+`update_project_mcp_server_selection`. Deselecting does not remove the shared
+connection. Newly selected Crew MCP tools take effect on the next user message.
+The UI and agent should explicitly distinguish removal **from this
+workflow/project** from removal **for everyone on the server**.
 
 ## Login: both
 
@@ -124,7 +168,7 @@ first admin's id in one step during the switch-over.
 | Today | Becomes |
 |---|---|
 | `workflowAccessForIdentity` (env tiers) | `workflowAccessFor(userID, workflowID)`: owner if admin or in `owners`; read if in `readers`; none otherwise |
-| `currentUserIsReadOnly` in the query path (`server.go:3192`) | same flag, from the per-workflow answer |
+| `currentUserIsReadOnly` in the query path (`server.go`) | same flag, from the per-workflow answer |
 | `requireWorkflowWriteAccess` route wrapper | owner-of-this-workflow check through `can_edit`; creation and duplication routes use the separate `can_create` gate |
 | `requireWorkflowOwnerAccess` (4 admin routes) | `requireAdmin` |
 | `filterWorkflowManifestsForUser` / `userAllowedWorkflowID` | list = owned + readers + all if admin; open = same |

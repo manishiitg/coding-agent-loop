@@ -1072,3 +1072,24 @@ Confida follow-up `58281d117` is now deployed in
 `confida-d3624e74-20260918153600`. Service health and targeted regression checks
 pass. Fresh user retry remains unverified; this deployment does not close the
 broader PLAT-324 acceptance matrix.
+
+### Crew project MCP selection must refresh retained native tools (2026-09-18)
+
+Confida evidence: Shubham's Crew project selected Notion at server time 15:47:35.
+The successful tool result promised activation on the next user message, but
+messages at 15:48:45 and 15:50:33 used retained Muse live input without rebuilding
+its original empty MCP scope. Platform discovery's 45 tools were not the tools
+admitted to that native turn.
+
+The existing AgentProfileKey now includes the project's selected MCP servers.
+Resolve selection from the trusted runtime manifest during normal product
+setup and before explicit live input. A mismatch closes the old native process
+and routes the same message through normal setup; native resume rejects the old
+key while application conversation history stays intact. Running foreground
+turns no longer bypass product fingerprint checks. Both selecting and
+deselecting require this refresh; ordering alone does not change the key.
+
+Regression coverage checks MCP selection fingerprints, unchanged selection
+ordering and rejection of stale persisted keys while a foreground turn exists.
+Platform connection status and tool discovery counts do not imply tools were
+loaded into the current project turn. Live acceptance is pending deployment.

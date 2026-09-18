@@ -44,31 +44,32 @@ type BotEventFilter struct {
 	appBaseURL string // public app URL for shareable links (e.g., "https://app.example.com")
 	userID     string // workspace user ID for shareable links (e.g., "default")
 
-	progressMu          sync.Mutex // serialize progress sends with terminal cleanup
-	progressMessageID   string
-	mu                  sync.Mutex
-	delegationNames     map[string]string // correlationID -> instruction (sub-agent name)
-	startedAgents       map[string]bool   // correlationID/name keys already announced as started
-	endedAgents         map[string]bool   // correlationID/name keys already announced as ended
-	pendingDelegations  int
-	awaitingInput       bool   // set on any blocking event, cleared externally
-	completionReceived  bool   // set when unified_completion, agent_end, or conversation_end arrives
-	sessionFailed       bool   // authoritative main-level error completion
-	sessionDone         bool   // idempotency guard — ensures onSessionDone fires at most once
-	baseHierarchy       int    // the minimum hierarchy level seen — treated as "main" level
-	baseHierarchySet    bool   // true once baseHierarchy has been calibrated
-	lastActivity        string // human-friendly description of current activity
-	toolCallCount       int    // total tool calls seen (for progress feel)
-	mainTextSent        bool   // true once we've sent main-level text via llm_generation_end
-	lastErrorText       string // prevents duplicate error/completion notifications
-	lastMainText        string // last main-level text sent to the bot thread this turn
-	streamingMessageID  string // channel message ID for the in-place streamed reply
-	streamingText       string // accumulated clean assistant text for the current streamed reply
-	streamingSentText   string // last accumulated text actually visible in Slack
-	lastStreamingUpdate time.Time
-	sendFullDetails     bool // opt-in: forward workflow runtime chatter to bot channel
-	onBlockingEvent     BlockingEventCallback
-	onSessionDone       SessionDoneCallback
+	progressMu           sync.Mutex // serialize progress sends with terminal cleanup
+	progressMessageID    string
+	mu                   sync.Mutex
+	delegationNames      map[string]string // correlationID -> instruction (sub-agent name)
+	startedAgents        map[string]bool   // correlationID/name keys already announced as started
+	endedAgents          map[string]bool   // correlationID/name keys already announced as ended
+	pendingDelegations   int
+	awaitingInput        bool   // set on any blocking event, cleared externally
+	completionReceived   bool   // set when unified_completion, agent_end, or conversation_end arrives
+	sessionFailed        bool   // authoritative main-level error completion
+	sessionDone          bool   // idempotency guard — ensures onSessionDone fires at most once
+	baseHierarchy        int    // the minimum hierarchy level seen — treated as "main" level
+	baseHierarchySet     bool   // true once baseHierarchy has been calibrated
+	lastActivity         string // human-friendly description of current activity
+	toolCallCount        int    // total tool calls seen (for progress feel)
+	mainTextSent         bool   // true once we've sent main-level text via llm_generation_end
+	lastErrorText        string // prevents duplicate error/completion notifications
+	lastMainText         string // last main-level text sent to the bot thread this turn
+	streamingReplyPrefix string // cumulative text already posted before a follow-up
+	streamingMessageID   string // channel message ID for the in-place streamed reply
+	streamingText        string // accumulated clean assistant text for the current streamed reply
+	streamingSentText    string // last accumulated text actually visible in Slack
+	lastStreamingUpdate  time.Time
+	sendFullDetails      bool // opt-in: forward workflow runtime chatter to bot channel
+	onBlockingEvent      BlockingEventCallback
+	onSessionDone        SessionDoneCallback
 }
 
 // NewBotEventFilter creates a new event filter
@@ -122,12 +123,30 @@ func (f *BotEventFilter) ResetForNewTurn() {
 	f.mainTextSent = false
 	f.lastMainText = ""
 	f.lastErrorText = ""
+	f.streamingReplyPrefix = ""
 	f.streamingMessageID = ""
 	f.streamingText = ""
 	f.streamingSentText = ""
 	f.lastStreamingUpdate = time.Time{}
 	f.mu.Unlock()
 	log.Printf("[BOT_FILTER] Reset for new turn")
+}
+
+// beginMessageReply changes the visible reply boundary without resetting the
+// agent turn: a message sent while running is still steering that same turn.
+// The accepted user event serializes this with streaming events, so subsequent
+// output appears below the new user message instead of editing an older reply.
+func (f *BotEventFilter) beginMessageReply() {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.streamingMessageID == "" {
+		return
+	}
+	f.streamingReplyPrefix += f.streamingText
+	f.streamingMessageID = ""
+	f.streamingText = ""
+	f.streamingSentText = ""
+	f.lastStreamingUpdate = time.Time{}
 }
 
 // SessionFailed reports whether the current turn ended with a terminal error.
@@ -280,6 +299,10 @@ func (f *BotEventFilter) isMainLevel(event BotEventData) bool {
 
 // processEvent handles a single event. Returns true if a message was sent to the thread.
 func (f *BotEventFilter) processEvent(ctx context.Context, event BotEventData) bool {
+	if event.Type == "user_message" {
+		f.beginMessageReply()
+		return false
+	}
 	if event.Data == nil {
 		return false
 	}
@@ -1259,6 +1282,9 @@ func (f *BotEventFilter) sendStreamingChunk(ctx context.Context, event BotEventD
 	}
 
 	f.mu.Lock()
+	if !chunk.IsDelta && f.streamingReplyPrefix != "" {
+		content = strings.TrimPrefix(content, f.streamingReplyPrefix)
+	}
 	nextText := appendBotStreamingText(f.streamingText, content, chunk.IsDelta)
 	if strings.TrimSpace(nextText) == "" || sameBotMainText(nextText, f.streamingText) {
 		f.mu.Unlock()
@@ -1312,7 +1338,7 @@ func (f *BotEventFilter) flushStreamingMessage(ctx context.Context, finalText st
 		f.mu.Unlock()
 		return false
 	}
-	text := strings.TrimSpace(finalText)
+	text := strings.TrimSpace(strings.TrimPrefix(finalText, f.streamingReplyPrefix))
 	if text == "" {
 		text = strings.TrimSpace(f.streamingText)
 	}
@@ -1391,6 +1417,10 @@ func appendBotStreamingText(currentText, incoming string, isDelta bool) string {
 	}
 	if isDelta {
 		return currentText + botDeltaSeparator(currentText, incoming) + incoming
+	}
+	// Some providers publish cumulative snapshots instead of separate blocks.
+	if strings.HasPrefix(incoming, currentText) {
+		return incoming
 	}
 	if strings.HasSuffix(currentText, incoming) {
 		return currentText

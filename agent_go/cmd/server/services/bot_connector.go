@@ -518,12 +518,13 @@ type activeBotSession struct {
 	Metadata          *chathistory.BotMetadata // platform/user info for the conversation
 	cancel            context.CancelFunc
 	eventFilter       *BotEventFilter
-	awaitingUserInput bool      // set by event filter on any blocking event
-	blockingEventType string    // "blocking_human_feedback"
-	blockingRequestID string    // feedback request_id for blocking_human_feedback
-	ackChannelID      string    // channel of the message the bot reacted to (for removal)
-	ackMessageTS      string    // timestamp of the message the bot reacted to
-	LastActivity      time.Time // updated on any send/receive; used to prune stale completed sessions
+	awaitingUserInput bool       // set by event filter on any blocking event
+	blockingEventType string     // "blocking_human_feedback"
+	blockingRequestID string     // feedback request_id for blocking_human_feedback
+	ackChannelID      string     // channel of the message the bot reacted to (for removal)
+	ackMessageTS      string     // timestamp of the message the bot reacted to
+	followUpAcks      []ThreadID // every accepted follow-up reaction is cleared on completion
+	LastActivity      time.Time  // updated on any send/receive; used to prune stale completed sessions
 
 	// Background workflow tracking — when the builder agent fires
 	// run_full_workflow (or any tool that registers a parent chat), we bump
@@ -1630,6 +1631,19 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 	}
 	active.mu.Lock()
 	active.LastActivity = time.Now()
+	if msg.ChannelID != "" && msg.MessageTS != "" {
+		ack := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.MessageTS}
+		found := false
+		for _, previous := range active.followUpAcks {
+			if previous == ack {
+				found = true
+				break
+			}
+		}
+		if !found {
+			active.followUpAcks = append(active.followUpAcks, ack)
+		}
+	}
 	active.mu.Unlock()
 	go func() {
 		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
@@ -2559,23 +2573,12 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	if !alreadyFailed {
 		active.Status = chathistory.BotSessionStatusCompleted
 	}
-	ackChannel := active.ackChannelID
-	ackTS := active.ackMessageTS
+	acks := append([]ThreadID(nil), active.followUpAcks...)
+	acks = append(acks, ThreadID{Platform: active.Platform, ChannelID: active.ackChannelID, ThreadTS: active.ackMessageTS})
+	active.followUpAcks = nil
 	active.mu.Unlock()
 
-	// Clear both ack reactions: "eyes" (immediate) and "hourglass_flowing_sand"
-	// (added only if the session ran past the long-running threshold). Missing
-	// reactions are treated as non-fatal by the connector impl.
-	if ackChannel != "" && ackTS != "" {
-		connector := m.GetConnector(active.Platform)
-		if connector != nil && connector.Capabilities().Reactions {
-			for _, emoji := range []string{"eyes", "hourglass_flowing_sand"} {
-				if err := connector.RemoveReaction(ctx, ackChannel, ackTS, emoji); err != nil {
-					log.Printf("[BOT_MANAGER] Failed to remove %s reaction: %v", emoji, err)
-				}
-			}
-		}
-	}
+	m.clearBotMessageReactions(ctx, acks)
 
 	// Keep the session entry in the map with Completed status so a subsequent
 	// non-mention reply in the same thread flows through handleExistingSession
@@ -2586,6 +2589,26 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	completedAt := active.LastActivity
 	active.mu.Unlock()
 	m.persistBotSessionBinding(active, completedAt)
+}
+
+func (m *BotConversationManager) clearBotMessageReactions(ctx context.Context, acks []ThreadID) {
+	// Clear both ack reactions: "eyes" (immediate) and "hourglass_flowing_sand"
+	// (added only if the session ran past the long-running threshold). Missing
+	// reactions are treated as non-fatal by the connector impl.
+	for _, ack := range acks {
+		if ack.ChannelID == "" || ack.ThreadTS == "" {
+			continue
+		}
+		connector := m.GetConnector(ack.Platform)
+		if connector != nil && connector.Capabilities().Reactions {
+			for _, emoji := range []string{"eyes", "hourglass_flowing_sand"} {
+				if err := connector.RemoveReaction(ctx, ack.ChannelID, ack.ThreadTS, emoji); err != nil {
+					log.Printf("[BOT_MANAGER] Failed to remove %s reaction: %v", emoji, err)
+				}
+			}
+		}
+	}
+
 }
 
 // progressiveTextPollInterval is a var, not a const, so a test can shorten

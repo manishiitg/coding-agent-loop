@@ -108,3 +108,22 @@ reconciliation is not a general exactly-once delivery guarantee.
    native delivery, including legacy empty-project receipts.
 
 Related persistence and durable-submission tracking: [PLAT-324](../chat-reliability/plat-324.md).
+
+### Recent-fix provenance
+
+- `1979a25ef` (2026-09-17, PLAT-324) introduced the durable journal's strict
+  owner/project/session/message comparison and this exact conflict error.
+  The query route still accepted receipts before resolving its workflow folder.
+- `4e2d78b89` (2026-09-17, PLAT-324) recovered workflow identity for cold
+  live-input dispatch; it did not canonicalize workflow-phase query requests.
+- `e6e77d9c8` (2026-09-18) added queued-action deduplication and changed the
+  same-message comparison. It preserved the existing project comparison;
+  the observed direct retry is not evidence of a queue-deduplication defect.
+- `f75a304b5` (2026-09-18, PLAT-262/PLAT-102) introduced fresh retained-policy
+  admission. Its workflow gate depends on `SelectedFolder`, so requests that
+  identified their workflow only through the preset bypassed that check.
+
+The 409 is a confirmed integration gap in the recent PLAT-324 rollout. The
+provider/account defect is the PLAT-099 recurrence; the PLAT-262/102 path shares
+the same unresolved-folder prerequisite. The immediately preceding Workshop
+UI commit `d8de0e464` does not change these submission or routing paths.

@@ -1057,3 +1057,13 @@ no message was resent. 350 saved messages remained, but the interrupted Gemini
 turn had no completed final reply in its native transcript. Full live acceptance
 of retry, refresh and provider switching remains pending; health checks alone
 do not close this reliability ticket.
+
+### Provenance of the Confida receipt conflict
+
+The exact project comparison/conflict response originated in `1979a25ef`
+(2026-09-17). Cold live-input workflow recovery (`4e2d78b89`) handled one entry
+point but left workflow-phase `/query` accepting an empty-project receipt.
+Queued deduplication (`e6e77d9c8`, 2026-09-18) preserved that project check.
+The confirmed correction is shared canonical workflow resolution before
+acceptance and retained-policy checks, not removal of idempotency protection.
+See PLAT-099 for the commit-by-commit provenance and remaining live acceptance.

@@ -125,7 +125,7 @@ import {
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
 import { hasWorkflowChatContent } from './workflowChatTabConversion'
-import { hydrateTabEvents } from '../../utils/sessionRestore'
+import { hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
 import { isReadOnlyWorkflowRunTab, workflowTabsNeedingHydration, hydrateWorkflowTabsPrioritized } from '../../utils/workflowTabHydration'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
 // Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
@@ -1347,6 +1347,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   }, [])
 
   const runningWorkflowReconcileInFlightRef = useRef(false)
+  const workflowReconnectKeyRef = useRef('')
 
   // Reconnect on every workflow open so the persistent Chat follows the
   // user's latest durable conversation, including after switching away and
@@ -1355,9 +1356,12 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     if (!activePresetId) {
       return
     }
+    const reconnectKey = `${activePresetId}:${workspacePath || ''}`
     let cancelled = false
 
     const reconnectWorkflowTabs = async () => {
+      if (workflowReconnectKeyRef.current === reconnectKey) return
+      workflowReconnectKeyRef.current = reconnectKey
       // Wait for zustand to rehydrate persisted tabs from localStorage.
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
       await waitForChatStoreHydration()
@@ -1721,21 +1725,28 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               isViewOnly: false,
             })
             chatStore.setTabViewMode(tabId, 'formatted')
-            chatStore.beginWorkflowSessionRestore(session.sessionId)
-            try {
-              await withWorkflowRestoreTimeout(
-                hydrateTabEvents(session.sessionId, {
-                  workspacePath: workspacePath || undefined,
-                  fallbackToChatHistory: true,
-                  preferChatHistory: true,
-                }),
-                `Restoring latest workflow chat ${session.sessionId}`,
-              )
-              chatStore.setTabStreaming(tabId, false)
-              chatStore.setTabCompleted(tabId, true)
-            } finally {
-              chatStore.endWorkflowSessionRestore(session.sessionId)
+            // The list response already carries a compact, indexed transcript
+            // tail. Use it for automatic startup so a mature conversation does
+            // not block the whole right pane while the server parses its full
+            // archive. Explicit "Load earlier" requests still page the durable
+            // conversation endpoint.
+            if (!hydrateTabEventsFromSessionPreview(session.historySession)) {
+              chatStore.beginWorkflowSessionRestore(session.sessionId)
+              try {
+                await withWorkflowRestoreTimeout(
+                  hydrateTabEvents(session.sessionId, {
+                    workspacePath: workspacePath || undefined,
+                    fallbackToChatHistory: true,
+                    preferChatHistory: true,
+                  }),
+                  `Restoring latest workflow chat ${session.sessionId}`,
+                )
+              } finally {
+                chatStore.endWorkflowSessionRestore(session.sessionId)
+              }
             }
+            chatStore.setTabStreaming(tabId, false)
+            chatStore.setTabCompleted(tabId, true)
             lastTabId = tabId
             continue
           }
@@ -1821,6 +1832,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
         }
       } catch (error) {
+        if (workflowReconnectKeyRef.current === reconnectKey) {
+          workflowReconnectKeyRef.current = ''
+        }
         console.warn('[WorkflowReconnect] Failed to reconnect workflow tabs:', error)
       } finally {
         // Ensure every workflow has its one persistent Chat. Runs after every

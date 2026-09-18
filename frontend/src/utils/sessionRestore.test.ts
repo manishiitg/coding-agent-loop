@@ -39,7 +39,7 @@ vi.mock('../services/api', () => ({
   },
 }))
 
-import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore'
+import { conversationToRestoredEvents, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from './sessionRestore'
 import { buildCleanConversationItems } from './cleanConversation'
 
 describe('hydrateTabEvents restored chat fallback', () => {
@@ -47,6 +47,32 @@ describe('hydrateTabEvents restored chat fallback', () => {
     vi.resetAllMocks()
     mocks.chatTabs = {}
     mocks.getTabEvents.mockReturnValue([])
+  })
+
+  it('hydrates the initial workflow chat from indexed preview messages without reading the archive', () => {
+    const restored = hydrateTabEventsFromSessionPreview({
+      session_id: 'large-workflow-chat',
+      agent_mode: 'workflow_phase',
+      message_count: 37_204,
+      preview_messages: [
+        { role: 'human', text: 'Can you check PR 87?' },
+        { role: 'ai', text: 'Yes, I found the webhook run.' },
+      ],
+    })
+
+    expect(restored).toBe(true)
+    expect(mocks.getChatHistoryResumeConversation).not.toHaveBeenCalled()
+    expect(mocks.setTabEvents).toHaveBeenCalledWith(
+      'large-workflow-chat',
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'user_message' }),
+        expect.objectContaining({ type: 'unified_completion' }),
+      ]),
+    )
+    expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith(
+      'large-workflow-chat',
+      { hasMore: true, nextOffset: 1 },
+    )
   })
 
   it('reads a shared bot transcript without resuming its owner session', async () => {

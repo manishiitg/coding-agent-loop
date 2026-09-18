@@ -4,6 +4,7 @@ import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { useModeStore } from '../stores/useModeStore'
 import { agentApi } from '../services/api'
 import type { ChatHistoryConversation, PollingEvent } from '../services/api-types'
+import type { ChatHistorySession } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
 import axios from 'axios'
 
@@ -449,6 +450,41 @@ function hydrateTabEventsFromConversation(
     canSteer: false,
     restoredEvents: events,
   }
+}
+
+/**
+ * Restore the first visible chat frame from the compact metadata returned by
+ * the history list. This keeps workflow startup independent of the size of the
+ * canonical conversation JSON; older turns remain available through the
+ * normal durable-history pagination endpoint.
+ */
+export function hydrateTabEventsFromSessionPreview(session: ChatHistorySession): boolean {
+  const preview = (session.preview_messages || []).filter(message => message.text?.trim())
+  if (preview.length === 0) return false
+
+  const visibleTurns = preview.filter(message => {
+    const role = message.role.trim().toLowerCase()
+    return role === 'human' || role === 'user'
+  }).length
+  const conversation: ChatHistoryConversation = {
+    session_id: session.session_id,
+    agent_mode: session.agent_mode,
+    runtime: session.runtime,
+    workshop_mode: session.workshop_mode,
+    updated_at: session.updated_at,
+    conversation_history: preview.map(message => ({
+      Role: message.role,
+      Parts: [{ Text: message.text }],
+    })),
+    history_pagination: {
+      has_more: (session.message_count ?? preview.length) > preview.length,
+      next_offset: visibleTurns,
+      start_turn: 0,
+      total_turns: Math.max(visibleTurns, session.message_count ?? visibleTurns),
+    },
+  }
+  hydrateTabEventsFromConversation(session.session_id, conversation)
+  return true
 }
 
 async function tryFetchChatHistoryConversation(

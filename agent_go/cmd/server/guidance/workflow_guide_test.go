@@ -20,6 +20,15 @@ func TestWorkflowGuideIsDiscoverableAndKeepsHelpNonMutating(t *testing.T) {
 				"**Plan**",
 				"**Dashboard**",
 				"**Pulse**",
+				"Ask AI triage contract",
+				"account/platform connection",
+				"Setup tab failure guide",
+				"**MCP server**",
+				"search the web, MCP catalogs, and official provider documentation",
+				"search for or create a matching skill",
+				"future workflow steps know how to use the server correctly",
+				"**Bots**",
+				"**Skills**",
 			} {
 				if !strings.Contains(content, required) {
 					t.Errorf("workflow guide is missing %q", required)

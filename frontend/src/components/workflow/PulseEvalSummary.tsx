@@ -191,7 +191,7 @@ export function PulseEvalSummary({
   return (
     <section className={`min-w-0 overflow-hidden rounded-xl border bg-background ${className}`} aria-label="Evaluation results">
       <div className="flex items-center justify-between border-b px-4 py-3">
-        <div>
+        <div className="min-w-0 flex-1">
           <h3 className="text-sm font-semibold text-foreground">Evaluation</h3>
           <p className="mt-0.5 text-[11px] text-muted-foreground">
             {runs.length > 0
@@ -201,17 +201,17 @@ export function PulseEvalSummary({
               : 'Criterion scores across recent workflow runs'}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => { void load() }}
-          disabled={loading}
-          className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
-          aria-label="Refresh evaluation results"
-        >
-          <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-        </button>
-        {headerAction}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {headerAction}
+          <button
+            type="button"
+            onClick={() => { void load() }}
+            disabled={loading}
+            className="rounded p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"
+            aria-label="Refresh evaluation results"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+          </button>
         </div>
       </div>
 

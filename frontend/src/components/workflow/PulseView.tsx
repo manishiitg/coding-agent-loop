@@ -55,7 +55,7 @@ export default function PulseView({
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-5">
-        <div className="flex min-w-0 items-center gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
             <Activity className="h-4 w-4" />
           </div>
@@ -72,23 +72,23 @@ export default function PulseView({
             </div>
           </div>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
-        {monitorOn && (
-          <button
-            type="button"
-            onClick={() => {
-              window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
-              onRefresh()
-            }}
-            disabled={statusLoading}
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-            aria-label="Refresh Pulse status"
-            title="Refresh Pulse status"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
-          </button>
-        )}
-        {headerAction}
+        <div className="ml-auto flex shrink-0 items-center gap-2">
+          {headerAction}
+          {monitorOn && (
+            <button
+              type="button"
+              onClick={() => {
+                window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
+                onRefresh()
+              }}
+              disabled={statusLoading}
+              className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
+              aria-label="Refresh Pulse status"
+              title="Refresh Pulse status"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
+            </button>
+          )}
         </div>
       </div>
 

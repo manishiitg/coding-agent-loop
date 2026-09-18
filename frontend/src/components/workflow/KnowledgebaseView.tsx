@@ -285,14 +285,15 @@ function KnowledgebaseContent({ workspacePath, headerAction, sourceAlias }: Know
       <div className="flex h-full min-h-0 w-full flex-col bg-background">
         {/* Header */}
         <div className="flex items-start justify-between gap-3 p-3 border-b border-border flex-shrink-0 sm:p-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
             <Database className="w-5 h-5 text-primary" />
             <h2 className="text-lg font-semibold">Knowledgebase</h2>
             <span className="text-xs text-muted-foreground sm:ml-2">
               notes/ · narrative topics
             </span>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="ml-auto flex shrink-0 items-center gap-2">
+            {headerAction}
             <button
               onClick={load}
               disabled={loading}
@@ -301,7 +302,6 @@ function KnowledgebaseContent({ workspacePath, headerAction, sourceAlias }: Know
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
             </button>
-            {headerAction}
           </div>
         </div>
 

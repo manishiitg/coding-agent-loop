@@ -38,5 +38,5 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
  */
 export function getWorkspaceAskAIMessage(view: WorkspaceViewId): string {
   const label = getWorkspaceView(view).label
-  return `Read the workflow help guide with read_skill(skills=[{"name":"builder-reference","path":"references/workflow-guide.md"}]), then help me with the ${label} view. ${WORKSPACE_ASK_AI_MESSAGE[view]}`
+  return `Read the workflow help guide with read_skill(skills=[{"name":"builder-reference","path":"references/workflow-guide.md"}]), then use the ${label} view as context. ${WORKSPACE_ASK_AI_MESSAGE[view]}`
 }

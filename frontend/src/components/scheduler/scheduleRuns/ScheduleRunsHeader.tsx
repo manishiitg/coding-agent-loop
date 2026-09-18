@@ -117,6 +117,7 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
             {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
           </button>
         )}
+        {headerAction}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -130,7 +131,6 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
           </TooltipTrigger>
           <TooltipContent side="bottom">{isLoading ? 'Refreshing…' : 'Refresh'}</TooltipContent>
         </Tooltip>
-        {headerAction}
         {showClose && (
           <button onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" aria-label="Close schedules">
             <X className="w-4 h-4" />

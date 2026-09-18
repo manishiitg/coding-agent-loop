@@ -19,6 +19,7 @@ export function WorkspaceViewActions({
 }: WorkspaceViewActionsProps) {
   return (
     <div className="flex shrink-0 items-center gap-2">
+      <AskAIButton workspacePath={workspacePath} message={message} iconOnly />
       <button
         type="button"
         onClick={() => { void onRefresh() }}
@@ -29,7 +30,6 @@ export function WorkspaceViewActions({
       >
         <RefreshCw className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
       </button>
-      <AskAIButton workspacePath={workspacePath} message={message} iconOnly />
     </div>
   )
 }

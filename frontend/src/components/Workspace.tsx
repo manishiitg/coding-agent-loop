@@ -1999,8 +1999,8 @@ export default function Workspace({
             </Tooltip>
           </div>
         ) : (
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div className="flex min-w-0 flex-1 items-center gap-3">
               <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
                 {title}
               </h2>
@@ -2030,7 +2030,7 @@ export default function Workspace({
                 </div>
               )}
             </div>
-            <div className="flex items-center gap-2">
+            <div className="ml-auto flex shrink-0 items-center gap-2">
               {headerAction}
               {/* Selection mode controls */}
               {isSelectionMode && (

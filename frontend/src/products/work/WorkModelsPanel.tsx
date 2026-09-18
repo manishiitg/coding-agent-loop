@@ -204,13 +204,15 @@ export function WorkModelsPanel({
           <h2 className="text-sm font-semibold text-foreground">Project agent configuration</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Choose the coding agent and model this project uses. You can change either at any time.</p>
         </div>
-        <AskAIButton
-          workspacePath={workspacePath}
-          message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
-          onAsk={onAsk}
-          iconOnly
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-        />
+        <div className="ml-auto flex shrink-0 items-center gap-2 self-center">
+          <AskAIButton
+            workspacePath={workspacePath}
+            message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
+            onAsk={onAsk}
+            iconOnly
+            className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+          />
+        </div>
       </header>
       <div className="min-h-0 flex-1 overflow-y-auto p-4">
         <WorkflowLLMConfigurationPanel

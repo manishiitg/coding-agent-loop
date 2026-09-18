@@ -57,7 +57,7 @@ export function LogsHeader({
                 <span className="text-xs font-normal text-muted-foreground">{formatStartedAt(startedAt)}</span>
               )}
             </h2>
-            <div className={`flex min-w-0 flex-1 items-center gap-2 ${embedded ? 'justify-end' : 'flex-wrap'}`}>
+            <div className={`ml-auto flex min-w-0 flex-1 items-center justify-end gap-2 ${embedded ? '' : 'flex-wrap'}`}>
               {/* Run Folder Selector */}
               {runFolderOptions.length > 0 && (
                 <div className="flex min-w-0 items-center gap-1.5">
@@ -118,6 +118,7 @@ export function LogsHeader({
                 </button>
               )}
 
+              {headerAction}
               {/* Refresh Button — also refreshes the run-folder list itself
                   (onRefreshRunFolders), not just the currently selected
                   folder's logs (loadLogs). Without this, a run folder that
@@ -130,13 +131,12 @@ export function LogsHeader({
                   onRefreshRunFolders?.()
                 }}
                 disabled={loading || !selectedRunFolder}
-                className="p-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed ml-auto"
+                className="p-1.5 rounded-lg border border-border bg-card text-muted-foreground hover:text-foreground hover:bg-muted transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Refresh logs and run-folder list"
                 aria-label="Refresh logs and run-folder list"
               >
                 <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
               </button>
-              {headerAction}
             </div>
           </div>
   )

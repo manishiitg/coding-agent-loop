@@ -14,6 +14,15 @@ import (
 
 // resolveWorkspacePath prepends the workspace path to relative paths, with double-prepend protection.
 func (bo *BaseOrchestrator) resolveWorkspacePath(filePath string) string {
+	// Internally resolved dependencies can be absolute even though the
+	// workspace API and Folder Guard use canonical workspace-relative grants
+	// such as Workflow/example. Normalize paths under WORKSPACE_DOCS_PATH at
+	// this shared boundary before deciding whether the workflow prefix is
+	// already present. Paths outside every known docs root remain absolute and
+	// continue to fail closed downstream.
+	if normalized, ok := normalizeAbsoluteWorkspaceDocsPath(filePath); ok {
+		filePath = normalized
+	}
 	workspacePath := bo.GetWorkspacePath()
 	if workspacePath == "" || filepath.IsAbs(filePath) {
 		return filePath

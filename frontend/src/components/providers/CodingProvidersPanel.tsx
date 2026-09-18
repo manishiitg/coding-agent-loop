@@ -18,8 +18,6 @@ import {
 import ModalPortal from '../ui/ModalPortal'
 import {
   llmConfigService,
-  type DynamicModelEntry,
-  type ProviderDefaultTierModels,
   type ProviderManifestEntry,
 } from '../../services/llm-config-api'
 import { CODING_PROVIDER_GUIDES } from './codingProviderGuides'
@@ -75,7 +73,6 @@ const STATUS_STYLES: Record<ProviderStatus, { label: string; className: string }
   },
 }
 
-const TIER_ORDER: Array<keyof ProviderDefaultTierModels> = ['builder', 'high', 'medium', 'low', 'maintenance', 'pulse']
 const GUIDED_SETUP_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
 
 const PROVIDER_INSPECTION: Record<string, { label: string; note: string }> = {
@@ -169,243 +166,6 @@ function SetupStep({
         {children}
       </div>
     </section>
-  )
-}
-
-function TierSummary({ tiers }: { tiers?: ProviderDefaultTierModels }) {
-  if (!tiers) return null
-  const entries = TIER_ORDER.flatMap(tier => {
-    const model = tiers[tier]
-    return model ? [{ tier, model }] : []
-  })
-  if (entries.length === 0) return null
-
-  return (
-    <div className="mt-5">
-      <div className="mb-2 text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Default usage tiers</div>
-      <div className="grid gap-2 sm:grid-cols-2">
-        {entries.map(({ tier, model }) => (
-          <div key={tier} className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 dark:border-gray-700 dark:bg-gray-800/60">
-            <div className="text-[10px] font-semibold uppercase tracking-wide text-gray-400">{tier}</div>
-            <div className="mt-0.5 truncate text-xs font-medium text-gray-700 dark:text-gray-200" title={model.model_id}>
-              {model.model_id}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  )
-}
-
-const tierModels = (provider: ProviderManifestEntry): DynamicModelEntry[] => {
-  const tiers = provider.default_tier_models
-  if (!tiers) return []
-  return TIER_ORDER.flatMap(tier => {
-    const model = tiers[tier]
-    return model ? [{ model_id: model.model_id, model_name: model.model_id }] : []
-  })
-}
-
-const manifestModels = (provider: ProviderManifestEntry): DynamicModelEntry[] =>
-  provider.models.map(model => ({
-    model_id: model.model_id,
-    model_name: model.model_name || model.model_id,
-    is_default: model.model_id === provider.default_model_id,
-    context_window: model.context_window,
-  }))
-
-const uniqueModels = (models: DynamicModelEntry[], defaultModelId: string): DynamicModelEntry[] => {
-  const seen = new Set<string>()
-  const unique: DynamicModelEntry[] = []
-  for (const model of models) {
-    const id = model.model_id.trim()
-    if (!id || seen.has(id)) continue
-    seen.add(id)
-    unique.push({ ...model, model_id: id, model_name: model.model_name || id })
-  }
-  return unique.sort((left, right) => {
-    const leftDefault = left.is_default || left.model_id === defaultModelId
-    const rightDefault = right.is_default || right.model_id === defaultModelId
-    if (leftDefault !== rightDefault) return leftDefault ? -1 : 1
-    return left.model_name.localeCompare(right.model_name)
-  })
-}
-
-function PiProviderModelCatalog({ provider }: { provider: ProviderManifestEntry }) {
-  const [response, setResponse] = useState<Awaited<ReturnType<typeof llmConfigService.getProviderModels>> | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    setExpanded(false)
-    void llmConfigService.getProviderModels('pi-cli', false, true)
-      .then(result => {
-        if (!cancelled) setResponse(result)
-      })
-      .catch(error => {
-        if (!cancelled) {
-          setResponse({
-            provider: 'pi-cli',
-            model_selection_mode: 'dynamic',
-            models: [],
-            source: 'cli_available_error',
-            error: error instanceof Error ? error.message : 'Could not inspect Pi models',
-          })
-        }
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [provider.auth_configured, provider.usable])
-
-  const tierIDs = useMemo(() => new Set(tierModels(provider).map(model => model.model_id)), [provider])
-  const models = useMemo(() => uniqueModels(response?.models || [], provider.default_model_id).sort((left, right) => {
-    const leftRecommended = tierIDs.has(left.model_id) || left.is_default
-    const rightRecommended = tierIDs.has(right.model_id) || right.is_default
-    if (leftRecommended !== rightRecommended) return leftRecommended ? -1 : 1
-    return left.model_name.localeCompare(right.model_name)
-  }), [provider.default_model_id, response?.models, tierIDs])
-  const groupCounts = useMemo(() => {
-    const counts = new Map<string, number>()
-    for (const model of models) {
-      const group = model.group || 'Other'
-      counts.set(group, (counts.get(group) || 0) + 1)
-    }
-    return Array.from(counts.entries())
-  }, [models])
-  const visibleModels = expanded ? models : models.slice(0, 8)
-
-  return (
-    <div className="mt-5" data-testid="pi-provider-model-catalog">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Connected model providers</div>
-        <div className="text-[11px] text-gray-400">{loading ? 'Checking…' : `${models.length} available model${models.length === 1 ? '' : 's'}`}</div>
-      </div>
-
-      {loading ? (
-        <div className="flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-3 text-xs text-gray-500 dark:border-gray-700 dark:text-gray-400">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Asking Pi which models are available…
-        </div>
-      ) : response?.error ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-          Pi’s live model inventory could not be checked. Complete sign-in above, then check status again.
-        </p>
-      ) : models.length === 0 ? (
-        <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
-          No connected Pi model provider was detected. Start sign-in, type /login, and connect at least one provider.
-        </p>
-      ) : (
-        <>
-          <div className="flex flex-wrap gap-2">
-            {groupCounts.map(([group, count]) => (
-              <span key={group} className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-inset ring-emerald-200 dark:bg-emerald-500/10 dark:text-emerald-300 dark:ring-emerald-500/30">
-                <CheckCircle2 className="h-3 w-3" /> {group} <span className="text-emerald-600/70 dark:text-emerald-300/70">{count}</span>
-              </span>
-            ))}
-          </div>
-          <div className="mt-3 overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-            {visibleModels.map(model => {
-              const recommended = tierIDs.has(model.model_id) || model.is_default
-              return (
-                <div key={model.model_id} className="flex min-h-10 items-center justify-between gap-3 border-b border-gray-200 px-3 py-2 last:border-b-0 dark:border-gray-700">
-                  <div className="min-w-0">
-                    <div className="truncate text-xs font-medium text-gray-800 dark:text-gray-200" title={model.model_name}>{model.model_name}</div>
-                    <div className="truncate font-mono text-[10px] text-gray-400" title={model.model_id}>{model.model_id}</div>
-                  </div>
-                  {recommended && <span className="shrink-0 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">Recommended</span>}
-                </div>
-              )
-            })}
-            {models.length > 8 && (
-              <button type="button" onClick={() => setExpanded(value => !value)} className="w-full border-t border-gray-200 px-3 py-2 text-left text-xs font-medium text-violet-600 hover:bg-gray-50 dark:border-gray-700 dark:text-violet-300 dark:hover:bg-gray-800/60">
-                {expanded ? 'Show fewer models' : `Show ${models.length - 8} more models`}
-              </button>
-            )}
-          </div>
-          <p className="mt-2 text-xs leading-5 text-gray-500 dark:text-gray-400">Choose the exact provider/model in a workflow. AgentWorks will not silently replace it if Pi’s catalog changes.</p>
-        </>
-      )}
-    </div>
-  )
-}
-
-function ProviderModelCatalog({ provider }: { provider: ProviderManifestEntry }) {
-  const fallbackModels = useMemo(() => uniqueModels([
-    ...manifestModels(provider),
-    ...tierModels(provider),
-  ], provider.default_model_id), [provider])
-  const [models, setModels] = useState<DynamicModelEntry[]>(fallbackModels)
-  const [loading, setLoading] = useState(false)
-  const [expanded, setExpanded] = useState(false)
-
-  useEffect(() => {
-    let cancelled = false
-    setModels(fallbackModels)
-    setExpanded(false)
-
-    if (provider.id === 'pi-cli') return () => { cancelled = true }
-    setLoading(true)
-    void llmConfigService.getProviderModels(provider.id)
-      .then(response => {
-        if (!cancelled) {
-          setModels(uniqueModels([...response.models, ...fallbackModels], provider.default_model_id))
-        }
-      })
-      .catch(() => {
-        // Keep the manifest fallback when live discovery is unavailable.
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false)
-      })
-    return () => { cancelled = true }
-  }, [fallbackModels, provider.default_model_id, provider.id])
-
-  if (provider.id === 'pi-cli') return <PiProviderModelCatalog provider={provider} />
-
-  const visibleModels = expanded ? models : models.slice(0, 6)
-  return (
-    <div className="mt-5" data-testid="provider-model-catalog">
-      <div className="mb-2 flex items-center justify-between gap-3">
-        <div className="text-xs font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">Available models</div>
-        <div className="text-[11px] text-gray-400">
-          {loading ? 'Checking…' : `${models.length} model${models.length === 1 ? '' : 's'}`}
-        </div>
-      </div>
-      {models.length === 0 && !loading ? (
-        <p className="text-xs text-gray-500 dark:text-gray-400">This provider did not report a model catalog.</p>
-      ) : (
-        <div className="overflow-hidden rounded-lg border border-gray-200 dark:border-gray-700">
-          {visibleModels.map(model => {
-            const isDefault = model.is_default || model.model_id === provider.default_model_id
-            return (
-              <div key={model.model_id} className="flex min-h-9 items-center justify-between gap-3 border-b border-gray-200 px-3 py-1.5 last:border-b-0 dark:border-gray-700">
-                <div className="min-w-0">
-                  <div className="truncate text-xs font-medium text-gray-800 dark:text-gray-200" title={model.model_name}>{model.model_name}</div>
-                  {model.model_name !== model.model_id && (
-                    <div className="truncate font-mono text-[10px] text-gray-400" title={model.model_id}>{model.model_id}</div>
-                  )}
-                </div>
-                {isDefault && (
-                  <span className="shrink-0 rounded bg-violet-50 px-1.5 py-0.5 text-[10px] font-medium text-violet-700 dark:bg-violet-500/10 dark:text-violet-300">Default</span>
-                )}
-              </div>
-            )
-          })}
-          {models.length > 6 && (
-            <button
-              type="button"
-              onClick={() => setExpanded(value => !value)}
-              className="w-full border-t border-gray-200 px-3 py-2 text-left text-xs font-medium text-violet-600 hover:bg-gray-50 dark:border-gray-700 dark:text-violet-300 dark:hover:bg-gray-800/60"
-            >
-              {expanded ? 'Show fewer models' : `Show ${models.length - 6} more models`}
-            </button>
-          )}
-        </div>
-      )}
-    </div>
   )
 }
 
@@ -846,10 +606,6 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                   </div>
                   )}
 
-                  <div className="border-t border-gray-200 pt-5 dark:border-gray-700">
-                    <TierSummary tiers={selectedProvider.default_tier_models} />
-                    <ProviderModelCatalog provider={selectedProvider} />
-                  </div>
                 </div>
               )}
             </main>

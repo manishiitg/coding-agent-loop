@@ -989,3 +989,10 @@ separate from activity visibility, so an idle conversation leaves the monitor
 while running, background, and user-waiting work remains. Visible activity
 pills include a short responsive identity label and collapse back to icons on
 narrow layouts.
+
+Initial transcript hydration now requests the newest 10 user turns instead of
+20. Older turns remain available through pagination, and the coding-provider
+resume fallback remains a separate bounded mechanism. This reduces response
+transfer and first render work; it does not yet eliminate the server's full
+JSON read and workflow transcript-synchronization cost, which remains the next
+target if live timing still shows a long restore delay.

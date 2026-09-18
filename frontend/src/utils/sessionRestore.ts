@@ -10,7 +10,7 @@ import axios from 'axios'
 const TAG = '[SessionRestore]'
 
 // Fetch older turns only when the user requests them through history pagination.
-const INITIAL_HISTORY_TURNS = 20
+const INITIAL_HISTORY_TURNS = 10
 
 type RuntimeSessionState = {
   status: string

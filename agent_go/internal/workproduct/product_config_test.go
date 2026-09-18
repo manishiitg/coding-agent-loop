@@ -136,12 +136,9 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"query_agent":                       false,
 		"list_agents":                       false,
 		"terminate_agent":                   false,
-		"open_workspace_view":               false,
-		"refresh_workspace_view":            false,
 		"list_ui_capabilities":              false,
 		"get_ui_state":                      false,
 		"perform_ui_action":                 false,
-		"get_ui_action_result":              false,
 	}
 	for _, name := range manifest.Profile.ToolPolicy.Enabled {
 		if _, expected := wantEnabled[name]; !expected {

@@ -558,9 +558,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectOrchestratorLLM(
 			stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ExecutionLLM.Provider,
-				ModelID:  stepConfig.ExecutionLLM.ModelID,
-				Options:  stepConfig.ExecutionLLM.Options,
+				Provider:     stepConfig.ExecutionLLM.Provider,
+				ModelID:      stepConfig.ExecutionLLM.ModelID,
+				Options:      stepConfig.ExecutionLLM.Options,
+				ConnectionID: stepConfig.ExecutionLLM.ConnectionID,
 			},
 			APIKeys: hcpo.GetAPIKeys(),
 		}

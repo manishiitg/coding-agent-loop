@@ -134,6 +134,7 @@ func (f FlexibleContextOutput) String() string {
 
 // AgentLLMConfig represents LLM configuration for an agent
 type AgentLLMConfig struct {
+	ConnectionID   string                 `json:"connection_id,omitempty"`
 	PublishedLLMID string                 `json:"published_llm_id,omitempty"` // Optional published LLM registry reference
 	Provider       string                 `json:"provider,omitempty"`         // e.g., "openai", "bedrock", "openrouter", "vertex"
 	ModelID        string                 `json:"model_id,omitempty"`         // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"

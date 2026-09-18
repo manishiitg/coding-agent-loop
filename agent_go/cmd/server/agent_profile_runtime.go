@@ -424,7 +424,7 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 			}
 			llmOptions["reasoning_effort"] = effort
 		}
-		req.LLMConfig = &orchestrator.LLMConfig{Primary: orchestrator.LLMModel{Provider: provider, ModelID: modelID, Options: llmOptions}}
+		req.LLMConfig = &orchestrator.LLMConfig{Primary: orchestrator.LLMModel{Provider: provider, ModelID: modelID, Options: llmOptions, ConnectionID: req.ConnectionID}}
 		req.LLMConfigSource = llmConfigSourceAgentProfile
 		if strings.EqualFold(strings.TrimSpace(profile.Runtime.CredentialScope), agentprofiles.CredentialScopeGlobal) {
 			// Some products intentionally use the server-wide coding-agent login.

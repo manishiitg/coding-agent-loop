@@ -271,9 +271,15 @@ func SetGenerateTextWorkflowTierConfig(
 	executors map[string]func(ctx context.Context, args map[string]any) (string, error),
 	workspaceURL string,
 	config *WorkflowLLMTierConfig,
+	apiKeys ...*llm.ProviderAPIKeys,
 ) {
 	if executors == nil {
 		return
+	}
+	if config != nil && len(apiKeys) > 0 {
+		copy := *config
+		copy.APIKeys = apiKeys[0].Clone()
+		config = &copy
 	}
 	executors["generate_text_llm"] = createGenerateTextLLMExecutor(workspaceURL, config)
 }
@@ -321,9 +327,10 @@ type generateTextLLMResult struct {
 // workflow manifest. It is intentionally distinct from DelegationTierConfig,
 // which belongs to the general multi-agent delegation feature.
 type WorkflowLLMTierConfig struct {
-	High   *TierModel
-	Medium *TierModel
-	Low    *TierModel
+	APIKeys *llm.ProviderAPIKeys
+	High    *TierModel
+	Medium  *TierModel
+	Low     *TierModel
 }
 
 func createGenerateTextLLMExecutor(workspaceURL string, workflowTiers *WorkflowLLMTierConfig) func(ctx context.Context, args map[string]any) (string, error) {
@@ -343,7 +350,7 @@ func createGenerateTextLLMExecutor(workspaceURL string, workflowTiers *WorkflowL
 			return "", err
 		}
 
-		llmModel, err := createLLMFromTierModel(ctx, tierModel, loadWorkspaceProviderAPIKeys(ctx, workspaceURL))
+		llmModel, err := createLLMFromTierModel(ctx, tierModel, generateTextAPIKeys(ctx, workspaceURL, workflowTiers))
 		if err != nil {
 			return "", fmt.Errorf("failed to initialize LLM for tier %q: %w", tier, err)
 		}
@@ -403,7 +410,7 @@ func GenerateTextOneShot(ctx context.Context, workflowTiers *WorkflowLLMTierConf
 		return "", err
 	}
 
-	llmModel, err := createLLMFromTierModel(ctx, tierModel, loadWorkspaceProviderAPIKeys(ctx, workspaceURL))
+	llmModel, err := createLLMFromTierModel(ctx, tierModel, generateTextAPIKeys(ctx, workspaceURL, workflowTiers))
 	if err != nil {
 		return "", fmt.Errorf("failed to initialize LLM for tier %q: %w", tier, err)
 	}
@@ -568,9 +575,10 @@ func sanitizeTierModelLocal(model *TierModel) *TierModel {
 	}
 
 	sanitized := &TierModel{
-		Provider: provider,
-		ModelID:  modelID,
-		Options:  model.Options,
+		Provider:     provider,
+		ModelID:      modelID,
+		Options:      model.Options,
+		ConnectionID: model.ConnectionID,
 	}
 
 	return sanitized
@@ -683,11 +691,12 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
 	provider := llm.Provider(model.Provider)
 	llmCfg := llm.Config{
-		Provider:   provider,
-		ModelID:    resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
-		Context:    ctx,
-		APIKeys:    apiKeys,
-		MaxRetries: 3,
+		Provider:     provider,
+		ConnectionID: model.ConnectionID,
+		ModelID:      resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
+		Context:      ctx,
+		APIKeys:      apiKeys,
+		MaxRetries:   3,
 	}
 
 	return llm.InitializeLLM(llmCfg)
@@ -1107,4 +1116,11 @@ func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtype
 	}
 
 	return llm.InitializeLLM(llmCfg)
+}
+
+func generateTextAPIKeys(ctx context.Context, workspaceURL string, tiers *WorkflowLLMTierConfig) *llm.ProviderAPIKeys {
+	if tiers != nil && tiers.APIKeys != nil {
+		return tiers.APIKeys.Clone()
+	}
+	return loadWorkspaceProviderAPIKeys(ctx, workspaceURL)
 }

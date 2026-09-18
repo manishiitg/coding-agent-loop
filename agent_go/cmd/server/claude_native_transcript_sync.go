@@ -27,7 +27,8 @@ type claudeNativeTranscriptRuntime struct {
 	Provider           string `json:"provider"`
 	ExternalSessionID  string `json:"external_session_id"`
 	AgentSessionHandle *struct {
-		Provider *struct {
+		ConnectionID string `json:"connection_id,omitempty"`
+		Provider     *struct {
 			Provider        string `json:"provider"`
 			NativeSessionID string `json:"native_session_id"`
 			WorkingDir      string `json:"working_dir"`
@@ -466,13 +467,13 @@ func builderConversationMessagesFromLLMTypes(messages []llmtypes.MessageContent)
 // nativeTranscriptMessagesForRuntime reads the CLI's own transcript for a
 // builder session. ok is false when the provider has no reader or no
 // transcript could be found; callers then leave the persisted record as-is.
-func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir string) (messages []builderConversationMessage, maxTimestamp time.Time, transcriptPath string, ok bool, err error) {
+func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir string, accountHome ...string) (messages []builderConversationMessage, maxTimestamp time.Time, transcriptPath string, ok bool, err error) {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "claude-code":
 		if nativeSessionID == "" || workingDir == "" {
 			return nil, time.Time{}, "", false, nil
 		}
-		transcriptPath, err = resolveClaudeNativeTranscriptPath(workingDir, nativeSessionID)
+		transcriptPath, err = resolveClaudeNativeTranscriptPath(workingDir, nativeSessionID, accountHome...)
 		if err != nil || transcriptPath == "" {
 			return nil, time.Time{}, "", false, err
 		}
@@ -483,7 +484,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if nativeSessionID == "" {
 			return nil, time.Time{}, "", false, nil
 		}
-		transcriptPath, err = resolveCodexNativeTranscriptPath(nativeSessionID)
+		transcriptPath, err = resolveCodexNativeTranscriptPath(nativeSessionID, accountHome...)
 		if err != nil || transcriptPath == "" {
 			return nil, time.Time{}, "", false, err
 		}
@@ -494,7 +495,7 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if nativeSessionID == "" || workingDir == "" {
 			return nil, time.Time{}, "", false, nil
 		}
-		transcript, found, err := cursorcli.ReadNativeTranscript(workingDir, nativeSessionID)
+		transcript, found, err := cursorcli.ReadNativeTranscript(workingDir, nativeSessionID, accountHome...)
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
@@ -512,7 +513,11 @@ func nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir st
 		if nativeSessionID == "" {
 			return nil, time.Time{}, "", false, nil
 		}
-		transcript, found, err := musecli.ReadNativeTranscript(nativeSessionID)
+		dataHome := ""
+		if len(accountHome) > 0 && accountHome[0] != "" {
+			dataHome = filepath.Join(accountHome[0], ".local", "share")
+		}
+		transcript, found, err := musecli.ReadNativeTranscript(nativeSessionID, dataHome)
 		if err != nil || !found {
 			return nil, time.Time{}, "", false, err
 		}
@@ -610,7 +615,19 @@ func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ct
 	// therefore advance updated_at past an earlier missing reply. Reading the
 	// full native transcript and sequence-merging it is what recovers those
 	// interleaved replies without duplicating the already-persisted humans.
-	nativeMessages, maxTimestamp, transcriptPath, ok, err := nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir)
+	accountHome := ""
+	if runtime.AgentSessionHandle != nil && runtime.AgentSessionHandle.ConnectionID != "" {
+		userID := GetUserIDFromContext(ctx)
+		if userID == "" {
+			userID, _ = record["user_id"].(string)
+		}
+		keys, err := api.connectionAPIKeys(ctx, userID, provider, runtime.AgentSessionHandle.ConnectionID)
+		if err != nil {
+			return conv
+		}
+		accountHome = keys.RuntimeEnvironment["HOME"]
+	}
+	nativeMessages, maxTimestamp, transcriptPath, ok, err := nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir, accountHome)
 	if err != nil {
 		log.Printf("[CHAT_HISTORY] Native transcript catch-up: failed to read %s transcript for %s: %v", provider, nativeSessionID, err)
 		return conv
@@ -843,12 +860,15 @@ func builderConversationHistoriesEqual(left, right []builderConversationMessage)
 // session-ID glob fallback for when that escaping scheme has changed across
 // CLI versions. Duplicated here (rather than imported) because that
 // resolver is unexported and this is a narrow, self-contained lookup.
-func resolveClaudeNativeTranscriptPath(workingDir, sessionID string) (string, error) {
+func resolveClaudeNativeTranscriptPath(workingDir, sessionID string, accountHome ...string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
 
+	if len(accountHome) > 0 && accountHome[0] != "" {
+		home = accountHome[0]
+	}
 	candidates := pathidentity.Candidates(workingDir)
 
 	seen := make(map[string]struct{}, len(candidates))

@@ -156,6 +156,14 @@ run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./cmd/testing \
   -run '^TestProgressP0' -count=1
 npm --prefix "$ROOT_DIR/frontend" test -- src/utils/transcriptChunkUpdates.test.ts
 
+# Account contracts always accompany the optional two-account live matrix.
+run_required_go_tests go -C "$MULTI_LLM_DIR" test -json . ./llmtypes ./pkg/adapters/claudecode ./pkg/adapters/codexcli \
+  -run '^(TestProviderAccount|TestClaudeAccount|TestCodexAccount)' -count=1
+run_required_go_tests go -C "$MCPAGENT_DIR" test -json ./agent \
+  -run '^TestProviderAccountContinuationCannotCrossAccounts$' -count=1
+run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./cmd/server \
+  -run '^TestProviderConnection' -count=1
+
 IFS=',' read -r -a provider_list <<< "$PROVIDERS"
 for raw_provider in "${provider_list[@]}"; do
   provider="$(printf '%s' "$raw_provider" | tr '[:upper:]' '[:lower:]' | xargs)"
@@ -226,5 +234,14 @@ run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./pkg/orchestrator/t
   -coding-cli-p0-providers="$PROVIDERS" \
   -coding-cli-p0-workspace-api="$WORKSPACE_API_URL" \
   -coding-cli-p0-workspace-docs="$WORKSPACE_DOCS"
+
+if [[ "${CODING_CLI_P0_ACCOUNTS:-0}" == "1" ]]; then
+  run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./pkg/orchestrator/types \
+    -tags=coding_cli_p0_live -run 'TestCodingCLIWorkflowP0MultipleAccounts$' \
+    -count=1 -timeout=60m -args \
+    -coding-cli-p0-providers="$PROVIDERS" \
+    -coding-cli-p0-workspace-api="$WORKSPACE_API_URL" \
+    -coding-cli-p0-workspace-docs="$WORKSPACE_DOCS"
+fi
 
 echo "P0 live CLI, retained-session, MCP bridge, and workflow contracts passed for: $PROVIDERS"

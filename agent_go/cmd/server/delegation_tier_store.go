@@ -73,9 +73,10 @@ func sanitizeDelegationTierConfig(config *virtualtools.DelegationTierConfig) *vi
 				continue
 			}
 			custom[cleanSlug] = &virtualtools.CustomTierModel{
-				Description: strings.TrimSpace(tier.Description),
-				Provider:    provider,
-				ModelID:     modelID,
+				Description:  strings.TrimSpace(tier.Description),
+				ConnectionID: tier.ConnectionID,
+				Provider:     provider,
+				ModelID:      modelID,
 			}
 		}
 		if len(custom) > 0 {

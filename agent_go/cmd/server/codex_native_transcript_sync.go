@@ -38,7 +38,10 @@ type codexRolloutContentBlock struct {
 // codexSessionsRoot mirrors multi-llm-provider-go's codexcli adapter
 // (codexcli_transcript_completion.go codexSessionsRoot): CODEX_HOME wins,
 // else ~/.codex.
-func codexSessionsRoot() (string, error) {
+func codexSessionsRoot(accountHome ...string) (string, error) {
+	if len(accountHome) > 0 && accountHome[0] != "" {
+		return filepath.Join(accountHome[0], ".codex", "sessions"), nil
+	}
 	if codexHome := strings.TrimSpace(os.Getenv("CODEX_HOME")); codexHome != "" {
 		return filepath.Join(codexHome, "sessions"), nil
 	}
@@ -53,12 +56,12 @@ func codexSessionsRoot() (string, error) {
 // The date folders are the thread's *start* date, which the builder record
 // does not carry, so the lookup is by file-name suffix across the tree. The
 // newest match wins if the id somehow appears more than once.
-func resolveCodexNativeTranscriptPath(nativeSessionID string) (string, error) {
+func resolveCodexNativeTranscriptPath(nativeSessionID string, accountHome ...string) (string, error) {
 	nativeSessionID = strings.TrimSpace(nativeSessionID)
 	if nativeSessionID == "" {
 		return "", nil
 	}
-	root, err := codexSessionsRoot()
+	root, err := codexSessionsRoot(accountHome...)
 	if err != nil {
 		return "", err
 	}

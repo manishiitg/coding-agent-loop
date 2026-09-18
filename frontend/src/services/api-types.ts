@@ -62,6 +62,7 @@ export interface AgentLLMConfiguration {
 
 // Legacy LLM Configuration types (kept for backward compatibility)
 export interface LLMConfiguration {
+  connection_id?: string
   published_llm_id?: string
   provider: LLMProvider
   model_id: string
@@ -100,6 +101,7 @@ export type ExtendedLLMConfiguration = Omit<LLMConfiguration, 'api_keys'> & {
 
 // Agent streaming types
 export interface AgentQueryRequest {
+  connection_id?: string
   query: string
   provider?: LLMProvider
   model_id?: string
@@ -218,6 +220,7 @@ export interface AgentQueryResponse {
 // skills from the same shared controls as AgentWorks; the server accepts those
 // fields only for profiles that explicitly support them.
 export interface AgentProfileChatRequest {
+  connection_id?: string
   message: string
   conversation_key?: string
   // One of the profile's declared runtime.provider_options[].id; the server
@@ -1721,6 +1724,7 @@ export interface WorkflowActivityTimingSummary {
 // Preset LLM Configuration types
 
 export interface AgentLLMConfig {
+  connection_id?: string
   published_llm_id?: string
   provider: LLMProvider
   model_id: string
@@ -1728,6 +1732,7 @@ export interface AgentLLMConfig {
 }
 
 export interface PresetLLMConfig {
+  connection_id?: string
   schema_version: 2
   mode: 'provider_profile' | 'explicit'
 

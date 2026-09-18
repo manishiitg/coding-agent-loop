@@ -250,6 +250,7 @@ func convertDBAgentLLMConfig(dbConfig *workflowtypes.AgentLLMConfig) *step_based
 		Provider:       dbConfig.Provider,
 		ModelID:        dbConfig.ModelID,
 		Options:        dbConfig.Options,
+		ConnectionID:   dbConfig.ConnectionID,
 	}
 
 	return cfg

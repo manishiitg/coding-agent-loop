@@ -1,3 +1,4 @@
+import ProviderAccounts from '../providers/ProviderAccounts'
 import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -114,10 +115,10 @@ function toAgentLLMConfig(llm: LLMOption): AgentLLMConfig {
   }
 }
 
-function configKey(config: { provider?: string; model_id?: string; published_llm_id?: string; options?: Record<string, unknown> }): string {
+function configKey(config: { provider?: string; model_id?: string; published_llm_id?: string; connection_id?:string; options?: Record<string, unknown> }): string {
   return config.published_llm_id
-    ? `id:${config.published_llm_id}`
-    : `model:${config.provider}/${config.model_id}/${llmOptionsKey(config.options)}`
+    ? `id:${config.published_llm_id}/${config.connection_id || "global"}`
+    : `model:${config.provider}/${config.model_id}/${llmOptionsKey(config.options)}/${config.connection_id || "global"}`
 }
 
 function roleConfig(config: PresetLLMConfig | undefined, key: RoleKey): AgentLLMConfig | undefined {
@@ -288,10 +289,22 @@ export default function WorkflowLLMConfigurationPanel({
     return lockedProviders.includes('all') || lockedProviders.includes(base)
   }, [lockedProviders])
 
+  const [privateProviderIds, setPrivateProviderIds] = useState<string[]>([])
+ const [privateConnections,setPrivateConnections]=useState<import("../../services/llm-config-api").ProviderConnection[]>([])
+  useEffect(() => {
+    let cancelled = false
+    const refreshAccounts = () => { void llmConfigService.getProviderConnections().then(records => {
+      if (!cancelled) {setPrivateProviderIds(records.filter(record => record.scope === 'user').map(record => record.provider));setPrivateConnections(records.filter(record=>record.scope==='user'))}
+    }).catch(() => undefined) }
+    refreshAccounts()
+    window.addEventListener('provider-connections-changed', refreshAccounts)
+    return () => { cancelled = true; window.removeEventListener('provider-connections-changed', refreshAccounts) }
+  }, [])
+
   const providerIsReadyForUse = useCallback((row: ProviderRow) => {
     const status = providerStatus(row.entry, isProviderLocked(row.id))
-    return status.label === 'Ready' || status.label === 'Managed'
-  }, [isProviderLocked])
+    return status.label === 'Ready' || status.label === 'Managed' || (privateProviderIds.includes(row.entry.id) && row.entry.runtime_available !== false)
+  }, [isProviderLocked, privateProviderIds])
 
   const manifestEntries = useMemo(() => providerManifest.filter(entry => {
     if (entry.deprecated) return false
@@ -491,19 +504,23 @@ export default function WorkflowLLMConfigurationPanel({
   const configForRow = (row: ProviderRow): PresetLLMConfig | null => {
     if (!row.selectable) return null
     if (row.entry.integration_kind === 'coding_agent' && !providerIsReadyForUse(row)) return null
-    if (row.groupFilter) {
+    const existingID=llmConfig?.provider===row.entry.id ? llmConfig.connection_id : llmConfig?.builder_llm?.provider===row.entry.id ? llmConfig.builder_llm.connection_id : undefined
+ const personal=privateConnections.find(record=>record.provider===row.entry.id && (!row.groupFilter || row.modelId?.startsWith(record.underlying_provider+"/")))
+ const connection_id=existingID || (!row.entry.usable ? personal?.id : undefined)
+ if (row.groupFilter) {
       const option = piGroupOption(row)
       if (!option) return null
       const groupDefaults = getWorkflowLLMTierDefaults(option, providerManifest)
       return {
         schema_version: 2,
         mode: 'explicit',
-        builder_llm: groupDefaults.builder,
-        pulse_llm: groupDefaults.pulse,
-        tiered_config: { tier_1: groupDefaults.tier1, tier_2: groupDefaults.tier2, tier_3: groupDefaults.tier3 },
+        connection_id,
+ builder_llm: {...groupDefaults.builder,connection_id},
+        pulse_llm: {...groupDefaults.pulse,connection_id},
+        tiered_config: { tier_1: {...groupDefaults.tier1,connection_id}, tier_2: {...groupDefaults.tier2,connection_id}, tier_3: {...groupDefaults.tier3,connection_id} },
       }
     }
-    return { schema_version: 2, mode: 'provider_profile', provider: row.id as LLMProvider }
+    return { schema_version: 2, mode: 'provider_profile', provider: row.id as LLMProvider, connection_id }
   }
 
   const selectRow = (row: ProviderRow) => {
@@ -535,7 +552,7 @@ export default function WorkflowLLMConfigurationPanel({
 
   const useManagedDefaults = () => {
     if (!selectedProfile) return
-    onChange({ schema_version: 2, mode: 'provider_profile', provider: selectedProfile.provider as LLMProvider })
+    onChange({ schema_version: 2, mode: 'provider_profile', provider: selectedProfile.provider as LLMProvider, connection_id: llmConfig?.connection_id || llmConfig?.builder_llm?.connection_id })
     // Back on the provider's defaults there is nothing per-role left to look
     // at, so fold the section (and remember it folded).
     setRolesOpen(false)
@@ -553,7 +570,7 @@ export default function WorkflowLLMConfigurationPanel({
   // single touched role.
   const updateRole = (key: RoleKey, next: AgentLLMConfig) => {
     const seed = (roleKey: RoleKey): AgentLLMConfig | undefined =>
-      key === roleKey ? next : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
+      key === roleKey ? {...next,connection_id:next.connection_id || (roleConfig(llmConfig,roleKey)?.provider===next.provider ? roleConfig(llmConfig,roleKey)?.connection_id : next.provider===selectedProfile?.provider ? llmConfig?.connection_id : undefined)} : (roleConfig(llmConfig, roleKey) ?? defaultForRole(roleKey))
     const nextConfig: PresetLLMConfig = {
       ...llmConfig,
       schema_version: 2,
@@ -571,11 +588,12 @@ export default function WorkflowLLMConfigurationPanel({
 
   const defaultForRole = (key: RoleKey): AgentLLMConfig | undefined => {
     if (!defaults) return undefined
-    return key === 'tier_1' ? defaults.tier1
+    const value = key === 'tier_1' ? defaults.tier1
       : key === 'tier_2' ? defaults.tier2
         : key === 'tier_3' ? defaults.tier3
           : key === 'builder_llm' ? defaults.builder
                     : defaults.pulse
+    return value ? { ...value, connection_id: llmConfig?.connection_id } : undefined
   }
 
   const resetRole = (key: RoleKey) => {
@@ -632,6 +650,8 @@ export default function WorkflowLLMConfigurationPanel({
     const locked = isProviderLocked(activeProviderId)
     return (
       <div className="space-y-4">
+
+
         <button
           type="button"
           onClick={() => setActiveProviderId(null)}
@@ -1062,7 +1082,10 @@ export default function WorkflowLLMConfigurationPanel({
         </div>
         <div className="min-w-0 flex-1 space-y-1.5">
           {value ? (
+            <>
             <LLMRoleSelector availableLLMs={workflowOptions} value={value} onLLMSelect={llm => updateRole(row.key, toAgentLLMConfig(llm))} disabled={readOnly} />
+            {value?.provider && ["claude-code","codex-cli","cursor-cli","pi-cli","muse-cli"].includes(value.provider) && <ProviderAccounts key={value.provider} provider={value.provider} selectedId={value.connection_id} disabled={readOnly} onSelect={connection_id=>updateRole(row.key,{...value,connection_id})} />}
+            </>
           ) : (
             <span className="text-xs text-muted-foreground">Select a provider first.</span>
           )}
@@ -1081,6 +1104,18 @@ export default function WorkflowLLMConfigurationPanel({
 
   return (
     <div className="space-y-4">
+      {selectedProfile && <ProviderAccounts key={selectedProfile.provider} provider={selectedProfile.provider} selectedId={llmConfig?.connection_id || llmConfig?.builder_llm?.connection_id} disabled={readOnly} onSelect={connection_id => {
+        if (!llmConfig) return
+        onChange({ ...llmConfig, connection_id, ...(llmConfig.mode === 'explicit' ? {
+          builder_llm: llmConfig.builder_llm ? { ...llmConfig.builder_llm, connection_id } : undefined,
+          pulse_llm: llmConfig.pulse_llm?.provider === selectedProfile.provider ? { ...llmConfig.pulse_llm, connection_id } : llmConfig.pulse_llm,
+          tiered_config: llmConfig.tiered_config ? {
+            tier_1: { ...llmConfig.tiered_config.tier_1, ...(llmConfig.tiered_config.tier_1.provider === selectedProfile.provider ? { connection_id } : {}) },
+            tier_2: { ...llmConfig.tiered_config.tier_2, ...(llmConfig.tiered_config.tier_2.provider === selectedProfile.provider ? { connection_id } : {}) },
+            tier_3: { ...llmConfig.tiered_config.tier_3, ...(llmConfig.tiered_config.tier_3.provider === selectedProfile.provider ? { connection_id } : {}) },
+          } : undefined,
+        } : {}) })
+      }} />}
       <div className="rounded-lg border border-border bg-muted/20 p-3">
         {renderStatusLine()}
         {renderTokenLine()}

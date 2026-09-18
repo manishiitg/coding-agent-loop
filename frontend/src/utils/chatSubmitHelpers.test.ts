@@ -76,3 +76,7 @@ describe('agent profile query binding', () => {
     expect(buildAgentProfileChatRequest(payload, 'key', '')).toEqual({ message: 'hello', conversation_key: 'key' })
   })
 })
+
+it('carries a private account into product chat requests',()=>{
+ expect(buildAgentProfileChatRequest({query:'hello',connection_id:'account-B'} as Parameters<typeof buildAgentProfileChatRequest>[0],'conversation','codex-cli','gpt-test')).toMatchObject({connection_id:'account-B',engine:'codex-cli'})
+})

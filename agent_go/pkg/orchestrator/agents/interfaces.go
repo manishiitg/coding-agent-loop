@@ -47,8 +47,9 @@ const (
 
 // LLMModel represents a single LLM configuration
 type LLMModel struct {
-	Provider string `json:"provider"` // "anthropic", "openai", "bedrock", etc.
-	ModelID  string `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
+	ConnectionID string `json:"connection_id,omitempty"`
+	Provider     string `json:"provider"` // "anthropic", "openai", "bedrock", etc.
+	ModelID      string `json:"model_id"` // "claude-sonnet-4.5", "gpt-5", etc.
 
 	// Auth per model
 	APIKey  *string                `json:"api_key,omitempty"` // For OpenRouter, OpenAI, Anthropic, Vertex

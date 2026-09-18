@@ -101,7 +101,8 @@ export function WorkModelsPanel({
     schema_version: 2,
     mode: 'provider_profile',
     provider: selectedOption.provider as LLMProvider,
-  } : undefined, [selectedOption])
+    connection_id: savedSelection?.connectionId,
+  } : undefined, [selectedOption, savedSelection?.connectionId])
   const defaultForOption = useCallback((option: AgentProfileProviderOption | undefined) => {
     if (!option) return { modelId: '', reasoningEffort: undefined as string | undefined }
     const defaults = providerManifest.find(provider => provider.id === option.provider)?.default_tier_models?.builder
@@ -174,6 +175,7 @@ export function WorkModelsPanel({
     const defaults = defaultForOption(option)
     void onRuntimeChange({
       engine: option.id,
+      connectionId: config.connection_id,
       provider: option.provider,
       modelId: defaults.modelId,
       reasoningEffort: defaults.reasoningEffort,
@@ -185,6 +187,7 @@ export function WorkModelsPanel({
     const metadataMatchesProvider = tab?.metadata?.agentProfileEngine === selectedOption.id
     void onRuntimeChange({
       engine: selectedOption.id,
+      connectionId: savedSelection?.connectionId,
       provider: selectedOption.provider,
       modelId,
       reasoningEffort: (metadataMatchesProvider ? tab?.metadata?.agentProfileReasoningEffort : undefined) || selectedDefaults.reasoningEffort,

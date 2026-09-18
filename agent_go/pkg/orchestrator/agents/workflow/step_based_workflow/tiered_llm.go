@@ -103,9 +103,10 @@ func (tr *TierResolver) ResolveTier(tier TierLevel) *orchestrator.LLMConfig {
 
 	config := &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: agentConfig.Provider,
-			ModelID:  agentConfig.ModelID,
-			Options:  agentConfig.Options,
+			Provider:     agentConfig.Provider,
+			ModelID:      agentConfig.ModelID,
+			Options:      agentConfig.Options,
+			ConnectionID: agentConfig.ConnectionID,
 		},
 		APIKeys: tr.apiKeys,
 	}

@@ -1,3 +1,4 @@
+import ProviderAccounts from './ProviderAccounts'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   ArrowLeft,
@@ -30,6 +31,18 @@ interface CodingProvidersPanelProps {
   embedded?: boolean
   isOpen: boolean
   onClose: () => void
+}
+
+const PROVIDER_SIDEBAR_NAMES: Record<string, string> = {
+  'codex-cli': 'Codex',
+  'cursor-cli': 'Cursor',
+  'pi-cli': 'Pi',
+}
+
+const PROVIDER_SIDEBAR_ICONS: Record<string, string> = {
+  'codex-cli': '/provider-icons/codex.png',
+  'cursor-cli': '/provider-icons/cursor.svg',
+  'pi-cli': '/provider-icons/pi.svg',
 }
 
 type ProviderStatus = 'ready' | 'auth' | 'missing' | 'deprecated'
@@ -571,7 +584,14 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                       }`}
                     >
                       <div className="flex min-h-6 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">{provider.display_name}</span>
+                        {PROVIDER_SIDEBAR_ICONS[provider.id] ? (
+                          provider.id === 'pi-cli' ? (
+                            <span aria-hidden="true" className="h-5 w-5 shrink-0 bg-gray-900 dark:bg-gray-100" style={{ mask: `url(${PROVIDER_SIDEBAR_ICONS[provider.id]}) center / contain no-repeat` }} />
+                          ) : (
+                            <img src={PROVIDER_SIDEBAR_ICONS[provider.id]} alt="" className="h-5 w-5 shrink-0 rounded object-contain" />
+                          )
+                        ) : <Terminal aria-hidden="true" className="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />}
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">{PROVIDER_SIDEBAR_NAMES[provider.id] || provider.display_name}</span>
                         <ProviderListStatus provider={provider} />
                         <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-gray-400 ${selectedProvider?.id === provider.id ? 'text-violet-500' : ''}`} />
                       </div>
@@ -597,6 +617,8 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                       <p className="mt-1 max-w-2xl text-sm leading-6 text-gray-600 dark:text-gray-300">{selectedProvider.description}</p>
                     </div>
                   </div>
+
+                  <ProviderAccounts key={selectedProvider.id} provider={selectedProvider.id} />
 
                   {selectedProvider.deprecated && selectedProvider.deprecation_reason && (
                     <div className="mb-5 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-300">

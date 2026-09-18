@@ -28,6 +28,7 @@ const maxAgentProfileRequestBytes = 2 << 20
 // among a product-curated set of coding-agent runtimes (see ProviderOption's
 // doc comment) — never an arbitrary provider or model.
 type AgentProfileChatRequest struct {
+	ConnectionID    string `json:"connection_id,omitempty"`
 	Message         string `json:"message"`
 	ConversationKey string `json:"conversation_key,omitempty"`
 	Engine          string `json:"engine,omitempty"`
@@ -124,6 +125,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	}
 	req := QueryRequest{
 		Query:                       input.Message,
+		ConnectionID:                firstNonEmptyTrimmed(input.ConnectionID, conversation.ConnectionID),
 		SessionTitle:                firstNonEmptyTrimmed(conversation.Title, profile.Name),
 		AgentMode:                   "multi-agent",
 		AgentProfileID:              profile.ID,
@@ -187,6 +189,9 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 		modelID := ""
 		reasoningEffort := ""
 		if builder != nil {
+			if req.ConnectionID == "" {
+				req.ConnectionID = builder.ConnectionID
+			}
 			provider = strings.TrimSpace(builder.Provider)
 			modelID = strings.TrimSpace(builder.ModelID)
 			if effort, ok := builder.Options["reasoning_effort"].(string); ok {
@@ -219,6 +224,9 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 			input.Engine = option.ID
 			input.ModelID = conversation.ModelID
 			input.ReasoningEffort = conversation.ReasoningEffort
+			if req.ConnectionID == "" {
+				req.ConnectionID = conversation.ConnectionID
+			}
 			break
 		}
 	}
@@ -860,6 +868,9 @@ func prepareProductConversationTurn(ctx context.Context, userID string, profile 
 	if err != nil {
 		return QueryRequest{}, err
 	}
+	if conversation.Provider != "" && canonicalProviderConnectionID(conversation.Provider, conversation.ConnectionID) != canonicalProviderConnectionID(query.Provider, query.ConnectionID) {
+		return QueryRequest{}, fmt.Errorf("account change requires a new conversation")
+	}
 	target, found, err := resolveProductResumeTarget(userID, conversation)
 	if err != nil {
 		return QueryRequest{}, fmt.Errorf("resolve saved conversation: %w", err)
@@ -868,7 +879,7 @@ func prepareProductConversationTurn(ctx context.Context, userID string, profile 
 		query.resolvedResumeTarget = target
 	}
 	if strings.TrimSpace(query.Provider) != "" {
-		_, restart, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(ctx, userID, profile, conversation.ConversationKey, query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills, query.WorkflowContextPaths)
+		_, restart, err := defaultProductConversationRegistryStore().bindRuntimeConfiguration(ctx, userID, profile, conversation.ConversationKey, query.Provider, query.ModelID, query.ReasoningEffort, query.EnabledServers, query.SelectedSkills, query.WorkflowContextPaths, query.ConnectionID)
 		if err != nil {
 			return QueryRequest{}, err
 		}

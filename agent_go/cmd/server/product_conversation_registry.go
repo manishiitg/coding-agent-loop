@@ -32,6 +32,7 @@ var (
 // AgentWorks history/runtime owner. They are intentionally separate so a
 // future runtime migration does not change the product conversation identity.
 type ProductConversationRecord struct {
+	ConnectionID    string `json:"connection_id,omitempty"`
 	ConversationID  string `json:"conversation_id"`
 	ConversationKey string `json:"conversation_key"`
 	ProfileID       string `json:"profile_id"`
@@ -537,6 +538,7 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 	conversationKey string,
 	provider, modelID, reasoningEffort string,
 	enabledServers, selectedSkills, workflowContextPaths []string,
+	connectionIDs ...string,
 ) (boundProvider string, restartNeeded bool, err error) {
 	provider = strings.TrimSpace(provider)
 	modelID = strings.TrimSpace(modelID)
@@ -573,6 +575,12 @@ func (store productConversationRegistryStore) bindRuntimeConfiguration(
 			(reasoningEffort != "" && !strings.EqualFold(strings.TrimSpace(record.ReasoningEffort), reasoningEffort)) ||
 			!sameRuntimeSelection(record.EnabledServers, enabledServers) ||
 			!sameRuntimeSelection(record.SelectedSkills, selectedSkills)
+	}
+	if len(connectionIDs) > 0 {
+		if record.ConnectionID != connectionIDs[0] {
+			restartNeeded = true
+		}
+		record.ConnectionID = connectionIDs[0]
 	}
 	record.Provider = provider
 	if modelID != "" {

@@ -3,6 +3,7 @@ import type { LLMProvider } from '../services/api-types';
 
 // AgentLLMConfig represents LLM configuration for an agent
 export interface AgentLLMConfig {
+  connection_id?: string;
   published_llm_id?: string;
   provider?: LLMProvider;
   model_id?: string;

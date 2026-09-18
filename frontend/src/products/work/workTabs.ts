@@ -2,6 +2,7 @@ import type { ChatTab } from '../../stores/useChatStore'
 import { useChatStore } from '../../stores/useChatStore'
 
 export type WorkRuntimeSelection = {
+  connectionId?: string
   engine: string
   provider?: string
   modelId: string
@@ -147,6 +148,7 @@ export function setWorkProjectRuntimeSelection(
     if (options?.newChatsOnly && tab.metadata?.agentProfileBuilder !== true) continue
     store.setTabMetadata(tab.tabId, {
       agentProfileEngine: selection.engine,
+      agentProfileConnectionID: selection.connectionId,
       agentProfileModelID: selection.modelId,
       agentProfileReasoningEffort: selection.reasoningEffort,
       agentProfileRuntimeDirty: options?.newChatsOnly ? false : Boolean(tab.sessionId),

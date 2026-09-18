@@ -67,12 +67,13 @@ func TestCodingCLIWorkflowP0ProviderMatrix(t *testing.T) {
 }
 
 type codingCLIP0Provider struct {
-	name        string
-	provider    llm.Provider
-	model       string
-	requiredBin string
-	apiKeys     *llm.ProviderAPIKeys
-	cleanup     func(context.Context)
+	connectionID string
+	name         string
+	provider     llm.Provider
+	model        string
+	requiredBin  string
+	apiKeys      *llm.ProviderAPIKeys
+	cleanup      func(context.Context)
 }
 
 func codingCLIP0Providers(t *testing.T) map[string]codingCLIP0Provider {
@@ -249,14 +250,14 @@ func runCodingCLIWorkflowP0(t *testing.T, provider codingCLIP0Provider) {
 		t.Fatalf("write step config: %v", err)
 	}
 
-	model := &workflowtypes.AgentLLMConfig{Provider: string(provider.provider), ModelID: provider.model}
+	model := &workflowtypes.AgentLLMConfig{Provider: string(provider.provider), ModelID: provider.model, ConnectionID: provider.connectionID}
 	preset := &workflowtypes.PresetLLMConfig{
 		SchemaVersion: workflowtypes.LLMConfigSchemaVersion, Mode: workflowtypes.LLMConfigModeExplicit,
 		BuilderLLM: model, PulseLLM: model,
 		TieredConfig: &workflowtypes.TieredLLMConfig{Tier1: model, Tier2: model, Tier3: model},
 	}
 	workflowLLM := &orchestrator.LLMConfig{
-		Primary: orchestrator.LLMModel{Provider: string(provider.provider), ModelID: provider.model},
+		Primary: orchestrator.LLMModel{Provider: string(provider.provider), ModelID: provider.model, ConnectionID: provider.connectionID},
 		APIKeys: provider.apiKeys,
 	}
 	// Match production workflow construction: every execution agent receives the

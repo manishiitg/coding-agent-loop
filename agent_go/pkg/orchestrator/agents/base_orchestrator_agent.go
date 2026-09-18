@@ -431,6 +431,7 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 
 	// Create LLM configuration using unified LLMConfig
 	config := llm.Config{
+		ConnectionID:        boa.config.LLMConfig.Primary.ConnectionID,
 		Provider:            llm.Provider(primaryProvider),
 		ModelID:             primaryModel,
 		Temperature:         boa.config.Temperature,

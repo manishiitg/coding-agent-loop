@@ -214,6 +214,7 @@ export function applyAgentProfileBinding(payload: AgentQueryRequest, tab: ChatTa
   return {
     ...payload,
     agent_profile_id: metadata.agentProfileId,
+    connection_id: metadata.agentProfileConnectionID,
     agent_profile_version: metadata.agentProfileVersion,
     selected_folder: metadata.agentProfileWorkspace,
     agent_profile_context: {
@@ -226,6 +227,7 @@ export function applyAgentProfileBinding(payload: AgentQueryRequest, tab: ChatTa
 export function buildAgentProfileChatRequest(payload: AgentQueryRequest, conversationKey?: string, engine?: string, modelId?: string, reasoningEffort?: string): AgentProfileChatRequest {
   return {
     message: payload.query,
+    connection_id: payload.connection_id,
     ...(conversationKey ? { conversation_key: conversationKey } : {}),
     ...(engine ? { engine } : {}),
     ...(engine && modelId ? { model_id: modelId } : {}),

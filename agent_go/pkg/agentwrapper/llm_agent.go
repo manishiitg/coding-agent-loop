@@ -81,7 +81,7 @@ func runtimeBool(value bool) *bool { return &value }
 
 func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, tracer observability.Tracer, traceID observability.TraceID, logger loggerv2.Logger) mcpagent.RuntimeConfig {
 	llmConfig := mcpagent.AgentLLMConfiguration{
-		Primary: mcpagent.LLMModel{Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
+		Primary: mcpagent.LLMModel{ConnectionID: config.ConnectionID, Provider: string(config.Provider), ModelID: config.ModelID, Options: config.Options},
 	}
 
 	runtime := mcpagent.RuntimeConfig{
@@ -288,6 +288,7 @@ func resolveRuntimeModelID(provider llm.Provider, modelID string) string {
 
 // LLMAgentConfig holds configuration for the LLM agent wrapper
 type LLMAgentConfig struct {
+	ConnectionID       string
 	Name               string
 	ServerName         string
 	ConfigPath         string
@@ -1050,10 +1051,11 @@ func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger 
 
 	// Use the existing LLM provider system with the selected model
 	llmConfig := llm.Config{
-		Provider:    llmProvider,
-		ModelID:     runtimeModelID,
-		Temperature: config.Temperature,
-		TraceID:     traceID, // Pass the trace ID for proper span hierarchy
+		ConnectionID: config.ConnectionID,
+		Provider:     llmProvider,
+		ModelID:      runtimeModelID,
+		Temperature:  config.Temperature,
+		TraceID:      traceID, // Pass the trace ID for proper span hierarchy
 
 		MaxRetries:          3,
 		Logger:              v2LoggerForLLM,

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
@@ -256,7 +257,7 @@ func (s *SchedulerService) scheduleQuotaBlock(ctx context.Context, sctx *Schedul
 	if !scheduleUsesClaudeCode(sctx) {
 		return "", time.Time{}, false
 	}
-	keys, err := s.api.resolveEffectiveAPIKeys(ctx, "", sctx.WorkspacePath, nil)
+	keys, err := s.api.scheduleProviderAPIKeys(ctx, sctx)
 	if err != nil || keys == nil || keys.ClaudeCodeOAuthToken == nil {
 		return "", time.Time{}, false
 	}
@@ -293,7 +294,7 @@ func (s *SchedulerService) quotaPacingForSchedule(ctx context.Context, sctx *Sch
 	if err != nil || !found || !manifest.PacingEnabled() {
 		return "", 0
 	}
-	keys, err := s.api.resolveEffectiveAPIKeys(ctx, "", sctx.WorkspacePath, nil)
+	keys, err := s.api.scheduleProviderAPIKeys(ctx, sctx)
 	if err != nil || keys == nil || keys.ClaudeCodeOAuthToken == nil {
 		return "", 0
 	}
@@ -358,9 +359,23 @@ func (s *SchedulerService) quotaPacingAccount(ctx context.Context, sctx *Schedul
 	if s == nil || s.api == nil || sctx == nil || !scheduleUsesClaudeCode(sctx) {
 		return "", nil
 	}
-	keys, err := s.api.resolveEffectiveAPIKeys(ctx, "", sctx.WorkspacePath, nil)
+	keys, err := s.api.scheduleProviderAPIKeys(ctx, sctx)
 	if err != nil || keys == nil || keys.ClaudeCodeOAuthToken == nil {
 		return "", err
 	}
 	return llmtypes.AccountRateLimitKey(*keys.ClaudeCodeOAuthToken), nil
+}
+
+func (api *StreamingAPI) scheduleProviderAPIKeys(ctx context.Context, sctx *ScheduleContext) (*llm.ProviderAPIKeys, error) {
+	keys, err := api.resolveEffectiveAPIKeys(ctx, sctx.OwnerUserID, sctx.WorkspacePath, nil)
+	if err != nil {
+		return nil, err
+	}
+	if config := sctx.Capabilities.LLMConfig; config != nil {
+		builder := presetPrimaryLLMForChat(config)
+		if builder != nil && builder.ConnectionID != "" {
+			return api.connectionAPIKeys(ctx, sctx.OwnerUserID, builder.Provider, builder.ConnectionID)
+		}
+	}
+	return keys, nil
 }

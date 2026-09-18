@@ -100,11 +100,12 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	if llmConfig != nil {
 		// Copy Primary directly - no fallback to orchestrator default (LLM selection uses temp override → step config → preset LLM)
 		config.LLMConfig.Primary = agents.LLMModel{
-			Provider: llmConfig.Primary.Provider,
-			ModelID:  llmConfig.Primary.ModelID,
-			APIKey:   llmConfig.Primary.APIKey,
-			Region:   llmConfig.Primary.Region,
-			Options:  llmConfig.Primary.Options,
+			Provider:     llmConfig.Primary.Provider,
+			ModelID:      llmConfig.Primary.ModelID,
+			APIKey:       llmConfig.Primary.APIKey,
+			Region:       llmConfig.Primary.Region,
+			Options:      llmConfig.Primary.Options,
+			ConnectionID: llmConfig.Primary.ConnectionID,
 		}
 
 		// Direct assignment — orchestrator.APIKeys and agents.AgentAPIKeys are

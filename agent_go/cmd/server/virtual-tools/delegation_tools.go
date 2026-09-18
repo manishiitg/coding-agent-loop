@@ -96,16 +96,18 @@ type DelegationTierConfig struct {
 
 // TierModel represents a specific provider+model for a tier
 type TierModel struct {
-	Provider string                 `json:"provider"`
-	ModelID  string                 `json:"model_id"`
-	Options  map[string]interface{} `json:"options,omitempty"`
+	ConnectionID string                 `json:"connection_id,omitempty"`
+	Provider     string                 `json:"provider"`
+	ModelID      string                 `json:"model_id"`
+	Options      map[string]interface{} `json:"options,omitempty"`
 }
 
 // CustomTierModel represents a user-defined reasoning tier with description and model
 type CustomTierModel struct {
-	Description string `json:"description"`
-	Provider    string `json:"provider"`
-	ModelID     string `json:"model_id"`
+	ConnectionID string `json:"connection_id,omitempty"`
+	Description  string `json:"description"`
+	Provider     string `json:"provider"`
+	ModelID      string `json:"model_id"`
 }
 
 // CapabilitiesContext describes the available tools, servers, and skills for the planner

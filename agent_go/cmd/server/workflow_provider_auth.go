@@ -359,7 +359,8 @@ func (api *StreamingAPI) resolveEffectiveAPIKeys(ctx context.Context, userID, wo
 	if base == nil {
 		base = MergedProviderAPIKeys(ctx)
 	}
-	return api.workflowProviderAPIKeys(ctx, userID, workspacePath, base)
+	keys, err := api.workflowProviderAPIKeys(ctx, userID, workspacePath, base)
+	return api.withConnectionResolver(keys, userID), err
 }
 
 func normalizeWorkflowCredentialPath(workflowPath string) string {

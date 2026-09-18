@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { ChevronDown, ChevronUp, Settings, Sparkles, Code2 } from 'lucide-react';
 import { Button } from '../../ui/Button';
+import ProviderAccounts from '../../providers/ProviderAccounts';
 import LLMSelectionDropdown from '../../LLMSelectionDropdown';
 import { ToolSelectionSection } from '../../ToolSelectionSection';
 import { usePresetApplication } from '../../../stores/useGlobalPresetStore';
@@ -472,7 +473,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
   const handleExecutionLLMSelect = (llm: LLMOption) => {
     setAgentConfigs((prev) => ({
       ...prev,
-      execution_llm: optionToLLMConfig(llm),
+      execution_llm: {...optionToLLMConfig(llm), connection_id: prev.execution_llm?.provider === llm.provider ? prev.execution_llm.connection_id : (presetLLMConfig?.provider === llm.provider ? presetLLMConfig.connection_id : presetLLMConfig?.tiered_config?.tier_1?.provider===llm.provider ? presetLLMConfig.tiered_config.tier_1.connection_id : undefined)},
     }));
   };
 
@@ -1103,6 +1104,7 @@ export const StepEditPanel: React.FC<StepEditPanelProps> = ({
                 </div>
 
 	              </div>
+                  {agentConfigs.execution_llm?.provider && ['claude-code','codex-cli','cursor-cli','pi-cli','muse-cli'].includes(agentConfigs.execution_llm.provider) && <ProviderAccounts key={agentConfigs.execution_llm.provider} provider={agentConfigs.execution_llm.provider} selectedId={agentConfigs.execution_llm.connection_id} disabled={isSaving} onSelect={connection_id=>setAgentConfigs(prev=>({...prev,execution_llm:{...prev.execution_llm,connection_id}}))} />}
 	              {presetLLMConfig?.mode === 'explicit' && (
 	                <div>
 	                  <label className="text-xs text-gray-600 dark:text-gray-400">Execution Tier</label>

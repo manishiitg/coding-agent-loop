@@ -1377,9 +1377,10 @@ func workflowAgentLLMConfig(agentConfig *AgentLLMConfig, apiKeys *orchestrator.A
 
 	return &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: agentConfig.Provider,
-			ModelID:  agentConfig.ModelID,
-			Options:  agentConfig.Options,
+			Provider:     agentConfig.Provider,
+			ModelID:      agentConfig.ModelID,
+			Options:      agentConfig.Options,
+			ConnectionID: agentConfig.ConnectionID,
 		},
 		APIKeys: apiKeys,
 	}

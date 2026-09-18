@@ -207,6 +207,7 @@ function useWorkChatTabs(
         } as const
         const selectedRuntimeMetadata = savedRuntime ? {
             agentProfileEngine: savedRuntime.provider,
+            agentProfileConnectionID: savedRuntime.connectionId,
             agentProfileModelID: savedRuntime.modelId,
             agentProfileReasoningEffort: savedRuntime.reasoningEffort,
           } : {}
@@ -548,7 +549,7 @@ export function WorkSurface() {
   const changeWorkRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected || !tabId) return
     const previous = workLLMSelectionFromConfig(selected.llmConfig)
-    const providerChanged = Boolean(previous?.provider && selection.provider && previous.provider !== selection.provider)
+    const providerChanged = Boolean(previous?.provider && selection.provider && (previous.provider !== selection.provider || previous.connectionId !== selection.connectionId))
     try {
       await updateLLMConfig(selected.id, selection)
       setWorkProjectRuntimeSelection(selected.id, tabId, selection, { newChatsOnly: providerChanged })

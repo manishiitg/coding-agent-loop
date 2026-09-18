@@ -9,6 +9,7 @@ import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from './workData'
 export type WorkSession = ProductProject<typeof WORK_PROFILE_ID>
 
 export type WorkLLMSelection = {
+  connectionId?: string
   provider: string
   modelId: string
   reasoningEffort?: string
@@ -20,6 +21,7 @@ export function workLLMConfigFromSelection(selection: WorkLLMSelection): PresetL
     mode: 'explicit',
     builder_llm: {
       provider: selection.provider as LLMProvider,
+      connection_id: selection.connectionId,
       model_id: selection.modelId,
       ...(selection.reasoningEffort ? { options: { reasoning_effort: selection.reasoningEffort } } : {}),
     },
@@ -32,7 +34,7 @@ export function workLLMSelectionFromConfig(config?: PresetLLMConfig): WorkLLMSel
   const reasoningEffort = typeof builder.options?.reasoning_effort === 'string'
     ? builder.options.reasoning_effort
     : undefined
-  return { provider: builder.provider, modelId: builder.model_id, reasoningEffort }
+  return { connectionId: builder.connection_id, provider: builder.provider, modelId: builder.model_id, reasoningEffort }
 }
 
 export function sessionSlug(title: string): string {

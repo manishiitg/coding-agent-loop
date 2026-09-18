@@ -177,11 +177,12 @@ func NewBaseAgent(
 	if llmConfig != nil {
 		generation.LLM = mcpagent.AgentLLMConfiguration{
 			Primary: mcpagent.LLMModel{
-				Provider: llmConfig.Primary.Provider,
-				ModelID:  llmConfig.Primary.ModelID,
-				APIKey:   llmConfig.Primary.APIKey,
-				Region:   llmConfig.Primary.Region,
-				Options:  llmConfig.Primary.Options,
+				Provider:     llmConfig.Primary.Provider,
+				ModelID:      llmConfig.Primary.ModelID,
+				APIKey:       llmConfig.Primary.APIKey,
+				Region:       llmConfig.Primary.Region,
+				Options:      llmConfig.Primary.Options,
+				ConnectionID: llmConfig.Primary.ConnectionID,
 			},
 		}
 

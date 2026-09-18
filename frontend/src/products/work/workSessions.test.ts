@@ -26,7 +26,7 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
 }))
 
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
-import { createWorkSession, parseSessionManifest, sessionSlug, workLLMConfigFromSelection } from './workSessions'
+import { createWorkSession, parseSessionManifest, sessionSlug, workLLMConfigFromSelection, workLLMSelectionFromConfig } from './workSessions'
 
 describe('sessionSlug', () => {
   it('slugifies titles and falls back', () => {
@@ -184,4 +184,13 @@ describe('updateProductProjectLLMConfig', () => {
     expect(manifest.capabilities.custom_feature).toEqual({ enabled: true })
     expect(manifest.capabilities.llm_config).toEqual(llmConfig)
   })
+})
+
+describe('private account persistence',()=>{
+ it('round-trips the selected account separately from the model',()=>{
+ const selected={provider:'codex-cli' as const,modelId:'gpt-test',connectionId:'account-B'}
+ const config=workLLMConfigFromSelection(selected)
+ expect(config.builder_llm?.connection_id).toBe('account-B')
+ expect(workLLMSelectionFromConfig(config)).toMatchObject(selected)
+ })
 })

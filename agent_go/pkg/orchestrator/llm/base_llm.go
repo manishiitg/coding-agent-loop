@@ -128,14 +128,15 @@ func CreateLLMInstance(
 
 	// Create LLM configuration using unified LLMConfig
 	llmConfig := llm.Config{
-		Provider:    llm.Provider(primaryProvider),
-		ModelID:     primaryModel,
-		Temperature: config.Temperature,
-		Tracers:     nil, // Tracers will be set later if needed
-		TraceID:     traceID,
-		MaxRetries:  config.MaxRetries,
-		Logger:      llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
-		APIKeys:     llmAPIKeys,
+		ConnectionID: config.LLMConfig.Primary.ConnectionID,
+		Provider:     llm.Provider(primaryProvider),
+		ModelID:      primaryModel,
+		Temperature:  config.Temperature,
+		Tracers:      nil, // Tracers will be set later if needed
+		TraceID:      traceID,
+		MaxRetries:   config.MaxRetries,
+		Logger:       llmLogger, // Use separate LLM logger for multi-llm-provider-go logs
+		APIKeys:      llmAPIKeys,
 	}
 
 	// Initialize LLM using the existing factory

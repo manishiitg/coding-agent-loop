@@ -655,9 +655,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			stepPath, stepConfig.ExecutionLLM.Provider, stepConfig.ExecutionLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: stepConfig.ExecutionLLM.Provider,
-				ModelID:  stepConfig.ExecutionLLM.ModelID,
-				Options:  stepConfig.ExecutionLLM.Options,
+				Provider:     stepConfig.ExecutionLLM.Provider,
+				ModelID:      stepConfig.ExecutionLLM.ModelID,
+				Options:      stepConfig.ExecutionLLM.Options,
+				ConnectionID: stepConfig.ExecutionLLM.ConnectionID,
 			},
 			APIKeys: orchestratorLLMConfig.APIKeys,
 		}
@@ -673,9 +674,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 			stepPath, subAgentLLM.Provider, subAgentLLM.ModelID))
 		return &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: subAgentLLM.Provider,
-				ModelID:  subAgentLLM.ModelID,
-				Options:  subAgentLLM.Options,
+				Provider:     subAgentLLM.Provider,
+				ModelID:      subAgentLLM.ModelID,
+				Options:      subAgentLLM.Options,
+				ConnectionID: subAgentLLM.ConnectionID,
 			},
 			APIKeys: hcpo.GetAPIKeys(),
 		}
@@ -1054,9 +1056,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPhaseLLM(agentPurpose string) *
 		agentPurpose, hcpo.presetPhaseLLM.Provider, hcpo.presetPhaseLLM.ModelID))
 	return &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: hcpo.presetPhaseLLM.Provider,
-			ModelID:  hcpo.presetPhaseLLM.ModelID,
-			Options:  hcpo.presetPhaseLLM.Options,
+			Provider:     hcpo.presetPhaseLLM.Provider,
+			ModelID:      hcpo.presetPhaseLLM.ModelID,
+			Options:      hcpo.presetPhaseLLM.Options,
+			ConnectionID: hcpo.presetPhaseLLM.ConnectionID,
 		},
 		APIKeys: hcpo.GetAPIKeys(),
 	}
@@ -1070,9 +1073,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPulseLLM(agentPurpose string) *
 		agentPurpose, hcpo.presetPulseLLM.Provider, hcpo.presetPulseLLM.ModelID))
 	return &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: hcpo.presetPulseLLM.Provider,
-			ModelID:  hcpo.presetPulseLLM.ModelID,
-			Options:  hcpo.presetPulseLLM.Options,
+			Provider:     hcpo.presetPulseLLM.Provider,
+			ModelID:      hcpo.presetPulseLLM.ModelID,
+			Options:      hcpo.presetPulseLLM.Options,
+			ConnectionID: hcpo.presetPulseLLM.ConnectionID,
 		},
 		APIKeys: hcpo.GetAPIKeys(),
 	}
@@ -1629,9 +1633,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 		}
 		llmConfig = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: orchestratorStepLLMConfig.Primary.Provider,
-				ModelID:  orchestratorStepLLMConfig.Primary.ModelID,
-				Options:  orchestratorStepLLMConfig.Primary.Options,
+				Provider:     orchestratorStepLLMConfig.Primary.Provider,
+				ModelID:      orchestratorStepLLMConfig.Primary.ModelID,
+				Options:      orchestratorStepLLMConfig.Primary.Options,
+				ConnectionID: orchestratorStepLLMConfig.Primary.ConnectionID,
 			},
 			APIKeys: apiKeys, // Preserve API keys from orchestrator (may be nil)
 		}
@@ -1647,9 +1652,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 	if llmConfig == nil && hcpo.presetPhaseLLM != nil && hcpo.presetPhaseLLM.Provider != "" && hcpo.presetPhaseLLM.ModelID != "" {
 		llmConfig = &orchestrator.LLMConfig{
 			Primary: orchestrator.LLMModel{
-				Provider: hcpo.presetPhaseLLM.Provider,
-				ModelID:  hcpo.presetPhaseLLM.ModelID,
-				Options:  hcpo.presetPhaseLLM.Options,
+				Provider:     hcpo.presetPhaseLLM.Provider,
+				ModelID:      hcpo.presetPhaseLLM.ModelID,
+				Options:      hcpo.presetPhaseLLM.Options,
+				ConnectionID: hcpo.presetPhaseLLM.ConnectionID,
 			},
 			APIKeys: orchestratorLLMConfig.APIKeys, // Preserve API keys from orchestrator
 		}

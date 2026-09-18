@@ -67,7 +67,8 @@ type PresetLLMConfig struct {
 	// Provider is stored only in provider_profile mode. The provider package
 	// owns the Builder, execution-tier, and Pulse defaults and can
 	// evolve them when the application is updated.
-	Provider string `json:"provider,omitempty"`
+	Provider     string `json:"provider,omitempty"`
+	ConnectionID string `json:"connection_id,omitempty"`
 
 	// Explicit mode pins each workflow role directly.
 	BuilderLLM *AgentLLMConfig `json:"builder_llm,omitempty"`
@@ -102,6 +103,7 @@ type TieredLLMConfig struct {
 
 // AgentLLMConfig represents LLM configuration for a specific agent type.
 type AgentLLMConfig struct {
+	ConnectionID   string                 `json:"connection_id,omitempty"`
 	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
 	Provider       string                 `json:"provider"`
 	ModelID        string                 `json:"model_id"`
@@ -242,6 +244,11 @@ func ResolveProviderProfileConfig(config *PresetLLMConfig) (*AgentLLMConfig, *Ti
 		Tier3: agentLLMConfigFromCodingAgentRef(defaults.Low),
 	}
 
+	for _, role := range []*AgentLLMConfig{builder, tiered.Tier1, tiered.Tier2, tiered.Tier3} {
+		if role != nil {
+			role.ConnectionID = config.ConnectionID
+		}
+	}
 	if tiered.Tier1 == nil || tiered.Tier2 == nil || tiered.Tier3 == nil {
 		return builder, nil, true
 	}
@@ -264,6 +271,7 @@ func ResolveProviderProfilePulseConfig(config *PresetLLMConfig) (*AgentLLMConfig
 	if pulse == nil {
 		return nil, false
 	}
+	pulse.ConnectionID = config.ConnectionID
 	return pulse, true
 }
 

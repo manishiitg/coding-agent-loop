@@ -577,6 +577,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		reasoningLevel = loadedTemplate.Frontmatter.DefaultReasoningLevel
 		log.Printf("[DELEGATION] Using template default reasoning_level: %s", reasoningLevel)
 	}
+	connectionID := parentReq.ConnectionID
+	if parentReq.LLMConfig != nil {
+		connectionID = parentReq.LLMConfig.Primary.ConnectionID
+	}
+	if string(provider) != parentReq.Provider {
+		connectionID = ""
+	}
 	var tierOptions map[string]interface{}
 	if reasoningLevel != "" {
 		// Load fresh from workspace file at delegation time so LLM-written tier changes take effect immediately
@@ -594,7 +601,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				// Custom tier lookup
 				if tierConfig.Custom != nil {
 					if ct, ok := tierConfig.Custom[reasoningLevel]; ok {
-						tierModel = &virtualtools.TierModel{Provider: ct.Provider, ModelID: ct.ModelID}
+						tierModel = &virtualtools.TierModel{Provider: ct.Provider, ModelID: ct.ModelID, ConnectionID: ct.ConnectionID}
 					}
 				}
 			}
@@ -602,6 +609,9 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 				provider = llm.Provider(tierModel.Provider)
 				modelID = tierModel.ModelID
 				tierOptions = tierModel.Options
+				if tierModel.ConnectionID != "" || string(provider) != parentReq.Provider {
+					connectionID = tierModel.ConnectionID
+				}
 				log.Printf("[DELEGATION] Using tier %s model: %s/%s", reasoningLevel, tierModel.Provider, tierModel.ModelID)
 			}
 		}
@@ -646,7 +656,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Load provider keys and add the private workflow credential only for
 	// workflow-owned delegations. Normal multi-agent chats must not inherit a
 	// credential merely because they reference a workflow folder.
-	apiKeys := MergedProviderAPIKeys(ctx)
+	apiKeys := api.withConnectionResolver(MergedProviderAPIKeys(ctx), subAgentUserID)
 	workflowOwnedDelegation := parentReq.AgentMode == "workflow" || parentReq.AgentMode == "workflow_phase" || strings.TrimSpace(parentReq.PhaseID) != ""
 	workflowDecisionScope := strings.TrimSpace(parentReq.SelectedFolder)
 	if workflowOwnedDelegation {
@@ -679,12 +689,13 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 
 	// Create sub-agent config based on parent request
 	subAgentConfig := agent.LLMAgentConfig{
-		Name:       fmt.Sprintf("sub-agent-depth-%d", currentDepth),
-		ServerName: serverName,
-		ConfigPath: api.mcpConfigPath,
-		Provider:   provider,
-		ModelID:    modelID,
-		Options:    tierOptions,
+		Name:         fmt.Sprintf("sub-agent-depth-%d", currentDepth),
+		ServerName:   serverName,
+		ConfigPath:   api.mcpConfigPath,
+		Provider:     provider,
+		ConnectionID: connectionID,
+		ModelID:      modelID,
+		Options:      tierOptions,
 		Temperature: func() float64 {
 			if parentReq.Temperature > 0 {
 				return parentReq.Temperature

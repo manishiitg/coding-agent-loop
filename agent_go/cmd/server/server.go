@@ -677,6 +677,7 @@ func spaStaticFileHandler(root string) http.Handler {
 
 // QueryRequest represents an agent query request
 type QueryRequest struct {
+	ConnectionID    string   `json:"connection_id,omitempty"`
 	Query           string   `json:"query"`
 	Message         string   `json:"message,omitempty"`           // Alias for Query (used by frontend)
 	SessionTitle    string   `json:"session_title,omitempty"`     // Short UI label for backend-started sessions; never use the full prompt here.
@@ -1266,9 +1267,10 @@ func queryLLMConfigFromPreset(preset *workflowtypes.PresetLLMConfig) *orchestrat
 	}
 	cfg := &orchestrator.LLMConfig{
 		Primary: orchestrator.LLMModel{
-			Provider: primary.Provider,
-			ModelID:  primary.ModelID,
-			Options:  primary.Options,
+			Provider:     primary.Provider,
+			ModelID:      primary.ModelID,
+			Options:      primary.Options,
+			ConnectionID: primary.ConnectionID,
 		},
 	}
 
@@ -2118,9 +2120,11 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/llm-config/delegation-tiers", api.handleGetDelegationTierDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/providers", api.handleGetProviderManifest).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/providers/{provider}/models", api.handleGetProviderModels).Methods("GET")
-	apiRouter.HandleFunc("/provider-setup/sessions", requireAdmin(api.handleStartProviderSetup)).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/provider-setup/sessions/{id}", requireAdmin(api.handleProviderSetupSession)).Methods("GET", "DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/provider-setup/sessions/{id}/stream", requireAdmin(api.handleProviderSetupStream)).Methods("GET")
+	apiRouter.HandleFunc("/provider-connections", api.handleProviderConnections).Methods("GET", "POST", "OPTIONS")
+	apiRouter.HandleFunc("/provider-connections/{connectionID}", api.handleProviderConnection).Methods("PATCH", "DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/provider-setup/sessions", api.handleStartProviderSetup).Methods("POST", "OPTIONS")
+	apiRouter.HandleFunc("/provider-setup/sessions/{id}", api.handleProviderSetupSession).Methods("GET", "DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/provider-setup/sessions/{id}/stream", api.handleProviderSetupStream).Methods("GET")
 	apiRouter.HandleFunc("/session/cancel-turn", api.handleCancelCurrentTurn).Methods("POST")
 	apiRouter.HandleFunc("/session/stop", api.handleStopSession).Methods("POST")
 	apiRouter.HandleFunc("/session/clear", api.handleClearSession).Methods("POST")
@@ -3777,7 +3781,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Everything downstream that reads req.LLMConfig directly (the workflow
 		// orchestrator's base config, run metadata) must see the locked answer
 		// too, not the request's original choice.
-		req.LLMConfig = &orchestrator.LLMConfig{Primary: orchestrator.LLMModel{Provider: finalProvider, ModelID: finalModelID}}
+		connectionID := req.ConnectionID
+		if req.LLMConfig != nil && req.LLMConfig.Primary.ConnectionID != "" {
+			connectionID = req.LLMConfig.Primary.ConnectionID
+		}
+		req.LLMConfig = &orchestrator.LLMConfig{Primary: orchestrator.LLMModel{Provider: finalProvider, ModelID: finalModelID, ConnectionID: connectionID}}
 		req.LLMConfigSource = ""
 		supported := getSupportedProviders()
 		if len(supported) > 0 {
@@ -4241,7 +4249,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
 		api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
-		virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiers(presetLLMConfig))
+		virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiers(presetLLMConfig), workflowKeys)
 		if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 			workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode
 		}
@@ -4791,6 +4799,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		mergedAPIKeys = resolvedProfile.APIKeys
 	}
 
+	mergedAPIKeys = api.withConnectionResolver(mergedAPIKeys, currentUserID)
 	queryInputLaneRelease := releaseInputLane
 	if queryInputLaneRelease != nil {
 		// Ownership moves to the background turn for its full lifetime. Normal
@@ -5071,7 +5080,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			platformBridgeTools = append(platformBridgeTools, "read_image")
 		}
 
+		resolvedConnectionID := req.ConnectionID
+		if req.LLMConfig != nil && req.LLMConfig.Primary.ConnectionID != "" {
+			resolvedConnectionID = req.LLMConfig.Primary.ConnectionID
+		}
 		agentConfig := agent.LLMAgentConfig{
+			ConnectionID:       resolvedConnectionID,
 			Name:               "chat-agent",
 			ServerName:         serverList, // Use full server list, not just first one
 			ConfigPath:         api.mcpConfigPath,
@@ -8642,9 +8656,10 @@ func sanitizeTierModel(model *virtualtools.TierModel) *virtualtools.TierModel {
 		return nil
 	}
 	sanitized := &virtualtools.TierModel{
-		Provider: strings.TrimSpace(model.Provider),
-		ModelID:  strings.TrimSpace(model.ModelID),
-		Options:  model.Options,
+		Provider:     strings.TrimSpace(model.Provider),
+		ModelID:      strings.TrimSpace(model.ModelID),
+		Options:      model.Options,
+		ConnectionID: model.ConnectionID,
 	}
 
 	return sanitized
@@ -10050,7 +10065,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	}
 	sessionAwareExecutors, workspaceEnv := virtualtools.CreateWorkspaceAdvancedToolExecutorsWithSessionAndEnv(currentUserID, sessionID, secretEnvVars)
 	api.setPlaywrightExecutionContext(workspaceEnv, sessionID, req)
-	virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiersFromResolved(cfg.TieredConfig))
+	virtualtools.SetGenerateTextWorkflowTierConfig(sessionAwareExecutors, getWorkspaceAPIURL(), generateTextWorkflowTiersFromResolved(cfg.TieredConfig), workshopAPIKeys)
 	if mode := validatedWorkflowExecutionMode(req.ExecutionOptions); mode != "" {
 		workspaceEnv["WORKFLOW_EXECUTION_MODE"] = mode
 	}
@@ -12092,6 +12107,7 @@ func workshopConvertAgentLLMConfig(config *workflowtypes.AgentLLMConfig) *todo_c
 		Provider:       config.Provider,
 		ModelID:        config.ModelID,
 		Options:        config.Options,
+		ConnectionID:   config.ConnectionID,
 	}
 }
 
@@ -12135,9 +12151,10 @@ func generateTextWorkflowTiersFromResolved(tiers *todo_creation_human.TieredLLMC
 			return nil
 		}
 		return &virtualtools.TierModel{
-			Provider: model.Provider,
-			ModelID:  model.ModelID,
-			Options:  model.Options,
+			Provider:     model.Provider,
+			ModelID:      model.ModelID,
+			Options:      model.Options,
+			ConnectionID: model.ConnectionID,
 		}
 	}
 	return &virtualtools.WorkflowLLMTierConfig{

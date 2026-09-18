@@ -102,6 +102,7 @@ type providerSetupSnapshot struct {
 }
 
 type providerSetupSession struct {
+	bindingID   string
 	mu          sync.Mutex
 	id          string
 	provider    string
@@ -289,7 +290,11 @@ func newProviderSetupManager() *providerSetupManager {
 	}
 }
 
-func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func(), replaceRunning bool) (*providerSetupSession, error) {
+func (m *providerSetupManager) start(ownerID, provider, action string, cols, rows int, environment []string, cleanup func(), replaceRunning bool, connectionIDs ...string) (*providerSetupSession, error) {
+	bindingID := provider
+	if len(connectionIDs) > 0 && connectionIDs[0] != "" {
+		bindingID = connectionIDs[0]
+	}
 	if cleanup == nil {
 		cleanup = func() {}
 	}
@@ -309,14 +314,14 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	}
 
 	m.mu.Lock()
-	if m.starting[provider] {
+	if m.starting[bindingID] {
 		m.mu.Unlock()
 		cleanup()
 		return nil, &providerSetupConflictError{provider: provider}
 	}
 	var sessionsToStop []*providerSetupSession
 	for _, existing := range m.sessions {
-		if existing.provider == provider && existing.isRunning() {
+		if existing.provider == provider && (existing.bindingID == bindingID || (existing.bindingID == "" && bindingID == provider)) && existing.isRunning() {
 			if !replaceRunning {
 				m.mu.Unlock()
 				cleanup()
@@ -326,11 +331,11 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 			delete(m.sessions, existing.id)
 		}
 	}
-	m.starting[provider] = true
+	m.starting[bindingID] = true
 	m.mu.Unlock()
 	defer func() {
 		m.mu.Lock()
-		delete(m.starting, provider)
+		delete(m.starting, bindingID)
 		m.mu.Unlock()
 	}()
 
@@ -349,6 +354,13 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), providerSetupMaxDuration)
 	command := exec.CommandContext(ctx, spec.command, spec.args...)
+	if bindingID != provider {
+		for _, entry := range environment {
+			if strings.HasPrefix(entry, "HOME=") {
+				command.Dir = strings.TrimPrefix(entry, "HOME=")
+			}
+		}
+	}
 	if action == "usage" {
 		workDir, mkdirErr := os.MkdirTemp("", "agentworks-provider-usage-*")
 		if mkdirErr != nil {
@@ -378,7 +390,7 @@ func (m *providerSetupManager) start(ownerID, provider, action string, cols, row
 		return nil, fmt.Errorf("start %s %s: %w", provider, action, err)
 	}
 	now := time.Now().UTC()
-	session := &providerSetupSession{
+	session := &providerSetupSession{bindingID: bindingID,
 		id:          id,
 		provider:    provider,
 		action:      action,
@@ -563,6 +575,7 @@ func (api *StreamingAPI) providerSetupManager() *providerSetupManager {
 }
 
 type startProviderSetupRequest struct {
+	ConnectionID   string `json:"connection_id,omitempty"`
 	Provider       string `json:"provider"`
 	Action         string `json:"action"`
 	WorkspacePath  string `json:"workspace_path,omitempty"`
@@ -621,7 +634,18 @@ func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http
 	request.WorkspacePath = strings.TrimSpace(request.WorkspacePath)
 	var environment []string
 	var cleanup func()
-	if request.WorkspacePath != "" {
+	if request.ConnectionID != "" && !strings.HasPrefix(request.ConnectionID, "global:") {
+		keys, err := api.connectionAPIKeys(r.Context(), GetUserIDFromContext(r.Context()), request.Provider, request.ConnectionID)
+		if err != nil {
+			http.Error(w, "connection unavailable or unauthorized", 403)
+			return
+		}
+		environment = providerConnectionSetupEnvironment(keys)
+	} else if !currentUserIsAdmin(r) {
+		writeWorkflowPermissionDenied(w, "admin")
+		return
+	}
+	if request.WorkspacePath != "" && request.ConnectionID == "" {
 		if request.Action != "inspect" {
 			http.Error(w, `{"error":"workflow context is only supported for account inspection"}`, http.StatusBadRequest)
 			return
@@ -643,7 +667,7 @@ func (api *StreamingAPI) handleStartProviderSetup(w http.ResponseWriter, r *http
 			return
 		}
 	}
-	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup, request.ReplaceRunning)
+	session, err := api.providerSetupManager().start(GetUserIDFromContext(r.Context()), request.Provider, request.Action, request.Cols, request.Rows, environment, cleanup, request.ReplaceRunning, request.ConnectionID)
 	if err != nil {
 		status := http.StatusBadRequest
 		var conflict *providerSetupConflictError

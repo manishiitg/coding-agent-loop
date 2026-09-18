@@ -9,6 +9,16 @@ import type {
   LLMDiscoveryResponse,
 } from './api-types'
 
+export interface ProviderConnection {
+  id: string
+  provider: string
+  display_name: string
+  scope: 'global' | 'user'
+  personal_accounts_allowed?: boolean
+  auth_method: string
+  underlying_provider?: string
+}
+
 export interface ModelMetadata {
   model_id: string
   model_name: string
@@ -193,6 +203,19 @@ export const llmConfigService = {
   },
 
   // Get comprehensive provider manifest (replaces hardcoded provider info)
+  getProviderConnections: async (): Promise<ProviderConnection[]> => {
+    const response = await llmConfigApi.get('/api/provider-connections')
+    return response.data.connections
+  },
+  addProviderConnection: async (connection: { provider: string; display_name: string; credential?: string; auth_method?: string; underlying_provider?: string }): Promise<ProviderConnection> => {
+    const response = await llmConfigApi.post('/api/provider-connections', connection)
+    return response.data
+  },
+
+  updateProviderConnection: async (id: string, changes: { display_name: string; credential?: string }): Promise<void> => { await llmConfigApi.patch(`/api/provider-connections/${encodeURIComponent(id)}`, changes) },
+
+  deleteProviderConnection: async (id: string): Promise<void> => { await llmConfigApi.delete(`/api/provider-connections/${encodeURIComponent(id)}`) },
+
   getProviderManifest: async (): Promise<ProviderManifestResponse> => {
     const response = await llmConfigApi.get('/api/llm-config/providers')
     return response.data
@@ -217,10 +240,12 @@ export const llmConfigService = {
     rows?: number,
     workspacePath?: string,
     replaceRunning?: boolean,
+    connectionId?: string,
   ): Promise<ProviderSetupSession> => {
     const response = await llmConfigApi.post('/api/provider-setup/sessions', {
       provider,
       action,
+      connection_id: connectionId,
       cols,
       rows,
       workspace_path: workspacePath,

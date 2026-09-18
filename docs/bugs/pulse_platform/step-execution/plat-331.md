@@ -4,7 +4,7 @@
 
 | Coordination | Value |
 |---|---|
-| State | Implemented and regression-tested locally with contract v1.0.42 migration; deployment and live acceptance pending |
+| State | Deployed; RTS workflow migrated to contract v1.0.42; overlapping-delivery live acceptance pending |
 | Date | 2026-09-18 |
 | Owner | step execution / deterministic routing |
 | Related | [PLAT-328](plat-328.md) |
@@ -57,14 +57,21 @@ left unchanged. All other workflows take the idempotent no-op path.
 
 ## RTS migration and acceptance
 
-- Run the v1.0.42 migration; it changes `pr-review-branch`, `record-skip`, and
-  `basic-pr-review` together and removes their shared-path instructions.
-- Remove the gate script's now-unused compatibility write to
-  `db/assets/route_selection.json` after verifying no non-plan consumer reads
-  it; the route data flow no longer depends on that mirror.
-- Keep append-only `pr_gate_decisions` rows in SQLite as durable audit history.
-- Deploy only after user approval, then send two overlapping eligible/skip
-  webhook deliveries and verify each downstream step retains its own PR and
-  run ID.
+- Release `e63b6c7-20260918161036` (`e63b6c783`) was deployed with user
+  approval on 2026-09-18. The planner health endpoint and the agent, browser,
+  gateway, and workspace services were healthy after deployment.
+- `rtsprreviweer` was migrated from v1.0.41 to v1.0.42. The branch and both
+  destinations now declare `context_dependencies: ["route_selection.json"]`;
+  the branch no longer has a shared `route_source_file`.
+- The gate's obsolete `db/assets/route_selection.json` compatibility write and
+  the skip step's shared-path fallback were removed. The gate still writes
+  `STEP_OUTPUT_DIR/route_selection.json` and preserves append-only
+  `pr_gate_decisions` audit rows in SQLite.
+- Static production validation passed: the workflow plan and affected scripts
+  contain no shared route path, both Python scripts parse, and all three
+  consumers declare the run-scoped dependency. A timestamped server backup
+  was retained before migration.
+- Remaining acceptance: send two overlapping eligible/skip webhook deliveries
+  and verify each downstream step retains its own PR and run ID.
 
 Focused and full `step_based_workflow` package tests pass locally.

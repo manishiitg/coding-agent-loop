@@ -13,7 +13,7 @@ vi.mock('../utils/chatIdentity', () => ({
   captureChatIdentity: () => state.generation,
   isChatIdentityCurrent: (value: number) => value === state.generation,
 }))
-import { drainChatQueue, sendQueuedChatMessage } from '../utils/chatQueueController'
+import { drainChatQueue, resetChatQueueDeliveryReceiptsForTests, sendQueuedChatMessage } from '../utils/chatQueueController'
 
 const build = (messages: string[]) => ({ message: messages.join('\n\n'), isAutoNotification: messages.every(m => m.startsWith('[AUTO-NOTIFICATION]')) })
 function tab(sessionId: string, message: string) {
@@ -22,6 +22,7 @@ function tab(sessionId: string, message: string) {
 
 describe('queued notification and human message ownership', () => {
   beforeEach(() => {
+    resetChatQueueDeliveryReceiptsForTests()
     state.verify.mockReset().mockResolvedValue([])
     state.generation = 1
     state.tabs = { A: tab('schedule-cron--job_1', '[AUTO-NOTIFICATION] Scheduled step completed'), B: tab('chat-B', 'message for B') }
@@ -90,6 +91,33 @@ describe('queued notification and human message ownership', () => {
     expect(send).toHaveBeenCalledTimes(1)
     release(true)
     await Promise.all([first, second])
+  })
+  it('deduplicates delayed delivery from another tab projecting the same session', async () => {
+    state.tabs.C = tab('chat-B', 'message for B')
+    const send = vi.fn(async (_message: string, _options: unknown) => true)
+
+    await sendQueuedChatMessage('B', 0, 'message for B', send)
+    await sendQueuedChatMessage('C', 0, 'message for B', send)
+
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(state.tabs.B.config.queuedMessages).toEqual([])
+    expect(state.tabs.C.config.queuedMessages).toEqual([])
+  })
+  it('serializes concurrent delivery across tabs projecting the same session', async () => {
+    state.tabs.C = tab('chat-B', 'message for B')
+    let release!: (value: boolean) => void
+    const send = vi.fn((_message: string, _options: unknown) => new Promise<boolean>(resolve => { release = resolve }))
+
+    const first = sendQueuedChatMessage('B', 0, 'message for B', send)
+    const overlapping = await sendQueuedChatMessage('C', 0, 'message for B', send)
+    expect(overlapping).toBe(false)
+    expect(send).toHaveBeenCalledTimes(1)
+    release(true)
+    await first
+
+    await sendQueuedChatMessage('C', 0, 'message for B', send)
+    expect(send).toHaveBeenCalledTimes(1)
+    expect(state.tabs.C.config.queuedMessages).toEqual([])
   })
   it('sends the selected duplicate occurrence and preserves its earlier twin', async () => {
     state.tabs.B.config.queuedMessages = ['same', 'middle', 'same', 'tail']

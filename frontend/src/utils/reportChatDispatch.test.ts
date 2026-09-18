@@ -31,6 +31,7 @@ beforeEach(() => {
       return 'fresh'
     }),
     getTab: (id: string) => mocks.chat.chatTabs[id],
+    getActiveSessions: vi.fn(async () => []),
     getTabConfig: vi.fn(() => ({ queuedMessages: ['earlier request'], inputText: 'My unsent draft' })),
     setTabConfig: vi.fn(), setTabViewMode: vi.fn(), setAutoScroll: vi.fn(),
   }
@@ -47,6 +48,8 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(result).toEqual({ tabId: 'running', reused: true, queuedBehindRunningTurn: true })
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
     expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('running', { queuedMessages: ['earlier request', 'Apply finding 42'] })
+    expect(mocks.chat.getActiveSessions).toHaveBeenCalledWith(true)
+    expect(mocks.chat.setTabViewMode).toHaveBeenCalledWith('running', 'formatted')
     expect(mocks.chat.setTabConfig.mock.calls[0][1]).not.toHaveProperty('inputText')
     expect(mocks.activate).toHaveBeenCalledWith('running')
   })
@@ -57,6 +60,8 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(result).toEqual({ tabId: 'existing', reused: true, queuedBehindRunningTurn: false })
     expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
     expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('existing', { queuedMessages: ['earlier request', 'Run visual QA'] })
+    expect(mocks.chat.getActiveSessions).not.toHaveBeenCalled()
+    expect(mocks.chat.setTabViewMode).toHaveBeenCalledWith('existing', 'formatted')
   })
 
   it('creates a chat when this automation has none', async () => {

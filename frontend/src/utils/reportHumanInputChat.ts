@@ -35,9 +35,13 @@ export function selectReportDiscussionTab(
   const candidates = Object.values(tabs).filter(tab => isInteractiveWorkflowTab(tab, target.presetId))
 
   return candidates.sort((left, right) => {
-    const leftRunning = left.isStreaming || left.hasRunningBgAgents
-    const rightRunning = right.isStreaming || right.hasRunningBgAgents
-    if (leftRunning !== rightRunning) return leftRunning ? -1 : 1
+    // A right-pane action should start in an idle conversational lane when one
+    // exists. Preferring a retained tab merely because it reported streaming
+    // could activate a stale/busy chat and leave the action sitting in its
+    // visible queue even though another interactive Builder tab was ready.
+    // Background agents do not own the foreground lane and therefore do not
+    // make a tab busy for this choice.
+    if (left.isStreaming !== right.isStreaming) return left.isStreaming ? 1 : -1
     if ((left.tabId === activeTabId) !== (right.tabId === activeTabId)) {
       return left.tabId === activeTabId ? -1 : 1
     }
@@ -159,14 +163,13 @@ async function findWorkflowPreset(workspacePath: string) {
 export async function sendWorkflowMessageToChat({
   workspacePath,
   message,
-  viewMode = 'terminal',
+  viewMode = 'formatted',
 }: {
   workspacePath: string
   message: string
-  /** Pulse's original "Ask in chat" wants the raw terminal visible (the
-   *  underlying coding-agent CLI working live is the point) — that's the
-   *  default. A caller whose message is a normal conversational ask, not
-   *  something to watch execute, should pass 'formatted' instead. */
+  /** Right-pane actions are ordinary user messages and share the formatted
+   *  chat presentation. A caller may explicitly request the raw terminal for
+   *  a terminal-specific action. */
   viewMode?: EventViewMode
 }): Promise<ReportHumanInputChatResult> {
   if (!message.trim()) throw new Error('Write a message before opening chat.')
@@ -212,6 +215,16 @@ export async function sendWorkflowMessageToChat({
   finalChatStore.setTabViewMode(tabId, viewMode)
   finalChatStore.setAutoScroll(true)
   activateTab(tabId)
+
+  // A server restart or missed completion event can leave a retained tab
+  // marked as streaming after it is actually idle. Refresh immediately for
+  // pane-originated actions so the shared queue controller can drain the
+  // message; do not make the click wait on this diagnostic request.
+  if (queuedBehindRunningTurn) {
+    void finalChatStore.getActiveSessions(true).catch(error => {
+      console.warn('[WorkflowChatAction] Failed to refresh the target chat session', error)
+    })
+  }
 
   if (targetTab.metadata?.mode === 'workflow') {
     const workflowStore = useWorkflowStore.getState()

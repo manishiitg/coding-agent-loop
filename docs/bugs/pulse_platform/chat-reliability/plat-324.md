@@ -872,3 +872,30 @@ The reliability correction shipped in `d4000d378`; compact activity-type icons
 shipped in `7f445d682`. Both are live on RTS in release
 `7f445d6-20260918045339`. The production build, release assets, idle drain,
 active release symlink, all three services, and public health check passed.
+
+### One queued Pulse action was delivered twice through duplicate chat projections
+
+On 2026-09-18 a manual Architecture Review command appeared twice in the same
+RTS conversation. Durable evidence showed that this was not a renderer-only
+duplicate. Session `877d4d7c-1032-4f21-a69a-9e9bb3ce3eaf` accepted the queued
+command at `05:34:27Z` under submission `a410023c-...`, then accepted the same
+command again at `05:34:51Z` under submission `977f3b7b-...`. The first copy
+was injected as a numbered queue item and the second as a plain live query, so
+the transcript rendered them as equivalent user cards. A separate session had
+already claimed the Pulse review, which is why the duplicate pass reported a
+collision.
+
+The browser queue lock was scoped to `tabId` even though backend delivery and
+idempotency are scoped to the conversation `sessionId`. Two UI projections of
+one conversation could therefore serialize rather than collide: after the
+first tab released its lock, the delayed second tab minted a new idempotency key
+and the backend correctly accepted it as a distinct submission.
+
+Queue delivery now uses one in-process lane per authenticated identity and
+conversation session. It also retains a bounded accepted-message receipt for
+two minutes, so a delayed projection consumes its stale queue copy without
+calling the backend again. Acceptance is recorded before checking whether the
+originating tab still exists, covering close/replace races. Focused regressions
+cover both concurrent and delayed duplicate projections of the same session.
+This correction is locally verified and has not been deployed pending explicit
+operator approval.

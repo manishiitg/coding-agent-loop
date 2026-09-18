@@ -11,6 +11,8 @@ let notify: ((message: string) => void) | undefined
 let subscribed = false
 let scheduled = false
 const pending = new Set<string>()
+const accepted = new Map<string, number>()
+const ACCEPTED_RECEIPT_TTL_MS = 2 * 60 * 1000
 
 type QueueReceipt = NonNullable<ChatTabConfig['queuedSubmission']>
 
@@ -19,13 +21,28 @@ function matchesReceipt(queue: string[], receipt: QueueReceipt): boolean {
   return prefix.every((message, index) => queue[index] === message)
 }
 
+function receiptKey(identity: number, sessionId: string, receipt: QueueReceipt): string {
+  return `${identity}:${sessionId}:${JSON.stringify(receipt.messages)}`
+}
+
+function wasRecentlyAccepted(key: string, now = Date.now()): boolean {
+  for (const [candidate, acceptedAt] of accepted) {
+    if (now - acceptedAt > ACCEPTED_RECEIPT_TTL_MS) accepted.delete(candidate)
+  }
+  return accepted.has(key)
+}
+
 async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: Submit, build: Prepare, verifyIdle: boolean): Promise<boolean> {
   const identity = captureChatIdentity()
   const store = useChatStore.getState()
   const sessionId = receipt.sessionId
-  const key = `${identity}:${tabId}:${sessionId}`
-  if (pending.has(key)) return false
-  pending.add(key)
+  // A conversation can be projected into more than one UI tab. The backend
+  // submission belongs to the session, so those projections must share one
+  // delivery lane as well.
+  const laneKey = `${identity}:${sessionId}`
+  const acceptedKey = receiptKey(identity, sessionId, receipt)
+  if (pending.has(laneKey)) return false
+  pending.add(laneKey)
   const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(tabId)?.sessionId === sessionId
   try {
     // Persist the exact snapshot before the first await. New queue entries may
@@ -41,13 +58,18 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
         : 'The queue changed while delivery was pending. Review it before retrying.')
     }
     const built = build(receipt.messages)
-    const accepted = receipt.accepted || !built.message.trim() || await send(built.message, {
+    const alreadyAccepted = receipt.accepted || wasRecentlyAccepted(acceptedKey)
+    const deliveryAccepted = alreadyAccepted || !built.message.trim() || await send(built.message, {
       sourceTabId: tabId, sourceSessionId: sessionId, identity,
       submissionId: receipt.id, isAutoNotification: built.isAutoNotification,
       preferLiveInput: receipt.preferLiveInput,
     })
+    // Remember server acceptance before checking whether this particular UI
+    // projection still owns the tab. A second projection must not resend an
+    // accepted message merely because the first one was closed or replaced.
+    if (deliveryAccepted) accepted.set(acceptedKey, Date.now())
     if (!owns()) return false
-    if (!accepted) throw new Error('Queued delivery was not confirmed. The message remains queued for retry.')
+    if (!deliveryAccepted) throw new Error('Queued delivery was not confirmed. The message remains queued for retry.')
     // Save acknowledgement before consuming the local queue. Even if another
     // view edited it, retry must never dispatch this accepted receipt again.
     const acknowledged = { ...receipt, accepted: true }
@@ -68,9 +90,14 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
     notify?.(message)
     return false
   } finally {
-    pending.delete(key)
+    pending.delete(laneKey)
     if (owns()) store.setTabConfig(tabId, { isQueueProcessing: false })
   }
+}
+
+export function resetChatQueueDeliveryReceiptsForTests(): void {
+  pending.clear()
+  accepted.clear()
 }
 
 /** Selection is presentation only. The snapshot owns its session and receipt. */

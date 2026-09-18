@@ -59,7 +59,7 @@ describe('Pulse decision chat routing', () => {
     )?.tabId).toBe('chat')
   })
 
-  it('prefers a running interactive chat when more than one retained tab exists', () => {
+  it('prefers an idle interactive chat instead of stranding a pane action behind a running turn', () => {
     const idle = tab('idle', { createdAt: 20 })
     const running = tab('running', { isStreaming: true, createdAt: 10 })
 
@@ -67,7 +67,7 @@ describe('Pulse decision chat routing', () => {
       { idle, running },
       { mode: 'workflow', presetId: 'workflow-one' },
       'idle',
-    )?.tabId).toBe('running')
+    )?.tabId).toBe('idle')
   })
 
   it('includes decision context while making clear that chat must not answer it implicitly', () => {

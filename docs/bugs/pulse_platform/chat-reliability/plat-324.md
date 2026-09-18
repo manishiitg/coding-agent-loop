@@ -867,3 +867,8 @@ The display cache now reuses its prior array only when every event object is
 unchanged, so middle-row replacements reach the transcript renderer. Focused
 coverage reproduces the accepted-message/completion/stale-history ordering and
 checks the client/server identity handoff.
+
+The reliability correction shipped in `d4000d378`; compact activity-type icons
+shipped in `7f445d682`. Both are live on RTS in release
+`7f445d6-20260918045339`. The production build, release assets, idle drain,
+active release symlink, all three services, and public health check passed.

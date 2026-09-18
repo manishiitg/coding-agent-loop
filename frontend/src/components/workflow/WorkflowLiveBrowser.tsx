@@ -6,7 +6,11 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 
-const PLAYWRIGHT_BROWSER = 'playwright-tests'
+// Keep the persisted value for compatibility with existing browser selections,
+// but treat it as automatic activity following. Older clients described this
+// as "Follow latest test", which could strand the viewer on an empty
+// Playwright channel while the managed agent browser was active.
+const AUTO_BROWSER = 'playwright-tests'
 
 type Recording = { recording: boolean; validation?: string; directory?: string; errors?: string[] }
 
@@ -64,13 +68,18 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
   const viewport = useRef({ width: 1280, height: 720 })
   const screen = useRef<HTMLImageElement>(null)
   const canWrite = useCanWriteWorkflow(workspacePath)
-  const followingPlaywright = selection === PLAYWRIGHT_BROWSER
+  const followingActivity = selection === AUTO_BROWSER
   const currentBrowser = sessions.find(item => item.browser_session === session)
-  const followLabel = currentBrowser?.kind === 'playwright' ? `${testBrowserLabel(currentBrowser)} · Auto` : 'Follow latest test'
-  const readOnly = followingPlaywright || currentBrowser?.read_only === 'true'
+  const followLabel = currentBrowser?.kind === 'playwright'
+    ? `${testBrowserLabel(currentBrowser)} · Auto`
+    : currentBrowser
+      ? `${currentBrowser.label || 'Managed browser'} · Auto`
+      : 'Follow browser activity'
+  const readOnly = currentBrowser?.read_only === 'true'
+    || (followingActivity && (!currentBrowser || currentBrowser.kind === 'playwright'))
   const canControl = canWrite && !readOnly
   const retainedFrame = !connected && lastPlaywrightFrame?.workspace === workspacePath
-    && (followingPlaywright || session.startsWith('pw-'))
+    && (followingActivity || session.startsWith('pw-'))
     && (!session || session === lastPlaywrightFrame.session) ? lastPlaywrightFrame.frame : ''
   const displayFrame = frame || retainedFrame
   const sourceCompleted = currentBrowser?.state === 'completed'
@@ -116,7 +125,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     catch { selectedBrowser.current = '' }
     // Minimal mode (SparkQuill: agent_browser only, no Playwright fixture)
     // never follows Playwright, even a selection stored by a prior session.
-    if (minimal && selectedBrowser.current === PLAYWRIGHT_BROWSER) selectedBrowser.current = ''
+    if (minimal && selectedBrowser.current === AUTO_BROWSER) selectedBrowser.current = ''
     setSelection(selectedBrowser.current)
     let polling = false
     const poll = async () => {
@@ -133,17 +142,27 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         for (const item of tests) if (item.recording_state && replayScope.current?.workspace === workspacePath) replayScope.current.ids.add(item.browser_session)
         const activeTests = tests.filter(item => item.state !== 'completed')
         let choice = selectedBrowser.current
-        if (choice && choice !== PLAYWRIGHT_BROWSER && !nextSessions.some(item => item.browser_session === choice)) {
-          choice = choice.startsWith('pw-') ? PLAYWRIGHT_BROWSER : ''
+        if (choice && choice !== AUTO_BROWSER && !nextSessions.some(item => item.browser_session === choice)) {
+          choice = choice.startsWith('pw-') ? AUTO_BROWSER : ''
         }
         // Follow tests as they start, including when the always-present shared
         // browser was selected by default. An explicit browser choice wins.
-        if (!minimal && !choice && tests.length) choice = PLAYWRIGHT_BROWSER
+        if (!minimal && !choice && tests.length) choice = AUTO_BROWSER
         selectedBrowser.current = choice
         setSelection(choice)
-        setSession(current => choice === PLAYWRIGHT_BROWSER
-          ? activeTests.find(item => item.browser_session === current)?.browser_session || activeTests[0]?.browser_session || tests.find(item => item.browser_session === current)?.browser_session || tests[0]?.browser_session || ''
-          : choice || nextSessions[0]?.browser_session || '')
+        setSession(current => {
+          if (choice !== AUTO_BROWSER) return choice || nextSessions[0]?.browser_session || ''
+          const test = activeTests.find(item => item.browser_session === current)
+            || activeTests[0]
+            || tests.find(item => item.browser_session === current)
+            || tests[0]
+          if (test) return test.browser_session
+          // Let the retained final test frame render once its source leaves
+          // discovery. A workspace with no prior test falls through to its
+          // managed browser immediately.
+          if (current.startsWith('pw-')) return ''
+          return nextSessions.find(item => item.kind !== 'playwright')?.browser_session || ''
+        })
       } catch {
         if (!cancelled) setError(`Unable to load ${scopeNoun} browser sessions.`)
       } finally { polling = false }
@@ -224,7 +243,14 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
     selectedBrowser.current = choice
     setSelection(choice)
     try { sessionStorage.setItem(`browser-selection:${workspacePath}`, choice) } catch { /* Selection still works in memory. */ }
-    setSession(choice === PLAYWRIGHT_BROWSER ? sessions.find(item => item.kind === 'playwright')?.browser_session || '' : choice)
+    if (choice === AUTO_BROWSER) {
+      setSession(sessions.find(item => item.kind === 'playwright' && item.state !== 'completed')?.browser_session
+        || sessions.find(item => item.kind === 'playwright')?.browser_session
+        || sessions.find(item => item.kind !== 'playwright')?.browser_session
+        || '')
+      return
+    }
+    setSession(choice)
   }
 
   async function toggleRecording() {
@@ -295,9 +321,9 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         <h3 className="text-sm font-medium">Browser</h3>
         <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
         {!minimal && (
-          <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingPlaywright ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+          <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
             {!selection && !session && <option value="" disabled>No managed browser</option>}
-            <option value={PLAYWRIGHT_BROWSER}>{followingPlaywright ? followLabel : 'Follow latest test'}</option>
+            <option value={AUTO_BROWSER}>{followingActivity ? followLabel : 'Follow browser activity'}</option>
             {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
           </select>
         )}
@@ -346,7 +372,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
 
       {replayURL ? <video controls preload="metadata" src={replayURL} aria-label="Playwright test recording" className="min-h-0 flex-1 bg-black object-contain" /> : displayFrame ? <div className="live-browser-viewport relative min-h-0 flex-1 bg-muted/20"><div className="live-browser-frame absolute inset-0 flex items-center justify-center overflow-hidden">
         <img ref={screen} src={displayFrame} alt={retainedFrame ? "Last Playwright test frame" : "Live server browser viewport"} draggable={false} tabIndex={controlling ? 0 : -1} className="block h-auto max-h-full w-auto max-w-full select-none outline-none focus:ring-2 focus:ring-inset focus:ring-ring" onMouseDown={event => mouse(event, 'mousePressed')} onMouseUp={event => mouse(event, 'mouseReleased')} onMouseMove={event => mouse(event, 'mouseMoved')} onContextMenu={event => event.preventDefault()} onKeyDown={event => keyboard(event, 'keyDown')} onKeyUp={event => keyboard(event, 'keyUp')} />
-      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingPlaywright && !minimal ? 'Waiting for a Playwright test. Tests using the AgentWorks fixture will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
+      </div>{retainedFrame && <span className="pointer-events-none absolute bottom-3 right-3 rounded bg-background/90 px-3 py-1 text-xs shadow">{completed ? 'Completed' : 'Disconnected'} · Last frame</span>}</div> : <div className="flex min-h-0 flex-1 items-center justify-center px-6 py-12 text-center text-sm text-muted-foreground">{replayQueued ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Replay queued for processing…</span> : replayPreparing ? <span className="inline-flex items-center gap-2"><Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />Preparing video replay…</span> : replayFailed ? 'Replay unavailable. See the recording error above.' : sourceCompleted ? 'Replay is no longer available.' : session ? 'Waiting for the browser’s live view…' : followingActivity && !minimal ? 'Waiting for browser activity. Managed browser sessions and AgentWorks Playwright tests will appear here automatically.' : `When this ${scopeNoun} opens a managed browser, its live view will appear here.`}</div>}
       <p className="live-browser-footer shrink-0 border-t border-border px-3 py-1 text-[11px] text-muted-foreground">{readOnly && !minimal ? 'Playwright test · Watch-only. Video replay is recorded automatically.' : session === 'shared-browser' ? 'Shared browser · everyone uses the same tabs and sign-ins. Coordinate before making changes.' : controlling ? 'Browser automation is paused while you interact. Return control or press Escape to let it continue.' : 'Live server browser · Take control to interact.'}</p>
     </section>
   )

@@ -76,7 +76,7 @@ const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideI
   { id: 'mcp', label: 'MCP servers', icon: Server },
   { id: 'models', label: 'Agent configuration', icon: BrainCircuit },
   { id: 'email', label: 'Gmail', icon: Mail },
-  { id: 'bots', label: 'Bots', icon: Bot },
+  { id: 'bots', label: 'Connectors', icon: Bot },
   { id: 'folders', label: 'Attached folders', icon: FolderOpen },
 ]
 

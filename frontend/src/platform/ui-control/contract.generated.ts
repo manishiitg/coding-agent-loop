@@ -200,7 +200,7 @@ export const UI_CONTROL_CONTRACT = {
     },
     {
       "id": "bots",
-      "label": "Workflow bots",
+      "label": "Connectors",
       "actions": [
         "open"
       ],

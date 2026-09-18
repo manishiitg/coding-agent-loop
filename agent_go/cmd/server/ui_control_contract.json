@@ -197,7 +197,7 @@
     },
     {
       "id": "bots",
-      "label": "Workflow bots",
+      "label": "Connectors",
       "actions": [
         "open"
       ],

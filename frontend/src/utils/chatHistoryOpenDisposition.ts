@@ -27,8 +27,9 @@ function usesTerminalRestore(session: ChatHistorySession): boolean {
 /** Historical schedules are observations, not resumable builder conversations. */
 export function chatHistoryOpenDisposition(
   session: ChatHistorySession,
-): 'read-only-schedule' | 'interactive-transport' | 'interactive-history' {
+): 'read-only-schedule' | 'read-only-history' | 'interactive-transport' | 'interactive-history' {
   if (isScheduledChatHistorySession(session)) return 'read-only-schedule'
+  if (session.can_resume === false) return 'read-only-history'
   if (usesTerminalRestore(session) || supportsNativeResume(session)) return 'interactive-transport'
   return 'interactive-history'
 }

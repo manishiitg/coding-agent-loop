@@ -17,6 +17,13 @@ function session(overrides: Partial<ChatHistorySession>): ChatHistorySession {
 }
 
 describe('chatHistoryOpenDisposition', () => {
+  it('opens a bot transcript read-only even when its transport supports resume', () => {
+    expect(chatHistoryOpenDisposition(session({
+      session_id: 'bot-slack--channel-thread', bot_platform: 'slack', can_resume: false,
+      runtime: { kind: 'coding_agent', transport: 'tmux', resume_supported: true },
+    }))).toBe('read-only-history')
+  })
+
   it('keeps a scheduled coding-agent tmux session read-only', () => {
     expect(chatHistoryOpenDisposition(session({
       session_id: 'schedule-manual--37c45de4_1787214437488081000',

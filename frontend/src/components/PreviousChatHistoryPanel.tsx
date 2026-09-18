@@ -1,6 +1,6 @@
 import './PreviousChatHistoryPanel.css'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Eye, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import {
@@ -710,12 +710,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [expandedSessionIds, loadExpandedMessages])
 
   const handleSelect = useCallback((session: ChatHistorySession) => {
-    if (session.can_resume === false) {
-      toggleExpanded(session)
-      return
-    }
     void onSelectSession(session)
-  }, [onSelectSession, toggleExpanded])
+  }, [onSelectSession])
 
   const handleDeleteSession = useCallback(async (session: ChatHistorySession) => {
     const title = chatHistorySessionTitle(session, 80)
@@ -1034,25 +1030,16 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>
                       )}
-                      {canResume ? (
-                        <button
-                          type="button"
-                          onClick={() => handleSelect(session)}
-                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
-                        >
-                          <ActionIcon className="h-3.5 w-3.5" />
-                          {!compact && <span>{actionLabel}</span>}
-                        </button>
-                      ) : (
-                        <span
-                          className="inline-flex items-center rounded border border-border/70 bg-muted/30 p-1 text-muted-foreground"
-                          title="View only"
-                          aria-label="View only"
-                        >
-                          <Eye className="h-3.5 w-3.5" />
-                          <span className="sr-only">View only</span>
-                        </span>
-                      )}
+                      <button
+                        type="button"
+                        onClick={() => handleSelect(session)}
+                        title={canResume ? actionLabel : 'Open read-only conversation'}
+                        aria-label={canResume ? actionLabel : 'Open read-only conversation'}
+                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
+                      >
+                        <ActionIcon className="h-3.5 w-3.5" />
+                        {!compact && <span>{canResume ? actionLabel : 'Open'}</span>}
+                      </button>
                     </div>
                   </div>
 

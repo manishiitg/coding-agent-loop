@@ -365,14 +365,18 @@ const WorkflowPreviousChatsPanel: React.FC<{
 
   const handleResumePreviousChat = useCallback(async (session: ChatHistorySession) => {
     const disposition = chatHistoryOpenDisposition(session)
-    if (disposition === 'read-only-schedule') {
+    if (disposition === 'read-only-schedule' || disposition === 'read-only-history') {
+      const isSchedule = disposition === 'read-only-schedule'
+      const transcriptLabel = isSchedule ? 'Schedule' : session.bot_platform ? 'Bot chat' : 'History'
       const chatStore = useChatStore.getState()
       const scheduleMetadata: NonNullable<ChatTab['metadata']> = {
         mode: 'workflow',
         presetQueryId: activePresetId || undefined,
         isViewOnly: true,
-        isScheduledRun: true,
-        scheduledJobName: 'Schedule',
+        isScheduledRun: isSchedule,
+        isBotRun: Boolean(session.bot_platform),
+        botPlatform: session.bot_platform,
+        scheduledJobName: isSchedule ? 'Schedule' : undefined,
         readOnlyRestoredAt: Date.now(),
         userInteractiveContinuation: false,
       }
@@ -384,7 +388,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
         getTabs: () => useChatStore.getState().chatTabs,
         presetQueryId: activePresetId || '',
         sessionId: session.session_id,
-        name: 'Schedule',
+        name: transcriptLabel,
         metadata: scheduleMetadata,
         createChatTab: chatStore.createChatTab,
         updateTabSessionId: chatStore.updateTabSessionId,
@@ -413,7 +417,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
           sessionId: session.session_id,
           error,
         })
-        addToast('Failed to open the saved schedule transcript', 'error')
+        addToast(`Failed to open the saved ${isSchedule ? 'schedule' : 'bot'} transcript`, 'error')
         return
       }
 

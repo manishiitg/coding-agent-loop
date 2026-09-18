@@ -10,6 +10,7 @@ import {
   chatHistoryWorkshopModeLabel,
 } from '../components/PreviousChatHistoryPanel'
 import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
+import { hydrateTabEvents } from '../utils/sessionRestore'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
 /**
@@ -34,6 +35,33 @@ export function useResumePreviousChat() {
 
     if (!targetTabId || targetTab?.metadata?.mode !== 'multi-agent' || !targetTab.metadata.agentProfileId) {
       useChatStore.getState().addToast('Open the product chat before resuming its history.', 'error')
+      return
+    }
+
+    if (session.can_resume === false) {
+      const profileId = targetTab.metadata.agentProfileId
+      const existing = Object.values(chatStore.chatTabs).find(tab =>
+        tab.sessionId === session.session_id && tab.metadata?.isViewOnly === true &&
+        tab.metadata?.agentProfileId === profileId,
+      )
+      const readOnlyTabId = existing?.tabId || await chatStore.createChatTab(chatHistorySessionTitle(session), {
+        ...targetTab.metadata,
+        agentProfileBuilder: false,
+        isViewOnly: true,
+        isBotRun: Boolean(session.bot_platform),
+        botPlatform: session.bot_platform,
+        readOnlyRestoredAt: Date.now(),
+        userInteractiveContinuation: false,
+      }, session.session_id)
+      chatStore.setTabCanSteer(readOnlyTabId, false)
+      try {
+        const runtime = await hydrateTabEvents(session.session_id, { workspacePath: session.workspace_path, fallbackToChatHistory: true, preferChatHistory: true })
+        chatStore.setTabStreaming(readOnlyTabId, runtime.status === 'running')
+        chatStore.setTabCompleted(readOnlyTabId, runtime.status !== 'running')
+        chatStore.switchTab(readOnlyTabId)
+      } catch {
+        chatStore.addToast('Failed to open the saved conversation', 'error')
+      }
       return
     }
 

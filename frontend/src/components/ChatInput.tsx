@@ -3000,9 +3000,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     if (placeholderOverride) return placeholderOverride
     if (agentProfileWorkspace) return 'Describe the video you want to make… (@ files, / commands)'
     if (isWorkflowPhaseChat) {
-      return 'Chat with the automation builder... (@ files, / commands, # automations)'
+      return 'Chat with the automation builder... (@ files, / commands, # references)'
     }
-    const baseHints = "@ files, / commands, # automations, ! skills, $ servers"
+    const baseHints = "@ files, / commands, # references, ! skills, $ servers"
     if (!tabSessionId && (canBootstrapMultiAgentTab || canBootstrapWorkflowPhaseTab)) return `Ask anything... chat will initialize on send (${baseHints})`
     if (isMultiAgentMode) return `Ask anything... (${baseHints})`
     return `Ask anything... (${baseHints})`
@@ -3263,14 +3263,14 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       )}
 
 
-      {/* Workflow Context Display — same style as FileContextDisplay */}
+      {/* Read-only workflow/Crew references — same style as FileContextDisplay */}
       {(tabConfig?.workflowContext?.length ?? 0) > 0 && (
         <div className={inputPadX}>
           <div className="border rounded px-1.5 py-0.5 mb-1 bg-gray-50 dark:bg-gray-800 border-gray-200 dark:border-gray-700">
             <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
                 <Layers className="w-3 h-3 inline-block mr-0.5 -mt-0.5" />
-                Automations:
+                References:
               </span>
               {tabConfig!.workflowContext.map((w, index) => (
                 <div key={w.presetId} className="flex items-center gap-0.5">
@@ -3292,7 +3292,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       }
                     }}
                     className="p-0.5 hover:bg-red-100 dark:hover:bg-red-900/20 rounded text-red-500 hover:text-red-700 dark:hover:text-red-400"
-                    title="Remove automation context"
+                    title="Remove reference context"
                   >
                     <X className="w-2 h-2" />
                   </button>

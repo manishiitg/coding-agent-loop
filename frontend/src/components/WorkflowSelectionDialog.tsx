@@ -2,11 +2,17 @@ import React, { useState, useEffect, useRef, useMemo } from 'react'
 import { Layers, Search } from 'lucide-react'
 import { workflowManifestApi } from '../services/api'
 import { useAuthStore } from '../stores/useAuthStore'
+import { loadProductProjects } from '../platform/chat/productProjects'
+import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from '../products/work/workData'
+import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
 interface WorkflowItem {
   presetId: string
   label: string
   workspacePath: string
+  kind: 'workflow' | 'crew'
+  icon?: string
+  secondaryLabel?: string
 }
 
 interface WorkflowSelectionDialogProps {
@@ -54,34 +60,54 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
   }, [isOpen])
 
   const userID = useAuthStore(state => state.user?.id)
-  const [workflowResult, setWorkflowResult] = useState<{ userID?: string; items: WorkflowItem[] } | null>(null)
+  const [referenceResult, setReferenceResult] = useState<{ userID?: string; items: WorkflowItem[] } | null>(null)
   const [loadError, setLoadError] = useState(false)
-  // Fetch the permission-filtered list for every opening. Never fall back to
-  // cached presets after an error, account change, or sharing revocation.
+  // Fetch fresh permission-filtered workflows and user-scoped Crew projects
+  // for every opening. Never reuse stale entries after an account change,
+  // access revocation, or failed authorization check.
   useEffect(() => {
     let cancelled = false
-    setWorkflowResult(null)
+    setReferenceResult(null)
     setLoadError(false)
     if (!isOpen) return
-    void workflowManifestApi.listWorkflowManifests().then(response => {
+    void Promise.all([
+      workflowManifestApi.listWorkflowManifests(),
+      loadProductProjects(WORK_PROJECTS_ROOT, WORK_PROFILE_ID),
+    ]).then(([response, crews]) => {
       if (cancelled) return
-      setWorkflowResult({ userID, items: (response.workflows || []).map(workflow => ({
-        presetId: workflow.manifest.id || workflow.workspace_path,
+      const workflows: WorkflowItem[] = (response.workflows || []).map(workflow => ({
+        presetId: `workflow:${workflow.manifest.id || workflow.workspace_path}`,
         label: workflow.manifest.label,
         workspacePath: workflow.workspace_path,
-      })) })
+        kind: 'workflow',
+        icon: workflow.manifest.icon,
+      }))
+      const crewProjects: WorkflowItem[] = crews.map(crew => {
+        const identityName = crew.identity?.name?.trim() || crew.title
+        return {
+          presetId: `crew:${crew.id}`,
+          label: identityName,
+          secondaryLabel: identityName === crew.title ? undefined : crew.title,
+          workspacePath: crew.workspacePath,
+          kind: 'crew',
+          icon: crew.identity?.icon,
+        }
+      })
+      setReferenceResult({ userID, items: [...workflows, ...crewProjects] })
     }).catch(() => { if (!cancelled) setLoadError(true) })
     return () => { cancelled = true }
   }, [isOpen, userID])
-  const allWorkflows = useMemo(() => isOpen && workflowResult?.userID === userID ? workflowResult?.items || [] : [], [isOpen, workflowResult, userID])
+  const allReferences = useMemo(() => isOpen && referenceResult?.userID === userID ? referenceResult?.items || [] : [], [isOpen, referenceResult, userID])
 
   // Filter synchronously
   const filteredWorkflows = useMemo<WorkflowItem[]>(() => {
-    if (!localQuery.trim()) return allWorkflows
+    if (!localQuery.trim()) return allReferences
 
     const query = localQuery.toLowerCase().trim()
-    const filtered = allWorkflows.filter(w =>
+    const filtered = allReferences.filter(w =>
       w.label.toLowerCase().includes(query) ||
+      w.secondaryLabel?.toLowerCase().includes(query) ||
+      w.kind.includes(query) ||
       w.workspacePath.toLowerCase().includes(query)
     )
 
@@ -98,13 +124,13 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
     })
 
     return filtered
-  }, [localQuery, allWorkflows])
+  }, [localQuery, allReferences])
 
   const filteredWorkflowsRef = useRef(filteredWorkflows)
   useEffect(() => { filteredWorkflowsRef.current = filteredWorkflows }, [filteredWorkflows])
 
   // Reset selected index when results change
-  useEffect(() => { setSelectedIndex(0) }, [localQuery, allWorkflows])
+  useEffect(() => { setSelectedIndex(0) }, [localQuery, allReferences])
 
   // Scroll selected item into view
   useEffect(() => {
@@ -154,7 +180,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       <div className="px-3 py-2 border-b border-border bg-secondary">
         <div className="flex items-center gap-2">
           <Layers className="w-4 h-4 text-muted-foreground" />
-          <span className="text-sm font-medium">Automations</span>
+          <span className="text-sm font-medium">References</span>
         </div>
       </div>
 
@@ -165,7 +191,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
           <input
             ref={searchInputRef}
             type="text"
-            placeholder="Search automations..."
+            placeholder="Search workflows and Crews..."
             value={localQuery}
             onChange={e => setLocalQuery(e.target.value)}
             onKeyDown={e => {
@@ -183,7 +209,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       <div ref={listRef} className="overflow-y-auto max-h-64">
         {filteredWorkflows.length === 0 ? (
           <div className="px-3 py-4 text-center text-muted-foreground text-sm">
-            {loadError ? 'Unable to load accessible automations. Close and reopen to retry.' : !workflowResult ? 'Loading accessible automations…' : localQuery ? 'No automations found' : 'No accessible automations available'}
+            {loadError ? 'Unable to load accessible references. Close and reopen to retry.' : !referenceResult ? 'Loading accessible references…' : localQuery ? 'No references found' : 'No accessible workflows or Crews available'}
           </div>
         ) : (
           filteredWorkflows.map((workflow, index) => (
@@ -196,11 +222,13 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
               }`}
               onMouseDown={e => { e.preventDefault(); onSelectWorkflow(workflow) }}
             >
-              <div className="text-muted-foreground">
-                <Layers className="w-4 h-4" />
-              </div>
+              <EntityIdentityIcon icon={workflow.icon} label={workflow.label} />
               <div className="flex-1 min-w-0">
-                <div className="font-medium">{workflow.label}</div>
+                <div className="flex min-w-0 items-center gap-2">
+                  <div className="truncate font-medium">{workflow.label}</div>
+                  <span className="shrink-0 rounded border border-border px-1 py-0.5 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{workflow.kind}</span>
+                </div>
+                {workflow.secondaryLabel && <div className="truncate text-xs text-muted-foreground">{workflow.secondaryLabel}</div>}
                 <div className="text-xs text-muted-foreground truncate">{workflow.workspacePath}</div>
               </div>
             </div>

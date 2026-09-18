@@ -715,7 +715,7 @@ export function WorkSurface() {
                           tabId={tabId}
                           compact
                           landingContent={<WorkNewChatGuide />}
-                          composerPlaceholder="Describe what you want to build… (@ files, # automations)"
+                          composerPlaceholder="Describe what you want to build… (@ files, # references)"
                           showCompactRuntimeLoading
                           showProductSteerAction
                           showProductTerminalControl

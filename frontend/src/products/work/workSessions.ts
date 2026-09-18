@@ -67,7 +67,7 @@ export async function loadWorkSessions(): Promise<WorkSession[]> {
   }))
 }
 
-export async function createWorkSession(title: string, description: string): Promise<WorkSession> {
+export async function createWorkSession(title: string, description: string, icon?: string): Promise<WorkSession> {
   const options = await loadAgentProfileProviderOptions(WORK_PROFILE_ID)
   const selected = options.find(option => option.default) || options[0]
   const reasoningEffort = typeof selected?.options?.reasoning_effort === 'string'
@@ -84,6 +84,10 @@ export async function createWorkSession(title: string, description: string): Pro
     sessionPrefix: 'work:project',
     slugFallback: 'workspace',
     commitLabel: 'Create Work project',
+    identity: {
+      name: title.trim(),
+      icon: icon?.trim() || Array.from(title.trim())[0]?.toLocaleUpperCase() || 'C',
+    },
     llmConfig,
     runtimeManifestName: 'workflow.json',
   })

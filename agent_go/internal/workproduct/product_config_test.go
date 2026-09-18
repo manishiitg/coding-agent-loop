@@ -154,10 +154,14 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 			t.Fatalf("expected tool_policy.enabled to include %q", name)
 		}
 	}
-	if len(manifest.Profile.Tools) != 2 || manifest.Profile.Tools[0].ID != "work.set-identity" || manifest.Profile.Tools[1].ID != "work.custom-commands" {
-		t.Fatalf("work must expose its identity and custom-command tools, got %+v", manifest.Profile.Tools)
+	if len(manifest.Profile.Tools) != 3 || manifest.Profile.Tools[0].ID != "work.create-project" || manifest.Profile.Tools[1].ID != "work.set-identity" || manifest.Profile.Tools[2].ID != "work.custom-commands" {
+		t.Fatalf("work must expose project creation, identity, and custom-command tools, got %+v", manifest.Profile.Tools)
 	}
-	identityInteraction := manifest.Profile.Tools[0].Interaction
+	createInteraction := manifest.Profile.Tools[0].Interaction
+	if createInteraction == nil || createInteraction.Kind != "project_created" || createInteraction.Render != "product.refresh" {
+		t.Fatalf("work project creation interaction must refresh the product, got %+v", createInteraction)
+	}
+	identityInteraction := manifest.Profile.Tools[1].Interaction
 	if identityInteraction == nil || identityInteraction.Kind != "identity_updated" || identityInteraction.Render != "product.refresh" {
 		t.Fatalf("work identity interaction must be declared in product.yaml, got %+v", identityInteraction)
 	}
@@ -272,6 +276,7 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"workflow selected with `#` is",
 		"general-purpose",
 		"tasks, notes, plans, status, research",
+		"use `create_crew`",
 	} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Crew prompt is missing %q", required)
@@ -279,7 +284,7 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 	}
 }
 
-func TestRegisterAgentProfileRuntimeRegistersIdentityTool(t *testing.T) {
+func TestRegisterAgentProfileRuntimeRegistersCrewTools(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
 	if err := RegisterAgentProfileRuntime(registry, "http://127.0.0.1:0"); err != nil {
 		t.Fatalf("RegisterAgentProfileRuntime failed: %v", err)
@@ -292,6 +297,15 @@ func TestRegisterAgentProfileRuntimeRegistersIdentityTool(t *testing.T) {
 	}
 	if tool.Name != "set_work_identity" || tool.Execute == nil {
 		t.Fatalf("unexpected identity tool: %+v", tool)
+	}
+	createTool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.create-project"}, agentprofiles.ToolRuntimeContext{
+		UserID: "user-1", SessionID: "session-1", WorkspacePath: "Chats/Work/projects/demo",
+	})
+	if err != nil {
+		t.Fatalf("BuildTool(create Crew) failed: %v", err)
+	}
+	if createTool.Name != "create_crew" || createTool.Execute == nil {
+		t.Fatalf("unexpected create Crew tool: %+v", createTool)
 	}
 }
 

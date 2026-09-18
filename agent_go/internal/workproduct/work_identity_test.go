@@ -140,3 +140,88 @@ func TestWorkIdentityStaysCompact(t *testing.T) {
 		t.Fatalf("unexpected instructions validation: %q", got)
 	}
 }
+
+func TestCreateCrewProjectToolCreatesIdentifiedPersistentProject(t *testing.T) {
+	writes := map[string]string{}
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPut || !strings.HasPrefix(r.URL.Path, "/api/documents/Chats/Work/projects/") {
+			http.Error(w, "unexpected request", http.StatusNotFound)
+			return
+		}
+		if r.Header.Get("X-User-ID") != "user-1" {
+			http.Error(w, "missing user scope", http.StatusUnauthorized)
+			return
+		}
+		var payload struct {
+			Content string `json:"content"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		mu.Lock()
+		writes[strings.TrimPrefix(r.URL.Path, "/api/documents/")] = payload.Content
+		mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+	}))
+	defer server.Close()
+
+	registry := agentprofiles.NewRegistry()
+	if err := RegisterAgentProfileRuntime(registry, server.URL); err != nil {
+		t.Fatalf("register Crew runtime: %v", err)
+	}
+	var emitted []*orchestratorevents.ProductInteractionEvent
+	interaction := &agentprofiles.InteractionBinding{Kind: "project_created", Render: "product.refresh"}
+	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.create-project", Interaction: interaction}, agentprofiles.ToolRuntimeContext{
+		UserID: "user-1", SessionID: "session-1", WorkspacePath: "Chats/Work/projects/current", Product: "work", Interaction: interaction,
+		Emit: func(event any) {
+			if payload, ok := event.(*orchestratorevents.ProductInteractionEvent); ok {
+				emitted = append(emitted, payload)
+			}
+		},
+	})
+	if err != nil {
+		t.Fatalf("build create Crew tool: %v", err)
+	}
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"name":        "Launch Crew",
+		"icon":        "🚀",
+		"description": "Own the launch.",
+	})
+	if err != nil {
+		t.Fatalf("create Crew: %v", err)
+	}
+	var response map[string]interface{}
+	if err := json.Unmarshal([]byte(result), &response); err != nil {
+		t.Fatalf("decode tool response: %v", err)
+	}
+	workspacePath, _ := response["workspace_path"].(string)
+	if !strings.HasPrefix(workspacePath, "Chats/Work/projects/launch-crew-") || response["status"] != "created" {
+		t.Fatalf("unexpected tool response: %+v", response)
+	}
+
+	mu.Lock()
+	productRaw := writes[workspacePath+"/product.json"]
+	workflowRaw := writes[workspacePath+"/workflow.json"]
+	_, hasCodeFolder := writes[workspacePath+"/code/.gitkeep"]
+	mu.Unlock()
+	var product map[string]interface{}
+	if err := json.Unmarshal([]byte(productRaw), &product); err != nil {
+		t.Fatalf("decode product manifest: %v", err)
+	}
+	identity, _ := product["identity"].(map[string]interface{})
+	if product["product"] != "work" || product["title"] != "Launch Crew" || identity["name"] != "Launch Crew" || identity["icon"] != "🚀" {
+		t.Fatalf("Crew identity was not persisted: %+v", product)
+	}
+	var workflow map[string]interface{}
+	if err := json.Unmarshal([]byte(workflowRaw), &workflow); err != nil {
+		t.Fatalf("decode workflow manifest: %v", err)
+	}
+	if workflow["label"] != "Launch Crew" || !hasCodeFolder {
+		t.Fatalf("basic Crew files were not initialized: workflow=%+v code=%v", workflow, hasCodeFolder)
+	}
+	if len(emitted) != 1 || emitted[0].Kind != "project_created" || emitted[0].Payload["project_id"] != response["project_id"] {
+		t.Fatalf("project refresh event was not emitted: %+v", emitted)
+	}
+}

@@ -136,6 +136,7 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 		t.Fatalf("register profile tools: %v", err)
 	}
 	foundIdentity := false
+	foundCreateCrew := false
 	foundCustomCommands := false
 	foundFileLink := false
 	foundReportLink := false
@@ -143,6 +144,9 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 	for _, name := range registrar.admitted {
 		if name == "set_work_identity" {
 			foundIdentity = true
+		}
+		if name == "create_crew" {
+			foundCreateCrew = true
 		}
 		if name == "manage_custom_commands" {
 			foundCustomCommands = true
@@ -159,6 +163,9 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 	}
 	if !foundIdentity {
 		t.Fatalf("admitted profile tools = %v, missing set_work_identity", registrar.admitted)
+	}
+	if !foundCreateCrew {
+		t.Fatalf("admitted profile tools = %v, missing create_crew", registrar.admitted)
 	}
 	if !foundCustomCommands {
 		t.Fatalf("admitted profile tools = %v, missing manage_custom_commands", registrar.admitted)

@@ -13,6 +13,7 @@ import { hasIdleAliveCodingAgent, isVisibleActivitySession, nonWorkflowActivityT
 import { isLocalActivityFallbackTab } from '../utils/activityFallback'
 import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
 import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
+import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
 interface QuickSwitcherProps {
   isOpen: boolean
@@ -66,6 +67,7 @@ interface CrewChatItem {
   tabId: string
   activeSession?: ActiveSessionInfo
   hasLocalActivity: boolean
+  icon?: string
 }
 
 type QuickSwitcherItem = WorkflowItem | ChatTabItem | CrewChatItem | ActiveWorkItem
@@ -255,7 +257,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
       .sort((a, b) => (b.lastAccessedAt || b.createdAt || 0) - (a.lastAccessedAt || a.createdAt || 0))
       .map(tab => {
         const activeSession = tab.sessionId ? visibleActiveSessions.find(session => session.session_id === tab.sessionId) : undefined
-        const project = tab.metadata?.agentProfileProjectTitle || 'Crew'
+        const project = tab.metadata?.agentProfileIdentityName || tab.metadata?.agentProfileProjectTitle || 'Crew'
         const role = tab.metadata?.agentProfileBuilder ? 'Builder' : 'Chat'
         return {
           type: 'crew' as const,
@@ -267,6 +269,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
           tabId: tab.tabId,
           activeSession,
           hasLocalActivity: isLocalActivityFallbackTab(tab),
+          icon: tab.metadata?.agentProfileProjectIcon,
         }
       })
 
@@ -528,7 +531,9 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
                   onMouseEnter={() => setSelectedIndex(index)}
                   onMouseDown={e => { e.preventDefault(); void handleSelect(item) }}
                 >
-                  <ItemIcon className={`w-4 h-4 flex-shrink-0 ${item.isActive ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`} />
+                  {item.type === 'crew'
+                    ? <EntityIdentityIcon icon={item.icon} label={item.label} />
+                    : <ItemIcon className={`w-4 h-4 flex-shrink-0 ${item.isActive ? 'text-blue-500' : 'text-gray-400 dark:text-gray-500'}`} />}
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
                       <span className={`text-sm font-medium truncate ${item.isActive ? 'text-blue-600 dark:text-blue-400' : 'text-gray-900 dark:text-gray-100'}`}>

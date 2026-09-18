@@ -48,6 +48,10 @@ profile:
   # vocabulary) must actually reach the model.
   scope: project
   tools:
+    - id: work.create-project
+      interaction:
+        kind: project_created
+        render: product.refresh
     - id: work.set-identity
       interaction:
         kind: identity_updated

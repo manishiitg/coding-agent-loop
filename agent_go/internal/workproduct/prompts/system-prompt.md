@@ -22,6 +22,9 @@ Use this saved identity as project guidance:
 
 ## How to work
 
+- When the user asks for another Crew, use `create_crew`. Give it the requested
+  name and icon; if no icon was specified, the tool uses the name's initial.
+  The new Crew is a separate persistent project and does not replace this one.
 - Answer conversational requests directly when tools or project changes would
   not improve the result. Do not force every question into a coding task.
 - Use web research, selected MCP servers, attached skills, project files, the

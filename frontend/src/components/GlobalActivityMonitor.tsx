@@ -23,6 +23,7 @@ import { workflowTriggerLabel, isInternalChildSession } from '../utils/workflowS
 import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
 import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
+import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 
@@ -356,10 +357,11 @@ export const GlobalActivityMonitor: React.FC = () => {
       {inlineActivityItems.map((item, i) => {
         if (item.type === 'builder-tab') {
           const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
-          const builderPreset = workflowPresetForActivity(workflowPresets, undefined, item.tab) ?? currentWorkflowPreset ?? undefined
-          const builderWorkflowName = builderPreset?.label || ((item.tab.name && item.tab.name !== 'Automation Builder')
-            ? item.tab.name
-            : currentWorkflowPresetName)
+          const isCrewBuilder = item.tab.metadata?.agentProfileId === 'work'
+          const builderPreset = isCrewBuilder ? undefined : workflowPresetForActivity(workflowPresets, undefined, item.tab) ?? currentWorkflowPreset ?? undefined
+          const builderWorkflowName = isCrewBuilder
+            ? item.tab.metadata?.agentProfileIdentityName || item.tab.metadata?.agentProfileProjectTitle || 'Crew'
+            : builderPreset?.label || ((item.tab.name && item.tab.name !== 'Automation Builder') ? item.tab.name : currentWorkflowPresetName)
 
           return (
             <React.Fragment key={item.id}>
@@ -373,7 +375,9 @@ export const GlobalActivityMonitor: React.FC = () => {
                 {builderBusy
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-                <WorkflowIcon icon={builderPreset?.icon} label={builderWorkflowName || 'Automation'} />
+                {isCrewBuilder
+                  ? <EntityIdentityIcon icon={item.tab.metadata?.agentProfileProjectIcon} label={builderWorkflowName || 'Crew'} />
+                  : <WorkflowIcon icon={builderPreset?.icon} label={builderWorkflowName || 'Automation'} />}
               </button>
             </React.Fragment>
           )
@@ -388,6 +392,7 @@ export const GlobalActivityMonitor: React.FC = () => {
         const tone = statusTone(session)
         const title = displaySessionTitle(session, tab, undefined, fallbackName)
         const type = activityType(session)
+        const crewSession = isWorkProductSession(session)
         const statusLabel = headerStatusLabel(session)
         // End user only cares about two states: is it working, or is it waiting for me?
         // The icon alone conveys this — spinner = running, amber alert = waiting for input.
@@ -415,7 +420,9 @@ export const GlobalActivityMonitor: React.FC = () => {
                     : <Clock className="w-3.5 h-3.5 opacity-50" />}
               {isWorkflowSession(session)
                 ? <WorkflowIcon icon={workflowPreset?.icon} label={title} />
-                : <span className="whitespace-nowrap">{name}</span>}
+                : crewSession
+                  ? <EntityIdentityIcon icon={tab?.metadata?.agentProfileProjectIcon} label={tab?.metadata?.agentProfileIdentityName || title} />
+                  : <span className="whitespace-nowrap">{name}</span>}
               <ActivityTypeIcon type={type} />
             </button>
           </React.Fragment>

@@ -197,6 +197,7 @@ export async function createProductProject<P extends string>(options: {
   slugFallback: string
   commitLabel: string
   llmConfig?: PresetLLMConfig
+  identity?: ProductIdentity
   runtimeManifestName?: string
 }): Promise<ProductProject<P>> {
   const id = globalThis.crypto.randomUUID()
@@ -225,6 +226,7 @@ export async function createProductProject<P extends string>(options: {
     session_id: sessionId,
     created_at: now,
     updated_at: now,
+    ...(options.identity ? { identity: options.identity } : {}),
   }
   if (!options.runtimeManifestName) manifest.capabilities = capabilities
   if (options.runtimeManifestName) {
@@ -256,6 +258,7 @@ export async function createProductProject<P extends string>(options: {
     id,
     title,
     description,
+    identity: options.identity,
     sessionId,
     workspacePath,
     createdAt: now,

@@ -80,7 +80,7 @@ describe('parseSessionManifest', () => {
 
 describe('createWorkSession', () => {
   it('creates its own project folder without requiring a workspace selection', async () => {
-    const session = await createWorkSession('New project', '')
+    const session = await createWorkSession('New project', '', '🧭')
 
     expect(session.workspacePath).toMatch(/^Chats\/Work\/projects\/new-project-/)
     const runtimeCall = updatePlannerFile.mock.calls.find(call => call[0] === `${session.workspacePath}/workflow.json`)
@@ -91,6 +91,8 @@ describe('createWorkSession', () => {
     const product = JSON.parse(productCall![1] as string)
     expect(product).not.toHaveProperty('workspace_id')
     expect(product).not.toHaveProperty('capabilities')
+    expect(product.identity).toEqual({ name: 'New project', icon: '🧭' })
+    expect(session.identity).toEqual({ name: 'New project', icon: '🧭' })
     expect(runtime.capabilities.llm_config.builder_llm).toMatchObject({
       provider: 'muse-cli',
       model_id: 'muse-spark-1.3-contributor',

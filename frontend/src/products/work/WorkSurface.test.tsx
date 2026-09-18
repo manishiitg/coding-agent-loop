@@ -28,8 +28,11 @@ describe('CreateWorkProjectDialog', () => {
     expect(submit.disabled).toBe(true)
 
     const name = container.querySelector('[data-testid="work-create-project-name-input"]') as HTMLInputElement
+    const icon = container.querySelector('[data-testid="work-create-project-icon-input"]') as HTMLInputElement
     const description = container.querySelector('textarea') as HTMLTextAreaElement
     await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(icon, '🚀')
+      icon.dispatchEvent(new Event('input', { bubbles: true }))
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, '  Customer portal  ')
       name.dispatchEvent(new Event('input', { bubbles: true }))
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(description, '  Build and maintain the portal.  ')
@@ -38,7 +41,7 @@ describe('CreateWorkProjectDialog', () => {
 
     expect(submit.disabled).toBe(false)
     await act(async () => { submit.click() })
-    expect(onCreate).toHaveBeenCalledWith('Customer portal', 'Build and maintain the portal.')
+    expect(onCreate).toHaveBeenCalledWith('Customer portal', 'Build and maintain the portal.', '🚀')
 
     await act(async () => { root.unmount() })
   })

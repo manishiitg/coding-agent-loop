@@ -449,6 +449,8 @@ export interface ChatTab {
     agentProfileWorkspace?: string
     agentProfileProjectId?: string
     agentProfileProjectTitle?: string
+    agentProfileProjectIcon?: string
+    agentProfileIdentityName?: string
     // Permanent product home tab. Sending from it creates a separate chat,
     // matching AgentWorks' Builder -> Chat tab workflow.
     agentProfileBuilder?: boolean

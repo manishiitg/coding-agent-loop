@@ -29,6 +29,7 @@ import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../pla
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
+import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_UI_PRESENTATION_VIEWS = {
@@ -130,8 +131,8 @@ function useWorkSessions() {
     return () => { cancelled = true }
   }, [setSelectedId])
 
-  const create = useCallback(async (title: string, description: string) => {
-    const session = await createWorkSession(title, description)
+  const create = useCallback(async (title: string, description: string, icon?: string) => {
+    const session = await createWorkSession(title, description, icon)
     setSessions((current) => [session, ...current])
     setSelectedId(session.id)
     return session
@@ -207,6 +208,8 @@ function useWorkChatTab(
           agentProfileWorkspace: session.workspacePath,
           agentProfileProjectId: session.id,
           agentProfileProjectTitle: session.title,
+          agentProfileProjectIcon: session.identity?.icon,
+          agentProfileIdentityName: session.identity?.name,
           agentProfileChatContract: 'profile-v1',
           agentProfileBuilder: false,
           agentProfileConversationKey: conversation.conversation_key,
@@ -298,8 +301,10 @@ function WorkTopBarControl({
 
   return (
     <TopBarEntitySelector
-      label={selected?.title}
-      leading={selected?.identity?.icon ? <span className="shrink-0 text-base leading-none" title={`Project agent identity: ${selected.identity.name || selected.identity.role || selected.identity.icon}`}>{selected.identity.icon}</span> : undefined}
+      label={selected?.identity?.name || selected?.title}
+      leading={selected ? <EntityIdentityIcon icon={selected.identity?.icon} label={selected.identity?.name || selected.title} /> : undefined}
+      compactOnNarrow
+      title={selected ? `${selected.identity?.name || selected.title}${selected.identity?.name && selected.identity.name !== selected.title ? ` · ${selected.title}` : ''}` : 'New Crew'}
       placeholder="New project"
       open={open}
       onToggle={() => setOpen(current => !current)}
@@ -332,10 +337,13 @@ function WorkTopBarControl({
             className={`w-full rounded-md p-2 text-left text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
           >
             <span className="flex items-center gap-2">
-              {session.identity?.icon
-                ? <span className="w-5 shrink-0 text-center text-base leading-none" aria-hidden="true">{session.identity.icon}</span>
-                : <span className="h-2 w-2 shrink-0 rounded-full bg-green-500" />}
-              <span className="truncate font-medium">{session.title}</span>
+              <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
+              <span className="min-w-0">
+                <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
+                {session.identity?.name && session.identity.name !== session.title
+                  ? <span className="block truncate text-xs text-muted-foreground">{session.title}</span>
+                  : null}
+              </span>
             </span>
           </button>
         ))}
@@ -536,12 +544,12 @@ export function WorkSurface() {
     })
   }, [selected?.id, setSplitRatio, startSplitDrag])
 
-  const createProject = useCallback(async (title: string, description: string) => {
+  const createProject = useCallback(async (title: string, description: string, icon?: string) => {
     if (creating) return
     setCreating(true)
     setCreateError(null)
     try {
-      await create(title, description)
+      await create(title, description, icon)
       setCreateOpen(false)
     } catch (cause) {
       setCreateError(cause instanceof Error ? cause.message : 'Could not create project.')

@@ -12,6 +12,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/commands"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -47,11 +48,29 @@ var productSkills = []agentprofiles.SkillFileBinding{
 }
 
 var customCommandSlugPattern = regexp.MustCompile(`[^a-z0-9_-]+`)
+var crewProjectSlugPattern = regexp.MustCompile(`[^a-z0-9]+`)
 
 func customCommandSlug(name string) string {
 	name = strings.ToLower(strings.TrimSpace(name))
 	name = customCommandSlugPattern.ReplaceAllString(name, "-")
 	return strings.Trim(name, "-")
+}
+
+func crewProjectSlug(name string) string {
+	name = strings.ToLower(strings.TrimSpace(name))
+	name = crewProjectSlugPattern.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-")
+	if name == "" {
+		return "crew"
+	}
+	return name
+}
+
+func defaultCrewIcon(name string) string {
+	for _, char := range strings.TrimSpace(name) {
+		return strings.ToUpper(string(char))
+	}
+	return "C"
 }
 
 func customCommandMarkdown(name, description, icon, prompt string, modes []string) string {
@@ -331,10 +350,130 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 	}
 }
 
-// RegisterAgentProfileRuntime connects Crew's durable chat-configurable
-// identity to both the provider prompt and its one product-owned tool.
+func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
+	return func(runtime agentprofiles.ToolRuntimeContext, _ json.RawMessage) (agentprofiles.ToolSpec, error) {
+		// This trusted tool deliberately omits the current session id: it creates a
+		// sibling project outside the active Crew's folder guard. X-User-ID still
+		// scopes every Chats/ path to the authenticated user's private workspace.
+		client := workspace.NewClient(workspaceAPIURL, workspace.WithUserID(runtime.UserID))
+		return agentprofiles.ToolSpec{
+			Name:     "create_crew",
+			Category: "work_projects",
+			Description: "Create another basic Crew project for the signed-in user when they ask. " +
+				"The new Crew has its own durable conversation, files, runtime configuration, display name, and icon. " +
+				"This does not replace or rename the active Crew. After creation, tell the user to select the new Crew from the top project menu.",
+			Parameters: map[string]interface{}{
+				"type":                 "object",
+				"additionalProperties": false,
+				"properties": map[string]interface{}{
+					"name":        map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Crew display name and project title."},
+					"icon":        map[string]interface{}{"type": "string", "maxLength": workIdentityIconLimit, "description": "One emoji or short glyph. Omit to use the name's initial."},
+					"description": map[string]interface{}{"type": "string", "maxLength": 1000, "description": "Optional short purpose for this Crew."},
+				},
+				"required": []string{"name"},
+			},
+			Execute: func(ctx context.Context, args map[string]interface{}) (string, error) {
+				name := strings.TrimSpace(fmt.Sprint(args["name"]))
+				if name == "" || name == "<nil>" {
+					return "", fmt.Errorf("name is required")
+				}
+				icon, _ := args["icon"].(string)
+				description, _ := args["description"].(string)
+				identity := normalizeWorkIdentity(workIdentity{Name: name, Icon: icon})
+				if identity.Icon == "" {
+					identity.Icon = defaultCrewIcon(name)
+				}
+				if validationError := validateWorkIdentity(identity); validationError != "" {
+					return validationError, nil
+				}
+				description = strings.TrimSpace(description)
+				if utf8.RuneCountInString(description) > 1000 {
+					return "The Crew description must be at most 1000 characters.", nil
+				}
+
+				id := uuid.NewString()
+				workspacePath := path.Join("Chats", "Work", "projects", crewProjectSlug(name)+"-"+id[:8])
+				now := time.Now().UTC().Format(time.RFC3339)
+				workflowManifest := map[string]interface{}{
+					"schema_version": 1,
+					"id":             id,
+					"label":          name,
+					"capabilities": map[string]interface{}{
+						"selected_servers":             []string{},
+						"selected_tools":               []string{},
+						"selected_skills":              []string{},
+						"selected_secrets":             []string{},
+						"selected_global_secret_names": []string{},
+						"browser_mode":                 "auto",
+						"use_code_execution_mode":      false,
+					},
+					"workflow_context_paths": []string{},
+					"schedules":              []interface{}{},
+					"triggers":               []interface{}{},
+					"created_at":             now,
+					"updated_at":             now,
+				}
+				productManifest := map[string]interface{}{
+					"schema_version": 1,
+					"product":        "work",
+					"id":             id,
+					"title":          name,
+					"description":    description,
+					"identity":       identity,
+					"session_id":     "work:project:" + id,
+					"created_at":     now,
+					"updated_at":     now,
+				}
+				writeJSON := func(filePath string, value interface{}) error {
+					encoded, err := json.MarshalIndent(value, "", "  ")
+					if err != nil {
+						return err
+					}
+					_, err = client.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: filePath, Content: string(encoded) + "\n"})
+					return err
+				}
+				if err := writeJSON(path.Join(workspacePath, "workflow.json"), workflowManifest); err != nil {
+					return "", fmt.Errorf("create Crew runtime configuration: %w", err)
+				}
+				if _, err := client.UpdateWorkspaceFile(ctx, workspace.UpdateWorkspaceFileParams{Filepath: path.Join(workspacePath, "code", ".gitkeep"), Content: ""}); err != nil {
+					return "", fmt.Errorf("create Crew code folder: %w", err)
+				}
+				if err := writeJSON(path.Join(workspacePath, "product.json"), productManifest); err != nil {
+					return "", fmt.Errorf("create Crew project configuration: %w", err)
+				}
+
+				if runtime.Emit != nil {
+					kind := "project_created"
+					if runtime.Interaction != nil && strings.TrimSpace(runtime.Interaction.Kind) != "" {
+						kind = strings.TrimSpace(runtime.Interaction.Kind)
+					}
+					runtime.Emit(&orchestratorevents.ProductInteractionEvent{
+						Product: "work",
+						Kind:    kind,
+						Payload: map[string]interface{}{"operation": "created", "project_id": id, "name": name, "icon": identity.Icon, "workspace_path": workspacePath},
+					})
+				}
+				result, err := json.MarshalIndent(map[string]interface{}{
+					"status":         "created",
+					"project_id":     id,
+					"name":           name,
+					"icon":           identity.Icon,
+					"workspace_path": workspacePath,
+					"message":        "The Crew was created. Select it from the top project menu to open its persistent conversation.",
+				}, "", "  ")
+				return string(result), err
+			},
+		}, nil
+	}
+}
+
+// RegisterAgentProfileRuntime connects Crew's durable project tools and
+// chat-configurable identity to the provider runtime.
 func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIURL string) error {
 	if err := registry.RegisterToolFactory("work.set-identity", workIdentityFactory(workspaceAPIURL)); err != nil {
+		return err
+	}
+	if err := registry.RegisterToolFactory("work.create-project", createCrewProjectFactory(workspaceAPIURL)); err != nil {
 		return err
 	}
 	if err := registry.RegisterToolFactory("work.custom-commands", workCustomCommandsFactory(workspaceAPIURL)); err != nil {

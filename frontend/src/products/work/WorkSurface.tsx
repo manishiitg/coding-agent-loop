@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Loader2, MessageSquare, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import ChatArea from '../../components/ChatArea'
@@ -228,14 +228,17 @@ function useWorkChatTab(
   session: WorkSession | null,
   onLegacyRuntimeDiscovered: (selection: WorkRuntimeSelection) => void | Promise<void>,
 ) {
-  const [error, setError] = useState<string | null>(null)
-  const [ready, setReady] = useState(false)
+  const [failure, setFailure] = useState<{ projectId: string; message: string } | null>(null)
   const { chatTabs } = useChatStore(useShallow(state => ({ chatTabs: state.chatTabs })))
+  const sessionRef = useRef(session)
+  const legacyRuntimeHandlerRef = useRef(onLegacyRuntimeDiscovered)
+  sessionRef.current = session
+  legacyRuntimeHandlerRef.current = onLegacyRuntimeDiscovered
+  const projectId = session?.id
 
   useEffect(() => {
-    setReady(false)
-    setError(null)
-    if (!session) return
+    const target = sessionRef.current
+    if (!target || target.id !== projectId) return
     let cancelled = false
     const prepare = async () => {
       try {
@@ -245,11 +248,11 @@ function useWorkChatTab(
         if (cancelled) return
 
         const chatStore = useChatStore.getState()
-        const savedRuntime = workLLMSelectionFromConfig(session.llmConfig)
-        const savedServers = session.selectedServers.length > 0 ? session.selectedServers : ['NO_SERVERS']
-        const savedSkills = session.selectedSkills
+        const savedRuntime = workLLMSelectionFromConfig(target.llmConfig)
+        const savedServers = target.selectedServers.length > 0 ? target.selectedServers : ['NO_SERVERS']
+        const savedSkills = target.selectedSkills
         const conversation = await agentApi.resolveAgentProfileConversation(WORK_PROFILE_ID, {
-          conversation_key: session.id,
+          conversation_key: target.id,
         })
         if (cancelled) return
 
@@ -257,11 +260,11 @@ function useWorkChatTab(
           mode: 'multi-agent',
           agentProfileId: WORK_PROFILE_ID,
           agentProfileVersion: WORK_PROFILE_VERSION,
-          agentProfileWorkspace: session.workspacePath,
-          agentProfileProjectId: session.id,
-          agentProfileProjectTitle: session.title,
-          agentProfileProjectIcon: session.identity?.icon,
-          agentProfileIdentityName: session.identity?.name,
+          agentProfileWorkspace: target.workspacePath,
+          agentProfileProjectId: target.id,
+          agentProfileProjectTitle: target.title,
+          agentProfileProjectIcon: target.identity?.icon,
+          agentProfileIdentityName: target.identity?.name,
           agentProfileChatContract: 'profile-v1',
           agentProfileBuilder: false,
           agentProfileConversationKey: conversation.conversation_key,
@@ -276,7 +279,7 @@ function useWorkChatTab(
 
         // Reuse the local projection of the server-owned canonical session when
         // one exists, including the old blank Builder after migration.
-        const matching = findCanonicalWorkProjectTab(chatStore.chatTabs, session.id, conversation.session_id)
+        const matching = findCanonicalWorkProjectTab(chatStore.chatTabs, target.id, conversation.session_id)
         if (matching) chatStore.setTabMetadata(matching.tabId, projectMetadata)
 
         const canonicalTabId = await chatStore.createChatTab('Chat', projectMetadata, conversation.session_id)
@@ -291,32 +294,66 @@ function useWorkChatTab(
         useChatStore.setState(state => {
           const nextTabs = { ...state.chatTabs }
           for (const tab of Object.values(nextTabs)) {
-            if (tab.tabId !== canonicalTabId && belongsToWorkProject(tab, session.id)) delete nextTabs[tab.tabId]
+            if (tab.tabId !== canonicalTabId && belongsToWorkProject(tab, target.id)) delete nextTabs[tab.tabId]
           }
           return { chatTabs: nextTabs, activeTabId: canonicalTabId }
         })
 
         if ((useChatStore.getState().tabEvents[conversation.session_id]?.length ?? 0) === 0) {
           await hydrateTabEvents(conversation.session_id, {
-            workspacePath: session.workspacePath,
+            workspacePath: target.workspacePath,
             fallbackToChatHistory: true,
             preferChatHistory: true,
           })
         }
         if (!savedRuntime) {
-          const restored = await restoreWorkRuntimeSelection(canonicalTabId, conversation.session_id, session.workspacePath)
-          if (restored) await onLegacyRuntimeDiscovered(restored)
+          const restored = await restoreWorkRuntimeSelection(canonicalTabId, conversation.session_id, target.workspacePath)
+          if (restored) await legacyRuntimeHandlerRef.current(restored)
         }
         if (cancelled) return
-        activateTab(canonicalTabId)
-        setReady(true)
+        setFailure(current => current?.projectId === target.id ? null : current)
       } catch (cause) {
-        if (!cancelled) setError(cause instanceof Error ? cause.message : 'Could not open Crew.')
+        if (!cancelled) setFailure({ projectId: target.id, message: cause instanceof Error ? cause.message : 'Could not open Crew.' })
       }
     }
     void prepare()
     return () => { cancelled = true }
-  }, [onLegacyRuntimeDiscovered, session])
+  }, [projectId])
+
+  // Manifest changes (identity, model, MCPs, or skills) update the existing
+  // local tab in place. They must not restart the expensive conversation
+  // resolution and history hydration performed above.
+  useEffect(() => {
+    if (!session) return
+    const tab = Object.values(useChatStore.getState().chatTabs).find(candidate =>
+      belongsToWorkProject(candidate, session.id) &&
+      candidate.metadata?.agentProfileBuilder !== true &&
+      candidate.metadata?.agentProfileConversationKey === session.id)
+    if (!tab) return
+    const savedRuntime = workLLMSelectionFromConfig(session.llmConfig)
+    const metadata = {
+      agentProfileWorkspace: session.workspacePath,
+      agentProfileProjectTitle: session.title,
+      agentProfileProjectIcon: session.identity?.icon,
+      agentProfileIdentityName: session.identity?.name,
+      ...(savedRuntime ? {
+        agentProfileEngine: savedRuntime.provider,
+        agentProfileConnectionID: savedRuntime.connectionId,
+        agentProfileModelID: savedRuntime.modelId,
+        agentProfileReasoningEffort: savedRuntime.reasoningEffort,
+      } : {}),
+    }
+    if (Object.entries(metadata).some(([key, value]) => tab.metadata?.[key as keyof typeof tab.metadata] !== value)) {
+      useChatStore.getState().setTabMetadata(tab.tabId, metadata)
+    }
+    const selectedServers = session.selectedServers.length > 0 ? session.selectedServers : ['NO_SERVERS']
+    const selectedSkills = session.selectedSkills
+    const sameList = (left: string[] | undefined, right: string[]) =>
+      left?.length === right.length && left.every((value, index) => value === right[index])
+    if (!sameList(tab.config.selectedServers, selectedServers) || !sameList(tab.config.selectedSkills, selectedSkills)) {
+      useChatStore.getState().setTabConfig(tab.tabId, { selectedServers, selectedSkills })
+    }
+  }, [session])
 
   const canonical = session
     ? Object.values(chatTabs).find(tab =>
@@ -324,7 +361,15 @@ function useWorkChatTab(
       tab.metadata?.agentProfileBuilder !== true &&
       tab.metadata?.agentProfileConversationKey === session.id)
     : undefined
-  return { tabId: ready ? canonical?.tabId ?? null : null, error }
+  useLayoutEffect(() => {
+    if (canonical?.tabId) activateTab(canonical.tabId)
+  }, [canonical?.tabId])
+  return {
+    // A previously prepared Crew tab is safe to display immediately while its
+    // durable binding is revalidated in the background.
+    tabId: canonical?.tabId ?? null,
+    error: failure && failure.projectId === session?.id ? failure.message : null,
+  }
 }
 
 function WorkChatLabel() {
@@ -595,18 +640,16 @@ export function WorkSurface() {
     return () => { cancelled = true }
   }, [])
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     setWorkspaceView(readWorkWorkspaceView(selected?.id))
-  }, [selected?.id])
-
-  useEffect(() => {
-    setChatOpen(true)
-    setPanelOpen(true)
-  }, [selected?.id])
+    const nextRatio = readWorkSplitRatio(selected?.id)
+    splitRatioRef.current = nextRatio
+    setSplitRatioState(nextRatio)
+    setReportPreviewPreference(readReportPreviewPreference(selected?.workspacePath))
+  }, [selected?.id, selected?.workspacePath])
 
   useEffect(() => {
     const sync = () => setReportPreviewPreference(readReportPreviewPreference(selected?.workspacePath))
-    sync()
     window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, sync as EventListener)
     window.addEventListener('storage', sync)
     return () => {
@@ -640,12 +683,7 @@ export function WorkSurface() {
     return () => window.removeEventListener('agentworks:product-engine-selected', handleEngineSelection)
   }, [changeWorkRuntime, selected, tabId])
 
-  useEffect(() => {
-    const next = readWorkSplitRatio(selected?.id)
-    splitRatioRef.current = next
-    setSplitRatioState(next)
-    return stopSplitDrag
-  }, [selected?.id, stopSplitDrag])
+  useEffect(() => stopSplitDrag, [selected?.id, stopSplitDrag])
 
   const setSplitRatio = useCallback((next: number, persist = false) => {
     const width = splitLayoutRef.current?.getBoundingClientRect().width || window.innerWidth

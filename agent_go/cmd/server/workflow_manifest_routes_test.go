@@ -106,7 +106,7 @@ func TestScheduledBuilderActuallyRegistersPlanMigrationTools(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, name := range []string{"migrate_orchestrator_step_type"} {
+		for _, name := range []string{"maintain_plan"} {
 			_, exists := reg.tools[name]
 			if exists == readOnly {
 				t.Fatalf("scheduled phase tool %s present=%v readOnly=%v", name, exists, readOnly)

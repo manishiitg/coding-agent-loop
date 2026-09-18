@@ -19,4 +19,6 @@ id -u video-studio >/dev/null 2>&1 || useradd --system --create-home --home-dir 
 bash "$script_dir/../../common/install-rootless-docker.sh" video-studio
 runuser -u video-studio -- env HOME=/var/lib/video-studio npx --yes hyperframes@0.8.6 browser ensure
 test -x "$(runuser -u video-studio -- env HOME=/var/lib/video-studio npx --yes hyperframes@0.8.6 browser path | tail -n 1)"
+bash "$script_dir/../../../agent_go/scripts/install-slack-cli.sh" /usr/local
+command -v slack
 command -v agent-browser

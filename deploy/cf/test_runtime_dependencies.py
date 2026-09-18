@@ -33,7 +33,7 @@ class ConfidaRuntimeDependenciesTest(unittest.TestCase):
         self.assertIn("https://dev.meta.ai/install.sh", deploy)
         self.assertIn("MUSE_INSTALL_DIR='$REMOTE_APP/home/.local/bin'", deploy)
         self.assertNotIn("WARNING: agent-browser is NOT installed", deploy)
-        self.assertIn("for cli in agent-browser claude codex pi cursor-agent muse", deploy)
+        self.assertIn("for cli in agent-browser claude codex pi cursor-agent muse slack", deploy)
 
     def test_agent_and_workspace_services_receive_tools_path(self) -> None:
         activate = (CF_DIR / "server-build-and-activate.sh").read_text()

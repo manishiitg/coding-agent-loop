@@ -92,7 +92,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	// Only an interactive Builder has a UI to control. Schedules share this
 	// phase, so decide by origin/ownership, not WorkshopMode or write access.
 	if err := api.registerWorkflowUIForCaller(definitionAgent, workflowPhaseID, sessionID, phaseWorkspacePath, syntheticReq, readOnly); err != nil {
-		return fmt.Errorf("register open_workspace_view: %w", err)
+		return fmt.Errorf("register workspace UI tools: %w", err)
 	}
 	switch workflowPhaseID {
 	case workflowtypes.WorkflowStatusWorkflowBuilder:
@@ -474,19 +474,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				log.Printf("[WORKFLOW_PHASE] Registered reorganize_knowledgebase in %s", workflowPhaseID)
 				todo_creation_human.RegisterConsolidateKnowledgebaseTool(definitionAgent, workshopSession, api.logger)
 				log.Printf("[WORKFLOW_PHASE] Registered consolidate_knowledgebase in %s", workflowPhaseID)
-			}
-			// Auto-improvement proposer tools stay in Workshop mode
-			// (was Optimizer before the merge). capture_context is also
-			// safe in Run mode because it requires explicit user
-			// confirmation. Legacy "optimizer" is also accepted for
-			// backward compat with persisted sessions that pre-date the
-			// merge.
-			if policy.allows("improvement_proposals") {
-				RegisterAutoImprovementProposerTools(definitionAgent, phaseWorkspacePath, "pulse-fixer", api.logger)
-				log.Printf("[WORKFLOW_PHASE] Registered auto-improvement proposer tools in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
-			} else {
-				RegisterCaptureContextTool(definitionAgent, phaseWorkspacePath, api.logger)
-				log.Printf("[WORKFLOW_PHASE] Registered capture_context in %s (mode=%s)", workflowPhaseID, phaseTemplateVars["WorkshopMode"])
 			}
 			// Guided-flow text for every workflow slash command, returned via
 			// get_workflow_command_guidance(kind=...). Available across modes;

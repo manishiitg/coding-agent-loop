@@ -112,6 +112,8 @@ echo "==> Ensuring Confida Node $REMOTE_NODE_VERSION is installed"
 # credentials and CLI availability survive release pruning. A missing CLI is
 # fatal: the Providers UI may report status and guide authentication, but it
 # must never ask an end user to repair the host.
+# Install the pinned backend Slack CLI in the same persistent tools prefix.
+"${SSH[@]}" "bash -s -- '$REMOTE_TOOLS'" < "$LOCAL_REPO_ROOT/agent_go/scripts/install-slack-cli.sh"
 echo "==> Installing server CLI dependencies (agent-browser, claude, codex, pi, cursor, muse)"
 "${SSH[@]}" "set -euo pipefail
   install -d -m 0755 '$REMOTE_TOOLS' '$REMOTE_APP/home/.local/bin'
@@ -130,7 +132,7 @@ echo "==> Installing server CLI dependencies (agent-browser, claude, codex, pi, 
     --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash
   export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
   export PATH='$REMOTE_APP/home/.local/bin':\"\$PATH\"
-  for cli in agent-browser claude codex pi cursor-agent muse; do
+  for cli in agent-browser claude codex pi cursor-agent muse slack; do
     command -v \"\$cli\" >/dev/null
   done
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
@@ -184,7 +186,7 @@ curl -fsSI "https://confida.agentworkshq.com/login" | head -1
 "${SSH[@]}" "set -e
   export PATH='$REMOTE_RUNTIME_PATH'
   test \"\$(node --version)\" = 'v$REMOTE_NODE_VERSION'
-  for cli in agent-browser claude codex pi cursor-agent muse; do
+  for cli in agent-browser claude codex pi cursor-agent muse slack; do
     command -v "\$cli" >/dev/null
   done
   for unit in confida-agent confida-workspace; do

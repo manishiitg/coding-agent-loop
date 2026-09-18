@@ -16,7 +16,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 - Examples: "OTP field appears ~3s after PAN submit — poll, don't sleep", "HDFC balance is inside .account-summary", "gmail.search_messages returns max 50 — paginate".
 
 **knowledgebase/ — business context and durable narrative observations**
-- `context/context.md`: user-supplied runtime business context. Use for rules, preferences, constraints, assumptions, examples, and other context the user explicitly gives that future steps must respect. It is user-owned content captured via `capture_context` or curated in Workshop; automated KB review must not rewrite it.
+- `context/context.md`: user-supplied runtime business context. Use for rules, preferences, constraints, assumptions, examples, and other context the user explicitly gives that future steps must respect. It is user-owned content maintained by the user; automated KB review must not rewrite it.
 - `notes/`: per-topic narrative markdown built up by workflow runs, one file per topic (entity-scoped like `company-acme.md` or cross-cutting like `pattern-<slug>.md`), plus `notes/_index.json` as the registry. Use for prose analysis, hypotheses, evolution-over-time observations, cross-cutting patterns, and durable subject-matter knowledge discovered by the workflow. No structured graph — entity references inside notes are just markdown (`company-acme`) that consolidation tools can resolve by slug.
 - The step agent writes notes itself, inline, using `diff_patch_workspace_file` for every KB content change, including new topic files and `notes/_index.json` updates. Since PLAT-055 this happens in the **same merged reflection turn** as learnings (one sequence message covering learnings + KB + concern routing), not a separate KB-only turn. There is no separate post-step KB update agent.
   - There is no `knowledgebase_write_method` setting. It was removed with the other dead `AgentConfigs` fields in PLAT-061 and is not on the struct, so a step that tries to declare it is rejected. Earlier revisions of this file required setting it explicitly, which sent steps after a field that no longer exists — upwork reported exactly that on 2026-08-10.
@@ -55,7 +55,7 @@ Every workflow has three separate stores that survive across runs. They are NOT 
 
 **When to use which — deciding questions:**
 - *Does it tell the agent HOW to do the task?* → learnings/ (the learning agent writes it; you rarely do)
-- *Did the user provide runtime business context, rules, examples, preferences, or constraints that steps must respect?* → knowledgebase/context/context.md (capture_context/user-owned; steps read it with KB read access)
+- *Did the user provide runtime business context, rules, examples, preferences, or constraints that steps must respect?* → knowledgebase/context/context.md (user-owned; steps read it with KB read access)
 - *Is it a durable observation, decision, or pattern about the workflow's subject matter discovered by the workflow?* → knowledgebase/notes/ (write a knowledgebase_contribution; the KB update agent appends to the right topic file, or the step writes directly in direct-mode)
 - *Is it the workflow's actual output data — rows, records, results this run produced?* → db/db.sqlite (agentic steps use managed DB tools; upsert on the primary key, never recreate or wholesale-overwrite the table)
 - *Is it a durable image/PDF/audio/download/generated file?* → db/assets/ with a db/db.sqlite metadata row pointing to it

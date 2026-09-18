@@ -34,7 +34,7 @@ profile:
     - id: triggers
       options: {mode: message_only}
     - id: bots
-      # Shared bots feature declares Slack inspection, configuration, testing, and route tools.
+      # Shared bots feature declares the Slack CLI API tool, tracked sends, and connector management.
       options: {channels: "slack,whatsapp,gmail"}
     - database
     - dashboard
@@ -71,7 +71,7 @@ profile:
     # pulse/improvement tools, workflow-step orchestration, media-generation tools,
     # workflow configuration, and human_feedback /
     # notify_user. mcpagent's own intrinsic tools (get_api_spec,
-    # get_prompt, get_resource, read_skill) are injected by mcpagent
+    # read_skill) are injected by mcpagent
     # itself and are not governed by this list.
   runtime:
     # Transport is selected by AgentWorks' shared execution policy: interactive

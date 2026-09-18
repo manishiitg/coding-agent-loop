@@ -64,7 +64,7 @@ func TestAssembledWorkflowPrompt(t *testing.T) {
 							t.Errorf("stale/unscoped content in prompt: %q", unwanted)
 						}
 					}
-					if strings.Contains(got, "open_workspace_view") != ui {
+					if strings.Contains(got, "perform_ui_action") != ui {
 						t.Error("view instructions must follow interactive UI capability")
 					}
 					if mode == "run" {

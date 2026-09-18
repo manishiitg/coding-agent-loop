@@ -540,12 +540,6 @@
           "format": "date-time",
           "type": "string"
         },
-        "total_prompts": {
-          "type": "integer"
-        },
-        "total_resources": {
-          "type": "integer"
-        },
         "total_tools": {
           "type": "integer"
         },
@@ -2896,14 +2890,8 @@
         "error": {
           "type": "string"
         },
-        "prompts_count": {
-          "type": "integer"
-        },
         "reason": {
           "type": "string"
-        },
-        "resources_count": {
-          "type": "integer"
         },
         "server_name": {
           "type": "string"

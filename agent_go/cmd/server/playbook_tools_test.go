@@ -34,7 +34,7 @@ func TestPlaybookSearchToolIsRecommendationOnly(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool, ok := reg.tools["search_playbooks"]
-	if !ok || !strings.Contains(tool.desc, "never installs") || !strings.Contains(tool.desc, "workflow-specific") || !strings.Contains(tool.desc, "do not recreate it manually") || !strings.Contains(tool.desc, "open_workspace_view") || !strings.Contains(tool.desc, "inspect the current workflow") || !strings.Contains(tool.desc, "installation is not approval") {
+	if !ok || !strings.Contains(tool.desc, "never installs") || !strings.Contains(tool.desc, "workflow-specific") || !strings.Contains(tool.desc, "do not recreate it manually") || !strings.Contains(tool.desc, "perform_ui_action") || !strings.Contains(tool.desc, "inspect the current workflow") || !strings.Contains(tool.desc, "installation is not approval") {
 		t.Fatalf("tool = %+v", tool)
 	}
 	out, err := tool.exec(context.Background(), map[string]interface{}{"query": "cost anomalies", "limit": float64(2)})

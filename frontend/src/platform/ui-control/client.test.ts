@@ -10,7 +10,7 @@ describe('closed semantic UI control contract', () => {
       expect(supportedAction({ ...base, view: id, action: 'open' })).toBe(true)
       expect(supportedAction({ ...base, view: id, action: 'send' })).toBe(false)
       expect(supportedAction({ ...base, view: id, action: 'open', target: 'guessed' })).toBe(id === 'flow' || id === 'report' || id === 'files')
-      expect(supportedAction({ ...base, view: id, action: 'refresh' })).toBe(false)
+      expect(supportedAction({ ...base, view: id, action: 'refresh' })).toBe(true)
     }
   })
   it('allows a bounded report tab target', () => {

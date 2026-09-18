@@ -1309,12 +1309,6 @@
         "total_tools": {
           "type": "integer"
         },
-        "total_prompts": {
-          "type": "integer"
-        },
-        "total_resources": {
-          "type": "integer"
-        },
         "server_status": {
           "additionalProperties": {
             "$ref": "#/$defs/ServerCacheStatus"
@@ -4846,12 +4840,6 @@
           "type": "string"
         },
         "tools_count": {
-          "type": "integer"
-        },
-        "prompts_count": {
-          "type": "integer"
-        },
-        "resources_count": {
           "type": "integer"
         },
         "age": {

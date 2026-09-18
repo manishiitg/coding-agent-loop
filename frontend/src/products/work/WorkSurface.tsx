@@ -451,6 +451,7 @@ export function WorkSurface() {
   const workUIAdapter = useMemo<WorkspaceUIControlAdapter>(() => ({
     getView: () => workPresentationView(workspaceView),
     openView: openWorkPresentationView,
+    refreshView: () => setWorkspaceViewRefresh(value => value + 1),
     isViewSupported: (view) => view in WORK_UI_PRESENTATION_VIEWS,
     labelForView: (view) => WORK_UI_LABELS[view as WorkUIPresentationView] ?? view,
     actorLabel: 'Crew',

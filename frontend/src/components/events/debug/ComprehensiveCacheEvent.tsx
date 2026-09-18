@@ -117,7 +117,7 @@ export const ComprehensiveCacheEventDisplay: React.FC<ComprehensiveCacheEventDis
           {/* Server Summary */}
           <div className="bg-white dark:bg-gray-800 rounded p-3 mb-4">
             <div className="text-xs font-medium text-gray-700 dark:text-gray-300 mb-2">Server Summary</div>
-            <div className="grid grid-cols-3 gap-4 text-center">
+            <div className="grid grid-cols-2 gap-4 text-center">
               <div>
                 <div className="text-sm font-bold text-blue-600 dark:text-blue-400">{event.servers_count}</div>
                 <div className="text-xs text-gray-600 dark:text-gray-400">Servers</div>
@@ -125,10 +125,6 @@ export const ComprehensiveCacheEventDisplay: React.FC<ComprehensiveCacheEventDis
               <div>
                 <div className="text-sm font-bold text-blue-600 dark:text-blue-400">{event.total_tools}</div>
                 <div className="text-xs text-gray-600 dark:text-gray-400">Tools</div>
-              </div>
-              <div>
-                <div className="text-sm font-bold text-blue-600 dark:text-blue-400">{event.total_prompts}</div>
-                <div className="text-xs text-gray-600 dark:text-gray-400">Prompts</div>
               </div>
             </div>
           </div>
@@ -168,11 +164,6 @@ export const ComprehensiveCacheEventDisplay: React.FC<ComprehensiveCacheEventDis
                       <span className="text-gray-500 dark:text-gray-400">
                         {status.tools_count || 0} tools
                       </span>
-                      {(status.prompts_count || 0) > 0 && (
-                        <span className="text-gray-500 dark:text-gray-400">
-                          {status.prompts_count} prompts
-                        </span>
-                      )}
                     </div>
                   </div>
                 ))}

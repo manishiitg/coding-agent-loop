@@ -1,8 +1,6 @@
 package server
 
 import (
-	"context"
-	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -78,48 +76,5 @@ func workspaceViewAction(view, workspacePath, action, target string) (*orchestra
 // building it, the costs when asked about spend, the schedules after adding
 // one) instead of describing where to click.
 func (api *StreamingAPI) registerOpenWorkspaceViewTool(registrar definitionToolRegistrar, sessionID, workspacePath string) error {
-	if err := api.registerUIControlTools(registrar, sessionID, workspacePath); err != nil {
-		return err
-	}
-	var lines []string
-	for _, v := range workflowWorkspaceViews {
-		lines = append(lines, fmt.Sprintf("%s — %s (%s)", v.ID, v.Label, v.About))
-	}
-	description := "Browser-acknowledged workspace opening, using the same protocol as perform_ui_action. Only status=applied confirms success. For Plan, pass an exact step ID as target to select it and open its details. For Report, pass an exact top-level report tab label as target; the platform delivers report.focus/report:focus to the report. For Files, pass a workspace-relative file path as target to load that file in the right-side viewer. Other deep targets are unsupported and rejected. Open one of the workspace views on the right side of the user's screen, the same views as the toolbar above the chat. " +
-		"Use it when what you are talking about is on one of them: after you build or update the report, open `report`; when the user asks about spend, open `costs`; " +
-		"after adding a schedule, open `schedules`; when browsing with agent_browser or running live tests through @agentworks/playwright, open `browser` to show the live browser. Playwright test sessions are watch-only and require the fixture/helper; opening this view does not register ordinary tests. Browser settings are behind its gear button; streaming updates automatically. To request a reload use refresh_workspace_view (legacy, unverified). No sends, saves, or workflow execution. Views:\n" + strings.Join(lines, "\n")
-	params := map[string]interface{}{
-		"type": "object",
-		"properties": map[string]interface{}{
-			"view":   map[string]interface{}{"type": "string", "enum": workflowWorkspaceViewIDs(), "description": "which view to open"},
-			"target": map[string]interface{}{"type": "string", "maxLength": 1024, "description": "For open: exact Plan step ID with view=flow, exact top-level report tab label with view=report, or workspace-relative file path with view=files. For legacy refresh: optional view-specific target; rendering is unverified."},
-		},
-		"required": []string{"view"},
-	}
-	if err := registrar.RegisterCustomTool("open_workspace_view", description, params, func(ctx context.Context, args map[string]interface{}) (string, error) {
-		if api.uiBroker().scope(sessionID) != workspacePath {
-			return uiError(fmt.Errorf("inactive_scope")), nil
-		}
-		view, _ := args["view"].(string)
-		target, _ := args["target"].(string)
-		return api.performUIAction(ctx, sessionID, workspacePath, map[string]interface{}{"view": strings.ToLower(strings.TrimSpace(view)), "action": "open", "target": target})
-	}, "workflow_ui"); err != nil {
-		return err
-	}
-	refreshDescription := "Legacy, unverified refresh request; requested is NOT proof that fresh content loaded. Reload a workspace view after you changed what it shows: the report after editing db/reports/index.html, the database after writing rows, schedules after adding one, files after writing them. " +
-		"Opens the view first if it is not on screen. Same view names and the same optional `target` as open_workspace_view."
-	return registrar.RegisterCustomTool("refresh_workspace_view", refreshDescription, params, func(_ context.Context, args map[string]interface{}) (string, error) {
-		if api.uiBroker().scope(sessionID) != workspacePath {
-			return uiError(fmt.Errorf("inactive_scope")), nil
-		}
-		view, _ := args["view"].(string)
-		target, _ := args["target"].(string)
-		event, err := workspaceViewAction(view, workspacePath, "refresh", target)
-		if err != nil {
-			return "", err
-		}
-		api.emitAgentProfileEvent(sessionID, event)
-		out, _ := json.Marshal(map[string]interface{}{"status": "requested", "visible": false, "receipt": "unverified_legacy_presentation", "refreshed": event.Payload["view"], "label": event.Title})
-		return string(out), nil
-	}, "workflow_ui")
+	return api.registerUIControlTools(registrar, sessionID, workspacePath)
 }

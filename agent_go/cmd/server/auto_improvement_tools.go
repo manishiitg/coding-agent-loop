@@ -70,10 +70,3 @@ func RegisterCaptureContextTool(agent definitionToolRegistrar, workspacePath str
 		}
 	}
 }
-
-// RegisterAutoImprovementProposerTools registers optimizer-side framework tools.
-// Call this alongside the existing builder tools when the workshop session
-// enters optimizer mode.
-func RegisterAutoImprovementProposerTools(agent definitionToolRegistrar, workspacePath, triggerSource string, logger loggerv2.Logger) {
-	RegisterCaptureContextTool(agent, workspacePath, logger)
-}

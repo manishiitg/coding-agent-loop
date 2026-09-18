@@ -1125,8 +1125,6 @@ export interface ComprehensiveCacheEvent {
   fresh_fallback?: boolean;
   servers_count?: number;
   total_tools?: number;
-  total_prompts?: number;
-  total_resources?: number;
   server_status?: {
     [k: string]: ServerCacheStatus;
   };
@@ -1143,8 +1141,6 @@ export interface ServerCacheStatus {
   status?: string;
   cache_key?: string;
   tools_count?: number;
-  prompts_count?: number;
-  resources_count?: number;
   age?: string;
   reason?: string;
   error?: string;

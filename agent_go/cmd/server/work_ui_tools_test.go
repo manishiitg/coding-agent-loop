@@ -12,9 +12,19 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	if err := api.registerOpenWorkWorkspaceViewTool(reg, "user-1", "work-chat", "Chats/Work/projects/demo"); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
+	for _, name := range []string{"list_ui_capabilities", "get_ui_state", "perform_ui_action"} {
 		if _, ok := reg.tools[name]; !ok {
 			t.Fatalf("missing Work UI tool %q", name)
+		}
+	}
+	if len(reg.tools) != 3 {
+		t.Fatalf("expected exactly three Crew UI tools, got %d", len(reg.tools))
+	}
+	for _, contract := range []uiContract{uiControlContract, workUIControlContract} {
+		for _, view := range contract.Views {
+			if err := validateUIActionForContract(contract, view.ID, "refresh", ""); err != nil {
+				t.Fatalf("refresh %s/%s: %v", contract.Product, view.ID, err)
+			}
 		}
 	}
 	capabilities, err := reg.tools["list_ui_capabilities"].exec(context.Background(), map[string]interface{}{})
@@ -29,10 +39,10 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 			t.Fatalf("Work advertised workflow-only capability %s: %s", workflowOnly, capabilities)
 		}
 	}
-	if out, err := reg.tools["open_workspace_view"].exec(context.Background(), map[string]interface{}{"view": "report"}); err != nil || !strings.Contains(out, "browser_disconnected") {
+	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "report", "action": "open"}); err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("report open=%s err=%v", out, err)
 	}
-	if out, err := reg.tools["open_workspace_view"].exec(context.Background(), map[string]interface{}{"view": "schedules", "target": "webhooks"}); err != nil || !strings.Contains(out, "browser_disconnected") {
+	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "schedules", "action": "open", "target": "webhooks"}); err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("webhooks open=%s err=%v", out, err)
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {

@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 **Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
 
 ## OPTIMIZATION GUIDELINES
@@ -173,7 +175,7 @@ The step **description** in plan.json is the primary instruction the execution a
 - **Keep WHAT and HOW separate**: Keep objectives, task-specific business constraints, authorization boundaries, and success criteria in the description. Curate reusable methods and verified procedures in accessible skills/learnings; use `learnings_access="read"` when contributions stabilize. See `references/step-description.md`.
 - **Keep the boundary coherent**: The description may include many tool calls or sub-actions, but it should still serve one durable output contract. If it starts mixing unrelated outputs, validation gates, retry domains, stores, or approval/routing decisions, split at those boundaries.
 
-**How to update**: Use the plan modification tools (`update_scripted_step`, `update_message_sequence_step`, `update_orchestrator_step`, `update_orchestrator_route`, `update_routing_step`, `update_human_input_step`, or `update_validation_schema`) to update step descriptions and validation. Do not patch `planning/plan.json` directly; it is system-managed and guarded. The change takes effect on the next execution.
+**How to update**: Use the plan modification tools (`update_step`, `update_step`, `update_step`, `manage_step_route`, `update_step`, `update_step`, or `update_validation_schema`) to update step descriptions and validation. Do not patch `planning/plan.json` directly; it is system-managed and guarded. The change takes effect on the next execution.
 
 **Description review bookkeeping is required**: After you change or approve a description, immediately call `update_step_config` to record:
 - `description_reviewed` + `review_notes`
@@ -217,7 +219,7 @@ When the user runs a step, briefly note the highest-priority improvement needed.
 
 ### 7. Execution Modes: Agentic vs Scripted
 
-A step's execution mode is its plan type — `regular` is scripted, `message_sequence` is agentic. Create with `add_scripted_step` / `add_message_sequence_step`; move an existing step between the two with **change_step_type(step_id, target_type="scripted"|"message_sequence", reason)** — never via `update_step_config`:
+A step's execution mode is its plan type — `regular` is scripted, `message_sequence` is agentic. Create with `add_step` / `add_step`; move an existing step between the two with **change_step_type(step_id, target_type="scripted"|"message_sequence", reason)** — never via `update_step_config`:
 
 - **Scripted** (`regular` type): Agent writes a reusable `main.py` that is saved and tried first on future runs (0 LLM tokens when stable). If the saved script fails, the LLM repairs it. This is the default execution mode for deterministic API/SDK calls, CLI commands, known pagination, data fetching, stable parsing/normalization/transforms, and mechanical persistence. Create or move that work to scripted immediately; no run-count gate applies to mode selection. The 10+-scenario-covering-runs evidence gates only *trusting and freezing* the script with `lock_code`.
 

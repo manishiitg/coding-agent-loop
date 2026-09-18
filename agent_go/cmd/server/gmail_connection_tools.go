@@ -68,7 +68,7 @@ func (api *StreamingAPI) registerGmailConnectionManagementTools(registrar defini
 		"Change what a Gmail connection is authorized for -- Gmail read access and/or Google Workspace services (%s) -- and get back a reconnect link for the user. "+
 			"This only updates the STORED request; it does NOT change what Google has already granted. Google fixes a token's scope at the moment the user consents, "+
 			"so after this call succeeds you MUST tell the user to open the returned reconnect_url and complete Google's consent screen -- the change has no effect until they do. "+
-			"Also call open_workspace_view(view=\"bots\") right after this so the Sending accounts panel is visible with the updated request. "+
+			"Also call perform_ui_action(action=\"open\", view=\"bots\") right after this so the Sending accounts panel is visible with the updated request. "+
 			"Pass connection_id to target a specific account; omitted, the account's default connection is used. services replaces the full existing service list for this connection "+
 			"(pass every service that should remain authorized, not just the one being added) -- omit it entirely to leave services unchanged and only touch allow_read_access.",
 		strings.Join(serviceKeys, ", "),

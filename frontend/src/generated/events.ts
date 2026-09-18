@@ -243,8 +243,6 @@ export interface ComprehensiveCacheEvent {
   };
   servers_count?: number;
   timestamp?: string;
-  total_prompts?: number;
-  total_resources?: number;
   total_tools?: number;
   type?: string;
 }
@@ -252,9 +250,7 @@ export interface ServerCacheStatus {
   age?: string;
   cache_key?: string;
   error?: string;
-  prompts_count?: number;
   reason?: string;
-  resources_count?: number;
   server_name?: string;
   status?: string;
   tools_count?: number;

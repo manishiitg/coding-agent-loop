@@ -13,6 +13,7 @@ type Binding = { binding: string; token: string; workspace: string }
 export type WorkspaceUIControlAdapter = {
   getView: () => string
   openView: (view: string, target?: string) => void
+  refreshView?: (view: string, target?: string) => void
   isViewSupported: (view: string) => boolean
   labelForView: (view: string) => string
   actorLabel?: string
@@ -91,7 +92,17 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
             if (configured) {
               if (configured.isViewSupported(view)) configured.openView(view, target)
             } else if (isWorkspaceViewId(view)) useWorkflowStore.getState().openWorkspaceView(view, target)
-          }, state, controller.signal)
+          }, state, controller.signal, (view, target) => {
+            const configured = adapterRef.current
+            if (configured) {
+              configured.openView(view, target)
+              configured.refreshView?.(view, target)
+            } else if (isWorkspaceViewId(view)) {
+              const store = useWorkflowStore.getState()
+              store.openWorkspaceView(view, target)
+              store.refreshWorkspaceView(target)
+            }
+          })
           if (stopped) break
           if (result.status === 'applied') {
             revision++

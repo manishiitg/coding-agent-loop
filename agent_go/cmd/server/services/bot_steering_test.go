@@ -51,8 +51,8 @@ func TestBotSteeringDeliveryFailureDoesNotBlockRetryP0(t *testing.T) {
 	send("first steer")
 	select {
 	case reply := <-connector.replies:
-		if !strings.Contains(reply, "Couldn't deliver your message") || !strings.Contains(reply, "live input unavailable") {
-			t.Fatalf("delivery error hidden: %q", reply)
+		if !strings.Contains(reply, "couldn't deliver your message") || !strings.Contains(reply, "execution logs") {
+			t.Fatalf("missing delivery failure guidance: %q", reply)
 		}
 	case <-time.After(time.Second):
 		t.Fatal("delivery failed silently")

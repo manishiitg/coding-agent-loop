@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## human_input — Asking the User a Question Mid-Workflow
 
 `human_input` is the step type that **blocks the workflow and asks the
@@ -6,7 +8,7 @@ Load this skill when adding or editing a human_input step, deciding
 how to capture a free-form value, or preserving a legacy input step. For
 fixed-choice decisions, load `references/branch.md`.
 
-Use `add_human_input_step` / `update_human_input_step` to manage these
+Use `add_step` / `update_step` to manage these
 in the plan.
 
 ## When to use human_input
@@ -16,7 +18,7 @@ person's *decision* — approve/hold, yes/no, pick one of a few options — is a
 `branch` step with `route_source: "human"` (`references/branch.md`): the
 routes are the options, schedules answer it up front with
 `route_selections`, and unattended runs fall back to `default_route_id`.
-`add_human_input_step` rejects `response_type: yesno` and `multiple_choice`
+`add_step` rejects `response_type: yesno` and `multiple_choice`
 and points there. Existing `human_input` steps of every type keep working
 unchanged.
 
@@ -123,8 +125,8 @@ into a text field).
 
 ## Tools
 
-- **`add_human_input_step(id, title, question, next_step_id, insert_after_step_id, reason, response_type="text", ...)`** — add a free-form value step; optionally set `variable_name` and `context_output`.
-- **`update_human_input_step(existing_step_id, question?, response_type?, ...)`** — edit an existing step. Legacy option fields are only for maintaining existing choice steps.
+- **`add_step(id, title, question, next_step_id, insert_after_step_id, reason, response_type="text", ...)`** — add a free-form value step; optionally set `variable_name` and `context_output`.
+- **`update_step(existing_step_id, question?, response_type?, ...)`** — edit an existing step. Legacy option fields are only for maintaining existing choice steps.
 - **`execute_step(step_id, group_name, human_input="<response>")`** — in workshop mode, test by passing the response directly via `human_input`. Skips the actual prompt UX.
 
 For the full signatures + parameters see

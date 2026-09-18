@@ -8,7 +8,8 @@ export const UI_CONTROL_CONTRACT = {
       "label": "Dashboard",
       "target_kind": "report_tab",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -17,7 +18,8 @@ export const UI_CONTROL_CONTRACT = {
       "label": "Plan",
       "target_kind": "plan_step_id",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -25,7 +27,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "costs",
       "label": "Costs",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -33,7 +36,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "execution-logs",
       "label": "Execution logs",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -41,7 +45,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "learnings",
       "label": "Learnings",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -49,7 +54,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "knowledgebase",
       "label": "Knowledgebase",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -57,7 +63,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "database",
       "label": "Database",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -65,7 +72,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "evaluation",
       "label": "Evaluation",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -73,7 +81,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "webhooks",
       "label": "Webhooks",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -82,7 +91,8 @@ export const UI_CONTROL_CONTRACT = {
       "label": "Schedules",
       "target_kind": "view_section",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": [
         "schedules",
@@ -94,7 +104,8 @@ export const UI_CONTROL_CONTRACT = {
       "label": "Files",
       "target_kind": "workspace_file_path",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -102,7 +113,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "pulse",
       "label": "Pulse",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -110,7 +122,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "backup",
       "label": "Backup",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -118,7 +131,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "publish",
       "label": "Publish",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -127,7 +141,8 @@ export const UI_CONTROL_CONTRACT = {
       "label": "Notify",
       "actions": [
         "open",
-        "expand"
+        "expand",
+        "refresh"
       ],
       "targets": [
         "run_summary",
@@ -138,7 +153,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "access",
       "label": "Access",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -146,7 +162,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "playbooks",
       "label": "Workflow playbooks",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -154,7 +171,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "skills",
       "label": "Workflow skills",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -162,7 +180,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "secrets",
       "label": "Workflow secrets",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -170,7 +189,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "mcp",
       "label": "Integrations",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -178,7 +198,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "browser",
       "label": "Browser automation",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -186,7 +207,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "llm",
       "label": "Workflow LLM configuration",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -194,7 +216,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "email",
       "label": "Gmail",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -202,7 +225,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "bots",
       "label": "Connectors",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -210,7 +234,8 @@ export const UI_CONTROL_CONTRACT = {
       "id": "folders",
       "label": "Attached folders",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     }

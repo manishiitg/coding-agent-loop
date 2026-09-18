@@ -7,7 +7,8 @@
       "label": "Dashboard",
       "target_kind": "report_tab",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -16,7 +17,8 @@
       "label": "Plan",
       "target_kind": "plan_step_id",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -24,7 +26,8 @@
       "id": "costs",
       "label": "Costs",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -32,7 +35,8 @@
       "id": "execution-logs",
       "label": "Execution logs",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -40,7 +44,8 @@
       "id": "learnings",
       "label": "Learnings",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -48,7 +53,8 @@
       "id": "knowledgebase",
       "label": "Knowledgebase",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -56,7 +62,8 @@
       "id": "database",
       "label": "Database",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -64,7 +71,8 @@
       "id": "evaluation",
       "label": "Evaluation",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -72,7 +80,8 @@
       "id": "webhooks",
       "label": "Webhooks",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -81,7 +90,8 @@
       "label": "Schedules",
       "target_kind": "view_section",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": [
         "schedules",
@@ -93,7 +103,8 @@
       "label": "Files",
       "target_kind": "workspace_file_path",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -101,7 +112,8 @@
       "id": "pulse",
       "label": "Pulse",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -109,7 +121,8 @@
       "id": "backup",
       "label": "Backup",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -117,7 +130,8 @@
       "id": "publish",
       "label": "Publish",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -126,7 +140,8 @@
       "label": "Notify",
       "actions": [
         "open",
-        "expand"
+        "expand",
+        "refresh"
       ],
       "targets": [
         "run_summary",
@@ -137,7 +152,8 @@
       "id": "access",
       "label": "Access",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -145,7 +161,8 @@
       "id": "playbooks",
       "label": "Workflow playbooks",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -153,7 +170,8 @@
       "id": "skills",
       "label": "Workflow skills",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -161,7 +179,8 @@
       "id": "secrets",
       "label": "Workflow secrets",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -169,7 +188,8 @@
       "id": "mcp",
       "label": "Integrations",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -177,7 +197,8 @@
       "id": "browser",
       "label": "Browser automation",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -185,21 +206,26 @@
       "id": "llm",
       "label": "Workflow LLM configuration",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
     {
       "id": "email",
       "label": "Gmail",
-      "actions": ["open"],
+      "actions": [
+        "open",
+        "refresh"
+      ],
       "targets": []
     },
     {
       "id": "bots",
       "label": "Connectors",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     },
@@ -207,7 +233,8 @@
       "id": "folders",
       "label": "Attached folders",
       "actions": [
-        "open"
+        "open",
+        "refresh"
       ],
       "targets": []
     }

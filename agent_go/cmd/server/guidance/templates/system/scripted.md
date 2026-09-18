@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## scripted — Deterministic Worker
 
 A `regular` step is the scripted boundary for one deterministic unit of work. It owns one
@@ -21,7 +23,7 @@ task count alone does not make it agentic.
 
 ## Calling scripts from a message sequence
 
-Create a reusable definition with `add_scripted_step(is_orphan=true, ...)`, then
+Create a reusable definition with `add_step(is_orphan=true, ...)`, then
 reference its ID and typed parameters from a sequence's `scripted` batch item.
 The runtime runs saved code, validates outputs, waits for the batch, and passes
 result paths to the sequence's next conversational turn. No child LLM, automatic
@@ -53,7 +55,7 @@ for the exact item schema, permissions, parallelism, Stop behavior, and limits.
 
 ## Execution mode
 
-- **Scripted / code-execution mode** is the only mode for new regular steps. Create one with `add_scripted_step`; the internal plan type remains `regular`. The builder authors a `main.py` saved under
+- **Scripted / code-execution mode** is the only mode for new regular steps. Create one with `add_step`; the internal plan type remains `regular`. The builder authors a `main.py` saved under
   `code/{step-id}/` when workflow.json has `code_layout_version: 1`; absent/0 stays at `learnings/{step-id}/`. Prefer an explicit migration to `code/` for legacy scripted workflows using the "Deliberate migration to code/" procedure in `references/code-authoring.md`; never silently move files or change the layout flag. Test using `execute_step(fast_path_only=true)` so the actual runner supplies the selected group's environment, inputs, permissions and working directory. New-layout source and shared helpers are edited in place, not copied into a run. Use for
   deterministic, repeatable execution. No run-history threshold is required to declare an obviously deterministic step scripted; 10+ representative successful runs are required only before `lock_code=true` freezes it. See `read_skill(skills=[{"name":"builder-reference","path":"references/code-authoring.md"}])`.
 - Judgment, adaptive discovery, ambiguous live evidence, and browser/UI work use `message_sequence`.

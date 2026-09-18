@@ -98,6 +98,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # workspace_browser tool. Native deployments execute it locally; container
 # deployments also install it in the workspace image below.
 RUN npm install -g agent-browser@latest && which agent-browser && agent-browser --version
+COPY agent_go/scripts/install-slack-cli.sh /tmp/install-slack-cli.sh
+RUN bash /tmp/install-slack-cli.sh /usr/local && rm /tmp/install-slack-cli.sh
 
 # Install Google Chrome (stable, amd64). agent-browser will use this
 # binary instead of the Chromium installed via apt above. We keep chromium too

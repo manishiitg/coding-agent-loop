@@ -8,7 +8,7 @@ not a separate schedule skill profile. Do not ask a schedule to open or manipula
 the foreground workspace. Observing a scheduled conversation does not promote it;
 an explicit supported interactive continuation is required.
 
-The right-hand pane of the workflow page shows one view at a time; the toolbar above the chat switches between them. `open_workspace_view(view)` uses acknowledged UI control; only an `applied` receipt confirms that the view opened. `refresh_workspace_view(view)` emits an unverified presentation request. Request the view that holds what you are talking about instead of describing where to click, but report only what the receipt actually confirms.
+The right-hand pane of the workflow page shows one view at a time; the toolbar above the chat switches between them. `perform_ui_action(view, action="open")` uses acknowledged UI control; only an `applied` receipt confirms that the view opened. `perform_ui_action(view, action="refresh")` returns a browser receipt after invoking a reload. Request the view that holds what you are talking about instead of describing where to click, but report only what the receipt actually confirms.
 
 ### Views cluster
 | View id | Shows | Open it when |
@@ -72,23 +72,17 @@ Both tools take an optional `target` — what to focus once the view is up. A vi
 Views are independent of the chat: opening one changes nothing in the workflow. Prefer one open per reply, the view that best answers what the user asked.
 # Acknowledged UI actions (PLAT-292 baseline)
 
-Prefer `list_ui_capabilities`, `get_ui_state`, `perform_ui_action` and
-`get_ui_action_result` when available. Discover first; only advertise the
+Prefer `list_ui_capabilities`, `get_ui_state`, and `perform_ui_action` when available. Discover first; only advertise the
 actions in the returned contract. Initial coverage is AgentWorks workspace
 view-shell opening and Notify instruction expansion (`run_summary` or
-`pulse_review`). Other deep targets, refresh receipts and product adapters
-are not yet supported by this protocol.
+`pulse_review`). Refresh invokes the view reload and waits for its visible shell; data-load completion is not guaranteed. Crew uses this same protocol with its own supported views.
 
 `applied` means the browser acknowledged the presentation, not that a human
 read it. Opening acknowledges the mounted shell, not all underlying data.
 `accepted`, `applying`, `expired`, and legacy `requested` are not success.
-When a result is uncertain, retrieve it by request ID; never blindly replay
-with a new idempotency key. Reuse a key only for the same intended action.
+Actions return their completion receipt directly. When a result is uncertain,
+repeat the same action with the same idempotency key to inspect its retained
+receipt; never blindly replay with a new key. Reuse a key only for the same intended action.
 Disconnected or ambiguous browsers require user attention, not broadcasting.
 
-The older open/refresh tools remain for compatibility but return unverified
-requests. Do not say their contents were verified or that a refresh succeeded
-from that response alone. Presentation tools cannot send notifications, edit
-settings, run workflows, reveal secrets, or establish MCP connections.
-
-When starting managed browser work for the user, call `open_workspace_view(view="browser")` alongside `agent_browser status` and navigation. Also open this view once when starting live tests through `@agentworks/playwright`; see `references/playwright-scripted.md` for supported runtime and fixture setup. Playwright sessions are watch-only and use runner-owned recordings. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.
+When starting managed browser work for the user, call `perform_ui_action(action="open", view="browser")` alongside `agent_browser status` and navigation. Also open this view once when starting live tests through `@agentworks/playwright`; see `references/playwright-scripted.md` for supported runtime and fixture setup. Playwright sessions are watch-only and use runner-owned recordings. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.

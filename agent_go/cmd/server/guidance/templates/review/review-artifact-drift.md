@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 **Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
 
 Use this to run a manual artifact-drift audit after plan or configuration
@@ -102,7 +104,7 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
      inspect the exact entry; do not rely on a separate presentation cursor.
    - If no cursor exists and more than 100 entries are unreviewed, inspect only the latest 100 and report that the older entries remain unreviewed.
    - Never advance the proposed cursor past an entry that was not fully inspected or safely cursor-backfilled.
-   - **The changelog only records plan mutations** (`update_scripted_step` and
+   - **The changelog only records plan mutations** (`update_step` and
      the other typed plan-mod tools) — `planning/` is never a granted write
      path for any other tool, so `plan.json` itself is always fully and
      truthfully captured here. A direct edit to a step's own code

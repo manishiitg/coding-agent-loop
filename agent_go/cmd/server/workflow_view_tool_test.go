@@ -34,29 +34,22 @@ func TestOpenWorkspaceViewToolOpensAKnownViewAndRefusesOthers(t *testing.T) {
 	if err := api.registerOpenWorkspaceViewTool(reg, "s1", "Workflow/x"); err != nil {
 		t.Fatal(err)
 	}
-	open, ok := reg.tools["open_workspace_view"]
-	if !ok || !strings.Contains(open.desc, "report — Dashboard") || !strings.Contains(open.desc, "schedules — Schedules") || !strings.Contains(open.desc, "refresh_workspace_view") {
-		t.Fatalf("open tool = %+v", open)
+	open, ok := reg.tools["perform_ui_action"]
+	if !ok || len(reg.tools) != 3 {
+		t.Fatalf("expected three UI tools, got %+v", reg.tools)
 	}
-	if !strings.Contains(open.desc, "pulse — Pulse (Needs your decision cards") {
-		t.Fatal("workspace tool must tell chat where decision cards live")
-	}
-	out, err := open.exec(context.Background(), map[string]interface{}{"view": "Report"})
+	out, err := open.exec(context.Background(), map[string]interface{}{"view": "report", "action": "open"})
 	if err != nil || !strings.Contains(out, `"code":"browser_disconnected"`) {
 		t.Fatalf("out=%s err=%v", out, err)
 	}
-	if out, err := open.exec(context.Background(), map[string]interface{}{"view": "dashboard"}); err != nil || !strings.Contains(out, "unsupported_view") {
+	if out, err := open.exec(context.Background(), map[string]interface{}{"view": "dashboard", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
 		t.Fatalf("unknown view must reject: %s %v", out, err)
 	}
-	refresh, ok := reg.tools["refresh_workspace_view"]
-	if !ok {
-		t.Fatal("refresh_workspace_view must be registered alongside open_workspace_view")
-	}
-	out, err = refresh.exec(context.Background(), map[string]interface{}{"view": "database"})
-	if err != nil || !strings.Contains(out, `"refreshed":"database"`) {
+	out, err = open.exec(context.Background(), map[string]interface{}{"view": "database", "action": "refresh"})
+	if err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("refresh out=%s err=%v", out, err)
 	}
-	targeted, err := open.exec(context.Background(), map[string]interface{}{"view": "flow", "target": "step-fetch"})
+	targeted, err := open.exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open", "target": "step-fetch"})
 	if err != nil || !strings.Contains(targeted, `"code":"browser_disconnected"`) {
 		t.Fatalf("targeted open = %s err=%v", targeted, err)
 	}
@@ -92,7 +85,7 @@ func TestOpenWorkspaceViewWaitsForSelectedStepReceipt(t *testing.T) {
 	defer cancel()
 	result := make(chan string, 1)
 	go func() {
-		out, _ := reg.tools["open_workspace_view"].exec(ctx, map[string]interface{}{"view": "flow", "target": "livekit-quality"})
+		out, _ := reg.tools["perform_ui_action"].exec(ctx, map[string]interface{}{"view": "flow", "action": "open", "target": "livekit-quality"})
 		result <- out
 	}()
 	var commands []uiAction

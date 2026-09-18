@@ -17,7 +17,7 @@ export function supportedAction(a: UIAction): boolean {
   const view = UI_CONTROL_CONTRACT.views.find(v => v.id === a.view)
   if (!view || !(view.actions as readonly string[]).includes(a.action)) return false
   const targetKind = 'target_kind' in view ? view.target_kind : undefined
-  return a.action === 'open'
+  return (a.action === 'open' || a.action === 'refresh')
     ? (!a.target || (targetKind === 'view_section'
       ? (view.targets as readonly string[]).includes(a.target)
       : ((targetKind === 'plan_step_id' || targetKind === 'report_tab' || targetKind === 'workspace_file_path') && !!a.target.trim() && a.target.length <= 1024)))
@@ -34,7 +34,7 @@ export function workspaceHost(workspace: string): HTMLElement | undefined {
 
 export async function applyUIAction(
   action: UIAction, workspace: string, open: (view: string, target?: string) => void,
-  state: () => UISnapshot, signal: AbortSignal,
+  state: () => UISnapshot, signal: AbortSignal, refresh?: (view: string, target?: string) => void,
 ): Promise<{ status: string; code: string }> {
   if (!supportedAction(action)) return { status: 'rejected', code: 'target_not_found' }
   if (signal.aborted || !workspaceHost(workspace)) return { status: 'cancelled', code: 'inactive_scope' }
@@ -42,7 +42,10 @@ export async function applyUIAction(
     return { status: 'rejected', code: 'stale_state' }
   const expires = Date.parse(action.expires_at)
   if (!Number.isFinite(expires) || expires <= Date.now()) return { status: 'failed', code: 'timeout' }
-  open(action.view, action.target)
+  if (action.action === 'refresh') {
+    if (!refresh) return { status: 'rejected', code: 'unsupported_action' }
+    refresh(action.view, action.target)
+  } else open(action.view, action.target)
   // Observe actual mount/visibility, including lazy-loaded inspectors. Bounded;
   // listeners/timers are removed on every terminal outcome and on unmount.
   return new Promise(resolve => {

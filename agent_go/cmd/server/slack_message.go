@@ -98,36 +98,9 @@ func (api *StreamingAPI) sendSlackMessageFromTool(ctx context.Context, args map[
 	if cfg == nil || !cfg.Enabled || !cfg.BotMode || !found || (route.BotGrant != "run" && route.BotGrant != "owner") {
 		return "", fmt.Errorf("Slack route is inactive or revoked")
 	}
-	inheritedThread := ""
-	if execution, ok := api.botExecutionForSession(session); ok {
-		trusted := context.WithValue(ctx, UserContextKey, execution.Claims)
-		if _, err := api.revalidateExecutionPrincipal(trusted, execution.Request); err != nil {
-			return "", err
-		}
-		if channel != execution.Request.BotChannelID || !sameSlackRouteDestination(route, execution.Claims.ExecutionPrincipal.Target) {
-			return "", fmt.Errorf("cross-route Slack send denied")
-		}
-		inheritedThread = execution.Request.BotThreadTS
-	} else {
-		if parent := virtualtools.GetParentChat(session); parent != nil {
-			session = parent.SessionID
-		}
-		active, ok := api.getActiveSession(session)
-		if !ok || active.WorkspacePath == "" {
-			return "", fmt.Errorf("session target unavailable")
-		}
-		if normalizeConversationWorkspace(active.WorkspacePath) != normalizeConversationWorkspace(route.WorkspacePath) {
-			return "", fmt.Errorf("route is outside this session target")
-		}
-		trusted := internalBotRequestContext(ctx, active.UserID)
-		if route.WorkflowID != "" {
-			access, manifest := workflowAccessForWorkspacePath(trusted, GetUserFromContext(trusted), route.WorkspacePath)
-			if access == WorkflowAccessNone || manifest == nil || manifest.ID != route.WorkflowID {
-				return "", fmt.Errorf("workflow route access denied")
-			}
-		} else if _, err := requireSlackRouteProfileOwner(trusted, api, route); err != nil {
-			return "", err
-		}
+	inheritedThread, err := api.authorizeSlackToolRoute(ctx, session, channel, route)
+	if err != nil {
+		return "", err
 	}
 	root := inheritedThread
 	if ref != "" {
@@ -220,4 +193,39 @@ func configureSlackCredentialCodec() {
 	slackCredentialCodecOnce.Do(func() {
 		services.ConfigureSlackCredentialCodec(func(value string) (string, error) { return encryptSecretValueWithAAD(value, []byte("operator:slack")) }, func(value string) (string, error) { return decryptSecretValueWithAAD(value, []byte("operator:slack")) })
 	})
+}
+
+func (api *StreamingAPI) authorizeSlackToolRoute(ctx context.Context, session, channel string, route ChannelRoute) (string, error) {
+	inheritedThread := ""
+	if execution, ok := api.botExecutionForSession(session); ok {
+		trusted := context.WithValue(ctx, UserContextKey, execution.Claims)
+		if _, err := api.revalidateExecutionPrincipal(trusted, execution.Request); err != nil {
+			return "", err
+		}
+		if channel != execution.Request.BotChannelID || !sameSlackRouteDestination(route, execution.Claims.ExecutionPrincipal.Target) {
+			return "", fmt.Errorf("cross-route Slack send denied")
+		}
+		inheritedThread = execution.Request.BotThreadTS
+	} else {
+		if parent := virtualtools.GetParentChat(session); parent != nil {
+			session = parent.SessionID
+		}
+		active, ok := api.getActiveSession(session)
+		if !ok || active.WorkspacePath == "" {
+			return "", fmt.Errorf("session target unavailable")
+		}
+		if normalizeConversationWorkspace(active.WorkspacePath) != normalizeConversationWorkspace(route.WorkspacePath) {
+			return "", fmt.Errorf("route is outside this session target")
+		}
+		trusted := internalBotRequestContext(ctx, active.UserID)
+		if route.WorkflowID != "" {
+			access, manifest := workflowAccessForWorkspacePath(trusted, GetUserFromContext(trusted), route.WorkspacePath)
+			if access == WorkflowAccessNone || manifest == nil || manifest.ID != route.WorkflowID {
+				return "", fmt.Errorf("workflow route access denied")
+			}
+		} else if _, err := requireSlackRouteProfileOwner(trusted, api, route); err != nil {
+			return "", err
+		}
+	}
+	return inheritedThread, nil
 }

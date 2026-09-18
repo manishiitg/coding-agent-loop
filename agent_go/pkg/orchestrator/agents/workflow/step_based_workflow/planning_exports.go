@@ -2421,3 +2421,12 @@ func ReadVariablesFromWorkspace(ctx context.Context, workspacePath string, readF
 	}
 	return FormatVariableNames(&manifest)
 }
+
+func registerPlanModificationTools(mcpAgent DefinitionToolRegistrar, workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error, moveFile func(context.Context, string, string) error, agentName string) error {
+	readFile = nativePlanReadFile(readFile)
+	r := newConsolidatedPlanRegistrar(mcpAgent, workspacePath, readFile)
+	if err := registerNativePlanModificationTools(r, workspacePath, logger, readFile, writeFile, moveFile, agentName); err != nil {
+		return err
+	}
+	return r.flush()
+}

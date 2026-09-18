@@ -1087,16 +1087,6 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	}
 	text = s.appendSlackFileContext(context.Background(), text, msg, channelID, userEmail, presetRoute)
 
-	// Route thread replies to the bot manager. Add :eyes: ack reaction just
-	// like @mention flow so follow-ups get the same "seen + working" feedback.
-	// If the manager ends up ignoring the message (no prior session), the
-	// reaction will linger briefly but Slack lets users read it as "noticed."
-	if s.client != nil {
-		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: channelID, Timestamp: messageTS}); err != nil {
-			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
-		} else {
-		}
-	}
 	s.messageHandler(BotIncomingMessage{
 		Platform:       "slack",
 		UserID:         userID,
@@ -1552,14 +1542,6 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	}
 
 	log.Printf("[SLACK_BOT] AppMention from user=%s channel=%s thread=%s: %s", ev.User, ev.Channel, threadTS, botTruncate(text, 80))
-
-	// Immediate ack: add reaction emoji so user sees the bot received the message
-	if s.client != nil {
-		if err := s.client.AddReaction("eyes", slack.ItemRef{Channel: ev.Channel, Timestamp: ev.TimeStamp}); err != nil {
-			log.Printf("[SLACK_BOT] Failed to add ack reaction: %v", err)
-		} else {
-		}
-	}
 
 	userEmail := s.resolveUserEmail(ev.User)
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), ev.User, userEmail, ev.Channel, threadTS, text, isThreadReply)

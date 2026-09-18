@@ -55,7 +55,7 @@ func TestMutatingWorkshopToolsAreGatedByRunMode(t *testing.T) {
 	})
 
 	mustBeGated := []string{
-		"debug_step", "update_step_config", "review_plan", "review_step_code",
+		"debug_step", "update_step_config", "review_step_code",
 		"update_variable", "add_group", "update_group", "delete_group",
 		"update_workflow_config", "set_workflow_contract_version",
 		"create_schedule", "create_calendar_schedule", "update_schedule", "delete_schedule",

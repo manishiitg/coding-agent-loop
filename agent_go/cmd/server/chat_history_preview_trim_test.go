@@ -2,6 +2,7 @@ package server
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -284,5 +285,41 @@ func TestProjectChatHistoryConversationForResumePageMovesCursorTowardEarlierTurn
 	}
 	if older.Pagination.HasMore || older.Pagination.NextOffset != 3 || older.Pagination.StartTurn != 0 {
 		t.Fatalf("unexpected older pagination: %+v", older.Pagination)
+	}
+}
+
+func TestProjectChatHistoryConversationForResumePageHidesProviderTaskNotifications(t *testing.T) {
+	message := func(role, text string) map[string]interface{} {
+		return map[string]interface{}{"role": role, "parts": []map[string]string{{"text": text}}}
+	}
+	raw, _ := json.Marshal(map[string]interface{}{
+		"conversation_history": []map[string]interface{}{
+			message("user", "real question"),
+			message("assistant", "working"),
+			message("human", "<task-notification>\n<task-id>abc</task-id>\n<status>completed</status>\n</task-notification>"),
+			message("assistant", "finished answer"),
+		},
+	})
+
+	var got struct {
+		History    []json.RawMessage `json:"conversation_history"`
+		Pagination struct {
+			TotalTurns int `json:"total_turns"`
+		} `json:"history_pagination"`
+	}
+	if err := json.Unmarshal(projectChatHistoryConversationForResumePage(raw, 10, 0), &got); err != nil {
+		t.Fatal(err)
+	}
+	if got.Pagination.TotalTurns != 1 {
+		t.Fatalf("total turns = %d, want 1", got.Pagination.TotalTurns)
+	}
+	if len(got.History) != 3 {
+		t.Fatalf("projected history has %d messages, want user plus two assistant updates", len(got.History))
+	}
+	for _, item := range got.History {
+		_, text := chatHistoryMessageRoleAndText(item)
+		if strings.Contains(text, "<task-notification>") {
+			t.Fatalf("provider task notification leaked into projected history: %q", text)
+		}
 	}
 }

@@ -867,7 +867,7 @@ func projectChatHistoryConversationForResumePage(data []byte, maxTurns, offset i
 		role, text := chatHistoryMessageRoleAndText(raw)
 		switch role {
 		case "human", "user":
-			if isClaudeLocalCommandRecord(text) {
+			if isClaudeLocalCommandRecord(text) || isProviderTaskNotification(text) {
 				continue
 			}
 			turns = append(turns, turn{user: resumeMessage{raw: raw, order: order}})
@@ -927,6 +927,12 @@ func projectChatHistoryConversationForResumePage(data []byte, maxTurns, offset i
 	}
 	doc["history_pagination"] = pagination
 	return marshalChatHistoryProjectionOrOriginal(doc, data)
+}
+
+func isProviderTaskNotification(text string) bool {
+	trimmed := strings.TrimSpace(text)
+	return strings.HasPrefix(strings.ToLower(trimmed), "<task-notification>") &&
+		strings.HasSuffix(strings.ToLower(trimmed), "</task-notification>")
 }
 
 func annotateResumedChatMessage(raw json.RawMessage, order, sourceCount int) json.RawMessage {

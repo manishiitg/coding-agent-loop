@@ -23,6 +23,11 @@ export function getMessageText(message: ChatHistoryMessage): string {
   return texts.join('\n\n')
 }
 
+function isProviderTaskNotification(content: string): boolean {
+  const normalized = content.trim().toLowerCase()
+  return normalized.startsWith('<task-notification>') && normalized.endsWith('</task-notification>')
+}
+
 export function makeRestoredEvent(
   sessionId: string,
   type: string,
@@ -82,6 +87,7 @@ function tracedHistoryOrderBounds(
     const order = Number(message.resume_order)
     if (!carrierRole || !Number.isFinite(order)) continue
     const rawText = getMessageText(message)
+    if (carrierRole === 'user' && isProviderTaskNotification(rawText)) continue
     const visibleText = carrierRole === 'assistant' ? sanitizeProviderTranscriptContent(rawText) : rawText
     const text = normalizedCarrierText(visibleText)
     if (!text) continue
@@ -117,7 +123,9 @@ function tracedHistoryOrderBounds(
     .filter(message => {
       const role = getMessageRole(message)
       const order = Number(message.resume_order)
-      return (role === 'human' || role === 'user') && Number.isFinite(order) && order > last
+      return (role === 'human' || role === 'user') &&
+        !isProviderTaskNotification(getMessageText(message)) &&
+        Number.isFinite(order) && order > last
     })
     .map(message => Number(message.resume_order))
     .sort((a, b) => a - b)[0]
@@ -231,6 +239,7 @@ export function conversationToRestoredEvents(conversation: RestorableConversatio
     if (!content) continue
 
     if (role === 'human' || role === 'user') {
+      if (isProviderTaskNotification(content)) continue
       flushAssistant()
       turn += 1
       currentQuestion = content

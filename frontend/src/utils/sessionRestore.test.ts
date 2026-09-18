@@ -442,6 +442,30 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(visibleText).toContain('No memory yet for this project')
   })
 
+  it('hides provider task notifications without dropping the completed reply', () => {
+    const events = conversationToRestoredEvents({
+      session_id: 'background-task-notification',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'check the files' }] },
+        { Role: 'ai', Parts: [{ Text: 'I am checking.' }] },
+        {
+          Role: 'human',
+          Parts: [{
+            Text: '<task-notification>\n<task-id>kfcmrko98</task-id>\n<status>completed</status>\n<result>{"stdout":"internal output"}</result>\n</task-notification>',
+          }],
+        },
+        { Role: 'ai', Parts: [{ Text: 'I found the requested file.' }] },
+      ],
+    })
+
+    const visibleText = events.map(event => JSON.stringify(event.data)).join('\n')
+    expect(visibleText).not.toContain('<task-notification>')
+    expect(visibleText).not.toContain('internal output')
+    expect(visibleText).toContain('check the files')
+    expect(visibleText).toContain('I found the requested file.')
+    expect(events.filter(event => event.type === 'user_message')).toHaveLength(1)
+  })
+
   it('keeps turns from before the saved trace above it instead of spreading them across it', () => {
     // Three old turns, then one traced turn. The trace (a restart cleared the
     // rest) holds only the last prompt and its tool call.

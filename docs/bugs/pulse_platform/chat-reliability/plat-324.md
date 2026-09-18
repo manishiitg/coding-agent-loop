@@ -996,3 +996,12 @@ resume fallback remains a separate bounded mechanism. This reduces response
 transfer and first render work; it does not yet eliminate the server's full
 JSON read and workflow transcript-synchronization cost, which remains the next
 target if live timing still shows a long restore delay.
+
+Live RTS evidence on 2026-09-18 also showed Claude's background MCP completion
+envelope persisted as a synthetic `human` message (`<task-notification>...`).
+That internal carrier was rendered as a user chat card and counted as a visible
+turn. Resume pagination now excludes complete provider task-notification
+envelopes, and the shared frontend restore converter applies the same defensive
+filter for legacy or unbounded history responses. The provider still retains
+the envelope in its native conversation context, and the assistant response
+that follows it remains visible.

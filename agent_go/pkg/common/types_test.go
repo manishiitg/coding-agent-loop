@@ -85,6 +85,21 @@ func TestWorkflowBrowserSessionNamespaceNormalizesWorkflowPath(t *testing.T) {
 	}
 }
 
+func TestUserWorkspaceBrowserSessionNamespaceScopesOwnerAndWorkspace(t *testing.T) {
+	want := UserWorkspaceBrowserSessionNamespace("alice", "chat-one", "Chats/Work/projects/crew-a")
+	for _, path := range []string{"/Chats/Work/projects/crew-a/", "Chats/Work//projects/crew-a", `Chats\Work\projects\crew-a`} {
+		if got := UserWorkspaceBrowserSessionNamespace("alice", "chat-two", path); got != want {
+			t.Fatalf("path %q resolved to %q, want %q", path, got, want)
+		}
+	}
+	if got := UserWorkspaceBrowserSessionNamespace("alice", "chat-two", "Chats/Work/projects/crew-b"); got == want {
+		t.Fatalf("different Crew projects shared namespace %q", got)
+	}
+	if got := UserWorkspaceBrowserSessionNamespace("bob", "chat-two", "Chats/Work/projects/crew-a"); got == want {
+		t.Fatalf("different users shared Crew namespace %q", got)
+	}
+}
+
 func TestBrowserSessionIsolationComposesWithDeploymentPrefix(t *testing.T) {
 	t.Setenv("AGENTWORKS_BROWSER_SESSION_PREFIX", "confida")
 	sessionID := "browser-isolation-prefix"

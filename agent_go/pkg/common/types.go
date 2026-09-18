@@ -572,6 +572,26 @@ func WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath string) str
 	return "workflow-" + hex.EncodeToString(sum[:8])
 }
 
+// UserWorkspaceBrowserSessionNamespace gives one authenticated user's product
+// workspace a durable browser. It is stable across chat/session rotation, but
+// unlike WorkflowBrowserSessionNamespace it never crosses the user boundary.
+// Product workspaces such as Crew are owner-scoped rather than shared through
+// workflow ACLs, so both identities belong in the namespace.
+func UserWorkspaceBrowserSessionNamespace(userID, sessionID, workspacePath string) string {
+	workspacePath = strings.ReplaceAll(workspacePath, "\\", "/")
+	workspacePath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspacePath)))
+	workspacePath = strings.Trim(workspacePath, "/")
+	if workspacePath == "" || workspacePath == "." {
+		return BrowserSessionNamespace(userID, sessionID)
+	}
+	owner := strings.TrimSpace(userID)
+	if owner == "" {
+		owner = strings.TrimSpace(sessionID)
+	}
+	sum := sha256.Sum256([]byte("user-workspace\x00" + owner + "\x00" + workspacePath))
+	return "workspace-" + hex.EncodeToString(sum[:8])
+}
+
 // BindSessionBrowserIsolation always replaces obsolete per-chat/per-group bindings.
 func BindSessionBrowserIsolation(sessionID, userID string) {
 	BindSessionBrowserIsolationForWorkflow(sessionID, userID, "")
@@ -584,6 +604,20 @@ func BindSessionBrowserIsolationForWorkflow(sessionID, userID, workflowPath stri
 		return
 	}
 	namespace := WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath)
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.BrowserSessionNamespace = namespace
+		cfg.BrowserSessionID = namespace + "--browser"
+	})
+}
+
+// BindSessionBrowserIsolationForUserWorkspace binds product chats and runs to
+// one persistent browser for that user and workspace. Different projects do
+// not share cookies or tabs, and the same project survives chat rotation.
+func BindSessionBrowserIsolationForUserWorkspace(sessionID, userID, workspacePath string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	namespace := UserWorkspaceBrowserSessionNamespace(userID, sessionID, workspacePath)
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
 		cfg.BrowserSessionNamespace = namespace
 		cfg.BrowserSessionID = namespace + "--browser"

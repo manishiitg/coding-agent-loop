@@ -32,8 +32,9 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 		if browser.IsUserBrowserSession(item["browser_session"]) {
 			userID := GetUserIDFromContext(r.Context())
 			expected := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(userID, "", workspace) + "--browser")
+			userWorkspaceSession := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace(userID, "", workspace) + "--browser")
 			productSession := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
-			if userID != "" && (item["browser_session"] == expected || item["browser_session"] == productSession) {
+			if userID != "" && (item["browser_session"] == expected || item["browser_session"] == userWorkspaceSession || item["browser_session"] == productSession) {
 				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
 				if manifest != nil {
 					// A real Workflow/ folder: its own capabilities.browser_mode

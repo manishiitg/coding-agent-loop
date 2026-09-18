@@ -353,6 +353,35 @@ func TestUserBrowserDiscoveryShowsFixedWorkspaceProductSessionInSingleUserMode(t
 	}
 }
 
+func TestUserBrowserDiscoveryShowsOnlyTheSelectedCrewBrowser(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":["work"]}]}`)
+	workspaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer workspaceServer.Close()
+	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
+
+	const workspace = "Chats/Work/projects/crew-a"
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
+		"crew-a-chat": {SessionID: "crew-a-chat", UserID: "alice", WorkspacePath: workspace},
+	}}
+	crewA := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace("alice", "", workspace) + "--browser")
+	crewB := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace("alice", "", "Chats/Work/projects/crew-b") + "--browser")
+	browser.GetSessionTracker().Touch(crewA, "crew-a-chat", "crew-a-chat")
+	browser.GetSessionTracker().Touch(crewB, "crew-b-chat", "crew-b-chat")
+	defer browser.GetSessionTracker().Remove(crewA)
+	defer browser.GetSessionTracker().Remove(crewB)
+
+	r := httptest.NewRequest("GET", "/?workspace_path="+workspace, nil)
+	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
+	items := api.liveBrowserSessions(r)
+	if len(items) != 1 || items[0]["browser_session"] != crewA {
+		t.Fatalf("expected only selected Crew browser %q, got %v", crewA, items)
+	}
+}
+
 // WorkflowBrowserSessionNamespace hashes the workspace path ONLY when it's
 // non-empty (by design, so a real Workflow's authorized users share one
 // browser) -- it does not fold in userID the way it does for the empty-path

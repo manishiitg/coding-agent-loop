@@ -1093,3 +1093,24 @@ Regression coverage checks MCP selection fingerprints, unchanged selection
 ordering and rejection of stale persisted keys while a foreground turn exists.
 Platform connection status and tool discovery counts do not imply tools were
 loaded into the current project turn. Live acceptance is pending deployment.
+
+### Crew workspace divider must reuse the complete AgentWorks rail (2026-09-18)
+
+The Crew surface imported the shared divider primitive, but assembled only its
+workspace-collapse control. AgentWorks separately added device-preview and
+chat-collapse controls around the same primitive. That partial reuse produced a
+visibly different divider and allowed the two product surfaces to drift even
+though Crew's product contract requires the shared AgentWorks shell.
+
+Commit `4a1a5274c` moves the complete rail composition into
+`WorkspaceSplitRail` and makes both AgentWorks and Crew render it. Crew now has
+the same mobile/tablet/desktop preview controls, chat and workspace collapse
+actions, ordering, dimensions and styling. Collapsing chat expands the workspace
+and exposes the same restore affordance. A source-contract regression test
+requires both products to use the complete shared rail rather than assembling
+the lower-level collapse controls locally.
+
+Focused frontend tests (26 tests), TypeScript, targeted ESLint, the production
+frontend build, report-preview build, release-asset validation and bundle hard
+limit all pass. The commit is on `main`; deployment and live visual acceptance
+remain pending explicit operator approval.

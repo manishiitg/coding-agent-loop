@@ -11,6 +11,8 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("onToggle={() => setOpenGroup('views')}")
     expect(source).toContain("onToggle={() => setOpenGroup('setup')}")
     expect(source).toContain("setOpenGroup(SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')")
+    expect(source.indexOf("id: 'history', label: 'Workshop'")).toBeGreaterThan(source.indexOf("id: 'browser', label: 'Browser'"))
+    expect(source).toContain('showAll')
   })
 
   it('binds the Work chat to acknowledged workspace view controls', () => {
@@ -22,5 +24,7 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain('data-ui-view-mounted')
     expect(source).toContain("report: 'dashboard'")
     expect(source).toContain("llm: 'models'")
+    expect(source).toContain('landingContent={<WorkNewChatGuide />}')
+    expect(source).toContain('This is the persistent conversation for this Crew project.')
   })
 })

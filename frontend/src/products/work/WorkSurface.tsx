@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, MessageSquare, PanelRightOpen, Plus } from 'lucide-react'
+import { Loader2, MessageSquare, PanelRightOpen, Plus, Sparkles } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import ChatArea from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
@@ -39,7 +39,7 @@ const WORK_UI_PRESENTATION_VIEWS = {
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
-  history: 'Conversation history',
+  history: 'Workshop',
   report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', schedules: 'Schedules', files: 'Files',
   skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
 }
@@ -280,6 +280,27 @@ function WorkChatLabel() {
     <div className="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium text-foreground">
       <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
       <span>Chat</span>
+    </div>
+  )
+}
+
+function WorkNewChatGuide() {
+  return (
+    <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-10">
+      <div className="w-full max-w-lg rounded-xl border border-border bg-muted/20 p-5">
+        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+          <Sparkles className="h-4 w-4 text-primary" />
+          Start your Crew chat
+        </div>
+        <p className="mt-2 text-sm leading-6 text-muted-foreground">
+          This is the persistent conversation for this Crew project. Ask Crew to:
+        </p>
+        <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+          <li>• Research, write, analyze, or plan ongoing work</li>
+          <li>• Work with project files, code, browser, terminal, and connected tools</li>
+          <li>• Create dashboards, schedules, webhooks, bots, or project memory</li>
+        </ul>
+      </div>
     </div>
   )
 }
@@ -666,6 +687,7 @@ export function WorkSurface() {
                         <ChatArea
                           tabId={tabId}
                           compact
+                          landingContent={<WorkNewChatGuide />}
                           composerPlaceholder="Describe what you want to build… (@ files, # automations)"
                           showCompactRuntimeLoading
                           showProductSteerAction

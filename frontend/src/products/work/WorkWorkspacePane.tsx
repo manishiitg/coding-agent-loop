@@ -56,6 +56,7 @@ const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIc
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'files', label: 'Files', icon: Files },
   { id: 'browser', label: 'Browser', icon: Monitor },
+  { id: 'history', label: 'Workshop', icon: History },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
   { id: 'database', label: 'Database', icon: Database },
@@ -88,7 +89,7 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
 }
 
 export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
-  const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
+  const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => item.id === 'history' || enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
   const [openGroup, setOpenGroup] = useState<'views' | 'setup'>(() => SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
 
@@ -99,7 +100,6 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
   return (
     <div data-tour="work-tools" className="ml-auto flex shrink-0 items-center gap-1">
       <TooltipProvider delayDuration={150}>
-        <WorkToolbarButton active={view === 'history'} icon={History} label="Conversation history" onClick={() => onViewChange('history')} />
         {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
           <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
@@ -366,11 +366,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         {view === 'history' && <PreviousChatHistoryPanel
           workspacePath={workspacePath}
           activeSessionId={activeSessionId}
-          title="Conversation history"
+          title="Workshop"
           emptyText="No earlier conversations. This project now keeps one continuous chat."
           recentOnly
           readOnly
           fill
+          showAll
           onSelectSession={() => {}}
         />}
         {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}

@@ -40,6 +40,8 @@ const PROVIDER_SIDEBAR_NAMES: Record<string, string> = {
 }
 
 const PROVIDER_SIDEBAR_ICONS: Record<string, string> = {
+  'claude-code': '/provider-icons/claude.ico',
+  'muse-cli': '/provider-icons/muse.ico',
   'codex-cli': '/provider-icons/codex.png',
   'cursor-cli': '/provider-icons/cursor.svg',
   'pi-cli': '/provider-icons/pi.svg',
@@ -585,11 +587,7 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                     >
                       <div className="flex min-h-6 items-center gap-2">
                         {PROVIDER_SIDEBAR_ICONS[provider.id] ? (
-                          provider.id === 'pi-cli' ? (
-                            <span aria-hidden="true" className="h-5 w-5 shrink-0 bg-gray-900 dark:bg-gray-100" style={{ mask: `url(${PROVIDER_SIDEBAR_ICONS[provider.id]}) center / contain no-repeat` }} />
-                          ) : (
-                            <img src={PROVIDER_SIDEBAR_ICONS[provider.id]} alt="" className="h-5 w-5 shrink-0 rounded object-contain" />
-                          )
+                          <img src={PROVIDER_SIDEBAR_ICONS[provider.id]} alt="" className={`h-5 w-5 shrink-0 rounded object-contain ${provider.id === 'pi-cli' ? 'bg-[#f6f6f6] p-0.5' : ''}`} />
                         ) : <Terminal aria-hidden="true" className="h-5 w-5 shrink-0 text-gray-500 dark:text-gray-400" />}
                         <span className="min-w-0 flex-1 truncate text-sm font-medium text-gray-900 dark:text-gray-100">{PROVIDER_SIDEBAR_NAMES[provider.id] || provider.display_name}</span>
                         <ProviderListStatus provider={provider} />

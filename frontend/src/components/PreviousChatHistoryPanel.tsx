@@ -55,8 +55,8 @@ const emptyStateContent: Record<PreviousChatFilter, {
 }> = {
   chat: {
     icon: MessageSquare,
-    title: 'No chats yet',
-    body: 'Use the Chat tab to send the first message. Saved conversations will appear here for reference.',
+    title: 'No conversation history yet',
+    body: 'Your main Chat is the continuing conversation. Earlier saved conversations will appear here for reference.',
   },
   schedule: {
     icon: CalendarClock,
@@ -83,7 +83,7 @@ const firstRunHints: Array<{
   {
     icon: MessageSquare,
     label: 'Chat',
-    body: 'Ask anything, then return here to resume the thread.',
+    body: 'Use the main Chat for the continuing conversation. This view keeps its earlier history.',
   },
   {
     icon: CalendarClock,
@@ -831,12 +831,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [addToast, oldVisibleSessionCounts, workspacePath])
 
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
-  // This row is a content filter inside the conversation hub, not another
-  // set of top-level chat tabs. "Recent" makes that distinction explicit:
-  // the workspace tab owns the active/new conversation, while this list is
-  // where someone returns to a saved one.
+  // This row is a content filter inside the conversation hub, not another set
+  // of active chats. The main Chat owns the one continuing conversation;
+  // History contains earlier saved conversations for reference.
   const filterItems = [
-    { filter: 'chat' as const, label: 'Recent', icon: MessageSquare },
+    { filter: 'chat' as const, label: 'History', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
     { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
@@ -899,7 +898,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
         </div>
 
         {isLoading ? (
-          <div className="px-3 py-3 text-xs text-muted-foreground">Loading previous chats...</div>
+          <div className="px-3 py-3 text-xs text-muted-foreground">Loading conversation history...</div>
         ) : isRunFilter ? (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
             {isLoadingScheduleActivity ? (
@@ -1058,7 +1057,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                         {isLoadingDetails && !hasLoadedMessages && (
                           <div className="flex items-center gap-2 text-muted-foreground">
                             <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span>Loading recent messages...</span>
+                            <span>Loading messages...</span>
                           </div>
                         )}
                         {!isLoadingDetails && messages.length === 0 && (

@@ -105,6 +105,8 @@ it('keeps historical Crew conversations read-only and expands them in place', as
 
   expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Open"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="History"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="Recent"]')).toBeNull()
   const title = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Earlier project discussion'))
   expect(title).toBeDefined()
   await act(async () => title!.click())

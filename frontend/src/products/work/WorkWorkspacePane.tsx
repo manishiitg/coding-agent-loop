@@ -91,10 +91,10 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
 export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => item.id === 'history' || enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
-  const [openGroup, setOpenGroup] = useState<'views' | 'setup'>(() => SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
+  const [setupOpen, setSetupOpen] = useState(() => SETUP_BUTTONS.some(item => item.id === view))
 
   useEffect(() => {
-    setOpenGroup(SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : 'views')
+    setSetupOpen(SETUP_BUTTONS.some(item => item.id === view))
   }, [view])
 
   return (
@@ -102,10 +102,10 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
       <TooltipProvider delayDuration={150}>
         {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
-            <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
-          </WorkspaceToolbarGroup>
-          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, integrations, models, connectors, Gmail and folders">
+          <div className="inline-flex items-center gap-0.5 px-0.5">
+            {visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}
+          </div>
+          <WorkspaceToolbarGroup label="Setup" open={setupOpen} onToggle={() => setSetupOpen(current => !current)} title="Setup: skills, secrets, integrations, models, connectors, Gmail and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>

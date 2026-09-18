@@ -24,12 +24,15 @@ import {
 } from './helpers'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
 import { ScheduleRowActions } from './ScheduleRowActions'
+import { ScheduleExecutionHistoryList } from '../../ScheduleExecutionHistoryList'
 
 type ScheduleListViewProps = {
   panel: Pick<ScheduleRunsPanelState,
     | 'filteredJobs' | 'presetMap' | 'showWorkflowIdentityInScheduleRows' | 'isReadOnlyUser'
     | 'handleStopRun' | 'handleTrigger' | 'triggering' | 'handleToggle'
     | 'openActionMenuJobId' | 'setOpenActionMenuJobId' | 'handleDelete'
+    | 'expandedRunHistoryJobIds' | 'runsByJob' | 'runsLoadingJobIds' | 'deletingRunSessionIds'
+    | 'toggleRunHistory' | 'openScheduledRun' | 'deleteScheduledRunSession'
   >
 }
 
@@ -46,6 +49,13 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
     openActionMenuJobId,
     setOpenActionMenuJobId,
     handleDelete,
+    expandedRunHistoryJobIds,
+    runsByJob,
+    runsLoadingJobIds,
+    deletingRunSessionIds,
+    toggleRunHistory,
+    openScheduledRun,
+    deleteScheduledRunSession,
   } = panel
 
   return (
@@ -265,6 +275,17 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                 />
               </div>
             </div>
+            {(job.run_count || 0) > 0 && <ScheduleExecutionHistoryList
+                job={job}
+                runs={runsByJob[job.id] || []}
+                historyOpen={expandedRunHistoryJobIds.has(job.id)}
+                historyLoading={runsLoadingJobIds.has(job.id)}
+                recordedRunCount={job.run_count || 0}
+                onToggle={() => { void toggleRunHistory(job) }}
+                onOpen={run => { void openScheduledRun(run, job) }}
+                onDelete={job.entity_type === 'product' ? undefined : run => { void deleteScheduledRunSession(run) }}
+                deletingRunIds={deletingRunSessionIds}
+            />}
             </div>
           </React.Fragment>
         )

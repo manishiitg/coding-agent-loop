@@ -94,16 +94,18 @@ describe('schedule panel views', () => {
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 
-  it('shares the Schedules and Webhooks switcher with a product project', async () => {
+  it('shares Schedules, Triggers, and Bots in one product automation hub', async () => {
     const { state } = buildPanelState()
     hookState.current = state
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
-    await act(async () => root.render(<WorkflowScheduleRunsPanel embedded entityType="product" productTriggerScope={{ profileId: 'work', projectId: 'project-1' }} onClose={() => {}} />))
+    await act(async () => root.render(<WorkflowScheduleRunsPanel embedded entityType="product" productTriggerScope={{ profileId: 'work', projectId: 'project-1' }} botContent={<div data-testid="bots">Bots content</div>} onClose={() => {}} />))
     try {
-      const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Workflow triggers"] button'))
-      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Webhooks'])
+      const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation channels"] button'))
+      expect(tabs.map(tab => tab.textContent)).toEqual(['Schedules', 'Triggers', 'Bots'])
       await act(async () => { tabs[1]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="product-webhooks"]')).not.toBeNull()
+      await act(async () => { tabs[2]!.click(); await Promise.resolve() })
+      expect(host.querySelector('[data-testid="bots"]')).not.toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 })

@@ -7,7 +7,6 @@ import {
   DollarSign,
   Files,
   FolderOpen,
-  History,
   KeyRound,
   LayoutDashboard,
   Mail,
@@ -39,15 +38,15 @@ import type { BrowserAutomationMode } from '../../components/BrowserAutomationSe
 import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type { WorkRuntimeSelection } from './workTabs'
-import { PreviousChatHistoryPanel } from '../../components/PreviousChatHistoryPanel'
 import type { ProductIdentity } from '../../platform/chat/productProjects'
+import { loadWorkSessions } from './workSessions'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../components/scheduler/WorkflowScheduleRunsPanel'))
 const ReportView = lazy(() => import('../../components/workflow/ReportViewer').then(module => ({ default: module.ReportView })))
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 
-export type WorkWorkspaceView = 'history' | 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
+export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
 
 function sendWorkProjectPaneMessage(projectId: string, message: string) {
   return sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: projectId, message })
@@ -56,9 +55,8 @@ function sendWorkProjectPaneMessage(projectId: string, message: string) {
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'browser', label: 'Browser', icon: Monitor },
-  { id: 'history', label: 'Workshop', icon: History },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
-  { id: 'schedules', label: 'Schedules', icon: CalendarClock },
+  { id: 'schedules', label: 'Automations', icon: CalendarClock },
 ]
 
 const OPS_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
@@ -93,7 +91,7 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
 }
 
 export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
-  const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => item.id === 'history' || enabledPanels.has(item.id)) : VIEW_BUTTONS
+  const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleOps = enabledPanels ? OPS_BUTTONS.filter(item => enabledPanels.has(item.id)) : OPS_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
   const [openGroup, setOpenGroup] = useState<'ops' | 'setup' | null>(() =>
@@ -124,7 +122,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
   )
 }
 
-function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }: { workflowContextPaths: string[]; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+function WorkFoldersPanel({ workspacePath, workflowContextPaths, onWorkflowContextPathsChange }: { workspacePath: string; workflowContextPaths: string[]; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const [folders, setFolders] = useState<WorkFolderGrant[]>([])
   const [roots, setRoots] = useState<string[]>([])
   const [path, setPath] = useState('')
@@ -133,6 +131,7 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+  const [crewReferences, setCrewReferences] = useState<Array<{ path: string; label: string; icon?: string }>>([])
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -149,6 +148,18 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
   }, [])
 
   useEffect(() => { void refresh() }, [refresh])
+  useEffect(() => {
+    let cancelled = false
+    void loadWorkSessions().then(sessions => {
+      if (cancelled) return
+      setCrewReferences(sessions.map(session => ({
+        path: session.workspacePath,
+        label: session.identity?.name || session.title,
+        icon: session.identity?.icon,
+      })))
+    }).catch(() => { if (!cancelled) setCrewReferences([]) })
+    return () => { cancelled = true }
+  }, [])
 
   const add = async () => {
     if (!path.trim() || !alias.trim() || saving) return
@@ -181,7 +192,14 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
       <h2 className="text-sm font-semibold text-foreground">Attached folders</h2>
       <p className="mt-1 text-xs text-muted-foreground">Give Crew access to an existing server folder in addition to this project.</p>
       {roots.length > 0 && <p className="mt-2 text-[11px] text-muted-foreground">Allowed roots: {roots.join(', ')}</p>}
-      <div className="mt-4"><WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={onWorkflowContextPathsChange} /></div>
+      <div className="mt-4"><WorkflowReferenceAccess
+        selectedPaths={workflowContextPaths}
+        onChange={onWorkflowContextPathsChange}
+        excludeWorkspacePath={workspacePath}
+        additionalReferences={crewReferences}
+        additionalLabel="Crew"
+        showAdditionalGroup
+      /></div>
       <div className="mt-4 grid gap-2 rounded-lg border border-border p-3">
         <input value={path} onChange={(event) => setPath(event.target.value)} placeholder="Absolute folder path" className="rounded-md border border-border bg-background px-3 py-2 text-sm" />
         <div className="grid grid-cols-[1fr_auto_auto] gap-2">
@@ -338,7 +356,6 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
 
 export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
-  const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
   const toggleSkill = async (folderName: string) => {
     const next = selectedSkills.includes(folderName)
@@ -366,33 +383,13 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
     }
   }
 
-  if (view !== 'history' && enabledPanels && !enabledPanels.has(view)) {
+  if (enabledPanels && !enabledPanels.has(view)) {
     return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">No workspace view is enabled for this product.</div>
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'history' && <PreviousChatHistoryPanel
-          workspacePath={workspacePath}
-          activeSessionId={activeSessionId}
-          title="Workshop"
-          emptyText="No earlier conversations. This project now keeps one continuous chat."
-          showHistoryFilter={false}
-          scheduleEntityType="product"
-          scheduleScopeId={projectId}
-          productTriggerScope={{ profileId: 'work', projectId }}
-          botContent={<div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
-            workspacePath={workspacePath}
-            scopeNoun="project"
-            onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
-            target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
-          /></div>}
-          readOnly
-          fill
-          showAll
-          onSelectSession={() => {}}
-        />}
         {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
         {view === 'mcp' && <WorkMCPPanel tabId={tabId} projectId={projectId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
@@ -411,7 +408,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           showSharedSecrets={false}
           allowGlobalPromotion
         /></div>}
-        {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
+        {view === 'folders' && <WorkFoldersPanel workspacePath={workspacePath} workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
         {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
         {view === 'email' && <div className="h-full overflow-y-auto p-4"><WorkflowEmailPanel workspacePath={workspacePath} /></div>}
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
@@ -437,6 +434,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
             canManage
             scopeNoun="project"
             productTriggerScope={enabledPanels?.has('triggers') === false ? undefined : { profileId: 'work', projectId }}
+            botContent={enabledPanels?.has('bots') === false ? undefined : <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
+              workspacePath={workspacePath}
+              scopeNoun="project"
+              onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
+              target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
+            /></div>}
             workflowScope={{ workflowId: projectId, workspacePath, label: projectTitle }}
             onClose={() => onViewChange('files')}
             headerAction={<AskAIButton

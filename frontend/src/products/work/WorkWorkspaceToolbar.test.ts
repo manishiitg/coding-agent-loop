@@ -13,8 +13,11 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("visibleViews.filter(item => item.id !== 'dashboard').map")
     expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'files', label: 'Files'"))
     expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'database', label: 'Database'"))
-    expect(source.indexOf("id: 'history', label: 'Workshop'")).toBeGreaterThan(source.indexOf("id: 'browser', label: 'Browser'"))
-    expect(source).toContain('showAll')
+    expect(source).not.toContain("id: 'history'")
+    expect(source).toContain("id: 'schedules', label: 'Automations'")
+    expect(source).toContain('botContent=')
+    expect(source).toContain("productTriggerScope={enabledPanels?.has('triggers')")
+    expect(source).toContain('showAdditionalGroup')
   })
 
   it('binds the Work chat to acknowledged workspace view controls', () => {
@@ -34,6 +37,7 @@ describe('WorkWorkspaceToolbar', () => {
     const source = readFileSync('src/products/work/WorkSurface.tsx', 'utf8')
 
     expect(source).toContain("const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'")
+    expect(source).toContain("if (saved === 'history') return 'schedules'")
     expect(source).toContain("return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'")
     expect(source).toContain('writeWorkWorkspaceView(selected?.id, view)')
     expect(source).toContain('setWorkspaceView(readWorkWorkspaceView(selected?.id))')

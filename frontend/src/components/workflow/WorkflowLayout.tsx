@@ -2,7 +2,7 @@ import { openHistoryExecutionLogs } from '../../utils/historyExecutionLogs'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import React, { useMemo, useCallback, useRef, useEffect, forwardRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Laptop, PanelLeftOpen, PanelRightOpen, Sparkles, Smartphone, Tablet } from 'lucide-react'
+import { PanelLeftOpen, PanelRightOpen, Sparkles } from 'lucide-react'
 import { WorkflowCanvas, type WorkflowCanvasRef } from './canvas'
 import { useGlobalPresetStore } from '../../stores/useGlobalPresetStore'
 import { useModeStore } from '../../stores/useModeStore'
@@ -46,7 +46,7 @@ import {
   writeReportPreviewPreference,
   writeWorkflowSplitPreference,
 } from '../../utils/reportPreviewPreference'
-import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../workspace/WorkspaceSplitDivider'
+import { WorkspaceSplitRail } from '../workspace/WorkspaceSplitDivider'
 import { AutomationHubPanel } from '../automation/AutomationHubPanel'
 
 const WorkflowBotsPanel = React.lazy(() => import('./WorkflowBotsPanel'))
@@ -2344,36 +2344,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         {workspacePaneVisible && canvasElement}
 
         {showChatArea && workspacePaneVisible && (
-          <WorkspaceSplitDivider
+          <WorkspaceSplitRail
             ratio={workspaceSplitRatio}
             onPointerDown={handleSplitPointerDown}
             onStep={delta => setSplitRatio(workspaceSplitRatioRef.current + delta, true)}
             className="md:row-start-2"
-          >
-              {([
-                ['mobile', Smartphone, 'Mobile preview'],
-                ['tablet', Tablet, 'Tablet preview'],
-                ['desktop', Laptop, 'Laptop preview'],
-              ] as const).map(([device, Icon, label]) => (
-                <button
-                  key={device}
-                  type="button"
-                  onPointerDown={event => event.stopPropagation()}
-                  onClick={() => writeReportPreviewPreference(workspacePath, device)}
-                  className={`pointer-events-auto flex h-6 w-6 items-center justify-center rounded transition-colors ${reportPreviewPreference === device ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
-                  aria-label={label}
-                  aria-pressed={reportPreviewPreference === device}
-                  title={label}
-                >
-                  <Icon className="h-3 w-3" />
-                </button>
-              ))}
-              <span className="h-px w-3 bg-border" />
-              <WorkspaceSplitCollapseControls
-                onCollapseChat={collapseChatFromRail}
-                onCollapseWorkspace={collapseWorkspaceFromRail}
-              />
-          </WorkspaceSplitDivider>
+            previewDevice={reportPreviewPreference}
+            onPreviewDeviceChange={device => writeReportPreviewPreference(workspacePath, device)}
+            onCollapseChat={collapseChatFromRail}
+            onCollapseWorkspace={collapseWorkspaceFromRail}
+          />
         )}
       </div>
     </div>

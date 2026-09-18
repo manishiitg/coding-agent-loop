@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, MessageSquare, PanelRightOpen, Plus, Sparkles } from 'lucide-react'
+import { Loader2, MessageSquare, PanelLeftOpen, PanelRightOpen, Plus, Sparkles } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import ChatArea from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
@@ -18,7 +18,7 @@ import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
 import { createWorkSession, loadWorkSessions, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
-import { WorkspaceSplitCollapseControls, WorkspaceSplitDivider } from '../../components/workspace/WorkspaceSplitDivider'
+import { WorkspaceSplitRail } from '../../components/workspace/WorkspaceSplitDivider'
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
@@ -30,6 +30,12 @@ import { usePresentationEvents } from '../../platform/presentations/usePresentat
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
+import {
+  REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
+  readReportPreviewPreference,
+  type ReportPreviewDevice,
+  writeReportPreviewPreference,
+} from '../../utils/reportPreviewPreference'
 
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
@@ -435,6 +441,7 @@ export function WorkSurface() {
   }, [projectConfigRefreshToken, refresh])
   const [creating, setCreating] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
+  const [chatOpen, setChatOpen] = useState(true)
   const [panelOpen, setPanelOpen] = useState(true)
   const [workspaceView, setWorkspaceView] = useState<WorkWorkspaceView>(() => readWorkWorkspaceView(selected?.id))
   const pendingWorkView = useProductSurfaceStore(state => state.pendingWorkView)
@@ -444,6 +451,7 @@ export function WorkSurface() {
   const splitLayoutRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
   const splitRatioRef = useRef(splitRatio)
+  const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(selected?.workspacePath))
   const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
   const [createError, setCreateError] = useState<string | null>(null)
   const showProviders = useLLMStore((state) => state.showLLMModal)
@@ -541,6 +549,22 @@ export function WorkSurface() {
   useEffect(() => {
     setWorkspaceView(readWorkWorkspaceView(selected?.id))
   }, [selected?.id])
+
+  useEffect(() => {
+    setChatOpen(true)
+    setPanelOpen(true)
+  }, [selected?.id])
+
+  useEffect(() => {
+    const sync = () => setReportPreviewPreference(readReportPreviewPreference(selected?.workspacePath))
+    sync()
+    window.addEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, sync as EventListener)
+    window.addEventListener('storage', sync)
+    return () => {
+      window.removeEventListener(REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT, sync as EventListener)
+      window.removeEventListener('storage', sync)
+    }
+  }, [selected?.workspacePath])
 
   useEffect(() => {
     if (enabledWorkspacePanels && !enabledWorkspacePanels.has(workspaceView)) {
@@ -699,16 +723,28 @@ export function WorkSurface() {
                   <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Workspace</span>
                 </button>
               ) : null}
+              {!chatOpen ? (
+                <button
+                  type="button"
+                  onClick={() => setChatOpen(true)}
+                  title="Show chat panel"
+                  aria-label="Show chat panel"
+                  className="absolute left-0 top-1/2 z-30 hidden -translate-y-1/2 flex-col items-center gap-1.5 rounded-r-lg border border-l-0 border-border bg-background/95 py-3 pl-1 pr-1.5 text-muted-foreground shadow-md backdrop-blur-sm transition-colors hover:bg-muted hover:text-foreground md:flex"
+                >
+                  <PanelLeftOpen className="h-4 w-4" />
+                  <span className="[writing-mode:vertical-rl] text-[10px] font-semibold uppercase tracking-wider">Chat</span>
+                </button>
+              ) : null}
               <div
                 ref={splitLayoutRef}
-                className={`grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] ${panelOpen ? 'md:[grid-template-columns:var(--work-split-columns)]' : ''}`}
-                style={panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
+                className={`grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] ${chatOpen && panelOpen ? 'md:[grid-template-columns:var(--work-split-columns)]' : ''}`}
+                style={chatOpen && panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
               >
-                <WorkspaceTopToolbar className={`${panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
+                <WorkspaceTopToolbar className={`${chatOpen && panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
                   {tabId ? <WorkChatLabel /> : <div className="min-w-0 flex-1" />}
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
-                <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
+                {chatOpen ? <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
@@ -726,24 +762,24 @@ export function WorkSurface() {
                       <span><Loader2 className="mr-2 inline h-4 w-4 animate-spin" />Opening project…</span>
                     </div>
                   )}
-                </main>
-                {panelOpen ? (
-                  <WorkspaceSplitDivider
+                </main> : null}
+                {chatOpen && panelOpen ? (
+                  <WorkspaceSplitRail
                     ratio={splitRatio}
                     onPointerDown={handleSplitPointerDown}
                     onStep={delta => setSplitRatio(splitRatioRef.current + delta, true)}
                     className="md:row-start-2"
-                  >
-                    <WorkspaceSplitCollapseControls
-                      onCollapseWorkspace={() => setPanelOpen(false)}
-                    />
-                  </WorkspaceSplitDivider>
+                    previewDevice={reportPreviewPreference}
+                    onPreviewDeviceChange={device => writeReportPreviewPreference(selected.workspacePath, device)}
+                    onCollapseChat={() => setChatOpen(false)}
+                    onCollapseWorkspace={() => setPanelOpen(false)}
+                  />
                 ) : null}
                 {panelOpen ? (
                   <aside
                     data-ui-workspace={selected.workspacePath}
                     data-ui-view={workPresentationView(workspaceView)}
-                    className="min-h-0 min-w-0 overflow-hidden bg-background row-start-2 md:col-start-2"
+                    className={`min-h-0 min-w-0 overflow-hidden bg-background row-start-2 ${chatOpen ? 'md:col-start-2' : 'col-start-1'}`}
                   >
                   {tabId ? (
                     <><span hidden data-ui-view-mounted /><WorkWorkspacePane

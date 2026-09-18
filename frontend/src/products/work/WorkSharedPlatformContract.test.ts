@@ -43,6 +43,19 @@ describe('Crew shared AgentWorks platform contract', () => {
     expect(workPane).toContain("../../components/workflow/BrowserWorkspacePanel")
   })
 
+  it('uses the complete shared split rail in AgentWorks and Crew', () => {
+    const workflowLayout = read('src/components/workflow/WorkflowLayout.tsx')
+    const workSurface = read('src/products/work/WorkSurface.tsx')
+
+    for (const consumer of [workflowLayout, workSurface]) {
+      expect(consumer).toContain('<WorkspaceSplitRail')
+      expect(consumer).toContain('onPreviewDeviceChange=')
+      expect(consumer).toContain('onCollapseChat=')
+      expect(consumer).toContain('onCollapseWorkspace=')
+      expect(consumer).not.toContain('<WorkspaceSplitCollapseControls')
+    }
+  })
+
   it('does not add product-local replacements for shared platform surfaces', () => {
     const files = readdirSync('src/products/work')
     const forbiddenProductForks = [

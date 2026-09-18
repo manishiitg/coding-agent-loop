@@ -1005,3 +1005,24 @@ envelopes, and the shared frontend restore converter applies the same defensive
 filter for legacy or unbounded history responses. The provider still retains
 the envelope in its native conversation context, and the assistant response
 that follows it remains visible.
+
+### Accepted live-input receipt and durable history echo rendered as two user messages
+
+RTS live evidence on 2026-09-18 showed ordinary prompts such as `check global
+secrets` and `check cli` twice while the agent/tool activity remained single.
+This was a presentation reconciliation bug, not a second model turn. The client
+keeps the frontend-created user row as an accepted mutation receipt until the
+durable UI trace confirms the backend `message_id`. During that allowed lag,
+the provider conversation history can already contain the same prompt. The
+compact product conversation renderer reconciled those two carriers, but the
+shared formatted terminal transcript did not, so the newer Crew/AgentWorks
+chat surface rendered both event IDs.
+
+The shared transcript now collapses only an adjacent identical pair where one
+carrier is frontend-created and the other is durable. It retains two deliberate
+repeats when both are real frontend submissions or both are durable, and it
+retains an older identical turn when an agent response separates it from the
+new prompt. Focused transcript, history reconciliation, clean-conversation, and
+live-input suites pass (164 tests); the production frontend build and focused
+backend packages also pass. Deployment is authorized and pending completion of
+the RTS release procedure.

@@ -54,11 +54,14 @@ function sendWorkProjectPaneMessage(projectId: string, message: string) {
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-  { id: 'files', label: 'Files', icon: Files },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'history', label: 'Workshop', icon: History },
   { id: 'costs', label: 'Costs and usage', icon: DollarSign },
   { id: 'schedules', label: 'Schedules', icon: CalendarClock },
+]
+
+const OPS_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
+  { id: 'files', label: 'Files', icon: Files },
   { id: 'database', label: 'Database', icon: Database },
 ]
 
@@ -90,11 +93,14 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
 
 export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => item.id === 'history' || enabledPanels.has(item.id)) : VIEW_BUTTONS
+  const visibleOps = enabledPanels ? OPS_BUTTONS.filter(item => enabledPanels.has(item.id)) : OPS_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => enabledPanels.has(item.id)) : SETUP_BUTTONS
-  const [setupOpen, setSetupOpen] = useState(() => SETUP_BUTTONS.some(item => item.id === view))
+  const [openGroup, setOpenGroup] = useState<'ops' | 'setup' | null>(() =>
+    OPS_BUTTONS.some(item => item.id === view) ? 'ops' : SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : null,
+  )
 
   useEffect(() => {
-    setSetupOpen(SETUP_BUTTONS.some(item => item.id === view))
+    setOpenGroup(OPS_BUTTONS.some(item => item.id === view) ? 'ops' : SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : null)
   }, [view])
 
   return (
@@ -105,7 +111,10 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
           <div className="inline-flex items-center gap-0.5 px-0.5">
             {visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}
           </div>
-          <WorkspaceToolbarGroup label="Setup" open={setupOpen} onToggle={() => setSetupOpen(current => !current)} title="Setup: skills, secrets, integrations, models, connectors, Gmail and folders">
+          {visibleOps.length > 0 && <WorkspaceToolbarGroup label="Ops" open={openGroup === 'ops'} onToggle={() => setOpenGroup(current => current === 'ops' ? null : 'ops')} title="Operations: project files and database">
+            <div className="inline-flex items-center gap-0.5">{visibleOps.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
+          </WorkspaceToolbarGroup>}
+          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup(current => current === 'setup' ? null : 'setup')} title="Setup: skills, secrets, integrations, models, connectors, Gmail and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>

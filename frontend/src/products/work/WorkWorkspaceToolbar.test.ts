@@ -2,14 +2,17 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('WorkWorkspaceToolbar', () => {
-  it('keeps workspace views visible and expands Setup for a selected setup panel', () => {
+  it('keeps primary views visible and groups Files and Database under Ops', () => {
     const source = readFileSync('src/products/work/WorkWorkspacePane.tsx', 'utf8')
 
     expect(source).not.toContain('label="Views"')
-    expect(source).toContain('open={setupOpen}')
-    expect(source).toContain('onToggle={() => setSetupOpen(current => !current)}')
-    expect(source).toContain('setSetupOpen(SETUP_BUTTONS.some(item => item.id === view))')
+    expect(source).toContain('label="Ops"')
+    expect(source).toContain("open={openGroup === 'ops'}")
+    expect(source).toContain("open={openGroup === 'setup'}")
+    expect(source).toContain("OPS_BUTTONS.some(item => item.id === view) ? 'ops'")
     expect(source).toContain("visibleViews.filter(item => item.id !== 'dashboard').map")
+    expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'files', label: 'Files'"))
+    expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'database', label: 'Database'"))
     expect(source.indexOf("id: 'history', label: 'Workshop'")).toBeGreaterThan(source.indexOf("id: 'browser', label: 'Browser'"))
     expect(source).toContain('showAll')
   })

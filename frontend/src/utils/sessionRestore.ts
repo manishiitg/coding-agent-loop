@@ -399,6 +399,15 @@ async function tryFetchChatHistoryConversation(
     if (isNotFoundError(error)) {
       return null
     }
+    // Shared observers may read history but cannot resume its owner's session.
+    // Only explicitly read-only tabs use this fallback; the history endpoint
+    // still enforces workspace read access.
+    const readOnly = Object.values(useChatStore.getState().chatTabs || {}).some(
+      tab => tab.sessionId === sessionId && tab.metadata?.isViewOnly,
+    )
+    if (readOnly && axios.isAxiosError(error) && error.response?.status === 403) {
+      return agentApi.getChatHistoryConversation(sessionId, workspacePath)
+    }
     throw error
   }
 }

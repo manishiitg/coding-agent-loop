@@ -1677,22 +1677,25 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [isProductSurface])
 
-  // Sync tab config inputText with preset query when preset is selected
+  // Preset draft sync belongs only to interactive product composers.
+  // Read-only workflow/bot observers must never publish composer updates.
   useEffect(() => {
+    if (!isMultiAgentMode || isViewOnly || !activeTabId) return
+    const currentInput = useChatStore.getState().chatTabs[activeTabId]?.config?.inputText || ''
     const activePresetId = activePresetIds['multi-agent']
 
     if (activePresetId && activeTabId) {
       const preset = getActivePreset('multi-agent')
 
-      if (preset && preset.query) {
+      if (preset && preset.query && currentInput !== preset.query) {
         // Sync tab config with preset query
         setTabConfig(activeTabId, { inputText: preset.query })
       }
-    } else if (!activePresetId && activeTabId) {
+    } else if (!activePresetId && activeTabId && currentInput !== '') {
       // No preset active, clear input text
       setTabConfig(activeTabId, { inputText: '' })
     }
-  }, [activePresetIds, getActivePreset, activeTabId, setTabConfig])
+  }, [activePresetIds, getActivePreset, activeTabId, setTabConfig, isMultiAgentMode, isViewOnly])
 
   // Handle auto-run from tab config
   useEffect(() => {

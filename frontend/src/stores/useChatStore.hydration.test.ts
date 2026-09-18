@@ -336,7 +336,13 @@ describe('useChatStore hydration bootstrap', () => {
     const submittedRevision = useChatStore.getState().getTabConfig(tab)?.composerRevision
     useChatStore.getState().setTabConfig(tab, { inputText: 'new instance edited' })
     expect(useChatStore.getState().getTabConfig(tab)?.composerRevision).toBe((submittedRevision ?? 0) + 1)
+    const settledState = useChatStore.getState()
+    const subscriber = vi.fn()
+    const unsubscribe = useChatStore.subscribe(subscriber)
     useChatStore.getState().setTabConfig(tab, { inputText: 'new instance edited' })
+    expect(useChatStore.getState()).toBe(settledState)
+    expect(subscriber).not.toHaveBeenCalled()
+    unsubscribe()
     expect(useChatStore.getState().getTabConfig(tab)?.composerRevision).toBe((submittedRevision ?? 0) + 1)
   })
 

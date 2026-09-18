@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
+  chatTabs: {} as Record<string, { sessionId: string; metadata?: { isViewOnly?: boolean } }>,
   addTabEvents: vi.fn(),
   setTabEvents: vi.fn(),
   setTabLastEventIndex: vi.fn(),
@@ -15,6 +16,7 @@ const mocks = vi.hoisted(() => ({
 vi.mock('../stores/useChatStore', () => ({
   useChatStore: {
     getState: () => ({
+      chatTabs: mocks.chatTabs,
       addTabEvents: mocks.addTabEvents,
       setTabEvents: mocks.setTabEvents,
       setTabLastEventIndex: mocks.setTabLastEventIndex,
@@ -42,7 +44,31 @@ import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore
 describe('hydrateTabEvents restored chat fallback', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    mocks.chatTabs = {}
     mocks.getTabEvents.mockReturnValue([])
+  })
+
+  it('reads a shared bot transcript without resuming its owner session', async () => {
+    mocks.chatTabs = { observer: { sessionId: 'shared-bot', metadata: { isViewOnly: true } } }
+    mocks.getChatHistoryResumeConversation.mockRejectedValue({ isAxiosError: true, response: { status: 403 } })
+    mocks.getChatHistoryConversation.mockResolvedValue({ session_id: 'shared-bot', conversation_history: [
+      { Role: 'human', Parts: [{ Text: 'Hello' }] },
+      { Role: 'ai', Parts: [{ Text: 'Saved bot answer' }] },
+    ] })
+    mocks.getRecentSessionEvents.mockRejectedValue({ isAxiosError: true, response: { status: 404 } })
+    await hydrateTabEvents('shared-bot', { workspacePath: 'Workflow/shared' })
+    expect(mocks.getChatHistoryConversation).toHaveBeenCalledWith('shared-bot', 'Workflow/shared')
+    expect(mocks.setTabEvents).toHaveBeenCalledWith('shared-bot', expect.arrayContaining([
+      expect.objectContaining({ type: 'unified_completion' }),
+    ]))
+  })
+
+  it('preserves a resume permission error for an interactive tab', async () => {
+    const denied = { isAxiosError: true, response: { status: 403 } }
+    mocks.getChatHistoryResumeConversation.mockRejectedValue(denied)
+    mocks.getRecentSessionEvents.mockResolvedValue({ events: [] })
+    await expect(hydrateTabEvents('private-session')).rejects.toBe(denied)
+    expect(mocks.getChatHistoryConversation).not.toHaveBeenCalled()
   })
 
   it('prefers complete persisted history when reopening a chat', async () => {

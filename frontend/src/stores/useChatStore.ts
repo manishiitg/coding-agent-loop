@@ -2887,7 +2887,8 @@ export const useChatStore = create<ChatState>()(
       setTabConfig: (tabId: string, configUpdate: Partial<ChatTabConfig>) => {
         const state = get()
         const tab = state.chatTabs[tabId]
-        if (!tab) return
+        if (!tab || Object.entries(configUpdate).every(([key, value]) =>
+          Object.is(tab.config[key as keyof ChatTabConfig], value))) return
 
         set((state) => {
           const freshTab = state.chatTabs[tabId]

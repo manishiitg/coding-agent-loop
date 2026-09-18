@@ -3944,6 +3944,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							finalProvider = phaseLLM.Provider
 							finalModelID = phaseLLM.ModelID
 							workflowPhasePrimaryOptions = phaseLLM.Options
+							// The manifest selects credentials as well as the model. Clear
+							// stale request account IDs when switching back to a server account.
+							req.ConnectionID = phaseLLM.ConnectionID
+							if req.LLMConfig != nil {
+								configCopy := *req.LLMConfig
+								configCopy.Primary.ConnectionID = phaseLLM.ConnectionID
+								req.LLMConfig = &configCopy
+							}
 							logfWithContext(queryLogCtx.WithWorkflow(resolvedWPath), "[WORKFLOW_PHASE] Using workshop LLM from manifest: %s/%s", finalProvider, finalModelID)
 						}
 					}

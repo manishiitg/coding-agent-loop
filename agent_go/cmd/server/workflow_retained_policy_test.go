@@ -94,3 +94,31 @@ func TestWorkflowExplicitNewTurnDoesNotInterruptForegroundForRetainedAdmission(t
 		}
 	}
 }
+
+func TestWorkflowRetainedProviderAndAccountChangesRequireReconnect(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)
+	ws, docs := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	req := QueryRequest{SelectedFolder: "Workflow/test", Provider: "claude-code", ModelID: "claude-sonnet-5", ConnectionID: "account-a"}
+	api := &StreamingAPI{lastQueryRequests: map[string]QueryRequest{"chat": req}, lastChatPolicyBySession: map[string]string{}}
+	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", req, nil, false))
+	for _, tc := range []struct {
+		name, provider, model, account string
+		want                           bool
+	}{
+		{"unchanged", "claude-code", "claude-sonnet-5", "account-a", true},
+		{"account switch", "claude-code", "claude-sonnet-5", "account-b", false},
+		{"deleted private back to server", "claude-code", "claude-sonnet-5", "", false},
+		{"back to gemini", "pi-cli", "google/gemini-3.8-flash", "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["owner"]},"capabilities":{"llm_config":{"mode":"explicit","builder_llm":{"provider":"` + tc.provider + `","model_id":"` + tc.model + `","connection_id":"` + tc.account + `"}}}}`
+			got, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req)
+			if err != nil || got != tc.want {
+				t.Fatalf("compatible=%v err=%v want=%v", got, err, tc.want)
+			}
+		})
+	}
+}

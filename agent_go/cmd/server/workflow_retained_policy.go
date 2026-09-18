@@ -30,6 +30,39 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 		}
 		return false, err
 	}
+	manifest, found, err := ReadWorkflowManifest(validated, req.SelectedFolder)
+	if err != nil {
+		return false, err
+	}
+	if found && manifest.Capabilities.LLMConfig != nil {
+		selected, _ := workshopResolveLLMConfig(lockedPresetLLMConfig(manifest.Capabilities.LLMConfig))
+		if selected != nil {
+			api.lastQueryMu.RLock()
+			previousRequest, warm := api.lastQueryRequests[session]
+			api.lastQueryMu.RUnlock()
+			if warm {
+				provider, model, connection := previousRequest.Provider, previousRequest.ModelID, previousRequest.ConnectionID
+				if previousRequest.LLMConfig != nil {
+					connection = previousRequest.LLMConfig.Primary.ConnectionID
+				}
+				if provider != selected.Provider || model != selected.ModelID || connection != selected.ConnectionID {
+					return false, nil
+				}
+			} else {
+				runtime, exists, readErr := ReadChatHistoryRuntimeForSession(GetUserIDFromContext(validated), session, req.SelectedFolder)
+				if readErr != nil {
+					return false, readErr
+				}
+				if !exists || runtime == nil || runtime.Provider != selected.Provider || runtime.ModelID != selected.ModelID {
+					return false, nil
+				}
+				// Cold restores cannot prove account identity from legacy snapshots.
+				if selected.ConnectionID != "" {
+					return false, nil
+				}
+			}
+		}
+	}
 	active, _ := api.getActiveSession(session)
 	key := api.chatPolicySessionKey(resolveWorkflowChatPolicy("", session, req, active, access == WorkflowAccessRead))
 	api.conversationMux.RLock()

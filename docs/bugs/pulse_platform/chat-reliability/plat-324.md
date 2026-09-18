@@ -848,3 +848,22 @@ to RTS as `30235d0-20260917180009`. The production build, focused frontend
 regressions, release asset checks, idle drain, active release symlink, all three
 services, and public health passed. Browser acceptance of cross-surface
 `Ctrl+K` and activity-pill navigation remains pending.
+
+### Accepted live-input prompt disappeared while its reply remained
+
+On 2026-09-18 the retained Work session accepted `which repo is pr 79` and
+persisted it immediately before the answer, but the open chat rendered only the
+answer. Completion reconciliation is allowed to replace the complete tab event
+array. It could receive a durable snapshot whose text history or UI trace was
+still behind the accepted live-input receipt and thereby remove the optimistic
+user carrier. The display-event reference cache compounded this by assuming
+events were append-only and treating equal length plus equal boundary IDs as an
+unchanged array even when hydration replaced a middle row.
+
+The browser now attaches the backend `message_id` to the accepted optimistic
+carrier and treats that carrier as a mutation receipt. History reconciliation
+cannot remove it until the durable UI trace confirms the same server identity.
+The display cache now reuses its prior array only when every event object is
+unchanged, so middle-row replacements reach the transcript renderer. Focused
+coverage reproduces the accepted-message/completion/stale-history ordering and
+checks the client/server identity handoff.

@@ -38,6 +38,7 @@ vi.mock('../services/api', () => ({
 }))
 
 import { conversationToRestoredEvents, hydrateTabEvents } from './sessionRestore'
+import { buildCleanConversationItems } from './cleanConversation'
 
 describe('hydrateTabEvents restored chat fallback', () => {
   beforeEach(() => {
@@ -573,5 +574,101 @@ describe('lazy history hydration', () => {
     await restoring
     expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith('paged', { hasMore: true, nextOffset: 20 })
     expect(mocks.setTabHasMoreOlderEvents).toHaveBeenLastCalledWith('paged', true)
+  })
+})
+
+describe('accepted live-input reconciliation', () => {
+  beforeEach(() => {
+    vi.resetAllMocks()
+  })
+
+  it('keeps an acknowledged user receipt when completion history is stale', async () => {
+    const prompt = 'which repo is pr 79'
+    const receipt = {
+      id: 'user-message-local-pr79',
+      type: 'user_message',
+      timestamp: '2026-09-18T04:23:21Z',
+      data: { data: { content: prompt, metadata: {
+        source: 'coding_agent_live_input',
+        delivery_status: 'sent_to_cli',
+        message_id: 'steer-server-pr79',
+      } } },
+    }
+    mocks.getTabEvents.mockReturnValue([receipt])
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [{
+        id: 'reply-pr79',
+        type: 'unified_completion',
+        timestamp: '2026-09-18T04:23:24Z',
+        data: { data: { final_result: 'PR #79 is in course_designer.' } },
+      }],
+      session_status: 'completed',
+      last_processed_index: 99,
+      has_more: false,
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'retained-pr79',
+      conversation_history: [
+        { Role: 'human', Parts: [{ Text: 'older question' }] },
+        { Role: 'ai', Parts: [{ Text: 'older answer' }] },
+        // Text persistence can win the race while the durable UI trace carrying
+        // the server message ID is still behind. Text equality alone must not
+        // revoke the accepted browser receipt.
+        { Role: 'human', Parts: [{ Text: prompt }] },
+      ],
+      // The history response completed before this accepted message reached
+      // the durable trace.
+      ui_events: [],
+    })
+
+    await hydrateTabEvents('retained-pr79', { workspacePath: '/workspace/work' })
+
+    const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string }>]
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: receipt.id, type: 'user_message' }),
+      expect.objectContaining({ id: 'reply-pr79', type: 'unified_completion' }),
+    ]))
+    const items = buildCleanConversationItems(events as never)
+    expect(items.filter(item => item.role === 'user' && item.content === prompt)).toHaveLength(1)
+    expect(items.findIndex(item => item.content === prompt)).toBeLessThan(
+      items.findIndex(item => item.content.includes('PR #79 is in')),
+    )
+  })
+
+  it('retires the optimistic receipt after durable identity confirmation', async () => {
+    const prompt = 'which repo is pr 79'
+    mocks.getTabEvents.mockReturnValue([{
+      id: 'user-message-local-pr79',
+      type: 'user_message',
+      timestamp: '2026-09-18T04:23:21Z',
+      data: { data: { content: prompt, metadata: {
+        source: 'coding_agent_live_input',
+        delivery_status: 'sent_to_cli',
+        message_id: 'steer-server-pr79',
+      } } },
+    }])
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [], session_status: 'completed', last_processed_index: 100, has_more: false,
+    })
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({
+      session_id: 'retained-pr79-confirmed',
+      conversation_history: [{ Role: 'human', Parts: [{ Text: prompt }] }],
+      ui_events: [{
+        id: 'steer-server-pr79',
+        type: 'user_message',
+        timestamp: '2026-09-18T04:23:21Z',
+        data: { data: { content: prompt, metadata: {
+          source: 'coding_agent_live_input',
+          delivery_status: 'sent_to_cli',
+          message_id: 'steer-server-pr79',
+        } } },
+      }],
+    })
+
+    await hydrateTabEvents('retained-pr79-confirmed', { workspacePath: '/workspace/work' })
+
+    const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string }>]
+    expect(events.some(event => event.id === 'user-message-local-pr79')).toBe(false)
+    expect(events.some(event => event.type === 'user_message')).toBe(true)
   })
 })

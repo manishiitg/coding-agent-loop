@@ -838,10 +838,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Always use tab events - never fall back to global events to prevent cross-tab mixing
   // If there are no tabs, return empty array (tabs should always exist in multi-tab mode)
-  // PERF FIX: Return a ref-stable array when the filtered output hasn't changed.
-  // Events are append-only with unique IDs, so comparing length + first/last ID
-  // is sufficient. This prevents downstream cascade: EventHierarchy → eventTree →
-  // flattenedItems → Virtuoso diff — all skip when the ref is the same.
+  // Return a ref-stable array when every filtered event is unchanged. Durable
+  // reconciliation can replace middle rows, so boundary IDs are insufficient.
+  // Keeping the reference only for an identical window avoids unnecessary
+  // downstream transcript recomputation without hiding replacements.
   // Holds the last returned displayEvents array. Used to avoid creating a new array
   // reference when the filtered output is identical — which would otherwise cascade
   // through EventHierarchy props → eventTree memo → flattenedItems memo → Virtuoso diff,
@@ -896,17 +896,18 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // .filter() always returns a new array, even when every element passes through unchanged.
     // That new reference triggers downstream useMemo/React.memo to recompute (they compare by ===).
     //
-    // Events are append-only with unique IDs and immutable payloads, so we can cheaply detect
-    // "same output" by comparing length + first ID + last ID (3 string comparisons).
+    // Hydration replaces the event window and may change a row in the middle
+    // without changing its length or boundary IDs. Reuse the prior array only
+    // when every event object is unchanged; otherwise transcript memos must
+    // observe the replacement.
     //
     // When the check passes we return the *previous* array ref — downstream memos see the same
     // object and bail out entirely: eventTree skip → flattenedItems skip → Virtuoso no-op.
     const prev = displayEventsRef.current
     if (
-      filtered.length === prev.length &&   // same count after filtering
-      filtered.length > 0 &&               // guard against empty-to-empty flip
-      filtered[0]?.id === prev[0]?.id &&   // first event unchanged (catches cleanup trimming from front)
-      filtered[filtered.length - 1]?.id === prev[prev.length - 1]?.id  // last event unchanged (catches new appends)
+      filtered.length === prev.length &&
+      filtered.length > 0 &&
+      filtered.every((event, index) => event === prev[index])
     ) {
       return prev  // same ref → no downstream recomputation
     }
@@ -2765,7 +2766,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const resolved = await resolveOrCreateTab({ freshActiveTab, selectedModeCategory: submitModeCategory })
     if (!isChatIdentityCurrent(identity)) return false
     if (!resolved) return false
-    let { tab: currentTab, sessionId: tabSessionId } = resolved
+    const { tab: currentTab, sessionId: tabSessionId } = resolved
     const stillOwnsSubmission = () => isChatIdentityCurrent(identity) &&
       useChatStore.getState().getTab(currentTab.tabId)?.sessionId === tabSessionId
     if (options?.sourceSessionId !== undefined && (
@@ -2860,7 +2861,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           acceptReceipt()
           useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
             [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
-              ? withLiveInputReceipt(event, response.delivery_status!, response.provider)
+              ? withLiveInputReceipt(event, response.delivery_status!, response.provider, response.message_id)
               : event),
           } }))
           chatStore.setAutoScroll(true)
@@ -3794,7 +3795,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {visibleWorkflowSurface === 'restoring' && !(isReadOnlyRunView && readOnlyRunViewGaveUp) && (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
                 <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Loading conversation...</p>
               </div>
             )}
 
@@ -3842,7 +3843,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             {multiAgentSurface === 'restoring' && (
               <div className="flex flex-col items-center justify-center py-12 gap-3">
                 <div className="w-6 h-6 border-2 border-gray-300 dark:border-gray-600 border-t-blue-600 dark:border-t-blue-400 rounded-full animate-spin"></div>
-                <p className="text-sm text-gray-500 dark:text-gray-400">Restoring previous session...</p>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Loading conversation...</p>
               </div>
             )}
 

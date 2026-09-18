@@ -3,6 +3,7 @@ import { Bot, CalendarClock, MessageSquareText, Webhook } from 'lucide-react'
 import type { ProductTriggerScope } from '../../api/productWebhooks'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { EntityIdentityIcon } from '../ui/EntityIdentityIcon'
+import { TriggerDeliveryHistoryPanel } from './TriggerDeliveryHistoryPanel'
 import type { WorkflowScope } from '../scheduler/scheduleRuns/helpers'
 
 const WorkflowScheduleRunsPanel = lazy(() => import('../scheduler/WorkflowScheduleRunsPanel'))
@@ -121,12 +122,12 @@ export function AutomationHubPanel({
         />}
         {section === 'triggers' && entityType === 'workflow' && <WorkflowAPITriggersView
           workspacePath={workspacePath}
-          onViewRuns={() => selectSection('schedules')}
+          deliveryHistory={<TriggerDeliveryHistoryPanel workspacePath={workspacePath} entityType="workflow" />}
           headerAction={triggerHeaderAction}
         />}
         {section === 'triggers' && entityType === 'product' && productTriggerScope && <ProductAPITriggersView
           scope={productTriggerScope}
-          onViewRuns={() => selectSection('schedules')}
+          deliveryHistory={<TriggerDeliveryHistoryPanel workspacePath={workspacePath} entityType="product" />}
           headerAction={triggerHeaderAction}
         />}
         {section === 'bots' && botContent}

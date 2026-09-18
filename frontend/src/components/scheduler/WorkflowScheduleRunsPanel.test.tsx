@@ -12,6 +12,7 @@ vi.mock('./scheduleRuns/ScheduleCalendarView', () => ({ ScheduleCalendarView: ()
 vi.mock('./scheduleRuns/ScheduleOverviewView', () => ({ ScheduleOverviewView: () => null }))
 vi.mock('../workflow/WorkflowAPITriggersView', () => ({ default: () => null }))
 vi.mock('../workflow/ProductAPITriggersView', () => ({ default: () => <div data-testid="product-webhooks" /> }))
+vi.mock('../automation/TriggerDeliveryHistoryPanel', () => ({ TriggerDeliveryHistoryPanel: () => <div data-testid="delivery-history" /> }))
 vi.mock('../../stores/useWorkflowStore', () => ({ useWorkflowStore: (selector: (state: unknown) => unknown) => selector({ workspaceViewTarget: null }) }))
 import WorkflowScheduleRunsPanel from './WorkflowScheduleRunsPanel'
 

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import axios from 'axios'
 import { Copy, RefreshCw, Webhook } from 'lucide-react'
 import { apiTriggerURL, productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
@@ -10,17 +10,19 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to update project triggers'
 }
 
-export default function ProductAPITriggersView({ scope, onViewRuns, headerAction }: { scope: ProductTriggerScope; onViewRuns?: () => void; headerAction?: React.ReactNode }) {
+export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHistory, headerAction }: { scope: ProductTriggerScope; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode }) {
+  const { profileId, projectId } = scope
   const [triggers, setTriggers] = useState<ProductAPITrigger[]>([])
   const [issued, setIssued] = useState<ProductAPITrigger | null>(null)
   const [error, setError] = useState('')
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState('')
+  const deliveryHistoryRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
-    try { setTriggers((await productWebhooksApi.list(scope)).triggers) }
+    try { setTriggers((await productWebhooksApi.list({ profileId, projectId })).triggers) }
     catch (cause) { setError(errorMessage(cause)) }
-  }, [scope.profileId, scope.projectId])
+  }, [profileId, projectId])
 
   useEffect(() => { setError(''); setIssued(null); void refresh() }, [refresh])
 
@@ -56,7 +58,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, headerAction
       </div>
       <div className="flex items-center gap-2"><button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button>{headerAction}</div>
     </div>
-    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Both use the same durable Builder conversation. Webhooks do not run AgentWorks routes or workflow steps. {onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View runs</button>}</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Both use the same durable Builder conversation. Webhooks do not run AgentWorks routes or workflow steps. {(deliveryHistory || onViewRuns) && <button type="button" className="underline text-foreground" onClick={() => deliveryHistory ? deliveryHistoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : onViewRuns?.()}>View delivery history</button>}</p>
     <p className="text-xs text-muted-foreground">Ask the project chat to create a webhook or change its saved message and authentication.</p>
     {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {issued?.secret && <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
@@ -72,6 +74,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, headerAction
       <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button></div>
     </section>)}{triggers.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the project chat to create one.</p>}</div>
     {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}
+    {deliveryHistory && <div ref={deliveryHistoryRef} className="scroll-mt-4 overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
     <p className="text-xs leading-relaxed text-muted-foreground">Send JSON up to 1 MiB. Bearer triggers use the Authorization header; GitHub triggers verify X-Hub-Signature-256. Reuse an Idempotency-Key or GitHub delivery ID to avoid duplicate runs.</p>
   </div>
 }

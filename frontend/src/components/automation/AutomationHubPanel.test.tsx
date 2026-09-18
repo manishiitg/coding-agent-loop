@@ -15,6 +15,7 @@ vi.mock('../../stores/useWorkflowStore', () => ({
 vi.mock('../scheduler/WorkflowScheduleRunsPanel', () => ({ default: () => <div data-testid="schedules">Schedule content</div> }))
 vi.mock('../workflow/ProductAPITriggersView', () => ({ default: () => <div data-testid="triggers">Trigger content</div> }))
 vi.mock('../workflow/WorkflowAPITriggersView', () => ({ default: () => <div data-testid="workflow-triggers">Workflow trigger content</div> }))
+vi.mock('./TriggerDeliveryHistoryPanel', () => ({ TriggerDeliveryHistoryPanel: () => <div data-testid="delivery-history" /> }))
 
 import { AutomationHubPanel } from './AutomationHubPanel'
 

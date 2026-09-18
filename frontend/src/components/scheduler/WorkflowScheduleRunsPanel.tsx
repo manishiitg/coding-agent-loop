@@ -14,6 +14,7 @@ import { ScheduleTableView } from './scheduleRuns/ScheduleTableView'
 import WorkflowAPITriggersView from '../workflow/WorkflowAPITriggersView'
 import type { ProductTriggerScope } from '../../api/productWebhooks'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { TriggerDeliveryHistoryPanel } from '../automation/TriggerDeliveryHistoryPanel'
 
 const ProductAPITriggersView = lazy(() => import('../workflow/ProductAPITriggersView'))
 
@@ -124,13 +125,17 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           <div className="min-h-0 flex-1">{botContent}</div>
         ) : automationSection === 'webhooks' && hasProductWebhooks && productTriggerScope ? (
           <div className="min-h-0 flex-1">
-            <ProductAPITriggersView scope={productTriggerScope} onViewRuns={() => setAutomationSection('schedules')} headerAction={headerAction} />
+            <ProductAPITriggersView
+              scope={productTriggerScope}
+              deliveryHistory={workflowScope?.workspacePath ? <TriggerDeliveryHistoryPanel workspacePath={workflowScope.workspacePath} entityType="product" /> : undefined}
+              headerAction={headerAction}
+            />
           </div>
         ) : automationSection === 'webhooks' && workflowScope?.workspacePath ? (
           <div className="min-h-0 flex-1">
             <WorkflowAPITriggersView
               workspacePath={workflowScope.workspacePath}
-              onViewRuns={() => setAutomationSection('schedules')}
+              deliveryHistory={<TriggerDeliveryHistoryPanel workspacePath={workflowScope.workspacePath} entityType="workflow" />}
               headerAction={headerAction}
             />
           </div>

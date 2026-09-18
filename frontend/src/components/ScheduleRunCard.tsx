@@ -25,7 +25,7 @@ interface ScheduleRunCardProps {
   // falls back to the job's configured message, and the outcome line falls
   // back to the status presentation's detail text.
   resolveSession?: (run: ScheduledJobRun) => ChatHistorySession | undefined
-  onOpen: (run: ScheduledJobRun) => void
+  onOpen?: (run: ScheduledJobRun) => void
   onDelete?: (run: ScheduledJobRun) => void
   deletingRunIds: Set<string>
   compact?: boolean
@@ -123,7 +123,7 @@ export function ScheduleRunCard({
           {run.session_id && showCopySessionId && (
             <ChatSessionIdCopyButton sessionId={run.session_id} compact />
           )}
-          {run.session_id && (
+          {run.session_id && onOpen && (
             <button
               type="button"
               onClick={() => onOpen(run)}

@@ -46,6 +46,25 @@ async function mount(compact = false) {
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   return { host, onSelect }
 }
+
+async function mountDeliveryHistory() {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel
+      workspacePath="Workflow/test"
+      title="Delivery history"
+      emptyText="No webhook deliveries recorded yet."
+      runOnly="webhook"
+      runEntityType="product"
+      readOnly
+      showAll
+      onSelectSession={vi.fn()}
+    />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  return host
+}
 async function select(host: HTMLElement, label: string) {
   const button = host.querySelector<HTMLButtonElement>(`button[aria-label="${label}"]`)
   expect(button).not.toBeNull()
@@ -86,6 +105,18 @@ it('refreshes the visible feed when a webhook finishes', async () => {
 })
 it('does not interpret a webhook received time as a cron slot', () => {
   expect(scheduleRunSlotLabel(hook, webhookRun)).toBeUndefined()
+})
+
+it('shows a read-only webhook delivery feed inside Triggers', async () => {
+  const host = await mountDeliveryHistory()
+  expect(host.textContent).toContain('Delivery history')
+  expect(host.textContent).toContain('PR reviews')
+  expect(host.textContent).not.toContain('Daily audit')
+  expect(host.querySelector('button[aria-label="Webhooks"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="Schedules"]')).toBeNull()
+  expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Open')).toBe(false)
+  expect(agentApi.listChatHistorySessions).not.toHaveBeenCalled()
+  expect(schedulerApi.listJobs).toHaveBeenCalledWith({ entity_type: 'product', limit: 100 })
 })
 
 it('keeps historical Crew conversations read-only and expands them in place', async () => {

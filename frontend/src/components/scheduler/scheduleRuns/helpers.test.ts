@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ScheduledJob } from '../../../services/api-types'
-import { defaultSchedulePanelView, jobMatchesWorkflowScope } from './helpers'
+import { defaultSchedulePanelView, jobMatchesWorkflowScope, timeScheduledJobs } from './helpers'
 
 describe('defaultSchedulePanelView', () => {
   it('opens global views on the per-workflow grouping', () => {
@@ -9,6 +9,18 @@ describe('defaultSchedulePanelView', () => {
 
   it('opens a workflow-scoped view on the schedule list', () => {
     expect(defaultSchedulePanelView(true)).toBe('schedules')
+  })
+})
+
+describe('timeScheduledJobs', () => {
+  it('keeps cron and calendar schedules while leaving webhook jobs to Triggers', () => {
+    const jobs = [
+      { id: 'cron', schedule_type: 'cron' },
+      { id: 'calendar', schedule_type: 'calendar' },
+      { id: 'webhook', schedule_type: 'webhook' },
+    ] as ScheduledJob[]
+
+    expect(timeScheduledJobs(jobs).map(job => job.id)).toEqual(['cron', 'calendar'])
   })
 })
 

@@ -22,6 +22,7 @@ import {
   isScheduleIssueStatus,
   jobMatchesWorkflowScope,
   sortJobs,
+  timeScheduledJobs,
   type CalendarCell,
   type CalendarEntry,
   type JobFilter,
@@ -147,8 +148,9 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
         }),
         schedulerApi.getConfig().catch(() => null),
       ])
-      setJobs(resp.jobs)
-      onJobsLoaded?.(resp.jobs)
+      const scheduleJobs = timeScheduledJobs(resp.jobs)
+      setJobs(scheduleJobs)
+      onJobsLoaded?.(scheduleJobs)
       setSchedulerConfig(config)
     } catch {
       setError('Failed to load automation schedules')

@@ -431,6 +431,10 @@ interface PreviousChatHistoryPanelProps {
   /** History browser only: expand stored messages in place without making an
    *  earlier session live or exposing an Open/Resume action. */
   readOnly?: boolean
+  /** Show one automation run feed without the general history filters. */
+  runOnly?: 'schedule' | 'webhook'
+  /** Scheduler ownership for the run feed. */
+  runEntityType?: 'workflow' | 'product'
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -446,12 +450,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   showAll = false,
   recentOnly = false,
   readOnly = false,
+  runOnly,
+  runEntityType = 'workflow',
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCleanupLoading, setIsCleanupLoading] = useState(false)
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
-  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('chat')
+  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>(runOnly || 'chat')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   const [expandedMessagesBySession, setExpandedMessagesBySession] = useState<Record<string, ChatHistoryPreviewMessage[]>>({})
@@ -483,7 +489,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     setScheduleJobs([])
     setScheduleRunsByJob({})
     setScheduleJobsWorkspacePath('')
-    setActiveFilter('chat')
+    setActiveFilter(runOnly || 'chat')
     setVisibleCount(PAGE_SIZE)
     setExpandedSessionIds(new Set())
     setExpandedMessagesBySession({})
@@ -493,7 +499,9 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     // Fetch ordinary chats separately. A schedule-heavy workflow can have many
     // newer schedule transcripts, so a mixed newest-N page would otherwise
     // hide every older chat before the Recent filter gets a chance to run.
-    const sessionsRequest = recentOnly
+    const sessionsRequest = runOnly
+      ? Promise.resolve([] as ChatHistorySession[])
+      : recentOnly
       ? agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat')
           .then(chatResponse => chatResponse.sessions || [])
       : Promise.all([
@@ -516,7 +524,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       })
 
     return () => { cancelled = true }
-  }, [addToast, recentOnly, workspacePath])
+  }, [addToast, recentOnly, runOnly, workspacePath])
 
   const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
@@ -539,7 +547,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       inFlight = true
       if (initial) setIsLoadingScheduleActivity(true)
       try {
-        const response = await schedulerApi.listJobs({ entity_type: 'workflow', limit: 100 })
+        const response = await schedulerApi.listJobs({ entity_type: runEntityType, limit: 100 })
         const jobs = (response.jobs || []).filter(job => sameWorkspace(job.workspace_path, workspacePath))
         const results = await Promise.allSettled(jobs.map(job => schedulerApi.getJobRuns(job.id, 30)))
         if (cancelled) return
@@ -562,7 +570,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void refresh(true)
     const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
-  }, [addToast, recentOnly, workspacePath, showRunActivity])
+  }, [addToast, recentOnly, runEntityType, workspacePath, showRunActivity])
 
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
@@ -839,7 +847,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
     { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
-  ].filter(({ filter }) => !recentOnly || filter === 'chat')
+  ].filter(({ filter }) => runOnly ? filter === runOnly : !recentOnly || filter === 'chat')
 
   return (
     <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
@@ -850,7 +858,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           {!compact && title && (
             <div className="flex min-w-0 items-center gap-2 text-sm">
               <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/80" />
-              <span className="truncate font-medium text-foreground">{activeFilter === 'webhook' ? 'Webhook activity' : activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
+              <span className="truncate font-medium text-foreground">{runOnly ? title : activeFilter === 'webhook' ? 'Webhook activity' : activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
             </div>
           )}
 
@@ -909,7 +917,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
             ) : filteredJobs.length === 0 ? (
               <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhooks configured. Ask the workflow builder chat to create one.' : 'No schedules are configured for this workflow yet.'}</div>
             ) : filteredRuns.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhook runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
+              <div className="px-3 py-4 text-sm text-muted-foreground">{runOnly ? emptyText : activeFilter === 'webhook' ? 'No webhook runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
             ) : (
               <div className="divide-y divide-border">
                 {displayedScheduleRuns.map(({ job, run }) => (
@@ -918,7 +926,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       job={job}
                       run={run}
                       resolveSession={r => (r.session_id ? sessionsByID.get(r.session_id) : undefined)}
-                      onOpen={r => openScheduleActivity({ id: r.id, job, run: r, kind: 'run', occurredAt: r.started_at })}
+                      onOpen={readOnly ? undefined : r => openScheduleActivity({ id: r.id, job, run: r, kind: 'run', occurredAt: r.started_at })}
                       onDelete={r => {
                         const session = r.session_id ? sessionsByID.get(r.session_id) : undefined
                         if (session) void handleDeleteSession(session)

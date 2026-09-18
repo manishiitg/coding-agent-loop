@@ -1,5 +1,5 @@
 // @vitest-environment happy-dom
-import { act } from 'react'
+import { act, type ReactNode } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import WorkflowAPITriggersView from './WorkflowAPITriggersView'
@@ -19,10 +19,10 @@ beforeEach(() => {
   vi.mocked(workflowWebhooksApi.save).mockImplementation(async value => ({ ...trigger, ...value }))
 })
 afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.clearAllMocks() })
-async function mount() {
+async function mount(props: { onViewRuns?: () => void; deliveryHistory?: ReactNode } = {}) {
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
-  await act(async () => root.render(<WorkflowAPITriggersView workspacePath="Workflow/test" />))
+  await act(async () => root.render(<WorkflowAPITriggersView workspacePath="Workflow/test" {...props} />))
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   return host
 }
@@ -97,4 +97,20 @@ it('removes only the selected trigger', async () => {
   const host = await mount()
   await act(async () => button(host, 'Remove').click())
   expect(workflowWebhooksApi.delete).toHaveBeenCalledWith('Workflow/test', 'trigger-1')
+})
+
+it('keeps delivery history inside Triggers when an embedded feed is available', async () => {
+  const onViewRuns = vi.fn()
+  const scrollIntoView = vi.fn()
+  const original = HTMLElement.prototype.scrollIntoView
+  HTMLElement.prototype.scrollIntoView = scrollIntoView
+  try {
+    const host = await mount({ onViewRuns, deliveryHistory: <div>Recorded webhook deliveries</div> })
+    await act(async () => button(host, 'View delivery history').click())
+    expect(host.textContent).toContain('Recorded webhook deliveries')
+    expect(scrollIntoView).toHaveBeenCalledOnce()
+    expect(onViewRuns).not.toHaveBeenCalled()
+  } finally {
+    HTMLElement.prototype.scrollIntoView = original
+  }
 })

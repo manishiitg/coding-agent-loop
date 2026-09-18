@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import axios from 'axios'
 import { Copy, GitBranch, RefreshCw, ShieldCheck, Webhook, Zap } from 'lucide-react'
 import { workflowWebhooksApi, apiTriggerURL, type APITriggerOptions, type WorkflowAPITrigger } from '../../api/workflowWebhooks'
@@ -14,7 +14,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to update API triggers'
 }
 
-export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, headerAction }: { workspacePath: string | null; onViewRuns?: () => void; headerAction?: React.ReactNode }) {
+export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, deliveryHistory, headerAction }: { workspacePath: string | null; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode }) {
   const canWrite = useCanWriteWorkflow(workspacePath)
   const [options, setOptions] = useState<APITriggerOptions>(emptyOptions)
   const [issued, setIssued] = useState<WorkflowAPITrigger | null>(null)
@@ -22,6 +22,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState('')
   const requestGeneration = useRef(0)
+  const deliveryHistoryRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return
@@ -97,7 +98,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           <span><span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeTriggers} active</span>
           <span>{options.triggers.length - activeTriggers} paused</span>
-          <button type="button" className="text-foreground underline underline-offset-2" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>
+          <button type="button" className="text-foreground underline underline-offset-2" onClick={() => deliveryHistory ? deliveryHistoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>
         </div>
       </div>
       <div className="space-y-4 p-4 sm:p-6">
@@ -166,6 +167,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, hea
         <summary className="cursor-pointer text-foreground">Delivery requirements</summary>
         <p className="mt-2 leading-relaxed">Use a server URL reachable by the caller. Send JSON up to 1 MiB. A successful delivery returns 202 with a run ID. When all four delivery slots are busy, the endpoint returns 503 with Retry-After. Reuse Idempotency-Key or GitHub’s delivery ID when retrying.</p>
       </details>
+      {deliveryHistory && <div ref={deliveryHistoryRef} className="scroll-mt-24 overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
       </div>
     </div>
   )

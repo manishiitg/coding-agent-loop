@@ -31,6 +31,12 @@ export const isScheduleWaitingStatus = (status?: ScheduledJob['last_status']) =>
 
 export const WORKFLOW_SCHEDULE_PANEL_LIMIT = 10_000
 
+/** The Schedules surface owns only time-based work. Webhook jobs and their
+ * delivery history live in Triggers. */
+export function timeScheduledJobs(jobs: ScheduledJob[]): ScheduledJob[] {
+  return jobs.filter(job => job.schedule_type !== 'webhook')
+}
+
 export type WorkflowScheduleGroup = {
   key: string
   label: string

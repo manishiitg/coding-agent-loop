@@ -12,5 +12,6 @@ describe('Work Dashboard', () => {
     expect(source).toContain("view === 'database'")
     expect(source).toContain('sendChatMessage={async (message)')
     expect(source).toContain("From this project's dashboard:")
+    expect(source).toContain('emptyIdentity={{ icon: projectIdentity?.icon, name: projectIdentity?.name || projectTitle, projectName: projectTitle }}')
   })
 })

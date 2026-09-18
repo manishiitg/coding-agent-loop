@@ -19,6 +19,7 @@ import { ReportEmbedProvider, type ReportDataApi } from './reportWidgets/reportE
 import { isStreamableReportMediaPath } from './reportWidgets/reportMedia'
 import { allowedReportPath, normalizeReportSource, renderReportMarkdown, reportMarkdownBasePath } from './reportWidgets/reportMarkdown'
 import { useReportChat } from './reportWidgets/useReportChat'
+import { EntityIdentityIcon } from '../ui/EntityIdentityIcon'
 
 import { WORKFLOW_REPORT_REFRESH_EVENT } from './reportRefreshEvent'
 import { useSelectedReportDocument } from './reportDocuments'
@@ -49,6 +50,7 @@ interface ReportViewProps {
   reserveTopControlsSpace?: boolean
   documentPath?: string
   emptyDescription?: string
+  emptyIdentity?: { icon?: string; name: string; projectName: string }
   sendChatMessage?: ReportDataApi['sendChatMessage']
   headerAction?: React.ReactNode
 }
@@ -154,7 +156,7 @@ async function loadReportDocument(workspacePath: string, documentPath = 'db/repo
   return { path, html, label: title || 'Dashboard' }
 }
 
-function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, emptyDescription, sendChatMessage, headerAction }: ReportViewProps) {
+function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, emptyDescription, emptyIdentity, sendChatMessage, headerAction }: ReportViewProps) {
   const [report, setReport] = useState<ReportDocument | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -224,7 +226,16 @@ function ReportViewComponent({ workspacePath, onClose, focusTier, documentPath, 
             {error && <div className="m-3 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">Failed to load report: {error}</div>}
             {!loading && !error && !report && (
               <div className="m-3 flex flex-col items-center gap-3 rounded-xl border border-dashed border-border p-8 text-center">
-                <BarChart3 className="h-8 w-8 text-muted-foreground" />
+                {emptyIdentity ? (
+                  <div className="flex flex-col items-center gap-2">
+                    <EntityIdentityIcon icon={emptyIdentity.icon} label={emptyIdentity.name} className="h-12 w-12 rounded-xl text-2xl shadow-sm" />
+                    <div>
+                      <div className="text-[11px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Crew identity</div>
+                      <div className="mt-0.5 text-lg font-semibold">{emptyIdentity.name}</div>
+                      {emptyIdentity.projectName !== emptyIdentity.name && <div className="mt-0.5 text-xs text-muted-foreground">Crew name: {emptyIdentity.projectName}</div>}
+                    </div>
+                  </div>
+                ) : <BarChart3 className="h-8 w-8 text-muted-foreground" />}
                 <div>
                   <div className="font-semibold">Dashboard isn’t set up yet</div>
                   <p className="mt-1 text-sm text-muted-foreground">{emptyDescription ?? 'Run the workflow or ask the Builder to set up its dashboard. It will appear here when it is ready.'}</p>

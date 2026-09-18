@@ -751,6 +751,7 @@ export function WorkSurface() {
                         workspacePath={selected.workspacePath}
                         projectId={selected.id}
                         projectTitle={selected.title}
+                        projectIdentity={selected.identity}
                         tabId={tabId}
                         onClose={() => setPanelOpen(false)}
                         view={workspaceView}

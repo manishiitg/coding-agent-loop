@@ -40,6 +40,7 @@ import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type { WorkRuntimeSelection } from './workTabs'
 import { PreviousChatHistoryPanel } from '../../components/PreviousChatHistoryPanel'
+import type { ProductIdentity } from '../../platform/chat/productProjects'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../components/scheduler/WorkflowScheduleRunsPanel'))
@@ -335,7 +336,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
@@ -410,6 +411,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
+            emptyIdentity={{ icon: projectIdentity?.icon, name: projectIdentity?.name || projectTitle, projectName: projectTitle }}
             emptyDescription="Ask Crew to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
             sendChatMessage={async (message) => ({ status: 'queued', ...await sendWorkProjectPaneMessage(projectId, `From this project's dashboard:\n\n${message}`) })}
           />}

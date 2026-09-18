@@ -21,6 +21,33 @@ function isInteractiveWorkflowTab(tab: ChatTab, presetId: string): boolean {
     tab.metadata?.isBotRun !== true
 }
 
+function isInteractiveProductTab(tab: ChatTab, profileId: string, conversationKey: string): boolean {
+  return tab.metadata?.mode === 'multi-agent' &&
+    tab.metadata?.agentProfileId === profileId &&
+    tab.metadata?.agentProfileConversationKey === conversationKey &&
+    tab.metadata?.agentProfileBuilder !== true &&
+    tab.metadata?.isViewOnly !== true &&
+    tab.metadata?.isScheduledRun !== true &&
+    tab.metadata?.isBotRun !== true
+}
+
+/** Resolve a product pane through its durable identity, never a retained tab id. */
+export function selectWorkspacePaneProductTab(
+  tabs: Record<string, ChatTab>,
+  profileId: string,
+  conversationKey: string,
+  activeTabId?: string | null,
+): ChatTab | undefined {
+  return Object.values(tabs)
+    .filter(tab => isInteractiveProductTab(tab, profileId, conversationKey))
+    .sort((left, right) => {
+      if ((left.tabId === activeTabId) !== (right.tabId === activeTabId)) {
+        return left.tabId === activeTabId ? -1 : 1
+      }
+      return tabRecency(right) - tabRecency(left)
+    })[0]
+}
+
 /** Select the interactive workflow conversation used by every right-pane action. */
 export function selectWorkspacePaneWorkflowTab(
   tabs: Record<string, ChatTab>,
@@ -66,8 +93,9 @@ type WorkspacePaneChatRequest = {
   message: string
   viewMode?: EventViewMode
 } & (
-  | { workspacePath: string; tabId?: never }
-  | { tabId: string; workspacePath?: never }
+  | { workspacePath: string; tabId?: never; profileId?: never; conversationKey?: never }
+  | { tabId: string; workspacePath?: never; profileId?: never; conversationKey?: never }
+  | { profileId: string; conversationKey: string; tabId?: never; workspacePath?: never }
 )
 
 /**
@@ -75,25 +103,31 @@ type WorkspacePaneChatRequest = {
  * Dashboard HTML, human decisions, Ask AI, Pulse, and Work-project panes all
  * resolve their destination here and then use the same durable chat queue.
  */
-export async function sendWorkspacePaneMessageToChat({
-  workspacePath,
-  tabId: requestedTabId,
-  message,
-  viewMode = 'formatted',
-}: WorkspacePaneChatRequest): Promise<WorkspacePaneChatResult> {
+export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatRequest): Promise<WorkspacePaneChatResult> {
+  const { message, viewMode = 'formatted' } = request
+  const workspacePath = 'workspacePath' in request ? request.workspacePath : undefined
+  const requestedTabId = 'tabId' in request ? request.tabId : undefined
+  const profileId = 'profileId' in request ? request.profileId : undefined
+  const conversationKey = 'conversationKey' in request ? request.conversationKey : undefined
   if (!message.trim()) throw new Error('Write a message before opening chat.')
 
   let targetTab: ChatTab | undefined
   let tabId: string
   let reused = false
 
-  if (requestedTabId) {
+  if (profileId && conversationKey) {
+    const chatStore = useChatStore.getState()
+    targetTab = selectWorkspacePaneProductTab(chatStore.chatTabs, profileId, conversationKey, chatStore.activeTabId)
+    if (!targetTab) throw new Error('This project chat is not ready. Reopen the project and try again.')
+    tabId = targetTab.tabId
+    reused = true
+  } else if (requestedTabId) {
     tabId = requestedTabId
     targetTab = useChatStore.getState().getTab(tabId)
     reused = true
     if (!targetTab) throw new Error('This chat is not available.')
   } else {
-    if (!workspacePath) throw new Error('An automation path or chat tab is required.')
+    if (!workspacePath) throw new Error('An automation path or project conversation is required.')
     const preset = await findWorkflowPreset(workspacePath)
     if (!preset) throw new Error(`Could not find the automation for ${workspacePath}.`)
     if (!selectWorkflowPreset(preset)) throw new Error('Failed to open the automation.')

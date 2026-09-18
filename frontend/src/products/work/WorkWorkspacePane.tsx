@@ -48,6 +48,10 @@ const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView')
 
 export type WorkWorkspaceView = 'history' | 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
 
+function sendWorkProjectPaneMessage(projectId: string, message: string) {
+  return sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: projectId, message })
+}
+
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'files', label: 'Files', icon: Files },
@@ -185,7 +189,7 @@ function WorkFoldersPanel({ workflowContextPaths, onWorkflowContextPathsChange }
   )
 }
 
-function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId: string; workspacePath: string; onSelectedServersChange: (servers: string[]) => Promise<unknown> }) {
+function WorkMCPPanel({ tabId, projectId, workspacePath, onSelectedServersChange }: { tabId: string; projectId: string; workspacePath: string; onSelectedServersChange: (servers: string[]) => Promise<unknown> }) {
   const selectedServers = useChatStore(state => state.chatTabs[tabId]?.config.selectedServers || [])
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = [...new Set(toolList
@@ -196,7 +200,6 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
 
   const setSelected = async (servers: string[]) => {
     const store = useChatStore.getState()
-    const projectId = store.chatTabs[tabId]?.metadata?.agentProfileProjectId
     const selected = servers.length > 0 ? servers : ['NO_SERVERS']
     try {
       await onSelectedServersChange(servers)
@@ -211,7 +214,7 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
     }
   }
   const askAI = async (message: string) => {
-    await sendWorkspacePaneMessageToChat({ tabId, message })
+    await sendWorkProjectPaneMessage(projectId, message)
   }
 
   return (
@@ -241,7 +244,7 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
   )
 }
 
-function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePath: string }) {
+function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; projectId: string; workspacePath: string }) {
   const savedMode = useChatStore(state => state.chatTabs[tabId]?.config.browserMode ?? 'auto')
   const savedPort = useChatStore(state => state.chatTabs[tabId]?.config.cdpPort ?? 9222)
   const [browserMode, setBrowserMode] = useState<BrowserAutomationMode>(savedMode)
@@ -314,7 +317,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
         <AskAIButton
           workspacePath={workspacePath}
           message="Help me configure browser access for this project. Ask what site or task it is for before changing anything."
-          onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
+          onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           iconOnly
           className="flex items-center gap-1.5 rounded p-1.5 text-muted-foreground hover:bg-muted"
         />
@@ -372,7 +375,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
         />}
         {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
-        {view === 'mcp' && <WorkMCPPanel tabId={tabId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
+        {view === 'mcp' && <WorkMCPPanel tabId={tabId} projectId={projectId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}
         {view === 'secrets' && <div className="h-full overflow-y-auto p-4"><SecretSelectionSection
           selectedSecrets={selectedSecrets}
           onSecretChange={secrets => { void updateSecretSelection(secrets) }}
@@ -386,22 +389,22 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
           allowGlobalPromotion={false}
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
-        {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
+        {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}
         {view === 'email' && <div className="h-full overflow-y-auto p-4"><WorkflowEmailPanel workspacePath={workspacePath} /></div>}
         {view === 'bots' && <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
           workspacePath={workspacePath}
           scopeNoun="project"
-          onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
+          onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
         /></div>}
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView
             workspacePath={workspacePath}
             emptyDescription="Ask Crew to create a visual dashboard for this project. It can organize tasks, notes, plans, status, research, or anything else you want to manage visually."
-            sendChatMessage={async (message) => ({ status: 'queued', ...await sendWorkspacePaneMessageToChat({ tabId, message: `From this project's dashboard:\n\n${message}` }) })}
+            sendChatMessage={async (message) => ({ status: 'queued', ...await sendWorkProjectPaneMessage(projectId, `From this project's dashboard:\n\n${message}`) })}
           />}
           {view === 'database' && <DatabaseView workspacePath={workspacePath} />}
-          {view === 'browser' && <WorkBrowserPanel tabId={tabId} workspacePath={workspacePath} />}
+          {view === 'browser' && <WorkBrowserPanel tabId={tabId} projectId={projectId} workspacePath={workspacePath} />}
           {view === 'costs' && <CostsPopup isOpen embedded projectMode onClose={() => onViewChange('files')} workspacePath={workspacePath} runFolders={[]} selectedRunFolder={null} emptyHint="Send a message to see this project's usage here." />}
           {view === 'schedules' && <WorkflowScheduleRunsPanel
             embedded
@@ -415,7 +418,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
             headerAction={<AskAIButton
               workspacePath={workspacePath}
               message="Help me manage this project's schedules or authenticated webhook triggers. Each sends exactly one saved instruction to this Crew project; do not create workflow routes or workflow executions."
-              onAsk={async message => { await sendWorkspacePaneMessageToChat({ tabId, message }) }}
+              onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
               iconOnly
             />}
           />}

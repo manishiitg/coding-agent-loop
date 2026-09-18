@@ -89,6 +89,35 @@ describe('shared Ask in chat dispatch for reports', () => {
     expect(mocks.activate).toHaveBeenCalledWith('project')
   })
 
+  it('resolves a Crew pane through the durable project key instead of a stale browser tab', async () => {
+    mocks.presets.workflowPresets = []
+    mocks.chat.activeTabId = 'legacy'
+    mocks.chat.chatTabs = {
+      legacy: chat('legacy', { metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileConversationKey: 'project-1:old-chat' } }),
+      scheduled: chat('scheduled', { metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileConversationKey: 'project-1', isScheduledRun: true } }),
+      canonical: chat('canonical', { metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileConversationKey: 'project-1', agentProfileBuilder: false } }),
+    }
+
+    const result = await sendWorkspacePaneMessageToChat({
+      profileId: 'work', conversationKey: 'project-1', message: 'Apply this dashboard action',
+    })
+
+    expect(result).toEqual({ tabId: 'canonical', reused: true, queuedBehindRunningTurn: false })
+    expect(mocks.chat.setTabConfig).toHaveBeenCalledWith('canonical', { queuedMessages: ['earlier request', 'Apply this dashboard action'] })
+    expect(mocks.activate).toHaveBeenCalledWith('canonical')
+    expect(mocks.chat.createChatTab).not.toHaveBeenCalled()
+  })
+
+  it('does not revive a legacy Crew chat when the canonical project chat is unavailable', async () => {
+    mocks.chat.chatTabs.legacy = chat('legacy', {
+      metadata: { mode: 'multi-agent', agentProfileId: 'work', agentProfileConversationKey: 'project-1:old-chat' },
+    })
+    await expect(sendWorkspacePaneMessageToChat({
+      profileId: 'work', conversationKey: 'project-1', message: 'Apply this dashboard action',
+    })).rejects.toThrow('project chat is not ready')
+    expect(mocks.chat.setTabConfig).not.toHaveBeenCalled()
+  })
+
   it('does not submit when the automation cannot be resolved', async () => {
     await expect(sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/missing', message: 'Apply finding 42' })).rejects.toThrow('Could not find')
     expect(mocks.chat.setTabConfig).not.toHaveBeenCalled()

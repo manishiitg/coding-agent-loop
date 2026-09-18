@@ -933,6 +933,15 @@ Open, Resume, Rename, Delete, or bulk-cleanup actions. Schedules, webhooks, bots
 project creation, workspace tools, reports/dashboard files, and the Workshop
 execution contract remain unchanged.
 
+Right-pane actions use the shared `sendWorkspacePaneMessageToChat()` queue, but
+Crew no longer gives that dispatcher a transient browser `tabId`. It supplies
+the durable `(profile_id=work, conversation_key=projectId)` identity, and the
+dispatcher resolves the current interactive project Chat immediately before it
+appends the message. It excludes legacy per-chat keys, Builder tabs, scheduled
+runs, bot runs, and read-only projections. If the canonical Chat is not ready,
+the action fails visibly instead of reviving an older conversation or creating
+a second one.
+
 Migration deliberately trusts the registry's authenticated
 `(user, profile=work, project conversation key)` binding. Existing per-chat
 browser keys are historical records; they are not allowed to replace the
@@ -942,7 +951,7 @@ project.
 
 Local verification covers canonical legacy-tab adoption, cross-project
 isolation, provider changes on the same session, scoped runtime invalidation,
-and read-only history behavior. The focused Vitest suite passed 38 tests and
+and read-only history behavior. The focused Vitest suite passed 47 tests and
 the complete production frontend build, report-preview build, release-asset
 check, and bundle-budget check passed. The full frontend suite passed 1,402
 tests and retained nine unrelated baseline failures in provider-account mocks

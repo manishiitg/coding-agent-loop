@@ -4,7 +4,7 @@
 
 | Coordination | Value |
 |---|---|
-| State | Implemented and regression-tested locally; deployment pending |
+| State | Deployed and verified in production |
 | Date | 2026-09-18 |
 | Owner | workflow execution / contract migrations |
 
@@ -29,3 +29,8 @@ The guard lives on the shared execution-tool registrar, so toolbar actions,
 chat requests, restored sessions, and agent-profile callers receive the same
 behavior. Scheduled sessions retain their existing blocking migration
 preflight, and direct webhooks retain their own fail-closed preflight.
+
+Release `bb24ab5-20260918164118` (`bb24ab544`) was deployed on 2026-09-18.
+Post-deployment verification confirmed the exact source revision, all four
+services active, a healthy planner endpoint, and the migration guard present in
+the production binary.

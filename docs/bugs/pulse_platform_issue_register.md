@@ -1,6 +1,6 @@
 ## Manual workflow contract preflight — PLAT-332
 
-[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Implementation and local regression coverage are complete; deployment is pending.
+[PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Release `bb24ab5-20260918164118` is deployed and verified healthy in production.
 
 ## Concurrent webhook route isolation — PLAT-331
 

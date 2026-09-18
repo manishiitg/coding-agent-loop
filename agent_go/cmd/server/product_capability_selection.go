@@ -186,6 +186,46 @@ func productSelectedSecrets(ctx context.Context, profileID, workspacePath string
 	return names, true, nil
 }
 
+// productSelectedGlobalSecrets reads the explicit global-secret allowlist for
+// a product project. Product selections are always explicit: a missing legacy
+// field or JSON null both mean none, so future global secrets are never granted
+// to a Crew merely because its manifest predates this capability.
+func productSelectedGlobalSecrets(ctx context.Context, profileID, workspacePath string) (*[]string, error) {
+	raw, found, err := readProjectRuntimeManifest(ctx, profileID, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	empty := []string{}
+	if !found {
+		return &empty, nil
+	}
+	var manifest map[string]interface{}
+	if err := json.Unmarshal([]byte(raw), &manifest); err != nil {
+		return nil, fmt.Errorf("decode product manifest: %w", err)
+	}
+	capabilities, _ := manifest["capabilities"].(map[string]interface{})
+	value, initialized := capabilities["selected_global_secret_names"]
+	if !initialized {
+		return &empty, nil
+	}
+	if value == nil {
+		return &empty, nil
+	}
+	items, ok := value.([]interface{})
+	if !ok {
+		return nil, fmt.Errorf("product capabilities.selected_global_secret_names must be an array or null")
+	}
+	names := make([]string, 0, len(items))
+	for _, item := range items {
+		name, ok := item.(string)
+		if ok {
+			names = appendUniqueStrings(names, strings.TrimSpace(name))
+		}
+	}
+	sort.Strings(names)
+	return &names, nil
+}
+
 func updateProductSelectedSecrets(ctx context.Context, profileID, workspacePath string, mutate func([]string) []string) error {
 	raw, manifestPath, err := ensureProjectRuntimeManifest(ctx, profileID, workspacePath)
 	if err != nil {

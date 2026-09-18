@@ -343,6 +343,56 @@ func TestResolveAgentProfileInjectsProjectScopedSecretsIntoNativeEnvironment(t *
 	}
 }
 
+func TestResolveCrewProfileUsesOnlyExplicitlySelectedGlobalSecrets(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	const userID = "user-1"
+	const workspacePath = "Chats/Work/projects/site"
+	const physicalWorkspacePath = "_users/user-1/Chats/Work/projects/site"
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		physicalWorkspacePath + "/product.json":  `{"schema_version":1,"product":"work","id":"site","title":"Site","session_id":"work:site"}`,
+		physicalWorkspacePath + "/workflow.json": `{"capabilities":{"selected_secrets":[],"selected_global_secret_names":["SHARED_TOKEN"]}}`,
+		workspacePath + "/workflow.json":         `{"capabilities":{"selected_secrets":[],"selected_global_secret_names":["SHARED_TOKEN"]}}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+	previousGlobals := globalSecrets
+	globalSecrets = []globalSecretEntry{
+		{Name: "SHARED_TOKEN", Value: "selected-value"},
+		{Name: "UNRELATED_TOKEN", Value: "must-not-be-granted"},
+	}
+	t.Cleanup(func() { globalSecrets = previousGlobals })
+
+	registry := agentprofiles.NewRegistry()
+	if err := registry.RegisterProfile(agentprofiles.Profile{
+		ID: "work", Name: "Crew", Version: 1, BuiltIn: true,
+		SystemPromptTemplate: "{{.ProjectTitle}}",
+		Runtime: agentprofiles.RuntimePolicy{
+			Transport:    "structured",
+			Workspace:    agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"},
+			Conversation: agentprofiles.ConversationPolicy{Mode: agentprofiles.ConversationModeKeyed, KeyType: agentprofiles.ConversationKeyTypeProject},
+			Capabilities: agentprofiles.RuntimeCapabilities{Secrets: agentprofiles.CapabilityRequired},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{agentProfiles: registry, chatStore: store}
+	req := QueryRequest{AgentMode: "multi-agent", AgentProfileID: "work", AgentProfileConversationKey: "site", SelectedFolder: workspacePath, AgentProfileContext: agentprofiles.PromptContext{ProjectTitle: "Site"}}
+	if _, err := api.resolveAgentProfileForQuery(context.Background(), &req, userID, "session-1"); err != nil {
+		t.Fatal(err)
+	}
+	if req.SelectedGlobalSecrets == nil || len(*req.SelectedGlobalSecrets) != 1 || (*req.SelectedGlobalSecrets)[0] != "SHARED_TOKEN" {
+		t.Fatalf("Crew global selection = %#v", req.SelectedGlobalSecrets)
+	}
+	resolved := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
+	if len(resolved) != 1 || resolved[0].Name != "SHARED_TOKEN" || resolved[0].Value != "selected-value" {
+		t.Fatalf("Crew received globals outside its explicit allowlist: %#v", resolved)
+	}
+}
+
 func encryptProfileSecretForTest(t *testing.T, userID, value string) string {
 	t.Helper()
 	block, err := aes.NewCipher(deriveSecretsKey())

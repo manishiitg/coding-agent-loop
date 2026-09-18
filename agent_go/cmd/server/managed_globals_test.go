@@ -201,3 +201,31 @@ func TestManagedGlobalToolPromotesFromAnotherWorkflow(t *testing.T) {
 		t.Fatal("demoted admin could promote from another source")
 	}
 }
+
+func TestManagedGlobalPromotionAcceptsOwnedCrewProject(t *testing.T) {
+	api := managedGlobalTestAPI(t)
+	ctx := context.Background()
+	const publicPath = "Chats/Work/projects/research"
+	const runtimePath = "_users/admin/Chats/Work/projects/research"
+	const name = "CREW_SHARED_TOKEN"
+	const value = "crew-private-value"
+	workspace := httptest.NewServer(&mockWorkspaceAPI{files: map[string]string{
+		runtimePath + "/product.json": `{"schema_version":1,"product":"work","id":"research","title":"Research"}`,
+	}})
+	defer workspace.Close()
+	t.Setenv("WORKSPACE_API_URL", workspace.URL)
+	if err := api.upsertSharedWorkflowSecret(ctx, runtimePath, name, value); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	api.handleManageGlobalSecret(rec, sharedSecretsRequest(http.MethodPost, "/api/secrets/global", "admin", map[string]string{"name": name, "workspace_path": publicPath}))
+	if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), value) {
+		t.Fatalf("Crew promotion: %d %s", rec.Code, rec.Body.String())
+	}
+	names := []string{name}
+	resolved := mergeGlobalSecrets(nil, &names)
+	if len(resolved) != 1 || resolved[0].Name != name || resolved[0].Value != value {
+		t.Fatalf("destination could not resolve Crew-promoted global: %#v", resolved)
+	}
+}

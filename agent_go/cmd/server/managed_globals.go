@@ -103,11 +103,11 @@ func (api *StreamingAPI) promoteWorkflowSecret(ctx context.Context, userID, work
 		return errGlobalAdmin
 	}
 	claims := &UserClaims{UserID: userID}
-	paths, err := authorizeWorkflowContextPaths(context.WithValue(ctx, UserContextKey, claims), []string{workspacePath})
+	_, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(context.WithValue(ctx, UserContextKey, claims), []string{workspacePath})
 	if err != nil {
-		return errors.New("Source workflow is unavailable")
+		return errors.New("Source project or workflow is unavailable")
 	}
-	workspacePath = paths[0]
+	workspacePath = readRoots[0]
 	secrets, err := api.ensureSharedWorkflowSecrets(ctx, workspacePath, userID)
 	if err != nil {
 		return errors.New("Could not read source secrets")

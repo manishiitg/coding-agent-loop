@@ -126,6 +126,38 @@ func TestProductManifestRoundTripPreservesExplicitEmptySecretSelection(t *testin
 	}
 }
 
+func TestProductSelectedGlobalSecretsIsExplicitAndFailClosed(t *testing.T) {
+	const workspacePath = "_users/user-1/Chats/Work/projects/site"
+	const runtimePath = workspacePath + "/workflow.json"
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		runtimePath: `{"capabilities":{"selected_global_secret_names":[" SHARED_TOKEN ","SHARED_TOKEN","DEPLOY_TOKEN"]}}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+
+	names, err := productSelectedGlobalSecrets(context.Background(), "work", workspacePath)
+	if err != nil || names == nil || len(*names) != 2 || (*names)[0] != "DEPLOY_TOKEN" || (*names)[1] != "SHARED_TOKEN" {
+		t.Fatalf("selected globals = %#v, err=%v", names, err)
+	}
+
+	workspace.mu.Lock()
+	workspace.files[runtimePath] = `{"capabilities":{"selected_global_secret_names":null}}`
+	workspace.mu.Unlock()
+	names, err = productSelectedGlobalSecrets(context.Background(), "work", workspacePath)
+	if err != nil || names == nil || len(*names) != 0 {
+		t.Fatalf("null selection must fail closed, got %#v, err=%v", names, err)
+	}
+
+	workspace.mu.Lock()
+	workspace.files[runtimePath] = `{"capabilities":{}}`
+	workspace.mu.Unlock()
+	names, err = productSelectedGlobalSecrets(context.Background(), "work", workspacePath)
+	if err != nil || names == nil || len(*names) != 0 {
+		t.Fatalf("legacy missing selection must fail closed, got %#v, err=%v", names, err)
+	}
+}
+
 func jsonContainsField(encoded []byte, parent, child string) bool {
 	var value map[string]interface{}
 	if json.Unmarshal(encoded, &value) != nil {

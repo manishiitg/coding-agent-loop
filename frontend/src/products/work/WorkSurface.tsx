@@ -169,7 +169,7 @@ function useWorkSessions() {
     return updated
   }, [sessions])
 
-  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; workflowContextPaths?: string[] }) => {
+  const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; selectedGlobalSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
     const updated = await updateProductProjectSelections(project, patch, `Update Crew project integrations ${project.title}`, 'workflow.json')
@@ -759,11 +759,13 @@ export function WorkSurface() {
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}
+                        selectedGlobalSecrets={selected.selectedGlobalSecrets}
                         workflowContextPaths={selected.workflowContextPaths}
                         onRuntimeChange={changeWorkRuntime}
                         onSelectedServersChange={servers => updateSelections(selected.id, { selectedServers: servers })}
                         onSelectedSkillsChange={skills => updateSelections(selected.id, { selectedSkills: skills })}
                         onSelectedSecretsChange={secrets => updateSelections(selected.id, { selectedSecrets: secrets })}
+                        onSelectedGlobalSecretsChange={secrets => updateSelections(selected.id, { selectedGlobalSecrets: secrets })}
                         onWorkflowContextPathsChange={async paths => {
                           await updateSelections(selected.id, { workflowContextPaths: paths })
                           markWorkProjectRuntimeDirty(selected.id)

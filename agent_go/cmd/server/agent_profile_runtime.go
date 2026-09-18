@@ -367,6 +367,14 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		// Values stay in encrypted storage; only explicitly attached names enter
 		// the coding-agent environment. For an older product manifest, preserve
 		// the previous behavior once by attaching its existing project secrets.
+		selectedGlobals, globalSecretErr := productSelectedGlobalSecrets(ctx, profile.ID, workspacePath)
+		if globalSecretErr != nil {
+			log.Printf("[SECRETS] Failed to read product global secret attachments for %s (%s): %v", userID, workspacePath, globalSecretErr)
+			noGlobalSecrets := []string{}
+			req.SelectedGlobalSecrets = &noGlobalSecrets
+		} else {
+			req.SelectedGlobalSecrets = selectedGlobals
+		}
 		selectedNames, initialized, secretErr := productSelectedSecrets(ctx, profile.ID, workspacePath)
 		if secretErr != nil {
 			log.Printf("[SECRETS] Failed to read product secret attachments for %s (%s): %v", userID, workspacePath, secretErr)

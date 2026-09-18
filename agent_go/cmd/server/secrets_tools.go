@@ -73,11 +73,11 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 
 	if err := registerTool(
 		"list_secrets",
-		"List all secrets available to the current user. Returns JSON buckets: 'global' (server-wide, admin-managed), 'workflow' (encrypted per-user and scoped to this workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets. Admins may supply source_workflow_path to list another accessible workflow before global promotion.",
+		"List all secrets available to the current user. Returns JSON buckets: 'global' (server-wide, admin-managed), 'workflow' (encrypted and scoped to the active project/workflow when applicable), and 'user' (encrypted per-user, reusable). Values are never returned — only names. Use this before setting, deleting, or attaching secrets. Admins may supply source_workflow_path to list another accessible Crew project or workflow before global promotion.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"source_workflow_path": map[string]interface{}{"type": "string", "description": "Admin-only optional source workspace path, e.g. Workflow/rts-latency. Defaults to the active workflow. Returns names only."},
+				"source_workflow_path": map[string]interface{}{"type": "string", "description": "Admin-only optional source workspace path, e.g. Workflow/rts-latency or an exact Crew project path. Defaults to the active project/workflow. Returns names only."},
 			},
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -88,13 +88,13 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 				}
 				path, ok := raw.(string)
 				if !ok || strings.TrimSpace(path) == "" {
-					return "", fmt.Errorf("source_workflow_path must be a non-empty workflow workspace path")
+					return "", fmt.Errorf("source_workflow_path must be a non-empty project or workflow workspace path")
 				}
-				paths, err := authorizeWorkflowContextPaths(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID}), []string{path})
+				_, readRoots, err := authorizeWorkflowContextPathsWithReadRoots(context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID}), []string{path})
 				if err != nil {
-					return "", fmt.Errorf("Source workflow is unavailable")
+					return "", fmt.Errorf("Source project or workflow is unavailable")
 				}
-				sourcePath = paths[0]
+				sourcePath = readRoots[0]
 			}
 			globals := getGlobalSecrets()
 			globalNames := make([]string, 0, len(globals))
@@ -156,11 +156,11 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 	}
 
 	if canManageGlobalSecrets(userID) {
-		if err := registerTool("manage_global_secret", "Admin-only server-wide secret management. action=promote moves an existing secret from source_workflow_path (defaults to the active workflow) into the encrypted global store. Admins can promote from another accessible workflow without switching chats; existing source attachments continue working. Other workflows may select it from Global Secrets. action=set creates or updates a managed global value; action=delete removes a managed global. Environment globals cannot be changed here. Promotion never overwrites a global name. Values are never returned. Only promote when the user intends server-wide access.", map[string]interface{}{
+		if err := registerTool("manage_global_secret", "Admin-only server-wide secret management. action=promote moves an existing secret from source_workflow_path (defaults to the active project or workflow) into the encrypted global store. Admins can promote from another accessible Crew project or workflow without switching chats; existing source attachments continue working. Other projects and workflows may explicitly select it from Global Secrets. action=set creates or updates a managed global value; action=delete removes a managed global. Environment globals cannot be changed here. Promotion never overwrites a global name. Values are never returned. Only promote when the user intends server-wide access.", map[string]interface{}{
 			"type": "object", "properties": map[string]interface{}{
 				"action":               map[string]interface{}{"type": "string", "enum": []string{"promote", "set", "delete"}},
 				"name":                 map[string]interface{}{"type": "string"},
-				"source_workflow_path": map[string]interface{}{"type": "string", "description": "For promote only: source workspace path such as Workflow/rts-latency. Omit to use the active workflow. Use list_secrets with this path to discover names first."},
+				"source_workflow_path": map[string]interface{}{"type": "string", "description": "For promote only: source workspace path such as Workflow/rts-latency or the exact path returned for a Crew project. Omit to use the active project/workflow. Use list_secrets with this path to discover names first."},
 				"value":                map[string]interface{}{"type": "string", "description": "New value for action=set only; omit when promoting an existing workflow secret."},
 			}, "required": []string{"action", "name"},
 		}, func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -193,7 +193,7 @@ func (api *StreamingAPI) registerSecretManagementTools(agent definitionToolRegis
 			if err != nil {
 				return "", err
 			}
-			return fmt.Sprintf("Global secret %q: %s completed. No value returned. Global changes apply to new turns and runs; select this name in the destination workflow's global secrets.", name, action), nil
+			return fmt.Sprintf("Global secret %q: %s completed. No value returned. Global changes apply to new turns and runs; select this name in each destination project's or workflow's Global Secrets.", name, action), nil
 		}); err != nil {
 			return err
 		}

@@ -703,8 +703,9 @@ type productProjectManifest struct {
 		// Pointer preserves the contract's three relevant states when schedule
 		// updates rewrite the runtime manifest: missing (legacy, migrate once), empty
 		// (explicitly attach none), and populated.
-		SelectedSecrets      *[]string `json:"selected_secrets,omitempty"`
-		WorkflowContextPaths []string  `json:"workflow_context_paths,omitempty"`
+		SelectedSecrets           *[]string `json:"selected_secrets,omitempty"`
+		SelectedGlobalSecretNames *[]string `json:"selected_global_secret_names,omitempty"`
+		WorkflowContextPaths      []string  `json:"workflow_context_paths,omitempty"`
 	} `json:"capabilities,omitempty"`
 }
 

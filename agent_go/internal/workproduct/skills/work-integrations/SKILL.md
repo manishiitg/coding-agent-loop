@@ -22,6 +22,13 @@ from selection for this project. MCP setup has its own `work-mcp` skill.
   `capabilities.selected_secrets`, using the AgentWorks workflow contract.
   Secret values remain encrypted outside the manifest. Respect the user's
   selections in **Setup > Secrets**; do not attach an unrelated credential.
+- A read-only workflow or Crew reference never grants its secrets. To reuse a
+  credential across projects, an administrator must explicitly promote the
+  source project/workflow secret with `manage_global_secret(action="promote")`
+  or **Make global** in Setup > Secrets. Then explicitly select that global
+  name in each destination Crew. Crew persists this allowlist in
+  `capabilities.selected_global_secret_names`; it never inherits newly created
+  globals automatically.
 - Never print, echo, store in project files, or otherwise reveal a secret
   value. Refer to secrets by name.
 

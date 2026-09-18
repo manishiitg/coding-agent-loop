@@ -93,6 +93,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"delete_workflow_secret":              false,
 		"set_user_secret":                     false,
 		"delete_user_secret":                  false,
+		"manage_global_secret":                false,
 		"list_skills":                         false,
 		"search_skills":                       false,
 		"install_skill":                       false,
@@ -201,7 +202,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 	}
 	checks := map[string][]string{
 		"work-mcp":                {"list_mcp_servers", "Setup > MCP", "platform-level", "trigger_mcp_discovery", "update_project_mcp_server_selection", "next user message"},
-		"work-integrations":       {"set_workflow_secret", "available to shell", "do not ask the user to start", "list_work_folders", "Setup > Models"},
+		"work-integrations":       {"set_workflow_secret", "available to shell", "do not ask the user to start", "manage_global_secret", "selected_global_secret_names", "list_work_folders", "Setup > Models"},
 		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Crew account"},
 		"work-skills":             {"list_skills", "search_skills", "skills/custom/<skill-name>/SKILL.md", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},

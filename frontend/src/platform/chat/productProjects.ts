@@ -17,6 +17,7 @@ export type ProductProject<P extends string = string> = {
   selectedServers: string[]
   selectedSkills: string[]
   selectedSecrets: string[]
+  selectedGlobalSecrets: string[]
   workflowContextPaths: string[]
   selectionConfigInitialized: boolean
   secretSelectionInitialized: boolean
@@ -70,7 +71,7 @@ function manifestLLMConfig(raw: ProductManifest): PresetLLMConfig | undefined {
   return parseProductLLMConfig((raw.capabilities as { llm_config?: unknown }).llm_config)
 }
 
-function manifestStringList(raw: ProductManifest, key: 'selected_servers' | 'selected_skills' | 'selected_secrets' | 'workflow_context_paths'): string[] {
+function manifestStringList(raw: ProductManifest, key: 'selected_servers' | 'selected_skills' | 'selected_secrets' | 'selected_global_secret_names' | 'workflow_context_paths'): string[] {
   if (key === 'workflow_context_paths' && Array.isArray(raw.workflow_context_paths)) {
     return [...new Set(raw.workflow_context_paths.map(asString).filter(Boolean))]
   }
@@ -78,6 +79,13 @@ function manifestStringList(raw: ProductManifest, key: 'selected_servers' | 'sel
   const value = (raw.capabilities as Record<string, unknown>)[key]
   if (!Array.isArray(value)) return []
   return [...new Set(value.map(asString).filter(Boolean))]
+}
+
+function manifestGlobalSecretSelection(raw: ProductManifest): string[] {
+  if (!raw.capabilities || typeof raw.capabilities !== 'object') return []
+  const capabilities = raw.capabilities as Record<string, unknown>
+  if (capabilities.selected_global_secret_names === null) return []
+  return manifestStringList(raw, 'selected_global_secret_names')
 }
 
 function manifestHasSelectionConfig(raw: ProductManifest): boolean {
@@ -124,6 +132,7 @@ export function parseProductProjectManifest<P extends string>(
     selectedServers: manifestStringList(raw, 'selected_servers'),
     selectedSkills: manifestStringList(raw, 'selected_skills'),
     selectedSecrets: manifestStringList(raw, 'selected_secrets'),
+    selectedGlobalSecrets: manifestGlobalSecretSelection(raw),
     workflowContextPaths: manifestStringList(raw, 'workflow_context_paths'),
     selectionConfigInitialized: manifestHasSelectionConfig(raw),
     secretSelectionInitialized: manifestHasSecretSelection(raw),
@@ -148,6 +157,7 @@ function applyRuntimeManifest<P extends string>(project: ProductProject<P>, cont
     selectedServers: manifestStringList(raw, 'selected_servers'),
     selectedSkills: manifestStringList(raw, 'selected_skills'),
     selectedSecrets: manifestStringList(raw, 'selected_secrets'),
+    selectedGlobalSecrets: manifestGlobalSecretSelection(raw),
     workflowContextPaths: manifestStringList(raw, 'workflow_context_paths'),
     selectionConfigInitialized: manifestHasSelectionConfig(raw),
     secretSelectionInitialized: manifestHasSecretSelection(raw),
@@ -267,6 +277,7 @@ export async function createProductProject<P extends string>(options: {
     selectedServers: [],
     selectedSkills: [],
     selectedSecrets: [],
+    selectedGlobalSecrets: [],
     workflowContextPaths: [],
     selectionConfigInitialized: true,
     secretSelectionInitialized: true,
@@ -355,7 +366,7 @@ export async function updateProductProjectLLMConfig<P extends string>(
 
 export async function updateProductProjectSelections<P extends string>(
   project: ProductProject<P>,
-  patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; workflowContextPaths?: string[] },
+  patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; selectedGlobalSecrets?: string[]; workflowContextPaths?: string[] },
   commitLabel: string,
   runtimeManifestName?: string,
 ): Promise<ProductProject<P>> {
@@ -368,10 +379,12 @@ export async function updateProductProjectSelections<P extends string>(
     const selectedServers = patch.selectedServers === undefined ? project.selectedServers : normalize(patch.selectedServers)
     const selectedSkills = patch.selectedSkills === undefined ? project.selectedSkills : normalize(patch.selectedSkills)
     const selectedSecrets = patch.selectedSecrets === undefined ? project.selectedSecrets : normalize(patch.selectedSecrets)
+    const selectedGlobalSecrets = patch.selectedGlobalSecrets === undefined ? project.selectedGlobalSecrets : normalize(patch.selectedGlobalSecrets)
     const workflowContextPaths = patch.workflowContextPaths === undefined ? project.workflowContextPaths : normalize(patch.workflowContextPaths)
     capabilities.selected_servers = selectedServers
     capabilities.selected_skills = selectedSkills
     capabilities.selected_secrets = selectedSecrets
+    capabilities.selected_global_secret_names = selectedGlobalSecrets
     if (runtimeManifestName) manifest.workflow_context_paths = workflowContextPaths
     else capabilities.workflow_context_paths = workflowContextPaths
     const updatedAt = new Date().toISOString()
@@ -379,7 +392,7 @@ export async function updateProductProjectSelections<P extends string>(
     manifest.updated_at = updatedAt
     await agentApi.updatePlannerFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, commitLabel)
     if (runtimeManifestName && !project.runtimeConfigInitialized) await stripLegacyRuntimeFromProduct(project, commitLabel)
-    return { ...project, selectedServers, selectedSkills, selectedSecrets, workflowContextPaths, selectionConfigInitialized: true, secretSelectionInitialized: true, runtimeConfigInitialized: true, updatedAt }
+    return { ...project, selectedServers, selectedSkills, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, selectionConfigInitialized: true, secretSelectionInitialized: true, runtimeConfigInitialized: true, updatedAt }
   } catch {
     throw new Error('Project configuration is invalid JSON.')
   }

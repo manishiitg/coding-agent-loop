@@ -336,7 +336,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
@@ -390,14 +390,17 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
         {view === 'secrets' && <div className="h-full overflow-y-auto p-4"><SecretSelectionSection
           selectedSecrets={selectedSecrets}
           onSecretChange={secrets => { void updateSecretSelection(secrets) }}
+          selectedGlobalSecrets={selectedGlobalSecrets}
+          onGlobalSecretChange={secrets => { void onSelectedGlobalSecretsChange(secrets || []) }}
+          persistExplicitGlobalSelection
           workflowPath={workspacePath}
           workspaceNoun="project"
           workspaceSecretHeading="Project secrets"
           workspaceBadgeLabel="Project"
           workspaceSharingBadgeLabel="Project"
-          showGlobalSecrets={false}
+          showGlobalSecrets
           showSharedSecrets={false}
-          allowGlobalPromotion={false}
+          allowGlobalPromotion
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}
         {view === 'models' && <WorkModelsPanel tabId={tabId} workspacePath={workspacePath} onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }} projectLLMConfig={projectLLMConfig} onRuntimeChange={onRuntimeChange} />}

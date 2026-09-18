@@ -24,6 +24,7 @@ interface SecretSelectionSectionProps {
   showSharedSecrets?: boolean;
   workspaceSecretsAlwaysEnabled?: boolean;
   allowGlobalPromotion?: boolean;
+  persistExplicitGlobalSelection?: boolean;
 }
 
 const isValidName = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
@@ -43,6 +44,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   showSharedSecrets = true,
   workspaceSecretsAlwaysEnabled = false,
   allowGlobalPromotion = true,
+  persistExplicitGlobalSelection = false,
 }) => {
   const secrets = useSecretsStore((s) => s.secrets);
   const globalSecrets = useSecretsStore((s) => s.globalSecrets);
@@ -188,7 +190,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
       onGlobalSecretChange(remaining);
     } else if (!attachedByName) {
       const next = [...(selectedGlobalSecrets ?? []), name];
-      onGlobalSecretChange(next.length === globalSecrets.length ? null : next);
+      onGlobalSecretChange(!persistExplicitGlobalSelection && next.length === globalSecrets.length ? null : next);
     }
   };
 

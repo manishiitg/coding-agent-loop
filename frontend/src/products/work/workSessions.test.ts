@@ -49,6 +49,7 @@ describe('parseSessionManifest', () => {
       selected_servers: ['github'],
       selected_skills: ['code-reviewer'],
       selected_secrets: ['GITHUB_TOKEN'],
+      selected_global_secret_names: ['SHARED_API_TOKEN'],
       workflow_context_paths: ['Workflow/reference'],
       llm_config: {
         schema_version: 2,
@@ -67,6 +68,7 @@ describe('parseSessionManifest', () => {
     expect(session?.selectedServers).toEqual(['github'])
     expect(session?.selectedSkills).toEqual(['code-reviewer'])
     expect(session?.selectedSecrets).toEqual(['GITHUB_TOKEN'])
+    expect(session?.selectedGlobalSecrets).toEqual(['SHARED_API_TOKEN'])
     expect(session?.secretSelectionInitialized).toBe(true)
     expect(session?.workflowContextPaths).toEqual(['Workflow/reference'])
   })
@@ -100,6 +102,7 @@ describe('createWorkSession', () => {
     expect(runtime.capabilities.selected_servers).toEqual([])
     expect(runtime.capabilities.selected_skills).toEqual([])
     expect(runtime.capabilities.selected_secrets).toEqual([])
+    expect(runtime.capabilities.selected_global_secret_names).toEqual([])
     expect(runtime.workflow_context_paths).toEqual([])
     expect(createPlannerFolder).toHaveBeenCalledWith(
       `${session.workspacePath}/code`,
@@ -132,12 +135,14 @@ describe('updateProductProjectSelections', () => {
       selectedServers: ['google_sheets', 'google_sheets'],
       selectedSkills: ['work-dashboard'],
       selectedSecrets: ['GITHUB_TOKEN', 'GITHUB_TOKEN'],
+      selectedGlobalSecrets: ['SHARED_API_TOKEN', 'SHARED_API_TOKEN'],
       workflowContextPaths: ['Workflow/reference', 'Workflow/reference'],
     }, 'Update integrations', 'workflow.json')
 
     expect(updated.selectedServers).toEqual(['google_sheets'])
     expect(updated.selectedSkills).toEqual(['work-dashboard'])
     expect(updated.selectedSecrets).toEqual(['GITHUB_TOKEN'])
+    expect(updated.selectedGlobalSecrets).toEqual(['SHARED_API_TOKEN'])
     expect(updated.workflowContextPaths).toEqual(['Workflow/reference'])
     const [path, content] = updatePlannerFile.mock.calls.at(-1)!
     expect(path).toBe(`${project.workspacePath}/workflow.json`)
@@ -146,6 +151,7 @@ describe('updateProductProjectSelections', () => {
     expect(manifest.capabilities.selected_servers).toEqual(['google_sheets'])
     expect(manifest.capabilities.selected_skills).toEqual(['work-dashboard'])
     expect(manifest.capabilities.selected_secrets).toEqual(['GITHUB_TOKEN'])
+    expect(manifest.capabilities.selected_global_secret_names).toEqual(['SHARED_API_TOKEN'])
     expect(manifest.workflow_context_paths).toEqual(['Workflow/reference'])
   })
 })

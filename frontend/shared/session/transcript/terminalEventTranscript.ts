@@ -501,6 +501,53 @@ function dropDuplicateExecutionPromptMessages(events: PollingEvent[]): PollingEv
   })
 }
 
+function normalizedUserMessageText(event: PollingEvent): string {
+  if (event.type !== 'user_message') return ''
+  return textField(eventFields(event).content).replace(/\s+/g, ' ').toLowerCase()
+}
+
+function isFrontendUserMessage(event: PollingEvent): boolean {
+  return event.type === 'user_message' && Boolean(event.id?.startsWith('user-message-'))
+}
+
+/**
+ * A submitted chat message exists locally before the server acknowledgement
+ * and can then return through durable history with a different event id. Keep
+ * one row when those two carriers are adjacent and have identical text.
+ *
+ * Adjacency is the important safety boundary. Two identical messages entered
+ * intentionally remain visible when both are local or both are durable, and
+ * an older identical turn separated by an agent response is never collapsed.
+ */
+function dropAdjacentFrontendUserEchoes(events: PollingEvent[]): PollingEvent[] {
+  const visible: PollingEvent[] = []
+  for (const event of events) {
+    const previous = visible.at(-1)
+    const content = normalizedUserMessageText(event)
+    const sameAdjacentUserMessage = Boolean(
+      content &&
+      previous?.type === 'user_message' &&
+      normalizedUserMessageText(previous) === content,
+    )
+    if (!sameAdjacentUserMessage || !previous) {
+      visible.push(event)
+      continue
+    }
+
+    const previousIsFrontend = isFrontendUserMessage(previous)
+    const currentIsFrontend = isFrontendUserMessage(event)
+    if (previousIsFrontend === currentIsFrontend) {
+      visible.push(event)
+      continue
+    }
+
+    // Prefer the frontend carrier: it owns the immediate accepted timestamp
+    // and, for live input, the server message receipt used by reconciliation.
+    if (currentIsFrontend) visible[visible.length - 1] = event
+  }
+  return visible
+}
+
 function isTranscriptEvent(event: PollingEvent): boolean {
   if (NON_TRANSCRIPT_TYPES.has(event.type || '')) return false
   if (isRunToolEnd(event)) return false
@@ -924,9 +971,9 @@ export function buildTranscriptItems(events: PollingEvent[]): TranscriptItem[] {
   // completion can supersede the richer delegated completion and then be
   // removed itself, accidentally hiding both records.
   const transcriptEvents = events.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(isTranscriptEvent)
-  const visibleEvents = dropAnswersRepeatedByCompletionCard(
+  const visibleEvents = dropAdjacentFrontendUserEchoes(dropAnswersRepeatedByCompletionCard(
     dropDuplicateExecutionPromptMessages(collapseCompletedLifecycleStarts(transcriptEvents)),
-  )
+  ))
   const items: TranscriptItem[] = []
   let cursor = 0
 

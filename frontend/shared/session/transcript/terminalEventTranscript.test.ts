@@ -270,6 +270,54 @@ describe('selectTerminalEvents — main-agent terminal', () => {
 })
 
 describe('buildTranscriptItems', () => {
+  it('collapses an adjacent durable echo of a frontend user message', () => {
+    const durable = evt({
+      id: 'restored-s1-4-user_message', session_id: 's1', type: 'user_message',
+      data: { data: { content: 'check global secrets' } } as never,
+    })
+    const optimistic = evt({
+      id: 'user-message-local-secret-check', session_id: 's1', type: 'user_message',
+      data: { data: { content: 'check global secrets', metadata: {
+        source: 'coding_agent_live_input',
+        delivery_status: 'sent_to_cli',
+        message_id: 'server-secret-check',
+      } } } as never,
+    })
+
+    expect(buildTranscriptItems([durable, optimistic]).map(item => item.key)).toEqual([
+      'user-message-local-secret-check',
+    ])
+    expect(buildTranscriptItems([optimistic, durable]).map(item => item.key)).toEqual([
+      'user-message-local-secret-check',
+    ])
+  })
+
+  it('keeps intentional repeated user messages and older identical turns', () => {
+    const first = evt({
+      id: 'user-message-local-1', session_id: 's1', type: 'user_message',
+      data: { data: { content: 'check cli' } } as never,
+    })
+    const second = evt({
+      id: 'user-message-local-2', session_id: 's1', type: 'user_message',
+      data: { data: { content: 'check cli' } } as never,
+    })
+    const reply = evt({
+      id: 'reply-1', session_id: 's1', type: 'llm_generation_end',
+      data: { data: { content: 'CLI is available.' } } as never,
+    })
+    const laterDurable = evt({
+      id: 'restored-s1-8-user_message', session_id: 's1', type: 'user_message',
+      data: { data: { content: 'check cli' } } as never,
+    })
+
+    expect(buildTranscriptItems([first, second]).map(item => item.key)).toEqual([
+      'user-message-local-1', 'user-message-local-2',
+    ])
+    expect(buildTranscriptItems([first, reply, laterDurable]).map(item => item.key)).toEqual([
+      'user-message-local-1', 'reply-1', 'restored-s1-8-user_message',
+    ])
+  })
+
   it('replaces a finished background-agent start card with its one completion card', () => {
     const events = [
       evt({

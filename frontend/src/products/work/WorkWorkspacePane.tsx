@@ -378,7 +378,16 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           activeSessionId={activeSessionId}
           title="Workshop"
           emptyText="No earlier conversations. This project now keeps one continuous chat."
-          recentOnly
+          showHistoryFilter={false}
+          scheduleEntityType="product"
+          scheduleScopeId={projectId}
+          productTriggerScope={{ profileId: 'work', projectId }}
+          botContent={<div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
+            workspacePath={workspacePath}
+            scopeNoun="project"
+            onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
+            target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
+          /></div>}
           readOnly
           fill
           showAll

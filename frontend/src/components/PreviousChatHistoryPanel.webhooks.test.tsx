@@ -5,6 +5,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
+import { productWebhooksApi } from '../api/productWebhooks'
 import { workflowWebhooksApi } from '../api/workflowWebhooks'
 import type { ScheduledJob, ScheduledJobRun } from '../services/api-types'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
@@ -14,6 +15,10 @@ vi.mock('../services/api', () => ({ agentApi: {
   getChatHistoryConversation: vi.fn(),
 } }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn() } }))
+vi.mock('../api/productWebhooks', () => ({
+  productWebhooksApi: { list: vi.fn(), save: vi.fn(), delete: vi.fn() },
+  apiTriggerURL: (path: string) => `https://example.test${path}`,
+}))
 vi.mock('../api/workflowWebhooks', () => ({ workflowWebhooksApi: { getPayload: vi.fn() } }))
 vi.mock('../stores/useChatStore', () => {
   const state = { addToast: vi.fn() }
@@ -36,6 +41,7 @@ beforeEach(() => {
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [hook, cron], total: 2, limit: 100, offset: 0 })
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [webhookRun] : [cronRun], total: 1, limit: 30, offset: 0 }))
   vi.mocked(workflowWebhooksApi.getPayload).mockResolvedValue({ raw_payload: '{"action":"opened","number":42}' })
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [] })
 })
 afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.useRealTimers(); vi.clearAllMocks() })
 async function mount(compact = false) {
@@ -132,6 +138,46 @@ it('shows every fetched Workshop chat without a load-more control', async () => 
 
   expect(host.textContent).toContain('Saved chat 6')
   expect(host.textContent).not.toContain('Load 5 more')
+})
+
+it('uses automation tabs instead of duplicate human history for a persistent Crew chat', async () => {
+  const crewSchedule = {
+    ...cron,
+    id: 'product:work:daily',
+    entity_type: 'product',
+    workflow_id: 'crew-1',
+    workspace_path: '_users/member/Chats/Work/projects/crew-1',
+  } as ScheduledJob
+  vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [crewSchedule], total: 1, limit: 100, offset: 0 })
+  vi.mocked(schedulerApi.getJobRuns).mockResolvedValue({ runs: [cronRun], total: 1, limit: 30, offset: 0 })
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [{
+    id: 'github', name: 'GitHub delivery', enabled: true, message: 'Review it', auth_mode: 'github', path: '/hooks/github',
+  }] })
+
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel
+      workspacePath="Chats/Work/projects/crew-1"
+      showHistoryFilter={false}
+      scheduleEntityType="product"
+      scheduleScopeId="crew-1"
+      productTriggerScope={{ profileId: 'work', projectId: 'crew-1' }}
+      readOnly
+      onSelectSession={vi.fn()}
+    />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.querySelector('button[aria-label="History"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Schedules"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="Bots"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="Triggers"]')).not.toBeNull()
+  expect(schedulerApi.listJobs).toHaveBeenCalledWith({ entity_type: 'product', limit: 100 })
+  expect(host.textContent).toContain('Daily audit')
+
+  await select(host, 'Triggers')
+  expect(host.textContent).toContain('GitHub delivery')
 })
 
 it('loads and formats the webhook body when delivery details are opened', async () => {

@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
+import { productWebhooksApi, type ProductTriggerScope } from '../api/productWebhooks'
 import {
   type ChatHistoryConversation,
   type ChatHistoryMessage,
@@ -21,6 +22,7 @@ import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
 import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
+import ProductAPITriggersView from './workflow/ProductAPITriggersView'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import {
   CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
@@ -428,6 +430,16 @@ interface PreviousChatHistoryPanelProps {
   showAll?: boolean
   /** Keep the shared history UI while hiding automation-only filters. */
   recentOnly?: boolean
+  /** Hide the human-history filter when the product owns one continuing chat. */
+  showHistoryFilter?: boolean
+  /** Scheduler namespace used by this surface. Crew projects use product jobs. */
+  scheduleEntityType?: 'workflow' | 'product'
+  /** Stable scheduler scope id. For Crew this is the project id. */
+  scheduleScopeId?: string
+  /** Product trigger scope used to show the Crew project's configured triggers. */
+  productTriggerScope?: ProductTriggerScope
+  /** Product-scoped bot configuration shown instead of legacy bot transcripts. */
+  botContent?: React.ReactNode
   /** History browser only: expand stored messages in place without making an
    *  earlier session live or exposing an Open/Resume action. */
   readOnly?: boolean
@@ -445,13 +457,18 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   fill = false,
   showAll = false,
   recentOnly = false,
+  showHistoryFilter = true,
+  scheduleEntityType = 'workflow',
+  scheduleScopeId,
+  productTriggerScope,
+  botContent,
   readOnly = false,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
   const [isCleanupLoading, setIsCleanupLoading] = useState(false)
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
-  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>('chat')
+  const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>(() => showHistoryFilter ? 'chat' : 'schedule')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
   const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
   const [expandedMessagesBySession, setExpandedMessagesBySession] = useState<Record<string, ChatHistoryPreviewMessage[]>>({})
@@ -465,6 +482,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const [scheduleRunsByJob, setScheduleRunsByJob] = useState<Record<string, ScheduledJobRun[]>>({})
   const [isLoadingScheduleActivity, setIsLoadingScheduleActivity] = useState(false)
   const [scheduleJobsWorkspacePath, setScheduleJobsWorkspacePath] = useState('')
+  const [productTriggerCount, setProductTriggerCount] = useState<number | null>(null)
   const expandedMessagesRef = useRef(expandedMessagesBySession)
   const loadingExpandedSessionIdsRef = useRef(loadingExpandedSessionIds)
   const addToast = useChatStore(state => state.addToast)
@@ -483,7 +501,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     setScheduleJobs([])
     setScheduleRunsByJob({})
     setScheduleJobsWorkspacePath('')
-    setActiveFilter('chat')
+    setActiveFilter(showHistoryFilter ? 'chat' : 'schedule')
     setVisibleCount(PAGE_SIZE)
     setExpandedSessionIds(new Set())
     setExpandedMessagesBySession({})
@@ -516,9 +534,22 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       })
 
     return () => { cancelled = true }
-  }, [addToast, recentOnly, workspacePath])
+  }, [addToast, recentOnly, showHistoryFilter, workspacePath])
 
-  const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
+  useEffect(() => {
+    if (!productTriggerScope) {
+      setProductTriggerCount(null)
+      return
+    }
+    let cancelled = false
+    setProductTriggerCount(null)
+    productWebhooksApi.list(productTriggerScope)
+      .then(response => { if (!cancelled) setProductTriggerCount(response.triggers?.length || 0) })
+      .catch(() => { if (!cancelled) setProductTriggerCount(0) })
+    return () => { cancelled = true }
+  }, [productTriggerScope?.profileId, productTriggerScope?.projectId])
+
+  const showRunActivity = activeFilter === 'schedule' || (activeFilter === 'webhook' && !productTriggerScope)
   useEffect(() => {
     if (recentOnly) {
       setScheduleJobs([])
@@ -539,8 +570,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       inFlight = true
       if (initial) setIsLoadingScheduleActivity(true)
       try {
-        const response = await schedulerApi.listJobs({ entity_type: 'workflow', limit: 100 })
-        const jobs = (response.jobs || []).filter(job => sameWorkspace(job.workspace_path, workspacePath))
+        const response = await schedulerApi.listJobs({ entity_type: scheduleEntityType, limit: 100 })
+        const jobs = (response.jobs || []).filter(job =>
+          scheduleScopeId ? job.workflow_id === scheduleScopeId : sameWorkspace(job.workspace_path, workspacePath)
+        )
         const results = await Promise.allSettled(jobs.map(job => schedulerApi.getJobRuns(job.id, 30)))
         if (cancelled) return
         setScheduleJobs(jobs)
@@ -562,7 +595,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void refresh(true)
     const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
-  }, [addToast, recentOnly, workspacePath, showRunActivity])
+  }, [addToast, recentOnly, scheduleEntityType, scheduleScopeId, workspacePath, showRunActivity])
 
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
@@ -618,7 +651,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     return items.sort((a, b) => Date.parse(b.run.started_at || '') - Date.parse(a.run.started_at || ''))
   }, [scheduleJobs, scheduleRunsByJob])
 
-  const isRunFilter = activeFilter === 'schedule' || activeFilter === 'webhook'
+  const isProductTriggerFilter = activeFilter === 'webhook' && Boolean(productTriggerScope)
+  const isRunFilter = activeFilter === 'schedule' || (activeFilter === 'webhook' && !productTriggerScope)
   const isWebhookRun = ({ job, run }: { job: ScheduledJob; run: ScheduledJobRun }) =>
     job.schedule_type === 'webhook' || workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source }) === 'Webhook'
   const webhookRuns = flattenedScheduleRuns.filter(isWebhookRun)
@@ -629,8 +663,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const displayFilterCounts = {
     ...filterCounts,
+    bot: botContent ? null : filterCounts.bot,
     schedule: scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? scheduledRuns.length : '…',
-    webhook: scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? webhookRuns.length : '…',
+    webhook: productTriggerScope
+      ? productTriggerCount ?? '…'
+      : scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? webhookRuns.length : '…',
   }
 
   const sessionsByID = useMemo(
@@ -838,8 +875,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'chat' as const, label: 'History', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
-    { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
-  ].filter(({ filter }) => !recentOnly || filter === 'chat')
+    { filter: 'webhook' as const, label: productTriggerScope ? 'Triggers' : 'Webhooks', icon: Webhook },
+  ].filter(({ filter }) => (!recentOnly || filter === 'chat') && (showHistoryFilter || filter !== 'chat'))
 
   return (
     <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
@@ -875,13 +912,15 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                   >
                     <Icon className="h-3.5 w-3.5" />
                     {!compact && <span className="chat-history-filter-label">{label}</span>}
-                    <span className={`chat-history-filter-count min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
-                      isActive
-                        ? 'bg-muted text-foreground'
-                        : 'bg-background/60 text-muted-foreground'
-                    }`}>
-                      {displayFilterCounts[filter]}
-                    </span>
+                    {displayFilterCounts[filter] !== null && (
+                      <span className={`chat-history-filter-count min-w-4 rounded-full px-1 py-0.5 text-center text-[10px] leading-none ${
+                        isActive
+                          ? 'bg-muted text-foreground'
+                          : 'bg-background/60 text-muted-foreground'
+                      }`}>
+                        {displayFilterCounts[filter]}
+                      </span>
+                    )}
                   </button>
                 )
                 })}
@@ -899,6 +938,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
         {isLoading ? (
           <div className="px-3 py-3 text-xs text-muted-foreground">Loading conversation history...</div>
+        ) : isProductTriggerFilter && productTriggerScope ? (
+          <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
+            <ProductAPITriggersView scope={productTriggerScope} />
+          </div>
+        ) : activeFilter === 'bot' && botContent ? (
+          <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
+            {botContent}
+          </div>
         ) : isRunFilter ? (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
             {isLoadingScheduleActivity ? (

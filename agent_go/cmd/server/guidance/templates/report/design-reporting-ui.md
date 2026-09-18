@@ -15,6 +15,15 @@ inside the workflow-owned HTML.{{if .Focus}}
 
 Focus on: {{.Focus}}.{{end}}
 
+Preserve the owning workflow or Crew project's saved identity where it helps
+the user stay oriented. Reuse its configured icon and display name in useful
+places such as the Dashboard title/header, an empty state, or compact
+navigation. If no icon is configured, use the established name-initial fallback
+rather than inventing an emoji. Do not stamp the identity onto every card, and
+keep long names responsive so they do not crowd the tablet or mobile layout.
+When revising an existing Dashboard, do not silently remove useful identity
+that is already shown.
+
 For goal tracking, evaluations, or costs, use the shared Dashboard helpers before
 writing custom queries or charts:
 - `window.report.getGoalMetrics()` / `renderGoalProgress('#goals')`

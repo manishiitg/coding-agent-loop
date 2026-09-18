@@ -148,6 +148,24 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   expect(agentApi.getChatHistoryConversation).toHaveBeenCalledWith('old-chat', 'Workflow/test', expect.any(Number))
 })
 
+it('identifies the open persistent chat even before it appears in history', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel
+      workspacePath="Workflow/test"
+      activeSessionId="current-chat"
+      recentOnly
+      onSelectSession={vi.fn()}
+    />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.textContent).toContain('Current chat is open')
+  expect(host.textContent).not.toContain('No conversation history yet')
+  expect(host.textContent).not.toContain('This view keeps its earlier history')
+})
+
 it('shows every fetched Workshop chat without a load-more control', async () => {
   vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({
     sessions: Array.from({ length: 6 }, (_, index) => ({

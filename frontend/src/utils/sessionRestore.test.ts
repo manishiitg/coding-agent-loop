@@ -84,7 +84,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
     ] })
     mocks.getRecentSessionEvents.mockRejectedValue({ isAxiosError: true, response: { status: 404 } })
     await hydrateTabEvents('shared-bot', { workspacePath: 'Workflow/shared' })
-    expect(mocks.getChatHistoryConversation).toHaveBeenCalledWith('shared-bot', 'Workflow/shared')
+    expect(mocks.getChatHistoryConversation).toHaveBeenCalledWith('shared-bot', 'Workflow/shared', 10)
     expect(mocks.setTabEvents).toHaveBeenCalledWith('shared-bot', expect.arrayContaining([
       expect.objectContaining({ type: 'unified_completion' }),
     ]))

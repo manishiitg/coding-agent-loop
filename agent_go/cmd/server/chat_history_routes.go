@@ -755,7 +755,11 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 				}
 			}
 		} else if limit := parsePositiveQueryInt(r, "preview_messages"); limit > 0 {
-			data = trimChatHistoryConversationForPreview(data, limit)
+			// Preview is also a browser transfer contract. A single pasted file or
+			// provider payload can make even a handful of messages enormous, so a
+			// numeric message limit alone is insufficient. Apply the same hard byte
+			// ceiling used by formatted restore.
+			data = boundChatHistoryResumeSnapshot(trimChatHistoryConversationForPreview(data, limit))
 		} else {
 			data = filterClaudeLocalCommandHistory(data)
 		}

@@ -124,7 +124,6 @@ import {
 } from '../../services/api-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
-import { hasWorkflowChatContent } from './workflowChatTabConversion'
 import { hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
 import { isReadOnlyWorkflowRunTab, workflowTabsNeedingHydration, hydrateWorkflowTabsPrioritized } from '../../utils/workflowTabHydration'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
@@ -266,7 +265,11 @@ const WorkflowPreviousChatsPanel: React.FC<{
     const tabId = state.activeTabId
     const tab = tabId ? state.chatTabs[tabId] : undefined
     if (!tab?.sessionId || tab.metadata?.mode !== 'workflow') return undefined
-    return hasWorkflowChatContent(state.tabEvents[tab.sessionId]) ? tab.sessionId : undefined
+    // A workflow owns one persistent chat even before its events have been
+    // rehydrated. Workshop must identify that open chat from the tab itself;
+    // tying it to event hydration caused the empty-history UI to flash or
+    // remain visible whenever restore was slow or failed.
+    return tab.sessionId
   })
   const setTabConfig = useChatStore(state => state.setTabConfig)
   const addToast = useChatStore(state => state.addToast)

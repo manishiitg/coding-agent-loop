@@ -510,7 +510,11 @@ async function tryFetchChatHistoryConversation(
       tab => tab.sessionId === sessionId && tab.metadata?.isViewOnly,
     )
     if (readOnly && axios.isAxiosError(error) && error.response?.status === 403) {
-      return agentApi.getChatHistoryConversation(sessionId, workspacePath)
+      // A shared/read-only transcript cannot use the resume endpoint because
+      // resuming is owner-only. Keep the fallback bounded too: calling the
+      // conversation endpoint without a preview limit downloaded the entire
+      // canonical archive (118 MB for a mature workflow chat) into the browser.
+      return agentApi.getChatHistoryConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
     }
     throw error
   }

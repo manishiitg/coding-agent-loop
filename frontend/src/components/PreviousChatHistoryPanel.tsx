@@ -396,7 +396,7 @@ const PreviousChatEmptyState: React.FC<{
             <div className="text-sm font-medium text-foreground">{content.title}</div>
             <p className="mt-1 max-w-xl text-xs leading-5 text-muted-foreground">{content.body || fallbackText}</p>
 
-            {!hasAnySessions && !hasCurrentSession && (
+            {!recentOnly && !hasAnySessions && !hasCurrentSession && (
               <div className={`mt-3 grid gap-x-4 gap-y-2 border-t border-border/70 pt-3 ${recentOnly ? 'grid-cols-1' : 'sm:grid-cols-3'}`}>
                 {firstRunHints
                   .filter(({ label }) => !recentOnly || label === 'Chat')
@@ -584,8 +584,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     [activeSessionId, sessions]
   )
   const hasCurrentSession = useMemo(
-    () => !!activeSessionId && sessions.some(session => session.session_id === activeSessionId),
-    [activeSessionId, sessions],
+    // The active persistent chat is commonly omitted from the history index
+    // until its next durable write. Its tab/session identity is authoritative;
+    // requiring a matching history row made Workshop incorrectly claim that
+    // there was no conversation while the conversation was open beside it.
+    () => !!activeSessionId,
+    [activeSessionId],
   )
 
   const filterCounts = useMemo(() => {

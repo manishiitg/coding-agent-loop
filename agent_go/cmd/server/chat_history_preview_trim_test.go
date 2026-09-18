@@ -361,3 +361,22 @@ func TestBoundChatHistoryResumeSnapshotNeverExceedsTwoMiB(t *testing.T) {
 		t.Fatal("bounded resume snapshot lost the latest user message")
 	}
 }
+
+func TestPreviewProjectionNeverExceedsTwoMiB(t *testing.T) {
+	huge := strings.Repeat("x", 3*1024*1024)
+	raw, err := json.Marshal(map[string]interface{}{
+		"session_id": "large-preview",
+		"conversation_history": []map[string]interface{}{
+			{"Role": "human", "Parts": []map[string]string{{"Text": "latest question"}}},
+			{"Role": "ai", "Parts": []map[string]string{{"Text": huge}}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	preview := boundChatHistoryResumeSnapshot(trimChatHistoryConversationForPreview(raw, 10))
+	if len(preview) > maxChatHistoryResumeSnapshotBytes {
+		t.Fatalf("bounded preview is %d bytes, limit is %d", len(preview), maxChatHistoryResumeSnapshotBytes)
+	}
+}

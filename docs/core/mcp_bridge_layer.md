@@ -134,3 +134,14 @@ admits it. This does not enable a provider-native image or file tool: the call
 still lands on AgentWorks' workspace-aware `read_image` implementation, which
 selects its configured image-analysis provider independently of the calling
 chat model.
+
+### Multiple accounts for one MCP service
+
+Configured server names are exact connection IDs used by project/workflow
+selection and bridge routing. Base and overlay entries with the same name but
+different explicit OAuth token files are preserved separately by the SDK merge:
+the overlay retains its existing ID; the base receives `<name>-base` (with a
+numbered suffix if needed). This preserves existing selections. Discovery exposes
+both IDs without credentials. Verify account/workspace labels with the relevant
+connection's read-only service tools; do not infer them from names or storage
+locations. Crew and AgentWorks use the same merged configuration and routing.

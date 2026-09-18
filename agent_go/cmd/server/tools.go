@@ -645,7 +645,7 @@ func (api *StreamingAPI) loadOverlayServerNames() map[string]bool {
 // distinct from Status, which answers "is it working?".
 func connectionState(name string, cfg mcpclient.MCPServerConfig, overlay map[string]bool, userID string) string {
 	_ = userID
-	if !overlay[name] {
+	if !overlay[name] && !(cfg.OAuth != nil && strings.TrimSpace(cfg.OAuth.TokenFile) != "" && hasOAuthTokenFile(cfg)) {
 		return connectionAvailable
 	}
 	if cfg.OAuth == nil {

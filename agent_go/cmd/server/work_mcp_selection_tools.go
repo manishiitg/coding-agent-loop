@@ -26,7 +26,7 @@ func (api *StreamingAPI) registerWorkMCPSelectionTool(registrar definitionToolRe
 		"required":             []string{"action", "server"},
 		"properties": map[string]interface{}{
 			"action": map[string]interface{}{"type": "string", "enum": []string{"select", "deselect"}},
-			"server": map[string]interface{}{"type": "string", "description": "Configured MCP server name returned by list_mcp_servers."},
+			"server": map[string]interface{}{"type": "string", "description": "Exact connection ID returned by list_mcp_servers. Different accounts have separate IDs; verify the intended workspace before selecting."},
 		},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		action := strings.ToLower(strings.TrimSpace(fmt.Sprint(args["action"])))

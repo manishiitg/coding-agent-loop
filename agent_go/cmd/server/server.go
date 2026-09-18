@@ -11257,7 +11257,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 			sort.Strings(names)
 
 			var sb strings.Builder
-			sb.WriteString("## MCP Servers\n\n")
+			sb.WriteString("## MCP Servers\n\nEach name below is an exact connection ID. Separate connections may access different accounts. Verify workspace/account identity with each connection’s read-only service tools; never infer it from its name. If the intended account is unclear, ask which connection to use. Connected does not mean selected for this project or loaded in this turn.\n\n")
 			if len(names) == 0 {
 				sb.WriteString("No MCP servers are configured.\n")
 				return sb.String(), nil
@@ -11302,7 +11302,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					}
 				}
 
-				sb.WriteString(fmt.Sprintf("- `%s` [%s] [%s]\n", name, source, statusLabel))
+				sb.WriteString(fmt.Sprintf("- connection_id: `%s` [%s] [%s]\n", name, source, statusLabel))
 				if server.Description != "" {
 					sb.WriteString(fmt.Sprintf("  %s\n", server.Description))
 				}

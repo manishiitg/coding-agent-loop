@@ -1158,3 +1158,21 @@ existing archive-read instruction and bounded emergency fallback then transfer
 context while the full application history remains preserved. Regression tests
 cover unchanged foreground admission without a completed snapshot, genuinely
 changed foreground admission, retained key checks and existing continuity paths.
+
+### Distinct MCP account discovery (2026-09-18)
+
+Confida had two `Linear` OAuth connections with different explicit credential
+files. Base/overlay merging hid the base account and project selection could only
+see the overlay. The SDK now owns a shared merge function used by runtime and
+server discovery. It preserves distinct OAuth credential sources under unique
+connection IDs (`Linear-base`, or a collision-safe numbered suffix), retaining
+`Linear` overlay precedence for existing selections. Identical credential sources
+remain one connection. Base connections with existing explicit OAuth credentials
+are selectable; unsigned catalog entries remain unavailable.
+
+Discovery labels exact connection IDs, and Crew guidance requires verifying
+workspace identity with read-only service tools and clarifying ambiguous account
+requests. Account identity is not inferred from token paths. Credentials remain
+backend-only. Regression coverage verifies both accounts survive, alias conflicts
+cannot overwrite a configured server, identical accounts are not duplicated,
+and an unsigned catalog entry cannot become selectable.

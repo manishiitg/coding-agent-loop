@@ -30,3 +30,13 @@ connection setup from selection for this project.
 - Use `get_mcp_server_logs` to diagnose a configured server and
   `trigger_mcp_discovery` when its tool metadata is stale. Removing a server is
   platform-wide, so identify the exact server and explain that scope first.
+
+## Multiple accounts
+
+Use the exact connection IDs from `list_mcp_servers`. Distinct OAuth accounts
+remain separate, for example `Linear-base` and `Linear`; existing selections
+keep their original account. Never infer workspace identity from the connection
+name or credential location. Verify it using that connection's read-only team or
+identity tools. If tools are not loaded, select the explicit connection and verify
+on the next user message. When account choice is unclear, show the IDs and ask
+which to use. Never expose tokens, credential paths, headers or environment values.

@@ -326,12 +326,12 @@ function WorkTopBarControl({
       leading={selected ? <EntityIdentityIcon icon={selected.identity?.icon} label={selected.identity?.name || selected.title} /> : undefined}
       compactOnNarrow
       title={selected ? `${selected.identity?.name || selected.title}${selected.identity?.name && selected.identity.name !== selected.title ? ` · ${selected.title}` : ''}` : 'New Crew'}
-      placeholder="New project"
+      placeholder="New Crew member"
       open={open}
       onToggle={() => setOpen(current => !current)}
       onClose={() => setOpen(false)}
       onAdd={onNewProject}
-      addLabel="New project"
+      addLabel="New Crew member"
       addDisabled={creating}
     >
       <div role="menu" aria-label="Projects" className="max-h-96 space-y-1 overflow-y-auto p-2">
@@ -343,7 +343,7 @@ function WorkTopBarControl({
         >
           <span className="flex items-center gap-2 font-medium">
             <span className="h-2 w-2 rounded-full bg-blue-500" />
-            {creating ? 'Creating project…' : '+ New project'}
+            {creating ? 'Creating Crew member…' : '+ New Crew member'}
           </span>
         </button>
         {sessions.length === 0 ? (
@@ -573,7 +573,7 @@ export function WorkSurface() {
       await create(title, description, icon)
       setCreateOpen(false)
     } catch (cause) {
-      setCreateError(cause instanceof Error ? cause.message : 'Could not create project.')
+      setCreateError(cause instanceof Error ? cause.message : 'Could not create Crew member.')
     } finally {
       setCreating(false)
     }
@@ -652,7 +652,7 @@ export function WorkSurface() {
                       onClick={openCreateProject}
                       className="mt-5 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-1.5 text-sm font-medium text-primary-foreground hover:bg-primary/90"
                     >
-                      <Plus className="h-3.5 w-3.5" /> Create your first project
+                      <Plus className="h-3.5 w-3.5" /> Create your first Crew member
                     </button>
                   </div>
                 </div>

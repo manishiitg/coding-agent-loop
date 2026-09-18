@@ -25,7 +25,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error }
           <X className="h-4 w-4" />
         </button>
         <span className="grid h-11 w-11 place-items-center rounded-xl bg-primary/10 text-primary"><FolderKanban className="h-5 w-5" /></span>
-        <h2 id="work-create-project-title" className="mt-4 text-xl font-semibold text-foreground">Create a Crew project</h2>
+        <h2 id="work-create-project-title" className="mt-4 text-xl font-semibold text-foreground">Create a Crew member</h2>
         <p className="mt-1.5 text-sm leading-6 text-muted-foreground">Give this project a clear name. Its chats, files, coding work, tools, schedules, and dashboard will stay together.</p>
         <div className="mt-5 grid grid-cols-[72px_minmax(0,1fr)] gap-3">
           <label className="block text-xs font-semibold text-foreground">
@@ -46,7 +46,7 @@ export function CreateWorkProjectDialog({ onClose, onCreate, submitting, error }
           <button type="button" onClick={onClose} disabled={submitting} className="rounded-lg px-4 py-2.5 text-xs font-semibold text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50">Cancel</button>
           <button type="submit" data-testid="work-create-project-submit" disabled={!title.trim() || submitting} className="inline-flex min-w-32 items-center justify-center gap-2 rounded-lg bg-primary px-4 py-2.5 text-xs font-semibold text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50">
             {submitting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}
-            {submitting ? 'Creating…' : 'Create project'}
+            {submitting ? 'Creating…' : 'Create Crew member'}
           </button>
         </div>
       </form>

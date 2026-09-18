@@ -25,6 +25,8 @@ describe('CreateWorkProjectDialog', () => {
     })
 
     const submit = container.querySelector('[data-testid="work-create-project-submit"]') as HTMLButtonElement
+    expect(container.textContent).toContain('Create a Crew member')
+    expect(submit.textContent).toContain('Create Crew member')
     expect(submit.disabled).toBe(true)
 
     const name = container.querySelector('[data-testid="work-create-project-name-input"]') as HTMLInputElement

@@ -296,6 +296,69 @@ function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEve
   return combined
 }
 
+const ACCEPTED_LIVE_INPUT_STATUSES = new Set(['sent_to_cli', 'next_turn_started', 'queued_for_injection'])
+
+function eventPayload(event: PollingEvent): Record<string, unknown> {
+  const outer = event.data && typeof event.data === 'object'
+    ? event.data as unknown as Record<string, unknown>
+    : {}
+  return outer.data && typeof outer.data === 'object' ? outer.data as Record<string, unknown> : outer
+}
+
+function eventMetadata(event: PollingEvent): Record<string, unknown> {
+  const metadata = eventPayload(event).metadata
+  return metadata && typeof metadata === 'object' ? metadata as Record<string, unknown> : {}
+}
+
+function isAcceptedOptimisticLiveInput(event: PollingEvent): boolean {
+  if (event.type !== 'user_message' || !event.id?.startsWith('user-message-')) return false
+  const metadata = eventMetadata(event)
+  return metadata.source === 'coding_agent_live_input'
+    && ACCEPTED_LIVE_INPUT_STATUSES.has(String(metadata.delivery_status || ''))
+}
+
+function durableLiveInputMessageIDs(conversation: ChatHistoryConversation): Set<string> {
+  const ids = new Set<string>()
+  for (const event of (conversation.ui_events as PollingEvent[] | undefined) || []) {
+    if (event.type !== 'user_message') continue
+    const messageID = String(eventMetadata(event).message_id || '').trim()
+    if (messageID) ids.add(messageID)
+  }
+  return ids
+}
+
+// An accepted live-input bubble is a local receipt for a server mutation. A
+// history response can lag that mutation, so absence from one snapshot is not
+// deletion authority. Keep the receipt until the durable UI trace confirms the
+// server message ID. This invariant runs after projection because projection is
+// allowed to replace the complete event array.
+function preserveUnconfirmedAcceptedLiveInputs(
+  projectedEvents: PollingEvent[],
+  currentEvents: ReadonlyArray<PollingEvent>,
+  conversation: ChatHistoryConversation,
+): PollingEvent[] {
+  const durableMessageIDs = durableLiveInputMessageIDs(conversation)
+  const projectedIDs = new Set(projectedEvents.map(event => event.id).filter((id): id is string => !!id))
+  const missing = currentEvents.filter(event => {
+    if (!isAcceptedOptimisticLiveInput(event) || (event.id && projectedIDs.has(event.id))) return false
+    const messageID = String(eventMetadata(event).message_id || '').trim()
+    return !messageID || !durableMessageIDs.has(messageID)
+  })
+  if (missing.length === 0) return projectedEvents
+
+  return [...projectedEvents, ...missing]
+    .map((event, index) => ({ event, index }))
+    .sort((left, right) => {
+      if (left.event.type === 'conversation_resumed') return -1
+      if (right.event.type === 'conversation_resumed') return 1
+      const leftTime = Date.parse(left.event.timestamp || '')
+      const rightTime = Date.parse(right.event.timestamp || '')
+      if (Number.isFinite(leftTime) && Number.isFinite(rightTime) && leftTime !== rightTime) return leftTime - rightTime
+      return left.index - right.index
+    })
+    .map(({ event }) => event)
+}
+
 // Keep the newest accepted durable snapshot independently of request completion
 // order. Source counts and timestamps also catch an older backend replica
 // answering a newer request. Unversioned histories may grow but cannot erase
@@ -333,6 +396,7 @@ function hydrateTabEventsFromConversation(
   liveEvents: ReadonlyArray<PollingEvent> = [],
 ): HydratedHistoryRuntimeState {
   const chatStore = useChatStore.getState()
+  const currentEvents = chatStore.getTabEvents(sessionId)
   conversation = monotonicConversation(sessionId, conversation)
   // There is one transcript-ordering boundary. Persisted UI events, raw events
   // already received by SSE, and the current EventStore window all enter the
@@ -342,14 +406,18 @@ function hydrateTabEventsFromConversation(
   // older progress appear below a newer durable final answer after refresh.
   const trace = combineTranscriptTraceEvents(
     conversation.ui_events as PollingEvent[] | undefined,
-    chatStore.getTabEvents(sessionId),
+    currentEvents,
     liveEvents,
   )
   const projectedConversation: ChatHistoryConversation = trace.length > 0
     ? { ...conversation, ui_events: trace }
     : conversation
   const rawEvents = conversationToRestoredEvents(projectedConversation)
-  const events = restoreToolArgumentsFromConversation(rawEvents, conversation)
+  const events = preserveUnconfirmedAcceptedLiveInputs(
+    restoreToolArgumentsFromConversation(rawEvents, conversation),
+    currentEvents,
+    conversation,
+  )
 
   chatStore.setTabEvents(sessionId, events)
   // Restored conversation rows are synthesized from durable history, while

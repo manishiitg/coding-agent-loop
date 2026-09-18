@@ -2231,7 +2231,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             {isActiveWorkflowSessionRestoring && (
               <div className="flex items-center gap-2 border-b border-blue-100 bg-blue-50 px-3 py-1.5 dark:border-blue-800/50 dark:bg-blue-900/20">
                 <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-600 dark:border-t-blue-400"></div>
-                <span className="text-xs text-blue-600 dark:text-blue-400">Restoring previous session...</span>
+                <span className="text-xs text-blue-600 dark:text-blue-400">Loading conversation...</span>
               </div>
             )}
 

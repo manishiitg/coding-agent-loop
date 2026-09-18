@@ -3519,6 +3519,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	currentUserIsReadOnly = access == WorkflowAccessRead
+	normalizeWorkflowConversationMode(&req, currentUserIsReadOnly)
 
 	var resolvedProfileSkills []*llmtypes.Skill
 	if resolvedProfile != nil {

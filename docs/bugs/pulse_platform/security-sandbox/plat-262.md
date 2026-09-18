@@ -514,3 +514,7 @@ A mismatch cancels the old foreground turn, closes its actual native provider an
 Verification covers promotion, demotion, revoked access, unchanged warm admission, unchanged previous-key visibility to reconnect, live-input next-turn dispatch and preservation of the current message/workflow. Explicit new-turn admission regression protects the foreground turn. This is revalidation at the next message/invocation, not a claim of instant revocation of every already-started external action.
 
 The separate bounded suggestion exception is [PLAT-330](plat-330.md).
+
+### Follow-up: restored Run mode after owner promotion (2026-09-18)
+
+Confida release `confida-f75a304b-20260918150257` correctly admitted Builder tools, but a restored request still carried `execution_options.workshop_mode=run`. Session metadata, reconnect notices and the private native CLI directory continued using that stale value. Normalize the workflow-builder conversational request from resolved current access before those consumers run, preserving other execution options and leaving Crew profiles and headless execution unchanged. Regression checks cover owner promotion, reader demotion, missing options, private directory mode selection and the exclusive authoring guard.

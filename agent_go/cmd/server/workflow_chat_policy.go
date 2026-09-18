@@ -93,3 +93,22 @@ func (api *StreamingAPI) registerMCPToolsForChat(registrar definitionToolRegistr
 	}
 	return api.registerMultiAgentMCPServerTools(registrar, disabled)
 }
+
+// Persist the same access-derived conversational mode used for tool admission.
+// Old clients and restored chats may still submit the mode from before an
+// access change; it must not select the CLI directory or reconnect metadata.
+func normalizeWorkflowConversationMode(req *QueryRequest, readOnly bool) {
+	if req == nil || req.AgentProfileID != "" || req.AgentMode != "workflow_phase" || req.PhaseID != "workflow-builder" {
+		return
+	}
+	if req.ExecutionOptions == nil {
+		req.ExecutionOptions = &ExecutionOptions{}
+	} else {
+		options := *req.ExecutionOptions
+		req.ExecutionOptions = &options
+	}
+	req.ExecutionOptions.WorkshopMode = "workshop"
+	if resolveWorkflowChatPolicy("", "", *req, nil, readOnly).Mode == "run" {
+		req.ExecutionOptions.WorkshopMode = "run"
+	}
+}

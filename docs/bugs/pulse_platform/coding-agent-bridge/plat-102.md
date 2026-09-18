@@ -163,3 +163,11 @@ cost this ticket's traces never showed because their connectors were signed
 in. Filed and fixed as [PLAT-275](plat-275.md); after it the pre-launch cost is
 0.4 s and the remaining ~14 s is cursor-agent's own startup, which is the
 "cold coding-agent startup" wait this ticket already names.
+
+## 2026-09-18 — Permission admission is required before the fast path
+
+Local implementation/regression verification; deployment and live latency measurement pending. See [PLAT-262](../security-sandbox/plat-262.md) and [PLAT-324](../chat-reliability/plat-324.md).
+
+An unchanged AgentWorks workflow policy still reaches the existing SDK-owned warm delivery without reconstructing an Agent, tools or bridge. Fresh permission/manifest lookup and the existing policy key comparison precede delivery. A changed or unverifiable admission is an intentional reconstruction boundary, just like a changed definition; stale permissions must not be retained for latency. No new per-provider send path is introduced.
+
+Early interruption applies only to eligible retained-delivery requests. Automatic notifications, explicit new-turn requests and manifest configuration overrides retain their normal setup/lane behavior. Live latency has not been measured for this additional authorization lookup; acceptance below 250 ms remains an explicit post-deployment check, not inferred from passing unit tests.

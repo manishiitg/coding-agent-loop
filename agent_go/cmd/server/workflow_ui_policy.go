@@ -37,6 +37,11 @@ func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolReg
 			mode = req.ExecutionOptions.WorkshopMode
 		}
 		policy := resolveWorkflowChatPolicy(mode, session, req, active, readOnly)
+		if policy.allows("workflow_suggestions") {
+			if err := api.registerWorkflowSuggestionTool(registrar, session, workspace); err != nil {
+				return err
+			}
+		}
 		if policy.allows("bot_management") {
 			if err := api.registerSlackBotTools(registrar, session, workspace, "", policy.Origin == "interactive" && !readOnly && policy.Mode == "builder"); err != nil {
 				return err

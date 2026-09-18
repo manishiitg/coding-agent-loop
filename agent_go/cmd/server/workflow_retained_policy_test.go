@@ -1,0 +1,96 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"github.com/gorilla/mux"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+	"time"
+)
+
+func TestWorkflowRetainedPolicyChecksCurrentPermissions(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)
+	ws, docs := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["owner"]}}`
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	req := QueryRequest{SelectedFolder: "Workflow/test"}
+	api := &StreamingAPI{lastChatPolicyBySession: map[string]string{}}
+	keyFor := func(readOnly bool) string {
+		return api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", req, nil, readOnly))
+	}
+	api.lastChatPolicyBySession["chat"] = keyFor(true)
+	if compatible, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req); err != nil || compatible {
+		t.Fatal("promotion retained old Run definition", compatible, err)
+	}
+	if api.lastChatPolicyBySession["chat"] != keyFor(true) {
+		t.Fatal("gate overwrote old policy")
+	}
+	api.lastChatPolicyBySession["chat"] = keyFor(false)
+	if compatible, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req); err != nil || !compatible {
+		t.Fatal("unchanged Builder lost warm delivery", compatible, err)
+	}
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["another"],"readers":["owner"]}}`
+	if compatible, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req); err != nil || compatible {
+		t.Fatal("demotion retained Builder tools", compatible, err)
+	}
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["another"]}}`
+	if _, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req); err == nil {
+		t.Fatal("revoked access accepted")
+	}
+}
+
+func TestWorkflowLiveInputRefreshesInsteadOfDeliveringToOldCLI(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)
+	ws, docs := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["owner"]}}`
+	query := QueryRequest{SelectedFolder: "Workflow/test"}
+	canceled := false
+	next := make(chan QueryRequest, 1)
+	api := &StreamingAPI{
+		internalChatSubmissionStore: newTestChatSubmissionStore(),
+		activeSessions:              map[string]*ActiveSessionInfo{"chat": {UserID: "owner"}},
+		lastQueryRequests:           map[string]QueryRequest{"chat": query},
+		lastChatPolicyBySession:     map[string]string{},
+		agentCancelFuncs:            map[string]context.CancelFunc{"chat": func() { canceled = true }},
+		internalQueryHandler: func(_ http.ResponseWriter, r *http.Request) {
+			var req QueryRequest
+			_ = json.NewDecoder(r.Body).Decode(&req)
+			next <- req
+		},
+	}
+	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", query, nil, true))
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	req := httptest.NewRequest(http.MethodPost, "/api/sessions/chat/live-input", strings.NewReader(`{"message":"remove the integration from this workflow"}`)).WithContext(ctx)
+	req = mux.SetURLVars(req, map[string]string{"session_id": "chat"})
+	response := httptest.NewRecorder()
+	api.handleLiveInputMessage(response, req)
+	if response.Code != http.StatusOK || !canceled {
+		t.Fatalf("refresh not accepted: %d %s canceled=%v", response.Code, response.Body.String(), canceled)
+	}
+	select {
+	case resumed := <-next:
+		if !resumed.DisableLiveInputDelivery || resumed.SelectedFolder != query.SelectedFolder || resumed.Query != "remove the integration from this workflow" {
+			t.Fatalf("unsafe continuation: %+v", resumed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no rebuilt turn dispatched")
+	}
+}
+
+func TestWorkflowExplicitNewTurnDoesNotInterruptForegroundForRetainedAdmission(t *testing.T) {
+	canceled := false
+	api := &StreamingAPI{agentCancelFuncs: map[string]context.CancelFunc{"chat": func() { canceled = true }}}
+	for _, req := range []QueryRequest{{SelectedFolder: "Workflow/test", IsAutoNotification: true}, {SelectedFolder: "Workflow/test", DisableLiveInputDelivery: true}} {
+		compatible, err := api.prepareWorkflowRetainedDelivery(context.Background(), "chat", req, false)
+		if err != nil || compatible || canceled {
+			t.Fatal("explicit new turn attempted retained admission or canceled foreground", compatible, err, canceled)
+		}
+	}
+}

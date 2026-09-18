@@ -3606,7 +3606,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
 	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
-	if !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible
+	retainedWorkflowCompatible, policyErr := api.prepareWorkflowRetainedDelivery(r.Context(), sessionID, req, retainedDeliveryEligible)
+	if policyErr != nil {
+		http.Error(w, policyErr.Error(), http.StatusForbidden)
+		return
+	}
+	if retainedWorkflowCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
 		return
 	}
 
@@ -6621,16 +6627,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			//
 			// Symmetric across the tmux-backed coding-CLI providers.
 			reason := fmt.Sprintf("workflow chat policy changed (mode %q -> %q)", modeChangePrevMode, newWorkshopMode)
-			switch strings.ToLower(strings.TrimSpace(finalProvider)) {
-			case "cursor-cli":
-				llmproviders.CloseCursorCLIInteractiveSessionForOwner(sessionID, reason)
-			case "codex-cli":
-				llmproviders.CloseCodexCLIInteractiveSessionForOwner(sessionID, reason)
-			case "claude-code":
-				llmproviders.CloseClaudeCodeInteractiveSessionForOwner(sessionID, reason)
-			case "pi-cli":
-				llmproviders.ClosePiCLIInteractiveSessionForOwner(sessionID, reason)
-			}
+			closeWorkflowPolicyCLI(sessionID, finalProvider, reason)
 		}
 
 		// Restore the durable transcript into the process-local UI cache. It is
@@ -6729,7 +6726,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
-			if target := req.resolvedResumeTarget; target != nil {
+			if modeChangedThisTurn {
+				// Policy refresh must never seed the previous native session handle.
+			} else if target := req.resolvedResumeTarget; target != nil {
 				restoredConversationPathForFallback = target.ConversationPath
 				restoredRuntime = target.Runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
@@ -6739,7 +6738,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			if req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+			if !modeChangedThisTurn && req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
@@ -6935,6 +6934,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					codingFallbackInjectedMessages++
 				}
 			}
+		}
+
+		if modeChangedThisTurn && isCodingAgentProvider(finalProvider, finalModelID) && modeChangeConversationPath != "" {
+			chatQuery = prependCodingAgentContinuityNotice(chatQuery, modeChangeConversationPath, workflowPhaseFolder, len(preModeChangeSnapshot))
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background
@@ -9331,6 +9334,30 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	}
 	defer finishSubmission()
 
+	api.lastQueryMu.RLock()
+	policyRequest, policyKnown := api.lastQueryRequests[sessionID]
+	api.lastQueryMu.RUnlock()
+	if !policyKnown && strings.HasPrefix(submissionProject, "Workflow/") {
+		http.Error(w, "Workflow session configuration is unavailable; reopen the workflow chat", http.StatusConflict)
+		return
+	}
+	if policyKnown {
+		compatible, policyErr := api.workflowRetainedPolicyCompatible(r.Context(), sessionID, policyRequest)
+		if policyErr != nil {
+			http.Error(w, policyErr.Error(), http.StatusForbidden)
+			return
+		}
+		if !compatible {
+			api.interruptWorkflowPolicySession(sessionID, policyRequest.Provider)
+			r = r.WithContext(context.WithValue(r.Context(), workflowPolicyRefreshKey{}, true))
+			if api.startNextTurnFromLiveInput(w, r, sessionID, req.Message, nil) {
+				return
+			}
+			http.Error(w, "Unable to refresh workflow session", http.StatusConflict)
+			return
+		}
+	}
+
 	// One durable mcpagent Session owns warm delivery across transports and
 	// remains addressable after the wrapped Go turn has completed.
 	tryColdRetainedFallback := true
@@ -9553,6 +9580,9 @@ func (api *StreamingAPI) startNextTurnFromLiveInput(w http.ResponseWriter, r *ht
 		return false
 	}
 
+	if refresh, _ := r.Context().Value(workflowPolicyRefreshKey{}).(bool); refresh {
+		baseReq.DisableLiveInputDelivery = true
+	}
 	baseReq.Query = message
 	baseReq.Message = message
 	baseReq.IsAutoNotification = false

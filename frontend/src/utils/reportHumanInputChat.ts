@@ -5,6 +5,7 @@ import { sendWorkspacePaneMessageToChat } from './workspacePaneChat'
 function sourceName(source: string): string {
   if (['technical_review', 'engineering_review', 'ops_review'].includes(source)) return 'Technical Review'
   if (['strategic_review', 'strategy_auditor', 'goal_advisor'].includes(source)) return 'Strategic Review'
+  if (source === 'user_suggestion') return 'User suggestion'
   if (source === 'architecture_review') return 'Architecture Review'
   if (source === 'plan_drift_review') return 'Plan Drift Review'
   return 'Pulse'

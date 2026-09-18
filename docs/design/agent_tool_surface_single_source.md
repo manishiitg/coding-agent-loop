@@ -30,6 +30,14 @@ existing durable transcript replay path. There is no second per-turn catalog
 filter. The earlier status/header and historical gate descriptions below record
 the original design and should not be treated as a current code inventory.
 
+## 2026-09-18 retained-delivery compatibility update
+
+The existing policy fingerprint must be compared before either warm SDK delivery or cold retained terminal delivery can bypass definition construction. Effective workflow access is freshly resolved first. A changed admission rebuilds the native session with the same durable chat identity, current tools/prompt and existing history handoff. The old key remains untouched until normal setup performs its comparison. Native resume handles from the old policy are not reused.
+
+This is lifecycle admission, not a second tool-name filter or replacement authorization. Unchanged admission keeps SDK-owned warm delivery. Explicit new turns and auto-notifications use their existing lane and do not interrupt foreground work just to attempt retained delivery. See PLAT-262, PLAT-324 and PLAT-102 for local evidence and pending deployment/live acceptance.
+
+Product-declared `workflow_suggestions` permits bounded suggestion intake in Run/read-only chat. Existing workflow decision records/UI are reused; owner review cannot grant unattended mutation authority. This does not admit general decision management or Builder mutation tools to readers. See PLAT-330.
+
 ## Problem
 
 "What tools does this agent have?" is answered in five places today, in three

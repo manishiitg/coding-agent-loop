@@ -48,10 +48,11 @@ chat_policy:
       - report_authoring
       - secret_management
       - knowledgebase_maintenance
+      - workflow_suggestions
       - improvement_proposals
       - workspace_ui
       - bot_management
-    run: [workspace_ui, bot_management]
+    run: [workspace_ui, bot_management, workflow_suggestions]
   origins:
     interactive: *builder_capabilities
     scheduled: *builder_capabilities
@@ -60,7 +61,7 @@ chat_policy:
     child: [plan_authoring, report_authoring, secret_management, knowledgebase_maintenance, improvement_proposals]
     bot: *builder_capabilities
     notification: *builder_capabilities
-  read_only: [workspace_ui, bot_management]
+  read_only: [workspace_ui, bot_management, workflow_suggestions]
 
 # Prompt text stays in Markdown. Includes contain named Go-template definitions;
 # the entry file chooses which definitions to render. Runtime values stay in Go.
@@ -102,6 +103,7 @@ chat:
       - get_slack_bot_settings
       - slack
       - get_step_prompts
+      - submit_workflow_suggestion
       - get_ui_state
       - get_workflow_command_guidance
       - get_workflow_config
@@ -175,6 +177,7 @@ chat:
       - get_slack_bot_settings
       - slack
       - get_step_prompts
+      - submit_workflow_suggestion
       - get_ui_state
       - get_workflow_command_guidance
       - get_workflow_config

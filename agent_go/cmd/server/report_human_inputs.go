@@ -480,6 +480,9 @@ func ensureReportHumanInputColumn(ctx context.Context, db *sql.DB, column, defin
 }
 
 func createReportHumanInput(ctx context.Context, workspacePath string, req ReportHumanInputCreateRequest) (*ReportHumanInput, error) {
+	if normalizeReportHumanInputSource(req.Source) == "user_suggestion" && req.CreatedVia != "suggestion_tool" {
+		return nil, fmt.Errorf("use submit_workflow_suggestion to leave a user suggestion")
+	}
 	reportHumanInputStoreMu.Lock()
 	defer reportHumanInputStoreMu.Unlock()
 
@@ -512,6 +515,9 @@ func createReportHumanInput(ctx context.Context, workspacePath string, req Repor
 	existing, err := getReportHumanInputByID(ctx, db, normalized, id)
 	if err != nil {
 		return nil, err
+	}
+	if existing != nil && existing.Source == "user_suggestion" {
+		return nil, fmt.Errorf("user suggestions cannot be overwritten; submit a new suggestion")
 	}
 	if existing != nil && existing.Status != "pending" {
 		return nil, fmt.Errorf("input_id %q already exists with status %q", id, existing.Status)
@@ -645,6 +651,9 @@ func answerReportHumanInput(ctx context.Context, workspacePath, inputID string, 
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
 	}
+	if err := requireSuggestionOwner(ctx, normalized, input); err != nil {
+		return nil, err
+	}
 	if input.Status == "consumed" || input.Status == "dismissed" || input.Status == "claimed" {
 		return nil, fmt.Errorf("input_id %q is %s", inputID, input.Status)
 	}
@@ -737,6 +746,9 @@ func dismissReportHumanInput(ctx context.Context, workspacePath, inputID string,
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
 	}
+	if err := requireSuggestionOwner(ctx, normalized, input); err != nil {
+		return nil, err
+	}
 	if input.Status == "consumed" || input.Status == "claimed" {
 		return nil, fmt.Errorf("input_id %q is %s and cannot be dismissed", inputID, input.Status)
 	}
@@ -791,6 +803,9 @@ func consumeReportHumanInput(ctx context.Context, workspacePath, inputID string,
 	}
 	if input == nil {
 		return nil, fmt.Errorf("input_id %q not found", inputID)
+	}
+	if err := requireSuggestionOwner(ctx, normalized, input); err != nil {
+		return nil, err
 	}
 	if input.Status != "answered" && input.Status != "claimed" {
 		return nil, fmt.Errorf("input_id %q must be answered or claimed before it can be consumed; current status=%q", inputID, input.Status)
@@ -1374,6 +1389,8 @@ func reportHumanInputAnswerForAgent(input ReportHumanInput) string {
 
 func normalizeReportHumanInputSource(source string) string {
 	switch strings.ToLower(strings.TrimSpace(source)) {
+	case "user_suggestion":
+		return "user_suggestion"
 	case "engineering_review", "engineering-review", "engineering review":
 		return "technical_review"
 	case "ops_review", "ops-review", "ops review", "operations_review", "operations-review", "operations review":

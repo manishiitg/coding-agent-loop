@@ -1,3 +1,7 @@
+## Workflow suggestions and permission refresh — PLAT-330 / PLAT-262
+
+[PLAT-330](pulse_platform/security-sandbox/plat-330.md) tracks the bounded suggestion tool for Run/read-only workflow users. The [PLAT-262 follow-up](pulse_platform/security-sandbox/plat-262.md) fixes permission fingerprint checks before retained CLI delivery; [PLAT-324](pulse_platform/chat-reliability/plat-324.md) records same-chat continuity and [PLAT-102](pulse_platform/coding-agent-bridge/plat-102.md) records the fast-path compatibility boundary. These changes are tested locally; deployment and live acceptance are pending.
+
 ## Cross-workflow knowledgebase write access — PLAT-325 (PLAT-310 follow-up)
 
 Implemented locally, not yet deployed to RTS: `knowledgebase_sources` now

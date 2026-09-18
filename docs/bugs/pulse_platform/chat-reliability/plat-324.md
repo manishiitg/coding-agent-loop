@@ -1026,3 +1026,13 @@ new prompt. Focused transcript, history reconciliation, clean-conversation, and
 live-input suites pass (164 tests); the production frontend build and focused
 backend packages also pass. Deployment is authorized and pending completion of
 the RTS release procedure.
+
+## 2026-09-18 — Workflow permission reconnect must preserve the same conversation
+
+Implemented and regression-tested locally; deployment/live verification pending. Related permission enforcement: [PLAT-262](../security-sandbox/plat-262.md).
+
+Both incoming message paths now compare AgentWorks workflow admission before retained delivery. A policy change uses the existing same-session history snapshot/handoff and full transcript merge; it does not invent a new browser chat ID or private namespace. A policy refresh must not seed the previous native session handle, even if a restored conversation target supplies one. Native cleanup is shared with the existing reconnect path and now includes Muse.
+
+The replacement CLI receives the existing visible `AGENTWORKS CONVERSATION CONTINUITY` notice with the current user message, pointing to the complete saved conversation archive. Archived text remains historical context, never current permission authority. The existing bounded handoff remains available as immediate context, including the exceptional case where no archive could be saved.
+
+Compatibility audit: SDK Session.Send still owns unchanged warm delivery; no second message-delivery implementation or automatic retry is added. Existing submission journal and serialized next-turn path are reused. Explicit new turns and synthetic notifications cannot cancel foreground work merely because their origin gives a different fingerprint. Focused retained/live-input, continuity/history, submission-context and permission regressions pass. After deployment, reverify promotion and demotion in the same active Confida testing chat, one delivery per user message and a visible archive-read notice with no duplicated transcript.

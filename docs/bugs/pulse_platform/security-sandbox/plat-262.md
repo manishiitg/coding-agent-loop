@@ -500,3 +500,17 @@ activation. The configured-environment Linux sandbox regression passed.
 Earlier pending-deployment notes are superseded; feature-specific live acceptance
 limits remain as documented. No user accounts/sharing or notification recipients
 were changed during verification.
+
+## 2026-09-18 — Revalidate chat policy before retained delivery
+
+State: implemented and regression-tested locally; deployment and Confida live reverify pending.
+
+Confida testing session `be5087d3-b2c4-4fe1-a114-007a3fe12dcd` was built in Run mode. Logs at 14:19:14 server time show `mode=run`; calls to `update_workflow_config` at 14:21:10 and 14:31:21 failed because the tool was not registered. The account subsequently has owner access, but warm delivery bypassed definition reconstruction. The attempted `mcp_servers:[]` payload was also unsupported: workflow detachment uses `remove_servers` with configured server names. Neither failed call removed an integration.
+
+The existing ChatPolicyKey already hashes effective mode, origin, admitted capabilities, product chat definition and MCP configuration. Do not add a parallel permission fingerprint or change the durable chat ID. `workflow_retained_policy.go` revalidates current workflow access and compares that key before eligible `/api/query` retained delivery and before `/live-input` delivery. Unknown or mismatched old admission falls back to construction; revoked access fails closed. The early comparison does not publish the new key, so the existing reconnect/handoff path can still recognize the old policy.
+
+A mismatch cancels the old foreground turn, closes its actual native provider and routes the message through normal serialized setup. Explicit new turns and auto-notifications do not perform early interruption merely to attempt retained delivery. Existing tool execution context checks still revalidate permissions per invocation; the fingerprint is lifecycle coordination, not replacement authorization.
+
+Verification covers promotion, demotion, revoked access, unchanged warm admission, unchanged previous-key visibility to reconnect, live-input next-turn dispatch and preservation of the current message/workflow. Explicit new-turn admission regression protects the foreground turn. This is revalidation at the next message/invocation, not a claim of instant revocation of every already-started external action.
+
+The separate bounded suggestion exception is [PLAT-330](plat-330.md).

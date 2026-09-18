@@ -1,6 +1,6 @@
 import { useLLMStore } from '../stores/useLLMStore'
 import React, { useCallback, useEffect, useMemo } from 'react'
-import { AlertCircle, Clock, Loader2, Pause } from 'lucide-react'
+import { AlertCircle, Bot, CalendarClock, Clock, Loader2, MessageSquare, MousePointerClick, Pause, Webhook } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -27,6 +27,36 @@ const MAX_INLINE_ACTIVITY_ITEMS = 2
 type ActivityMonitorItem =
   | { type: 'session'; id: string; session: ActiveSessionInfo }
   | { type: 'builder-tab'; id: string; tab: ChatTab }
+
+type ActivityType = 'Scheduled' | 'Webhook' | 'Manual' | 'Bot' | 'Chat'
+
+function activityType(session: ActiveSessionInfo): ActivityType {
+  const triggerLabel = workflowTriggerLabel({ sessionId: session.session_id, triggeredBy: session.triggered_by })
+  if (triggerLabel) return triggerLabel
+  const trigger = (session.triggered_by || '').toLowerCase()
+  const sessionID = session.session_id.toLowerCase()
+  if (session.bot_platform || trigger.includes('bot') || trigger.includes('slack') || trigger.includes('whatsapp') || sessionID.startsWith('bot-')) {
+    return 'Bot'
+  }
+  return 'Chat'
+}
+
+function ActivityTypeIcon({ type }: { type: ActivityType }) {
+  const Icon = type === 'Scheduled'
+    ? CalendarClock
+    : type === 'Webhook'
+      ? Webhook
+      : type === 'Manual'
+        ? MousePointerClick
+        : type === 'Bot'
+          ? Bot
+          : MessageSquare
+  return (
+    <span className="inline-flex opacity-75" title={type} aria-label={type}>
+      <Icon className="h-3 w-3" aria-hidden="true" />
+    </span>
+  )
+}
 
 function isWorkflowSession(session: ActiveSessionInfo): boolean {
   return session.agent_mode?.toLowerCase().includes('workflow') ?? false
@@ -327,7 +357,7 @@ export const GlobalActivityMonitor: React.FC = () => {
         const fallbackName = selectedModeCategory === 'workflow' ? currentWorkflowPresetName : null
         const tone = statusTone(session)
         const title = displaySessionTitle(session, tab, undefined, fallbackName)
-        const triggerLabel = workflowTriggerLabel({ sessionId: session.session_id, triggeredBy: session.triggered_by })
+        const type = activityType(session)
         const statusLabel = headerStatusLabel(session)
         // End user only cares about two states: is it working, or is it waiting for me?
         // The icon alone conveys this — spinner = running, amber alert = waiting for input.
@@ -344,7 +374,7 @@ export const GlobalActivityMonitor: React.FC = () => {
               data-testid={i === 0 ? 'tour-active-work-switcher' : undefined}
               onClick={() => void handleOpenSession(session)}
               className={pillClasses}
-              title={`${title}${triggerLabel ? ` · ${triggerLabel}` : ''} · ${statusLabel}${waitingTitle}`}
+              title={`${title} · ${type} · ${statusLabel}${waitingTitle}`}
             >
               {tone === 'needs-input'
                 ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
@@ -354,7 +384,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                     ? <Pause className="w-3.5 h-3.5 opacity-50" />
                     : <Clock className="w-3.5 h-3.5 opacity-50" />}
               <span className="whitespace-nowrap">{name}</span>
-              {triggerLabel && <span className="rounded border border-current/20 px-1 text-[10px] opacity-75">{triggerLabel}</span>}
+              <ActivityTypeIcon type={type} />
             </button>
           </React.Fragment>
         )

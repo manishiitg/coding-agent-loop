@@ -426,6 +426,9 @@ interface PreviousChatHistoryPanelProps {
   fill?: boolean
   /** Keep the shared history UI while hiding automation-only filters. */
   recentOnly?: boolean
+  /** History browser only: expand stored messages in place without making an
+   *  earlier session live or exposing an Open/Resume action. */
+  readOnly?: boolean
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -439,6 +442,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   compact = false,
   fill = false,
   recentOnly = false,
+  readOnly = false,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -880,7 +884,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 )
                 })}
               </div>
-              {!isRunFilter && hasOldVisibleSessions && (
+              {!readOnly && !isRunFilter && hasOldVisibleSessions && (
                 <CleanupOldChatsDropdown
                   counts={oldVisibleSessionCounts}
                   isLoading={isCleanupLoading || isLoading}
@@ -952,8 +956,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const hasLoadedMessages = Boolean(expandedMessagesBySession[session.session_id]?.length)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
-              const canResume = session.can_resume !== false
-              const canDelete = session.can_delete !== false
+              const canResume = !readOnly && session.can_resume !== false
+              const canDelete = !readOnly && session.can_delete !== false
               const timeLabel = formatChatTime(session.updated_at || session.created_at)
               const messageCountLabel = formatMessageCount(session.message_count)
               const botSourceLabel = botSessionSourceLabel(session)
@@ -973,7 +977,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
                     <button
                       type="button"
-                      onClick={() => handleSelect(session)}
+                      onClick={() => readOnly ? toggleExpanded(session) : handleSelect(session)}
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
@@ -1030,16 +1034,18 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        onClick={() => handleSelect(session)}
-                        title={canResume ? actionLabel : 'Open read-only conversation'}
-                        aria-label={canResume ? actionLabel : 'Open read-only conversation'}
-                        className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
-                      >
-                        <ActionIcon className="h-3.5 w-3.5" />
-                        {!compact && <span>{canResume ? actionLabel : 'Open'}</span>}
-                      </button>
+                      {!readOnly && (
+                        <button
+                          type="button"
+                          onClick={() => handleSelect(session)}
+                          title={canResume ? actionLabel : 'Open read-only conversation'}
+                          aria-label={canResume ? actionLabel : 'Open read-only conversation'}
+                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
+                        >
+                          <ActionIcon className="h-3.5 w-3.5" />
+                          {!compact && <span>{canResume ? actionLabel : 'Open'}</span>}
+                        </button>
+                      )}
                     </div>
                   </div>
 

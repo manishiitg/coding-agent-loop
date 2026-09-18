@@ -9,7 +9,10 @@ import { workflowWebhooksApi } from '../api/workflowWebhooks'
 import type { ScheduledJob, ScheduledJobRun } from '../services/api-types'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 
-vi.mock('../services/api', () => ({ agentApi: { listChatHistorySessions: vi.fn() } }))
+vi.mock('../services/api', () => ({ agentApi: {
+  listChatHistorySessions: vi.fn(),
+  getChatHistoryConversation: vi.fn(),
+} }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn() } }))
 vi.mock('../api/workflowWebhooks', () => ({ workflowWebhooksApi: { getPayload: vi.fn() } }))
 vi.mock('../stores/useChatStore', () => {
@@ -29,6 +32,7 @@ const cronRun: ScheduledJobRun = { id: 'cron-run', job_id: cron.id, trigger_sour
 const cleanups: (() => void)[] = []
 beforeEach(() => {
   vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [] })
+  vi.mocked(agentApi.getChatHistoryConversation).mockResolvedValue({ session_id: 'old-chat', conversation_history: [] })
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [hook, cron], total: 2, limit: 100, offset: 0 })
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [webhookRun] : [cronRun], total: 1, limit: 30, offset: 0 }))
   vi.mocked(workflowWebhooksApi.getPayload).mockResolvedValue({ raw_payload: '{"action":"opened","number":42}' })
@@ -82,6 +86,30 @@ it('refreshes the visible feed when a webhook finishes', async () => {
 })
 it('does not interpret a webhook received time as a cron slot', () => {
   expect(scheduleRunSlotLabel(hook, webhookRun)).toBeUndefined()
+})
+
+it('keeps historical Crew conversations read-only and expands them in place', async () => {
+  vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [{
+    session_id: 'old-chat',
+    title: 'Earlier project discussion',
+    message_count: 2,
+    created_at: '2026-09-10T10:00:00Z',
+  }] })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const onSelect = vi.fn()
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel workspacePath="Workflow/test" recentOnly readOnly onSelectSession={onSelect} />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Open"]')).toBeNull()
+  const title = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Earlier project discussion'))
+  expect(title).toBeDefined()
+  await act(async () => title!.click())
+  expect(onSelect).not.toHaveBeenCalled()
+  expect(agentApi.getChatHistoryConversation).toHaveBeenCalledWith('old-chat', 'Workflow/test', expect.any(Number))
 })
 
 it('loads and formats the webhook body when delivery details are opened', async () => {

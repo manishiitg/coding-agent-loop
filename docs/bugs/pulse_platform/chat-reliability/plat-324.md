@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `deployed to RTS; health verified; user live chat acceptance pending` |
-| Last synchronized | `2026-09-17` |
+| Ticket state | `Crew single-chat simplification locally verified; deployment pending explicit approval` |
+| Last synchronized | `2026-09-18` |
 | Latest regression fix | `624d4a8a1` deployed — retain Work chat names before the first transcript save |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
@@ -907,3 +907,44 @@ concurrent and delayed duplicate projections, and backend regressions cover
 cross-client durable replay without suppressing intentional typed repeats. This
 correction is locally verified and has not been deployed pending explicit
 operator approval.
+
+### Crew now owns one persistent conversation per user and project
+
+The retained-tab design kept trying to reconcile three identities: the
+server-owned product conversation, multiple browser chat tabs, and a permanent
+blank Workshop/Builder tab. That complexity was the common source of reload,
+provider-switch, resume, duplicate-projection, and close/reopen failures. It
+also made the UI imply that a user could safely create several live chats while
+the backend product registry still had one authoritative project slot.
+
+Crew now renders the authenticated user's server-owned conversation for the
+selected project as one permanent **Chat**. The browser resolves that durable
+conversation before enabling the composer, reuses a matching legacy local tab
+when possible, and removes other local projections without stopping or deleting
+their durable history. There is no blank Workshop tab, chat tab close/rename
+control, chat-pane collapse control, previous-chat resume action, or Crew “New
+Chat” shortcut/help entry. Changing from Codex to Cursor, Claude, Pi, or another
+declared runtime keeps the platform conversation identity and relaunches its
+native provider on the next message with the durable transcript.
+
+Earlier conversations remain available from a **Conversation history** icon in
+the right workspace toolbar. They expand in place for reading and do not expose
+Open, Resume, Rename, Delete, or bulk-cleanup actions. Schedules, webhooks, bots,
+project creation, workspace tools, reports/dashboard files, and the Workshop
+execution contract remain unchanged.
+
+Migration deliberately trusts the registry's authenticated
+`(user, profile=work, project conversation key)` binding. Existing per-chat
+browser keys are historical records; they are not allowed to replace the
+registry's current project session. This keeps different users and different
+Crew projects isolated while giving each user one continuing chat inside each
+project.
+
+Local verification covers canonical legacy-tab adoption, cross-project
+isolation, provider changes on the same session, scoped runtime invalidation,
+and read-only history behavior. The focused Vitest suite passed 38 tests and
+the complete production frontend build, report-preview build, release-asset
+check, and bundle-budget check passed. The full frontend suite passed 1,402
+tests and retained nine unrelated baseline failures in provider-account mocks
+and a notification-copy source assertion; none of those failing files changed
+in this refactor. This refactor has not been deployed.

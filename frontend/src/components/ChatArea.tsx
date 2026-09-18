@@ -475,7 +475,7 @@ function prepareQueuedChatMessages(queuedMessages: string[]) {
 
 interface ChatAreaProps {
   // New chat handler
-  onNewChat: () => void
+  onNewChat?: () => void
   // Hide header when used inside another layout (like WorkflowLayout)
   hideHeader?: boolean
   // Hide input area when used inside workflow mode
@@ -3557,7 +3557,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // a tab exists. Normal tabbed chats use resetTabChat above.
       resetChatState()
       resetSessionId()
-      onNewChat()
+      onNewChat?.()
     }
 
     notifiedWorkshopAgentsRef.current.clear()

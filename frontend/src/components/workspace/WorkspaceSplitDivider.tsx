@@ -46,7 +46,7 @@ export function WorkspaceSplitDivider({ ratio, onPointerDown, onStep, children, 
 }
 
 type WorkspaceSplitCollapseControlsProps = {
-  onCollapseChat: () => void
+  onCollapseChat?: () => void
   onCollapseWorkspace: () => void
 }
 
@@ -57,16 +57,18 @@ export function WorkspaceSplitCollapseControls({
 }: WorkspaceSplitCollapseControlsProps) {
   return (
     <>
-      <button
-        type="button"
-        onPointerDown={event => event.stopPropagation()}
-        onClick={onCollapseChat}
-        className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
-        aria-label="Collapse chat panel"
-        title="Collapse chat panel"
-      >
-        <PanelLeftClose className="h-3 w-3" />
-      </button>
+      {onCollapseChat ? (
+        <button
+          type="button"
+          onPointerDown={event => event.stopPropagation()}
+          onClick={onCollapseChat}
+          className="pointer-events-auto flex h-6 w-6 items-center justify-center rounded text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          aria-label="Collapse chat panel"
+          title="Collapse chat panel"
+        >
+          <PanelLeftClose className="h-3 w-3" />
+        </button>
+      ) : null}
       <button
         type="button"
         onPointerDown={event => event.stopPropagation()}

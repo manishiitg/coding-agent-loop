@@ -7,6 +7,7 @@ import {
   DollarSign,
   Files,
   FolderOpen,
+  History,
   KeyRound,
   LayoutDashboard,
   Mail,
@@ -38,13 +39,14 @@ import type { BrowserAutomationMode } from '../../components/BrowserAutomationSe
 import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type { WorkRuntimeSelection } from './workTabs'
+import { PreviousChatHistoryPanel } from '../../components/PreviousChatHistoryPanel'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../components/scheduler/WorkflowScheduleRunsPanel'))
 const ReportView = lazy(() => import('../../components/workflow/ReportViewer').then(module => ({ default: module.ReportView })))
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 
-export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
+export type WorkWorkspaceView = 'history' | 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'skills' | 'mcp' | 'secrets' | 'models' | 'bots' | 'email' | 'folders'
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
@@ -93,6 +95,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
   return (
     <div data-tour="work-tools" className="ml-auto flex shrink-0 items-center gap-1">
       <TooltipProvider delayDuration={150}>
+        <WorkToolbarButton active={view === 'history'} icon={History} label="Conversation history" onClick={() => onViewChange('history')} />
         {visibleViews.some(item => item.id === 'dashboard') && <ReportDocumentSwitcher workspacePath={workspacePath} active={view === 'dashboard'} onOpen={() => onViewChange('dashboard')} />}
         <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
           <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
@@ -322,6 +325,7 @@ function WorkBrowserPanel({ tabId, workspacePath }: { tabId: string; workspacePa
 
 export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
+  const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
   const toggleSkill = async (folderName: string) => {
     const next = selectedSkills.includes(folderName)
@@ -349,13 +353,23 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, tabI
     }
   }
 
-  if (enabledPanels && !enabledPanels.has(view)) {
+  if (view !== 'history' && enabledPanels && !enabledPanels.has(view)) {
     return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">No workspace view is enabled for this product.</div>
   }
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
+        {view === 'history' && <PreviousChatHistoryPanel
+          workspacePath={workspacePath}
+          activeSessionId={activeSessionId}
+          title="Conversation history"
+          emptyText="No earlier conversations. This project now keeps one continuous chat."
+          recentOnly
+          readOnly
+          fill
+          onSelectSession={() => {}}
+        />}
         {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" />}
         {view === 'skills' && <div className="flex h-full min-h-0 flex-col p-4"><SkillsManagerPanel compact workspacePath={workspacePath} selectedSkills={selectedSkills} onToggleSkill={folderName => { void toggleSkill(folderName) }} selectionLabel="Skills for this project" emptySelectionText="No project skills yet — pick one below." selectionScopeLabel="project" /></div>}
         {view === 'mcp' && <WorkMCPPanel tabId={tabId} workspacePath={workspacePath} onSelectedServersChange={onSelectedServersChange} />}

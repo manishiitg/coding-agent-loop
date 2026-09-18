@@ -34,7 +34,7 @@ profile:
     - id: triggers
       options: {mode: message_only}
     - id: bots
-      # Shared bots feature declares Slack inspection, configuration, testing, and route tools.
+      # Shared bots feature declares the Slack CLI API tool, tracked sends, and connector management.
       options: {channels: "slack,whatsapp,gmail"}
     - database
     - dashboard

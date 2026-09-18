@@ -10,7 +10,9 @@ import (
 	"path/filepath"
 	"strings"
 
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // The UI and tools use the same ChannelRoute contract and owner checks. Tools
@@ -133,6 +135,21 @@ func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRou
 }
 
 func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar, session, workspace, profile string, canMutate bool) error {
+	tool := virtualtools.SlackCLIToolDefinition().Function
+	raw, err := json.Marshal(tool.Parameters)
+	if err != nil {
+		return err
+	}
+	var schema map[string]interface{}
+	if err := json.Unmarshal(raw, &schema); err != nil {
+		return err
+	}
+	if err := registrar.RegisterCustomTool(tool.Name, tool.Description, schema, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		return api.slackCLIFromTool(context.WithValue(ctx, common.ChatSessionIDKey, session), args)
+	}, "slack_bot_management"); err != nil {
+		return err
+	}
+
 	register := func(name, description string, properties map[string]interface{}, required []string, execute func(context.Context, map[string]interface{}) (string, error)) error {
 		return registrar.RegisterCustomTool(name, description, map[string]interface{}{"type": "object", "properties": properties, "required": required, "additionalProperties": false}, execute, "slack_bot_management")
 	}

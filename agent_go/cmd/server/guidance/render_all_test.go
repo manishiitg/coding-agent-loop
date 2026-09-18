@@ -1184,7 +1184,7 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 		t.Fatalf("render design-plan: %v", err)
 	}
 	for _, want := range []string{
-		"Call `review_plan",
+		"access_mode=\"read_only\"",
 		"dependent artifacts",
 		"VISUAL MAP",
 		"PRIORITIES",
@@ -1570,8 +1570,8 @@ func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 		visited++
 		for _, name := range removed {
 			if strings.Contains(string(body), name) {
-					t.Errorf("%s still instructs agents to call removed Pulse tool %q; "+
-						"the surface is get_pulse_state(view=...), record_pulse_worklist, record_pulse_result, and canonical issue writes",
+				t.Errorf("%s still instructs agents to call removed Pulse tool %q; "+
+					"the surface is get_pulse_state(view=...), record_pulse_worklist, record_pulse_result, and canonical issue writes",
 					path, name)
 			}
 		}

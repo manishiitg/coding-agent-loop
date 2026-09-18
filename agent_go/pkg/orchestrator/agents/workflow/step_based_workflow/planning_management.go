@@ -681,7 +681,7 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "update_scripted_step" || name == "update_routing_step" || name == "update_branch_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_orchestrator_step" || name == "update_message_sequence_step" || name == "delete_plan_steps" || name == "add_scripted_step" || name == "add_routing_step" || name == "add_branch_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_orchestrator_step" || name == "add_message_sequence_step" ||
+	return name == "add_step" || name == "update_step" || name == "manage_step_route" || name == "manage_group" || name == "maintain_plan" || name == "update_scripted_step" || name == "update_routing_step" || name == "update_branch_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_orchestrator_step" || name == "update_message_sequence_step" || name == "delete_plan_steps" || name == "add_scripted_step" || name == "add_routing_step" || name == "add_branch_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_orchestrator_step" || name == "add_message_sequence_step" ||
 		name == "update_validation_schema" ||
 		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
 		name == "add_orchestrator_route" || name == "update_orchestrator_route" || name == "delete_orchestrator_route" || name == "migrate_orchestrator_step_type" ||

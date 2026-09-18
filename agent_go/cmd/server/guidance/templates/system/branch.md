@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## BRANCH STEP DESIGN
 
 A branch step is a deterministic switch — a small in-flow next-step
@@ -21,7 +23,7 @@ schedule or caller picks via `route_selections`, each route a sub-workflow of
 many steps. Once a plan has it, every further fixed choice is a branch by
 definition. A simple if-condition — skip or continue, probe ok or failed,
 publish or hold, any option that goes straight to `end` — is always a branch;
-`add_routing_step` refuses a second routing step and any route to `end`
+`add_step` refuses a second routing step and any route to `end`
 (PLAT-294).
 
 ### Human-decided branch (`route_source: "human"`)
@@ -46,8 +48,8 @@ see:
 4. interactive run — the person is asked; the run waits (same 10-minute
    window as `human_input`).
 
-Use `add_branch_step(..., route_source="human")` for any new yes/no or
-pick-one decision; `add_human_input_step` now rejects `yesno` and
+Use `add_step(..., route_source="human")` for any new yes/no or
+pick-one decision; `add_step` now rejects `yesno` and
 `multiple_choice` and points here. Keep `human_input` (`text`) only for
 capturing a free-form value into a variable. Existing `human_input` steps are
 untouched.

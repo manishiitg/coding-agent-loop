@@ -47,7 +47,7 @@ func TestWorkflowUIRegistrationFollowsCallerNotSharedBuilderPhase(t *testing.T) 
 			if err := api.registerWorkflowUIForCaller(reg, phase, tc.session, "Workflow/test", tc.req, false); err != nil {
 				t.Fatal(err)
 			}
-			for _, name := range []string{"open_workspace_view", "refresh_workspace_view", "list_ui_capabilities", "get_ui_state", "perform_ui_action", "get_ui_action_result"} {
+			for _, name := range []string{"list_ui_capabilities", "get_ui_state", "perform_ui_action"} {
 				_, exists := reg.tools[name]
 				if exists != tc.want {
 					t.Fatalf("%s present=%v want=%v", name, exists, tc.want)
@@ -83,8 +83,8 @@ func TestWorkflowUIScheduleReclassificationRevokesOldLease(t *testing.T) {
 	if result.Status != "cancelled" {
 		t.Fatal(result)
 	}
-	for _, name := range []string{"open_workspace_view", "refresh_workspace_view"} {
-		out, err := initial.tools[name].exec(context.Background(), map[string]interface{}{"view": "notify"})
+	for _, name := range []string{"perform_ui_action"} {
+		out, err := initial.tools[name].exec(context.Background(), map[string]interface{}{"view": "notify", "action": "open"})
 		if err != nil || !strings.Contains(out, "inactive_scope") {
 			t.Fatalf("retained %s remained callable: %s %v", name, out, err)
 		}
@@ -98,7 +98,7 @@ func TestWorkspacePresentationDoesNotGrantConnectionWriteAccess(t *testing.T) {
 		if err := api.registerWorkflowUIForCaller(reg, "workflow-builder", "chat", "Workflow/test", QueryRequest{}, readOnly); err != nil {
 			t.Fatal(err)
 		}
-		if _, exists := reg.tools["open_workspace_view"]; !exists {
+		if _, exists := reg.tools["perform_ui_action"]; !exists {
 			t.Fatal("read-only users must keep presentation")
 		}
 		_, exists := reg.tools["update_gmail_connection_grants"]

@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## Module dispatch boundary
 
 The scheduler dispatches one module per blocking lifecycle step, in order:
@@ -400,8 +402,8 @@ already has authority to explore beyond the current approach.
 
 A tool refusal is not evidence that a finding is unfixable. Check the target's
 actual type before concluding anything: rtslatency recorded two collectors as
-"not editable" after `update_scripted_step` was refused, when they were
-message_sequence steps and `update_message_sequence_step` was in the same tool
+"not editable" after `update_step` was refused, when they were
+message_sequence steps and `update_step` was in the same tool
 surface. Before `blocked` or `external_action_required` on a rejected edit, name
 the tool you used, the target's real type, and the tool that type requires.
 

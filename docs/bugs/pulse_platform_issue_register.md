@@ -20,6 +20,10 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Builder plan-tool consolidation — PLAT-329
+
+[PLAT-329](pulse_platform/plans-contracts/plat-329.md) tracks the locally implemented consolidation of typed step/route/group/conversion/maintenance tools and replacement of the dedicated plan-review launcher with existing skill-driven background review. Validation and deployment status are recorded in the ticket.
+
 ## Pulse persistence simplification — PLAT-326
 
 [PLAT-326](pulse_platform/pulse-governance/plat-326.md) completed its corrected

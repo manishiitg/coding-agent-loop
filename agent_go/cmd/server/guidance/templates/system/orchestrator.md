@@ -1,10 +1,12 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## orchestrator — Orchestrator / Sub-Workflow / Pipeline Step
 
 `orchestrator` is the multi-task orchestration step type. Users call it
 "orchestrator," "sub-workflow," or "pipeline," and the things inside it
 "sub-agents." The plan type is `orchestrator`; `todo_task` is the legacy
 alias older plans still carry, which the runtime keeps reading (contract
-v1.0.35 rewrites it via migrate_orchestrator_step_type). Load this skill when
+v1.0.35 rewrites it via maintain_plan). Load this skill when
 designing a new orchestrator step, adding/restructuring routes, deciding
 between inline `sub_agent_step` and shared `orphan_step_ref`, or
 debugging route behavior.
@@ -224,12 +226,12 @@ reconcile and write the report").
 
 ## Tools
 
-- `add_orchestrator_step(step_id, description, todo_task_step, ...)` — add
+- `add_step(step_id, description, todo_task_step, ...)` — add
   a new orchestrator to the plan.
-- `update_orchestrator_step(step_id, ...)` — update orchestrator metadata.
-- `add_orchestrator_route(step_id, route_id, condition, sub_agent_step | orphan_step_ref)` — add a route.
-- `update_orchestrator_route(step_id, route_id, ...)` — update a route.
-- `delete_orchestrator_route(step_id, route_id)` — remove a route.
+- `update_step(step_id, ...)` — update orchestrator metadata.
+- `manage_step_route(step_id, route_id, condition, sub_agent_step | orphan_step_ref)` — add a route.
+- `manage_step_route(step_id, route_id, ...)` — update a route.
+- `manage_step_route(step_id, route_id)` — remove a route.
 
 When inspecting an orchestrator step, prefer
 `jq '.steps[] | select(.id == "<step-id>") | {type, todo_task_step, predefined_routes}' planning/plan.json`

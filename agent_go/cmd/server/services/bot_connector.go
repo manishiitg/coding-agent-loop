@@ -1003,7 +1003,7 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		if msg.IsMention {
 			if connector := m.GetConnector(msg.Platform); connector != nil {
 				connector.SendThreadMessage(context.Background(), threadID,
-					"Can't link your account — no email available from this platform. Please contact your administrator.")
+					unroutedBotAccessMessage(msg.Platform, "Can't link your account — no email available from this platform. Please contact your administrator."))
 			}
 		}
 		return
@@ -1056,7 +1056,7 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 						if threadID.ThreadTS == "" {
 							threadID.ThreadTS = fmt.Sprintf("%d", time.Now().UnixNano())
 						}
-						connector.SendThreadMessage(context.Background(), threadID, "Sorry, you don't have access to use this bot. Please contact your administrator to get access.")
+						connector.SendThreadMessage(context.Background(), threadID, unroutedBotAccessMessage(msg.Platform, "Sorry, you don't have access to use this bot. Please contact your administrator to get access."))
 					}
 				}
 				return
@@ -1389,17 +1389,16 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = botRouteFromActive(active)
 		}
-		// Thread-less platforms (WhatsApp, Telegram) are conceptually a
-		// single long conversation per chat — there's no platform-side
-		// thread API to pull history from. Reuse the existing sessionID so
-		// chat_history/<sessionID>/conversation.json keeps accumulating and
-		// the agent sees every prior turn as context.
-		if !supportsThreads && active.SessionID != "" {
+		// A completed turn is not a new conversation. Keep the durable
+		// session identity for both channel threads and thread-less chats:
+		// private CLI directories and native resume handles are keyed to it.
+		// Each query still has its own execution ID and run logs.
+		if oldSessionID != "" {
 			msg.Text = m.withBotRuntimeState(active, msg.Text)
-			go m.startNewSessionDirect(msg, threadID, active.SessionID)
+			go m.startNewSessionDirect(msg, threadID, oldSessionID)
 			return
 		}
-		go m.startNewSessionDirect(msg, threadID, "", oldSessionID)
+		go m.startNewSessionDirect(msg, threadID)
 	}
 }
 
@@ -1645,6 +1644,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		}
 	}
 	active.mu.Unlock()
+	m.acknowledgeBotMessage(msg.Platform, msg.ChannelID, msg.MessageTS)
 	go func() {
 		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer followCancel()
@@ -1656,7 +1656,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		if err != nil {
 			log.Printf("[BOT_MANAGER] Follow-up failed: %v", err)
 			if connector := m.GetConnector(platform); connector != nil {
-				connector.SendThreadMessage(context.Background(), threadID, fmt.Sprintf("Couldn't deliver your message: %v", err))
+				connector.SendThreadMessage(context.Background(), threadID, botFollowUpFailureMessage(err))
 			}
 		} else {
 		}
@@ -2498,6 +2498,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	if connector == nil {
 		return
 	}
+	m.acknowledgeBotMessage(active.Platform, active.ackChannelID, active.ackMessageTS)
 
 	// Set up event filter for streaming updates to thread
 	sessionCtx, cancel := context.WithCancel(ctx)
@@ -2589,6 +2590,24 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	completedAt := active.LastActivity
 	active.mu.Unlock()
 	m.persistBotSessionBinding(active, completedAt)
+}
+
+// Acknowledge only messages accepted for an agent turn, never raw channel events.
+func (m *BotConversationManager) acknowledgeBotMessage(platform, channelID, messageTS string) {
+	connector := m.GetConnector(platform)
+	if connector == nil || !connector.Capabilities().Reactions || channelID == "" || messageTS == "" {
+		return
+	}
+	if err := connector.AddReaction(context.Background(), channelID, messageTS, "eyes"); err != nil {
+		log.Printf("[BOT_MANAGER] Failed to acknowledge accepted message: %v", err)
+	}
+}
+
+func unroutedBotAccessMessage(platform, fallback string) string {
+	if strings.EqualFold(strings.TrimSpace(platform), "slack") {
+		return "This channel isn't connected to a workflow. Use the bot in a configured channel, or ask a workflow owner to add this channel in Setup > Connectors > Slack. Inviting the bot alone doesn't connect the channel."
+	}
+	return fallback
 }
 
 func (m *BotConversationManager) clearBotMessageReactions(ctx context.Context, acks []ThreadID) {

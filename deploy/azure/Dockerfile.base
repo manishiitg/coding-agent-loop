@@ -35,6 +35,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 RUN npm install -g agent-browser@latest && agent-browser --version
+COPY agent_go/scripts/install-slack-cli.sh /tmp/install-slack-cli.sh
+RUN bash /tmp/install-slack-cli.sh /usr/local && rm /tmp/install-slack-cli.sh
 ENV AGENT_BROWSER_EXECUTABLE_PATH=/usr/bin/chromium
 
 RUN pip3 install --break-system-packages uv

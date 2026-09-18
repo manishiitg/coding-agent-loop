@@ -119,7 +119,7 @@ func getWorkflowPhaseWorkspaceMapForMode(docsRoot, workflowFolder, mode string) 
 	active := resolveWorkspacePath(docsRoot, path.Clean(workflowFolder))
 	access := "Workshop may write workflow-owned artifacts here; planning/config changes require dedicated tools."
 	if mode == "run" {
-		access = "Run may read workflow artifacts and execute authorized business work; it cannot edit workflow design, config, learnings, KB, eval, or report files. Confirmed runtime context uses capture_context."
+		access = "Run may read workflow artifacts and execute authorized business work; it cannot edit workflow design, config, learnings, KB, eval, or report files."
 	}
 	return "\n## Workspace\n\nWorkspace docs root: `" + docsRoot + "`. Active workflow: `" + active + "/`. " + access +
 		"\nOther workflows are read-only. `config/` is tool-only. Use quoted absolute paths under the docs root in shell commands. Store workflow outputs and scratch artifacts under the active workflow, not Chats. `" +
@@ -216,7 +216,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`planning/changelog/changelog-YYYY-MM-DD-HH-MM-SS.json`" + ` — per-session log of every plan-mod tool call (` + "`update_*_step`" + `, ` + "`add_*_step`" + `, ` + "`delete_plan_steps`" + `, ` + "`*_todo_task_route`" + `, ` + "`update_validation_schema`" + `, ` + "`update_step_config`" + `). Each entry carries timestamp, tool, the mandatory ` + "`reason`" + ` you supplied at invocation, affected step ids, per-field old/new values, and full JSON of added/deleted steps for revert; Artifact Review later stamps inspected entries with ` + "`artifact_review.done=true`" + ` through ` + "`mark_changelog_artifact_reviewed`" + `. **Read this** before proposing plan edits to see what's already been tried this session and why; it complements typed Pulse findings with per-session, per-mutation detail. Files rotate hourly. Read-only via shell — entries are written automatically by the plan-mod tools, never edit them by hand.
 
 **Pulse / Goal Advisor framework files (opt-in per workflow):**
-- ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. Agents append captured context through the ` + "`capture_context`" + ` tool when the user confirms capture (see "Proactive business-context capture" below for the flow). **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Each capture is recorded as a typed authoritative context record so it is visible in Pulse.
+- ` + "`knowledgebase/context/context.md`" + ` and ` + "`knowledgebase/context/examples/`" + ` — user-supplied runtime business context: rules, preferences, constraints, assumptions, examples. **Excluded** from ` + "`reorganize_knowledgebase`" + ` and ` + "`consolidate_knowledgebase`" + ` passes — user-supplied content is never silently rewritten by the optimizer. Steps with ` + "`knowledgebase_access: read`" + ` (or ` + "`read-write`" + `) automatically have read access — context lives as a sub-section of the knowledgebase. Each capture is recorded as a typed authoritative context record so it is visible in Pulse.
 
 **Operating model and oversight:**
 - ` + "`/define-success`" + ` records the confirmed operating-model assessment (primary type, secondary traits, plan stability, runtime mode, business-context accumulation, and cadence) as a typed decision record. It is historical reasoning, not a permanent Goal/Profile card. Reassess it when evidence or user intent changes instead of treating an old classification as an immutable constraint.
@@ -338,34 +338,6 @@ SQLite is the finding and fix lifecycle source of truth; the Pulse popup is the 
 - Never fabricate baselines or measurement values. The system reads them from real run history.
 - Never claim a harden/replan action improved the workflow until real run/eval evidence supports it.
 - Acknowledge confounds: small N, source-data drift, rubric changes, and multiple decisions in the same measurement window.
-
-### Proactive business-context capture (context-accumulating workflows only)
-
-There is no slash command for context capture because it should happen naturally during workflow setup, improvement, and normal run-mode conversation. When the user shares a business rule, constraint, or persistent domain fact in conversation about a workflow whose profile says ` + "`business_context_accumulating`" + ` as primary/secondary or ` + "`Business context: accumulating`" + `, **recognize it, confirm with the user, and persist it with ` + "`capture_context`" + `**. Do not manually patch ` + "`knowledgebase/context/context.md`" + ` unless the tool is unavailable.
-
-**Recognition signals (capture-worthy):**
-- Imperatives that should persist: *"always X"*, *"never X"*, *"don't ever X"*, *"avoid X"*.
-- Conditional rules: *"when X, do Y"*, *"for {customer/persona/jurisdiction}, do X"*.
-- Domain facts that change agent behavior: regulatory clauses, exception cases, blessed exceptions, ICP definitions, risk thresholds, brand-voice constraints.
-- Memorize-worthy nuance: *"remember that X"*, *"note that X"*, *"the way we do this here is X"*.
-
-**Do NOT capture:**
-- Conversational context (the user's mood, working preferences, casual asides).
-- One-off task instructions ("run X right now") — those are decisions, not durable rules.
-- Material that belongs elsewhere: objective/success_criteria → ` + "`soul.md`" + `; technical patterns and tool quirks → ` + "`learnings/_global/SKILL.md`" + `; KB facts about specific entities → ` + "`knowledgebase/`" + `.
-
-**Capture flow:**
-1. **Recognize.** Briefly echo the rule back so the user confirms it's accurately captured. Do not write anything until the user confirms.
-2. **Pick a section.** Read ` + "`knowledgebase/context/context.md`" + ` when useful and choose the right ` + "`## <Section>`" + ` heading or propose a new one.
-3. **Capture.** Call ` + "`capture_context`" + ` with ` + "`section`" + ` and ` + "`context_text`" + `. The tool appends the context and records it as **User rule (authoritative)** through typed Pulse tools. Marking it user-authoritative is load-bearing — future agents must treat captured context as a hard constraint and never silently rewrite it.
-4. **Wire affected steps.** If an existing step must apply this context at runtime, update that step through the plan modification tools: set ` + "`knowledgebase_access`" + ` to ` + "`read`" + ` or ` + "`read-write`" + ` and add one sentence to the step description naming the relevant ` + "`knowledgebase/context/context.md`" + ` section/path. Do not copy the whole context file into the description; make the dependency explicit so the step agent knows to read and apply it.
-5. **Confirm.** Tell the user the section + context that was added, which step descriptions/configs were wired, and the typed User rule receipt returned by ` + "`capture_context`" + `.
-
-**On workflows without confirmed business-context accumulation**: do NOT add context to ` + "`knowledgebase/context/`" + ` unless the user has confirmed that operating-model trait. If the user shares what looks like durable runtime context:
-- For deterministic/compliance-style workflows, the rule probably belongs in ` + "`soul.md`" + `, the eval plan, or a hardened validation check; offer that path.
-- For open optimization, monitoring, research, creative, or human-review workflows, ask whether durable context should become part of runtime behavior. If confirmed, record the operating-model change as a dated Decisions and analysis entry and wire the relevant knowledgebase dependency; do not create a permanent Goal/Profile card.
-
-**Be conservative.** It's better to ask "should I capture that as a rule?" than to silently start writing to the user's context store. The user's context is their content; you write to it only with explicit OK.
 
 ## Modifying Existing Workflows
 

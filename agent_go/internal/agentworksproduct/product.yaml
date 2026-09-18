@@ -68,36 +68,24 @@ chat:
   builder:
     # Default workflow phase tools; integration tests compare real registration.
     tools:
-      - add_branch_step
+      - add_step
       - add_evaluation_step
-      - add_group
-      - add_human_input_step
+      - manage_group
       - add_mcp_server
-      - add_message_sequence_step
-      - add_orchestrator_route
-      - add_orchestrator_step
-      - add_routing_step
-      - add_scripted_step
-      - add_todo_task_route
-      - add_todo_task_step
+      - manage_step_route
       - agent_browser
-      - capture_context
       - change_step_type
-      - cleanup_orphan_step_configs
+      - maintain_plan
       - configure_slack_bot
       - consolidate_knowledgebase
-      - convert_routing_branch_step_type
       - create_calendar_schedule
       - create_plan
       - create_schedule
       - create_slack_bot_route
       - debug_step
       - delete_evaluation_step
-      - delete_group
-      - delete_orchestrator_route
       - delete_plan_steps
       - delete_schedule
-      - delete_todo_task_route
       - delete_user_secret
       - delete_workflow_secret
       - edit_mcp_server
@@ -106,14 +94,14 @@ chat:
       - get_cost_summary
       - get_file_link
       - get_llm_config
-      - get_mcp_server_logs
       - get_plan_prompt_health
+      - get_mcp_server_logs
       - get_report_link
       - get_schedule_runs
       - get_slack_bot_credentials
       - get_slack_bot_settings
+      - slack
       - get_step_prompts
-      - get_ui_action_result
       - get_ui_state
       - get_workflow_command_guidance
       - get_workflow_config
@@ -132,20 +120,14 @@ chat:
       - manage_user_access
       - manage_workflow_webhook
       - mark_changelog_artifact_reviewed
-      - migrate_declared_execution_mode
-      - migrate_message_sequence_code_items
-      - migrate_orchestrator_step_type
-      - open_workspace_view
       - perform_ui_action
       - preview_report
       - query_step
       - record_plan_drift_review
-      - refresh_workspace_view
       - remove_mcp_server
       - remove_slack_bot_route
       - reorganize_knowledgebase
       - request_workflow_folder_access
-      - review_plan
       - review_step_code
       - run_full_evaluation
       - run_full_workflow
@@ -159,26 +141,16 @@ chat:
       - set_workflow_secret
       - stop_all_executions
       - stop_step
-      - strip_declared_execution_mode
       - test_slack_bot_connection
       - trigger_mcp_discovery
       - trigger_schedule
       - uninstall_skill
-      - update_branch_step
+      - update_step
       - update_evaluation_plan
       - update_gmail_connection_grants
-      - update_group
-      - update_human_input_step
-      - update_message_sequence_step
-      - update_orchestrator_route
-      - update_orchestrator_step
-      - update_routing_step
       - update_schedule
-      - update_scripted_step
       - update_slack_bot_route_permission
       - update_step_config
-      - update_todo_task_route
-      - update_todo_task_step
       - update_validation_schema
       - update_variable
       - update_workflow_config
@@ -193,18 +165,16 @@ chat:
     # Default workflow phase tools; integration tests compare real registration.
     tools:
       - agent_browser
-      - capture_context
       - execute_step
       - get_contract_upgrades
       - get_cost_summary
       - get_file_link
       - get_llm_config
-      - get_plan_prompt_health
       - get_report_link
       - get_schedule_runs
       - get_slack_bot_settings
+      - slack
       - get_step_prompts
-      - get_ui_action_result
       - get_ui_state
       - get_workflow_command_guidance
       - get_workflow_config
@@ -213,10 +183,8 @@ chat:
       - list_secrets
       - list_skills
       - list_ui_capabilities
-      - open_workspace_view
       - perform_ui_action
       - query_step
-      - refresh_workspace_view
       - request_workflow_folder_access
       - run_full_evaluation
       - run_full_workflow

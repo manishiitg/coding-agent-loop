@@ -383,7 +383,7 @@ func TestBlockingHumanFeedbackResponseSubmitsNotification(t *testing.T) {
 	}
 }
 
-func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
+func TestThreadedCompletedSessionReusesDurableConversation(t *testing.T) {
 	manager := NewBotConversationManager(nil, "", "")
 	connector := &testBotConnector{name: "slack", supportsThreads: true}
 	manager.RegisterConnector(connector)
@@ -420,11 +420,11 @@ func TestThreadedCompletedSessionStartsFreshWithRestoreSessionID(t *testing.T) {
 
 	select {
 	case got := <-started:
-		if got.sessionID == "old-session-1" {
-			t.Fatalf("threaded completed session reused old session ID; want fresh session with restore pointer")
+		if got.sessionID != "old-session-1" {
+			t.Fatalf("threaded completed session changed durable identity: %q", got.sessionID)
 		}
-		if got.req["restored_conversation_session_id"] != "old-session-1" {
-			t.Fatalf("restored_conversation_session_id = %#v, want old-session-1", got.req["restored_conversation_session_id"])
+		if _, ok := got.req["restored_conversation_session_id"]; ok {
+			t.Fatal("same-conversation continuation should use the current conversation resume path")
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected new threaded session to start")

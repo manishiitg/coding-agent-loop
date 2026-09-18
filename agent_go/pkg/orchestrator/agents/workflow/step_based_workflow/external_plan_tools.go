@@ -901,15 +901,7 @@ func ExecuteExternalPlanTool(ctx context.Context, name string, args map[string]i
 	}
 	capture := &externalPlanWarningLogger{Logger: logger, warnings: &externalPlanWarnings{}}
 	servers, _ := ctx.Value(externalPlanSelectedServersKey{}).([]string)
-	// The native workspace helpers recognize "not found" text, while hosted
-	// callbacks use the typed filesystem sentinel. Preserve both conventions.
-	nativeRead := func(callCtx context.Context, path string) (string, error) {
-		content, readErr := readFile(callCtx, path)
-		if errors.Is(readErr, os.ErrNotExist) {
-			return "", fmt.Errorf("not found: %w", readErr)
-		}
-		return content, readErr
-	}
+	nativeRead := nativePlanReadFile(readFile)
 	runtime := &externalPlanRuntime{workspacePath: workspacePath, readFile: nativeRead, writeFile: withPlanMutationWriteAccess(workspacePath, writeFile), moveFile: moveFile, servers: servers}
 	result, err := tool.executor(runtime, capture)(withPlanChangeOrigin(ctx, "agentworks-api"), nativeArgs)
 	// The legacy config tool reports rejected updates as text with nil error.
@@ -1010,4 +1002,16 @@ func (r *externalPlanRuntime) WriteStepConfigsToSubdir(ctx context.Context, subd
 		r.configWrites++
 	}
 	return err
+}
+
+func nativePlanReadFile(readFile func(context.Context, string) (string, error)) func(context.Context, string) (string, error) {
+	// The native workspace helpers recognize "not found" text, while hosted
+	// callbacks use the typed filesystem sentinel. Preserve both conventions.
+	return func(callCtx context.Context, path string) (string, error) {
+		content, readErr := readFile(callCtx, path)
+		if errors.Is(readErr, os.ErrNotExist) {
+			return "", fmt.Errorf("not found: %w", readErr)
+		}
+		return content, readErr
+	}
 }

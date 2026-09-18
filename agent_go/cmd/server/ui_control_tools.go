@@ -35,7 +35,7 @@ func (api *StreamingAPI) registerUIControlToolsForContract(registrar definitionT
 	}
 	props := map[string]interface{}{
 		"view":                    map[string]interface{}{"type": "string", "enum": uiContractViewIDs(contract)},
-		"action":                  map[string]interface{}{"type": "string", "enum": []string{"open", "expand"}},
+		"action":                  map[string]interface{}{"type": "string", "enum": []string{"open", "expand", "refresh"}},
 		"target":                  map[string]interface{}{"type": "string", "maxLength": 1024, "description": targetDescription},
 		"idempotency_key":         map[string]interface{}{"type": "string", "maxLength": 128, "description": "Reuse for a retry of this exact action; omit to generate a fresh request."},
 		"expected_state_revision": map[string]interface{}{"type": "integer", "minimum": 0},
@@ -62,19 +62,12 @@ func (api *StreamingAPI) registerUIControlToolsForContract(registrar definitionT
 	}, "workflow_ui"); err != nil {
 		return err
 	}
-	if err := registrar.RegisterCustomTool("perform_ui_action", "Perform one semantic presentation action and wait up to 10 seconds for a browser receipt. Discover capabilities first. applied confirms the view shell rendered, not that every data request succeeded. Notify expand confirms its instructions are visible. accepted/applying/expired are NOT success. Never retry an unknown outcome with a new key; use get_ui_action_result. Does not send, save, run, delete or connect anything.", schema(props, "view", "action"), func(ctx context.Context, args map[string]interface{}) (string, error) {
+	if err := registrar.RegisterCustomTool("perform_ui_action", "Open or refresh a workspace view, or expand supported instructions, using one semantic presentation action and wait up to 10 seconds for a browser receipt. Discover capabilities first. applied confirms the view shell rendered and the requested refresh was invoked, not that every data request succeeded. Notify expand confirms its instructions are visible. accepted/applying/expired are NOT success. Returns the completion receipt directly. For an uncertain outcome, repeat the same action with the same idempotency_key to inspect its retained receipt; never use a new key. Does not send, save, run, delete or connect anything.", schema(props, "view", "action"), func(ctx context.Context, args map[string]interface{}) (string, error) {
 		return api.performUIActionForContract(ctx, session, workspace, contract, args)
 	}, "workflow_ui"); err != nil {
 		return err
 	}
-	return registrar.RegisterCustomTool("get_ui_action_result", "Read an action receipt without executing it again. Results are retained for ten minutes; unknown_request is not permission to blindly retry.", schema(map[string]interface{}{"request_id": map[string]interface{}{"type": "string"}}, "request_id"), func(_ context.Context, args map[string]interface{}) (string, error) {
-		id, _ := args["request_id"].(string)
-		a, err := b.result(session, id)
-		if err != nil {
-			return uiError(err), nil
-		}
-		return uiJSON(a), nil
-	}, "workflow_ui")
+	return nil
 }
 
 func (api *StreamingAPI) performUIAction(ctx context.Context, session, workspace string, args map[string]interface{}) (string, error) {
@@ -115,7 +108,9 @@ func (api *StreamingAPI) performUIActionForContract(ctx context.Context, session
 		select {
 		case <-a.done:
 		case <-timer.C:
+			b.expirePendingAction(session, a.RequestID, "timeout")
 		case <-ctx.Done():
+			b.expirePendingAction(session, a.RequestID, "request_cancelled")
 		}
 	}
 	result, err := b.result(session, a.RequestID)

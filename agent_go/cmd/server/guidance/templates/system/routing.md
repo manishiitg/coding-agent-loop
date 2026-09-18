@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 ## ROUTING STEP DESIGN
 
 **Routing is now the "route" concept: a major, self-contained sub-workflow
@@ -20,8 +22,8 @@ many steps with their own downstream identity — so every route must start at
 a real step; a route straight to `end` is rejected, because a "mode" that does
 nothing is a simple if-condition. Every further fixed choice inside the flow —
 a skip/continue gate, an approval outcome, a "did the probe succeed" check —
-is a `branch`, however late in the plan it sits. `add_routing_step` rejects a
-second routing step or a route to `end`, and `convert_routing_branch_step_type`
+is a `branch`, however late in the plan it sits. `add_step` rejects a
+second routing step or a route to `end`, and `change_step_type`
 rejects a conversion to routing in the same cases; plans authored before this
 rule keep the routing steps they already have (PLAT-294).
 

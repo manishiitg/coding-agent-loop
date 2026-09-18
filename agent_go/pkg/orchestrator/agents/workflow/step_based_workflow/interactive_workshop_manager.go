@@ -1446,7 +1446,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Read-only info tools — safe in all modes
 	readOnly := []string{
 		"get_goal_metrics",
-		"get_step_prompts", "get_plan_prompt_health", "get_workflow_config", "request_workflow_folder_access", "get_llm_config", "get_cost_summary",
+		"get_step_prompts", "get_workflow_config", "request_workflow_folder_access", "get_llm_config", "get_cost_summary",
 	}
 
 	// Workshop execution tools
@@ -1513,11 +1513,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"validate_report_html",
 	}
 
-	// Auto-improvement tools. capture_context is also available in run mode so
-	// users can say "remember this" while executing the workflow, with explicit
-	// confirmation.
+	// Guided workflow command tools.
 	autoImprovement := []string{
-		"capture_context",
 		"get_workflow_command_guidance", // canonical slash-command prose; see guidance package.
 	}
 
@@ -1547,6 +1544,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 
 	switch mode {
 	case "workshop":
+		tools = append(tools, "get_plan_prompt_health")
 		// WORKSHOP: full toolkit for designing,
 		// running, evaluating, reviewing, and evolving a workflow. The agent
 		// derives the current "phase" from workspace state (does a plan
@@ -1564,7 +1562,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, llmConfig...)
 		tools = append(tools, "debug_step")
 		tools = append(tools, "run_full_workflow")
-		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, eval...)
@@ -1584,11 +1581,9 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, execution...)
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "debug_step")
-		tools = append(tools, "review_plan")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
 		tools = append(tools, "get_workflow_command_guidance") // /review-* commands need this even in run mode
-		tools = append(tools, "capture_context")
 
 	default:
 		// Unknown mode — allow everything (no restriction)
@@ -1604,7 +1599,13 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "debug_step")
 	}
 
-	return tools
+	projected := []string{}
+	for _, name := range tools {
+		if name != "review_plan" {
+			projected = append(projected, ConsolidatedPlanToolName(name))
+		}
+	}
+	return uniqueStringsPreserveOrder(projected)
 }
 
 func (iwm *InteractiveWorkshopManager) registerMarkChangelogArtifactReviewedTool(mcpAgent DefinitionToolRegistrar, workspacePath string, logger loggerv2.Logger) error {
@@ -2241,6 +2242,14 @@ func registerGetCostSummaryTool(iwm *InteractiveWorkshopManager, mcpAgent Defini
 }
 
 func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent DefinitionRegistrar, logger loggerv2.Logger) {
+	capture := newConsolidatedPlanRegistrar(mcpAgent, iwm.controller.GetWorkspacePath(), func(ctx context.Context, p string) (string, error) { return iwm.controller.ReadWorkspaceFile(ctx, p) })
+	mcpAgent = consolidatedWorkshopRegistrar{mcpAgent, capture}
+	defer func() {
+		if err := capture.flush(); err != nil {
+			logger.Warn(fmt.Sprintf("Failed to register consolidated workshop tools: %v", err))
+		}
+	}()
+
 	// Tool 1: execute_step — start step in background
 	if err := mcpAgent.RegisterCustomTool(
 		"execute_step",
@@ -2686,6 +2695,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Short descriptive name (e.g., 'Research APIs', 'Validate data')",
 				},
+				"access_mode": map[string]interface{}{"type": "string", "enum": []string{"read_write", "read_only"}, "description": "Default read_write inherits parent grants. read_only uses a bounded inspection-only tool surface, no workflow write grants or connected MCPs; executor only. Use for design review."},
 				"instruction": map[string]interface{}{
 					"type":        "string",
 					"description": "Opening-turn instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
@@ -2749,6 +2759,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					return "", fmt.Errorf("review_module requires an executor")
 				}
 			}
+			readOnlyTask, err := parseBackgroundReadOnlyAccess(args, agentType)
+			if err != nil {
+				return "", err
+			}
 			// Create slug from name for execution ID
 			nameSlug := strings.ToLower(strings.ReplaceAll(name, " ", "-"))
 			// Trim to reasonable length
@@ -2762,6 +2776,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "Session was stopped — execution skipped", nil
 			}
 
+			if readOnlyTask {
+				execCtx = context.WithValue(execCtx, backgroundReadOnlyKey{}, true)
+			}
 			if reviewModule != "" {
 				execCtx = context.WithValue(execCtx, backgroundReviewScopeKey{}, backgroundReviewScope{Module: reviewModule, RunID: reviewRunID})
 			}
@@ -3478,30 +3495,32 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register update_step_config tool: %v", err))
 	}
 
-	// Tool 5: get_plan_prompt_health — compact, deterministic size/duplication
-	// metrics for authored step descriptions. This avoids pasting a whole plan into
-	// a reviewer prompt just to establish whether prompt-contract bloat exists.
-	if err := mcpAgent.RegisterCustomTool(
-		"get_plan_prompt_health",
-		"Measure authored plan-description health without dumping the plan: per-step character counts, 5k/10k/20k thresholds, and long verbatim duplicate paragraphs. This is an objective review signal, not permission to rewrite a workflow automatically.",
-		map[string]interface{}{
-			"type":       "object",
-			"properties": map[string]interface{}{},
-		},
-		func(ctx context.Context, _ map[string]interface{}) (string, error) {
-			report, err := iwm.controller.currentPlanPromptHealth(ctx)
-			if err != nil {
-				return "", fmt.Errorf("load plan for prompt-health review: %w", err)
-			}
-			encoded, err := json.MarshalIndent(report, "", "  ")
-			if err != nil {
-				return "", fmt.Errorf("encode prompt-health report: %w", err)
-			}
-			return string(encoded), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register get_plan_prompt_health tool: %v", err))
+	if iwm.currentWorkshopModeFromConfigs(nil) != "run" {
+		// Tool 5: get_plan_prompt_health — compact, deterministic size/duplication
+		// metrics for authored step descriptions. This avoids pasting a whole plan into
+		// a reviewer prompt just to establish whether prompt-contract bloat exists.
+		if err := mcpAgent.RegisterCustomTool(
+			"get_plan_prompt_health",
+			"Measure authored plan-description health without dumping the plan: per-step character counts, 5k/10k/20k thresholds, and long verbatim duplicate paragraphs. This is an objective review signal, not permission to rewrite a workflow automatically.",
+			map[string]interface{}{
+				"type":       "object",
+				"properties": map[string]interface{}{},
+			},
+			func(ctx context.Context, _ map[string]interface{}) (string, error) {
+				report, err := iwm.controller.currentPlanPromptHealth(ctx)
+				if err != nil {
+					return "", fmt.Errorf("load plan for prompt-health review: %w", err)
+				}
+				encoded, err := json.MarshalIndent(report, "", "  ")
+				if err != nil {
+					return "", fmt.Errorf("encode prompt-health report: %w", err)
+				}
+				return string(encoded), nil
+			},
+			"workflow",
+		); err != nil {
+			logger.Warn(fmt.Sprintf("⚠️ Failed to register get_plan_prompt_health tool: %v", err))
+		}
 	}
 
 	// Tool 6: get_step_prompts — read saved system prompt + user message for a step run
@@ -3713,120 +3732,6 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	// === Tools: analyze, learn, optimize, background tasks ===
 
-	// Tool 7f: review_plan — background agent that critically reviews current workflow design and artifacts
-	if iwm.isRunModeRestricted() {
-		// PLAT-262: skip review_plan registration for read-only access
-	} else if err := mcpAgent.RegisterCustomTool(
-		"review_plan",
-		"Start a background agent that critically reviews the current workflow design and dependent artifacts: plan structure, step descriptions, context flow, validation, learnings, saved scripts, knowledgebase notes, db/db.sqlite table contracts, report wiring, evaluation coverage, portability, and whether decisions are justified by objective, success criteria, and optional run evidence. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"focus": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional focus for the review, e.g., 'step boundaries', 'mode decisions', 'context flow', 'hardcoded values', 'learnings', 'knowledgebase', 'db schema', 'report wiring', 'evaluation coverage'.",
-				},
-				"iteration": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional iteration folder (e.g., 'iteration-3'). If omitted, the review stays plan-centric unless a run folder is already selected.",
-				},
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "Optional group/user subfolder within the iteration (e.g., 'saurabh'). Use together with iteration for grouped workflows.",
-				},
-			},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			focus := ""
-			if val, ok := args["focus"]; ok && val != nil {
-				if s, ok := val.(string); ok {
-					focus = s
-				}
-			}
-			targetRunFolder := ""
-			if iter, ok := args["iteration"]; ok && iter != nil {
-				if s, ok := iter.(string); ok && strings.TrimSpace(s) != "" {
-					targetRunFolder = strings.TrimSpace(s)
-					if gid, ok := args["group_name"]; ok && gid != nil {
-						if g, ok := gid.(string); ok && strings.TrimSpace(g) != "" {
-							targetRunFolder += "/" + strings.TrimSpace(g)
-						}
-					}
-				}
-			}
-			if targetRunFolder == "" {
-				targetRunFolder = strings.TrimSpace(iwm.controller.selectedRunFolder)
-			}
-
-			execID := fmt.Sprintf("review-plan-%05d", time.Now().UnixNano()%100000)
-			execCtx, cancel, ctxErr := iwm.newExecContext(ctx)
-			if ctxErr != nil {
-				return "Session was stopped — execution skipped", nil
-			}
-
-			agentSessionID := fmt.Sprintf("workshop-review-plan-%d", time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         "review-plan",
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			iwm.stepRegistry.Register(exec)
-
-			if iwm.executionNotifier != nil {
-				iwm.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              "Review Workflow Plan",
-					Kind:              string(orchestrator_events.ExecutionKindSubAgent),
-					Cancel:            cancel,
-				})
-			}
-			// Without this, runReviewPlanAgent's own execution correlates only via
-			// agentSessionID (a separate id, for LLM turn/event correlation) and
-			// never links back to execID — the lifecycle registration above and the
-			// actual running agent's content end up as two disjoint rail entries.
-			// Matches the working pattern at line ~3088/3509.
-			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
-
-			go func() {
-				var result string
-				var execErr error
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if !skipNotify && iwm.executionNotifier != nil {
-						iwm.executionNotifier.OnExecutionComplete(execID, "Review Workflow Plan", result, nil, execErr)
-					}
-				}()
-
-				result, execErr = iwm.runReviewPlanAgent(execCtx, targetRunFolder, focus)
-			}()
-
-			focusInfo := ""
-			if focus != "" {
-				focusInfo = fmt.Sprintf("\nFocus: %s", focus)
-			}
-			runInfo := ""
-			if targetRunFolder != "" {
-				runInfo = fmt.Sprintf("\nTarget run folder: %s", targetRunFolder)
-			}
-			logger.Info(fmt.Sprintf("🧪 Workshop: review_plan agent started in background, execution_id=%q, target_run_folder=%q", execID, targetRunFolder))
-			return fmt.Sprintf("Workflow plan review agent started in background.\nexecution_id: %q%s%s\nYou will be automatically notified when it completes.", execID, runInfo, focusInfo), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register review_plan tool: %v", err))
-	}
-
-	// Retired: cost and timing are now one agentic Ops Review. Keep the legacy
-	// implementations temporarily as dormant code, but do not expose separate
-	// tools that can bypass the consolidated review.
 	const registerRetiredCostTimingReviewers = false
 	if registerRetiredCostTimingReviewers {
 		// Tool 7f3: review_workflow_timing — retired in favor of /ops-review
@@ -8273,67 +8178,6 @@ func (agent *WorkflowCostReviewAgent) Execute(ctx context.Context, templateVars 
 }
 
 // runReviewPlanAgent performs a read-only critical review of the current workflow design and dependent artifacts.
-func (iwm *InteractiveWorkshopManager) runReviewPlanAgent(ctx context.Context, targetRunFolder string, focus string) (string, error) {
-	workspacePath := iwm.controller.GetWorkspacePath()
-	logger := iwm.controller.GetLogger()
-
-	readPaths := []string{
-		workspacePath,
-		fmt.Sprintf("%s/builder", workspacePath),
-		fmt.Sprintf("%s/db", workspacePath),
-		fmt.Sprintf("%s/runs", workspacePath),
-		fmt.Sprintf("%s/planning", workspacePath),
-		fmt.Sprintf("%s/learnings", workspacePath),
-		fmt.Sprintf("%s/code", workspacePath),
-		fmt.Sprintf("%s/knowledgebase", workspacePath),
-		fmt.Sprintf("%s/reports", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
-		fmt.Sprintf("%s/variables", workspacePath),
-	}
-	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, []string{})
-
-	llmConfigToUse := iwm.controller.selectPulseLLM("review_plan agent")
-	if llmConfigToUse == nil {
-		return "", fmt.Errorf("no valid LLM configuration for review_plan agent")
-	}
-
-	config := iwm.createUnattendedWorkshopAgentConfig("review-plan-agent", 50, llmConfigToUse, "review_plan agent")
-	// Isolate in a fresh tmp dir; don't project CLAUDE.md/.claude into the
-	// builder's live workflow folder. See improve-db-agent above.
-	config.IsolateCodingAgentWorkspace = true
-	config.UseCodeExecutionMode = requiresCodeExecutionForProvider(iwm.presetLLM)
-	config.ServerNames = []string{mcpclient.NoServers}
-	defer iwm.configureWorkshopToolAgentSession(config, "review-plan", readPaths, []string{})()
-
-	phaseTools, phaseExecutors := prepareReadOnlyBackgroundAgentTools(iwm.controller.BaseOrchestrator)
-	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-		return newWorkflowPlanReviewAgent(cfg, log, tracer, eventBridge)
-	}
-	agent, err := iwm.controller.CreateAndSetupStandardAgentWithConfig(
-		ctx, config, "review-plan", 0, 0, "review-plan",
-		createAgentFunc, phaseTools, phaseExecutors, true,
-	)
-	if err != nil {
-		return "", fmt.Errorf("failed to create review_plan agent: %w", err)
-	}
-
-	templateVars := map[string]string{
-		"WorkspacePath":    workspacePath,
-		"AbsWorkspacePath": absPromptWorkspacePath(workspacePath),
-		"TargetRunFolder":  targetRunFolder,
-		"Focus":            focus,
-		"SessionID":        iwm.sessionID,
-		"WorkflowID":       iwm.workflowID,
-	}
-
-	logger.Info(fmt.Sprintf("🧪 Running review_plan agent (target_run_folder: %q, focus: %q)", targetRunFolder, focus))
-	result, _, err := agent.Execute(ctx, templateVars, nil)
-	if err != nil {
-		return "", fmt.Errorf("review_plan agent failed: %w", err)
-	}
-	return result, nil
-}
-
 // prepareReadOnlyBackgroundAgentTools is the common tool surface for
 // read-only workshop reviewers. Every such agent can inspect workflow state
 // through the managed query tool; none receives database mutation authority.
@@ -9062,6 +8906,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundOrchestratorAgent(ctx contex
 // agent, optionally preserving it across ordered follow-up turns.
 func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx context.Context, name string, instruction string, messageSequence []backgroundMessageSequenceItem, inheritedSkills []*llmtypes.Skill) (string, error) {
 	logger := iwm.controller.GetLogger()
+	readOnlyTask, _ := ctx.Value(backgroundReadOnlyKey{}).(bool)
 
 	// --- Folder guard: same as workshop agent ---
 	workspacePath := iwm.controller.GetWorkspacePath()
@@ -9087,6 +8932,10 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 			writePaths = []string{fmt.Sprintf("%s/runs/pulse/%s", workspacePath, reviewScope.RunID)}
 		}
 		instruction += "\nRESEARCH REVIEW: use authorized workflow MCPs, browser, web search and managed DB queries to investigate. Save new reasoning and dated source references in optional review_note on record_pulse_result. No mandatory Markdown checkpoint or reporting-only turn; optional research files remain allowed. Do not edit workflow implementation, run business actions, send messages, publish, or change external records. Create typed decisions for proposals and reuse the improvement ledger. External tool access retains the workflow's existing authorization limits."
+	}
+	if readOnlyTask {
+		writePaths = []string{}
+		instruction += "\nREAD-ONLY REVIEW: inspect only. Do not edit artifacts, execute workflow steps, persist findings, send messages, or modify external records. Return findings to the parent."
 	}
 	iwm.controller.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 
@@ -9127,6 +8976,9 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	// through the MCP api-bridge tools, which take absolute workspace
 	// paths and do not depend on CLI CWD.
 	config.IsolateCodingAgentWorkspace = true
+	if readOnlyTask {
+		config.ServerNames = []string{mcpclient.NoServers}
+	}
 	config.CodingAgentKeepAlive = len(messageSequence) > 0
 	_, cleanupToolSession := iwm.configureWorkshopToolAgentSessionWithID(config, "background-task", readPaths, writePaths)
 	defer cleanupToolSession()
@@ -9147,6 +8999,15 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		}
 		workshopToolDefinitions = filtered
 	}
+	if readOnlyTask {
+		filtered := workshopToolDefinitions[:0]
+		for _, tool := range workshopToolDefinitions {
+			if readOnlyBackgroundToolAllowed(tool.Name) {
+				filtered = append(filtered, tool)
+			}
+		}
+		workshopToolDefinitions = filtered
+	}
 	config.DirectTools = workshopToolDefinitions
 
 	// --- Tools: inherit the parent's complete workspace tool bundle ---
@@ -9162,6 +9023,10 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	executorsToUse := iwm.controller.WorkspaceToolExecutors
 	if reviewScope.researchOnly() {
 		toolsToRegister, executorsToUse = filterResearchReviewTools(toolsToRegister, executorsToUse)
+	}
+
+	if readOnlyTask {
+		toolsToRegister, executorsToUse = filterReadOnlyBackgroundTools(toolsToRegister, executorsToUse)
 	}
 
 	createAgentFunc := func(cfg *agents.OrchestratorAgentConfig, log loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
@@ -9269,8 +9134,11 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		"BrowserPrompt":    browserPrompt,
 	}
 
-	if reviewScope.researchOnly() {
+	if reviewScope.researchOnly() || readOnlyTask {
 		templateVars["DBGuidance"] = BuildManagedWorkflowDBGuidance(DBAccessRead)
+	}
+	if readOnlyTask {
+		templateVars["SecretPrompt"] = ""
 	}
 	// --- Execute ---
 	logger.Info(fmt.Sprintf("🚀 Running background task agent: %q (turns=%d)", name, 1+len(messageSequence)))

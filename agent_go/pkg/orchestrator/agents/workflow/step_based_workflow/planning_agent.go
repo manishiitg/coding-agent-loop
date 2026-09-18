@@ -5997,7 +5997,7 @@ For the full decision playbook and anti-patterns, call read_skill(skills=[{"name
 // registerPlanModificationTools registers all plan modification tools (plan update tools only)
 // Note: human_feedback is NOT registered here because it's already included in WorkspaceTools
 // This shared function is used by planning agent, code exec debugging agent, etc.
-func registerPlanModificationTools(
+func registerNativePlanModificationTools(
 	mcpAgent DefinitionToolRegistrar,
 	workspacePath string,
 	logger loggerv2.Logger,

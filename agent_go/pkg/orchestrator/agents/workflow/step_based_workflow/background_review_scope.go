@@ -49,3 +49,43 @@ func filterResearchReviewTools(tools []llmtypes.Tool, executors map[string]inter
 	}
 	return result, handlers
 }
+
+// Generic read-only execution replaces specialized read-only reviewer launchers.
+type backgroundReadOnlyKey struct{}
+
+func parseBackgroundReadOnlyAccess(args map[string]interface{}, agentType string) (bool, error) {
+	value, present := args["access_mode"]
+	if !present {
+		return false, nil
+	}
+	mode, ok := value.(string)
+	if !ok || (mode != "read_write" && mode != "read_only") {
+		return false, fmt.Errorf("access_mode must be read_write or read_only")
+	}
+	if mode == "read_only" && agentType != "executor" {
+		return false, fmt.Errorf("read_only requires an executor")
+	}
+	return mode == "read_only", nil
+}
+func readOnlyBackgroundToolAllowed(name string) bool {
+	switch name {
+	case "execute_shell_command", "read_workspace_file", "list_workspace_files", "search_workspace_files", "read_skill", "get_api_spec", "get_prompt", "get_resource",
+		"query_workflow_db", "query_workflow_costs", "get_step_prompts", "get_plan_prompt_health", "get_workflow_config", "get_llm_config", "get_cost_summary",
+		"list_executions", "get_sub_agent_conversation", "get_route_description", "get_goal_metrics", "get_pulse_state":
+		return true
+	}
+	return false
+}
+func filterReadOnlyBackgroundTools(tools []llmtypes.Tool, executors map[string]interface{}) ([]llmtypes.Tool, map[string]interface{}) {
+	result := []llmtypes.Tool{}
+	handlers := map[string]interface{}{}
+	for _, tool := range tools {
+		if tool.Function != nil && readOnlyBackgroundToolAllowed(tool.Function.Name) {
+			result = append(result, tool)
+			if handler, ok := executors[tool.Function.Name]; ok {
+				handlers[tool.Function.Name] = handler
+			}
+		}
+	}
+	return result, handlers
+}

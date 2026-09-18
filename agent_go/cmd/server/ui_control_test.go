@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"github.com/gorilla/mux"
 	"io"
@@ -111,8 +112,8 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 		if err := validateUIAction(v.ID, "delete", ""); err == nil {
 			t.Fatal("mutation advertised")
 		}
-		if err := validateUIAction(v.ID, "refresh", ""); err == nil {
-			t.Fatal("unverified refresh advertised")
+		if err := validateUIAction(v.ID, "refresh", ""); err != nil {
+			t.Fatalf("refresh missing for %s: %v", v.ID, err)
 		}
 		if err := validateUIAction(v.ID, "open", "arbitrary target"); err == nil && v.ID != "flow" && v.ID != "report" && v.ID != "files" {
 			t.Fatal("ignored target")
@@ -256,5 +257,39 @@ func TestUIControlStateIsBoundedAndRedacted(t *testing.T) {
 	text := uiJSON(a)
 	if strings.Contains(text, c.token) || strings.Contains(text, c.id) || strings.Contains(text, c.session) {
 		t.Fatal("private binding leaked")
+	}
+}
+
+func TestPerformUIActionCancellationReturnsTerminalReceipt(t *testing.T) {
+	api := &StreamingAPI{}
+	b := api.uiBroker()
+	b.setScope("s", "Workflow/test")
+	if _, err := b.bind("s"); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	args := map[string]interface{}{"view": "flow", "action": "open", "idempotency_key": "cancel-test"}
+	out, err := api.performUIAction(ctx, "s", "Workflow/test", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipt uiAction
+	if err := json.Unmarshal([]byte(out), &receipt); err != nil {
+		t.Fatal(err)
+	}
+	if receipt.Status != "expired" || receipt.Code != "request_cancelled" {
+		t.Fatalf("expected terminal cancellation receipt, got %s", out)
+	}
+	again, err := api.performUIAction(context.Background(), "s", "Workflow/test", args)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retained uiAction
+	if err := json.Unmarshal([]byte(again), &retained); err != nil {
+		t.Fatal(err)
+	}
+	if retained.RequestID != receipt.RequestID || retained.Status != receipt.Status {
+		t.Fatalf("same key created a new action: %s", again)
 	}
 }

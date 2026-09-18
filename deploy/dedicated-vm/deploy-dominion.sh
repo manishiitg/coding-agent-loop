@@ -113,6 +113,8 @@ if ! cmp -s "$SELF_SOURCE" "$SELF_TARGET"; then
   mv "$SELF_TARGET.next" "$SELF_TARGET"
 fi
 sync_repo "mcpagent" "$MCPAGENT"
+bash "$REPO/agent_go/scripts/install-slack-cli.sh" /srv/dominion/tools
+command -v slack >/dev/null
 
 # workspace/ and mcpagent/'s own go.mod carry no `replace` directives (only
 # agent_go/go.mod does), so without a go.work tying all three siblings

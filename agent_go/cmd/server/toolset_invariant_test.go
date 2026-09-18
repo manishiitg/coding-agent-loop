@@ -13,7 +13,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	registered := map[string]string{}
 	add := func(source string, names ...string) {
 		for _, name := range names {
-			registered[name] = source
+			registered[todo_creation_human.ConsolidatedPlanToolName(name)] = source
 		}
 	}
 
@@ -24,7 +24,6 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret",
 		"set_user_secret", "delete_user_secret", "manage_global_secret", "manage_user_access", "manage_workflow_webhook",
 	)
-	add("auto-improvement context tools", "capture_context")
 	// Registered by registerLLMCapabilityDiscoveryTools in multiagent_llm_tools.go,
 	// which is outside the workflow tool pool. Granted to workshop mode by
 	// 385c95158 without a matching entry here, which left this invariant red.
@@ -48,7 +47,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 	)
 	add("workshop review/maintenance tools",
 		"update_step_config", "get_step_prompts", "get_plan_prompt_health",
-		"review_plan", "mark_changelog_artifact_reviewed",
+		"mark_changelog_artifact_reviewed",
 		"review_workflow_timing", "review_workflow_costs", "review_step_code",
 		"get_cost_summary",
 		"run_full_evaluation", "validate_evaluation_plan",
@@ -214,7 +213,7 @@ func TestToolSetInvariants(t *testing.T) {
 		"get_pulse_state", "record_pulse_worklist", "record_pulse_result", "resolve_run_concern",
 		"mark_changelog_artifact_reviewed",
 	} {
-		if !workshop[n] {
+		if !workshop[todo_creation_human.ConsolidatedPlanToolName(n)] {
 			t.Fatalf("workshop allow-list missing expected tool %q", n)
 		}
 	}

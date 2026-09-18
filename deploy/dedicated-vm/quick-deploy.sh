@@ -162,6 +162,9 @@ if [[ "$TARGET" == "all" || "$TARGET" == "agent" ]]; then
   echo "    Updating bare-metal CLI tools (agent-browser, claude, pi)..."
   npm install -g agent-browser@latest @anthropic-ai/claude-code@latest @earendil-works/pi-coding-agent@latest 2>&1 | tail -3
 
+  bash "$REMOTE/src/agent_go/scripts/install-slack-cli.sh" /usr/local
+  command -v slack >/dev/null
+
   # Fix go.mod replace directives
   cd $REMOTE/src/agent_go
   go mod edit -dropreplace=github.com/manishiitg/mcpagent 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go 2>/dev/null; go mod edit -dropreplace=github.com/manishiitg/coding-agent-loop/workspace 2>/dev/null

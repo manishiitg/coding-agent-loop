@@ -115,6 +115,8 @@ fi
 # an outer double-quoted string: bash's paren-matching for a case pattern's
 # bare `)` breaks down in exactly that nesting, misreading the case body as
 # closing the command substitution early.
+# Install the pinned backend Slack CLI in the same persistent tools prefix.
+"${SSH[@]}" "bash -s -- '$REMOTE_TOOLS'" < "$LOCAL_REPO_ROOT/agent_go/scripts/install-slack-cli.sh"
 if [[ "${#CLI_TOOLS[@]}" -gt 0 ]]; then
   cli_install_cmd() {
     case "$1" in
@@ -144,6 +146,7 @@ if [[ "${#CLI_TOOLS[@]}" -gt 0 ]]; then
     export PATH='$REMOTE_TOOLS/bin':\"\$PATH\"
     export PATH='$REMOTE_APP/home/.local/bin':\"\$PATH\"
     command -v agent-browser >/dev/null
+    command -v slack >/dev/null
     $check_lines
     agent-browser --version"
 fi

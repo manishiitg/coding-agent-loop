@@ -123,7 +123,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"delete_project_trigger":              false,
 		"google_workspace_cli":                false,
 
-		"send_slack_message": false, "get_slack_bot_settings": false, "get_slack_bot_credentials": false, "configure_slack_bot": false, "test_slack_bot_connection": false, "create_slack_bot_route": false, "update_slack_bot_route_permission": false, "remove_slack_bot_route": false,
+		"send_slack_message": false, "slack": false, "get_slack_bot_settings": false, "get_slack_bot_credentials": false, "configure_slack_bot": false, "test_slack_bot_connection": false, "create_slack_bot_route": false, "update_slack_bot_route_permission": false, "remove_slack_bot_route": false,
 		"list_gmail_connections":            false,
 		"update_gmail_connection_grants":    false,
 		"query_workflow_db":                 false,

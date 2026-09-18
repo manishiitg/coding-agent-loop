@@ -74,7 +74,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 
 	return referenceSkillSpec{
 		Name:             "builder-reference",
-		DescriptionIntro: "Workflow reference topics.",
+		DescriptionIntro: "Workflow docs.",
 		Intro:            "This skill bundles the workflow workshop's reference documentation. Match it when you need detailed rules, patterns, or contracts for any of the topics below — especially LLM/provider configuration via tools, not by reading or editing `config/` files; connecting a new third-party service/tool, using integration-discovery for catalog and internet search, provider verification, and installation through install_mcp_server (or add_mcp_server for known custom config), never hand-editing managed MCP config; browser/CDP automation; and Gmail/Google Workspace connection scope or permission issues. Read the single matching file under `references/`. You don't need to read more than one unless the action spans multiple topics.",
 	}
 }
@@ -286,7 +286,7 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 	// Generate the compact discovery list from the same references as the
 	// detailed TOC so new topics remain discoverable without duplicating the
 	// entire reference catalog into every agent's initial context.
-	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + ". Files: references/."
+	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + "."
 
 	return &llmtypes.Skill{
 		Name:            spec.Name,

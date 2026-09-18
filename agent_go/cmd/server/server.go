@@ -2523,6 +2523,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	botManager.SetProfileTurnFunc(api.botProfileTurn)
 	botManager.SetWorkflowTurnFunc(api.botWorkflowTurn)
 	virtualtools.SetSlackMessageHandler(api.sendSlackMessageFromTool)
+	virtualtools.SetSlackCLIHandler(api.slackCLIFromTool)
 	if slackSvc != nil {
 		slackSvc.SetTriggerHandler(api.dispatchSlackTrigger)
 	}

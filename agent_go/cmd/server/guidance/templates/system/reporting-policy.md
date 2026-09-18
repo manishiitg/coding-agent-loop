@@ -132,7 +132,7 @@ window.addEventListener('report:focus', function () {
 });
 ```
 
-`open_workspace_view(view="report", target="<tab>")` sets `report.focus` and
+`perform_ui_action(action="open", view="report", target="<tab>")` sets `report.focus` and
 fires this event. It is optional — a Dashboard that ignores it simply stays on
 its current tab — but a tabbed Dashboard that honors it lets the agent say
 "here is the answer" and land the reader on the right tab.

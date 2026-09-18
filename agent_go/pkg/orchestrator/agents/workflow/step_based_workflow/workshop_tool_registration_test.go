@@ -223,7 +223,7 @@ func TestBackgroundTaskGetsWorkshopMutationToolDefinitions(t *testing.T) {
 	// definitions that used to disappear completely.
 	for _, name := range []string{
 		"get_workflow_command_guidance",
-		"update_message_sequence_step",
+		"update_step",
 		"update_step_config",
 		"update_schedule",
 		"add_evaluation_step",

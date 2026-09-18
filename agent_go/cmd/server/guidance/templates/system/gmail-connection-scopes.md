@@ -109,7 +109,7 @@ and does not change what the account can do yet. It returns a
 
 1. Tell the user to open `reconnect_url` and complete Google's consent
    screen. Nothing takes effect until they do.
-2. Call `open_workspace_view(view="bots")` right after, so the Sending
+2. Call `perform_ui_action(action="open", view="bots")` right after, so the Sending
    accounts panel is visible and they can see the updated request (and
    click Reconnect there instead, if they'd rather not use the link).
 

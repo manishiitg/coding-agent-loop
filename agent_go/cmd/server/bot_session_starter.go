@@ -278,7 +278,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("follow-up failed: status %d: %s", resp.StatusCode, string(respBody))
+		return services.NewBotSubmissionError(resp.StatusCode, respBody)
 	}
 
 	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {

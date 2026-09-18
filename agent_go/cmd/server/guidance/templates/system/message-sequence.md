@@ -1,3 +1,5 @@
+**Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
+
 **Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
 
 ## MESSAGE SEQUENCE — SAME-CONTEXT CONVERSATIONAL WORK
@@ -15,7 +17,7 @@ Supported item types:
 - `prevalidation`: a deterministic backend validation gate with corrective feedback sent to the same conversation.
 - `scripted`: a finite batch of saved regular scripts; the runtime executes and validates every call before advancing, without creating agent sessions.
 
-`type: "code"` was removed in workflow contract v1.0.10. Deterministic code lives in a saved `regular` step definition — the type alone makes it scripted; create it with `add_scripted_step`, or move existing conversational work there with `change_step_type` — with its script at `<script-dir>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
+`type: "code"` was removed in workflow contract v1.0.10. Deterministic code lives in a saved `regular` step definition — the type alone makes it scripted; create it with `add_step`, or move existing conversational work there with `change_step_type` — with its script at `<script-dir>/main.py`. Connect conversational and scripted steps through explicit `context_dependencies`, `context_output`, database contracts, and validation.
 
 Preferred split when deterministic data is needed:
 
@@ -66,11 +68,11 @@ new mode field or agentic delegation tool for sequences.
 
 ## SCRIPTED BATCHES
 
-Create saved script definitions with `add_scripted_step(is_orphan=true, ...)`,
+Create saved script definitions with `add_step(is_orphan=true, ...)`,
 using `insert_after_step_id: ""`. Declare `script_parameters`, explicit dependencies,
 and a non-empty `validation_schema`; author and test `<script-dir>/main.py` in
 Workshop. An orphan is callable here only if it is a scripted regular step.
-Then reference it from `add_message_sequence_step` / `update_message_sequence_step`:
+Then reference it from `add_step` / `update_step`:
 
 ```json
 {

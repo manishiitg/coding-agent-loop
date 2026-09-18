@@ -16,7 +16,7 @@ type collisionToolRegistrar struct {
 
 func ScheduleGuardedTool(name string) bool {
 	switch name {
-	case "execute_step", "run_full_workflow", "run_full_evaluation", "debug_step", "convert_routing_branch_step_type",
+	case "add_step", "update_step", "manage_step_route", "manage_group", "maintain_plan", "execute_step", "run_full_workflow", "run_full_evaluation", "debug_step", "convert_routing_branch_step_type",
 		"create_plan", "change_step_type", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"add_scripted_step", "add_message_sequence_step", "add_routing_step", "add_branch_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route", "add_orchestrator_step", "add_orchestrator_route",

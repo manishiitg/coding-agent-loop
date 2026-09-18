@@ -13,7 +13,7 @@ managed commands, CDP policies, media defaults, and capture rules below apply to
 agent-browser sessions. Do not apply them to a test runner's private Chromium.
 
 In an interactive Builder with workspace-view tools, call
-`open_workspace_view(view="browser")` when starting browser work so the user
+`perform_ui_action(action="open", view="browser")` when starting browser work so the user
 can watch the live server browser in the right-hand pane. Only an `applied`
 receipt confirms the UI opened. Open the view once; do not switch it back after
 every command if the user chose another view. The live stream follows navigation

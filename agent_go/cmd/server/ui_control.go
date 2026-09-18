@@ -194,10 +194,10 @@ func validateUIActionForContract(contract uiContract, view, action, target strin
 		if !found {
 			return fmt.Errorf("unsupported_action")
 		}
-		if action == "open" && target == "" {
+		if (action == "open" || action == "refresh") && target == "" {
 			return nil
 		}
-		if action == "open" && strings.TrimSpace(target) != "" && len(target) <= 1024 {
+		if (action == "open" || action == "refresh") && strings.TrimSpace(target) != "" && len(target) <= 1024 {
 			switch v.TargetKind {
 			case "plan_step_id", "report_tab":
 				return nil
@@ -376,4 +376,13 @@ func (b *uiControlBroker) result(session, id string) (uiAction, error) {
 		return uiAction{}, fmt.Errorf("unknown_request")
 	}
 	return *a, nil
+}
+
+// expirePendingAction makes the synchronous tool return a terminal receipt.
+func (b *uiControlBroker) expirePendingAction(session, id, code string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if a := b.actions[id]; a != nil && a.session == session {
+		b.finish(a, "expired", code)
+	}
 }

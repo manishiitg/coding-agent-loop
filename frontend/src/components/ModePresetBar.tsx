@@ -26,6 +26,7 @@ import WorkspaceTopBarControls from './WorkspaceTopBarControls'
 import ProvidersControl from './topbar/ProvidersControl'
 import { TopBarEntitySelector } from './topbar/TopBarEntitySelector'
 import { GlobalActivityButton } from './topbar/GlobalActivityButton'
+import { WorkflowIcon } from './workflow/WorkflowIcon'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import {
   LLM_DISCOVERY_ONBOARDING_CLEARED_EVENT,
@@ -42,6 +43,7 @@ const workflowManifestToPreset = (manifest: WorkflowManifest, workspacePath: str
   return {
     id: manifest.id || workspacePath,
     label: manifest.label || workspacePath.split('/').pop() || workspacePath,
+    icon: manifest.icon,
     createdAt: new Date(manifest.created_at || 0).getTime(),
     agentMode: 'workflow',
     selectedFolder: {
@@ -350,7 +352,8 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
     browserMode?: 'none' | 'auto' | 'headless' | 'cdp',
-    cdpPorts?: number[]
+    cdpPorts?: number[],
+    icon?: string
   ) => {
     try {
       const effectiveMode = editingPreset ? editingPreset.agentMode : agentMode
@@ -371,6 +374,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
         const payload = {
           workspace_path: workspacePath,
           label,
+          icon: icon?.trim() || '',
           capabilities: {
             selected_servers: dedupedSelectedServers || [],
             selected_tools: selectedTools || [],
@@ -404,7 +408,8 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
         selectedSecrets,
         selectedGlobalSecretNames,
         browserMode,
-        cdpPorts
+        cdpPorts,
+        icon
       )
 
       // Apply the preset immediately if it's a new one
@@ -581,8 +586,12 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                   return (
                     <TopBarEntitySelector
                       label={activePreset?.label}
+                      leading={activePreset ? <WorkflowIcon icon={activePreset.icon} label={activePreset.label} /> : undefined}
+                      compactOnNarrow
                       placeholder="Select Automation"
-                      title={currentSessionStatusLabel ? `${activePreset?.label ?? ''} · ${currentSessionStatusLabel}` : undefined}
+                      title={activePreset?.label
+                        ? (currentSessionStatusLabel ? `${activePreset.label} · ${currentSessionStatusLabel}` : activePreset.label)
+                        : 'Select Automation'}
                       open={showPresetDropdown}
                       onToggle={() => {
                         if (isGlobalPage) returnToWorkspace()
@@ -666,7 +675,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                                     }`}
                                   >
                                     <div className="flex items-center gap-2">
-                                      <div className="w-2 h-2 shrink-0 bg-green-500 rounded-full"></div>
+                                      <WorkflowIcon icon={preset.icon} label={preset.label} />
                                       <div className="flex-1">
                                         <div className="font-medium">{preset.label}</div>
                                       </div>

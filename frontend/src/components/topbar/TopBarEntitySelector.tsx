@@ -16,6 +16,7 @@ type TopBarEntitySelectorProps = {
   addTestId?: string
   badge?: ReactNode
   leading?: ReactNode
+  compactOnNarrow?: boolean
   middleControl?: ReactNode
   children: ReactNode
   dataTour?: string
@@ -38,6 +39,7 @@ export function TopBarEntitySelector({
   addTestId,
   badge,
   leading,
+  compactOnNarrow = false,
   middleControl,
   children,
   dataTour,
@@ -73,11 +75,12 @@ export function TopBarEntitySelector({
           onClick={onToggle}
           aria-haspopup="menu"
           aria-expanded={open}
+          aria-label={label || placeholder}
           className="flex min-w-0 items-center gap-2 px-3 py-1 transition-colors hover:bg-gray-100 dark:hover:bg-slate-700"
           title={title}
         >
           {leading ?? <div className={`h-2 w-2 shrink-0 rounded-full ${active ? 'bg-green-500' : 'bg-gray-400'}`} />}
-          <span className={`block max-w-[190px] truncate whitespace-nowrap text-sm font-medium ${active ? 'text-gray-700 dark:text-gray-300' : 'text-gray-500 dark:text-gray-400'}`}>
+          <span className={`${compactOnNarrow ? 'hidden min-[1180px]:block' : 'block'} max-w-[190px] truncate whitespace-nowrap text-sm font-medium ${active ? 'text-gray-700 dark:text-gray-300' : 'text-gray-500 dark:text-gray-400'}`}>
             {label || placeholder}
           </span>
           {badge}

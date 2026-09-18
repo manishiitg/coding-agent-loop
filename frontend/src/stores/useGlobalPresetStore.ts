@@ -21,6 +21,7 @@ function buildWorkflowPresetsFromManifests(): CustomPreset[] {
     return {
       id: wf.manifest.id || wf.workspace_path,
       label: wf.manifest.label || wf.workspace_path.split('/').pop() || wf.workspace_path,
+      icon: wf.manifest.icon,
       createdAt: new Date(wf.manifest.created_at || 0).getTime(),
       agentMode: 'workflow' as const,
       selectedFolder: {
@@ -73,7 +74,7 @@ interface GlobalPresetState {
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
-  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => Promise<CustomPreset | null>
+  savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[], icon?: string) => Promise<CustomPreset | null>
   duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
 
   // Actions for preset application
@@ -156,7 +157,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         return refreshPromise
       },
       
-      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, selectedSecrets, selectedGlobalSecretNames, browserMode, cdpPorts) => {
+      savePreset: async (label, query, selectedServers, selectedTools, selectedSkills, agentMode, selectedFolder, llmConfig, useCodeExecutionMode, id, selectedSecrets, selectedGlobalSecretNames, browserMode, cdpPorts, icon) => {
         const toolsForBackend = selectedTools?.filter(t => !t.endsWith(':*')) || []
         const existingPreset = id ? get().workflowPresets.find(p => p.id === id) : undefined
         const effectiveCDPPorts = cdpPorts ?? existingPreset?.cdpPorts ?? []
@@ -220,6 +221,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             await workflowManifestApi.updateWorkflowManifest({
               workspace_path: selectedFolder.filepath,
               label,
+              icon: icon === undefined ? (existingPreset?.icon || '') : icon.trim(),
               capabilities: {
                 selected_servers: selectedServers || [],
                 selected_tools: toolsForBackend,
@@ -236,6 +238,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             // Create new workflow manifest
             await workflowManifestApi.createWorkflowManifest({
               label,
+              icon: icon?.trim() || undefined,
               workspace_path: selectedFolder.filepath,
               capabilities: {
                 selected_servers: selectedServers || [],
@@ -423,7 +426,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             originalPreset.selectedSecrets, // Copy secret selections
             originalPreset.selectedGlobalSecretNames, // Copy global secret selection
             originalPreset.browserMode,
-            originalPreset.cdpPorts
+            originalPreset.cdpPorts,
+            originalPreset.icon
           )
           
           // If original preset had a workflow, create a new workflow for the duplicated preset

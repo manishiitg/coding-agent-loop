@@ -89,7 +89,9 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     useCodeExecutionMode?: boolean,
     selectedSecrets?: string[],
     selectedGlobalSecretNames?: string[] | null,
-    browserMode?: 'none' | 'auto' | 'headless' | 'cdp'
+    browserMode?: 'none' | 'auto' | 'headless' | 'cdp',
+    cdpPorts?: number[],
+    icon?: string
   ) => {
     // Set the agent mode based on the mode category
     const presetAgentMode = getAgentModeFromCategory(modeCategory as ModeCategory) as 'multi-agent' | 'workflow'
@@ -103,7 +105,7 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     
     try {
       // Create the preset via manifest and get the returned preset object
-      const newPreset = await savePreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, undefined, selectedSecrets, selectedGlobalSecretNames, browserMode)
+      const newPreset = await savePreset(label, query, selectedServers, selectedTools, selectedSkills, presetAgentMode, selectedFolder, llmConfig, useCodeExecutionMode, undefined, selectedSecrets, selectedGlobalSecretNames, browserMode, cdpPorts, icon)
       
       if (!newPreset) {
         console.error('Failed to create preset')

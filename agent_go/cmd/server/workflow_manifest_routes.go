@@ -91,6 +91,7 @@ func (api *StreamingAPI) handleGetWorkflowManifest(w http.ResponseWriter, r *htt
 
 type CreateWorkflowManifestRequest struct {
 	Label                     string                     `json:"label"`
+	Icon                      string                     `json:"icon,omitempty"`
 	WorkspacePath             string                     `json:"workspace_path"`
 	Capabilities              *WorkflowCapabilities      `json:"capabilities,omitempty"`
 	ExecutionDefaults         *WorkflowExecutionDefaults `json:"execution_defaults,omitempty"`
@@ -150,6 +151,7 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 
 	// Build manifest
 	manifest := NewWorkflowManifest(req.Label)
+	manifest.Icon = strings.TrimSpace(req.Icon)
 	manifest.CreatedBy = GetUserIDFromContext(r.Context())
 	if manifest.CreatedBy != "" {
 		manifest.Access = &WorkflowAccess{Owners: []string{manifest.CreatedBy}, Readers: []string{}}
@@ -179,7 +181,7 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 // --- Update manifest ---
 
 type UpdateWorkflowManifestRequest struct {
-	KnowledgebaseSources       *[]workflowtypes.KnowledgebaseSource         `json:"knowledgebase_sources,omitempty"`
+	KnowledgebaseSources *[]workflowtypes.KnowledgebaseSource `json:"knowledgebase_sources,omitempty"`
 	// KBWriteGrants replaces the complete list of other workflow IDs allowed to
 	// write into THIS workflow's knowledgebase/notes/ via their own "write"
 	// knowledgebase_source. The consent step a consumer's write source depends
@@ -187,6 +189,7 @@ type UpdateWorkflowManifestRequest struct {
 	KBWriteGrants              *[]string                                    `json:"kb_write_grants,omitempty"`
 	WorkspacePath              string                                       `json:"workspace_path"`
 	Label                      *string                                      `json:"label,omitempty"`
+	Icon                       *string                                      `json:"icon,omitempty"`
 	Capabilities               *WorkflowCapabilities                        `json:"capabilities,omitempty"`
 	ExecutionDefaults          *WorkflowExecutionDefaults                   `json:"execution_defaults,omitempty"`
 	Schedules                  *[]WorkflowSchedule                          `json:"schedules,omitempty"`
@@ -332,6 +335,9 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	// Apply partial updates
 	if req.Label != nil {
 		manifest.Label = *req.Label
+	}
+	if req.Icon != nil {
+		manifest.Icon = strings.TrimSpace(*req.Icon)
 	}
 	if req.Capabilities != nil {
 		manifest.Capabilities = mergeWorkflowCapabilitiesUpdate(manifest.Capabilities, req.Capabilities)

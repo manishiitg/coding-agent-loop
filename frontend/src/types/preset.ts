@@ -4,6 +4,7 @@ import type { PresetLLMConfig } from '../services/api-types';
 export interface CustomPreset {
   id: string;
   label: string;
+  icon?: string;
   query?: string;
   createdAt: number;
   selectedServers?: string[];
@@ -24,6 +25,7 @@ export interface CustomPreset {
 export interface PredefinedPreset {
   id: string
   label: string
+  icon?: string
   query?: string
   selectedServers?: string[];
   selectedTools?: string[]; // NEW: Array of "server:tool" strings

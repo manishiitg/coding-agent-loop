@@ -21,6 +21,8 @@ import {
 } from '../utils/globalActivityMonitorStatus'
 import { workflowTriggerLabel, isInternalChildSession } from '../utils/workflowSessionKinds'
 import { isWorkProductSession, openGlobalActivitySession, openGlobalTab } from '../utils/globalProductNavigation'
+import { WorkflowIcon } from './workflow/WorkflowIcon'
+import type { CustomPreset } from '../types/preset'
 
 const MAX_INLINE_ACTIVITY_ITEMS = 2
 
@@ -153,6 +155,29 @@ function activityKeysForTab(tab: ChatTab): string[] {
   return keys
 }
 
+function workflowPresetForActivity(
+  presets: CustomPreset[],
+  session?: ActiveSessionInfo,
+  tab?: ChatTab,
+): CustomPreset | undefined {
+  const presetID = normalizedActivityIdentity(session?.preset_query_id || tab?.metadata?.presetQueryId)
+  if (presetID) {
+    const byID = presets.find(preset => normalizedActivityIdentity(preset.id) === presetID)
+    if (byID) return byID
+  }
+
+  const workspacePath = normalizedActivityIdentity(session?.workspace_path)
+  if (workspacePath) {
+    const byPath = presets.find(preset => {
+      const presetPath = normalizedActivityIdentity(preset.selectedFolder?.filepath)
+      return presetPath && (presetPath === workspacePath || workspacePath.endsWith(`/${presetPath}`))
+    })
+    if (byPath) return byPath
+  }
+
+  return undefined
+}
+
 export const GlobalActivityMonitor: React.FC = () => {
   const activeSessionsCache = useChatStore(state => state.activeSessionsCache)
   const getActiveSessions = useChatStore(state => state.getActiveSessions)
@@ -161,10 +186,12 @@ export const GlobalActivityMonitor: React.FC = () => {
   const selectedModeCategory = useModeStore(state => state.selectedModeCategory)
   const showProviders = useLLMStore(state => state.showLLMModal)
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
-  const currentWorkflowPresetName = useGlobalPresetStore(state => {
+  const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
+  const currentWorkflowPreset = useGlobalPresetStore(state => {
     const presetId = state.activePresetIds.workflow
-    return state.workflowPresets.find(preset => preset.id === presetId)?.label ?? null
+    return state.workflowPresets.find(preset => preset.id === presetId) ?? null
   })
+  const currentWorkflowPresetName = currentWorkflowPreset?.label ?? null
 
   useEffect(() => {
     let disposed = false
@@ -305,11 +332,12 @@ export const GlobalActivityMonitor: React.FC = () => {
     // A workflow pill represents the workflow, not whichever reviewer/step
     // most recently emitted activity. Resolve the preset again and let the
     // canonical workflow navigation path choose its root main-agent session.
+    const workflowPreset = workflowPresetForActivity(workflowPresets, session)
     await openGlobalActivitySession(session, {
-      title: sessionTitle(session, undefined, currentWorkflowPresetName),
+      title: sessionTitle(session, undefined, workflowPreset?.label),
       source: 'global-activity-monitor',
     })
-  }, [currentWorkflowPresetName])
+  }, [workflowPresets])
 
   if (activityItems.length === 0) {
     return null
@@ -328,9 +356,10 @@ export const GlobalActivityMonitor: React.FC = () => {
       {inlineActivityItems.map((item, i) => {
         if (item.type === 'builder-tab') {
           const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
-          const builderWorkflowName = (item.tab.name && item.tab.name !== 'Automation Builder')
+          const builderPreset = workflowPresetForActivity(workflowPresets, undefined, item.tab) ?? currentWorkflowPreset ?? undefined
+          const builderWorkflowName = builderPreset?.label || ((item.tab.name && item.tab.name !== 'Automation Builder')
             ? item.tab.name
-            : currentWorkflowPresetName
+            : currentWorkflowPresetName)
 
           return (
             <React.Fragment key={item.id}>
@@ -344,9 +373,7 @@ export const GlobalActivityMonitor: React.FC = () => {
                 {builderBusy
                   ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                   : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-                <span className="whitespace-nowrap">
-                  {shortText(builderWorkflowName || 'builder', nameCharLimit)}
-                </span>
+                <WorkflowIcon icon={builderPreset?.icon} label={builderWorkflowName || 'Automation'} />
               </button>
             </React.Fragment>
           )
@@ -354,7 +381,10 @@ export const GlobalActivityMonitor: React.FC = () => {
 
         const session = item.session
         const tab = Object.values(chatTabs).find(t => t.sessionId === session.session_id)
-        const fallbackName = selectedModeCategory === 'workflow' ? currentWorkflowPresetName : null
+        const workflowPreset = isWorkflowSession(session)
+          ? workflowPresetForActivity(workflowPresets, session, tab)
+          : undefined
+        const fallbackName = workflowPreset?.label || null
         const tone = statusTone(session)
         const title = displaySessionTitle(session, tab, undefined, fallbackName)
         const type = activityType(session)
@@ -383,7 +413,9 @@ export const GlobalActivityMonitor: React.FC = () => {
                   : tone === 'paused'
                     ? <Pause className="w-3.5 h-3.5 opacity-50" />
                     : <Clock className="w-3.5 h-3.5 opacity-50" />}
-              <span className="whitespace-nowrap">{name}</span>
+              {isWorkflowSession(session)
+                ? <WorkflowIcon icon={workflowPreset?.icon} label={title} />
+                : <span className="whitespace-nowrap">{name}</span>}
               <ActivityTypeIcon type={type} />
             </button>
           </React.Fragment>

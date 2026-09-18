@@ -29,9 +29,10 @@ export interface WorkflowManifestState {
   replaceWorkflowManifest: (workspacePath: string, manifest: WorkflowManifest) => void
 
   // CRUD
-  createWorkflow: (label: string, workspacePath: string, capabilities?: Partial<WorkflowCapabilities>) => Promise<WorkflowManifest>
+  createWorkflow: (label: string, workspacePath: string, capabilities?: Partial<WorkflowCapabilities>, icon?: string) => Promise<WorkflowManifest>
   updateWorkflow: (workspacePath: string, updates: {
     label?: string
+    icon?: string
     query?: string
     capabilities?: WorkflowCapabilities
     execution_defaults?: WorkflowExecutionDefaults
@@ -103,9 +104,10 @@ export const useWorkflowManifestStore = create<WorkflowManifestState>((set, get)
     })
   },
 
-  createWorkflow: async (label, workspacePath, capabilities) => {
+  createWorkflow: async (label, workspacePath, capabilities, icon) => {
     const response = await workflowManifestApi.createWorkflowManifest({
       label,
+      icon,
       workspace_path: workspacePath,
       capabilities,
     })

@@ -3238,6 +3238,7 @@ export interface WorkflowManifest {
   id: string
   version?: string
   label: string
+  icon?: string
   capabilities: WorkflowCapabilities
   execution_defaults: WorkflowExecutionDefaults
   ownership: WorkflowOwnership
@@ -3380,6 +3381,7 @@ export interface GetWorkflowManifestResponse {
 
 export interface CreateWorkflowManifestRequest {
   label: string
+  icon?: string
   workspace_path: string
   capabilities?: Partial<WorkflowCapabilities>
   execution_defaults?: Partial<WorkflowExecutionDefaults>
@@ -3389,6 +3391,7 @@ export interface CreateWorkflowManifestRequest {
 export interface UpdateWorkflowManifestRequest {
   workspace_path: string
   label?: string
+  icon?: string
   capabilities?: WorkflowCapabilities
   execution_defaults?: WorkflowExecutionDefaults
   ownership?: WorkflowOwnership

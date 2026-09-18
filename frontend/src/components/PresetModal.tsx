@@ -28,7 +28,7 @@ import { useChatStore } from '../stores/useChatStore';
 interface PresetModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[]) => boolean | void | Promise<boolean | void>;
+  onSave: (label: string, query: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[], icon?: string) => boolean | void | Promise<boolean | void>;
   editingPreset?: CustomPreset | null;
   availableServers?: string[];
   hideAgentModeSelection?: boolean;
@@ -49,6 +49,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
   onDeleteWorkflow,
 }) => {
   const [label, setLabel] = useState('');
+  const [icon, setIcon] = useState('');
   const [query, setQuery] = useState('');
   const [selectedServers, setSelectedServers] = useState<string[]>([]);
   const [selectedTools, setSelectedTools] = useState<string[]>([]);
@@ -214,6 +215,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       console.log('[PresetModal] Selected tools from preset:', editingPreset.selectedTools);
       console.log('[PresetModal] Selected skills from preset:', editingPreset.selectedSkills);
       setLabel(editingPreset.label);
+      setIcon(editingPreset.icon || '');
       setQuery(editingPreset.query || '');
       setSelectedServers(editingPreset.selectedServers || []);
       setSelectedTools(editingPreset.selectedTools || []); // NEW
@@ -252,6 +254,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
       setShowWorkflowLLMAdvanced(hasAdvancedWorkflowLLMConfig(presetLLM));
     } else {
       setLabel('');
+      setIcon('');
       setQuery('');
       setSelectedServers([]);
       setSelectedTools([]); // NEW
@@ -427,7 +430,8 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
         selectedSecrets, // Secret names for workflow injection
         selectedGlobalSecrets, // Per-preset global secret selection (null=all)
         browserMode, // Browser mode: none|auto|headless|cdp
-        cdpPorts
+        cdpPorts,
+        icon.trim()
       );
       if (saved === false) return;
       manifestSaved = true;
@@ -446,7 +450,7 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
     } finally {
       setIsSavingPreset(false);
     }
-  }, [label, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, unsavedCredentialProvider]);
+  }, [label, icon, query, effectiveAgentMode, selectedFolder, selectedServers, selectedTools, selectedSkills, selectedSecrets, selectedGlobalSecrets, llmConfig, builderLLM, effectiveBuilderLLM, maintenanceLLM, effectiveMaintenanceLLM, pulseLLM, effectivePulseLLM, browserMode, cdpPort, editingPreset, onSave, onClose, defaultAgentLLM, effectiveTier1LLM, effectiveTier2LLM, effectiveTier3LLM, showWorkflowLLMAdvanced, unsavedCredentialProvider]);
 
   // Close modal on escape key
   useEffect(() => {
@@ -547,18 +551,38 @@ const PresetModal: React.FC<PresetModalProps> = React.memo(({
                user's request: with a deployment-wide LLM lock it only
                confused people.) */
             <div className="mx-auto w-full max-w-lg space-y-4">
+              <div className="grid grid-cols-[72px_minmax(0,1fr)] gap-3">
+                <div>
+                  <label htmlFor="preset-icon" className="mb-2 block text-sm font-medium">
+                    Icon
+                  </label>
+                  <Input
+                    id="preset-icon"
+                    value={icon}
+                    onChange={(e) => setIcon(Array.from(e.target.value).slice(0, 8).join(''))}
+                    placeholder="⚙️"
+                    aria-describedby="preset-icon-help"
+                    className="text-center text-lg"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
+                    Automation Name
+                  </label>
+                  <Input
+                    id="preset-label"
+                    value={label}
+                    onChange={(e) => setLabel(e.target.value)}
+                    placeholder="Enter automation name..."
+                    autoFocus
+                    required
+                  />
+                </div>
+              </div>
               <div>
-                <label htmlFor="preset-label" className="block text-sm font-medium mb-2">
-                  Automation Name
-                </label>
-                <Input
-                  id="preset-label"
-                  value={label}
-                  onChange={(e) => setLabel(e.target.value)}
-                  placeholder="Enter automation name..."
-                  autoFocus
-                  required
-                />
+                <p id="preset-icon-help" className="text-xs text-gray-500 dark:text-gray-400">
+                  Optional. Use an emoji or short symbol; otherwise the automation’s initial is used.
+                </p>
                 {!editingPreset && (
                   <p className="mt-2 text-xs text-gray-500 dark:text-gray-400">
                     Saved under <span className="font-mono">{selectedFolder?.filepath || 'Workflow/workflow'}</span>. Models, secrets and connectors are set up inside the workflow.

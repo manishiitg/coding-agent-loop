@@ -55,8 +55,8 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
     savesViaManifest: true,
   },
   mcp: {
-    title: 'Workflow MCP',
-    description: 'Select the MCP servers and tools this workflow may use.',
+    title: 'Integrations',
+    description: 'Select the integrations and tools this workflow may use.',
     // Selection changes persist immediately, so this long directory can use
     // one uninterrupted scroll surface without a fixed Save footer.
     savesViaManifest: false,
@@ -276,7 +276,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
               ? handleRefreshServers
               : () => useWorkflowStore.getState().refreshWorkspaceView()}
             refreshing={section === 'mcp' && refreshingServers}
-            refreshLabel={section === 'mcp' ? 'Refresh connected MCP servers' : `Refresh ${copy.title}`}
+            refreshLabel={section === 'mcp' ? 'Refresh connected integrations' : `Refresh ${copy.title}`}
           />
         </div>
       </header>}

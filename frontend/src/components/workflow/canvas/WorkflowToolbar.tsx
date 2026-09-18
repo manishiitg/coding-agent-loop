@@ -40,7 +40,7 @@ const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
   skills: 'Skills',
   secrets: 'Secrets',
-  mcp: 'MCP servers',
+  mcp: 'Integrations',
   llm: 'LLM',
   bots: 'Connectors',
   email: 'Gmail',
@@ -486,7 +486,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openToolbarMenu === 'setup'}
             onToggle={() => toggleToolbarMenu('setup')}
-            title="Setup: playbooks, skills, secrets, MCP servers, LLM, connectors, Gmail, folders and access"
+            title="Setup: playbooks, skills, secrets, integrations, LLM, connectors, Gmail, folders and access"
           >
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
               const active = workflowWorkspaceView === id

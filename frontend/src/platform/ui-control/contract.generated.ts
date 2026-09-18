@@ -168,7 +168,7 @@ export const UI_CONTROL_CONTRACT = {
     },
     {
       "id": "mcp",
-      "label": "Workflow MCP servers",
+      "label": "Integrations",
       "actions": [
         "open"
       ],

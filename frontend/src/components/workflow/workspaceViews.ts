@@ -104,7 +104,7 @@ const VIEWS = [
   { id: 'playbooks', kind: 'capability', label: 'Workflow playbooks', icon: BookMarked, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'skills', kind: 'capability', label: 'Workflow skills', icon: Puzzle, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'secrets', kind: 'capability', label: 'Workflow secrets', icon: KeyRound, toolbarGroup: 'capabilities', pane: true },
-  { id: 'mcp', kind: 'capability', label: 'Workflow MCP servers', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
+  { id: 'mcp', kind: 'capability', label: 'Integrations', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
   { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
   { id: 'email', kind: 'capability', label: 'Gmail', icon: Mail, toolbarGroup: 'capabilities', pane: true },

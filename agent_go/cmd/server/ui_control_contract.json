@@ -167,7 +167,7 @@
     },
     {
       "id": "mcp",
-      "label": "Workflow MCP servers",
+      "label": "Integrations",
       "actions": [
         "open"
       ],

@@ -73,7 +73,7 @@ const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIc
 const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'skills', label: 'Skills', icon: Puzzle },
   { id: 'secrets', label: 'Secrets', icon: KeyRound },
-  { id: 'mcp', label: 'MCP servers', icon: Server },
+  { id: 'mcp', label: 'Integrations', icon: Server },
   { id: 'models', label: 'Agent configuration', icon: BrainCircuit },
   { id: 'email', label: 'Gmail', icon: Mail },
   { id: 'bots', label: 'Connectors', icon: Bot },
@@ -113,7 +113,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
           <WorkspaceToolbarGroup label="Views" hideLabel open={openGroup === 'views'} onToggle={() => setOpenGroup('views')} title="Views: files, browser, costs, schedules and database">
             <div className="inline-flex items-center gap-0.5">{visibleViews.filter(item => item.id !== 'dashboard').map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
-          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, MCP servers, models, bots, Gmail and folders">
+          <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup('setup')} title="Setup: skills, secrets, integrations, models, connectors, Gmail and folders">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>
         </div>
@@ -213,7 +213,7 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
     try {
       await onSelectedServersChange(servers)
     } catch (cause) {
-      store.addToast(cause instanceof Error ? cause.message : 'Could not save project MCP servers.', 'error')
+      store.addToast(cause instanceof Error ? cause.message : 'Could not save project integrations.', 'error')
       return
     }
     for (const tab of Object.values(store.chatTabs)) {
@@ -230,7 +230,7 @@ function WorkMCPPanel({ tabId, workspacePath, onSelectedServersChange }: { tabId
     <div className="flex h-full min-h-0 flex-col p-4">
       <div className="mb-3 flex shrink-0 items-center justify-between gap-3 border-b border-border pb-3">
         <div>
-          <h2 className="text-sm font-semibold text-foreground">Project MCP servers</h2>
+          <h2 className="text-sm font-semibold text-foreground">Integrations</h2>
           <p className="mt-0.5 text-xs text-muted-foreground">Choose connected servers for this project, or connect another one.</p>
         </div>
         <ServerSelectionDropdown

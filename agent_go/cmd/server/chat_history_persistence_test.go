@@ -2758,6 +2758,11 @@ func TestAgentProfileAllowsRetainedLiveInputRequiresMatchingPersistedKey(t *test
 	if api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
 		t.Fatal("stale product runtime must not accept retained live input")
 	}
+	api.launchedAgentProfileKeyBySession = map[string]string{"product-chat": "profile-sha256:current"}
+	if !api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
+		t.Fatal("preceding completed-turn snapshot overrode the current foreground admission")
+	}
+	api.launchedAgentProfileKeyBySession = nil
 	writeRuntime("profile-sha256:current")
 	if !api.agentProfileAllowsRetainedLiveInput("user-1", "product-chat", workspace, true) {
 		t.Fatal("matching product runtime should accept retained live input")
@@ -2994,5 +2999,35 @@ func TestBoundedChatHistoryTailRetainsNewestOversizedMessage(t *testing.T) {
 	part, ok := tail[0].Parts[0].(llmtypes.TextContent)
 	if !ok || len(part.Text) != 4096 {
 		t.Fatalf("tail did not retain the newest oversized message: %#v", tail[0])
+	}
+}
+
+func TestAgentProfileRetainedAdmissionUsesLaunchedFingerprint(t *testing.T) {
+	api := &StreamingAPI{
+		lastAgentProfileKeyBySession:     map[string]string{"crew": "new-linear-scope"},
+		launchedAgentProfileKeyBySession: map[string]string{"crew": "new-linear-scope"},
+		agentCancelFuncs:                 map[string]context.CancelFunc{"crew": func() {}},
+	}
+	// Persistence still belongs to the previous completed turn. The foreground
+	// agent's actual admission is authoritative until its own turn is saved.
+	if !api.agentProfileAllowsRetainedLiveInput("user", "crew", "missing", true) {
+		t.Fatal("rebuilt foreground session restarted on unchanged follow-up")
+	}
+	api.lastAgentProfileKeyBySession["crew"] = "new-notion-scope"
+	if api.agentProfileAllowsRetainedLiveInput("user", "crew", "missing", true) {
+		t.Fatal("running session accepted a changed MCP scope")
+	}
+	if api.launchedAgentProfileKeyBySession["crew"] != "new-linear-scope" {
+		t.Fatal("new request overwrote launched admission")
+	}
+}
+
+func TestAgentProfileRuntimeKeepsActualTurnAdmission(t *testing.T) {
+	api := &StreamingAPI{lastAgentProfileKeyBySession: map[string]string{"crew": "next-request-scope"}}
+	agent := &mcpagent.Agent{}
+	api.agentProfileAdmissions.Store(agent, "scope-used-by-this-turn")
+	runtime := api.captureChatHistoryAgentRuntime("crew", "muse-cli", "test-model", "Chats/Work/projects/example", agent)
+	if runtime.AgentProfileKey != "scope-used-by-this-turn" {
+		t.Fatal("canceled turn stamped its old native handle with the next request's admission")
 	}
 }

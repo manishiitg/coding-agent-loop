@@ -582,9 +582,11 @@ type StreamingAPI struct {
 	// that turn (so the new system prompt + tool list actually take effect on
 	// the next CLI invocation) and the conversation history is replaced with a
 	// synthetic recap so the new agent sees just enough context to continue.
-	lastWorkshopModeBySession    map[string]string
-	lastChatPolicyBySession      map[string]string
-	lastAgentProfileKeyBySession map[string]string
+	lastWorkshopModeBySession        map[string]string
+	lastChatPolicyBySession          map[string]string
+	lastAgentProfileKeyBySession     map[string]string
+	launchedAgentProfileKeyBySession map[string]string
+	agentProfileAdmissions           sync.Map // *mcpagent.Agent -> immutable launched profile key
 
 	// Interactive workshop chat sessions — per-session controller + step registry
 	// Key: sessionID, Value: *todo_creation_human.WorkshopChatSession
@@ -3613,6 +3615,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// never short-circuited. Scoped to live-input-capable coding agents so API/LLM
 	// chat is unchanged.
 	retainedProfileCompatible := api.agentProfileAllowsRetainedLiveInput(currentUserID, sessionID, req.SelectedFolder, resolvedProfile != nil)
+	productDefinitionRefreshed := resolvedProfile != nil && !retainedProfileCompatible
 	if !retainedProfileCompatible && !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) {
 		api.interruptWorkflowPolicySession(sessionID, req.Provider)
 	}
@@ -6744,7 +6747,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			restoredConversationPathForFallback := restoredConversationPath
 			var restoredRuntime *ChatHistoryAgentRuntime
-			if modeChangedThisTurn {
+			if modeChangedThisTurn || productDefinitionRefreshed {
 				// Policy refresh must never seed the previous native session handle.
 			} else if target := req.resolvedResumeTarget; target != nil {
 				restoredConversationPathForFallback = target.ConversationPath
@@ -6756,7 +6759,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				restoredRuntime = runtime
 				restoredNativeCodingResume = api.seedCodingAgentRuntimeFromRestoredConversation(sessionID, finalProvider, newWorkshopMode, restoredRuntime, underlyingAgent)
 			}
-			if !modeChangedThisTurn && req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
+			if !modeChangedThisTurn && !productDefinitionRefreshed && req.resolvedResumeTarget == nil && !restoredNativeCodingResume && restoredConversationPath == "" && restoredConversationSessionID != "" {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, restoredConversationSessionID, restoredConversationWorkspace); err != nil {
 					logfWithContext(queryLogCtx, "[CHAT_HISTORY] Failed to read restored runtime for session %s: %v", restoredConversationSessionID, err)
 				} else if ok {
@@ -6771,7 +6774,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if !restoredNativeCodingResume && !modeChangedThisTurn && restoredConversationPath == "" && restoredConversationSessionID == "" {
+			if !restoredNativeCodingResume && !modeChangedThisTurn && !productDefinitionRefreshed && restoredConversationPath == "" && restoredConversationSessionID == "" {
 				if seeded, currentRuntime := api.seedCodingAgentRuntimeFromCurrentConversation(sessionID, currentUserID, finalProvider, newWorkshopMode, workflowPhaseFolder, underlyingAgent); seeded {
 					restoredNativeCodingResume = true
 					// Active-tab auto-resume after idle/reap: this same session (the
@@ -6828,7 +6831,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// spurious relaunch. Also gated on isSessionMarkedStopped, same PLAT-130
 			// reasoning as the auto-resume block above — this is the second of the two
 			// blocks that reproduced the live "Stop doesn't stop" incident.
-			if !forceStructuredCodingAgent && !restoredNativeCodingResume && !modeChangedThisTurn && restoredRuntime == nil &&
+			if !forceStructuredCodingAgent && !restoredNativeCodingResume && !modeChangedThisTurn && !productDefinitionRefreshed && restoredRuntime == nil &&
 				codingAgentHasNativeResume(finalProvider, underlyingAgent) && !api.sessionHasLiveMainCodingTmux(sessionID) &&
 				!api.isSessionMarkedStopped(sessionID) {
 				if runtime, ok, err := ReadChatHistoryRuntimeForSession(currentUserID, sessionID, workflowPhaseFolder); err != nil {
@@ -6909,7 +6912,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 
 			if isCodingAgentProvider(finalProvider, finalModelID) &&
-				(restoredNativeCodingResume || codingAgentHasNativeResume(finalProvider, underlyingAgent) || api.sessionHasLiveMainCodingTmux(sessionID)) {
+				!productDefinitionRefreshed && (restoredNativeCodingResume || codingAgentHasNativeResume(finalProvider, underlyingAgent) || api.sessionHasLiveMainCodingTmux(sessionID)) {
 				replayHistoryToAgent = false
 				logfWithContext(queryLogCtx, "[CONVERSATION] Coding-agent context is owned by its transport/native continuation; UI history will not be replayed")
 			}
@@ -6968,6 +6971,18 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		// Use the enhanced wrapper to get text chunks - events are handled via EventObserver and polling API
+		if resolvedProfile != nil {
+			api.conversationMux.Lock()
+			if api.launchedAgentProfileKeyBySession == nil {
+				api.launchedAgentProfileKeyBySession = make(map[string]string)
+			}
+			api.launchedAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
+			if launchedAgent := llmAgent.GetUnderlyingAgent(); launchedAgent != nil {
+				api.agentProfileAdmissions.Store(launchedAgent, api.launchedAgentProfileKeyBySession[sessionID])
+				defer api.agentProfileAdmissions.Delete(launchedAgent)
+			}
+			api.conversationMux.Unlock()
+		}
 		logfWithContext(queryLogCtx, "[STREAMING_LIFECYCLE] T+%dms | Starting StreamWithEvents | session=%s query=%.80s", time.Since(startTime).Milliseconds(), sessionID, chatQuery)
 		textChan, err := llmAgent.StreamWithEvents(agentCtx, chatQuery)
 		if err != nil {
@@ -7661,6 +7676,10 @@ func (api *StreamingAPI) captureChatHistoryAgentRuntime(sessionID, provider, mod
 	runtime.ChatPolicyKey = api.lastChatPolicyBySession[sessionID]
 	runtime.AgentProfileKey = api.lastAgentProfileKeyBySession[sessionID]
 	api.conversationMux.RUnlock()
+	if admitted, ok := api.agentProfileAdmissions.Load(underlyingAgent); ok {
+		runtime.AgentProfileKey = admitted.(string)
+	}
+
 	normalizeChatHistoryRuntime(runtime)
 
 	return runtime
@@ -9119,10 +9138,9 @@ func (api *StreamingAPI) handleSetLLMGuidance(w http.ResponseWriter, r *http.Req
 	json.NewEncoder(w).Encode(response)
 }
 
-// agentProfileAllowsRetainedLiveInput prevents an idle provider-native session
-// from bypassing current product setup. An actively running foreground turn was
-// built by this process and can still be steered immediately; an idle retained
-// session must carry the same persisted profile fingerprint as this request.
+// Compare current product setup to the admission of the actually launched
+// agent. Saved runtime metadata may still belong to the preceding turn while
+// the current turn streams; it is only a fallback after process restart.
 func (api *StreamingAPI) agentProfileAllowsRetainedLiveInput(userID, sessionID, workspacePath string, hasProfile bool) bool {
 	if api == nil || !hasProfile {
 		return true
@@ -9133,6 +9151,13 @@ func (api *StreamingAPI) agentProfileAllowsRetainedLiveInput(userID, sessionID, 
 	if !known || currentProfileKey == "" {
 		return false
 	}
+	api.conversationMux.RLock()
+	launched, launchKnown := api.launchedAgentProfileKeyBySession[sessionID]
+	api.conversationMux.RUnlock()
+	if launchKnown {
+		return launched == currentProfileKey
+	}
+
 	runtime, ok, err := ReadChatHistoryRuntimeForSession(userID, sessionID, workspacePath)
 	if err != nil || !ok || runtime == nil {
 		log.Printf("[CHAT_HISTORY] Retained live input disabled for product session %s: current runtime fingerprint is unavailable", sessionID)

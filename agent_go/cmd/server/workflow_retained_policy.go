@@ -84,6 +84,10 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 }
 
 func (api *StreamingAPI) interruptWorkflowPolicySession(session, provider string) {
+	api.conversationMux.Lock()
+	delete(api.launchedAgentProfileKeyBySession, session)
+	api.conversationMux.Unlock()
+
 	// Close the process receiving messages, even when the original request
 	// omitted its provider and setup selected it from the workflow manifest.
 	if snapshot, live := api.liveMainCodingTmuxSnapshot(session); live {
@@ -149,6 +153,13 @@ func (api *StreamingAPI) agentProfileRetainedPolicyCompatible(ctx context.Contex
 	names := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
 	attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, names)
 	key := agentProfileSessionKey(profile, attached)
+	api.conversationMux.RLock()
+	launched, known := api.launchedAgentProfileKeyBySession[session]
+	api.conversationMux.RUnlock()
+	if known {
+		return launched == key, nil
+	}
+
 	runtime, found, err := ReadChatHistoryRuntimeForSession(user, session, req.SelectedFolder)
 	if err != nil {
 		return false, err

@@ -1137,3 +1137,24 @@ TypeScript, ESLint and the complete production frontend build. The broader
 server suite retains its unrelated existing assembled-prompt size failure
 (24,153 bytes against a 24,000-byte ceiling). Deployment and live deletion
 acceptance remain pending explicit operator approval.
+### Foreground Crew admission must not use the preceding turn's snapshot (2026-09-18)
+
+Live Confida regression: a Linear-enabled Crew turn launched at 16:27:19,
+then the next user message at 16:28:07 canceled it with another profile mismatch.
+The runtime JSON still described the preceding completed turn until the current
+turn saved its runtime. Comparing only that JSON falsely treated an unchanged
+foreground agent as stale. This is independent of chat length.
+
+Track the fingerprint admitted at actual stream launch separately from the
+request's freshly resolved fingerprint. Both query and explicit live-input
+paths compare to launched admission when known, falling back to durable runtime
+after process restart. Clear launched admission when closing the native agent.
+The stable application session ID is unchanged. Genuine integration selection
+changes still trigger refresh.
+
+During a product refresh, skip every native-resume seeding path for the old
+handle and do not let a leftover live tmux claim ownership of context. The
+existing archive-read instruction and bounded emergency fallback then transfer
+context while the full application history remains preserved. Regression tests
+cover unchanged foreground admission without a completed snapshot, genuinely
+changed foreground admission, retained key checks and existing continuity paths.

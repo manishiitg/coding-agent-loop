@@ -262,8 +262,8 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         return {
           type: 'crew' as const,
           id: `crew:${tab.tabId}`,
-          label: tab.metadata?.agentProfileBuilder ? project : tab.name,
-          subtitle: `Crew · ${project} · ${role}${builderStateSuffix(tab)}${activeSessionSuffix(activeSession)}`,
+          label: project,
+          subtitle: `Crew · ${role}${builderStateSuffix(tab)}${activeSessionSuffix(activeSession)}`,
           isActive: productSurface === 'work' && tab.tabId === activeTabId,
           lastAccessedAt: tab.lastAccessedAt || tab.createdAt || 0,
           tabId: tab.tabId,

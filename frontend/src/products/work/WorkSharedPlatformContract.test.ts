@@ -56,6 +56,14 @@ describe('Crew shared AgentWorks platform contract', () => {
     }
   })
 
+  it('identifies Crew chats by their Crew name in the shared switcher', () => {
+    const switcher = read('src/components/QuickSwitcher.tsx')
+
+    expect(switcher).toContain('label: project,')
+    expect(switcher).toContain('subtitle: `Crew · ${role}')
+    expect(switcher).not.toContain('label: tab.metadata?.agentProfileBuilder ? project : tab.name')
+  })
+
   it('does not add product-local replacements for shared platform surfaces', () => {
     const files = readdirSync('src/products/work')
     const forbiddenProductForks = [

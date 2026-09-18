@@ -177,19 +177,11 @@ function applyRestoredWorkflowConversationConfig(tabId: string, session: ChatHis
   const useTerminalRestore = chatHistoryUsesTerminalRestore(session)
   const useNativeResume = chatHistorySupportsNativeResume(session)
   const existingContext = chatStore.getTabConfig(tabId)?.fileContext || []
-  const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
-  const nextFileContext = shouldAttachFileFallback
-    ? existingContext.some(item => item.path === path)
-      ? existingContext
-      : [
-          ...existingContext,
-          {
-            name: chatHistorySessionTitle(session),
-            path,
-            type: 'file' as const,
-          },
-        ]
-    : existingContext.filter(item => item.path !== path)
+  // The server owns resume/fallback context through restoredConversationPath.
+  // Never expose the canonical conversation JSON as a browser file attachment:
+  // mature chats can be hundreds of megabytes even though restore needs only
+  // the compact user/assistant projection.
+  const nextFileContext = existingContext.filter(item => item.path !== path)
 
   chatStore.setTabConfig(tabId, {
     fileContext: nextFileContext,
@@ -337,19 +329,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
     const useTerminalRestore = disposition === 'interactive-transport' && chatHistoryUsesTerminalRestore(session)
     const useNativeResume = disposition === 'interactive-transport' && chatHistorySupportsNativeResume(session)
     const existingContext = useChatStore.getState().getTabConfig(targetTabId)?.fileContext || []
-    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
-    const nextFileContext = shouldAttachFileFallback
-      ? existingContext.some(item => item.path === path)
-        ? existingContext
-        : [
-            ...existingContext,
-            {
-              name: chatHistorySessionTitle(session),
-              path,
-              type: 'file' as const,
-            },
-          ]
-      : existingContext.filter(item => item.path !== path)
+    const nextFileContext = existingContext.filter(item => item.path !== path)
 
     setTabConfig(targetTabId, {
       fileContext: nextFileContext,

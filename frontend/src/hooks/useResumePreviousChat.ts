@@ -155,12 +155,7 @@ export function useResumePreviousChat() {
     const useNativeResume = chatHistorySupportsNativeResume(session)
     const latestStore = useChatStore.getState()
     const existingContext = latestStore.getTabConfig(targetTabId)?.fileContext || []
-    const shouldAttachFileFallback = !useTerminalRestore && !useNativeResume
-    const nextFileContext = shouldAttachFileFallback
-      ? existingContext.some(item => item.path === path)
-        ? existingContext
-        : [...existingContext, { name: title, path, type: 'file' as const }]
-      : existingContext.filter(item => item.path !== path)
+    const nextFileContext = existingContext.filter(item => item.path !== path)
 
     latestStore.setTabConfig(targetTabId, {
       fileContext: nextFileContext,

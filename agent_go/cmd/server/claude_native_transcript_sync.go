@@ -691,6 +691,9 @@ func (api *StreamingAPI) refreshLatestBuilderConversationFromNativeTranscript(ct
 		log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) from %s but failed to persist to %s: %v", len(merged)-previousCount, transcriptPath, path, err)
 		return originalConv
 	} else {
+		if snapshotErr := writeChatHistoryResumeSnapshot(ctx, path, encoded); snapshotErr != nil {
+			log.Printf("[CHAT_HISTORY] Native transcript catch-up: failed to update resume snapshot for %s: %v", path, snapshotErr)
+		}
 		log.Printf("[CHAT_HISTORY] Native transcript catch-up: merged %d missing message(s) into %s from %s (native transcript through %s)",
 			len(merged)-previousCount, path, transcriptPath, maxTimestamp.Format(time.RFC3339))
 	}

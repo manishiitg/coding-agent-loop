@@ -490,7 +490,7 @@ export function hydrateTabEventsFromSessionPreview(session: ChatHistorySession):
 async function tryFetchChatHistoryConversation(
   sessionId: string,
   workspacePath?: string,
-  includeUiEvents = true,
+  includeUiEvents = false,
 ): Promise<ChatHistoryConversation | null> {
   const requestOrder = ++nextHistoryRequest
   try {

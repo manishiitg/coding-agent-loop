@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
@@ -244,13 +245,16 @@ const (
 	// value. Linux limits a single argument to roughly 128 KiB even when
 	// ARG_MAX is much larger, so leave ample room for the system prompt and the
 	// current user message.
-	maxCodingAgentFallbackMessages  = 48
-	maxCodingAgentFallbackBytes     = 48 * 1024
-	maxChatHistoryTerminalSnapshots = 1
-	maxChatHistoryTerminalBytes     = 512 * 1024
-	maxChatHistoryTerminalLines     = 10000
-	chatHistoryIndexVersion         = 1
-	chatHistoryIndexFileName        = "chat-index.json"
+	maxCodingAgentFallbackMessages    = 48
+	maxCodingAgentFallbackBytes       = 48 * 1024
+	maxChatHistoryTerminalSnapshots   = 1
+	maxChatHistoryTerminalBytes       = 512 * 1024
+	maxChatHistoryTerminalLines       = 10000
+	chatHistoryIndexVersion           = 1
+	chatHistoryIndexFileName          = "chat-index.json"
+	chatHistoryResumeSnapshotTurns    = 10
+	maxChatHistoryResumeSnapshotBytes = 2 * 1024 * 1024
+	maxChatHistoryResumeMessageBytes  = 128 * 1024
 )
 
 type chatHistoryIndex struct {
@@ -284,6 +288,133 @@ func chatHistoryConversationDate(t time.Time) string {
 
 func chatHistoryConversationPath(userID, sessionID string, t time.Time) string {
 	return pathpkg.Join(chatHistoryRoot(userID), chatHistoryConversationDate(t), chatHistoryConversationFileName(sessionID))
+}
+
+// chatHistoryResumeSnapshotPath returns a compact sibling that is safe to read
+// during UI startup. The complete conversation remains the durable source of
+// truth; this file is only a rebuildable projection of its newest turns.
+func chatHistoryResumeSnapshotPath(conversationPath string) string {
+	conversationPath = strings.TrimSpace(conversationPath)
+	if conversationPath == "" {
+		return ""
+	}
+	const suffix = "-conversation.json"
+	if strings.HasSuffix(conversationPath, suffix) {
+		return strings.TrimSuffix(conversationPath, suffix) + "-resume.json"
+	}
+	if pathpkg.Base(conversationPath) == "conversation.json" {
+		return strings.TrimSuffix(conversationPath, "conversation.json") + "resume.json"
+	}
+	return conversationPath + ".resume.json"
+}
+
+func writeChatHistoryResumeSnapshot(ctx context.Context, conversationPath string, data []byte) error {
+	snapshotPath := chatHistoryResumeSnapshotPath(conversationPath)
+	if snapshotPath == "" || len(data) == 0 {
+		return nil
+	}
+	projected := projectChatHistoryConversationForResumePage(data, chatHistoryResumeSnapshotTurns, 0)
+	projected = boundChatHistoryResumeSnapshot(projected)
+	return writeRawFileToWorkspace(ctx, snapshotPath, string(projected))
+}
+
+// boundChatHistoryResumeSnapshot makes the UI transfer contract independent of
+// tool-result size. Prefer the formatted trace when it fits; otherwise retain
+// readable recent messages and pagination metadata under a strict 2 MiB cap.
+func boundChatHistoryResumeSnapshot(data []byte) []byte {
+	if len(data) <= maxChatHistoryResumeSnapshotBytes {
+		return data
+	}
+	var doc map[string]json.RawMessage
+	if json.Unmarshal(data, &doc) != nil {
+		return nil
+	}
+	delete(doc, "ui_events")
+	delete(doc, "terminal_snapshots")
+	if encoded, err := json.Marshal(doc); err == nil && len(encoded) <= maxChatHistoryResumeSnapshotBytes {
+		return encoded
+	}
+
+	var history []json.RawMessage
+	if json.Unmarshal(doc["conversation_history"], &history) != nil {
+		return nil
+	}
+	messageBudget := maxChatHistoryResumeMessageBytes
+	if len(history) > 0 {
+		const totalMessageBudget = 1536 * 1024
+		if fairShare := totalMessageBudget / len(history); fairShare < messageBudget {
+			messageBudget = fairShare
+		}
+		if messageBudget < 4096 {
+			messageBudget = 4096
+		}
+	}
+	compact := make([]json.RawMessage, 0, len(history))
+	for _, raw := range history {
+		role, message := chatHistoryMessageRoleAndText(raw)
+		if message == "" {
+			continue
+		}
+		if len(message) > messageBudget {
+			message = truncateUTF8Bytes(message, messageBudget) + "\n\n[Long message truncated for chat restore]"
+		}
+		minimal, err := json.Marshal(map[string]interface{}{
+			"Role":  role,
+			"Parts": []map[string]string{{"Text": message}},
+		})
+		if err == nil {
+			compact = append(compact, minimal)
+		}
+	}
+	encodedHistory, err := json.Marshal(compact)
+	if err != nil {
+		return nil
+	}
+	doc["conversation_history"] = encodedHistory
+	encoded, err := json.Marshal(doc)
+	if err != nil {
+		return nil
+	}
+	if len(encoded) <= maxChatHistoryResumeSnapshotBytes {
+		return encoded
+	}
+	// Individually bounded messages can still exceed the total budget.
+	// Drop the oldest until the complete response fits; those turns remain in
+	// the canonical archive and can be requested explicitly.
+	for len(compact) > 1 {
+		compact = compact[1:]
+		encodedHistory, _ = json.Marshal(compact)
+		doc["conversation_history"] = encodedHistory
+		encoded, err = json.Marshal(doc)
+		if err == nil && len(encoded) <= maxChatHistoryResumeSnapshotBytes {
+			return encoded
+		}
+	}
+	return encoded
+}
+
+func truncateUTF8Bytes(value string, maxBytes int) string {
+	if len(value) <= maxBytes {
+		return value
+	}
+	value = value[:maxBytes]
+	for len(value) > 0 && !utf8.ValidString(value) {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
+func ReadChatHistoryResumeSnapshot(userID, sessionID, workspacePath string) (json.RawMessage, bool, error) {
+	conversationPath, found, err := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath)
+	if err != nil || !found {
+		return nil, false, err
+	}
+	snapshotPath := chatHistoryResumeSnapshotPath(conversationPath)
+	data, exists, err := readFileFromWorkspace(context.Background(), snapshotPath)
+	if err != nil || !exists {
+		return nil, false, err
+	}
+	return json.RawMessage(data), true, nil
 }
 
 // workProjectChatHistoryConversationPath keeps Work's Builder transcripts in
@@ -436,6 +567,9 @@ func (api *StreamingAPI) persistChatConversationToPathWithTerminalSession(sessio
 	if err := writeRawFileToWorkspace(context.Background(), convPath, string(convJSON)); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write %s: %v", convPath, err)
 		return
+	}
+	if err := writeChatHistoryResumeSnapshot(context.Background(), convPath, convJSON); err != nil {
+		logfWithContext(logCtx, "[CHAT_HISTORY] Failed to write resume snapshot for %s: %v", convPath, err)
 	}
 	if err := updatePersistedChatHistoryIndex(userID, sessionID, agentMode, persistedHistory, runtime, convPath, int64(len(convJSON)), now, botMeta); err != nil {
 		// The transcript remains the source of truth. A missing index entry is
@@ -3927,6 +4061,9 @@ func (api *StreamingAPI) appendLiveInputToPersistedChatHistory(userID, sessionID
 	if err := writeRawFileToWorkspace(context.Background(), conversationPath, string(encoded)); err != nil {
 		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot write %s: %v", conversationPath, err)
 		return
+	}
+	if err := writeChatHistoryResumeSnapshot(context.Background(), conversationPath, encoded); err != nil {
+		logfWithContext(logCtx, "[CHAT_HISTORY] Live-input append: cannot update resume snapshot for %s: %v", conversationPath, err)
 	}
 	// Keep the history index in step with the transcript, so a session steered
 	// only by live input still shows its latest message — and stays listed at all

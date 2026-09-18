@@ -323,3 +323,41 @@ func TestProjectChatHistoryConversationForResumePageHidesProviderTaskNotificatio
 		}
 	}
 }
+
+func TestChatHistoryResumeSnapshotPathIsASeparateSibling(t *testing.T) {
+	got := chatHistoryResumeSnapshotPath("Workflow/reviewer/builder/conversation/2026-09-18/session-abc-conversation.json")
+	want := "Workflow/reviewer/builder/conversation/2026-09-18/session-abc-resume.json"
+	if got != want {
+		t.Fatalf("resume snapshot path = %q, want %q", got, want)
+	}
+}
+
+func TestBoundChatHistoryResumeSnapshotNeverExceedsTwoMiB(t *testing.T) {
+	huge := strings.Repeat("x", 3*1024*1024)
+	raw, err := json.Marshal(map[string]interface{}{
+		"session_id": "large",
+		"conversation_history": []map[string]interface{}{
+			{"Role": "human", "Parts": []map[string]string{{"Text": "latest question"}}},
+			{"Role": "ai", "Parts": []map[string]string{{"Text": huge}}},
+		},
+		"ui_events": []map[string]string{{"type": "tool_call_end", "data": huge}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	bounded := boundChatHistoryResumeSnapshot(raw)
+	if len(bounded) > maxChatHistoryResumeSnapshotBytes {
+		t.Fatalf("bounded resume snapshot is %d bytes, limit is %d", len(bounded), maxChatHistoryResumeSnapshotBytes)
+	}
+	var decoded map[string]json.RawMessage
+	if err := json.Unmarshal(bounded, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := decoded["ui_events"]; exists {
+		t.Fatal("oversized resume snapshot retained tool UI events")
+	}
+	if !strings.Contains(string(decoded["conversation_history"]), "latest question") {
+		t.Fatal("bounded resume snapshot lost the latest user message")
+	}
+}

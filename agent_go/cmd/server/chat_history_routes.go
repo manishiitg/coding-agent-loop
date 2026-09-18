@@ -680,13 +680,23 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		sessionID := mux.Vars(r)["session_id"]
 		workspacePath := r.URL.Query().Get("workspace_path")
+		resumeTurns := parsePositiveQueryInt(r, "resume_turns")
+		resumeOffset := parseNonNegativeQueryInt(r, "resume_offset")
 		_, workflowScoped, allowed := chatHistoryWorkspaceAccess(r, workspacePath)
 		if !allowed {
 			http.Error(w, "workflow access denied", http.StatusForbidden)
 			return
 		}
 
-		data, err := ReadChatHistoryConversation(userID, sessionID, workspacePath)
+		var data json.RawMessage
+		servedResumeSnapshot := false
+		var err error
+		if resumeTurns == chatHistoryResumeSnapshotTurns && resumeOffset == 0 && r.URL.Query().Get("include_ui_events") != "1" {
+			data, servedResumeSnapshot, err = ReadChatHistoryResumeSnapshot(userID, sessionID, workspacePath)
+		}
+		if !servedResumeSnapshot {
+			data, err = ReadChatHistoryConversation(userID, sessionID, workspacePath)
+		}
 		if err != nil {
 			http.Error(w, "Session not found", http.StatusNotFound)
 			return
@@ -711,7 +721,7 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		// Recent/Resume shows where the conversation actually ended, not the
 		// last full-turn snapshot. Best-effort: unsupported providers and
 		// missing transcripts leave the record untouched.
-		if parsePositiveQueryInt(r, "resume_turns") > 0 && strings.TrimSpace(workspacePath) != "" {
+		if !servedResumeSnapshot && resumeTurns > 0 && strings.TrimSpace(workspacePath) != "" {
 			api.syncWorkflowBuilderConversationFromNativeTranscript(r.Context(), userID, sessionID, workspacePath)
 			if refreshed, refreshErr := ReadChatHistoryConversation(userID, sessionID, workspacePath); refreshErr == nil {
 				data = refreshed
@@ -721,13 +731,15 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 		// let it ask for just that. Without this it downloaded the whole file --
 		// 1.3 MB for a real builder session, nearly all of it ui_events -- and
 		// threw away everything but the last handful of messages client-side.
-		if limit := parsePositiveQueryInt(r, "resume_turns"); limit > 0 {
+		if !servedResumeSnapshot && resumeTurns > 0 {
+			limit := resumeTurns
+			resumeSource := append([]byte(nil), data...)
 			includeUIEvents := r.URL.Query().Get("include_ui_events") == "1"
 			var rawUIEvents []byte
 			if includeUIEvents {
 				rawUIEvents = chatHistoryUIEvents(data)
 			}
-			data = projectChatHistoryConversationForResumePage(data, limit, parseNonNegativeQueryInt(r, "resume_offset"))
+			data = projectChatHistoryConversationForResumePage(data, limit, resumeOffset)
 			// A scheduled run is restored as a read-only conversation, so its
 			// saved UI-event tail is the only existing record of its child-agent
 			// messages and tool calls. Keep the normal resume projection small by
@@ -735,6 +747,12 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 			// explicitly asks to reconstruct that run.
 			if includeUIEvents {
 				data = attachChatHistoryUIEventsForResume(data, rawUIEvents)
+			}
+			data = boundChatHistoryResumeSnapshot(data)
+			if limit == chatHistoryResumeSnapshotTurns && resumeOffset == 0 {
+				if conversationPath, found, pathErr := FindChatHistoryConversationPathForSession(userID, sessionID, workspacePath); pathErr == nil && found {
+					_ = writeChatHistoryResumeSnapshot(r.Context(), conversationPath, resumeSource)
+				}
 			}
 		} else if limit := parsePositiveQueryInt(r, "preview_messages"); limit > 0 {
 			data = trimChatHistoryConversationForPreview(data, limit)

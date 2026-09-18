@@ -68,5 +68,8 @@ func persistRawConversationSnapshot(ctx context.Context, path, content string) e
 	if err != nil {
 		return err
 	}
-	return writeRawFileToWorkspace(ctx, path, string(encoded))
+	if err := writeRawFileToWorkspace(ctx, path, string(encoded)); err != nil {
+		return err
+	}
+	return writeChatHistoryResumeSnapshot(ctx, path, encoded)
 }

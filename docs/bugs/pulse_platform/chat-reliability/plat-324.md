@@ -1067,3 +1067,8 @@ Queued deduplication (`e6e77d9c8`, 2026-09-18) preserved that project check.
 The confirmed correction is shared canonical workflow resolution before
 acceptance and retained-policy checks, not removal of idempotency protection.
 See PLAT-099 for the commit-by-commit provenance and remaining live acceptance.
+
+Confida follow-up `58281d117` is now deployed in
+`confida-d3624e74-20260918153600`. Service health and targeted regression checks
+pass. Fresh user retry remains unverified; this deployment does not close the
+broader PLAT-324 acceptance matrix.

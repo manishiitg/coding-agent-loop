@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented_pending_live_reverify` — Confida recurrence repaired; submission-route correction awaiting deployment and live acceptance |
+| Ticket state | `implemented_pending_live_reverify` — Confida recurrence and submission-route correction deployed; live acceptance pending |
 | Last synchronized | `2026-09-18` |
 
 - **Priority:** P0 — a user cannot continue an otherwise healthy live workflow-builder chat after changing its coding agent.
@@ -127,3 +127,13 @@ The 409 is a confirmed integration gap in the recent PLAT-324 rollout. The
 provider/account defect is the PLAT-099 recurrence; the PLAT-262/102 path shares
 the same unresolved-folder prerequisite. The immediately preceding Workshop
 UI commit `d8de0e464` does not change these submission or routing paths.
+
+### Follow-up deployment verification
+
+The canonical submission correction `58281d117` and provenance documentation
+`d3624e748` are deployed to Confida release
+`confida-d3624e74-20260918153600` (2026-09-18). Agent, workspace and gateway are
+active; agent health returns HTTP 200. Go submission/retained-policy tests,
+four frontend submission-target tests, TypeScript and release checks pass.
+A fresh user turn through Gemini has not been submitted by the recovery agent;
+live user retry remains the acceptance boundary.

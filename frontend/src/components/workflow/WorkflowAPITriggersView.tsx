@@ -22,7 +22,6 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState('')
   const requestGeneration = useRef(0)
-  const deliveryHistoryRef = useRef<HTMLDivElement>(null)
 
   const refresh = useCallback(async () => {
     if (!workspacePath) return
@@ -79,7 +78,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
   if (!workspacePath) return <p className="p-4 text-sm text-muted-foreground">Select a workflow to configure API triggers.</p>
   const activeTriggers = options.triggers.filter(trigger => trigger.enabled).length
   return (
-    <div className="h-full overflow-y-auto bg-background">
+    <div className="h-full min-w-0 w-full max-w-none overflow-x-hidden overflow-y-auto bg-background">
       <div className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
@@ -98,13 +97,13 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
         <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           <span><span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeTriggers} active</span>
           <span>{options.triggers.length - activeTriggers} paused</span>
-          <button type="button" className="text-foreground underline underline-offset-2" onClick={() => deliveryHistory ? deliveryHistoryRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }) : onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>
+          {!deliveryHistory && <button type="button" className="text-foreground underline underline-offset-2" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>}
         </div>
       </div>
       <div className="space-y-4 p-4 sm:p-6">
-      <div className="flex items-start gap-2 rounded-lg bg-muted/35 px-3 py-2.5 text-xs text-muted-foreground">
+      <div className="flex min-w-0 max-w-full items-start gap-2 rounded-lg bg-muted/35 px-3 py-2.5 text-xs text-muted-foreground">
         <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-        <p>Create a webhook or change its routing by asking Builder. Each webhook accepts up to four deliveries at once; additional deliveries receive a retry response.</p>
+        <p className="min-w-0 [overflow-wrap:anywhere]">Create a webhook or change its routing by asking Builder. Each webhook accepts up to four deliveries at once; additional deliveries receive a retry response.</p>
       </div>
       {error && <p role="alert" className="rounded-md border border-destructive/30 bg-destructive/5 p-3 text-sm text-destructive">{error}</p>}
       {issued?.secret && (
@@ -121,7 +120,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
           const routeSelections = trigger.route_selections || {}
           const groupNames = trigger.group_names || []
           const concurrency = trigger.max_concurrency || 4
-          return <section key={trigger.id} className="overflow-hidden rounded-xl border border-border bg-card">
+          return <section key={trigger.id} className="min-w-0 max-w-full overflow-hidden rounded-xl border border-border bg-card">
             <div className="flex items-start justify-between gap-3 px-4 py-3">
               <div className="min-w-0">
                 <div className="flex min-w-0 items-center gap-2">
@@ -133,8 +132,8 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
               {canWrite && <button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Pause' : 'Enable'}</button>}
             </div>
             <div className="border-y border-border bg-muted/20 px-4 py-2.5">
-              <div className="flex items-center gap-2">
-                <code className="min-w-0 flex-1 truncate text-xs text-foreground" title={apiTriggerURL(trigger.path)}>{apiTriggerURL(trigger.path)}</code>
+              <div className="flex min-w-0 items-center gap-2 overflow-hidden">
+                <code className="block min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-xs text-foreground" title={apiTriggerURL(trigger.path)}>{apiTriggerURL(trigger.path)}</code>
                 <button type="button" aria-label={`Copy endpoint for ${trigger.name}`} title="Copy endpoint" className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={14} /></button>
               </div>
             </div>
@@ -167,7 +166,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
         <summary className="cursor-pointer text-foreground">Delivery requirements</summary>
         <p className="mt-2 leading-relaxed">Use a server URL reachable by the caller. Send JSON up to 1 MiB. A successful delivery returns 202 with a run ID. When all four delivery slots are busy, the endpoint returns 503 with Retry-After. Reuse Idempotency-Key or GitHub’s delivery ID when retrying.</p>
       </details>
-      {deliveryHistory && <div ref={deliveryHistoryRef} className="scroll-mt-24 overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
+      {deliveryHistory && <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
       </div>
     </div>
   )

@@ -93,12 +93,12 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     <TooltipProvider delayDuration={300}>
     <div
       className={embedded
-        ? 'flex h-full min-h-0 w-full bg-background'
+        ? 'flex h-full min-h-0 min-w-0 w-full max-w-none flex-1 bg-background'
         : 'fixed inset-0 z-[9999] flex items-center justify-center bg-black/50'}
       onClick={embedded ? undefined : (e) => { if (e.target === e.currentTarget) onClose() }}
     >
       <div className={embedded
-        ? 'flex h-full min-h-0 w-full flex-col bg-card text-card-foreground'
+        ? 'flex h-full min-h-0 min-w-0 w-full max-w-none flex-1 flex-col bg-card text-card-foreground'
         : 'mx-4 flex max-h-[85vh] w-full max-w-6xl flex-col rounded-xl border border-border bg-card text-card-foreground shadow-2xl'}>
 
         {showAutomationTabs && (hasWebhooks || botContent) && (

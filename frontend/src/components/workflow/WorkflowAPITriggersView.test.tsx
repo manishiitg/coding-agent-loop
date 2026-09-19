@@ -101,16 +101,8 @@ it('removes only the selected trigger', async () => {
 
 it('keeps delivery history inside Triggers when an embedded feed is available', async () => {
   const onViewRuns = vi.fn()
-  const scrollIntoView = vi.fn()
-  const original = HTMLElement.prototype.scrollIntoView
-  HTMLElement.prototype.scrollIntoView = scrollIntoView
-  try {
-    const host = await mount({ onViewRuns, deliveryHistory: <div>Recorded webhook deliveries</div> })
-    await act(async () => button(host, 'View delivery history').click())
-    expect(host.textContent).toContain('Recorded webhook deliveries')
-    expect(scrollIntoView).toHaveBeenCalledOnce()
-    expect(onViewRuns).not.toHaveBeenCalled()
-  } finally {
-    HTMLElement.prototype.scrollIntoView = original
-  }
+  const host = await mount({ onViewRuns, deliveryHistory: <div>Recorded webhook deliveries</div> })
+  expect(host.textContent).toContain('Recorded webhook deliveries')
+  expect(host.textContent).not.toContain('View delivery history')
+  expect(onViewRuns).not.toHaveBeenCalled()
 })

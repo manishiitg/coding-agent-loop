@@ -12,6 +12,7 @@ package whatsappbot
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"log"
 	"sort"
@@ -88,8 +89,16 @@ type Connector struct {
 
 	seen *whatsapptransport.Dedupe
 
+	outboundEchoMu sync.Mutex
+	outboundEchoes map[[32]byte]outboundEcho
+
 	routesMu sync.Mutex
 	routes   map[string]string // in-memory RouteStore fallback
+}
+
+type outboundEcho struct {
+	count     int
+	expiresAt time.Time
 }
 
 // New builds a connector; call Start to open the session store.
@@ -109,7 +118,12 @@ func New(cfg Config) *Connector {
 	if cfg.AppVersion == ([3]uint32{}) {
 		cfg.AppVersion = [3]uint32{120, 0, 0}
 	}
-	return &Connector{cfg: cfg, seen: whatsapptransport.NewDedupe(cfg.DedupeWindow), routes: map[string]string{}}
+	return &Connector{
+		cfg:            cfg,
+		seen:           whatsapptransport.NewDedupe(cfg.DedupeWindow),
+		outboundEchoes: make(map[[32]byte]outboundEcho),
+		routes:         map[string]string{},
+	}
 }
 
 func (c *Connector) logf(format string, args ...interface{}) {
@@ -526,24 +540,25 @@ func (c *Connector) outbound(text string) string {
 
 // SendText sends one message into a chat through the account that owns it.
 func (c *Connector) SendText(ctx context.Context, chat types.JID, text string) error {
-	a := c.AccountFor(chat)
-	if a == nil {
-		return fmt.Errorf("whatsapp not paired")
-	}
-	id, err := a.SendTextID(ctx, chat, c.outbound(text))
-	if err == nil {
-		c.rememberOutbound(id)
-	}
+	_, err := c.SendTextID(ctx, chat, text)
 	return err
 }
 
 // SendTextWithRetry retries a send a few times before giving up.
 func (c *Connector) SendTextWithRetry(chat types.JID, text string, attempts int, attemptTimeout time.Duration) error {
-	a := c.AccountFor(chat)
-	if a == nil {
-		return fmt.Errorf("whatsapp not paired")
+	var err error
+	for attempt := 1; attempt <= attempts; attempt++ {
+		ctx, cancel := context.WithTimeout(context.Background(), attemptTimeout)
+		err = c.SendText(ctx, chat, text)
+		cancel()
+		if err == nil {
+			return nil
+		}
+		if attempt < attempts {
+			time.Sleep(time.Duration(attempt) * 3 * time.Second)
+		}
 	}
-	return a.SendTextWithRetry(chat, c.outbound(text), attempts, attemptTimeout)
+	return err
 }
 
 // SendDocument sends a file into a chat.
@@ -580,11 +595,7 @@ func (c *Connector) SendToAllSelf(ctx context.Context, text string) (sent int, l
 	for _, a := range c.connectedAccounts() {
 		self, err := a.SelfChat()
 		if err == nil {
-			var id types.MessageID
-			id, err = a.SendTextID(ctx, self, c.outbound(text))
-			if err == nil {
-				c.rememberOutbound(id)
-			}
+			_, err = c.sendTextID(ctx, a, self, c.outbound(text))
 		}
 		if err != nil {
 			lastErr = err
@@ -633,6 +644,10 @@ func (c *Connector) handleIncoming(acct *whatsapptransport.Account, evt *events.
 	if info.IsGroup || info.Chat.Server == types.BroadcastServer || info.Chat.User == "status" {
 		return
 	}
+	rawText := whatsapptransport.ExtractText(evt.Message)
+	if info.IsFromMe && selfChat && c.consumeOutboundEcho(info.Chat, rawText) {
+		return
+	}
 	if c.seen.Seen(info.ID) {
 		return
 	}
@@ -649,7 +664,7 @@ func (c *Connector) handleIncoming(acct *whatsapptransport.Account, evt *events.
 		SelfChat:  selfChat,
 		HasMedia:  whatsapptransport.HasMedia(evt.Message),
 	}
-	msg.RawText = whatsapptransport.ExtractText(evt.Message)
+	msg.RawText = rawText
 	msg.Text = msg.RawText
 	c.dispatch(c.bgContext(), msg)
 }
@@ -669,11 +684,71 @@ func (c *Connector) SendTextID(ctx context.Context, chat types.JID, text string)
 	if a == nil {
 		return "", fmt.Errorf("whatsapp not paired")
 	}
-	id, err := a.SendTextID(ctx, chat, c.outbound(text))
+	return c.sendTextID(ctx, a, chat, c.outbound(text))
+}
+
+func (c *Connector) sendTextID(ctx context.Context, a *whatsapptransport.Account, chat types.JID, outbound string) (types.MessageID, error) {
+	isSelfChat := a.IsSelfChat(chat)
+	if isSelfChat {
+		c.expectOutboundEcho(chat, outbound)
+	}
+	id, err := a.SendTextID(ctx, chat, outbound)
+	if err != nil && isSelfChat {
+		c.cancelOutboundEcho(chat, outbound)
+	}
 	if err == nil {
 		c.rememberOutbound(id)
 	}
 	return id, err
+}
+
+const outboundEchoWindow = 30 * time.Second
+
+func outboundEchoKey(chat types.JID, text string) [32]byte {
+	return sha256.Sum256([]byte(chat.ToNonAD().String() + "\x00" + text))
+}
+
+func (c *Connector) expectOutboundEcho(chat types.JID, text string) {
+	key := outboundEchoKey(chat, text)
+	now := time.Now()
+	c.outboundEchoMu.Lock()
+	defer c.outboundEchoMu.Unlock()
+	c.pruneOutboundEchoesLocked(now)
+	entry := c.outboundEchoes[key]
+	entry.count++
+	entry.expiresAt = now.Add(outboundEchoWindow)
+	c.outboundEchoes[key] = entry
+}
+
+func (c *Connector) cancelOutboundEcho(chat types.JID, text string) {
+	c.consumeOutboundEcho(chat, text)
+}
+
+func (c *Connector) consumeOutboundEcho(chat types.JID, text string) bool {
+	key := outboundEchoKey(chat, text)
+	now := time.Now()
+	c.outboundEchoMu.Lock()
+	defer c.outboundEchoMu.Unlock()
+	c.pruneOutboundEchoesLocked(now)
+	entry, ok := c.outboundEchoes[key]
+	if !ok || entry.count < 1 {
+		return false
+	}
+	entry.count--
+	if entry.count == 0 {
+		delete(c.outboundEchoes, key)
+	} else {
+		c.outboundEchoes[key] = entry
+	}
+	return true
+}
+
+func (c *Connector) pruneOutboundEchoesLocked(now time.Time) {
+	for key, entry := range c.outboundEchoes {
+		if !entry.expiresAt.After(now) {
+			delete(c.outboundEchoes, key)
+		}
+	}
 }
 
 // rememberOutbound prevents WhatsApp's self-chat echo of a bot response from

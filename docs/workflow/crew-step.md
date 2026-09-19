@@ -5,10 +5,11 @@
 ## Summary
 
 A workflow can use a Crew project as an executable step. The step invokes one
-of the Crew's authenticated triggers, waits for that trigger run to finish, and
-saves the Crew's final text response in the calling workflow's current
-iteration folder. Later workflow steps can read the Crew's persistent project
-files through the platform's existing read-only attached-folder mechanism.
+of the Crew's public or platform-internal triggers, waits for that trigger run
+to finish, and saves the Crew's final text response in the calling workflow's
+current iteration folder. Later workflow steps can read the Crew's persistent
+project files through the platform's existing read-only attached-folder
+mechanism.
 
 This feature makes a maintained Crew available as a reusable specialist inside
 many workflows. It does not turn Crew projects into workflows or add iteration
@@ -41,8 +42,10 @@ is the persistent, human-maintained specialist context.
 
 The workflow Builder adds a step with `type: "crew"`. The step identifies an
 accessible Crew project and one of that Crew's triggers. The trigger owns its
-saved base instruction and conversation destination. The step supplies the
-workflow-specific instruction and runtime input.
+saved base instruction and conversation destination. A platform-internal
+trigger can be created while the step is configured and is scoped to the
+calling workflow. The step supplies the workflow-specific instruction and
+runtime input.
 
 The Builder must understand that a Crew is a persistent project, not merely an
 LLM call. Builder guidance and tools must cover Crew identity, memory, skills,
@@ -169,14 +172,61 @@ conversation destination, or folder guards.
 
 ### Internal and external dispatch
 
-An external caller invokes a Crew trigger through its authenticated HTTP
-endpoint. A workflow running inside the same deployment should reuse the same
-trigger dispatcher internally rather than sending an HTTP request to itself or
-placing trigger secrets in `plan.json`.
+An external caller invokes a public Crew trigger through its authenticated HTTP
+endpoint. A workflow running inside the same deployment should use a
+platform-internal trigger and reuse the same trigger dispatcher directly,
+rather than sending an HTTP request to itself or placing trigger secrets in
+`plan.json`.
 
 Internal dispatch must produce the same trigger delivery, conversation,
 history, run status, final response, and idempotency behavior as the public
 endpoint.
+
+### Platform-internal triggers
+
+A platform-internal trigger is a first-class trigger binding for communication
+between a Workflow and a Crew on the same deployment. It has no public URL and
+issues no bearer or GitHub secret. Its authority comes from an explicit caller
+binding checked by the platform on every invocation.
+
+An illustrative binding is:
+
+```json
+{
+  "kind": "internal",
+  "id": "5f16e1fa-7ddd-4ee5-8311-63b34745ad46",
+  "name": "Release workflow reviewer",
+  "enabled": true,
+  "caller": {
+    "type": "workflow",
+    "id": "release-pipeline"
+  },
+  "target": {
+    "type": "crew",
+    "profile_id": "work",
+    "project_id": "rts-pr-reviewer"
+  },
+  "run_destination": "isolated"
+}
+```
+
+The reverse binding uses `caller.type="crew"` and `target.type="workflow"`.
+Bindings are directional and grant invocation only. They do not grant write
+access to the target's files or management access to its configuration.
+
+Both sides must be able to create the appropriate binding through their native
+agent tools:
+
+- Workflow Builder creates an internal Crew trigger while adding a Crew step.
+- Crew creates an internal workflow trigger when asked to invoke an attached
+  workflow.
+- Either side can list, disable, re-enable, or remove bindings it is authorized
+  to manage.
+
+Creating a binding requires management permission on the target and access to
+the caller. Invocation rechecks both resources, their attachment relationship,
+and the binding's enabled state. Copying either resource never silently copies
+cross-project authority.
 
 ## Files and attached folders
 
@@ -213,6 +263,78 @@ If immutable file snapshots become necessary later, they should be an explicit
 workflow feature with declared paths. They must not be introduced by parsing
 arbitrary response prose.
 
+## Crew invoking a workflow
+
+The integration is bidirectional. A Crew can invoke an attached AgentWorks
+workflow through a selected workflow trigger. This is useful when a persistent,
+human-maintained specialist needs a deterministic pipeline for testing,
+rendering, deployment, extraction, or another bounded operation.
+
+The runtime flow is:
+
+1. The Crew selects an attached workflow and an enabled trigger.
+2. It creates or uses a platform-internal trigger binding scoped to that Crew.
+3. It sends a JSON payload with a stable idempotency key.
+4. The workflow executes in its own `iteration-<n>-hook` folder.
+5. The Crew polls or awaits the trigger run until it becomes terminal.
+6. The Crew reads the returned status, inline step outputs, progress, and
+   artifact references.
+7. The Crew can summarize the result, update its persistent files or database,
+   and update its dashboard.
+
+The workflow trigger already defines its route selections, optional single-step
+target, variable groups, input mode, and execution contract. The Crew payload
+cannot override configuration that the trigger did not explicitly expose.
+
+An illustrative invocation is:
+
+```json
+{
+  "workflow_id": "course-designer-tests",
+  "trigger_id": "smoke-test-trigger",
+  "payload": {
+    "pull_request": 87,
+    "environment": "dev"
+  },
+  "wait": true,
+  "timeout_seconds": 1800
+}
+```
+
+The completed result can contain the workflow's normal structured outputs:
+
+```json
+{
+  "status": "completed",
+  "run_id": "iteration-68-hook",
+  "terminal": true,
+  "steps": [
+    {
+      "step_id": "test",
+      "outputs": {
+        "result.json": {
+          "passed": 42,
+          "failed": 0
+        }
+      }
+    }
+  ],
+  "artifacts": []
+}
+```
+
+Small JSON and text outputs can be read from the polling response. Large files
+remain workflow run artifacts and use the workflow trigger's existing signed
+download contract. When the workflow is attached read-only to the Crew, the
+Crew can also inspect the completed hook iteration through that attachment.
+
+The conceptual distinction is:
+
+- Workflow to Crew calls a persistent specialist and receives a natural text
+  response.
+- Crew to Workflow calls a deterministic pipeline and receives structured run
+  status, step outputs, and artifacts.
+
 ## Builder behavior
 
 The Builder should be able to:
@@ -233,10 +355,22 @@ Suggested Builder tools are:
 
 - `list_crews`
 - `list_crew_triggers`
+- `create_internal_crew_trigger`
+- `manage_internal_crew_trigger`
 - `attach_crew_to_workflow`
 - `add_crew_step`
 - `update_crew_step`
 - `delete_crew_step`
+
+The Crew runtime should have the corresponding workflow tools:
+
+- `list_attached_workflows`
+- `list_workflow_triggers`
+- `create_internal_workflow_trigger`
+- `manage_internal_workflow_trigger`
+- `run_workflow_trigger`
+- `get_workflow_trigger_run`
+- `stop_workflow_trigger_run`
 
 The Builder should help write instructions that state:
 
@@ -277,6 +411,8 @@ The UI should not imply that Crew files are copied into the workflow run.
 ## Access and security
 
 - Never store a plaintext trigger secret in the workflow plan.
+- Platform-internal triggers never issue a public endpoint or plaintext secret.
+- Every internal invocation must match the binding's exact caller and target.
 - Check Crew and trigger access when the step is configured and again when it
   executes.
 - Require the target Crew to be attached read-only before execution.
@@ -342,24 +478,33 @@ observable run contract should remain consistent with the public API.
 
 ## Implementation outline
 
-1. Add the Crew trigger status response and durable final-response lookup.
-2. Extract an internal Crew-trigger dispatch interface from the HTTP handler so
-   workflow execution can call it without secrets or loopback HTTP.
-3. Add `CrewPlanStep` parsing, validation, marshaling, plan editing tools, and
+1. Add the platform-internal trigger binding model, permission checks, and
+   lifecycle operations for both target types.
+2. Add the Crew trigger status response and durable final-response lookup.
+3. Extract internal Crew-trigger and workflow-trigger dispatch interfaces from
+   their HTTP handlers so callers can use them without secrets or loopback
+   HTTP.
+4. Add `CrewPlanStep` parsing, validation, marshaling, plan editing tools, and
    workflow execution dispatch.
-4. Save the final text to the step's current iteration execution directory and
+5. Save the final text to the step's current iteration execution directory and
    connect it to normal context-output handling.
-5. Add Builder discovery and mutation tools for Crews, triggers, and read-only
+6. Add Builder discovery and mutation tools for Crews, triggers, and read-only
    attachment setup.
-6. Add the Crew canvas node and configuration UI.
-7. Update Builder reference material and product guidance so the Builder can
-   choose between a Crew and an ordinary step and between the two retained
-   conversation histories.
+7. Add Crew tools to discover, create, invoke, poll, and stop internal workflow
+   trigger runs.
+8. Add the Crew canvas node and configuration UI.
+9. Update Builder and Crew reference material and product guidance so each side
+   understands internal triggers, and so the Builder can choose between a Crew
+   and an ordinary step and between the two retained conversation histories.
 
 ## Acceptance criteria
 
 - A Builder can select an accessible Crew and one of its enabled triggers and
   add it as a workflow step.
+- Workflow Builder can create and manage a Workflow-to-Crew internal trigger;
+  no public URL or secret is created.
+- Crew can create and manage a Crew-to-Workflow internal trigger for an
+  attached workflow, invoke it, poll it, and stop its owned run.
 - The Builder establishes or verifies a read-only Crew attachment.
 - A workflow run invokes the trigger exactly once for one step attempt and can
   recover safely after a retry.
@@ -374,5 +519,6 @@ observable run contract should remain consistent with the public API.
   attachment and cannot write to them.
 - No trigger secret appears in `plan.json`, logs, frontend state, or step
   outputs.
+- Internal trigger invocation is rejected when caller identity, target
+  identity, attachment, permissions, or enabled state no longer matches.
 - Crew projects remain persistent projects and do not gain iteration folders.
-

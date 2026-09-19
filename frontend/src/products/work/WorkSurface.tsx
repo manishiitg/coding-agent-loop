@@ -289,6 +289,23 @@ function useWorkChatTab(
         chatStore.setTabMetadata(canonicalTabId, { ...projectMetadata, agentProfileMCPSelectionInitialized: true })
         chatStore.setTabConfig(canonicalTabId, { selectedServers: savedServers, selectedSkills: savedSkills })
 
+        // Earlier UI versions could open the canonical session as a read-only
+        // history tab. Remove only those local duplicate projections; the
+        // server-owned conversation and its events remain attached to Chat.
+        useChatStore.setState(state => {
+          const duplicateIds = Object.values(state.chatTabs)
+            .filter(tab => tab.tabId !== canonicalTabId && tab.metadata?.isViewOnly === true &&
+              belongsToWorkProject(tab, target.id) && tab.sessionId === conversation.session_id)
+            .map(tab => tab.tabId)
+          if (duplicateIds.length === 0) return state
+          const nextTabs = { ...state.chatTabs }
+          for (const duplicateId of duplicateIds) delete nextTabs[duplicateId]
+          return {
+            chatTabs: nextTabs,
+            activeTabId: duplicateIds.includes(state.activeTabId || '') ? canonicalTabId : state.activeTabId,
+          }
+        })
+
         if ((useChatStore.getState().tabEvents[conversation.session_id]?.length ?? 0) === 0) {
           await hydrateTabEvents(conversation.session_id, {
             workspacePath: target.workspacePath,
@@ -374,8 +391,12 @@ function WorkChatTabs({ projectId, canonicalTabId }: { projectId: string; canoni
     activeTabId: state.activeTabId,
     closeTab: state.closeTab,
   })))
+  const canonicalSessionId = chatTabs[canonicalTabId]?.sessionId
   const tabs = Object.values(chatTabs)
-    .filter(tab => belongsToWorkProject(tab, projectId) && (tab.tabId === canonicalTabId || tab.metadata?.isViewOnly === true))
+    .filter(tab => belongsToWorkProject(tab, projectId) && (
+      tab.tabId === canonicalTabId ||
+      (tab.metadata?.isViewOnly === true && tab.sessionId !== canonicalSessionId)
+    ))
     .sort((a, b) => a.tabId === canonicalTabId ? -1 : b.tabId === canonicalTabId ? 1 : a.createdAt - b.createdAt)
   const selectTab = (nextTabId: string) => { activateTab(nextTabId) }
   const closeHistoryTab = (closingTabId: string) => {

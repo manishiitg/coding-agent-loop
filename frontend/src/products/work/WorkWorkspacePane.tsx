@@ -360,6 +360,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
   const openHistoryChat = useResumePreviousChat()
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
+  const canonicalSessionId = useChatStore(state => Object.values(state.chatTabs).find(tab =>
+    tab.metadata?.agentProfileId === 'work' &&
+    tab.metadata?.agentProfileProjectId === projectId &&
+    tab.metadata?.agentProfileConversationKey === projectId &&
+    tab.metadata?.isViewOnly !== true,
+  )?.sessionId)
 
   const toggleSkill = async (folderName: string) => {
     const next = selectedSkills.includes(folderName)
@@ -441,7 +447,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
             productTriggerScope={enabledPanels?.has('triggers') === false ? undefined : { profileId: 'work', projectId }}
             chatContent={<PreviousChatHistoryPanel
               workspacePath={workspacePath}
-              activeSessionId={activeSessionId}
+              activeSessionId={canonicalSessionId || activeSessionId}
               title=""
               emptyText="No earlier chats for this Crew member."
               recentOnly

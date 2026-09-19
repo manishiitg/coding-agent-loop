@@ -39,6 +39,17 @@ describe('findCanonicalWorkProjectTab', () => {
     })
     expect(findCanonicalWorkProjectTab({ other }, 'project-1', 'canonical-session')).toBeUndefined()
   })
+
+  it('never adopts a read-only history projection as the canonical chat', () => {
+    const history = tab({
+      tabId: 'history', sessionId: 'canonical-session',
+      metadata: {
+        mode: 'multi-agent', agentProfileId: 'work', agentProfileProjectId: 'project-1',
+        agentProfileConversationKey: 'project-1:history:canonical-session', isViewOnly: true,
+      },
+    })
+    expect(findCanonicalWorkProjectTab({ history }, 'project-1', 'canonical-session')).toBeUndefined()
+  })
 })
 
 describe('persistent Work runtime', () => {

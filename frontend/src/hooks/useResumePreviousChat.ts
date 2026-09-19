@@ -44,6 +44,18 @@ export function useResumePreviousChat() {
     // history row can never rebind the canonical project conversation.
     if (targetTab.metadata.agentProfileId === 'work') {
       const projectId = targetTab.metadata.agentProfileProjectId
+      const canonical = Object.values(chatStore.chatTabs).find(tab =>
+        tab.metadata?.agentProfileId === 'work' &&
+        tab.metadata?.agentProfileProjectId === projectId &&
+        tab.metadata?.agentProfileConversationKey === projectId &&
+        tab.metadata?.isViewOnly !== true,
+      )
+      // A stale history list may still contain the permanent Crew session.
+      // Selecting it means "return to Chat", never "open Chat as history".
+      if (canonical?.sessionId === session.session_id) {
+        chatStore.switchTab(canonical.tabId)
+        return
+      }
       const existing = Object.values(chatStore.chatTabs).find(tab =>
         tab.sessionId === session.session_id &&
         tab.metadata?.agentProfileId === 'work' &&

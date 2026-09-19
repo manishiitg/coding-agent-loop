@@ -29,7 +29,9 @@ export function findCanonicalWorkProjectTab(
   canonicalSessionId: string,
 ): ChatTab | undefined {
   return Object.values(tabs).find(tab =>
-    belongsToWorkProject(tab, projectId) && tab.sessionId === canonicalSessionId)
+    belongsToWorkProject(tab, projectId) &&
+    tab.metadata?.isViewOnly !== true &&
+    tab.sessionId === canonicalSessionId)
 }
 
 /** Relaunch the one persistent project conversation when durable context changes. */

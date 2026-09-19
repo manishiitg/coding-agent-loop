@@ -153,6 +153,14 @@ func TestCanRetryUncertainChatSubmissionUsesClosedNativeTranscriptProof(t *testi
 	}
 
 	writeTranscriptFixture(t, transcriptPath, []string{
+		`{"type":"user","timestamp":"2026-09-19T09:00:01Z","message":{"role":"user","content":"another prompt after the failed paste"}}`,
+		`{"type":"assistant","timestamp":"2026-09-19T09:00:02Z","message":{"role":"assistant","content":"later turn completed"}}`,
+	})
+	if !api.canRetryUncertainChatSubmission(context.Background(), record) {
+		t.Fatal("final native transcript continuing beyond the receipt without the exact prompt did not prove non-delivery")
+	}
+
+	writeTranscriptFixture(t, transcriptPath, []string{
 		`{"type":"user","timestamp":"2026-09-19T09:00:01Z","message":{"role":"user","content":"message after pane closed"}}`,
 	})
 	if api.canRetryUncertainChatSubmission(context.Background(), record) {

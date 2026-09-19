@@ -1,14 +1,22 @@
 package server
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os/exec"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"
+	"github.com/manishiitg/mcpagent/llm"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
@@ -134,6 +142,130 @@ func TestCodingCLILifecycleMatrixHermeticTmux(t *testing.T) {
 				t.Fatalf("main terminal after exit = state=%q process=%q reason=%q", snapshot.State, snapshot.ProcessState, snapshot.CloseReason)
 			}
 		})
+	}
+}
+
+// TestRetainedSubmissionRecoveryAfterIdleReaperP0 covers the cross-component
+// lifecycle that previously escaped the individual reaper, journal, and live
+// input tests: an idle retained tmux is reaped, an already-durable uncertain
+// receipt survives a server restart, reconciliation proves it was not
+// delivered, and the same submission starts exactly one resumed turn.
+func TestRetainedSubmissionRecoveryAfterIdleReaperP0(t *testing.T) {
+	const (
+		sessionID    = "p0-reaper-restart-recovery"
+		tmuxSession  = "mlp-claude-code-p0-reaped"
+		submissionID = "p0-durable-submission"
+		project      = "projects/p0-recovery"
+		message      = "resume after idle cleanup"
+	)
+
+	now := time.Now()
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		now.Add(-defaultCodingAgentTmuxOrphanIdleTimeout-time.Minute),
+		sessionID,
+		"main:"+sessionID,
+		tmuxSession,
+	))
+	retainedSession := startRegisteredTestTmuxSession(t, sessionID, tmuxSession)
+	journal := newTestChatSubmissionStore()
+
+	// Model the durable receipt left by the historical failed delivery. It is
+	// deliberately finalized as uncertain so only reconciliation may reopen it.
+	initialRequest := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	initialRequest.Header.Set("Idempotency-Key", submissionID)
+	initialResponse := httptest.NewRecorder()
+	initialAPI := &StreamingAPI{internalChatSubmissionStore: journal}
+	w, _, finish, accepted := initialAPI.beginChatSubmission(initialResponse, initialRequest, sessionID, project, message)
+	if !accepted {
+		t.Fatalf("initial durable submission was rejected: status=%d body=%s", initialResponse.Code, initialResponse.Body.String())
+	}
+	writeSubmissionUncertain(w, submissionID)
+	finish()
+
+	reaperAPI := &StreamingAPI{
+		terminalStore: terminalStore,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "completed"},
+		},
+	}
+	stubTerminalTmuxCommand(t)
+	if closed := reaperAPI.cleanupStaleCodingAgentTmuxSessions(now); closed != 1 {
+		t.Fatalf("reaper closed %d tmux sessions, want 1", closed)
+	}
+	if _, ok := mcpagent.LookupSession(sessionID); ok {
+		t.Fatal("idle reaper left the durable provider session registered")
+	}
+	if retainedSession.ActiveTurnID() != "" {
+		t.Fatal("reaped provider session retained an active turn")
+	}
+
+	// A fresh StreamingAPI represents a backend restart. The journal is the
+	// only shared state; the provider session registry remains cleared.
+	queryStarted := make(chan struct{}, 1)
+	restartedAPI := &StreamingAPI{
+		internalChatSubmissionStore: journal,
+		internalUncertainSubmissionRetryChecker: func(_ context.Context, record chatSubmissionRecord) bool {
+			return record.ID == submissionID && record.Session == sessionID && record.Project == project && record.Message == message
+		},
+		runningAgents:    map[string]*mcpagent.Agent{},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{},
+		agentCancelMux:   sync.RWMutex{},
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {SelectedFolder: project, AgentMode: "multi-agent", Provider: string(llm.ProviderClaudeCode), ModelID: "claude-sonnet-4-6"},
+		},
+		internalQueryHandler: func(w http.ResponseWriter, _ *http.Request) {
+			queryStarted <- struct{}{}
+			_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: "p0-resumed-turn"})
+		},
+	}
+	body := bytes.NewBufferString(fmt.Sprintf(`{"message":%q,"submission_id":%q}`, message, submissionID))
+	retryRequest := mux.SetURLVars(
+		httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body),
+		map[string]string{"session_id": sessionID},
+	)
+	retryResponse := httptest.NewRecorder()
+	restartedAPI.handleLiveInputMessage(retryResponse, retryRequest)
+
+	if retryResponse.Code != http.StatusOK {
+		t.Fatalf("reconciled retry status=%d body=%s, want 200", retryResponse.Code, retryResponse.Body.String())
+	}
+	retryResponseBody := retryResponse.Body.String()
+	var response LiveInputResponse
+	if err := json.Unmarshal([]byte(retryResponseBody), &response); err != nil {
+		t.Fatalf("decode reconciled retry: %v", err)
+	}
+	if !response.Success || response.DeliveryStatus != "next_turn_started" {
+		t.Fatalf("reconciled retry response=%#v, want next_turn_started", response)
+	}
+	select {
+	case <-queryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("reconciled submission did not start the resumed turn")
+	}
+	select {
+	case <-queryStarted:
+		t.Fatal("reconciled submission dispatched more than one resumed turn")
+	default:
+	}
+
+	// Once reconciliation succeeds, another retry of the same idempotency key
+	// must replay the durable success instead of opening a second turn.
+	replayBody := bytes.NewBufferString(fmt.Sprintf(`{"message":%q,"submission_id":%q}`, message, submissionID))
+	replayRequest := mux.SetURLVars(
+		httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", replayBody),
+		map[string]string{"session_id": sessionID},
+	)
+	replayResponse := httptest.NewRecorder()
+	restartedAPI.handleLiveInputMessage(replayResponse, replayRequest)
+	if replayResponse.Code != http.StatusOK || replayResponse.Body.String() != retryResponseBody {
+		t.Fatalf("completed submission was not replayed: status=%d first=%s replay=%s", replayResponse.Code, retryResponseBody, replayResponse.Body.String())
+	}
+	select {
+	case <-queryStarted:
+		t.Fatal("durable replay dispatched a duplicate resumed turn")
+	default:
 	}
 }
 

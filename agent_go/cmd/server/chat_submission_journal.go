@@ -269,16 +269,17 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 	return capture, r, finish, true
 }
 
-// canRetryUncertainChatSubmission proves that an old ambiguous receipt predates
-// the final native transcript of a now-closed tmux session. That is the narrow
-// case where a restart may safely reuse the same durable receipt: the provider's
-// own transcript ended before the submission existed, so it could not have
-// accepted that message. Missing or newer transcript evidence stays uncertain.
+// canRetryUncertainChatSubmission proves that an ambiguous receipt was not
+// delivered by consulting the final native transcript of a now-closed tmux
+// session. The proof is valid whether the transcript ended before the receipt
+// or continued beyond it: once the session is closed, absence of the exact
+// human prompt means the provider never accepted that submission. Missing
+// transcript evidence, an active turn, or a live tmux remains uncertain.
 func (api *StreamingAPI) canRetryUncertainChatSubmission(ctx context.Context, record chatSubmissionRecord) bool {
 	if api == nil || strings.TrimSpace(record.Session) == "" || strings.TrimSpace(record.Message) == "" {
 		return false
 	}
-	acceptedAt, err := time.Parse(time.RFC3339Nano, record.UpdatedAt)
+	_, err := time.Parse(time.RFC3339Nano, record.UpdatedAt)
 	if err != nil || api.hasActiveTurnCancel(record.Session) || api.sessionHasLiveMainCodingTmux(record.Session) {
 		return false
 	}
@@ -323,7 +324,7 @@ func (api *StreamingAPI) canRetryUncertainChatSubmission(ctx context.Context, re
 		}
 	}
 	messages, maxTimestamp, _, ok, err := nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir, accountHome)
-	if err != nil || !ok || maxTimestamp.IsZero() || !maxTimestamp.Before(acceptedAt) {
+	if err != nil || !ok || maxTimestamp.IsZero() {
 		return false
 	}
 	want := strings.TrimSpace(record.Message)

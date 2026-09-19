@@ -1,3 +1,14 @@
+## Busy multiline tmux input false durable 409 — PLAT-334
+
+[PLAT-334](pulse_platform/coding-agent-bridge/plat-334.md) records the Claude
+Code incident where a multiline paste chip was already visible during an active
+repainting turn, but whole-pane stability never occurred, Enter was never sent,
+and the durable submission remained a 409. The Claude correction and exact
+deterministic P0 are locally verified, as is transcript-based recovery of the
+original receipt. The ticket remains open until busy multiline live input is a
+required P0 certification for Claude Code, Codex CLI, Cursor CLI, Pi and Muse,
+and live acceptance plus deployment evidence are recorded.
+
 ## Eval subsystem removal with producer-owned measurement — PLAT-333
 
 [PLAT-333](pulse_platform/evaluation/plat-333.md) records the eval-subsystem removal and the final-review rejection of the mandatory 1.0.43 measurement migration (unneeded imposed topology, uncreatable router, nonexistent tool, unimplemented metrics table). No replacement migration ships: the upgrade chain ends at 1.0.42, measurement comes from producing steps' own stored outputs plus `record_goal_observations` for Pulse history, and old evaluation artifacts stay read-only. Implemented and verified locally; not committed, not deployed. See the [removal plan](../workflow/eval_removal_plan.md).

@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
@@ -159,5 +160,29 @@ func TestBotFollowUpReachesRetainedMuseThroughQueryP0(t *testing.T) {
 	}
 	if deliveries != 1 {
 		t.Fatalf("retained tmux deliveries=%d, want 1", deliveries)
+	}
+}
+
+func TestBotWorkflowAccessClaimsKeepWhatsAppUserAndSlackRouteSemantics(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[
+	  {"id":"paired-owner","username":"owner","can_edit":true,"products":["agentworks"]},
+	  {"id":"paired-reader","username":"reader","products":["agentworks"]},
+	  {"id":"unshared-user","username":"other","products":["agentworks"]}
+	]}`)
+	route := services.ChannelRoute{WorkflowID: "wf", WorkspacePath: "Workflow/wf", BotGrant: "run"}
+	manifest := &WorkflowManifest{ID: "wf", Access: &WorkflowAccess{Owners: []string{"paired-owner"}, Readers: []string{"paired-reader"}}}
+
+	reader := botWorkflowAccessClaims("paired-reader", "reader@example.com", route)
+	if reader.Provider == "bot_route" || workflowAccessForManifest(reader, manifest) != WorkflowAccessRead {
+		t.Fatalf("WhatsApp reader claims bypassed manifest: %+v", reader)
+	}
+	outsider := botWorkflowAccessClaims("unshared-user", "other@example.com", route)
+	if workflowAccessForManifest(outsider, manifest) != WorkflowAccessNone {
+		t.Fatal("unshared WhatsApp user received workflow access")
+	}
+	slack := botWorkflowAccessClaims(services.BotPrincipalIDForRoute("slack", route), "", route)
+	if slack.Provider != "bot_route" || workflowAccessForManifest(slack, manifest) != WorkflowAccessRead {
+		t.Fatalf("Slack route grant changed: %+v", slack)
 	}
 }

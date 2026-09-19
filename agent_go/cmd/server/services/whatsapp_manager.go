@@ -26,6 +26,7 @@ type WhatsAppServiceManager struct {
 	statusProvider   BotThreadStatusFunc
 	profileRouter    ProfileRouteResolver
 	voiceTranscriber VoiceTranscriberFunc
+	workflowAccess   WhatsAppWorkflowAccessFunc
 	started          bool
 
 	// routingLocks serializes the read-primary-then-fan-out-to-every-device
@@ -52,6 +53,21 @@ type WhatsAppServiceManager struct {
 	// (nextWhatsAppDeviceSlot fills gaps from the current on-disk listing),
 	// so this must be a transient per-operation lock, not a persisted flag.
 	keyLocks sync.Map
+}
+
+// SetWorkflowAccessFunc installs the current-user workflow visibility check
+// on every device, including devices created after startup.
+func (m *WhatsAppServiceManager) SetWorkflowAccessFunc(fn WhatsAppWorkflowAccessFunc) {
+	m.mu.Lock()
+	m.workflowAccess = fn
+	services := make([]*WhatsAppService, 0, len(m.services))
+	for _, svc := range m.services {
+		services = append(services, svc)
+	}
+	m.mu.Unlock()
+	for _, svc := range services {
+		svc.SetWorkflowAccessFunc(fn)
+	}
 }
 
 // LockAccountRouting acquires this account's routing lock and returns the
@@ -546,6 +562,10 @@ func (m *WhatsAppServiceManager) serviceForKey(ctx context.Context, userKey, slo
 }
 
 func (m *WhatsAppServiceManager) configureService(userID string, svc *WhatsAppService) {
+	m.mu.RLock()
+	workflowAccess := m.workflowAccess
+	m.mu.RUnlock()
+	svc.SetWorkflowAccessFunc(workflowAccess)
 	_, deviceSlot := splitWhatsAppServiceKey(userID)
 	svc.SetMessageHandler(func(msg BotIncomingMessage) {
 		rawChannelID := msg.ChannelID

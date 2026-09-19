@@ -22,3 +22,14 @@ concurrent sends. Failed sends cancel their marker, entries expire after 30
 seconds, raw message content is not retained, and message-ID deduplication remains
 as a second guard. Non-self chats and ordinary user-authored self-chat messages
 continue through the existing routing path.
+
+## Workflow access validation
+
+WhatsApp routing is scoped to the paired AgentWorks account. A saved slug is a
+destination pointer, not a permission grant. Before showing route choices,
+resolving a slug, and dispatching a message, the server now checks the paired
+workspace user's current access against the workflow manifest. Revoked and stale
+routes are hidden and an active inaccessible route is cleared. The bot manager
+also passes the paired workspace identity into its final authorization check.
+Slack remains intentionally different: a configured Slack channel route is its
+own Run/Owner grant for members of that channel.

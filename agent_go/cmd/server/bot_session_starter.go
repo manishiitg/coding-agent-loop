@@ -98,10 +98,14 @@ func botRouteProfileAccessForRequest(claims *UserClaims, req QueryRequest) (Work
 	return WorkflowAccessRead, true
 }
 
-// checkBotWorkflowAccess resolves the explicitly configured route grant. Slack
-// sender identity is audit metadata; channel members need no AgentWorks account.
+// checkBotWorkflowAccess resolves connector access. Slack routes are explicit
+// channel grants, while WhatsApp passes its paired workspace user and must
+// retain that user's current workflow access.
 func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUserID, userEmail string, route services.ChannelRoute) (string, bool, error) {
 	fallbackID := strings.TrimSpace(workspaceUserID)
+	if fallbackID == "" {
+		return "", false, nil
+	}
 
 	var manifest *WorkflowManifest
 	var exists bool
@@ -123,15 +127,37 @@ func (api *StreamingAPI) checkBotWorkflowAccess(ctx context.Context, workspaceUs
 			return fallbackID, false, nil
 		}
 	}
+	if routeID := strings.TrimSpace(route.WorkflowID); routeID != "" &&
+		strings.TrimSpace(manifest.ID) != "" && !strings.EqualFold(routeID, strings.TrimSpace(manifest.ID)) {
+		log.Printf("[BOT_ACCESS] Denied: route workflow=%q does not match manifest=%q", routeID, manifest.ID)
+		return fallbackID, false, nil
+	}
 
-	// Route creation already requires destination management authority. A Run
-	// grant also applies to legacy manifests without ownership metadata.
-	claims := botRouteUserClaims(fallbackID, route)
+	claims := botWorkflowAccessClaims(fallbackID, userEmail, route)
 	if workflowAccessForManifest(claims, manifest) == WorkflowAccessNone {
 		log.Printf("[BOT_ACCESS] Denied: route principal %s has no access to workflow %s", claims.UserID, manifest.ID)
 		return fallbackID, false, nil
 	}
 	return claims.UserID, true, nil
+}
+
+func botWorkflowAccessClaims(userID, userEmail string, route services.ChannelRoute) *UserClaims {
+	if strings.HasPrefix(strings.TrimSpace(userID), "bot-") {
+		// Route creation already requires destination management authority. A
+		// Slack Run grant also applies to legacy manifests without ownership.
+		return botRouteUserClaims(userID, route)
+	}
+	claims := &UserClaims{UserID: strings.TrimSpace(userID), Username: strings.TrimSpace(userID), Email: strings.TrimSpace(userEmail)}
+	if record := directoryUserFor(userID, "", userEmail); record != nil {
+		claims.Username = record.Username
+		claims.Email = record.Email
+	}
+	return claims
+}
+
+func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID string, route services.ChannelRoute) (bool, error) {
+	_, allowed, err := api.checkBotWorkflowAccess(ctx, strings.TrimSpace(userID), "", route)
+	return allowed, err
 }
 
 func (api *StreamingAPI) workflowManifestByBotRoute(ctx context.Context, route services.ChannelRoute) (*WorkflowManifest, bool, error) {

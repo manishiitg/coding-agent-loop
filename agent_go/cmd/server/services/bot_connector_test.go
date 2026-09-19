@@ -830,3 +830,40 @@ func TestExistingSessionDetailModeCommandsToggleFilter(t *testing.T) {
 		t.Fatalf("unexpected replies: %#v", connector.sent)
 	}
 }
+
+func TestWhatsAppWorkflowAuthorizationUsesPairedWorkspaceUser(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	var checkedUser string
+	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, _ string, _ ChannelRoute) (string, bool, error) {
+		checkedUser = userID
+		return userID, true, nil
+	})
+	msg := BotIncomingMessage{
+		Platform: "whatsapp", WorkspaceUserID: "paired-user", UserEmail: "paired@example.com",
+		ChannelID: "chat", IsMention: true,
+		PresetWorkflow: &ChannelRoute{WorkflowID: "wf", WorkspacePath: "Workflow/wf", BotGrant: "run"},
+	}
+	if !manager.authorizeWorkflowRouteForMessage(context.Background(), &msg, ThreadID{Platform: "whatsapp", ChannelID: "chat"}, nil) {
+		t.Fatal("accessible WhatsApp route rejected")
+	}
+	if checkedUser != "paired-user" {
+		t.Fatalf("access checked as %q, want paired workspace user", checkedUser)
+	}
+}
+
+func TestSlackWorkflowAuthorizationStillUsesRoutePrincipal(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	var checkedUser string
+	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, _ string, _ ChannelRoute) (string, bool, error) {
+		checkedUser = userID
+		return userID, true, nil
+	})
+	route := &ChannelRoute{WorkflowID: "wf", WorkspacePath: "Workflow/wf", BotGrant: "run"}
+	msg := BotIncomingMessage{Platform: "slack", WorkspaceUserID: "ignored-user", ChannelID: "C1", IsMention: true, PresetWorkflow: route}
+	if !manager.authorizeWorkflowRouteForMessage(context.Background(), &msg, ThreadID{Platform: "slack", ChannelID: "C1"}, nil) {
+		t.Fatal("accessible Slack route rejected")
+	}
+	if want := BotPrincipalIDForRoute("slack", *route); checkedUser != want {
+		t.Fatalf("access checked as %q, want route principal %q", checkedUser, want)
+	}
+}

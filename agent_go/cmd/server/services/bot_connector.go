@@ -875,7 +875,14 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return false
 	}
 	botUserID := BotPrincipalIDForRoute(msg.Platform, *route)
-	resolvedUserID, allowed, err := m.workflowAccess(ctx, botUserID, "", *route)
+	userEmail := ""
+	if strings.EqualFold(strings.TrimSpace(msg.Platform), "whatsapp") {
+		// WhatsApp is paired to a workspace account. Its saved slug identifies
+		// a destination, not an independent permission grant.
+		botUserID = strings.TrimSpace(msg.WorkspaceUserID)
+		userEmail = strings.TrimSpace(msg.UserEmail)
+	}
+	resolvedUserID, allowed, err := m.workflowAccess(ctx, botUserID, userEmail, *route)
 	if strings.TrimSpace(resolvedUserID) != "" {
 		msg.WorkspaceUserID = strings.TrimSpace(resolvedUserID)
 	}

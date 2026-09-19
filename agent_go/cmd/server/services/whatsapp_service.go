@@ -73,6 +73,7 @@ type WhatsAppService struct {
 	messageHandler     BotMessageHandler
 	interactionHandler BotInteractionHandler
 	statusProvider     BotThreadStatusFunc
+	workflowAccess     WhatsAppWorkflowAccessFunc
 	// profileRouter resolves the default product's own @tokens for this
 	// pairing's owner; consulted after the workflow slugs. nil: none.
 	profileRouter ProfileRouterFunc
@@ -127,6 +128,11 @@ type WhatsAppOwner struct {
 	DefaultUploadFolder string `json:"default_upload_folder,omitempty"`
 }
 
+// WhatsAppWorkflowAccessFunc verifies the paired workspace user's current
+// access to a route. WhatsApp routes are user-scoped; unlike Slack channel
+// grants, a saved slug must never confer access by itself.
+type WhatsAppWorkflowAccessFunc func(ctx context.Context, userID string, route ChannelRoute) (bool, error)
+
 type WhatsAppAccessState struct {
 	LinkCode        string                `json:"link_code,omitempty"`
 	LinkCodeExpires time.Time             `json:"link_code_expires_at,omitempty"`
@@ -144,6 +150,41 @@ type WhatsAppBoundDMChat struct {
 // pairing state in dbPath (a SQLite file local to the agent process).
 func NewWhatsAppService(dbPath string) *WhatsAppService {
 	return &WhatsAppService{dbPath: dbPath}
+}
+
+func (w *WhatsAppService) SetWorkflowAccessFunc(fn WhatsAppWorkflowAccessFunc) {
+	w.mu.Lock()
+	w.workflowAccess = fn
+	w.mu.Unlock()
+}
+
+func (w *WhatsAppService) workflowRouteAllowed(ctx context.Context, route ChannelRoute) bool {
+	owner := w.GetOwner()
+	if owner == nil || strings.TrimSpace(owner.UserID) == "" {
+		return false
+	}
+	w.mu.RLock()
+	check := w.workflowAccess
+	w.mu.RUnlock()
+	if check == nil {
+		return true // compatibility for standalone connector users; server always wires this.
+	}
+	allowed, err := check(ctx, owner.UserID, route)
+	if err != nil {
+		log.Printf("[WHATSAPP] Workflow access check failed for user=%s workflow=%s: %v", owner.UserID, route.WorkflowID, err)
+		return false
+	}
+	return allowed
+}
+
+func (w *WhatsAppService) accessibleRouting(ctx context.Context) WhatsAppRouting {
+	routing := w.GetRouting()
+	for slug, route := range routing {
+		if !w.workflowRouteAllowed(ctx, route) {
+			delete(routing, slug)
+		}
+	}
+	return routing
 }
 
 // Name returns the connector name used in routing and logs.
@@ -2223,6 +2264,10 @@ func (w *WhatsAppService) HandleCommand(ctx context.Context, msg *whatsappbot.Me
 func (w *WhatsAppService) Resolve(ctx context.Context, _ string, token string) *whatsappbot.Route {
 	key := strings.ToLower(strings.TrimSpace(token))
 	if route := w.resolveSlugRoute(key); route != nil {
+		if !w.workflowRouteAllowed(ctx, *route) {
+			log.Printf("[WHATSAPP] Denied inaccessible route @%s", key)
+			return nil
+		}
 		return &whatsappbot.Route{Key: key, Value: route}
 	}
 	profileRoute, err := w.resolveProfileRoute(ctx, key)
@@ -2313,7 +2358,7 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 			log.Printf("[WHATSAPP] Cleared unavailable active route @%s for chat=%s user=%s", stale, chatJID, owner.UserID)
 		}
 		msg.React("👀")
-		reply := formatWhatsAppSlugChoices(w.GetRouting())
+		reply := formatWhatsAppSlugChoices(w.accessibleRouting(ctx))
 		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, reply); err != nil {
 			log.Printf("[WHATSAPP] Failed to send route choices for chat=%s user=%s: %v", chatJID, owner.UserID, err)
 		}
@@ -2328,6 +2373,12 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		presetRoute, _ = msg.Route.Value.(*ChannelRoute)
 		presetProfile, _ = msg.Route.Value.(*ProfileRoute)
 		routedSlug = msg.Route.Key
+	}
+	if presetRoute != nil && !w.workflowRouteAllowed(ctx, *presetRoute) {
+		w.clearActiveSlug(chatJID)
+		msg.React("⚠️")
+		w.sendWorkflowCommandReply(ctx, chatJID, "You no longer have access to this workflow. Choose another workflow with @list.")
+		return
 	}
 
 	uploadFolder := whatsappWorkflowUploadFolder(presetRoute)

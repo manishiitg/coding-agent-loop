@@ -2513,6 +2513,7 @@ func runServer(cmd *cobra.Command, args []string) {
 			}
 		}
 		whatsappManager := services.NewWhatsAppServiceManager(sessionDir)
+		whatsappManager.SetWorkflowAccessFunc(api.checkWhatsAppWorkflowAccess)
 		botManager.RegisterConnector(whatsappManager)
 		api.whatsappManager = whatsappManager
 		if err := whatsappManager.StartListening(context.Background()); err != nil {

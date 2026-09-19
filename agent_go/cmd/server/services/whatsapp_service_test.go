@@ -217,3 +217,35 @@ func TestWhatsAppBotSessionControlsForwardToBotManager(t *testing.T) {
 		t.Fatalf("forwarded owner fields = userID %q email %q", got[0].WorkspaceUserID, got[0].UserEmail)
 	}
 }
+
+func TestWhatsAppRoutesAreFilteredByPairedUserAccess(t *testing.T) {
+	svc := &WhatsAppService{
+		owner: &WhatsAppOwner{UserID: "paired-user"},
+		routing: WhatsAppRouting{
+			"allowed": {WorkflowID: "wf-allowed", WorkspacePath: "Workflow/allowed"},
+			"denied":  {WorkflowID: "wf-denied", WorkspacePath: "Workflow/denied"},
+		},
+	}
+	var checked []string
+	svc.SetWorkflowAccessFunc(func(_ context.Context, userID string, route ChannelRoute) (bool, error) {
+		if userID != "paired-user" {
+			t.Fatalf("access checked as %q", userID)
+		}
+		checked = append(checked, route.WorkflowID)
+		return route.WorkflowID == "wf-allowed", nil
+	})
+
+	got := svc.accessibleRouting(context.Background())
+	if len(got) != 1 || got["allowed"].WorkflowID != "wf-allowed" {
+		t.Fatalf("accessible routing = %#v", got)
+	}
+	if svc.Resolve(context.Background(), "chat", "denied") != nil {
+		t.Fatal("inaccessible saved slug resolved")
+	}
+	if svc.Resolve(context.Background(), "chat", "allowed") == nil {
+		t.Fatal("accessible saved slug did not resolve")
+	}
+	if len(checked) != 4 {
+		t.Fatalf("access checks = %v", checked)
+	}
+}

@@ -23,33 +23,37 @@ import (
 
 // productWebhookTrigger is the message-only product counterpart of an
 // AgentWorks workflow webhook. It deliberately has no route/step fields: an
-// authenticated delivery becomes one turn in the product's durable chat.
+// authenticated delivery becomes one turn in either the Crew chat or the
+// trigger's own durable isolated conversation.
 type productWebhookTrigger struct {
-	ID      string                 `json:"id"`
-	Name    string                 `json:"name"`
-	Enabled bool                   `json:"enabled"`
-	Message string                 `json:"message"`
-	Webhook *WorkflowWebhookConfig `json:"webhook,omitempty"`
+	ID             string                 `json:"id"`
+	Name           string                 `json:"name"`
+	Enabled        bool                   `json:"enabled"`
+	Message        string                 `json:"message"`
+	RunDestination string                 `json:"run_destination,omitempty"`
+	Webhook        *WorkflowWebhookConfig `json:"webhook,omitempty"`
 }
 
 type productWebhookRequest struct {
-	ProfileID    string `json:"profile_id"`
-	ProjectID    string `json:"project_id"`
-	Name         string `json:"name"`
-	Enabled      bool   `json:"enabled"`
-	Message      string `json:"message"`
-	AuthMode     string `json:"auth_mode"`
-	RotateSecret bool   `json:"rotate_secret"`
+	ProfileID      string `json:"profile_id"`
+	ProjectID      string `json:"project_id"`
+	Name           string `json:"name"`
+	Enabled        bool   `json:"enabled"`
+	Message        string `json:"message"`
+	AuthMode       string `json:"auth_mode"`
+	RotateSecret   bool   `json:"rotate_secret"`
+	RunDestination string `json:"run_destination,omitempty"`
 }
 
 type productWebhookResponse struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Enabled  bool   `json:"enabled"`
-	Message  string `json:"message"`
-	AuthMode string `json:"auth_mode"`
-	Path     string `json:"path"`
-	Secret   string `json:"secret,omitempty"`
+	ID             string `json:"id"`
+	Name           string `json:"name"`
+	Enabled        bool   `json:"enabled"`
+	Message        string `json:"message"`
+	AuthMode       string `json:"auth_mode"`
+	Path           string `json:"path"`
+	Secret         string `json:"secret,omitempty"`
+	RunDestination string `json:"run_destination"`
 }
 
 func productWebhookDTO(trigger productWebhookTrigger) productWebhookResponse {
@@ -60,7 +64,8 @@ func productWebhookDTO(trigger productWebhookTrigger) productWebhookResponse {
 	return productWebhookResponse{
 		ID: trigger.ID, Name: trigger.Name, Enabled: trigger.Enabled,
 		Message: trigger.Message, AuthMode: authMode,
-		Path: "/api/hooks/product/" + trigger.ID,
+		Path:           "/api/hooks/product/" + trigger.ID,
+		RunDestination: firstNonEmptyTrimmed(trigger.RunDestination, runDestinationCrewChat),
 	}
 }
 
@@ -176,9 +181,16 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 	if id == "" {
 		id = uuid.NewString()
 	}
-	trigger := productWebhookTrigger{ID: id, Name: strings.TrimSpace(req.Name), Enabled: req.Enabled, Message: strings.TrimSpace(req.Message)}
+	isolated, err := isolatedForRunDestination(req.RunDestination)
+	if err != nil {
+		return productWebhookResponse{}, false, err
+	}
+	trigger := productWebhookTrigger{ID: id, Name: strings.TrimSpace(req.Name), Enabled: req.Enabled, Message: strings.TrimSpace(req.Message), RunDestination: runDestination(isolated)}
 	if index >= 0 {
 		trigger.Webhook = manifest.Triggers[index].Webhook
+		if strings.TrimSpace(req.RunDestination) == "" {
+			trigger.RunDestination = firstNonEmptyTrimmed(manifest.Triggers[index].RunDestination, runDestinationCrewChat)
+		}
 	}
 	if trigger.Webhook == nil {
 		trigger.Webhook = &WorkflowWebhookConfig{}
@@ -380,7 +392,7 @@ func (s *ProductScheduleService) receiveProductWebhook(w http.ResponseWriter, r 
 		return
 	}
 	message := strings.TrimSpace(match.Trigger.Message) + "\n\nThis turn was started by an authenticated webhook. Read its JSON payload from `" + relativePayloadPath + "` and use it as input."
-	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Messages: []string{message}}}
+	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: strings.EqualFold(match.Trigger.RunDestination, runDestinationIsolated), Messages: []string{message}}}
 	go func() {
 		_, _ = s.Run(context.Background(), job, "webhook", time.Time{})
 	}()

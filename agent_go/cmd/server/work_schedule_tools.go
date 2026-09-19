@@ -58,7 +58,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	}); err != nil {
 		return err
 	}
-	if err := register("create_project_schedule", "Create one recurring schedule for this Work project. It sends exactly one message into the project's Builder conversation; it never runs a workflow or route.", map[string]interface{}{
+	if err := register("create_project_schedule", "Create one recurring schedule for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this schedule's own persistent automation conversation.", map[string]interface{}{
 		"type": "object",
 		"properties": map[string]interface{}{
 			"name":            map[string]interface{}{"type": "string"},
@@ -66,6 +66,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 			"cron_expression": map[string]interface{}{"type": "string", "description": "Standard five-field cron expression."},
 			"timezone":        map[string]interface{}{"type": "string", "description": "IANA timezone, for example Asia/Kolkata."},
 			"enabled":         map[string]interface{}{"type": "boolean"},
+			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}, "description": "Where runs execute. Defaults to crew_chat."},
 		},
 		"required": []string{"name", "message", "cron_expression", "timezone"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -74,11 +75,16 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		cronExpression, _ := args["cron_expression"].(string)
 		timezone, _ := args["timezone"].(string)
 		enabled, hasEnabled := args["enabled"].(bool)
+		destination, _ := args["run_destination"].(string)
+		isolated, err := isolatedForRunDestination(destination)
+		if err != nil {
+			return "", err
+		}
 		if !hasEnabled {
 			enabled = true
 		}
 		job, err := api.productSchedules.CreateProjectSchedule(ctx, userID, "work", projectID, productschedule.Schedule{
-			Name: strings.TrimSpace(name), Messages: []string{strings.TrimSpace(message)}, CronExpression: strings.TrimSpace(cronExpression), Timezone: strings.TrimSpace(timezone), Enabled: enabled,
+			Name: strings.TrimSpace(name), Messages: []string{strings.TrimSpace(message)}, CronExpression: strings.TrimSpace(cronExpression), Timezone: strings.TrimSpace(timezone), Enabled: enabled, Isolated: isolated,
 		})
 		if err != nil {
 			return "", err
@@ -94,10 +100,19 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		"properties": map[string]interface{}{
 			"id": map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"cron_expression": map[string]interface{}{"type": "string"}, "timezone": map[string]interface{}{"type": "string"}, "enabled": map[string]interface{}{"type": "boolean"},
+			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
 		},
 		"required": []string{"id"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		id, _ := args["id"].(string)
+		var requestedIsolation *bool
+		if value, ok := args["run_destination"].(string); ok {
+			isolated, destinationErr := isolatedForRunDestination(value)
+			if destinationErr != nil {
+				return "", destinationErr
+			}
+			requestedIsolation = &isolated
+		}
 		job, err := api.productSchedules.UpdateProjectSchedule(ctx, userID, resolveID(id), func(schedule *productschedule.Schedule) {
 			if value, ok := args["name"].(string); ok && strings.TrimSpace(value) != "" {
 				schedule.Name = strings.TrimSpace(value)
@@ -113,6 +128,9 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 			}
 			if value, ok := args["enabled"].(bool); ok {
 				schedule.Enabled = value
+			}
+			if requestedIsolation != nil {
+				schedule.Isolated = *requestedIsolation
 			}
 		})
 		if err != nil {
@@ -151,20 +169,22 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	}); err != nil {
 		return err
 	}
-	if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Each delivery sends the saved message into the Builder chat with a path to its JSON payload. Return the one-time secret to the user immediately.", map[string]interface{}{
+	if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this trigger's own persistent automation conversation. Return the one-time secret immediately.", map[string]interface{}{
 		"type": "object", "properties": map[string]interface{}{
 			"name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"},
+			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
 		}, "required": []string{"name", "message"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		name, _ := args["name"].(string)
 		message, _ := args["message"].(string)
 		authMode, _ := args["auth_mode"].(string)
+		destination, _ := args["run_destination"].(string)
 		enabled, ok := args["enabled"].(bool)
 		if !ok {
 			enabled = true
 		}
-		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled}, "")
+		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RunDestination: destination}, "")
 		if err != nil {
 			return "", err
 		}
@@ -177,6 +197,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		"type": "object", "properties": map[string]interface{}{
 			"id": map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"}, "rotate_secret": map[string]interface{}{"type": "boolean"},
+			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
 		}, "required": []string{"id"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		id, _ := args["id"].(string)
@@ -194,7 +215,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		if current == nil {
 			return "", fmt.Errorf("trigger not found")
 		}
-		name, message, authMode, enabled := current.Name, current.Message, current.Webhook.AuthMode, current.Enabled
+		name, message, authMode, enabled, destination := current.Name, current.Message, current.Webhook.AuthMode, current.Enabled, firstNonEmptyTrimmed(current.RunDestination, runDestinationCrewChat)
 		if value, ok := args["name"].(string); ok && strings.TrimSpace(value) != "" {
 			name = value
 		}
@@ -207,8 +228,11 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		if value, ok := args["enabled"].(bool); ok {
 			enabled = value
 		}
+		if value, ok := args["run_destination"].(string); ok && strings.TrimSpace(value) != "" {
+			destination = value
+		}
 		rotate, _ := args["rotate_secret"].(bool)
-		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RotateSecret: rotate}, current.ID)
+		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RotateSecret: rotate, RunDestination: destination}, current.ID)
 		if err != nil {
 			return "", err
 		}

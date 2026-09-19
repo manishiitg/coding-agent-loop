@@ -3619,7 +3619,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if !retainedProfileCompatible && !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) {
 		api.interruptWorkflowPolicySession(sessionID, req.Provider)
 	}
-	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible
+	// Automated schedule and webhook turns must preserve turn boundaries. They
+	// queue on the session input lane instead of steering a person's currently
+	// running Crew reply through retained CLI live input.
+	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible
 	retainedWorkflowCompatible, policyErr := api.prepareWorkflowRetainedDelivery(r.Context(), sessionID, req, retainedDeliveryEligible)
 	if policyErr != nil {
 		http.Error(w, policyErr.Error(), http.StatusForbidden)

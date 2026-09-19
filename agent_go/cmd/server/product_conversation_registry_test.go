@@ -456,3 +456,29 @@ func TestIsolatedScheduleBindingRejectsNonSingletonProfiles(t *testing.T) {
 		t.Fatalf("expected a singleton-only error, got %v", err)
 	}
 }
+
+func TestIsolatedProjectAutomationBindingKeepsProjectPolicyButOwnsConversation(t *testing.T) {
+	base := productConversationBinding{
+		ConversationKey: "project-1", WorkspacePath: "Chats/Work/projects/project-1",
+		ManifestPath: "Chats/Work/projects/project-1/product.json", ResourceID: "project-1",
+		Title: "Prod issue", AuthoritativeSessionID: "crew-session",
+		ProjectSelectedServers: []string{"github"},
+	}
+	schedule, err := isolateProjectAutomationBinding(base, "project-1", "schedule", "daily", "Daily triage")
+	if err != nil {
+		t.Fatal(err)
+	}
+	trigger, err := isolateProjectAutomationBinding(base, "project-1", "trigger", "daily", "Incoming issue")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if schedule.ConversationKey == base.ConversationKey || schedule.ConversationKey == trigger.ConversationKey {
+		t.Fatalf("isolated keys collided: base=%q schedule=%q trigger=%q", base.ConversationKey, schedule.ConversationKey, trigger.ConversationKey)
+	}
+	if schedule.ManifestPath != "" || schedule.AuthoritativeSessionID != "" {
+		t.Fatalf("isolated binding retained the Crew session authority: %+v", schedule)
+	}
+	if schedule.WorkspacePath != base.WorkspacePath || schedule.ResourceID != base.ResourceID || strings.Join(schedule.ProjectSelectedServers, ",") != "github" {
+		t.Fatalf("isolated binding lost project policy: %+v", schedule)
+	}
+}

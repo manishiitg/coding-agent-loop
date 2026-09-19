@@ -3115,11 +3115,13 @@ export interface ScheduledJob {
   updated_at?: string
   built_in?: boolean
   managed_by?: 'built-in' | 'slash-command' | string
+  run_destination?: 'crew_chat' | 'isolated'
 }
 
 export interface CreateScheduledJobRequest {
   pulse_mode?: 'off' | 'basic' | 'full'
   pulse_mode_reason?: string
+  run_destination?: 'crew_chat' | 'isolated'
   name: string
   description?: string
   entity_type: 'workflow' | 'chat' | 'multi-agent' | 'product'
@@ -3180,6 +3182,7 @@ export interface UpdateScheduledJobRequest {
   cron_expression?: string
   timezone?: string
   enabled?: boolean
+  run_destination?: 'crew_chat' | 'isolated'
 }
 
 export interface CalendarScheduleItem {

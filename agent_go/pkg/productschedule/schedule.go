@@ -50,17 +50,11 @@ type Schedule struct {
 	Messages []string `json:"messages" yaml:"messages"`
 
 	// Isolated runs this schedule on its own dedicated conversation (session,
-	// coding-CLI process, transcript) instead of the profile's normal
-	// conversation — for a singleton-mode profile this is the only way a
-	// scheduled run avoids sharing the same tmux-backed CLI process as the
-	// person's own live chat, which a same-session run otherwise silently
-	// does today (they'd collide on the same pane if the person is chatting
-	// when the schedule fires). The isolated conversation persists across
-	// runs (so successive runs of this schedule stay continuous with each
-	// other) but never touches the profile's own conversation. Its turns are
-	// invisible in that conversation's transcript, so a schedule declaring
-	// this must reach the person entirely through its own tools (e.g.
-	// notify_user) rather than assuming anyone is reading its replies.
+	// coding-CLI process, transcript) instead of the profile or Crew project's
+	// normal conversation. The isolated conversation persists across runs, so
+	// successive runs of one schedule remain continuous with each other without
+	// steering a person's live chat. Its turns are visible from run history,
+	// rather than in the main conversation transcript.
 	Isolated bool `json:"isolated,omitempty" yaml:"isolated,omitempty"`
 }
 

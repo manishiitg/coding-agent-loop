@@ -465,6 +465,19 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     } catch { /* ignore */ }
   }
 
+  const handleRunDestination = async (job: ScheduledJob, runDestination: 'crew_chat' | 'isolated') => {
+    try {
+      const updated = await schedulerApi.updateJob(job.id, { run_destination: runDestination })
+      setJobs(previous => previous.map(candidate => candidate.id === job.id ? updated : candidate))
+      useChatStore.getState().addToast(runDestination === 'isolated'
+        ? `“${job.name}” will run in its own automation conversation.`
+        : `“${job.name}” will queue in the Crew chat.`, 'success')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : 'Unable to change run destination'
+      useChatStore.getState().addToast(detail, 'error')
+    }
+  }
+
   // Pause (or resume) every schedule belonging to a single workflow group in one click.
   // If any schedule in the group is enabled, pause them all; otherwise resume all paused ones.
   const handleToggleWorkflowGroupPause = async (group: WorkflowScheduleGroup) => {
@@ -776,6 +789,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     monthlyCalendar,
     selectedCalendarCell,
     handleToggle,
+    handleRunDestination,
     handleToggleWorkflowGroupPause,
     handleDelete,
     handleTrigger,

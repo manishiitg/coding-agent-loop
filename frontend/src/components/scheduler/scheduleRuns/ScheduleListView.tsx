@@ -30,6 +30,7 @@ type ScheduleListViewProps = {
   panel: Pick<ScheduleRunsPanelState,
     | 'filteredJobs' | 'presetMap' | 'showWorkflowIdentityInScheduleRows' | 'isReadOnlyUser'
     | 'handleStopRun' | 'handleTrigger' | 'triggering' | 'handleToggle'
+    | 'handleRunDestination'
     | 'openActionMenuJobId' | 'setOpenActionMenuJobId' | 'handleDelete'
     | 'expandedRunHistoryJobIds' | 'runsByJob' | 'runsLoadingJobIds' | 'deletingRunSessionIds'
     | 'toggleRunHistory' | 'openScheduledRun' | 'deleteScheduledRunSession'
@@ -46,6 +47,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
     handleTrigger,
     triggering,
     handleToggle,
+    handleRunDestination,
     openActionMenuJobId,
     setOpenActionMenuJobId,
     handleDelete,
@@ -174,6 +176,21 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                     <span className="px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium" title={executionScope.title}>
                       {executionScope.label}
                     </span>
+                  )}
+                  {job.entity_type === 'product' && (
+                    <label className="inline-flex items-center gap-1.5">
+                      <span>Runs in</span>
+                      <select
+                        aria-label={`Run destination for ${job.name}`}
+                        value={job.run_destination || 'crew_chat'}
+                        disabled={isReadOnlyUser || job.last_status === 'running'}
+                        onChange={event => void handleRunDestination(job, event.target.value as 'crew_chat' | 'isolated')}
+                        className="rounded border border-border bg-background px-1.5 py-0.5 text-xs text-foreground disabled:opacity-50"
+                      >
+                        <option value="crew_chat">Crew chat</option>
+                        <option value="isolated">Isolated run</option>
+                      </select>
+                    </label>
                   )}
                 </div>
                 {dependencyNames.length > 0 && (

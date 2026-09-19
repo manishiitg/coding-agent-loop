@@ -20,10 +20,10 @@ import (
 // Product schedules are the recurring jobs a product declares in its
 // product.yaml (profile.schedules). For every user who has the product, the
 // platform runs each due schedule by sending its messages one at a time into
-// that user's product conversation — the same conversation the product's
-// surface shows — so a check-in reads as part of the chat, not a separate
-// run. Each user keeps their own enable/disable override and run bookkeeping
-// in _users/<id>/chat_history/product-schedules.json; run history goes to
+// the user's normal product conversation, unless the saved schedule selects
+// its own persistent isolated conversation.
+// Each user keeps their own enable/disable override and run bookkeeping in
+// _users/<id>/chat_history/product-schedules.json; run history goes to
 // schedule-runs.json next to the conversation, the same file workflow
 // schedules use.
 //
@@ -36,6 +36,29 @@ import (
 const productScheduleJobPrefix = "product:"
 const projectScheduleJobPrefix = "product-project:"
 const productScheduleStateFile = "product-schedules.json"
+
+const (
+	runDestinationCrewChat = "crew_chat"
+	runDestinationIsolated = "isolated"
+)
+
+func runDestination(isolated bool) string {
+	if isolated {
+		return runDestinationIsolated
+	}
+	return runDestinationCrewChat
+}
+
+func isolatedForRunDestination(value string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", runDestinationCrewChat:
+		return false, nil
+	case runDestinationIsolated:
+		return true, nil
+	default:
+		return false, fmt.Errorf("run_destination must be %q or %q", runDestinationCrewChat, runDestinationIsolated)
+	}
+}
 
 // productScheduleUserState is one user's bookkeeping for one schedule.
 type productScheduleUserState struct {
@@ -56,14 +79,15 @@ type productScheduleUserState struct {
 
 // productScheduleJob is one (profile, schedule, user) triple.
 type productScheduleJob struct {
-	UserID        string
-	Profile       agentprofiles.Profile
-	Schedule      productschedule.Schedule
-	State         productScheduleUserState
-	ProjectID     string
-	ProjectTitle  string
-	WorkspacePath string
-	ManifestPath  string
+	UserID         string
+	Profile        agentprofiles.Profile
+	Schedule       productschedule.Schedule
+	State          productScheduleUserState
+	ProjectID      string
+	ProjectTitle   string
+	WorkspacePath  string
+	ManifestPath   string
+	AutomationKind string
 }
 
 // ID is the job id exposed through /api/scheduler/jobs.
@@ -809,7 +833,10 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 
 	var binding productConversationBinding
 	var bindErr error
-	if job.ProjectID != "" {
+	if job.ProjectID != "" && job.Schedule.Isolated {
+		kind := firstNonEmptyTrimmed(job.AutomationKind, "schedule")
+		binding, bindErr = resolveIsolatedProjectAutomationBinding(runCtx, job.UserID, job.Profile, job.ProjectID, kind, job.Schedule.ID, job.ProjectTitle+" · "+job.Schedule.Name)
+	} else if job.ProjectID != "" {
 		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, job.ProjectID)
 	} else if job.Schedule.Isolated {
 		binding, bindErr = resolveIsolatedScheduleBinding(runCtx, job.UserID, job.Profile)
@@ -961,6 +988,7 @@ func (s *ProductScheduleService) jobResponse(job productScheduleJob, runsWorkspa
 		LastDurationMs:      job.State.LastDurationMs,
 		RunCount:            job.State.RunCount,
 		ConsecutiveFailures: job.State.ConsecutiveFailures,
+		RunDestination:      runDestination(job.Schedule.Isolated),
 		DeferredReason:      s.deferredReason(job.UserID, job.ID()),
 	}
 	if sched.CronExpression == "" && sched.CadenceHours > 0 {

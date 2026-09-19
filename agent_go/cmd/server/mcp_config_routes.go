@@ -331,8 +331,15 @@ func (api *StreamingAPI) loadMergedConfig() (*mcpclient.MCPConfig, error) {
 		}
 	}
 
-	// Merge base config with user additions
-	mergedConfig := mcpclient.MergeMCPConfigs(api.mcpConfig, userConfig)
+	// Merge base config with user additions. Keep this local because older
+	// mcpagent releases do not export a merge helper.
+	mergedConfig := &mcpclient.MCPConfig{MCPServers: make(map[string]mcpclient.MCPServerConfig, len(api.mcpConfig.MCPServers)+len(userConfig.MCPServers))}
+	for name, server := range api.mcpConfig.MCPServers {
+		mergedConfig.MCPServers[name] = server
+	}
+	for name, server := range userConfig.MCPServers {
+		mergedConfig.MCPServers[name] = server
+	}
 
 	api.logger.Debug(fmt.Sprintf("Merged config: %d base servers + %d user servers = %d total",
 		len(api.mcpConfig.MCPServers), len(userConfig.MCPServers), len(mergedConfig.MCPServers)))

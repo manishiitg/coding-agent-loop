@@ -57,7 +57,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
       </div>
       <div className="flex items-center gap-2"><button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button>{headerAction}</div>
     </div>
-    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Both use the same durable Builder conversation. Webhooks do not run AgentWorks routes or workflow steps. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Choose whether each automation queues work in the Crew chat or keeps its own persistent isolated conversation. Webhooks do not run AgentWorks routes or workflow steps. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
     <p className="text-xs text-muted-foreground">Ask the project chat to create a webhook or change its saved message and authentication.</p>
     {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {issued?.secret && <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
@@ -70,6 +70,13 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
       <div className="flex justify-between gap-2"><h3 className="text-sm font-medium">{trigger.name}</h3><span className="text-xs text-muted-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span></div>
       <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all text-xs select-all">{apiTriggerURL(trigger.path)}</code><button type="button" aria-label={`Copy endpoint for ${trigger.name}`} className={buttonClass} onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={13} /></button></div>
       <p className="text-xs text-muted-foreground">{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'} · Message: {trigger.message}</p>
+      <label className="flex max-w-sm items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
+        <span><span className="block font-medium text-foreground">Run destination</span><span className="text-muted-foreground">{trigger.run_destination === 'isolated' ? 'Own persistent automation conversation' : 'Queue after the current Crew turn'}</span></span>
+        <select aria-label={`Run destination for ${trigger.name}`} disabled={busy} value={trigger.run_destination || 'crew_chat'} onChange={event => void save({ ...trigger, run_destination: event.target.value as 'crew_chat' | 'isolated' })} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground">
+          <option value="crew_chat">Crew chat</option>
+          <option value="isolated">Isolated run</option>
+        </select>
+      </label>
       <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button></div>
     </section>)}{triggers.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the project chat to create one.</p>}</div>
     {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}

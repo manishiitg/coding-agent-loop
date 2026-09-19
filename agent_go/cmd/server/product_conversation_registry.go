@@ -881,6 +881,35 @@ func resolveIsolatedScheduleBinding(ctx context.Context, userID string, profile 
 	return resolveIsolatedProductBinding(ctx, userID, profile, "pulse", profile.Name+" (check-in)")
 }
 
+// resolveIsolatedProjectAutomationBinding gives one project schedule or trigger
+// a durable conversation of its own. It inherits the Crew project's workspace
+// and capability policy, but it is not authoritative for product.json's main
+// session id. Repeated runs of the same automation therefore keep their own
+// context without steering or writing into the Crew chat.
+func resolveIsolatedProjectAutomationBinding(ctx context.Context, userID string, profile agentprofiles.Profile, projectID, kind, automationID, title string) (productConversationBinding, error) {
+	base, err := resolveProductConversationBinding(ctx, userID, profile, projectID)
+	if err != nil {
+		return productConversationBinding{}, err
+	}
+	return isolateProjectAutomationBinding(base, projectID, kind, automationID, title)
+}
+
+func isolateProjectAutomationBinding(base productConversationBinding, projectID, kind, automationID, title string) (productConversationBinding, error) {
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "schedule" && kind != "trigger" {
+		return productConversationBinding{}, fmt.Errorf("invalid isolated automation kind %q", kind)
+	}
+	key := strings.TrimSpace(projectID) + ":" + kind + ":" + strings.TrimSpace(automationID)
+	if !productConversationKeyPattern.MatchString(key) {
+		return productConversationBinding{}, fmt.Errorf("invalid isolated automation conversation key %q", key)
+	}
+	base.ConversationKey = key
+	base.ManifestPath = ""
+	base.AuthoritativeSessionID = ""
+	base.Title = firstNonEmptyTrimmed(title, base.Title+" · "+kind)
+	return base, nil
+}
+
 // resolveIsolatedProductBinding gives a singleton profile a further
 // conversation of its own under a server-chosen key — a schedule's, or a
 // second phone's — on the same workspace, apart from the profile's main

@@ -76,6 +76,7 @@ type ScheduledJobResponse struct {
 	PulseModeReason          string     `json:"pulse_mode_reason,omitempty"`
 	CreatedAt                string     `json:"created_at,omitempty"`
 	UpdatedAt                string     `json:"updated_at,omitempty"`
+	RunDestination           string     `json:"run_destination,omitempty"`
 }
 
 // CreateScheduleRequest is the request body for creating a schedule.
@@ -112,6 +113,7 @@ type CreateScheduleRequest struct {
 	PulseReviewOnly          bool                   `json:"pulse_review_only,omitempty"`
 	PulseMode                string                 `json:"pulse_mode,omitempty"`
 	PulseModeReason          string                 `json:"pulse_mode_reason,omitempty"`
+	RunDestination           string                 `json:"run_destination,omitempty"`
 }
 
 // UpdateScheduleRequest is the request body for updating a schedule.
@@ -135,6 +137,7 @@ type UpdateScheduleRequest struct {
 	CollisionPolicy          *string                `json:"collision_policy,omitempty"`
 	ConcurrencyMode          *string                `json:"concurrency_mode,omitempty"`
 	ParallelRiskAcknowledged *bool                  `json:"parallel_risk_acknowledged,omitempty"`
+	RunDestination           *string                `json:"run_destination,omitempty"`
 	MaxStartDelayMinutes     *int                   `json:"max_start_delay_minutes,omitempty"`
 	AfterScheduleID          *string                `json:"after_schedule_id,omitempty"`
 	AfterScheduleIDs         []string               `json:"after_schedule_ids,omitempty"`
@@ -559,9 +562,14 @@ func createScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 				http.Error(w, "a Work project schedule requires exactly one message", http.StatusBadRequest)
 				return
 			}
+			isolated, err := isolatedForRunDestination(req.RunDestination)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
 			job, err := svc.api.productSchedules.CreateProjectSchedule(r.Context(), productWorkspaceUserID(r.Context()), req.ProductProfileID, req.ProductProjectID, productschedule.Schedule{
 				Name: req.Name, Description: req.Description, Enabled: req.Enabled,
-				CronExpression: req.CronExpression, Timezone: scheduleTimezoneOrDefault(req.Timezone), Messages: req.Messages,
+				CronExpression: req.CronExpression, Timezone: scheduleTimezoneOrDefault(req.Timezone), Messages: req.Messages, Isolated: isolated,
 			})
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusBadRequest)
@@ -1334,6 +1342,15 @@ func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *Sched
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return true
 		}
+		var requestedIsolation *bool
+		if req.RunDestination != nil {
+			isolated, destinationErr := isolatedForRunDestination(*req.RunDestination)
+			if destinationErr != nil {
+				http.Error(w, destinationErr.Error(), http.StatusBadRequest)
+				return true
+			}
+			requestedIsolation = &isolated
+		}
 		updated, err := ps.UpdateProjectSchedule(ctx, userID, id, func(schedule *productschedule.Schedule) {
 			if req.Name != "" {
 				schedule.Name = req.Name
@@ -1352,6 +1369,9 @@ func handleProductScheduleJob(w http.ResponseWriter, r *http.Request, svc *Sched
 			}
 			if req.Messages != nil {
 				schedule.Messages = req.Messages
+			}
+			if requestedIsolation != nil {
+				schedule.Isolated = *requestedIsolation
 			}
 		})
 		if err != nil {

@@ -42,6 +42,21 @@ func TestProjectScheduleJobIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestRunDestinationDefaultsToCrewChatAndAcceptsIsolated(t *testing.T) {
+	for _, test := range []struct {
+		value    string
+		isolated bool
+	}{{"", false}, {runDestinationCrewChat, false}, {runDestinationIsolated, true}} {
+		got, err := isolatedForRunDestination(test.value)
+		if err != nil || got != test.isolated {
+			t.Fatalf("destination %q = %v, %v", test.value, got, err)
+		}
+	}
+	if _, err := isolatedForRunDestination("new_chat"); err == nil {
+		t.Fatal("invalid destination accepted")
+	}
+}
+
 func TestUsersWithProductFollowsDirectoryAccess(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	t.Setenv("AGENTWORKS_ADMIN_ONLY_PRODUCT_SURFACES", "work")

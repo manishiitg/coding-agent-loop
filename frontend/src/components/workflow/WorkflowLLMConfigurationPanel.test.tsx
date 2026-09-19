@@ -121,11 +121,11 @@ describe('WorkflowLLMConfigurationPanel coding-agent rows', () => {
       expect(host.textContent).toContain('Needs setup')
       expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Test')).toBe(false)
       expect(Array.from(host.querySelectorAll('button')).filter(button => button.textContent?.trim() === 'Use')).toHaveLength(1)
-      const setupButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Add account')
+      const setupButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Manage in Providers')
       expect(setupButton).toBeDefined()
       await act(async () => setupButton?.click())
-      expect(storeState.setShowLLMModal).not.toHaveBeenCalled()
-      expect(host.textContent).toContain('Add a private account')
+      expect(storeState.setShowLLMModal).toHaveBeenCalledWith(true)
+      expect(host.textContent).not.toContain('Add a private account')
     } finally {
       await act(async () => root.unmount())
       host.remove()
@@ -223,10 +223,8 @@ describe('workflow account tree', () => {
       expect(selected?.textContent).toBe('Selected'); expect(selected?.disabled).toBe(true)
       await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Use Claude Code account Personal A"]')?.click())
       expect(persist).toHaveBeenCalledWith(expect.objectContaining({ provider: 'claude-code', connection_id: 'account-a' }))
-      const add = Array.from(host.querySelectorAll('button')).find(button => button.textContent?.trim() === 'Add account')
-      await act(async () => add?.click())
-      expect(host.querySelector('input[placeholder="e.g. Personal account"]')).not.toBeNull()
-      expect(host.textContent).toContain('Start a new Builder conversation')
+      expect(Array.from(host.querySelectorAll('button')).some(button => button.textContent?.trim() === 'Add account')).toBe(false)
+      expect(host.querySelector('input[placeholder="e.g. Personal account"]')).toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 

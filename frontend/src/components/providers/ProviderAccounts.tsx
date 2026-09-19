@@ -3,13 +3,14 @@ import { Users, Plus, ShieldCheck, UserRound, Pencil, Trash2, LogIn, Loader2, X 
 import GuidedProviderTerminal from './GuidedProviderTerminal'
 import { llmConfigService, type ProviderSetupSession, type ProviderConnection } from '../../services/llm-config-api'
 
-export default function ProviderAccounts({ provider, selectedId, onSelect, disabled = false, addRequest = 0, formOnly = false }: {
+export default function ProviderAccounts({ provider, selectedId, onSelect, disabled = false, addRequest = 0, formOnly = false, selectionOnly = false }: {
   provider: string
   selectedId?: string
   onSelect?: (id: string) => void
   disabled?: boolean
   addRequest?: number
   formOnly?: boolean
+  selectionOnly?: boolean
 }) {
   const [connections, setConnections] = useState<ProviderConnection[]>([])
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -69,8 +70,8 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
   const cancel = () => { setAdding(false); setEditingId(null); setName(''); setCredential(''); setError(null) }
 
   return (
-    <section className={formOnly ? "p-3" : "mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700"}>
-      {!formOnly && <div className="flex flex-wrap items-start justify-between gap-3">
+    <section className={selectionOnly ? "" : formOnly ? "p-3" : "mb-5 rounded-xl border border-gray-200 p-4 dark:border-gray-700"}>
+      {!formOnly && !selectionOnly && <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2">
             <Users className="h-4 w-4 text-violet-600 dark:text-violet-300" />
@@ -86,7 +87,7 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
       </div>}
 
       {onSelect && !formOnly && (
-        <label className="mt-4 block text-xs font-medium text-gray-700 dark:text-gray-300">
+        <label className={`${selectionOnly ? '' : 'mt-4'} block text-xs font-medium text-gray-700 dark:text-gray-300`}>
           Account to use
           <select aria-label="Provider account" disabled={disabled || busy} value={selectedId || `global:${provider}`} onChange={event => onSelect(event.target.value)} className={inputClass}>
             {selectedId && !connections.some(record => record.id === selectedId) && <option value={selectedId}>Selected account unavailable</option>}
@@ -95,7 +96,7 @@ export default function ProviderAccounts({ provider, selectedId, onSelect, disab
         </label>
       )}
 
-      {!formOnly && <ul className="mt-4 divide-y divide-gray-200 dark:divide-gray-700">
+      {!formOnly && !selectionOnly && <ul className="mt-4 divide-y divide-gray-200 dark:divide-gray-700">
         {connections.filter(record => !onSelect || record.scope === 'user').map(record => (
           <li key={record.id} className="flex flex-wrap items-center justify-between gap-3 py-3 first:pt-0 last:pb-0">
             <div className="flex min-w-0 items-center gap-3">

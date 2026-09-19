@@ -933,17 +933,17 @@ export default function WorkflowLLMConfigurationPanel({
               {statusActionText(status.label)}
             </span>
           )}
-          {connected ? (
+          {connected && !selected ? (
             <button
               type="button"
               onClick={() => void applyRowToWorkflow(row)}
-              disabled={readOnly || selected || !row.selectable || rowUsing === row.id}
-              title={readOnly ? disabledTitle : selected ? 'Already in use' : `Use ${row.name} for this ${scopeNoun}`}
+              disabled={readOnly || !row.selectable || rowUsing === row.id}
+              title={readOnly ? disabledTitle : `Use ${row.name} for this ${scopeNoun}`}
               className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
             </button>
-          ) : (
+          ) : !connected ? (
             <button
               type="button"
               onClick={() => setShowLLMModal(true)}
@@ -952,7 +952,7 @@ export default function WorkflowLLMConfigurationPanel({
             >
               Manage in Providers
             </button>
-          )}
+          ) : null}
         </div>
         {open && renderAccountTree(row)}
         </div>
@@ -1175,7 +1175,11 @@ export default function WorkflowLLMConfigurationPanel({
         {renderStatusLine()}
         {renderTokenLine()}
       </div>
-      {!changing && selectedRow && selectedRow.entry.integration_kind === 'coding_agent' && <div className="rounded-lg border border-border">{renderAccountTree(selectedRow)}</div>}
+      {!changing && selectedRow && selectedRow.entry.integration_kind === 'coding_agent' && (
+        <div aria-label={`${selectedRow.name} accounts`} className="overflow-hidden rounded-lg border border-border bg-background">
+          {renderRow(selectedRow)}
+        </div>
+      )}
       {accountSelectionError && <p role="alert" className="text-xs text-red-600 dark:text-red-400">{accountSelectionError}</p>}
       {selectedPrivateAccount && <p className="text-xs text-muted-foreground">New runs use this account. Start a new Builder conversation to switch an existing chat.</p>}
 

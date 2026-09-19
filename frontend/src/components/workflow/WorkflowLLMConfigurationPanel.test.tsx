@@ -219,6 +219,9 @@ describe('workflow account tree', () => {
       await act(async () => Promise.resolve())
       expect(host.textContent).not.toContain('Needs setup')
       expect(host.textContent).toContain('Personal B (private)')
+      const providerBranch = host.querySelector<HTMLButtonElement>('[aria-label="Show Claude Code accounts"]')?.parentElement?.parentElement
+      expect(providerBranch?.textContent).toContain('Claude Code')
+      expect(providerBranch?.textContent).toContain('Personal B')
       const selected = host.querySelector<HTMLButtonElement>('[aria-label="Use Claude Code account Personal B"]')
       expect(selected?.textContent).toBe('Selected'); expect(selected?.disabled).toBe(true)
       await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="Use Claude Code account Personal A"]')?.click())

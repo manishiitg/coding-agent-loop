@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -15,10 +16,12 @@ import (
 	"github.com/google/uuid"
 	"github.com/gorilla/mux"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 )
 
 // The journal is durable acceptance, not a native-CLI exactly-once claim. An
-// interrupted dispatch remains uncertain and is never automatically resent.
+// interrupted dispatch remains uncertain unless the closed provider's final
+// native transcript proves it ended before the submission existed.
 // Workspace PUT and the process-local lock require a single writer per owner;
 // multiple active server replicas need storage-backed compare-and-swap.
 type chatSubmissionRecord struct {
@@ -153,6 +156,18 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 				exists = false
 			}
 		}
+		if exists && previous.State == "delivery_uncertain" {
+			canRetry := false
+			if api.internalUncertainSubmissionRetryChecker != nil {
+				canRetry = api.internalUncertainSubmissionRetryChecker(r.Context(), previous)
+			} else {
+				canRetry = api.canRetryUncertainChatSubmission(r.Context(), previous)
+			}
+			if canRetry {
+				exists = false
+				log.Printf("[CHAT_SUBMISSION] Reconciled submission %s as not delivered after its retained tmux closed; retrying through a resumed turn", previous.ID)
+			}
+		}
 		if !exists {
 			// Keep the path lock and replace the expired semantic receipt below.
 		} else {
@@ -252,6 +267,72 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 	}
 	r = r.WithContext(context.WithValue(r.Context(), chatSubmissionContextKey{}, chatSubmissionContext{ID: id, Owner: owner, Session: session, Message: message}))
 	return capture, r, finish, true
+}
+
+// canRetryUncertainChatSubmission proves that an old ambiguous receipt predates
+// the final native transcript of a now-closed tmux session. That is the narrow
+// case where a restart may safely reuse the same durable receipt: the provider's
+// own transcript ended before the submission existed, so it could not have
+// accepted that message. Missing or newer transcript evidence stays uncertain.
+func (api *StreamingAPI) canRetryUncertainChatSubmission(ctx context.Context, record chatSubmissionRecord) bool {
+	if api == nil || strings.TrimSpace(record.Session) == "" || strings.TrimSpace(record.Message) == "" {
+		return false
+	}
+	acceptedAt, err := time.Parse(time.RFC3339Nano, record.UpdatedAt)
+	if err != nil || api.hasActiveTurnCancel(record.Session) || api.sessionHasLiveMainCodingTmux(record.Session) {
+		return false
+	}
+	if retainedSession, ok := mcpagent.LookupSession(record.Session); ok && retainedSession.ActiveTurnID() != "" {
+		return false
+	}
+
+	raw, err := ReadChatHistoryConversation(record.Owner, record.Session, record.Project)
+	if err != nil || len(raw) == 0 {
+		return false
+	}
+	var conversation map[string]interface{}
+	if json.Unmarshal(raw, &conversation) != nil {
+		return false
+	}
+	runtimeRaw, err := json.Marshal(conversation["runtime"])
+	if err != nil {
+		return false
+	}
+	var runtime claudeNativeTranscriptRuntime
+	if json.Unmarshal(runtimeRaw, &runtime) != nil {
+		return false
+	}
+	provider := strings.ToLower(strings.TrimSpace(runtime.Provider))
+	nativeSessionID := strings.TrimSpace(runtime.ExternalSessionID)
+	workingDir := ""
+	accountHome := ""
+	if runtime.AgentSessionHandle != nil && runtime.AgentSessionHandle.Provider != nil {
+		if provider == "" {
+			provider = strings.ToLower(strings.TrimSpace(runtime.AgentSessionHandle.Provider.Provider))
+		}
+		if nativeSessionID == "" {
+			nativeSessionID = strings.TrimSpace(runtime.AgentSessionHandle.Provider.NativeSessionID)
+		}
+		workingDir = strings.TrimSpace(runtime.AgentSessionHandle.Provider.WorkingDir)
+		if runtime.AgentSessionHandle.ConnectionID != "" {
+			keys, keyErr := api.connectionAPIKeys(ctx, record.Owner, provider, runtime.AgentSessionHandle.ConnectionID)
+			if keyErr != nil {
+				return false
+			}
+			accountHome = keys.RuntimeEnvironment["HOME"]
+		}
+	}
+	messages, maxTimestamp, _, ok, err := nativeTranscriptMessagesForRuntime(provider, nativeSessionID, workingDir, accountHome)
+	if err != nil || !ok || maxTimestamp.IsZero() || !maxTimestamp.Before(acceptedAt) {
+		return false
+	}
+	want := strings.TrimSpace(record.Message)
+	for _, message := range messages {
+		if strings.EqualFold(strings.TrimSpace(message.Role), "human") && strings.TrimSpace(builderConversationMessageText(message)) == want {
+			return false
+		}
+	}
+	return true
 }
 
 func writeSubmissionUncertain(w http.ResponseWriter, id string) {

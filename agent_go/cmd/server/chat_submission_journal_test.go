@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/gorilla/mux"
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
@@ -58,6 +59,104 @@ func TestChatSubmissionDurableAcceptanceAndReplay(t *testing.T) {
 	conflict := httptest.NewRecorder()
 	if _, _, _, ok := restarted.beginChatSubmission(conflict, request(), "session-b", "project-a", "hello"); ok || conflict.Code != 409 {
 		t.Fatal("key cannot move between conversations")
+	}
+}
+
+func TestChatSubmissionRetriesUncertainReceiptOnlyAfterNotDeliveredProof(t *testing.T) {
+	store := newTestChatSubmissionStore()
+	request := func() *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+		r.Header.Set("Idempotency-Key", "uncertain-after-reaper")
+		return r
+	}
+	api := &StreamingAPI{
+		internalChatSubmissionStore: store,
+		internalUncertainSubmissionRetryChecker: func(_ context.Context, record chatSubmissionRecord) bool {
+			return record.Session == "session-a" && record.Message == "resume me"
+		},
+	}
+
+	first := httptest.NewRecorder()
+	w, _, finish, ok := api.beginChatSubmission(first, request(), "session-a", "project-a", "resume me")
+	if !ok {
+		t.Fatal("initial submission was not accepted")
+	}
+	writeSubmissionUncertain(w, "uncertain-after-reaper")
+	finish()
+
+	retry := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(retry, request(), "session-a", "project-a", "resume me"); !ok {
+		t.Fatalf("proven-undelivered receipt did not reopen: status=%d body=%s", retry.Code, retry.Body.String())
+	}
+}
+
+func TestChatSubmissionKeepsUncertainReceiptWithoutNotDeliveredProof(t *testing.T) {
+	store := newTestChatSubmissionStore()
+	request := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	request.Header.Set("Idempotency-Key", "still-uncertain")
+	api := &StreamingAPI{
+		internalChatSubmissionStore: store,
+		internalUncertainSubmissionRetryChecker: func(context.Context, chatSubmissionRecord) bool {
+			return false
+		},
+	}
+
+	first := httptest.NewRecorder()
+	w, _, finish, ok := api.beginChatSubmission(first, request, "session-a", "project-a", "maybe delivered")
+	if !ok {
+		t.Fatal("initial submission was not accepted")
+	}
+	writeSubmissionUncertain(w, "still-uncertain")
+	finish()
+
+	retry := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(retry, request, "session-a", "project-a", "maybe delivered"); ok || retry.Code != http.StatusConflict {
+		t.Fatalf("unproven receipt was reopened: status=%d body=%s", retry.Code, retry.Body.String())
+	}
+}
+
+func TestCanRetryUncertainChatSubmissionUsesClosedNativeTranscriptProof(t *testing.T) {
+	home := t.TempDir()
+	docs := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("WORKSPACE_DOCS_PATH", docs)
+	const owner = "default"
+	const sessionID = "closed-native-session"
+	const project = "Workflow/retry-proof"
+	const nativeSessionID = "native-before-receipt"
+	workingDir := filepath.Join(home, "runtime", "retry-proof")
+	if err := os.MkdirAll(workingDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcriptDir := filepath.Join(home, ".claude", "projects", claudeNativeTranscriptProjectSlug(workingDir))
+	if err := os.MkdirAll(transcriptDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	transcriptPath := filepath.Join(transcriptDir, nativeSessionID+".jsonl")
+	writeTranscriptFixture(t, transcriptPath, []string{
+		`{"type":"user","timestamp":"2026-09-19T08:00:00Z","message":{"role":"user","content":"earlier message"}}`,
+		`{"type":"assistant","timestamp":"2026-09-19T08:01:00Z","message":{"role":"assistant","content":"earlier answer"}}`,
+	})
+	conversationPath := filepath.Join(docs, filepath.FromSlash(project), "builder", "conversation", "users", owner, "2026-09-19", "session-"+sessionID+"-conversation.json")
+	if err := os.MkdirAll(filepath.Dir(conversationPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	conversation := fmt.Sprintf(`{"session_id":%q,"user_id":%q,"runtime":{"provider":"claude-code","external_session_id":%q,"workspace_path":%q,"agent_session_handle":{"provider":{"provider":"claude-code","native_session_id":%q,"working_dir":%q}}},"conversation_history":[]}`, sessionID, owner, nativeSessionID, project, nativeSessionID, workingDir)
+	if err := os.WriteFile(conversationPath, []byte(conversation), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	record := chatSubmissionRecord{Owner: owner, Session: sessionID, Project: project, Message: "message after pane closed", UpdatedAt: "2026-09-19T09:00:00Z"}
+	api := &StreamingAPI{}
+	if !api.canRetryUncertainChatSubmission(context.Background(), record) {
+		t.Fatal("final native transcript predating the receipt did not prove non-delivery")
+	}
+
+	writeTranscriptFixture(t, transcriptPath, []string{
+		`{"type":"user","timestamp":"2026-09-19T09:00:01Z","message":{"role":"user","content":"message after pane closed"}}`,
+	})
+	if api.canRetryUncertainChatSubmission(context.Background(), record) {
+		t.Fatal("receipt was reopened after the native transcript contained the message")
 	}
 }
 

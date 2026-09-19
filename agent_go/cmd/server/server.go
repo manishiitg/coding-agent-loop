@@ -368,8 +368,9 @@ type StreamingAPI struct {
 	internalRetainedTurnFinalResponseReader func(llmproviders.Provider, string, time.Time) string
 	// internalLiveInputPersistenceHandler lets routing tests verify that every
 	// provider-confirmed live delivery is also written to durable chat history.
-	internalLiveInputPersistenceHandler func(userID, sessionID, message string)
-	internalChatSubmissionStore         *chatSubmissionStore
+	internalLiveInputPersistenceHandler     func(userID, sessionID, message string)
+	internalChatSubmissionStore             *chatSubmissionStore
+	internalUncertainSubmissionRetryChecker func(context.Context, chatSubmissionRecord) bool
 
 	// Note: Removed session management - fresh agents created per request
 

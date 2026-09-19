@@ -413,8 +413,8 @@ func (api *StreamingAPI) handleAuthCallback(w http.ResponseWriter, r *http.Reque
 		http.Error(w, `{"error": "Failed to authenticate with provider"}`, http.StatusInternalServerError)
 		return
 	}
-	if !externalAuthEmailAllowed(extUser.Email) {
-		log.Printf("[AUTH] OAuth login refused for email outside AUTH_ALLOWED_EMAILS via provider %s", stateEntry.Provider)
+	if !externalAuthIdentityApproved(extUser.Email) {
+		log.Printf("[AUTH] OAuth login refused: email is neither in AUTH_ALLOWED_EMAILS nor the user directory via provider %s", stateEntry.Provider)
 		http.Error(w, `{"error": "This account is not approved for this workspace"}`, http.StatusForbidden)
 		return
 	}

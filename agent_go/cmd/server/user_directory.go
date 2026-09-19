@@ -445,6 +445,21 @@ func externalAuthEmailAllowed(email string) bool {
 	return false
 }
 
+// externalAuthIdentityApproved treats an account explicitly provisioned in
+// the user directory as approved even when a deployment also carries the
+// legacy AUTH_ALLOWED_EMAILS gate. Admin-created accounts are already the
+// workspace's durable admission list; requiring operators to duplicate every
+// invited email in an environment variable makes a valid invitation unusable.
+// Disabled records are deliberately returned here so the callback can produce
+// its specific disabled-account rejection after linking the external identity.
+func externalAuthIdentityApproved(email string) bool {
+	if externalAuthEmailAllowed(email) {
+		return true
+	}
+	dir, err := loadUserDirectory()
+	return err == nil && dir != nil && dir.byEmail(email) != nil
+}
+
 // hardcodedUsersSource is GetHardcodedUsers, swappable in tests (the real
 // one is guarded by a sync.Once over the environment).
 var hardcodedUsersSource = GetHardcodedUsers

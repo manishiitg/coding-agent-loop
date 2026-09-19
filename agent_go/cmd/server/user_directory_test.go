@@ -183,6 +183,21 @@ func TestExternalAuthEmailAllowlist(t *testing.T) {
 	}
 }
 
+func TestExternalAuthIdentityApprovedByProvisionedAccount(t *testing.T) {
+	t.Setenv("AUTH_ALLOWED_EMAILS", "existing@confida.ai")
+	withMemoryUserDirectory(t, `{"users":[{"id":"invited-user","username":"invitee","email":"invited@confida.ai","admin":false,"can_create":false,"products":["agentworks"]}]}`)
+
+	if !externalAuthIdentityApproved("invited@confida.ai") {
+		t.Fatal("admin-provisioned account must be allowed to complete its first SSO login")
+	}
+	if !externalAuthIdentityApproved("existing@confida.ai") {
+		t.Fatal("legacy AUTH_ALLOWED_EMAILS entry must remain approved")
+	}
+	if externalAuthIdentityApproved("unknown@confida.ai") {
+		t.Fatal("unknown account outside AUTH_ALLOWED_EMAILS must remain denied")
+	}
+}
+
 func TestExternalLoginLinksExistingAccountAndKeepsStableID(t *testing.T) {
 	content := withMemoryUserDirectory(t, `{"users":[{"id":"existing-manish","username":"manish","email":"manish.prakash@realtrainingsys.com","admin":true,"can_create":true,"products":[]}]}`)
 	rec := ensureDirectoryUserForExternal("supabase-user-id", &ExternalUser{

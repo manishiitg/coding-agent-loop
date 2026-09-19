@@ -2,6 +2,7 @@ package services
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -865,5 +866,16 @@ func TestSlackWorkflowAuthorizationStillUsesRoutePrincipal(t *testing.T) {
 	}
 	if want := BotPrincipalIDForRoute("slack", *route); checkedUser != want {
 		t.Fatalf("access checked as %q, want route principal %q", checkedUser, want)
+	}
+}
+
+func TestBotSessionFailureMessageDoesNotExposeInternalHTTPError(t *testing.T) {
+	got := botSessionFailureMessage(fmt.Errorf("handleQuery returned status 403: workflow access denied"))
+	if strings.Contains(got, "handleQuery") || strings.Contains(got, "403") || !strings.Contains(got, "don't currently have access") {
+		t.Fatalf("user-facing access error = %q", got)
+	}
+	got = botSessionFailureMessage(fmt.Errorf("dial tcp: private backend failed"))
+	if strings.Contains(got, "dial tcp") || strings.Contains(got, "private backend") {
+		t.Fatalf("user-facing internal error leaked details: %q", got)
 	}
 }

@@ -2559,7 +2559,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 			err := m.startSession(sessionCtx, queryReq, sessionID, userID, func(event *events.AgentEvent) {})
 			if err != nil && sessionCtx.Err() == nil {
 				log.Printf("[BOT_MANAGER] Session error: %v", err)
-				connector.SendThreadMessage(ctx, active.ThreadID, fmt.Sprintf("Session failed: %v", err))
+				connector.SendThreadMessage(ctx, active.ThreadID, botSessionFailureMessage(err))
 				active.mu.Lock()
 				active.Status = chathistory.BotSessionStatusFailed
 				active.mu.Unlock()
@@ -2597,6 +2597,17 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	completedAt := active.LastActivity
 	active.mu.Unlock()
 	m.persistBotSessionBinding(active, completedAt)
+}
+
+func botSessionFailureMessage(err error) string {
+	if err == nil {
+		return "I couldn't start this request. Please try again."
+	}
+	detail := strings.ToLower(err.Error())
+	if strings.Contains(detail, "workflow access denied") || strings.Contains(detail, "status 403") {
+		return "You don't currently have access to this workflow. Ask a workflow owner to share it with your AgentWorks account, then try again."
+	}
+	return "I couldn't start this request. Please try again. If it keeps failing, ask an administrator to check the connector logs."
 }
 
 // Acknowledge only messages accepted for an agent turn, never raw channel events.

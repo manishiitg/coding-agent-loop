@@ -438,6 +438,9 @@ interface PreviousChatHistoryPanelProps {
   /** History browser only: expand stored messages in place without making an
    *  earlier session live or exposing an Open/Resume action. */
   readOnly?: boolean
+  /** Keep history management read-only while still allowing a conversation to
+   *  open in its own tab. */
+  allowOpen?: boolean
   /** Show one automation run feed without the general history filters. */
   runOnly?: 'schedule' | 'webhook'
   /** Scheduler ownership for the run feed. */
@@ -457,6 +460,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   showAll = false,
   recentOnly = false,
   readOnly = false,
+  allowOpen = false,
   runOnly,
   runEntityType = 'workflow',
 }) => {
@@ -1060,16 +1064,16 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>
                       )}
-                      {!readOnly && (
+                      {(!readOnly || allowOpen) && (
                         <button
                           type="button"
                           onClick={() => handleSelect(session)}
-                          title={canResume ? actionLabel : 'Open read-only conversation'}
-                          aria-label={canResume ? actionLabel : 'Open read-only conversation'}
+                          title={readOnly ? 'Open in new tab' : canResume ? actionLabel : 'Open read-only conversation'}
+                          aria-label={readOnly ? 'Open in new tab' : canResume ? actionLabel : 'Open read-only conversation'}
                           className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground opacity-80 transition-colors hover:border-primary/40 hover:text-foreground group-hover:opacity-100"
                         >
                           <ActionIcon className="h-3.5 w-3.5" />
-                          {!compact && <span>{canResume ? actionLabel : 'Open'}</span>}
+                          {!compact && <span>{readOnly ? 'Open' : canResume ? actionLabel : 'Open'}</span>}
                         </button>
                       )}
                     </div>

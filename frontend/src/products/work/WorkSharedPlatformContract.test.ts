@@ -56,6 +56,20 @@ describe('Crew shared AgentWorks platform contract', () => {
     }
   })
 
+  it('opens Crew history beside the permanent chat instead of replacing it', () => {
+    const surface = read('src/products/work/WorkSurface.tsx')
+    const pane = read('src/products/work/WorkWorkspacePane.tsx')
+    const resume = read('src/hooks/useResumePreviousChat.ts')
+
+    expect(surface).toContain('<WorkChatTabs')
+    expect(surface).toContain("tab.metadata?.isViewOnly === true")
+    expect(pane).toContain('allowOpen')
+    expect(pane).toContain('onSelectSession={openHistoryChat}')
+    expect(resume).toContain("targetTab.metadata.agentProfileId === 'work'")
+    expect(resume).toContain('isViewOnly: true')
+    expect(resume).not.toContain("if (targetTab.metadata.agentProfileId === 'work') {\n      const profileId")
+  })
+
   it('identifies Crew chats by their Crew name in the shared switcher', () => {
     const switcher = read('src/components/QuickSwitcher.tsx')
 

@@ -38,6 +38,49 @@ export function useResumePreviousChat() {
       return
     }
 
+    // Crew owns one permanent interactive conversation. Automation runs and
+    // older conversations are references to that project, not replacements
+    // for its main chat. Open them in a separate read-only tab so selecting a
+    // history row can never rebind the canonical project conversation.
+    if (targetTab.metadata.agentProfileId === 'work') {
+      const projectId = targetTab.metadata.agentProfileProjectId
+      const existing = Object.values(chatStore.chatTabs).find(tab =>
+        tab.sessionId === session.session_id &&
+        tab.metadata?.agentProfileId === 'work' &&
+        tab.metadata?.agentProfileProjectId === projectId &&
+        tab.metadata?.isViewOnly === true,
+      )
+      const historyTabId = existing?.tabId || await chatStore.createChatTab(chatHistorySessionTitle(session), {
+        ...targetTab.metadata,
+        agentProfileBuilder: false,
+        agentProfileConversationKey: projectId
+          ? `${projectId}:history:${session.session_id}`
+          : targetTab.metadata.agentProfileConversationKey,
+        agentProfileConversationId: undefined,
+        agentProfileRuntimeDirty: false,
+        isViewOnly: true,
+        isBotRun: Boolean(session.bot_platform),
+        botPlatform: session.bot_platform,
+        readOnlyRestoredAt: Date.now(),
+        userInteractiveContinuation: false,
+      }, session.session_id)
+      chatStore.setTabCanSteer(historyTabId, false)
+      try {
+        const runtime = await hydrateTabEvents(session.session_id, {
+          workspacePath: session.workspace_path || targetTab.metadata.agentProfileWorkspace,
+          fallbackToChatHistory: true,
+          preferChatHistory: true,
+        })
+        chatStore.setTabStreaming(historyTabId, runtime.status === 'running')
+        chatStore.setTabCompleted(historyTabId, runtime.status !== 'running')
+        chatStore.setTabViewMode(historyTabId, 'formatted')
+        chatStore.switchTab(historyTabId)
+      } catch {
+        chatStore.addToast('Failed to open the saved conversation', 'error')
+      }
+      return
+    }
+
     if (session.can_resume === false) {
       const profileId = targetTab.metadata.agentProfileId
       const existing = Object.values(chatStore.chatTabs).find(tab =>

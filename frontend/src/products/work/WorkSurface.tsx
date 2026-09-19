@@ -31,6 +31,7 @@ import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
 import { EntityIdentityIcon } from '../../components/ui/EntityIdentityIcon'
 import ConfirmationDialog from '../../components/ui/ConfirmationDialog'
+import { AgentWorksChatTabItem } from '../../components/chat/AgentWorksChatTabItem'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   readReportPreviewPreference,
@@ -229,7 +230,7 @@ function useWorkChatTab(
   onLegacyRuntimeDiscovered: (selection: WorkRuntimeSelection) => void | Promise<void>,
 ) {
   const [failure, setFailure] = useState<{ projectId: string; message: string } | null>(null)
-  const { chatTabs } = useChatStore(useShallow(state => ({ chatTabs: state.chatTabs })))
+  const { chatTabs, activeTabId } = useChatStore(useShallow(state => ({ chatTabs: state.chatTabs, activeTabId: state.activeTabId })))
   const sessionRef = useRef(session)
   const legacyRuntimeHandlerRef = useRef(onLegacyRuntimeDiscovered)
   sessionRef.current = session
@@ -287,17 +288,6 @@ function useWorkChatTab(
         chatStore.renameTab(canonicalTabId, 'Chat')
         chatStore.setTabMetadata(canonicalTabId, { ...projectMetadata, agentProfileMCPSelectionInitialized: true })
         chatStore.setTabConfig(canonicalTabId, { selectedServers: savedServers, selectedSkills: savedSkills })
-
-        // Old Work tabs remain durable chat-history records. Remove only their
-        // local projections; do not stop or dismiss a turn that may still be
-        // finishing in the background.
-        useChatStore.setState(state => {
-          const nextTabs = { ...state.chatTabs }
-          for (const tab of Object.values(nextTabs)) {
-            if (tab.tabId !== canonicalTabId && belongsToWorkProject(tab, target.id)) delete nextTabs[tab.tabId]
-          }
-          return { chatTabs: nextTabs, activeTabId: canonicalTabId }
-        })
 
         if ((useChatStore.getState().tabEvents[conversation.session_id]?.length ?? 0) === 0) {
           await hydrateTabEvents(conversation.session_id, {
@@ -361,22 +351,50 @@ function useWorkChatTab(
       tab.metadata?.agentProfileBuilder !== true &&
       tab.metadata?.agentProfileConversationKey === session.id)
     : undefined
+  const activeProjectTab = session && activeTabId
+    ? chatTabs[activeTabId] && belongsToWorkProject(chatTabs[activeTabId], session.id)
+      ? chatTabs[activeTabId]
+      : undefined
+    : undefined
   useLayoutEffect(() => {
-    if (canonical?.tabId) activateTab(canonical.tabId)
-  }, [canonical?.tabId])
+    if (canonical?.tabId && !activeProjectTab) activateTab(canonical.tabId)
+  }, [activeProjectTab, canonical?.tabId])
   return {
     // A previously prepared Crew tab is safe to display immediately while its
     // durable binding is revalidated in the background.
-    tabId: canonical?.tabId ?? null,
+    tabId: activeProjectTab?.tabId ?? canonical?.tabId ?? null,
+    canonicalTabId: canonical?.tabId ?? null,
     error: failure && failure.projectId === session?.id ? failure.message : null,
   }
 }
 
-function WorkChatLabel() {
+function WorkChatTabs({ projectId, canonicalTabId }: { projectId: string; canonicalTabId: string }) {
+  const { chatTabs, activeTabId, closeTab } = useChatStore(useShallow(state => ({
+    chatTabs: state.chatTabs,
+    activeTabId: state.activeTabId,
+    closeTab: state.closeTab,
+  })))
+  const tabs = Object.values(chatTabs)
+    .filter(tab => belongsToWorkProject(tab, projectId) && (tab.tabId === canonicalTabId || tab.metadata?.isViewOnly === true))
+    .sort((a, b) => a.tabId === canonicalTabId ? -1 : b.tabId === canonicalTabId ? 1 : a.createdAt - b.createdAt)
+  const selectTab = (nextTabId: string) => { activateTab(nextTabId) }
+  const closeHistoryTab = (closingTabId: string) => {
+    void closeTab(closingTabId, false).then(() => {
+      if (activeTabId === closingTabId) activateTab(canonicalTabId)
+    })
+  }
   return (
-    <div className="flex min-w-0 flex-1 items-center gap-2 px-2 text-xs font-medium text-foreground">
-      <MessageSquare className="h-3.5 w-3.5 text-muted-foreground" />
-      <span>Chat</span>
+    <div className="flex min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1">
+      {tabs.map(tab => <AgentWorksChatTabItem
+        key={tab.tabId}
+        tab={tab}
+        isActive={tab.tabId === activeTabId}
+        canClose={tab.tabId !== canonicalTabId}
+        isBlank={false}
+        displayName={tab.tabId === canonicalTabId ? 'Chat' : tab.name}
+        onTabClick={selectTab}
+        onCloseTab={closeHistoryTab}
+      />)}
     </div>
   )
 }
@@ -495,7 +513,7 @@ export function WorkSurface() {
     if (!selected) return
     await updateLLMConfig(selected.id, selection)
   }, [selected, updateLLMConfig])
-  const { tabId, error: chatError } = useWorkChatTab(selected, persistLegacyRuntime)
+  const { tabId, canonicalTabId, error: chatError } = useWorkChatTab(selected, persistLegacyRuntime)
 
   // A browser reload loses transient tab metadata while the durable references
   // remain in workflow.json. Force the first follow-up through the full profile
@@ -858,7 +876,7 @@ export function WorkSurface() {
                 style={chatOpen && panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
               >
                 <WorkspaceTopToolbar className={`${chatOpen && panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
-                  {tabId ? <WorkChatLabel /> : <div className="min-w-0 flex-1" />}
+                  {tabId && canonicalTabId && selected ? <WorkChatTabs projectId={selected.id} canonicalTabId={canonicalTabId} /> : <div className="min-w-0 flex-1" />}
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 {chatOpen ? <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>

@@ -148,6 +148,29 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   expect(agentApi.getChatHistoryConversation).toHaveBeenCalledWith('old-chat', 'Workflow/test', expect.any(Number))
 })
 
+it('can open read-only Crew history in a separate tab without exposing management actions', async () => {
+  vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [{
+    session_id: 'isolated-trigger-chat',
+    title: 'Isolated trigger run',
+    message_count: 2,
+    created_at: '2026-09-10T10:00:00Z',
+  }] })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const onSelect = vi.fn()
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel workspacePath="Workflow/test" recentOnly readOnly allowOpen onSelectSession={onSelect} />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.querySelector('button[aria-label="Rename chat"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
+  const open = host.querySelector<HTMLButtonElement>('button[aria-label="Open in new tab"]')
+  expect(open).not.toBeNull()
+  await act(async () => open!.click())
+  expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'isolated-trigger-chat' }))
+})
+
 it('identifies the open persistent chat even before it appears in history', async () => {
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)

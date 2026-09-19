@@ -40,6 +40,7 @@ import type { WorkRuntimeSelection } from './workTabs'
 import type { ProductIdentity } from '../../platform/chat/productProjects'
 import { loadWorkSessions } from './workSessions'
 import { PreviousChatHistoryPanel } from '../../components/PreviousChatHistoryPanel'
+import { useResumePreviousChat } from '../../hooks/useResumePreviousChat'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const AutomationHubPanel = lazy(() => import('../../components/automation/AutomationHubPanel').then(module => ({ default: module.AutomationHubPanel })))
@@ -354,6 +355,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
 }
 
 export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, onViewChange, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown> }) {
+  const openHistoryChat = useResumePreviousChat()
   const selectedSkills = useChatStore(state => state.chatTabs[tabId]?.config.selectedSkills || [])
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
 
@@ -442,9 +444,11 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               emptyText="No earlier chats for this Crew member."
               recentOnly
               readOnly
+              allowOpen
               fill
               showAll
-              onSelectSession={() => {}}
+              actionLabel="Open"
+              onSelectSession={openHistoryChat}
             />}
             botContent={enabledPanels?.has('bots') === false ? undefined : <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
               workspacePath={workspacePath}

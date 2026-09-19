@@ -1,6 +1,7 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import {
   BrainCircuit,
+  Bot,
   Database,
   DollarSign,
   Files,
@@ -66,6 +67,7 @@ const OPS_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIco
 ]
 
 const SETUP_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
+  { id: 'bots', label: 'Bots', icon: Bot },
   { id: 'skills', label: 'Skills', icon: Puzzle },
   { id: 'secrets', label: 'Secrets', icon: KeyRound },
   { id: 'mcp', label: 'Integrations', icon: Server },
@@ -443,20 +445,17 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               title=""
               emptyText="No earlier chats for this Crew member."
               recentOnly
+              includeAutomationChats
               readOnly
               allowOpen
               openOnRowClick
+              runEntityType="product"
+              productTriggerScope={{ profileId: 'work', projectId }}
               fill
               showAll
               actionLabel="Open"
               onSelectSession={openHistoryChat}
             />}
-            botContent={enabledPanels?.has('bots') === false ? undefined : <div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel
-              workspacePath={workspacePath}
-              scopeNoun="project"
-              onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
-              target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
-            /></div>}
             workflowScope={{ workflowId: projectId, workspacePath, label: projectTitle }}
             scheduleHeaderAction={<AskAIButton
               workspacePath={workspacePath}

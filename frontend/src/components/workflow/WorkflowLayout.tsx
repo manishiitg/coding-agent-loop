@@ -49,8 +49,6 @@ import {
 import { WorkspaceSplitRail } from '../workspace/WorkspaceSplitDivider'
 import { AutomationHubPanel } from '../automation/AutomationHubPanel'
 
-const WorkflowBotsPanel = React.lazy(() => import('./WorkflowBotsPanel'))
-
 // Helper component to get observerId and render ChatArea
 // Always renders ChatArea (even without observerId) so it can handle initialization
 const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
@@ -2252,7 +2250,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           entityIcon={activeWorkflowPreset?.icon}
           workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
           chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
-          botContent={<div className="h-full overflow-y-auto p-4"><WorkflowBotsPanel workspacePath={workspacePath} /></div>}
         />
       ) : undefined}
       paneClassName={canvasPaneClassName}

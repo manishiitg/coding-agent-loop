@@ -43,7 +43,7 @@ const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
 const WORK_UI_PRESENTATION_VIEWS = {
   report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', workshop: 'schedules', schedules: 'schedules', files: 'files',
-  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'schedules', email: 'email', folders: 'folders',
+  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', email: 'email', folders: 'folders',
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
@@ -61,7 +61,7 @@ function readWorkWorkspaceView(projectId?: string): WorkWorkspaceView {
   if (typeof window === 'undefined' || !projectId) return 'dashboard'
   try {
     const saved = window.localStorage.getItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`)
-    if (saved === 'history' || saved === 'bots') return 'schedules'
+    if (saved === 'history') return 'schedules'
     return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'
   } catch {
     return 'dashboard'

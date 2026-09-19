@@ -3,6 +3,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
+import { productWebhooksApi, type ProductTriggerScope } from '../api/productWebhooks'
 import {
   type ChatHistoryConversation,
   type ChatHistoryMessage,
@@ -435,6 +436,8 @@ interface PreviousChatHistoryPanelProps {
   showAll?: boolean
   /** Keep the shared history UI while hiding automation-only filters. */
   recentOnly?: boolean
+  /** Show automation-created conversations in the unfiltered chat index. */
+  includeAutomationChats?: boolean
   /** History browser only: expand stored messages in place without making an
    *  earlier session live or exposing an Open/Resume action. */
   readOnly?: boolean
@@ -447,6 +450,8 @@ interface PreviousChatHistoryPanelProps {
   runOnly?: 'schedule' | 'webhook'
   /** Scheduler ownership for the run feed. */
   runEntityType?: 'workflow' | 'product'
+  /** Crew trigger scope used to identify which automation created a chat. */
+  productTriggerScope?: ProductTriggerScope
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -461,11 +466,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   fill = false,
   showAll = false,
   recentOnly = false,
+  includeAutomationChats = false,
   readOnly = false,
   allowOpen = false,
   openOnRowClick = false,
   runOnly,
   runEntityType = 'workflow',
+  productTriggerScope,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -484,6 +491,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   // Both trigger feeds use recorded runs, ordered by recency.
   const [scheduleRunsByJob, setScheduleRunsByJob] = useState<Record<string, ScheduledJobRun[]>>({})
   const [isLoadingScheduleActivity, setIsLoadingScheduleActivity] = useState(false)
+  const [automationSourceBySession, setAutomationSourceBySession] = useState<Record<string, { kind: 'schedule' | 'trigger'; label: string }>>({})
   const [scheduleJobsWorkspacePath, setScheduleJobsWorkspacePath] = useState('')
   const expandedMessagesRef = useRef(expandedMessagesBySession)
   const loadingExpandedSessionIdsRef = useRef(loadingExpandedSessionIds)
@@ -515,7 +523,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     // hide every older chat before the Recent filter gets a chance to run.
     const sessionsRequest = runOnly
       ? Promise.resolve([] as ChatHistorySession[])
-      : recentOnly
+      : recentOnly && !includeAutomationChats
       ? agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat')
           .then(chatResponse => chatResponse.sessions || [])
       : Promise.all([
@@ -538,7 +546,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       })
 
     return () => { cancelled = true }
-  }, [addToast, recentOnly, runOnly, workspacePath])
+  }, [addToast, includeAutomationChats, recentOnly, runOnly, workspacePath])
 
   const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
@@ -586,6 +594,42 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
   }, [addToast, recentOnly, runEntityType, workspacePath, showRunActivity])
 
+  // Crew automation sessions are ordinary product conversations. Join the
+  // durable run indexes by session id so the chat list can name its source.
+  useEffect(() => {
+    if (!recentOnly || !workspacePath || !productTriggerScope) {
+      setAutomationSourceBySession({})
+      return
+    }
+    let cancelled = false
+    void (async () => {
+      try {
+        const [jobsResponse, triggersResponse] = await Promise.all([
+          schedulerApi.listJobs({ entity_type: 'product', limit: 100 }),
+          productWebhooksApi.list(productTriggerScope),
+        ])
+        const jobs = (jobsResponse.jobs || []).filter(job => sameWorkspace(job.workspace_path, workspacePath))
+        const triggers = triggersResponse.triggers || []
+        const [jobRuns, triggerRuns] = await Promise.all([
+          Promise.all(jobs.map(async job => ({ job, runs: (await schedulerApi.getJobRuns(job.id, 30)).runs || [] }))),
+          Promise.all(triggers.map(async trigger => ({ trigger, runs: (await productWebhooksApi.runs(productTriggerScope, trigger.id, 30)).runs || [] }))),
+        ])
+        if (cancelled) return
+        const sources: Record<string, { kind: 'schedule' | 'trigger'; label: string }> = {}
+        for (const { job, runs } of jobRuns) {
+          for (const run of runs) if (run.session_id) sources[run.session_id] = { kind: 'schedule', label: job.name }
+        }
+        for (const { trigger, runs } of triggerRuns) {
+          for (const run of runs) if (run.session_id) sources[run.session_id] = { kind: 'trigger', label: trigger.name }
+        }
+        setAutomationSourceBySession(sources)
+      } catch {
+        if (!cancelled) setAutomationSourceBySession({})
+      }
+    })()
+    return () => { cancelled = true }
+  }, [productTriggerScope, recentOnly, workspacePath])
+
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
     [activeSessionId, sessions]
@@ -613,8 +657,10 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   }, [visibleSessions])
 
   const filteredSessions = useMemo(
-    () => visibleSessions.filter(session => getChatKind(session) === activeFilter),
-    [activeFilter, visibleSessions]
+    () => recentOnly && includeAutomationChats
+      ? visibleSessions
+      : visibleSessions.filter(session => getChatKind(session) === activeFilter),
+    [activeFilter, includeAutomationChats, recentOnly, visibleSessions]
   )
 
   const oldVisibleSessionCounts = useMemo(
@@ -999,6 +1045,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const timeLabel = formatChatTime(session.updated_at || session.created_at)
               const messageCountLabel = formatMessageCount(session.message_count)
               const botSourceLabel = botSessionSourceLabel(session)
+              const automationSource = automationSourceBySession[session.session_id]
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -1030,10 +1077,15 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                             <span>{messageCountLabel}</span>
                           </span>
                         )}
-                        {botSourceLabel ? (
+                        {automationSource ? (
+                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5" title={`${automationSource.kind === 'trigger' ? 'Trigger' : 'Schedule'} · ${automationSource.label}`}>
+                            {automationSource.kind === 'trigger' ? <Webhook className="h-3 w-3 shrink-0" /> : <CalendarClock className="h-3 w-3 shrink-0" />}
+                            <span className="truncate">{automationSource.kind === 'trigger' ? 'Trigger' : 'Schedule'} · {automationSource.label}</span>
+                          </span>
+                        ) : botSourceLabel ? (
                           <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
                             <Bot className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{botSourceLabel}</span>
+                            <span className="truncate">Bot · {botSourceLabel}</span>
                           </span>
                         ) : session.username && (
                           <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">

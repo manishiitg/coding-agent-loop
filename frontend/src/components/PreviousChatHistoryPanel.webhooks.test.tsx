@@ -6,6 +6,7 @@ import { PreviousChatHistoryPanel } from './PreviousChatHistoryPanel'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import { workflowWebhooksApi } from '../api/workflowWebhooks'
+import { productWebhooksApi } from '../api/productWebhooks'
 import type { ScheduledJob, ScheduledJobRun } from '../services/api-types'
 import { scheduleRunSlotLabel } from '../utils/scheduleRunSlot'
 
@@ -15,6 +16,7 @@ vi.mock('../services/api', () => ({ agentApi: {
 } }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn() } }))
 vi.mock('../api/workflowWebhooks', () => ({ workflowWebhooksApi: { getPayload: vi.fn() } }))
+vi.mock('../api/productWebhooks', () => ({ productWebhooksApi: { list: vi.fn(), runs: vi.fn() } }))
 vi.mock('../stores/useChatStore', () => {
   const state = { addToast: vi.fn() }
   return { useChatStore: (select: (value: typeof state) => unknown) => select(state) }
@@ -36,6 +38,7 @@ beforeEach(() => {
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [hook, cron], total: 2, limit: 100, offset: 0 })
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [webhookRun] : [cronRun], total: 1, limit: 30, offset: 0 }))
   vi.mocked(workflowWebhooksApi.getPayload).mockResolvedValue({ raw_payload: '{"action":"opened","number":42}' })
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [] })
 })
 afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.useRealTimers(); vi.clearAllMocks() })
 async function mount(compact = false) {
@@ -172,6 +175,40 @@ it('can open read-only Crew history in a separate tab without exposing managemen
   await act(async () => row!.click())
   expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'isolated-trigger-chat' }))
   expect(agentApi.getChatHistoryConversation).not.toHaveBeenCalled()
+})
+
+it('identifies trigger, schedule, and bot origins in the Crew chat index', async () => {
+  vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [
+    { session_id: 'trigger-session', title: 'Triggered review', created_at: '2026-09-19T10:00:00Z' },
+    { session_id: 'schedule-session', title: 'Scheduled review', created_at: '2026-09-19T09:00:00Z' },
+    { session_id: 'bot-slack--thread-1', title: 'Slack question', bot_platform: 'slack', created_at: '2026-09-19T08:00:00Z' },
+  ] })
+  vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [{ ...cron, entity_type: 'product', workspace_path: 'Workflow/test' }], total: 1, limit: 100, offset: 0 })
+  vi.mocked(schedulerApi.getJobRuns).mockResolvedValue({ runs: [{ ...cronRun, session_id: 'schedule-session' }], total: 1, limit: 30, offset: 0 })
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [{
+    id: 'trigger-1', name: 'PR opened', enabled: true, message: 'Review it', auth_mode: 'github',
+    path: '/api/hooks/product/trigger-1', run_destination: 'isolated',
+  }] })
+  vi.mocked(productWebhooksApi.runs).mockResolvedValue({ runs: [{
+    id: 'trigger-run', job_id: 'trigger-1', trigger_source: 'webhook', session_id: 'trigger-session',
+    status: 'success', started_at: '2026-09-19T10:00:00Z',
+  }], total: 1, limit: 30, offset: 0 })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(<PreviousChatHistoryPanel
+    workspacePath="Workflow/test"
+    recentOnly
+    includeAutomationChats
+    readOnly
+    openOnRowClick
+    productTriggerScope={{ profileId: 'work', projectId: 'crew-1' }}
+    onSelectSession={vi.fn()}
+  />))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(host.textContent).toContain('Trigger · PR opened')
+  expect(host.textContent).toContain('Schedule · Daily audit')
+  expect(host.textContent).toContain('Bot · Slack')
 })
 
 it('identifies the open persistent chat even before it appears in history', async () => {

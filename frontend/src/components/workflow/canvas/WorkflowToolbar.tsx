@@ -42,7 +42,7 @@ const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   secrets: 'Secrets',
   mcp: 'Integrations',
   llm: 'LLM',
-  bots: 'Connectors',
+  bots: 'Bots',
   email: 'Gmail',
   folders: 'Folders',
 }
@@ -189,7 +189,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   const workspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => PRIMARY_TOOLBAR_VIEW_IDS.has(view.id) && view.id !== 'report')
   const operationsWorkspaceViewDefinitions = PRIMARY_WORKSPACE_TOOLBAR_VIEWS.filter(view => OPERATIONS_TOOLBAR_VIEW_IDS.has(view.id))
   const capabilityViewDefinitions = useMemo(
-    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities' && view.id !== 'bots'),
+    () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
     [],
   )
 
@@ -483,7 +483,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Setup"
             open={openToolbarMenu === 'setup'}
             onToggle={() => toggleToolbarMenu('setup')}
-            title="Setup: playbooks, skills, secrets, integrations, LLM, connectors, Gmail, folders and access"
+            title="Setup: playbooks, skills, secrets, integrations, LLM, bots, Gmail, folders and access"
           >
             {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
               const active = workflowWorkspaceView === id

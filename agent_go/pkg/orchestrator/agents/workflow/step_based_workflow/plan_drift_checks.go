@@ -691,10 +691,12 @@ var planDriftReservedTables = map[string]bool{
 	"report_human_input_events": true,
 	"schema_migration_log":      true,
 	"run_concerns":              true,
-	"eval_results":              true,
-	"pulse_module_state":        true,
-	"pulse_module_audit":        true,
-	"report_field_update_log":   true,
+	// eval_results is retired: reserved as read-only history.
+	"eval_results": true,
+
+	"pulse_module_state":      true,
+	"pulse_module_audit":      true,
+	"report_field_update_log": true,
 }
 
 // sqlTableReferencePattern extracts table names referenced by FROM/JOIN/

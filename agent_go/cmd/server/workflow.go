@@ -4315,44 +4315,6 @@ func (api *StreamingAPI) handleGetLogFile(w http.ResponseWriter, r *http.Request
 	w.Write([]byte(content))
 }
 
-// handleGetEvaluationReports handles getting evaluation reports for a workflow
-// Returns evaluation_report.json files from evaluation/runs/*/ folders
-func (api *StreamingAPI) handleGetEvaluationReports(w http.ResponseWriter, r *http.Request) {
-	// Enable CORS
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
-	w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-
-	if r.Method != "GET" {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	workspacePath := r.URL.Query().Get("workspace_path")
-	runFolder := r.URL.Query().Get("run_folder") // Optional: filter to specific run folder
-
-	if workspacePath == "" {
-		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
-		return
-	}
-
-	// Validate and clean workspace path
-	cleanedWorkspacePath := filepath.Clean(workspacePath)
-	if strings.Contains(cleanedWorkspacePath, "..") {
-		http.Error(w, "Invalid workspace path", http.StatusBadRequest)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(loadWorkflowEvaluationReports(r.Context(), cleanedWorkspacePath, runFolder))
-}
-
-// populateStepMetadata recursively traverses the plan to build a mapping from step IDs/paths to human-readable metadata
 func populateStepMetadata(steps []map[string]interface{}, metadata map[string]map[string]string) {
 	for i, step := range steps {
 		id, _ := step["id"].(string)

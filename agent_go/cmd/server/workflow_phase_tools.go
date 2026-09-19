@@ -22,7 +22,7 @@ import (
 )
 
 // installWorkflowPhaseTools registers the phase-specific tool set on an agent
-// (plan modification tools, workshop chat tools, evaluation tools, run_full_workflow,
+// (plan modification tools, workshop chat tools, run_full_workflow,
 // guidance/reference doc tools, etc.).
 //
 // Extracted from the /api/query path in server.go (was the 358-line inline block
@@ -342,21 +342,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			}
 		}
 
-		// Register evaluation tools in builder-style phases: validation plus
-		// full execution against the current run.
-		if err := todo_creation_human.RegisterEvaluationValidationTools(
-			definitionAgent,
-			phaseWorkspacePath,
-			api.logger,
-			phaseReadFile,
-			phaseWriteFile,
-			phaseMoveFile,
-		); err != nil {
-			log.Printf("[WORKFLOW_PHASE] Warning: Failed to register evaluation validation tool in %s: %v", workflowPhaseID, err)
-		} else {
-			log.Printf("[WORKFLOW_PHASE] Registered evaluation validation tool in %s", workflowPhaseID)
-		}
-
 		// Only "workshop" or "run" can reach phaseTemplateVars: server.go
 		// normalizes every legacy value before this point. Comparing against
 		// the retired names asserted they still occur, which cost real
@@ -417,62 +402,6 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			log.Printf("[WORKFLOW_PHASE] Skipped HTML report tools in %s mode for %s", phaseTemplateVars["WorkshopMode"], workflowPhaseID)
 		}
 
-		// Create eval session for run_full_evaluation (needs isEvaluationMode=true)
-		evalSessionKey := "eval-" + sessionID
-		var evalSession *todo_creation_human.WorkshopChatSession
-		if cached, ok := api.workshopChatSessions.Load(evalSessionKey); ok {
-			evalSession = cached.(*todo_creation_human.WorkshopChatSession)
-			log.Printf("[WORKFLOW_PHASE] Reusing existing eval session in %s %s", workflowPhaseID, sessionID)
-		} else {
-			evalCfg, evalCfgErr := api.buildWorkshopConfig(ctx, syntheticReq, userID, phaseWorkspacePath, phaseRunFolder, selectedServers, sessionID, mergedAPIKeys)
-			if evalCfgErr != nil {
-				log.Printf("[WORKFLOW_PHASE] Error: Failed to build eval config in %s: %v", workflowPhaseID, evalCfgErr)
-			} else {
-				evalCfg.IsEvaluationMode = true
-				newEvalSession, evalSessionErr := todo_creation_human.NewWorkshopChatSession(ctx, evalCfg)
-				if evalSessionErr != nil {
-					log.Printf("[WORKFLOW_PHASE] Warning: Failed to create eval session in %s: %v", workflowPhaseID, evalSessionErr)
-				} else {
-					evalSession = newEvalSession
-					api.workshopChatSessions.Store(evalSessionKey, evalSession)
-					log.Printf("[WORKFLOW_PHASE] Created eval session in %s for %s", workflowPhaseID, sessionID)
-				}
-			}
-		}
-		if evalSession != nil {
-			evalSession.SetExtraSubAgentNotifier(&workflowSubAgentTrackingNotifier{
-				api:       api,
-				sessionID: sessionID,
-			})
-			evalSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
-				api:           api,
-				sessionID:     sessionID,
-				workspacePath: phaseWorkspacePath,
-				presetQueryID: syntheticReq.PresetQueryID,
-				userID:        userID,
-			})
-			evalSession.SetExecutionStateChecks(
-				func() bool {
-					api.pendingMu.RLock()
-					defer api.pendingMu.RUnlock()
-					return len(api.pendingCompletions[sessionID]) > 0
-				},
-				func() bool { return api.bgAgentRegistry.HasRunningAgents(sessionID) },
-				func() { api.cancelBackgroundAgents(sessionID) },
-				func() []todo_creation_human.ServerAgentInfo {
-					agents := api.bgAgentRegistry.GetAll(sessionID)
-					result := make([]todo_creation_human.ServerAgentInfo, 0, len(agents))
-					for _, a := range agents {
-						result = append(result, todo_creation_human.ServerAgentInfo{
-							ID: a.ID, Name: a.Name, Status: string(a.GetStatus()),
-						})
-					}
-					return result
-				},
-			)
-			todo_creation_human.RegisterRunFullEvaluationTool(definitionAgent, evalSession, api.logger)
-			log.Printf("[WORKFLOW_PHASE] Registered run_full_evaluation in %s", workflowPhaseID)
-		}
 		if workshopSession != nil {
 			todo_creation_human.RegisterRunFullWorkflowTool(definitionAgent, workshopSession, api.logger)
 			log.Printf("[WORKFLOW_PHASE] Registered run_full_workflow in %s", workflowPhaseID)

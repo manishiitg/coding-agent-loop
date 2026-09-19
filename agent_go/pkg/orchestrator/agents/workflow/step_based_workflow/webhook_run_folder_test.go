@@ -41,7 +41,7 @@ func TestWebhookVariableOverridesDoNotMutateSavedGroups(t *testing.T) {
 func TestWebhookProgressPersistsWithoutLiveEventBridge(t *testing.T) {
 	files := map[string]string{"Workflow/instagram/planning/plan.json": snapshotTestPlan(t, "smoke", "Smoke test")}
 	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files), selectedRunFolder: "iteration-3-hook/dev", executionOptions: &ExecutionOptions{WebhookInputFile: "delivery.json"}}
-	plan, err := controller.ReadCurrentPlan(t.Context(), false)
+	plan, err := controller.ReadCurrentPlan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

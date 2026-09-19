@@ -57,7 +57,7 @@ var pulseReviewFocusCatalog = map[string][]string{
 	},
 	pulseModuleTechnicalReview: {
 		"execution_health", "validation_contract_health", "store_integrity",
-		"report_quality_truth", "evaluation_quality_truth",
+		"report_quality_truth", "measurement_quality_truth",
 	},
 	pulseModuleStrategicReview: {
 		"goal_measurement_validity", "strategy_effectiveness", "feedback_loops_bias",
@@ -575,7 +575,8 @@ func canonicalPulseDeferredFocuses(keys []string) []string {
 		"orchestration_fitness":      {"plan_orchestration_integrity"},
 		"model_tier_fitness":         {"model_cost_fitness"},
 		"cost_attribution":           {"model_cost_fitness"},
-		"report_eval_truth":          {"report_quality_truth", "evaluation_quality_truth"},
+		"report_eval_truth":          {"report_quality_truth", "measurement_quality_truth"},
+		"evaluation_quality_truth":   {"measurement_quality_truth"},
 		"safety_permissions":         {},
 	}
 	seen := map[string]bool{}
@@ -2476,25 +2477,6 @@ func (api *StreamingAPI) handleGetPulseContext(w http.ResponseWriter, r *http.Re
 	}
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "records": records, "total": len(records)})
-}
-
-func (api *StreamingAPI) handleGetPulseEvalResults(w http.ResponseWriter, r *http.Request) {
-	if r.Method == "OPTIONS" {
-		w.WriteHeader(http.StatusOK)
-		return
-	}
-	workspacePath, err := normalizeReportHumanInputWorkspacePath(r.URL.Query().Get("workspace_path"))
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	results, err := step_based_workflow.LoadEvalResults(r.Context(), workspacePath, 200)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "results": results})
 }
 
 func getPulseWorklistForRun(ctx context.Context, workspacePath, pulseRunID string) (map[string]PulseModuleState, bool, error) {

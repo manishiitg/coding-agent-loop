@@ -5,8 +5,6 @@ import type { StepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { getExecutionModeVisuals } from './executionModeVisuals'
 import { effectiveExecutionMode, effectiveExecutionModeReason } from '../../../utils/stepConfigMatching'
-import type { EvaluationStep } from '../../../services/api-types'
-import { evaluationScopeLabel } from '../canvas/routeEvaluations'
 
 interface StepNodeProps {
   data: StepNodeData
@@ -45,11 +43,7 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
 
   // Check if this is a sub-agent (part of a routing step)
   const isSubAgent = useMemo(() => id.includes('-sub-agent-'), [id])
-  // Evaluation steps reuse this node (useEvaluationPlanToFlow) and carry no
-  // plan `type`; the flag tells effectiveExecutionMode to read their own
-  // execution_mode instead of treating a typeless step as `regular`.
-  const isEvaluationStep = Boolean((data as { isEvaluationStep?: boolean }).isEvaluationStep)
-  const executionMode = effectiveExecutionMode(step, { evaluation: isEvaluationStep })
+  const executionMode = effectiveExecutionMode(step)
   const executionModeReason = effectiveExecutionModeReason(step)
   const executionModeVisuals = getExecutionModeVisuals(executionMode, executionModeReason)
   const ModeIcon = executionModeVisuals.Icon
@@ -130,12 +124,6 @@ export const StepNode = memo(({ data, selected }: StepNodeProps) => {
             </h3>
           </div>
         </div>
-        {isEvaluationStep && (
-          <div className="text-[10px] leading-relaxed text-muted-foreground">
-            <span className="font-semibold text-purple-600 dark:text-purple-300">Evaluation · </span>
-            <span>{data.evaluationScopeLabel || evaluationScopeLabel(step as unknown as EvaluationStep, [])}</span>
-          </div>
-        )}
         {showFooterMetadata && (
           <div className="flex items-center gap-1.5">
             <div className="flex-1" />

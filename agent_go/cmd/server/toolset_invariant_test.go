@@ -36,7 +36,7 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 		"update_scripted_step", "update_message_sequence_step", "update_routing_step", "update_branch_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
-		"update_validation_schema", "update_evaluation_plan", "delete_evaluation_step",
+		"update_validation_schema",
 		"change_step_type",
 		"record_plan_drift_review",
 	)
@@ -50,7 +50,6 @@ func knownWorkshopRegisteredToolNamesOutsideWorkflowPool() map[string]string {
 		"mark_changelog_artifact_reviewed",
 		"review_workflow_timing", "review_workflow_costs", "review_step_code",
 		"get_cost_summary",
-		"run_full_evaluation", "validate_evaluation_plan",
 	)
 	add("workshop workflow/config tools",
 		"get_llm_config", "get_workflow_config", "update_workflow_config",

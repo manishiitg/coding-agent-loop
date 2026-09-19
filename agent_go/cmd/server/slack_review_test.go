@@ -342,8 +342,9 @@ func TestSlackRetentionPreservesActiveUnknownAndOtherRunFamilies(t *testing.T) {
 	write("workflow.json", `{"run_retention_count":1}`)
 	for _, name := range []string{"iteration-1-slack-a1", "iteration-2-slack-a2", "iteration-3-slack-a3", "iteration-4-slack-a4"} {
 		write("runs/"+name+"/.slack-run-id", name)
-		write("evaluation/runs/"+name+"/artifact", "evaluation")
 	}
+	// Legacy evaluation evidence is inert: retention prunes runs/ only.
+	write("evaluation/runs/iteration-1-slack-a1/artifact", "evaluation")
 	write("runs/iteration-1-slack-a1/group/run_metadata.json", `{"status":"completed","completed_at":"2026-09-01T00:00:00Z"}`)
 	write("runs/iteration-2-slack-a2/group/run_metadata.json", `{"status":"completed","completed_at":"2026-09-02T00:00:00Z"}`)
 	write("runs/iteration-3-slack-a3/group/run_metadata.json", `{"status":"completed","completed_at":"2026-08-01T00:00:00Z"}`)
@@ -354,10 +355,13 @@ func TestSlackRetentionPreservesActiveUnknownAndOtherRunFamilies(t *testing.T) {
 	if err := api.pruneSlackRuns(workspace); err != nil {
 		t.Fatal(err)
 	}
-	for _, path := range []string{"runs/iteration-1-slack-a1", "evaluation/runs/iteration-1-slack-a1"} {
+	for _, path := range []string{"runs/iteration-1-slack-a1"} {
 		if _, err := os.Stat(filepath.Join(docs, workspace, path)); !os.IsNotExist(err) {
 			t.Fatalf("expired path remains: %s %v", path, err)
 		}
+	}
+	if _, err := os.Stat(filepath.Join(docs, workspace, "evaluation/runs/iteration-1-slack-a1/artifact")); err != nil {
+		t.Fatalf("legacy evaluation evidence was disturbed: %v", err)
 	}
 	for _, path := range []string{"runs/iteration-0/artifact", "runs/iteration-5-sched/artifact", "runs/iteration-2-slack-a2", "runs/iteration-3-slack-a3", "runs/iteration-4-slack-a4"} {
 		if _, err := os.Stat(filepath.Join(docs, workspace, path)); err != nil {

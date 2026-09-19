@@ -1,3 +1,7 @@
+## Eval subsystem removal with producer-owned measurement — PLAT-333
+
+[PLAT-333](pulse_platform/evaluation/plat-333.md) records the eval-subsystem removal and the final-review rejection of the mandatory 1.0.43 measurement migration (unneeded imposed topology, uncreatable router, nonexistent tool, unimplemented metrics table). No replacement migration ships: the upgrade chain ends at 1.0.42, measurement comes from producing steps' own stored outputs plus `record_goal_observations` for Pulse history, and old evaluation artifacts stay read-only. Implemented and verified locally; not committed, not deployed. See the [removal plan](../workflow/eval_removal_plan.md).
+
 ## Manual workflow contract preflight — PLAT-332
 
 [PLAT-332](pulse_platform/plans-contracts/plat-332.md) closes the schedule-only migration gap: every manual `run_full_workflow` and `execute_step` call now rechecks `workflow.json` before starting. An old or unknown contract starts no execution and instructs the agent to ask the owner for migration approval, then use Workshop `get_contract_upgrades` before retrying. Scheduled and direct-webhook preflights remain unchanged. Release `bb24ab5-20260918164118` is deployed and verified healthy in production.

@@ -20,7 +20,6 @@ The right-hand pane of the workflow page shows one view at a time; the toolbar a
 | `learnings` | `learnings/_global/SKILL.md` and per-step learnings: the HOW the workflow has accumulated | You updated learnings, or the user asks what the workflow has learned |
 | `knowledgebase` | `knowledgebase/context/` (user-provided rules) and `knowledgebase/notes/` (what the workflow found) | You captured context or wrote notes, or the user asks what the workflow knows |
 | `database` | The tables in `db/db.sqlite` with their rows, and `db/README.md` contracts | You wrote or changed rows, or the user asks about stored data |
-| `evaluation` | Evaluation results for the selected run against `evaluation/evaluation_plan.json` | You ran or edited the evaluation, or the user asks how a run scored |
 | `schedules` | Scheduled runs: cadence, next run, last run, run history | You created or changed a schedule |
 | `files` | The workspace file browser | The user wants to open a specific file, or you wrote a file they should see |
 | `browser` | Live agent-browser with Take control, or watch-only Playwright test sessions; settings behind the gear button | You browse with `agent_browser`, start tests using `@agentworks/playwright`, or the user asks to watch a browser |

@@ -169,9 +169,6 @@ func createMigrateDeclaredExecutionModeExecutor(
 		if err := validateStepIDUniqueness(plan); err != nil {
 			return "", fmt.Errorf("validate migrated plan: %w", err)
 		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
-			return "", fmt.Errorf("validate migrated plan: %w", err)
-		}
 		if err := ValidatePlanStructure(plan); err != nil {
 			return "", fmt.Errorf("validate migrated plan: %w", err)
 		}

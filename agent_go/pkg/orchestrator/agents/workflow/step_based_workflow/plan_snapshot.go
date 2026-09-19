@@ -22,7 +22,7 @@ var planRevisionReference = regexp.MustCompile(`^plan-[a-f0-9]{64}$`)
 func isPositionalStepReference(id string) bool { return positionalStepReference.MatchString(id) }
 
 // readRunPlanSnapshot never substitutes today's plan for historical evidence.
-func (hcpo *StepBasedWorkflowOrchestrator) readRunPlanSnapshot(ctx context.Context, runFolder string, evaluation bool) (*PlanningResponse, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) readRunPlanSnapshot(ctx context.Context, runFolder string) (*PlanningResponse, error) {
 	if runFolder == "" {
 		return nil, fmt.Errorf("no run folder selected")
 	}
@@ -52,9 +52,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) readRunPlanSnapshot(ctx context.Conte
 		return nil, fmt.Errorf("run plan revision content does not match its identity")
 	}
 	path := "planning/plan.json"
-	if evaluation {
-		path = "evaluation/evaluation_plan.json"
-	}
 	if revision.Files[path] == nil {
 		return nil, fmt.Errorf("run revision has no %s", path)
 	}
@@ -64,17 +61,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) readRunPlanSnapshot(ctx context.Conte
 	}
 	var plan PlanningResponse
 	configPath := "planning/step_config.json"
-	if evaluation {
-		var evalPlan EvaluationPlan
-		if err := json.Unmarshal(encoded, &evalPlan); err != nil {
-			return nil, err
-		}
-		plan.Steps = evalPlan.ToPlanSteps()
-		configPath = "evaluation/step_config.json"
-	} else {
-		if err := json.Unmarshal(encoded, &plan); err != nil {
-			return nil, err
-		}
+	if err := json.Unmarshal(encoded, &plan); err != nil {
+		return nil, err
 	}
 	if err := resolvePlanOrphanStepRefs(&plan); err != nil {
 		return nil, err
@@ -104,22 +92,10 @@ func executionPlanFromContext(ctx context.Context) *PlanningResponse {
 }
 
 // ReadCurrentPlan always reads the workspace service; it has no session cache
-// and does not mutate execution state. The explicit scope avoids temporarily
-// changing isEvaluationMode during cross-plan configuration lookups.
-func (hcpo *StepBasedWorkflowOrchestrator) ReadCurrentPlan(ctx context.Context, evaluation bool) (*PlanningResponse, error) {
+// and does not mutate execution state.
+func (hcpo *StepBasedWorkflowOrchestrator) ReadCurrentPlan(ctx context.Context) (*PlanningResponse, error) {
 	if err := hcpo.loadCodeLayout(ctx); err != nil {
 		return nil, err
 	}
-	if !evaluation {
-		return readPlanFromFile(ctx, hcpo.GetWorkspacePath(), hcpo.ReadWorkspaceFile)
-	}
-	content, err := hcpo.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
-	if err != nil {
-		return nil, err
-	}
-	var plan EvaluationPlan
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, fmt.Errorf("parse evaluation_plan.json: %w", err)
-	}
-	return &PlanningResponse{Steps: plan.ToPlanSteps()}, nil
+	return readPlanFromFile(ctx, hcpo.GetWorkspacePath(), hcpo.ReadWorkspaceFile)
 }

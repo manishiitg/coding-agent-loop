@@ -1,5 +1,5 @@
 import { MarkerType } from '@xyflow/react'
-import type { ScheduledJob, EvaluationStep } from '../../../services/api-types'
+import type { ScheduledJob } from '../../../services/api-types'
 import type { WorkflowNode, WorkflowEdge, RoutingStepNodeData } from '../hooks/usePlanToFlow'
 
 export const TRIGGER_CARD_WIDTH = 288
@@ -113,17 +113,7 @@ export function traceTriggerGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], 
     }
   }
   for (const node of nodes) {
-    if (node.data.isEvaluationStep) {
-      const gates = (node.data.step as EvaluationStep).applies_to_routes || []
-      const matches = !job.step_id && gates.every(gate => !job.route_selections?.[gate.routing_step_id] || gate.route_ids.includes(job.route_selections[gate.routing_step_id]))
-      if (matches) { selectedNodes.add(node.id); if (typeof node.data.evaluationGroupId === 'string') selectedNodes.add(node.data.evaluationGroupId) }
-      else selectedNodes.delete(node.id)
-    }
     if (typeof node.data.parentStepId === 'string' && selectedNodes.has(node.data.parentStepId)) selectedNodes.add(node.id)
-  }
-  // Remove evaluation headings that were reached from End but have no matching checks.
-  for (const node of nodes.filter(node => node.type === 'evaluation-group')) {
-    if (!nodes.some(child => child.data.evaluationGroupId === node.id && selectedNodes.has(child.id))) selectedNodes.delete(node.id)
   }
   return {
     nodes: nodes.map(node => ({ ...node, style: { ...node.style, opacity: selectedNodes.has(node.id) ? 1 : 0.14 } })),

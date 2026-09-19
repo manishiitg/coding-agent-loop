@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// These five kinds are review LENSES: their own template text explicitly
+// These four kinds are review LENSES: their own template text explicitly
 // says findings are recorded by a parent turn after loading them alongside
 // sibling lenses inside ops-review's Technical Review. ops-review reaches
 // them only through materialize.go's read_skill bundle, never through
@@ -15,7 +15,7 @@ import (
 // generated exactly as instructed would be silently discarded when the turn
 // ends.
 func TestAppendStandaloneReviewLensNoticeCoversEveryOrphanableLens(t *testing.T) {
-	for _, kind := range []string{"improve-report", "improve-knowledge", "improve-database", "improve-learnings", "improve-evaluation"} {
+	for _, kind := range []string{"improve-report", "improve-knowledge", "improve-database", "improve-learnings"} {
 		if !standaloneReviewLensKinds[kind] {
 			t.Errorf("%s is a read-only Engineering Review lens but is missing from standaloneReviewLensKinds", kind)
 		}

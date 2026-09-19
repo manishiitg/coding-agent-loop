@@ -32,7 +32,7 @@ That means the recommended workflow config is to set both fields explicitly for 
 
 ## Recommended Usage
 
-Default to `code_exec`. Promote a workflow or eval step to `learn_code` only when all gates are satisfied:
+Default to `code_exec`. Promote a workflow step to `learn_code` only when all gates are satisfied:
 
 - the user explicitly asked for scripted/learn-code execution
 - the behavior is highly deterministic, with stable inputs, tools, output contract, and little/no per-instance judgment

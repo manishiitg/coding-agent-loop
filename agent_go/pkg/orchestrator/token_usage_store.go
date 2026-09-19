@@ -104,13 +104,8 @@ func (s *tokenUsageFileStore) parseDailyPhaseTokenUsageFile(content string) (*Da
 }
 
 func (s *tokenUsageFileStore) legacyRunTokenUsagePath(iterationFolder string) string {
-	scope, runFolder := NormalizeCostScopeAndRunFolder(iterationFolder)
-	switch scope {
-	case CostScopeEvaluation:
-		return filepath.Join(s.workspacePath, "evaluation", "runs", runFolder, "token_usage.json")
-	default:
-		return filepath.Join(s.workspacePath, "runs", runFolder, "token_usage.json")
-	}
+	_, runFolder := NormalizeCostScopeAndRunFolder(iterationFolder)
+	return filepath.Join(s.workspacePath, "runs", runFolder, "token_usage.json")
 }
 
 func (s *tokenUsageFileStore) ensureRunMigrated(ctx context.Context, iterationFolder string) {
@@ -345,7 +340,7 @@ func (s *tokenUsageFileStore) archiveRunCostPaths(ctx context.Context, fromRunFo
 		return nil
 	}
 
-	for _, scope := range []CostScope{CostScopeExecution, CostScopeEvaluation} {
+	for _, scope := range []CostScope{CostScopeExecution} {
 		root := filepath.Join(s.workspacePath, "costs", string(scope))
 		groups, err := s.listFiles(ctx, root)
 		if err != nil {

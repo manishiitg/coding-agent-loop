@@ -324,6 +324,8 @@ func isPlatformOwnedTable(name string) bool {
 		return true
 	case strings.HasPrefix(name, "report_human_input"):
 		return true
+	// eval_results / eval_route_scores are retired eval tables: steps must
+	// never write them, so they stay platform-owned as read-only history.
 	case name == "run_concerns", name == "eval_results", name == "eval_route_scores":
 		return true
 	}

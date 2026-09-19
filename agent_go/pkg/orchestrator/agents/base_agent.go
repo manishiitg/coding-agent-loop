@@ -44,14 +44,12 @@ type AgentType string
 
 const (
 	// Multi-agent TodoPlanner sub-agents (actively used)
-	TodoPlannerEvaluationDebuggerAgentType  AgentType = "todo_planner_evaluation_debugger"  // Analyzes evaluation execution and provides feedback for evaluation plan improvement
 	TodoPlannerExecutionQAAgentType         AgentType = "todo_planner_execution_qa"         // Answers questions about execution results (read-only)
 	TodoPlannerPlanningAgentType            AgentType = "todo_planner_planning"             // Creates step-wise plan from objective
 	TodoPlannerExecutionAgentType           AgentType = "todo_planner_execution"            // Executes first step of plan
 	TodoPlannerSuccessLearningAgentType     AgentType = "todo_planner_success_learning"     // Analyzes successful executions to capture best practices
 	TodoPlannerLearningDetectionAgentType   AgentType = "todo_planner_learning_detection"   // Detects if new learnings were generated after learning phase
 	ConditionalAgentType                    AgentType = "conditional"                       // Conditional decision agent for evaluating step conditions
-	EvaluationScoringAgentType              AgentType = "evaluation_scoring"                // Calculates scores for evaluation steps based on success criteria
 	OrchestratorAgentType                   AgentType = "todo_task_orchestrator"            // Orchestrator orchestrator agent that manages todo lists and delegates to sub-agents
 	GenericExecutionAgentType               AgentType = "generic_execution"                 // Generic execution agent for todo task steps (no learning, no prevalidation)
 	TodoPlannerInteractiveWorkshopAgentType AgentType = "todo_planner_interactive_workshop" // Interactive workshop: execute steps, edit plan, update step config in one session

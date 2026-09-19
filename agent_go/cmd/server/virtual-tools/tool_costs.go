@@ -19,8 +19,7 @@ import (
 type toolCostScope string
 
 const (
-	toolCostScopeExecution  toolCostScope = "execution"
-	toolCostScopeEvaluation toolCostScope = "evaluation"
+	toolCostScopeExecution toolCostScope = "execution"
 )
 
 type pricedToolCost struct {
@@ -103,9 +102,6 @@ func recordPricedToolCost(ctx context.Context, workspaceAPIURL, userID string, c
 	scope := "tool"
 	if hasTarget {
 		scope = "workflow_execution"
-		if target.Scope == toolCostScopeEvaluation {
-			scope = "evaluation"
-		}
 	}
 	sessionID := ""
 	executionID := ""
@@ -447,17 +443,7 @@ func inferWorkflowCostTarget(ctx context.Context, outputPath string) (workflowCo
 				}, true
 			}
 		}
-		if len(remainder) >= 3 && remainder[0] == "evaluation" && remainder[1] == "runs" {
-			runFolder, stepKey := inferRunFolderAndStepKey(ctx, remainder[2:])
-			if runFolder != "" {
-				return workflowCostTarget{
-					WorkspacePath: workspacePath,
-					Scope:         toolCostScopeEvaluation,
-					RunFolder:     runFolder,
-					StepKey:       stepKey,
-				}, true
-			}
-		}
+
 	}
 	return workflowCostTarget{}, false
 }

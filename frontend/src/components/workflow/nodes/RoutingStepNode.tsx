@@ -15,7 +15,6 @@ interface RoutingStepNodeProps {
 const statusBorderColors: Record<string, string> = {
   pending: 'border-teal-400 dark:border-teal-500',
   executing: 'border-teal-500 dark:border-teal-400',
-  evaluating: 'border-purple-500 dark:border-purple-400',
   routed: 'border-green-500 dark:border-green-400',
   completed: 'border-green-500 dark:border-green-400'
 }
@@ -35,7 +34,6 @@ const changeBadgeStyles: Record<ChangeType, { bg: string; icon: ReactElement }> 
 const statusIcons: Record<string, ReactElement | null> = {
   pending: null,
   executing: <Loader2 className="w-4 h-4 text-teal-500 animate-spin" />,
-  evaluating: <Loader2 className="w-4 h-4 text-purple-500 animate-spin" />,
   routed: <CheckCircle className="w-4 h-4 text-green-500" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />
 }
@@ -83,7 +81,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
           shadow-lg overflow-visible transition-all duration-200
           ${isOrphan ? 'border-dashed border-amber-400 dark:border-amber-500' : ''}
           ${selected ? 'ring-2 ring-teal-500/60' : ''}
-          ${status === 'executing' || status === 'evaluating' ? 'shadow-lg shadow-teal-500/30' : ''}
+          ${status === 'executing' ? 'shadow-lg shadow-teal-500/30' : ''}
         `}
       >
         {/* Header */}
@@ -146,7 +144,6 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
             {routes.map((route, index) => {
               const isSelectedRoute = selectedRouteId === route.route_id
               const routeColor = routeColorForIndex(index)
-              const evaluations = data.routeEvaluations?.[route.route_id]
               return (
                 <button
                   type="button"
@@ -154,7 +151,7 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
                   disabled={!data.onTraceRoute}
                   aria-label={`Trace route: ${route.route_name || route.route_id}`}
                   aria-pressed={data.tracedRouteId === route.route_id}
-                  title={[route.route_name || route.route_id, ...(evaluations?.map(evaluation => `Eval: ${evaluation.title}`) ?? [])].join('\n')}
+                  title={route.route_name || route.route_id}
                   onPointerDown={event => event.stopPropagation()}
                   onClick={event => {
                     event.stopPropagation()
@@ -182,11 +179,6 @@ export const RoutingStepNode = memo(({ data, selected }: RoutingStepNodeProps) =
                       {route.route_name || route.route_id}
                     </div>
                   </div>
-                  {evaluations && (
-                    <span className="shrink-0 text-[10px] text-muted-foreground" aria-label={`${evaluations.length} route-specific evaluations`}>
-                      {evaluations.length} eval{evaluations.length === 1 ? '' : 's'}
-                    </span>
-                  )}
                 </button>
               )
             })}

@@ -108,36 +108,3 @@ func TestRegisteredPromptHealthReadsCurrentPlan(t *testing.T) {
 		t.Fatalf("workspace reads = %d, want one per tool invocation (4)", reads)
 	}
 }
-
-func TestCurrentPromptHealthEvaluationSnapshot(t *testing.T) {
-	controller := newMessageSequenceClosingTestOrchestrator(t)
-	controller.isEvaluationMode = true
-	reads := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/documents/Workflow/test-flow/workflow.json" {
-			http.NotFound(w, r)
-			return
-		}
-		if r.URL.Path != "/api/documents/Workflow/test-flow/evaluation/evaluation_plan.json" {
-			t.Errorf("unexpected evaluation path: %s", r.URL.Path)
-		}
-		// The second persisted snapshot removes all evaluation steps.
-		content := `{"steps":[{"id":"eval","title":"Eval","description":"Current evaluation"}]}`
-		if reads > 0 {
-			content = `{"steps":[]}`
-		}
-		reads++
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "data": map[string]interface{}{"content": content}})
-	}))
-	defer server.Close()
-	controller.WorkspaceClient = workspace.NewClient(server.URL)
-	for _, count := range []int{1, 0} {
-		report, err := controller.currentPlanPromptHealth(context.Background())
-		if err != nil || report.StepsWithDescriptions != count {
-			t.Fatalf("evaluation health = %+v, %v; want %d steps", report, err, count)
-		}
-		if executionPlanFromContext(context.Background()) != nil {
-			t.Fatal("health probe populated the execution cache")
-		}
-	}
-}

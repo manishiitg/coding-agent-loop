@@ -1368,7 +1368,7 @@ func formatAnsweredReportHumanInputsForAgent(ctx context.Context, workspacePath 
 		b.WriteString(fmt.Sprintf("- input_id=%s source=%s priority=%s question=%q answer=%q answered_by=%q actor_kind=%s via=%s answered_at=%s evidence=%q%s\n",
 			input.ID, input.Source, input.Priority, input.Question, answer, input.AnsweredBy, input.AnsweredByKind, input.AnsweredVia, input.AnsweredAt, input.Evidence, context))
 	}
-	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/eval/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. The Pulse popup derives pending questions from typed state, so do not edit a presentation artifact or the SQLite table directly.\n")
+	b.WriteString("If an answered Goal Advisor plan proposal is approved, apply it only with normal plan modification/config/measurement/report tools, then call mark_human_input_consumed with the concrete outcome. If it is rejected or deferred, record that outcome and consume it. The Pulse popup derives pending questions from typed state, so do not edit a presentation artifact or the SQLite table directly.\n")
 	return strings.TrimSpace(b.String())
 }
 

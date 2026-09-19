@@ -84,7 +84,6 @@ function useReportDataApi(workspacePath: string, sendChatMessage: ReportDataApi[
     }
     return {
       workspacePath,
-      getEvaluations: () => agentApi.getPulseEvalResults(workspacePath),
       getCosts: (options) => agentApi.getCosts(workspacePath, { ...options, view: 'summary' }),
       sendChatMessage,
       query: async (sql: string) => {

@@ -28,7 +28,7 @@ describe('Workflow MCP panel layout', () => {
     expect(panel).toContain("message={getWorkspaceAskAIMessage('browser')}")
     expect(panel).toContain('refreshLabel="Refresh Browser"')
     expect(host).not.toContain('data-ui-view-assistant')
-    for (const view of ['costs', 'execution-logs', 'knowledgebase', 'database', 'evaluation', 'schedules', 'pulse', 'backup', 'publish', 'notify']) {
+    for (const view of ['costs', 'execution-logs', 'knowledgebase', 'database', 'schedules', 'pulse', 'backup', 'publish', 'notify']) {
       expect(host).toContain(`headerAction={askAI('${view}')}`)
     }
     for (const view of ['learnings', 'folders', 'access']) {

@@ -26,7 +26,6 @@ const (
 	ScopeChat              = "chat"
 	ScopeBuilder           = "builder"
 	ScopePulse             = "pulse"
-	ScopeEvaluation        = "evaluation"
 	ScopeWorkflowExecution = "workflow_execution"
 	// ScopeUnknown is the last-resort value recorded when a launch path did
 	// not name its scope. Reaching it is a defect and is logged as one.
@@ -128,8 +127,8 @@ func New(ledger *costledger.Ledger, sessionID, userID, agentMode string, opts ..
 		agentMode: agentMode,
 		// phase deliberately starts empty, not PhaseExecutionOnly (PLAT-166
 		// scope-fix). Every observer used to default to PhaseExecutionOnly,
-		// which meant EVERY execution — chat, builder, Pulse, evaluation,
-		// every plain workflow step — grew a `by_phase.execution_only` entry
+		// which meant EVERY execution — chat, builder, Pulse, every plain
+		// workflow step — grew a `by_phase.execution_only` entry
 		// that just duplicated its own top-level total, in every Cost
 		// Analysis API response, forever. Only a phase the caller explicitly
 		// sets via SetPhase (reflection, a message_sequence item) is worth
@@ -405,8 +404,6 @@ func matchPhaseScope(values ...string) string {
 	switch {
 	case strings.Contains(joined, "post_run_monitor"), strings.Contains(joined, "pulse"):
 		return ScopePulse
-	case strings.Contains(joined, "evaluation"), strings.Contains(joined, "eval"):
-		return ScopeEvaluation
 	}
 	return ""
 }

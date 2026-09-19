@@ -72,8 +72,8 @@ GOAL TRACKING CONTRACT
 Before proposing visual/layout work, translate `soul.md` success criteria into the dashboard's tracked signals using existing evidence:
 - Preserve configured Primary goals and Secondary goals from the Objective. These are outcome priorities, independent of primary/supporting metric roles. Do not turn a supporting metric into a secondary goal or infer priorities from legacy bullet order.
 - Prefer configured outcome metrics from `window.report.getGoalMetrics()` or its prebuilt goal-progress widget. Acceptance criteria and constraints remain supporting context.
-- For each important success criterion, show the best available signal from `db/db.sqlite`, `evaluation/`, `costs/`, `workflow.json`, typed Pulse records, or durable Dashboard-facing files.
-- If `evaluation_plan.json` has an eval step scoring this criterion, its verdict is already a `db/db.sqlite` row — see EVALUATION VERDICTS below — no separate measurement step is needed for that criterion.
+- For each important success criterion, show the best available signal from `db/db.sqlite`, `costs/`, `workflow.json`, typed Pulse records, or durable Dashboard-facing files.
+- If a producing step already scores this criterion, its verdict is already a stored row — see MEASUREMENT ROWS below — no separate measurement step is needed for that criterion.
 - Prefer a compact goal band: status, current value/state, target/baseline, trend/delta vs prior run/window, last updated, and a short plain-language interpretation.
 - If a success criterion cannot be measured from existing persisted evidence, show an honest "not measured yet" or "missing evidence" state and log the missing data requirement. Do not hardcode guesses and do not create a separate metrics system.
 - Keep detailed tables/charts below the goal band; the user should know progress and issues before inspecting raw rows.
@@ -98,19 +98,17 @@ GOAL ADVISOR MEASUREMENT HANDOFF
   collection step/data exists, log the missing-data handoff for Goal Advisor or
   plan work. This Dashboard lens must not create workflow steps itself.
 
-EVALUATION VERDICTS
-- Each eval step in `evaluation_plan.json` already writes its own score/reasoning into
-  `db/db.sqlite`'s framework-owned `eval_results` table (one row per `run_folder` +
-  `step_id`: `score`, `max_score`, `reasoning`, `evidence`) — no extra step or measurement
-  contract needed. Prefer `window.report.getEvaluations()` or `renderEvaluations`
-  for joined criterion titles, captured/skipped flags, and history; direct
-  `window.report.query` remains available for custom queries.
-- Keep each `eval_results` criterion visible with its score, evidence, route, and
-  run. Do not invent a combined score or assume `soul.md` defines an aggregation
-  rule. Show an aggregate only when the workflow explicitly defines its semantics;
-  retain the individual criteria and coverage so missing evaluations stay visible.
-- A criterion with no matching `eval_results` row for the current `run_folder` has not
-  been evaluated yet for this run — show "not evaluated" or the last available run's
+MEASUREMENT ROWS
+- Producing steps store one row per metric in their own tables — no extra step or
+  measurement contract needed. Query them with `window.report.query` for joined
+  criterion titles and history; prefer `window.report.getGoalMetrics()` for
+  configured goal metrics.
+- Keep each measured criterion visible with its value, evidence, and run. Do not
+  invent a combined score or assume `soul.md` defines an aggregation rule. Show an
+  aggregate only when the workflow explicitly defines its semantics; retain the
+  individual criteria and coverage so missing measurements stay visible.
+- A criterion with no matching stored row for the current run has not
+  been measured yet for this run — show "not measured" or the last available run's
   verdict with its run/date, never zero or "passing" by default.
 
 MODE

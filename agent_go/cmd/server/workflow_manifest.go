@@ -29,12 +29,13 @@ const WorkflowManifestSchemaVersion = 1
 // contract version. Unlike schema_version, this gates agent-run workflow
 // upgrades: Pulse can add version-specific messages and stamp this value only
 // after the workflow has been checked or migrated.
-const WorkflowContractCurrentVersion = workflowContractRunScopedRoutesVersion
+const WorkflowContractCurrentVersion = workflowContractEvalRetirementVersion
 
 const workflowContractExplicitSchedulePulseVersion = schedulepolicy.ExplicitPulseContractVersion
 
 const workflowContractRouteSummariesVersion = "1.0.40"
 const workflowContractRunScopedRoutesVersion = "1.0.42"
+const workflowContractEvalRetirementVersion = "1.0.43"
 
 const workflowContractInitialVersion = "1.0.0"
 const workflowContractMessageSequenceCodeVersion = "1.0.10"
@@ -78,10 +79,9 @@ const workflowContractDeclaredExecutionModeRetiredVersion = "1.0.38"
 
 // workflowContractDeclaredExecutionModeStrippedVersion (PLAT-287, half 2):
 // the runtime now decides a step's execution model from its plan type alone
-// (regular = scripted, message_sequence = conversational, evaluation step
-// scripted when its evaluation_plan.json entry says execution_mode="scripted"),
+// (regular = scripted, message_sequence = conversational),
 // so the retired declared_execution_mode / _reason keys are stripped from
-// planning/step_config.json and evaluation/step_config.json by
+// planning/step_config.json by
 // strip_declared_execution_mode, which refuses while any regular step still
 // carries declared_execution_mode="agentic" (i.e. v1.0.38 did not complete).
 const workflowContractDeclaredExecutionModeStrippedVersion = "1.0.39"

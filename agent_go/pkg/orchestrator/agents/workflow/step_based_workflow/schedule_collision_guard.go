@@ -16,14 +16,14 @@ type collisionToolRegistrar struct {
 
 func ScheduleGuardedTool(name string) bool {
 	switch name {
-	case "add_step", "update_step", "manage_step_route", "manage_group", "maintain_plan", "execute_step", "run_full_workflow", "run_full_evaluation", "debug_step", "convert_routing_branch_step_type",
+	case "add_step", "update_step", "manage_step_route", "manage_group", "maintain_plan", "execute_step", "run_full_workflow", "debug_step", "convert_routing_branch_step_type",
 		"create_plan", "change_step_type", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"add_scripted_step", "add_message_sequence_step", "add_routing_step", "add_branch_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route", "add_orchestrator_step", "add_orchestrator_route",
 		"update_scripted_step", "update_message_sequence_step", "update_routing_step", "update_branch_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route", "update_orchestrator_step", "update_orchestrator_route",
 		"delete_todo_task_route", "delete_orchestrator_route", "update_step_config", "update_validation_schema",
-		"add_evaluation_step", "update_evaluation_plan", "delete_evaluation_step", "migrate_message_sequence_code_items",
+		"migrate_message_sequence_code_items",
 		"migrate_orchestrator_step_type", "migrate_run_scoped_routes", "migrate_declared_execution_mode", "strip_declared_execution_mode",
 		"update_workflow_config", "set_workflow_llm_config", "update_variable", "add_group", "update_group", "delete_group":
 		return true

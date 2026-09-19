@@ -11,7 +11,6 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   learnings: "Help me understand or change what this workflow has learned. Explain the relevant learnings and ask which behavior or step I want to examine.",
   knowledgebase: "Help me use this workflow's knowledgebase. Explain what is available and ask what I want to find, add, or improve.",
   database: "Help me understand or change this workflow's database. Use the current schema and data, then ask what I want to inspect or update.",
-  evaluation: "Help me understand this workflow's evaluation results. Explain failures, quality gaps, and trends, then ask what I want to improve.",
   schedules: "Help me set up or change a schedule for this workflow. Ask what should run, when it should run, and any route requirements.",
   webhooks: "Help me set up or change a webhook for this workflow. Ask which external event should trigger it, what should run, and which authentication and routing it needs.",
   files: "Help me work with this workflow's files. Ask what I want to find, understand, create, or change before modifying anything.",

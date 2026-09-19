@@ -90,60 +90,36 @@ func TestStripDeclaredExecutionModeRefusesWhileALegacyAgenticRegularStepRemains(
 	}
 }
 
-func TestStripDeclaredExecutionModeMarksDeclaredScriptedEvaluationStepsOnThePlan(t *testing.T) {
-	plan := &PlanningResponse{Steps: []PlanStepInterface{testSequenceStep("talk", "Talk")}}
-	files, readFile, writeFile := changeStepTypeHarness(t, plan, nil)
-	evalPlan := map[string]interface{}{
-		"steps": []map[string]interface{}{
-			{"id": "eval-scripted", "title": "Scripted eval", "description": "Checks output deterministically.", "max_score": 10},
-			{"id": "eval-judge", "title": "Judge eval", "description": "LLM judgement.", "max_score": 10},
-		},
-	}
-	evalPlanJSON, _ := json.Marshal(evalPlan)
-	evalPlanPath := strings.Trim(changeStepTypeTestWorkspace, "/") + "/" + evaluationPlanRelPath
-	files[evalPlanPath] = string(evalPlanJSON)
-	evalConfigJSON, _ := json.Marshal(StepConfigFile{Steps: []StepConfig{
-		{ID: "eval-scripted", AgentConfigs: &AgentConfigs{LegacyDeclaredExecutionMode: StepModeScripted, LegacyDeclaredExecutionModeReason: "deterministic check"}},
-		{ID: "eval-judge", AgentConfigs: &AgentConfigs{LegacyDeclaredExecutionMode: StepModeAgentic}},
-	}})
+func TestStripDeclaredExecutionModeLeavesRetiredEvaluationFilesUntouched(t *testing.T) {
+	plan := &PlanningResponse{Steps: []PlanStepInterface{
+		&RegularPlanStep{Type: StepTypeRegular, CommonStepFields: CommonStepFields{ID: "scripted", Title: "Scripted", Description: "Deterministic."}},
+	}}
+	files, readFile, writeFile := changeStepTypeHarness(t, plan, []StepConfig{
+		{ID: "scripted", AgentConfigs: &AgentConfigs{LegacyDeclaredExecutionMode: StepModeScripted}},
+	})
+	evalPlanPath := strings.Trim(changeStepTypeTestWorkspace, "/") + "/evaluation/evaluation_plan.json"
 	evalConfigPath := normalizePathForWorkspaceAPI("evaluation/step_config.json", changeStepTypeTestWorkspace)
+	files[evalPlanPath] = `{"steps":[{"id":"eval-legacy","title":"Legacy eval"}]}`
+	evalConfigJSON, _ := json.Marshal(StepConfigFile{Steps: []StepConfig{
+		{ID: "eval-legacy", AgentConfigs: &AgentConfigs{LegacyDeclaredExecutionMode: StepModeScripted, LegacyDeclaredExecutionModeReason: "retired"}},
+	}})
 	files[evalConfigPath] = string(evalConfigJSON)
 
 	out, err := runStripDeclaredMode(t, readFile, writeFile)
 	if err != nil {
 		t.Fatalf("strip failed: %v", err)
 	}
-	if !strings.Contains(out, `"evaluation_stripped":2`) || !strings.Contains(out, `"evaluation_marked_scripted":1`) {
-		t.Fatalf("expected both eval entries stripped and one marked scripted, got %s", out)
+	if !strings.Contains(out, `"status":"migrated"`) {
+		t.Fatalf("planning entries must still strip, got %s", out)
 	}
-	if strings.Contains(files[evalConfigPath], "declared_execution_mode") {
-		t.Fatalf("the retired key must be gone from evaluation/step_config.json, got %s", files[evalConfigPath])
+	if strings.Contains(out, "evaluation_stripped") || strings.Contains(out, "evaluation_marked_scripted") {
+		t.Fatalf("output must not mention evaluation stripping, got %s", out)
 	}
-	var updatedPlan struct {
-		Steps []map[string]interface{} `json:"steps"`
+	if files[evalConfigPath] != string(evalConfigJSON) {
+		t.Fatalf("evaluation/step_config.json must be byte-identical, got %s", files[evalConfigPath])
 	}
-	if err := json.Unmarshal([]byte(files[evalPlanPath]), &updatedPlan); err != nil {
-		t.Fatalf("parse updated evaluation plan: %v", err)
-	}
-	modes := map[string]interface{}{}
-	for _, step := range updatedPlan.Steps {
-		modes[step["id"].(string)] = step["execution_mode"]
-	}
-	if modes["eval-scripted"] != StepModeScripted {
-		t.Fatalf("the declared-scripted eval step must be marked execution_mode=scripted on the plan, got %v", modes["eval-scripted"])
-	}
-	if _, set := modes["eval-judge"]; set && modes["eval-judge"] != nil {
-		t.Fatalf("an agentic eval step must not get an execution_mode, got %v", modes["eval-judge"])
-	}
-	entry := findChangelogEntry(t, changeStepTypeTestWorkspace, files, "strip_declared_execution_mode")
-	sawPlanMark := false
-	for _, change := range entry.Changes {
-		if change.StepID == "eval-scripted" && change.Field == "execution_mode" && change.NewValue == StepModeScripted {
-			sawPlanMark = true
-		}
-	}
-	if !sawPlanMark {
-		t.Fatalf("changelog must record the execution_mode mark, got %+v", entry.Changes)
+	if files[evalPlanPath] != `{"steps":[{"id":"eval-legacy","title":"Legacy eval"}]}` {
+		t.Fatalf("evaluation/evaluation_plan.json must be byte-identical, got %s", files[evalPlanPath])
 	}
 }
 

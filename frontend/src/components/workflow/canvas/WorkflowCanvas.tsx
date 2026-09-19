@@ -29,8 +29,6 @@ import { routeTraceFromEdge, traceRouteGraph, type RouteTrace } from './routeTra
 import { usePlanTriggers } from './usePlanTriggers'
 import { appendTriggerCards, traceTriggerGraph } from './triggerLayout'
 import { WorkflowTriggerNode, WorkflowTriggerHeading } from '../nodes/WorkflowTriggerNodes'
-import { appendEvaluationGroups } from './evaluationLayout'
-import { CompactEvaluationNode, EvaluationGroupNode } from '../nodes/CompactEvaluationNodes'
 import { VariablesSidebar } from './VariablesSidebar'
 import { BatchProgressHeader } from '../BatchProgressHeader'
 import {
@@ -82,8 +80,6 @@ const canvasNodeTypes = {
   ...nodeTypes,
   'workflow-trigger': WorkflowTriggerNode,
   'workflow-trigger-heading': WorkflowTriggerHeading,
-  'evaluation-card': CompactEvaluationNode,
-  'evaluation-group': EvaluationGroupNode,
   step: HandoffStepNode,
   todo_task: HandoffTodoTaskNode,
   human_input: HandoffHumanInputNode,
@@ -130,9 +126,6 @@ function enforceWorkflowHeaderClearance(nodes: WorkflowNode[]): WorkflowNode[] {
 
 import type { ExecutionOptions } from '../../../services/api-types'
 
-function isHorizontalWorkflowLayout(direction: 'LR' | 'TB'): boolean {
-  return direction === 'LR'
-}
 
 export interface WorkflowCanvasProps {
   workspacePath: string | null
@@ -756,7 +749,7 @@ function ReadOnlyStepDetailPanel({
   const data = node.data as WorkflowNodeData
   const step = 'step' in data && data.step ? data.step as PlanStep : null
   const title = (typeof data.title === 'string' && data.title) || step?.title || node.id
-  const rawType = data.isEvaluationStep ? 'Evaluation' : step?.type || node.type || 'node'
+  const rawType = step?.type || node.type || 'node'
   const type = planStepTypeLabel(rawType)
   const routes = step?.type === 'routing' || step?.type === 'branch'
     ? step.routes
@@ -1274,11 +1267,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [selectedRunFolder, workspacePath, highlightFile])
 
-  // Plan, evaluation plan, execution status, and workspace state come from the
+  // Plan, execution status, and workspace state come from the
   // host so that switching views never re-runs their loaders.
   const {
     planData,
-    evalData,
     workspace,
     isRefreshingPlan,
     setIsRefreshingPlan,
@@ -1288,15 +1280,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   } = viewData
 
   const plan = planData.plan
-  const evaluationPlan = evalData.evaluationPlan
 
   // A manual Plan refresh still uses the canonical plan loader, but it must
   // not replace the surrounding workflow surface with the initial-load screen.
-  const loading = (planData.loading && !isRefreshingPlan) || evalData.loading
+  const loading = planData.loading && !isRefreshingPlan
   const changes = planData.changes
 
   const loadPlanRefresh = planData.refresh
-  const refreshEvaluationPlan = evalData.refresh
   const clearChanges = planData.clearChanges
   const setChanges = planData.setChanges
 
@@ -1382,10 +1372,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     setIsRefreshingPlan(true)
     try {
       refreshTriggers()
-      const [reloaded] = await Promise.all([
-        loadPlanRefresh(),
-        refreshEvaluationPlan(),
-      ])
+      const reloaded = await loadPlanRefresh()
       if (!reloaded) {
         throw new Error('Plan could not be reloaded')
       }
@@ -1398,7 +1385,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     } finally {
       setIsRefreshingPlan(false)
     }
-  }, [isRefreshingPlan, loadPlanRefresh, refreshEvaluationPlan, setIsRefreshingPlan, refreshTriggers])
+  }, [isRefreshingPlan, loadPlanRefresh, setIsRefreshingPlan, refreshTriggers])
 
   // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
   const [selectedTrigger, setSelectedTrigger] = React.useState<{ workspace: string | null; id: string } | null>(null)
@@ -1415,8 +1402,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   const traceSource = routeTrace && routeTrace.workspace === workspacePath ? nodes.find(node => node.id === routeTrace.nodeId) : undefined
   const tracedRoute = (traceSource?.data as RoutingStepNodeData | undefined)?.routes?.find(route => route.route_id === routeTrace?.routeId)
   const activeTrace = tracedRoute ? routeTrace : null
-  const tracedEvaluations = (traceSource?.data as RoutingStepNodeData | undefined)?.routeEvaluations?.[tracedRoute?.route_id ?? ''] ?? []
-  const allRouteEvaluationCount = (traceSource?.data as RoutingStepNodeData | undefined)?.allRouteEvaluationCount ?? 0
   const selectTrigger = useCallback((id: string) => {
     setRouteTrace(null)
     setSelectedFlowNode(null)
@@ -1544,7 +1529,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     const nodeById = new Map(currentNodes.map(node => [node.id, node]))
 
     currentNodes.forEach(node => {
-      if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
+      if (node.id === 'start' || node.id === 'variables') {
         return
       }
       nodePositions[node.id] = { x: node.position.x, y: node.position.y }
@@ -1583,7 +1568,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [getLayoutFilePath, layoutDirection, toolbarOnly])
 
-  // Build node groups: map parent nodes to their child nodes (validation, learning, evaluation, sub-agents)
+  // Build node groups: map parent nodes to their child nodes (validation, learning, sub-agents)
   const buildNodeGroups = useCallback((currentNodes: WorkflowNode[]) => {
     const groups = new Map<string, string[]>()
     const childToParent = new Map<string, string>()
@@ -1606,7 +1591,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       const children: string[] = []
       
-      // Find validation, learning, and evaluation nodes by parentStepId
+      // Find validation and learning nodes by parentStepId
       currentNodes.forEach(childNode => {
         if (childNode.type === 'validation') {
           const data = childNode.data as { parentStepId?: string }
@@ -1619,15 +1604,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             offsets.set(childNode.id, { dx, dy })
           }
         } else if (childNode.type === 'learning') {
-          const data = childNode.data as { parentStepId?: string }
-          if (data.parentStepId === parentNode.id) {
-            children.push(childNode.id)
-            childToParent.set(childNode.id, parentNode.id)
-            const dx = childNode.position.x - parentNode.position.x
-            const dy = childNode.position.y - parentNode.position.y
-            offsets.set(childNode.id, { dx, dy })
-          }
-        } else if (childNode.type === 'evaluation') {
           const data = childNode.data as { parentStepId?: string }
           if (data.parentStepId === parentNode.id) {
             children.push(childNode.id)
@@ -1650,9 +1626,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       const children: string[] = []
       
-      // Find validation, learning, and evaluation nodes that belong to this sub-agent
+      // Find validation and learning nodes that belong to this sub-agent
       currentNodes.forEach(childNode => {
-        if (childNode.type === 'validation' || childNode.type === 'learning' || childNode.type === 'evaluation') {
+        if (childNode.type === 'validation' || childNode.type === 'learning') {
           const data = childNode.data as { parentStepId?: string }
           if (data.parentStepId === subAgentNode.id) {
             children.push(childNode.id)
@@ -1676,7 +1652,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Custom onNodesChange handler that groups nodes together
   const onNodesChange = useCallback((changes: NodeChange[]) => {
-    // Allow all nodes to be draggable: sub-agents, validation, learning, evaluation, and parent nodes
+    // Allow all nodes to be draggable: sub-agents, validation, learning, and parent nodes
     // These nodes can be manually positioned independently
     const filteredChanges = changes.filter(change => {
       if (change.type === 'position') {
@@ -1685,13 +1661,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         if (nodeId.includes('-sub-agent-')) {
           return true // Allow sub-agents to be draggable
         }
-        // Allow validation, learning, and evaluation nodes to be draggable
+        // Allow validation and learning nodes to be draggable
         const node = nodesRef.current.find(n => n.id === nodeId)
-        if (node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact')) {
-          return true // Allow validation, learning, and evaluation nodes to be draggable
+        if (node && (node.type === 'validation' || node.type === 'learning' || node.type === 'workflow-artifact')) {
+          return true // Allow validation and learning nodes to be draggable
         }
         // Check if this is a child node (has a parent) - these should not be draggable
-        // But we've already handled sub-agents and validation/learning/evaluation above
+        // But we've already handled sub-agents and validation/learning above
         if (childToParentRef.current.has(nodeId)) {
           return false // Ignore position changes for other child nodes
         }
@@ -1702,17 +1678,17 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     // Apply filtered changes
     onNodesChangeBase(filteredChanges as NodeChange<WorkflowNode>[])
 
-    // Check if any parent node position changed (including sub-agents, validation, learning, evaluation)
+    // Check if any parent node position changed (including sub-agents, validation, learning)
     const parentPositionChanges = new Map<string, { x: number; y: number }>()
     
     filteredChanges.forEach(change => {
       if (change.type === 'position' && change.position) {
         const nodeId = change.id
         const node = nodesRef.current.find(n => n.id === nodeId)
-        // Include sub-agents, validation, learning, and evaluation nodes as independently movable
+        // Include sub-agents, validation and learning nodes as independently movable
         const isSubAgent = nodeId.includes('-sub-agent-')
-        const isValidationLearningEval = node && (node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact')
-        // Check if this is a parent node (not a child) OR a sub-agent OR validation/learning/evaluation
+        const isValidationLearningEval = node && (node.type === 'validation' || node.type === 'learning' || node.type === 'workflow-artifact')
+        // Check if this is a parent node (not a child) OR a sub-agent OR validation/learning
         if (isSubAgent || isValidationLearningEval || (nodeGroupsRef.current.has(nodeId) && !childToParentRef.current.has(nodeId))) {
           parentPositionChanges.set(nodeId, { x: change.position.x, y: change.position.y })
         }
@@ -1724,13 +1700,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       setNodes((nds) => {
         // First pass: update direct children
         // Note: Sub-agents SHOULD move with their parent orchestrator
-        // Validation, learning, and evaluation nodes remain independent
+        // Validation and learning nodes remain independent
         let updatedNodes = nds.map(node => {
           const parentId = childToParentRef.current.get(node.id)
           
-          // Skip if this is a validation, learning, or evaluation node
+          // Skip if this is a validation or learning node
           // These are independent and can be manually positioned
-          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact'
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'workflow-artifact'
           if (isValidationLearningEval) {
             return node // These nodes are independent, don't update them here
           }
@@ -1762,10 +1738,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         })
 
         // Update children of nodes that moved
-        // Skip validation, learning, and evaluation nodes (they're independent)
+        // Skip validation and learning nodes (they're independent)
         updatedNodes = updatedNodes.map(node => {
-          // Skip validation, learning, and evaluation nodes - they're independent
-          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'evaluation' || node.type === 'workflow-artifact'
+          // Skip validation and learning nodes - they're independent
+          const isValidationLearningEval = node.type === 'validation' || node.type === 'learning' || node.type === 'workflow-artifact'
           if (isValidationLearningEval) {
             return node
           }
@@ -1857,11 +1833,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     disabled: toolbarOnly
   })
 
-  const augmentedFlow = React.useMemo(() => appendEvaluationGroups(planFlow, evaluationPlan?.steps ?? [], {
-    horizontal: isHorizontalWorkflowLayout(layoutDirection), workspacePath, selectedRunFolder,
-  }), [planFlow, evaluationPlan, layoutDirection, workspacePath, selectedRunFolder])
-
-  const { nodes: initialNodes, edges: initialEdges } = augmentedFlow
+  const { nodes: initialNodes, edges: initialEdges } = planFlow
 
   const showStepNode = useCallback((stepId: string): boolean => {
     const nodeToShow = nodesRef.current.find(node => {
@@ -1919,9 +1891,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   // Expose methods via ref
   useImperativeHandle(ref, () => ({
     refresh: async (changedStepIDs?: string[], deletedStepIDs?: string[]) => {
-      // The flow combines plan.json and evaluation_plan.json. Refresh both so
-      // deleted evaluation steps cannot remain as cached canvas nodes.
-      await Promise.all([loadPlanRefresh(), refreshEvaluationPlan()])
+      await loadPlanRefresh()
 
       // If granular change data is provided, use it directly
       if (changedStepIDs || deletedStepIDs) {
@@ -1963,7 +1933,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         try { void fitView({ padding: FLOW_FIT_PADDING, duration: 300, minZoom: FLOW_FIT_MIN_ZOOM, maxZoom: FLOW_FIT_MAX_ZOOM }) } catch { /* ignore */ }
       }, 60)
     }
-  }), [loadPlanRefresh, refreshEvaluationPlan, plan, setChanges, showStepNode, toolbarOnly, fitView])
+  }), [loadPlanRefresh, plan, setChanges, showStepNode, toolbarOnly, fitView])
 
   // Store step ID to focus on when changes are detected (will focus after nodes update)
   React.useEffect(() => {
@@ -2124,11 +2094,10 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
       // Priority: 1) Saved layout from file, 2) Current positions (captured before refresh), 3) Auto-layout
       if (initialNodes.length > 0) {
         // Extract header node positions from initialNodes BEFORE any restoration
-        // Header and grouped evaluation positions are generated; never restore
-        // stale eval positions from the previous serial-chain layout.
+        // Header positions are generated; never restore stale positions from the previous serial-chain layout.
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
+          if (node.id === 'start' || node.id === 'variables') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -2172,14 +2141,13 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 // Pass 2: Apply learning/validation offsets (relative to sub-agents or other parents)
                 
                 // First pass: Apply offsets for nodes whose parent is a top-level parent (orchestrator, step, etc.)
-                // Skip sub-agents, validation, learning, and evaluation nodes (they're loaded from parentPositions, not offsets)
+                // Skip sub-agents, validation and learning nodes (they're loaded from parentPositions, not offsets)
                 updated = updated.map(node => {
-                  // Skip sub-agents, validation, learning, and evaluation nodes - they're loaded from parentPositions, not offsets
+                  // Skip sub-agents, validation and learning nodes - they're loaded from parentPositions, not offsets
                   if (node.id.includes('-sub-agent-') || 
                       node.type === 'validation' || 
                       node.type === 'learning' || 
-                      node.type === 'evaluation' ||
-                      node.type === 'workflow-artifact') {
+                                            node.type === 'workflow-artifact') {
                     return node
                   }
                   
@@ -2318,7 +2286,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
         // No saved layout or layout direction changed - ensure header nodes have correct positions from usePlanToFlow
         const headerNodePositions = new Map<string, { x: number; y: number }>()
         initialNodes.forEach(node => {
-          if (node.id === 'start' || node.id === 'variables' || node.data.isEvaluationStep || node.type === 'evaluation-group') {
+          if (node.id === 'start' || node.id === 'variables') {
             headerNodePositions.set(node.id, { x: node.position.x, y: node.position.y })
           }
         })
@@ -2523,7 +2491,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
   }, [selectedFlowNode, activeTrace, selectedTriggerJob])
 
   const onNodeClick = useCallback((_: React.MouseEvent, node: WorkflowNode) => {
-    if (node.type === 'evaluation-group' || node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading') return
+    if (node.type === 'workflow-trigger' || node.type === 'workflow-trigger-heading') return
     if (node.type === 'variables') {
       setShowVariablesSidebar(true)
       setSelectedFlowNode(null)
@@ -2680,16 +2648,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
                 <Route className="h-4 w-4 shrink-0 text-teal-500" />
                 <span className="truncate">Tracing: {tracedRoute.route_name || tracedRoute.route_id}</span>
                 <button type="button" onClick={() => setRouteTrace(null)} className="shrink-0 rounded px-2 py-1 text-xs hover:bg-muted focus-visible:outline" title="Clear route trace (Escape)">Show all</button>
-              </div>
-              <div className="mt-1 max-h-40 overflow-y-auto border-t pt-2 text-xs" aria-label="Route evaluations">
-                <p className="text-muted-foreground">{tracedEvaluations.length} route-specific eval{tracedEvaluations.length === 1 ? '' : 's'} · {allRouteEvaluationCount} all-route eval{allRouteEvaluationCount === 1 ? '' : 's'}</p>
-                {tracedEvaluations.map(evaluation => (
-                  <button key={evaluation.id} type="button" onClick={() => showStepNode(`workflow-evaluation-step-${evaluation.id}`)}
-                    className="mt-1 block max-w-full truncate rounded px-1 py-0.5 text-left hover:bg-muted focus-visible:outline"
-                    title={`Show evaluation: ${evaluation.title}`}>
-                    {evaluation.title}
-                  </button>
-                ))}
               </div>
             </div>
           )}

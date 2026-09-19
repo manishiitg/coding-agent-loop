@@ -64,7 +64,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runStepReflectionTurn(
 		return result
 	}
 
-	writesLearnings := shouldDirectWriteLearnings(stepConfig, step, hcpo.isEvaluationMode)
+	writesLearnings := shouldDirectWriteLearnings(stepConfig, step)
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	kbContribution := kbContributionForPrompt(stepConfig)
 	writesKB := kbAccessAllowsWrite(kbAccess) && strings.TrimSpace(kbContribution) != ""

@@ -24,7 +24,7 @@ All paths below are relative to the workspace root (prepend the absolute root wh
 | runs/{iter}/{group}/execution/{step-id}/ | Step output files (*.json) |
 | runs/{iter}/{group}/execution/Downloads/ | Downloaded files (bank statements, etc.) |
 | costs/execution/{group}/{YYYY-MM-DD}.json | Execution token-usage ledger shard. Current records live under `executions[execution_id]`; `run_folder` is display metadata and `run_folders` is legacy compatibility only. |
-| costs/evaluation/{group}/{YYYY-MM-DD}.json | Evaluation cost ledger shard. Current records live under `evaluations[evaluation_id]`; do not use a reusable run-folder path as identity. |
+| costs/evaluation/{group}/{YYYY-MM-DD}.json | LEGACY (retired): evaluation cost ledger. Retained on disk; nothing writes or reads it. |
 | costs/phase/token_usage.json | Token usage for the `planning` phase plus workflow-builder chat interactions ONLY — not a workflow-wide total. Step-execution cost (the bulk of a real run) lives in `costs/execution/`, not here. `input_cost_usd` excludes cache-served tokens by design (`cache_cost_usd` carries their real charge) — a near-zero `input_cost_usd` next to a large `input_tokens` count is expected for a cache-heavy workload, not a pricing defect. |
 | costs/phase/daily/{YYYY-MM-DD}.json | Same narrow phase/model-key scope as `costs/phase/token_usage.json`, rolled up by date. Do not compare its total against `costs/execution/` and infer under/over-counting — the two ledgers cover different, non-overlapping call sets by design. |
 | costs/costs.sqlite | This workflow's own cost ledger (PLAT-184) — per-run, per-step `phase`, and per-message-sequence-item (`phase="item:<id>"`) cost/token breakdown for every LLM and paid-tool call attributed to this workflow. Query it with `query_workflow_costs`, never by reading the file directly. It only holds events recorded since PLAT-184 shipped — it is not a backfilled history and not the same store as the global human-facing Cost Analysis dashboard, which is a separate, workflow-agent-unreachable ledger. |
@@ -65,11 +65,11 @@ Use this order when debugging latency:
 | learnings/_global/SKILL.md | Global prose learnings shared across all steps |
 | <script-dir>/script_metadata.json | Script version, run counts, per-group stats, duration stats, recent run history (last 10 with exit codes/errors/durations), last failure details, success/failure streak |
 
-### Evaluation
+### Legacy evaluation (retired, retained on disk, no longer read)
 | Path | Contents |
 |------|----------|
-| evaluation/evaluation_plan.json | Eval step definitions |
-| evaluation/runs/{iter}/{group}/evaluation_report.json | Eval step outputs + evidence |
+| evaluation/evaluation_plan.json | Retired eval step definitions |
+| evaluation/runs/{iter}/{group}/evaluation_report.json | Retired eval step outputs + evidence |
 
 ### Other
 | Path | Contents |

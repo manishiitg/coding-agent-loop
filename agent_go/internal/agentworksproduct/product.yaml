@@ -70,13 +70,17 @@ chat:
     # Default workflow phase tools; integration tests compare real registration.
     tools:
       - add_step
-      - add_evaluation_step
       - manage_group
       - add_mcp_server
       - manage_step_route
       - agent_browser
       - change_step_type
       - maintain_plan
+      - migrate_declared_execution_mode
+      - migrate_message_sequence_code_items
+      - migrate_orchestrator_step_type
+      - migrate_run_scoped_routes
+      - strip_declared_execution_mode
       - configure_slack_bot
       - consolidate_knowledgebase
       - create_calendar_schedule
@@ -84,7 +88,6 @@ chat:
       - create_schedule
       - create_slack_bot_route
       - debug_step
-      - delete_evaluation_step
       - delete_plan_steps
       - delete_schedule
       - delete_user_secret
@@ -131,7 +134,6 @@ chat:
       - reorganize_knowledgebase
       - request_workflow_folder_access
       - review_step_code
-      - run_full_evaluation
       - run_full_workflow
       - run_in_background
       - search_mcp_catalog
@@ -148,7 +150,6 @@ chat:
       - trigger_schedule
       - uninstall_skill
       - update_step
-      - update_evaluation_plan
       - update_gmail_connection_grants
       - update_schedule
       - update_slack_bot_route_permission
@@ -156,7 +157,6 @@ chat:
       - update_validation_schema
       - update_variable
       - update_workflow_config
-      - validate_evaluation_plan
       - validate_plan_change
       - validate_report_html
     prompt:
@@ -189,7 +189,6 @@ chat:
       - perform_ui_action
       - query_step
       - request_workflow_folder_access
-      - run_full_evaluation
       - run_full_workflow
       - run_in_background
       - search_skills
@@ -198,7 +197,6 @@ chat:
       - stop_step
       - test_slack_bot_connection
       - trigger_schedule
-      - validate_evaluation_plan
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

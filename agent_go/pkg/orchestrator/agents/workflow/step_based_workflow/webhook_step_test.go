@@ -15,7 +15,7 @@ func TestWebhookStepBindingAndBatchIsolation(t *testing.T) {
 	if err := bindWebhookStep(opts, steps); err != nil {
 		t.Fatal(err)
 	}
-	if opts.ResumeFromStep != 2 || opts.ExecutionStrategy != ExecutionStrategyRunSingleStep || !opts.DisableEval {
+	if opts.ResumeFromStep != 2 || opts.ExecutionStrategy != ExecutionStrategyRunSingleStep {
 		t.Fatalf("wrong selection: %+v", opts)
 	}
 	orch := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, nil)}

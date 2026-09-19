@@ -18,7 +18,7 @@ import (
 // stepConfigToolRuntime separates the existing builder config executor from its
 // live conversation while retaining the same validation and mutation behavior.
 type stepConfigToolRuntime interface {
-	ReadCurrentPlan(context.Context, bool) (*PlanningResponse, error)
+	ReadCurrentPlan(context.Context) (*PlanningResponse, error)
 	ReadStepConfigsFromSubdir(context.Context, string) ([]StepConfig, error)
 	WriteStepConfigsToSubdir(context.Context, string, []StepConfig) error
 	GetSelectedServers() []string
@@ -27,7 +27,7 @@ type stepConfigToolRuntime interface {
 	WriteWorkspaceFile(context.Context, string, string) error
 }
 
-const updateStepConfigToolDescription = "Update step_config.json for a specific workflow or evaluation step. The tool auto-detects whether step_id belongs to planning/plan.json or evaluation/evaluation_plan.json, then writes planning/step_config.json or evaluation/step_config.json accordingly. Changes take effect on the next execute_step or run_full_evaluation call. To REMOVE a field (so the step falls back to preset/default behavior where that field has a fallback, or removes the explicit setting otherwise), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored."
+const updateStepConfigToolDescription = "Update planning/step_config.json for a specific workflow step. Changes take effect on the next execute_step or run_full_workflow call. To REMOVE a field (so the step falls back to preset/default behavior where that field has a fallback, or removes the explicit setting otherwise), list its name in clear_fields — sending null in a value field does NOT clear; it's ignored."
 
 func getUpdateStepConfigParameters() map[string]interface{} {
 	lockCodeDescription := "If true, lock the saved main.py script — prevents LLM-rewritten scripts from being saved back to learnings, and skips the fix loop (falls back directly to agentic mode). Only applies to scripted steps. Use only when the user explicitly wanted scripted, the script is deterministic, and script_metadata/eval evidence shows 10+ successful scenario-covering runs."
@@ -36,7 +36,7 @@ func getUpdateStepConfigParameters() map[string]interface{} {
 		"properties": map[string]interface{}{
 			"step_id": map[string]interface{}{
 				"type":        "string",
-				"description": "The step ID from planning/plan.json or evaluation/evaluation_plan.json.",
+				"description": "The step ID from planning/plan.json.",
 			},
 			"clear_fields": map[string]interface{}{
 				"type":        "array",
@@ -124,7 +124,7 @@ func getUpdateStepConfigParameters() map[string]interface{} {
 			"execution_tier": map[string]interface{}{
 				"type":        "string",
 				"enum":        []interface{}{"high", "medium", "low"},
-				"description": "Persistent execution tier override for this workflow step or evaluation step in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override workflow/eval step tier for a single run. REQUIRES execution_tier_reason. Pulse Architecture reviews model quality, cost, latency and retries to propose measured tier trials. Successful-run counts never change tiers. Unset execution steps default to high; evaluation steps default to medium. Preserve user pins and apply changes through the existing approval contract.",
+				"description": "Persistent execution tier override for this workflow step in tiered mode. Use high for subjective/ambiguous judgment, medium for normal checks, low for deterministic/file-shape checks. execution_llm still takes precedence, and execute_step(..., tier=...) can still override step tier for a single run. REQUIRES execution_tier_reason. Pulse Architecture reviews model quality, cost, latency and retries to propose measured tier trials. Successful-run counts never change tiers. Unset execution steps default to high. Preserve user pins and apply changes through the existing approval contract.",
 			},
 			"execution_tier_reason": map[string]interface{}{
 				"type":        "string",
@@ -183,14 +183,14 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 			return "reason is required (one-sentence rationale captured into the plan changelog)", nil
 		}
 
-		resolvedStepID, configSubdir, isEvalStep, resolveErr := resolveWorkshopStepConfigTarget(ctx, runtime, stepID)
+		resolvedStepID, resolveErr := resolveWorkshopStepConfigTarget(ctx, runtime, stepID)
 		if resolveErr != nil {
 			return resolveErr.Error(), nil
 		}
 		stepID = resolvedStepID
+		configSubdir := "planning"
 
-		// Read existing configs from the durable config file matching the target step:
-		// planning/step_config.json for workflow steps, evaluation/step_config.json for eval steps.
+		// Read existing configs from the durable planning/step_config.json.
 		configs, err := runtime.ReadStepConfigsFromSubdir(ctx, configSubdir)
 		if err != nil {
 			configs = []StepConfig{}
@@ -326,14 +326,10 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 			}
 		}
 		// PLAT-287: declared_execution_mode is retired. A step's plan type
-		// decides how it runs; an evaluation step's execution_mode lives on
-		// its evaluation_plan.json entry. Point at the real tools rather than
-		// silently dropping the argument.
+		// decides how it runs. Point at the real tools rather than silently
+		// dropping the argument.
 		for _, retired := range []string{"declared_execution_mode", "declared_execution_mode_reason"} {
 			if val, ok := args[retired]; ok && val != nil {
-				if isEvalStep {
-					return "", fmt.Errorf("%s is retired (PLAT-287): an evaluation step's execution model is the execution_mode field of its evaluation/evaluation_plan.json entry -- use update_evaluation_plan(step_id=%q, updates={\"execution_mode\": \"scripted\"|\"agentic\"}, reason=...)", retired, stepID)
-				}
 				return "", fmt.Errorf("%s is retired (PLAT-287): a step's plan type decides how it runs (regular = scripted main.py, message_sequence = conversational) -- use change_step_type(step_id=%q, target_type=\"scripted\"|\"message_sequence\", reason=...)", retired, stepID)
 			}
 		}
@@ -453,12 +449,8 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 		// Refresh from disk first so steps just added by other plan-mod tools in the
 		// same turn (e.g. add_todo_task_route on a nested parent) are visible — the
 		// query must not reuse a snapshot from a prior call.
-		if _, _, _, resolveErr := resolveWorkshopStepConfigTarget(ctx, runtime, stepID); resolveErr != nil {
-			targetFile := "planning/plan.json"
-			if isEvalStep {
-				targetFile = "evaluation/evaluation_plan.json"
-			}
-			errors = append(errors, fmt.Sprintf("Step ID %q not found in %s.", stepID, targetFile))
+		if _, resolveErr := resolveWorkshopStepConfigTarget(ctx, runtime, stepID); resolveErr != nil {
+			errors = append(errors, fmt.Sprintf("Step ID %q not found in planning/plan.json.", stepID))
 		}
 
 		// 2. Validate servers exist in workflow-level selection
@@ -654,9 +646,6 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 
 		workspacePath := runtime.GetWorkspacePath()
 		configPath := configSubdir + "/step_config.json"
-		if isEvalStep {
-			configPath = "evaluation/step_config.json"
-		}
 		cleanupMessages := make([]string, 0, 1)
 
 		// Re-read the persisted state rather than reusing the in-memory
@@ -688,7 +677,7 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 		}
 
 		logger.Info(fmt.Sprintf("📝 Workshop: step config updated for step %q in %s/step_config.json", stepID, configSubdir))
-		result := fmt.Sprintf("Step config for %q updated successfully in %s. Changes will take effect on the next execute_step/run_full_evaluation call.", stepID, configPath)
+		result := fmt.Sprintf("Step config for %q updated successfully in %s. Changes will take effect on the next execute_step or run_full_workflow call.", stepID, configPath)
 		if len(cleanupMessages) > 0 {
 			result += "\n\nCleanup:"
 			for _, msg := range cleanupMessages {
@@ -957,19 +946,8 @@ func (r *externalPlanRuntime) ReadWorkspaceFile(ctx context.Context, path string
 func (r *externalPlanRuntime) WriteWorkspaceFile(ctx context.Context, path, content string) error {
 	return r.writeFile(ctx, normalizePathForWorkspaceAPI(path, r.workspacePath), content)
 }
-func (r *externalPlanRuntime) ReadCurrentPlan(ctx context.Context, evaluation bool) (*PlanningResponse, error) {
-	if !evaluation {
-		return readPlanFromFile(ctx, r.workspacePath, r.readFile)
-	}
-	content, err := r.ReadWorkspaceFile(ctx, "evaluation/evaluation_plan.json")
-	if err != nil {
-		return nil, err
-	}
-	var plan EvaluationPlan
-	if err := json.Unmarshal([]byte(content), &plan); err != nil {
-		return nil, fmt.Errorf("parse evaluation_plan.json: %w", err)
-	}
-	return &PlanningResponse{Steps: plan.ToPlanSteps()}, nil
+func (r *externalPlanRuntime) ReadCurrentPlan(ctx context.Context) (*PlanningResponse, error) {
+	return readPlanFromFile(ctx, r.workspacePath, r.readFile)
 }
 func (r *externalPlanRuntime) ReadStepConfigsFromSubdir(ctx context.Context, subdir string) ([]StepConfig, error) {
 	content, err := r.ReadWorkspaceFile(ctx, filepath.Join(subdir, "step_config.json"))

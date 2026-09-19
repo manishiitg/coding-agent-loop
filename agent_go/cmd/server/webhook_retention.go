@@ -89,9 +89,6 @@ func (s *SchedulerService) pruneWebhookRunsChecked(workspace string) error {
 		if err := root.RemoveAll("runs/" + run.RunFolder); err != nil {
 			return err
 		}
-		if err := root.RemoveAll("evaluation/runs/" + run.RunFolder); err != nil && !os.IsNotExist(err) {
-			return err
-		}
 		removed[run.RunFolder] = true
 	}
 	return removeExpiredFoldersFromRunIndex(root, removed)
@@ -166,9 +163,6 @@ func (s *SchedulerService) pruneScheduledRunsChecked(workspace string) error {
 			return err
 		}
 		if err := root.RemoveAll("runs/" + run.RunFolder); err != nil {
-			return err
-		}
-		if err := root.RemoveAll("evaluation/runs/" + run.RunFolder); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		removed[run.RunFolder] = true

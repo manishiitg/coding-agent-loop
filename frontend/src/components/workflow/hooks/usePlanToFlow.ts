@@ -4,7 +4,7 @@ import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
 import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, runsAsMessageSequence, effectiveMessageSequenceItems } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
-import type { VariablesManifest, EvaluationStep, ScheduledJob } from '../../../services/api-types'
+import type { VariablesManifest, ScheduledJob } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
 import { useActiveWorkflowPreset } from '../../../hooks/useActiveWorkflowPreset'
 import { useLLMStore } from '../../../stores/useLLMStore'
@@ -27,8 +27,6 @@ export interface StepNodeData extends Record<string, unknown> {
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   validation_schema?: ValidationSchema  // Validation schema from plan.json
-  isEvaluationStep?: boolean  // True when rendered from evaluation_plan.json in the main flow
-  evaluationScopeLabel?: string
   // Sub-agent specific fields
   parentOrchestratorTitle?: string  // Title of parent orchestrator node (for sub-agents)
   routeName?: string  // Route name from orchestration_routes (for sub-agents)
@@ -71,8 +69,6 @@ export interface HumanInputNodeData extends Record<string, unknown> {
 }
 
 export interface RoutingStepNodeData extends Record<string, unknown> {
-  routeEvaluations?: Record<string, Array<{ id: string; title: string }>>
-  allRouteEvaluationCount?: number
   route_source?: 'human' // branch only: asks the person when nothing was preseeded
   tracedRouteId?: string
   onTraceRoute?: (routeId: string) => void
@@ -123,35 +119,11 @@ export interface LearningNodeData extends Record<string, unknown> {
   llmModel?: string  // LLM model name
 }
 
-export interface EvaluationNodeData extends Record<string, unknown> {
-  id: string
-  parentStepId: string
-  parentStepTitle: string
-  evaluationQuestion?: string
-  status: 'pending' | 'running' | 'evaluated_true' | 'evaluated_false'
-  llmProvider?: string  // LLM provider (e.g., 'openai', 'bedrock')
-  llmModel?: string  // LLM model name
-}
-
-export interface EvaluationStepNodeData extends Record<string, unknown> {
-  evaluationScopeLabel?: string
-  id: string
-  title: string
-  description?: string
-  success_criteria?: string
-  status: 'pending' | 'running' | 'completed' | 'failed'
-  stepIndex: number
-  step: EvaluationStep
-  workspacePath?: string | null
-  selectedRunFolder?: string
-  isEvaluationStep: boolean
-}
-
 export interface WorkflowArtifactNodeData extends Record<string, unknown> {
   id: string
   title: string
   description?: string
-  kind: 'evaluation' | 'output'
+  kind: 'output'
   configured: boolean
   detail?: string
 }
@@ -170,7 +142,7 @@ export interface WorkflowTriggerNodeData extends Record<string, unknown> {
   onRefresh?: () => void
 }
 
-export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | EvaluationNodeData | VariablesNodeData | EvaluationStepNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -2324,7 +2296,7 @@ export function usePlanToFlow(
       })
     })
 
-    // After Dagre + todo_task positioning, keep validation/learning/evaluation nodes
+    // After Dagre + todo_task positioning, keep validation/learning nodes
     // visually close to their parent step/decision nodes (but with overall higher spacing)
     const positionedNodes: WorkflowNode[] = layoutedResult.nodes.map(node => ({ ...node }))
     const nodeIndexById = new Map<string, number>()
@@ -2339,10 +2311,9 @@ export function usePlanToFlow(
       return NODE_DIMENSIONS[type as keyof typeof NODE_DIMENSIONS] || NODE_DIMENSIONS.step
     }
 
-    // Group validation, learning, and evaluation nodes by their parent step ID
+    // Group validation and learning nodes by their parent step ID
     const validationByParent = new Map<string, WorkflowNode>()
     const learningByParent = new Map<string, WorkflowNode>()
-    const evaluationByParent = new Map<string, WorkflowNode[]>()
 
     positionedNodes.forEach(node => {
       if (node.type === 'validation') {
@@ -2354,13 +2325,6 @@ export function usePlanToFlow(
         const data = node.data as LearningNodeData
         if (data.parentStepId && !data.parentStepId.includes('-sub-agent-') && !node.id.includes('-sub-agent-')) {
           learningByParent.set(data.parentStepId, node)
-        }
-      } else if (node.type === 'evaluation') {
-        const data = node.data as EvaluationNodeData
-        if (data.parentStepId && !data.parentStepId.includes('-sub-agent-') && !node.id.includes('-sub-agent-')) {
-          const list = evaluationByParent.get(data.parentStepId) || []
-          list.push(node)
-          evaluationByParent.set(data.parentStepId, list)
         }
       }
     })
@@ -2414,48 +2378,6 @@ export function usePlanToFlow(
         ...positionedNodes[learningIndex],
         position: { x: baseX, y: baseY }
       }
-    })
-
-    // Position evaluation nodes to the right of learning (preferred) or parent decision node
-    evaluationByParent.forEach((evalNodes, parentId) => {
-      // Determine anchor: learning node if available, otherwise parent step/decision node
-      let anchorNode: WorkflowNode | null = null
-      const learningNode = learningByParent.get(parentId)
-      if (learningNode) {
-        const lIndex = nodeIndexById.get(learningNode.id)
-        if (lIndex !== undefined) {
-          anchorNode = positionedNodes[lIndex]
-        }
-      }
-
-      if (!anchorNode) {
-        const parentIndex = nodeIndexById.get(parentId)
-        if (parentIndex === undefined) return
-        anchorNode = positionedNodes[parentIndex]
-      }
-
-      const anchorDims = getDimensions(anchorNode.type)
-
-      evalNodes.forEach((evalNode, index) => {
-        const evalIndex = nodeIndexById.get(evalNode.id)
-        if (evalIndex === undefined) return
-
-        const evalDims = getDimensions(evalNode.type)
-
-        const horizontalOffset = 48
-        const verticalGap = 24
-
-        // Slight vertical staggering if there are multiple evaluation nodes for same parent
-        const offsetY = index * (evalDims.height + verticalGap)
-
-        const baseX = anchorNode!.position.x + anchorDims.width + horizontalOffset
-        const baseY = anchorNode!.position.y + (anchorDims.height - evalDims.height) / 2 + offsetY
-
-        positionedNodes[evalIndex] = {
-          ...positionedNodes[evalIndex],
-          position: { x: baseX, y: baseY }
-        }
-      })
     })
 
     // Replace nodes with the adjusted positions
@@ -2560,7 +2482,6 @@ export function usePlanToFlow(
     }
 
     // Inject read-only context into step-type nodes.
-    // Also make validation, learning, and evaluation nodes non-draggable
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
       if (node.type === 'step' || node.type === 'human_input' || node.type === 'todo_task') {
         return {
@@ -2573,8 +2494,6 @@ export function usePlanToFlow(
         } as WorkflowNode
       }
 
-      // Validation, learning, and evaluation nodes are now draggable (can be manually positioned)
-      // They can be moved independently or will move with their parent nodes
       return node
     }) as WorkflowNode[]
 

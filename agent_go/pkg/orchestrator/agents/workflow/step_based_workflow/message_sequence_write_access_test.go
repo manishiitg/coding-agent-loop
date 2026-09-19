@@ -177,24 +177,6 @@ func TestMessageSequenceItemAlwaysKeepsUniformDBWriteAccess(t *testing.T) {
 	}
 }
 
-func TestMessageSequenceEvaluationOnlySuppressesLearningsWrites(t *testing.T) {
-	hcpo := newMessageSequenceClosingTestOrchestrator(t)
-	hcpo.useKnowledgebase = true
-	hcpo.isEvaluationMode = true
-	config := &AgentConfigs{
-		KnowledgebaseAccess: KBAccessReadWrite,
-		LearningsAccess:     LearningsAccessReadWrite,
-	}
-
-	got := hcpo.resolveMessageSequenceItemWriteAccess(config, MessageSequenceItem{
-		ID:   "evaluation-turn",
-		Type: "user_message",
-	})
-	if !got.DB || !got.Knowledgebase || got.Learnings {
-		t.Fatalf("evaluation should preserve configured DB/KB writes but suppress learnings, got: %+v", got)
-	}
-}
-
 func TestMessageSequenceTemplateVarsReflectItemWriteAccess(t *testing.T) {
 	docsRoot := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)

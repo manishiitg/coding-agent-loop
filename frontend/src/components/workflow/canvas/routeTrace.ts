@@ -1,6 +1,4 @@
 import type { RoutingStepNodeData, WorkflowEdge, WorkflowNode } from '../hooks/usePlanToFlow'
-import type { EvaluationStep } from '../../../services/api-types'
-import { evaluationMatchesRoute } from './routeEvaluations'
 
 export interface RouteTrace {
   nodeId: string
@@ -51,20 +49,6 @@ export function traceRouteGraph(nodes: WorkflowNode[], edges: WorkflowEdge[], tr
   if (!focus) return { nodes, edges }
   const routingStepId = (nodes.find(node => node.id === trace!.nodeId)?.data.step as { id?: string } | undefined)?.id
   if (routingStepId) {
-    for (const node of nodes) {
-      if (node.type === 'evaluation-group') focus.nodeIds.delete(node.id)
-    }
-    for (const node of nodes) {
-      if (node.data.isEvaluationStep) {
-        if (evaluationMatchesRoute(node.data.step as EvaluationStep, routingStepId, trace!.routeId)) {
-          focus.nodeIds.add(node.id)
-          if (typeof node.data.evaluationGroupId === 'string') focus.nodeIds.add(node.data.evaluationGroupId)
-        } else {
-          focus.nodeIds.delete(node.id)
-        }
-      }
-
-    }
     for (const edge of edges) {
       if (!focus.nodeIds.has(edge.source) || !focus.nodeIds.has(edge.target)) focus.edgeIds.delete(edge.id)
     }

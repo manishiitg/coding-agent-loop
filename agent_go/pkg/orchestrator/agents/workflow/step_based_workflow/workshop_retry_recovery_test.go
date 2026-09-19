@@ -75,7 +75,7 @@ func TestWorkshopRetryRecoveryReceiptsRoundTrip(t *testing.T) {
 		"Workflow/instagram/planning/plan.json": snapshotTestPlan(t, "step", "work"),
 	}
 	c := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files), selectedRunFolder: folder}
-	plan, err := c.ReadCurrentPlan(t.Context(), false)
+	plan, err := c.ReadCurrentPlan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

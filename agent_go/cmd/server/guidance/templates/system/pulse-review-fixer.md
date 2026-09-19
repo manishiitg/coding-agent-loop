@@ -591,7 +591,7 @@ nor executor writes a separate Pulse presentation artifact; the Pulse popup read
 the typed records directly.
 
 Do not create a separate impact or assessment record. Workflow steps and
-evaluation/collector steps own metric observations. A later review compares
+measurement/collector steps own metric observations. A later review compares
 outcomes at the named evidence boundary and updates the same canonical issue or
 records the conclusion in its single review result.
 

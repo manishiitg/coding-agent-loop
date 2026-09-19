@@ -14,7 +14,7 @@
 //   window.__reportPreview.setTheme('dark'|'light') -> re-theme without reload
 //   window.__reportPreview.setWidth(px)             -> re-layout at a viewport width
 
-import type { PulseEvalResultsResponse, WorkflowCostsResponse } from '../services/api-types'
+import type { WorkflowCostsResponse } from '../services/api-types'
 import type { ReportDataApi } from '../components/workflow/reportWidgets/reportEmbedContext'
 import {
   applyReportTheme,
@@ -118,7 +118,6 @@ async function fetchReportMetrics<T>(kind: string, params: Record<string, string
 function createPreviewDataApi(): ReportDataApi {
   return {
     workspacePath: workspace,
-    getEvaluations: () => fetchReportMetrics<PulseEvalResultsResponse>('evaluations'),
     getCosts: options => fetchReportMetrics<WorkflowCostsResponse>('costs', { days: String(options.days || 30), before: options.before || '' }),
     query: async (sql: string) => {
       const response = await fetch(apiUrl('query', {}), {

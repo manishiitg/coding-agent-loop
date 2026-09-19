@@ -62,14 +62,6 @@ describe('effectiveExecutionMode', () => {
     expect(effectiveExecutionModeReason(routing)).toBeUndefined()
   })
 
-  it('reads an evaluation step from its own execution_mode, defaulting to agentic', () => {
-    expect(effectiveExecutionMode({ execution_mode: 'scripted' }, { evaluation: true })).toBe('scripted')
-    expect(effectiveExecutionMode({ execution_mode: 'agentic' }, { evaluation: true })).toBe('agentic')
-    expect(effectiveExecutionMode({}, { evaluation: true })).toBe('agentic')
-    // Not yet migrated: the legacy key still marks a scripted eval.
-    expect(effectiveExecutionMode({ agent_configs: { declared_execution_mode: 'scripted' } }, { evaluation: true })).toBe('scripted')
-  })
-
   it('treats a plan step without a type as the legacy default, regular', () => {
     expect(effectiveExecutionMode({ agent_configs: {} })).toBe('scripted')
     expect(effectiveExecutionMode(undefined)).toBeUndefined()

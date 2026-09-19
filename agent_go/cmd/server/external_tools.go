@@ -431,7 +431,7 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 	externalJSON(w, result)
 }
 
-var externalPlanPaths = []string{"planning/plan.json", "planning/step_config.json", "evaluation/evaluation_plan.json", "evaluation/step_config.json"}
+var externalPlanPaths = []string{"planning/plan.json", "planning/step_config.json"}
 
 type externalPlanTransaction struct {
 	ctx    context.Context

@@ -13,7 +13,7 @@ import (
 
 func TestExplicitSchedulePulseMigration(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: "1.0.40"})
-	if len(plan) != 2 || plan[0].to != workflowContractExplicitSchedulePulseVersion || plan[0].label != "upgrade-explicit-schedule-pulse" {
+	if len(plan) != 3 || plan[0].to != workflowContractExplicitSchedulePulseVersion || plan[0].label != "upgrade-explicit-schedule-pulse" {
 		t.Fatalf("unexpected migration: %+v", plan)
 	}
 	for _, want := range []string{"pulse_mode_reason", "disabled schedules", "calendar schedules", "retained", "Do not change cron", "Do not execute the workflow", "do not stamp", "token cost", "multiple runs"} {
@@ -28,7 +28,7 @@ func TestExplicitSchedulePulseMigration(t *testing.T) {
 
 func TestRunScopedRouteMigration(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: workflowContractExplicitSchedulePulseVersion})
-	if len(plan) != 1 || plan[0].to != WorkflowContractCurrentVersion || plan[0].label != "upgrade-run-scoped-routes" {
+	if len(plan) != 2 || plan[0].to != workflowContractRunScopedRoutesVersion || plan[0].label != "upgrade-run-scoped-routes" || plan[1].to != WorkflowContractCurrentVersion || plan[1].label != "upgrade-eval-retirement" {
 		t.Fatalf("unexpected migration: %+v", plan)
 	}
 	for _, want := range []string{"migrate_run_scoped_routes", "route_selection.json", "db/assets/route_selection.json", "context_dependencies", "STEP_OUTPUT_DIR", "append-only database audit", "unrelated shared route sources", "1.0.42"} {

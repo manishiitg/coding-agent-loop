@@ -48,9 +48,8 @@ export interface AgentConfigs {
   description_reviewed?: boolean;
   review_notes?: string;
   // LEGACY, read-only (PLAT-287). A step's execution model is decided by its
-  // plan `type` now — `regular` is scripted, `message_sequence` is agentic —
-  // and an evaluation step carries `execution_mode` on the step itself. These
-  // two keys may still be present in a workflow's step_config.json until its
+  // plan `type` now — `regular` is scripted, `message_sequence` is agentic.
+  // These two keys may still be present in a workflow's step_config.json until its
   // v1.0.39 contract migration strips them; a `regular` step still carrying
   // "agentic" is a legacy agentic step the runtime runs as a sequence. Nothing
   // writes them any more. Use effectiveExecutionMode() instead of reading them.
@@ -327,19 +326,11 @@ export function isMessageSequenceStep(step: PlanStep): step is MessageSequencePl
 
 export type EffectiveExecutionMode = 'scripted' | 'agentic';
 
-// Anything the canvas can hand us: a plan step, or an evaluation step (which
-// has no plan `type` and carries `execution_mode` on the step itself).
+// Anything the canvas can hand us: a plan step.
 export interface ExecutionModeStepLike {
   type?: string;
   agent_configs?: AgentConfigs;
   execution_mode?: string;
-}
-
-export interface EffectiveExecutionModeOptions {
-  // The caller knows the step came from evaluation_plan.json. Evaluation steps
-  // have no plan `type`, and a plan step without a `type` is treated as
-  // `regular` (the legacy default), so the two cannot be told apart otherwise.
-  evaluation?: boolean;
 }
 
 // The legacy declared mode, canonicalised the way the backend did
@@ -357,21 +348,12 @@ function legacyDeclaredMode(step: ExecutionModeStepLike): string | undefined {
 // checked-in learnings/<id>/main.py — and `message_sequence` is agentic. The
 // one transitional exception: a `regular` step whose config still carries the
 // legacy key with "agentic" (not yet stripped by the v1.0.39 migration) is a
-// legacy agentic step the runtime still normalises into a sequence. An
-// evaluation step uses its own `execution_mode`, defaulting to agentic (a not
-// yet migrated eval step may still declare "scripted" through the legacy key).
+// legacy agentic step the runtime still normalises into a sequence.
 // Routing/branch/orchestrator/human-input steps have no execution mode.
 export function effectiveExecutionMode(
   step: ExecutionModeStepLike | null | undefined,
-  options?: EffectiveExecutionModeOptions
 ): EffectiveExecutionMode | undefined {
   if (!step) return undefined;
-  if (options?.evaluation) {
-    const own = step.execution_mode?.trim().toLowerCase();
-    if (own === 'scripted') return 'scripted';
-    if (own === 'agentic') return 'agentic';
-    return legacyDeclaredMode(step) === 'scripted' ? 'scripted' : 'agentic';
-  }
   const type = step.type || 'regular';
   if (type === 'regular') {
     return legacyDeclaredMode(step) === 'agentic' ? 'agentic' : 'scripted';

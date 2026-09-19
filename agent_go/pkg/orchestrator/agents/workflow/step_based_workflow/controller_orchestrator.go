@@ -36,7 +36,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 	executionWorkspacePath := hcpo.getOrchestratorExecutionWorkspacePath()
 	skillStepConfig := getAgentConfigs(step)
 	kbAccessForGuard := resolveKnowledgebaseAccess(skillStepConfig, hcpo.UseKnowledgebase())
-	learningsAccessForGuard := resolveExecutionLearningsAccess(skillStepConfig, step, hcpo.isEvaluationMode)
+	learningsAccessForGuard := resolveExecutionLearningsAccess(skillStepConfig, step)
 
 	// READ: current group's execution folder + DB documentation/assets, plus KB/learnings only when
 	// the step config grants those stores. WRITE: current group's execution
@@ -175,7 +175,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 
 	// Learnings read gate — default-on unless learnings_access="none" or routing/eval.
 	// Todo-task agents benefit from seeing _global/SKILL.md to reuse cross-step knowledge.
-	isLearningDisabled := !canReadLearnings(stepConfig, orchestratorStep, hcpo.isEvaluationMode)
+	isLearningDisabled := !canReadLearnings(stepConfig, orchestratorStep)
 	select {
 	case <-ctx.Done():
 		return false, "", fmt.Errorf("todo task execution canceled: %w", ctx.Err())
@@ -404,11 +404,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildOrchestratorTemplateVars(
 	// Get step config for code execution mode: step config > workflow/preset default
 	stepConfig := getAgentConfigs(step)
 	isCodeExecutionMode := hcpo.getCodeExecutionMode(stepConfig)
-	dbAccessForGuard := resolveEffectiveDBAccess(stepConfig, hcpo.isEvaluationMode, false)
+	dbAccessForGuard := resolveDBAccess(stepConfig)
 
 	// Resolve KB access mode for this step (explicit step config > preset default).
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
-	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step, hcpo.isEvaluationMode)
+	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step)
 	useKnowledgebase := kbAccess != KBAccessNone
 
 	// Build folder guard paths for prompt (same logic as executeOrchestratorStep setup)
@@ -656,7 +656,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		SkipHumanInput:             true, // Generic agents don't request human feedback
 		RunSingleStepOnly:          false,
 		SingleStepTarget:           -1,
-		IsEvaluationMode:           false,
 		ArtifactFolderNameOverride: genericStepPath,
 		ConversationHistoryCapture: &capturedHistory,
 	}
@@ -1025,7 +1024,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	execCtx.SkipHumanInput = true // Sub-agents don't request human feedback
 	execCtx.RunSingleStepOnly = false
 	execCtx.SingleStepTarget = -1
-	execCtx.IsEvaluationMode = false
 	execCtx.ArtifactFolderNameOverride = subAgentStepPath
 	execCtx.ConversationHistoryCapture = &capturedHistory
 	if execCtx.WorkshopHumanInput != "" {

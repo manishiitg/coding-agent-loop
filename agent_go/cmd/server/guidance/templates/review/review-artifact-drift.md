@@ -154,9 +154,9 @@ Load `read_skill(skills=[{"name":"builder-reference","path":"references/assumpti
    - `db/reports/index.html`, its internal views, SQL, and data contracts — deferral above covers whether each `window.report.query(...)` call still
      resolves; this checklist still owns data-contract/semantic disagreement.
      Flag a remaining `reports/report_plan.json` as an incomplete version migration
-   - `evaluation/evaluation_plan.json`, `evaluation/step_config.json`, and matching goal/success-criteria coverage — deferral above covers whether an
-     eval step's `PreValidation` SQL/JSONPath rules still resolve; coverage
-     gaps (an orphaned or missing eval) stay this checklist's job
+   - producer measurements and matching goal/success-criteria coverage — deferral above covers whether a
+     measurement query still resolves; coverage gaps (an orphaned or missing
+     measurement) stay this checklist's job
    - one representative recent run for changed runtime behavior when compatible
      evidence exists; pre-change artifacts are baseline only, not a reason to
      leave an applied fix awaiting a future run

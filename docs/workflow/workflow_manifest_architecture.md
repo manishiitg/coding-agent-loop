@@ -206,7 +206,6 @@ These still live alongside it:
 - `planning/workflow_layout.json`
 - `planning/output_plan.json`
 - `variables/variables.json`
-- `evaluation/evaluation_plan.json`
 - `builder/improve.html` — the schema-5 lightweight, newest-first Pulse executive journal: Bug/Goal verdicts, one status sentence, three Latest Pulse cells, and at most six material Activity transitions. Goal / Ikigai remains exclusively in `soul/soul.md` and is rendered directly by Runloop. Reviewer coverage, assumptions, issues, backlog counts, and complete operational detail stay in SQLite/Pulse; older material history can live in linked monthly `builder/improve-archive/YYYY-MM.html` files. See [auto_improvement_framework.md](./auto_improvement_framework.md).
 - `knowledgebase/rules/rules.md` and `knowledgebase/rules/examples/` — legacy business-rule storage when present. Current user-confirmed runtime context belongs in `knowledgebase/context/`; its audit trail is recorded in dated Reflection entries in `builder/improve.html`.
 

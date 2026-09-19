@@ -425,35 +425,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 		result.CompletedGroups++
 		result.CompletedGroupNames = append(result.CompletedGroupNames, group.Name)
 		// The target execution is complete now. Finalize its authoritative time
-		// boundary before starting the separate evaluation run; otherwise every
-		// evaluator necessarily reads status=running with no completed_at and
-		// cannot bind its evidence to the run it is grading.
+		// boundary so reviewers read status=completed with a completed_at.
 		hcpo.finalizeRunMetadata(ctx, runFolder, "completed", groupStartTime, time.Now())
 
-		// Auto-evaluation: Run scoring for this group if evaluation_plan.json exists
-		disableEval := hcpo.executionOptions != nil && hcpo.executionOptions.DisableEval
-		if disableEval {
-			hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Auto-evaluation disabled for group %s by execution option", group.Name))
-		}
-		if !hcpo.isEvaluationMode && !disableEval {
-			// Save selectedRunFolder before auto-evaluation: ExecuteEvaluationOnly overwrites it
-			// to "../evaluation/runs/..." and we need the original value restored afterward.
-			savedRunFolder := hcpo.selectedRunFolder
-			if evalErr := hcpo.MaybeRunAutoEvaluation(ctx); evalErr != nil {
-				hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Auto-evaluation failed for group %s: %v", group.Name, evalErr))
-				// Don't fail the group if auto-evaluation fails
-			}
-			hcpo.selectedRunFolder = savedRunFolder
-			hcpo.isEvaluationMode = false
-			// Report generation is no longer a post-group step — the dynamic report
-			// (design doc §2) is a live frontend view, produced on demand by the user
-			// opening the report panel.
-		}
-		// Evaluation emits its own token events, so drain again after it finishes.
-		// A failure here belongs to the evaluation run, not the already-completed
-		// target execution metadata.
-		if postEvalErr := hcpo.waitForTokenPersistence(); postEvalErr != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("Evaluation finished, but cost persistence did not: %v", postEvalErr))
+		// Report generation is no longer a post-group step — the dynamic report
+		// (design doc §2) is a live frontend view, produced on demand by the user
+		// opening the report panel.
+		// Drain token persistence once the group is done, so cost records land
+		// before the next group starts.
+		if tokenErr := hcpo.waitForTokenPersistence(); tokenErr != nil {
+			hcpo.GetLogger().Warn(fmt.Sprintf("Group finished, but cost persistence did not: %v", tokenErr))
 		}
 
 		// If single step mode was active, stop batch execution after this group

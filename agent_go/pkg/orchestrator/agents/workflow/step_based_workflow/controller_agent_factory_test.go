@@ -49,18 +49,12 @@ func TestRegisterStepSessionShellEnvProvidesBridgeParity(t *testing.T) {
 	}
 }
 
-func TestResolveEffectiveDBAccessIsReadWriteForEveryWorkflowStep(t *testing.T) {
+func TestResolveDBAccessIsReadWriteForEveryWorkflowStep(t *testing.T) {
 	// PLAT-061 removed the db_access field; the invariant it never actually
 	// enforced is what matters and must hold for every shape of config.
 	for name, cfg := range map[string]*AgentConfigs{"configured": {}, "nil": nil} {
-		if got := resolveEffectiveDBAccess(cfg, true, false); got != DBAccessReadWrite {
-			t.Fatalf("%s: evaluation without db_write must still be read-write, got %q", name, got)
-		}
-		if got := resolveEffectiveDBAccess(cfg, true, true); got != DBAccessReadWrite {
-			t.Fatalf("%s: evaluation with legacy db_write must be read-write, got %q", name, got)
-		}
-		if got := resolveEffectiveDBAccess(cfg, false, false); got != DBAccessReadWrite {
-			t.Fatalf("%s: normal execution must be read-write, got %q", name, got)
+		if got := resolveDBAccess(cfg); got != DBAccessReadWrite {
+			t.Fatalf("%s: execution must be read-write, got %q", name, got)
 		}
 	}
 }
@@ -319,34 +313,6 @@ func TestPrepareCustomToolsMaterializesDBCapabilityFromDBAccess(t *testing.T) {
 		if len(tools) != 2 || executors["mutate_workflow_db"] != nil || executors["apply_workflow_db_migration"] != nil {
 			t.Fatal("tool selection exposed DB mutation outside the authorized pool")
 		}
-	}
-}
-
-func TestEvaluationFolderGuardReadsAndWritesDB(t *testing.T) {
-	base, err := orchestrator.NewBaseOrchestrator(
-		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0,
-		"", nil, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
-	)
-	if err != nil {
-		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
-	}
-	base.SetWorkspacePath("Workflow/testing")
-	hcpo := &StepBasedWorkflowOrchestrator{
-		BaseOrchestrator:  base,
-		selectedRunFolder: "evaluation/iteration-0/test-group",
-	}
-
-	readPaths, writePaths := hcpo.setupExecutionFolderGuard(
-		"step-1", "eval-result", KBAccessNone, LearningsAccessNone,
-		resolveEffectiveDBAccess(nil, true, false),
-		nil,
-	)
-	dbPath := "Workflow/testing/db"
-	if !slices.Contains(readPaths, dbPath) {
-		t.Fatalf("evaluation must be able to read %q, got %v", dbPath, readPaths)
-	}
-	if !slices.Contains(writePaths, dbPath) {
-		t.Fatalf("evaluation must be able to write %q, got %v", dbPath, writePaths)
 	}
 }
 
@@ -1189,18 +1155,14 @@ func TestSelectExecutionLLM_UsesTierResolverWhenStepExecutionLLMIsUnset(t *testi
 	for _, tc := range []struct {
 		name   string
 		config AgentConfigs
-		eval   bool
 		want   string
 	}{
-		{"default execution", AgentConfigs{}, false, "tier-1"},
-		{"reviewed medium", AgentConfigs{ExecutionTier: "medium"}, false, "tier-2"},
-		{"reviewed low", AgentConfigs{ExecutionTier: "low"}, false, "tier-3"},
-		{"cleared returns to high", AgentConfigs{}, false, "tier-1"},
-		{"evaluation default unchanged", AgentConfigs{}, true, "tier-2"},
-		{"evaluation pin respected", AgentConfigs{ExecutionTier: "high"}, true, "tier-1"},
+		{"default execution", AgentConfigs{}, "tier-1"},
+		{"reviewed medium", AgentConfigs{ExecutionTier: "medium"}, "tier-2"},
+		{"reviewed low", AgentConfigs{ExecutionTier: "low"}, "tier-3"},
+		{"cleared returns to high", AgentConfigs{}, "tier-1"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			hcpo.isEvaluationMode = tc.eval
 			for run := 0; run < 5; run++ {
 				llm := hcpo.selectExecutionLLM(context.Background(), &tc.config, "step-1")
 				if llm == nil || llm.Primary.ModelID != tc.want {
@@ -1351,7 +1313,7 @@ func TestExecutionFolderGuardGrantsTheRunFolderNotOnlyItsExecutionChild(t *testi
 
 	readPaths, _ := hcpo.setupExecutionFolderGuard(
 		"step-0-cdp-test", "step-0-cdp-test", KBAccessNone, LearningsAccessNone,
-		resolveEffectiveDBAccess(nil, false, false),
+		resolveDBAccess(nil),
 		nil,
 	)
 
@@ -1395,7 +1357,7 @@ func TestExecutionFolderGuardGrantsToolOutputFolderRead(t *testing.T) {
 
 	readPaths, _ := hcpo.setupExecutionFolderGuard(
 		"step-1", "some-step", KBAccessNone, LearningsAccessNone,
-		resolveEffectiveDBAccess(nil, false, false),
+		resolveDBAccess(nil),
 		nil,
 	)
 

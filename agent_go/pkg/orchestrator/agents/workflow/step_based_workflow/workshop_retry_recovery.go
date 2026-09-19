@@ -81,7 +81,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) recordWorkshopRetryRecovery(ctx conte
 		return nil
 	}
 	// Compare against the current plan, not the immutable retry snapshot.
-	currentPlan, err := hcpo.ReadCurrentPlan(ctx, hcpo.isEvaluationMode)
+	currentPlan, err := hcpo.ReadCurrentPlan(ctx)
 	endRevision := ""
 	if err == nil {
 		endRevision, err = hcpo.ensureExecutablePlanRevision(withExecutionPlan(ctx, currentPlan))

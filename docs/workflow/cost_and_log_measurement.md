@@ -104,7 +104,7 @@ So one daily bucket can contain multiple runs for the same group on the same UTC
 Used for evaluation execution.
 
 Files:
-- `costs/evaluation/<group-or-__ungrouped__>/YYYY-MM-DD.json`
+- (retired) `costs/evaluation/<group-or-__ungrouped__>/YYYY-MM-DD.json` — legacy ledger, no new writes
 
 Evaluation uses the same ledger shape as execution, but under the `evaluation` scope.
 
@@ -134,7 +134,7 @@ This is what lets the UI render:
 Older layouts still exist in some workspaces:
 
 - `runs/<runFolder>/token_usage.json`
-- `evaluation/runs/<runFolder>/token_usage.json`
+- (retired) `evaluation/runs/<runFolder>/token_usage.json` — legacy path, no new writes
 - workspace-root `token_usage.json` for phase costs
 
 Current behavior:
@@ -151,7 +151,7 @@ Current behavior:
 - reads `costs/phase/token_usage.json`
 - reads `costs/phase/daily/*`
 - reads all execution daily ledgers under `costs/execution/*`
-- reads all evaluation daily ledgers under `costs/evaluation/*`
+- (retired) used to read evaluation daily ledgers under `costs/evaluation/*`
 - merges run-folder totals across daily files
 - returns execution and evaluation cost data side by side for each run folder
 

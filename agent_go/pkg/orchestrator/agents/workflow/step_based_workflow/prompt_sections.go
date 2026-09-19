@@ -57,7 +57,7 @@ func BuildStepFilesListing(folderPath string) string {
 }
 
 // PromptSections holds pre-built prompt sections that can be injected into any agent's
-// system prompt. All agent types (execution, todo task, evaluation) should
+// system prompt. All agent types (execution, todo task) should
 // use these common builders for consistency.
 type PromptSections struct {
 	CodeExecution string // Code execution instructions
@@ -162,7 +162,7 @@ func contextOutputFileNames(output string) []string {
 // patching a step's main.py MUST follow. Shared by:
 //   - the execution agent in scripted mode (via GetScriptedModeInstructions)
 //   - review_step_code (detects drift from these rules)
-//   - the parent Pulse Fixer (applies reviewed eval-driven fixes)
+//   - the parent Pulse Fixer (applies reviewed fixes)
 //
 // The workshop chat agent prompt does NOT call this anymore — it gets a short
 // cheat sheet and loads the full rules on demand via

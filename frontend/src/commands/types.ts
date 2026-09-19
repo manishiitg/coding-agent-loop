@@ -70,7 +70,7 @@ export interface CommandDefinition {
   description: string
   icon: ReactNode
   modes?: ModeCategory[]
-  requiredWorkflowMode?: 'plan' | 'eval' | 'output'
+  requiredWorkflowMode?: 'plan'
   requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
   validate?: (ctx: CommandContext) => string | null
   hidden?: boolean

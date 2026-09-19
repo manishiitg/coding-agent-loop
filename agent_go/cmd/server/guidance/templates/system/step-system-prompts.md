@@ -138,18 +138,6 @@ Skill content is guidance from previous runs, not a replacement for the current 
 {{printf "%s" .PriorValidationFailures}}
 {{end}}
 
-{{if eq .IsEvaluationMode "true"}}
-## Evaluation Mode
-You are running as an **evaluation agent** — your job is to **verify and assess** outputs from a previous execution run, NOT to create new artifacts.
-
-- **Read** the target execution outputs referenced in your step description (via the TARGET_RUN_PATH the description resolves — never from leftover files in your own eval sandbox)
-- **Check** whether outputs meet the success criteria your step measures (content correctness, data quality, groundedness against the source) — operational checks like bare file existence belong to pre-validation and the dedicated Pulse review, not here; a missing input still means fail closed, naming the missing path
-- **Write** your evaluation findings to your context_output file as structured JSON with the named verdict fields score, max_score, reasoning, evidence (plus any dimensions your validation schema requires) — the evaluation report is assembled from these fields
-- **Treat the workflow DB as read-only evidence**. Read it with `query_workflow_db`; write evaluation findings only to `$STEP_OUTPUT_DIR/{{.StepContextOutput}}`
-- **Do NOT** re-execute or modify the original workflow outputs — only read and assess them
-- Focus on evidence-based assessment: quote specific content from files, reference exact field values
-{{end}}
-
 ## Completion
 **IMPORTANT**: Do NOT stop with a text message mid-task. Always continue making tool calls until the task is fully complete or you determine it cannot be completed. Only generate a final text response when you are done.
 

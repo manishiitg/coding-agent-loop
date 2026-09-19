@@ -267,7 +267,7 @@ func TestWorkflowProgressBridgeSkipsMessageSequenceItemAgents(t *testing.T) {
 	}
 }
 
-func TestWorkflowProgressBridgeNotifiesExecutionPhaseCompletionBeforeEvaluation(t *testing.T) {
+func TestWorkflowProgressBridgeNotifiesExecutionPhaseCompletion(t *testing.T) {
 	notifier := &recordingExecutionNotifier{}
 	session := &WorkshopChatSession{
 		StepRegistry:      NewWorkshopStepRegistry(),
@@ -305,9 +305,6 @@ func TestWorkflowProgressBridgeNotifiesExecutionPhaseCompletionBeforeEvaluation(
 	}
 	if got := notifier.completes[0].meta["execution_type"]; got != "workflow-execution-phase" {
 		t.Fatalf("execution_type = %q, want workflow-execution-phase", got)
-	}
-	if got := notifier.completes[0].meta["next_phase"]; got != "auto-evaluation" {
-		t.Fatalf("next_phase = %q, want auto-evaluation", got)
 	}
 	if got := notifier.completes[0].meta["group_name"]; got != "job-search" {
 		t.Fatalf("group_name = %q, want job-search", got)

@@ -44,7 +44,7 @@ func TestAllocateScheduledRunFolderIsImmutableAndSharesNumericNamespace(t *testi
 	}
 }
 
-func TestScheduledRetentionUsesWorkflowCountAndRemovesPairedEvidence(t *testing.T) {
+func TestScheduledRetentionUsesWorkflowCount(t *testing.T) {
 	docs := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", docs)
 	workspace := "Workflow/demo"
@@ -70,9 +70,6 @@ func TestScheduledRetentionUsesWorkflowCountAndRemovesPairedEvidence(t *testing.
 			t.Fatal(allocationErr)
 		}
 		folders = append(folders, folder)
-		if err := os.MkdirAll(filepath.Join(root, "evaluation", "runs", folder), 0700); err != nil {
-			t.Fatal(err)
-		}
 		if err := store.BeginRun(ctx, schedulerstate.Run{RunID: runID, ScopeType: "workflow", ScopeID: workspace, LockKey: runID, ScheduleID: "daily", TriggerSource: "cron"}); err != nil {
 			t.Fatal(err)
 		}
@@ -96,13 +93,12 @@ func TestScheduledRetentionUsesWorkflowCountAndRemovesPairedEvidence(t *testing.
 	}
 	for i, folder := range folders {
 		_, runErr := os.Stat(filepath.Join(root, "runs", folder))
-		_, evalErr := os.Stat(filepath.Join(root, "evaluation", "runs", folder))
 		if i < 2 {
-			if !os.IsNotExist(runErr) || !os.IsNotExist(evalErr) || !scheduleArtifactsExpired(workspace, fmt.Sprintf("schedule-run-%d", i)) {
-				t.Fatalf("expired scheduled evidence was retained: %s run=%v eval=%v", folder, runErr, evalErr)
+			if !os.IsNotExist(runErr) || !scheduleArtifactsExpired(workspace, fmt.Sprintf("schedule-run-%d", i)) {
+				t.Fatalf("expired scheduled evidence was retained: %s run=%v", folder, runErr)
 			}
-		} else if runErr != nil || evalErr != nil {
-			t.Fatalf("new scheduled evidence was removed: %s run=%v eval=%v", folder, runErr, evalErr)
+		} else if runErr != nil {
+			t.Fatalf("new scheduled evidence was removed: %s run=%v", folder, runErr)
 		}
 	}
 	raw, err := os.ReadFile(filepath.Join(root, "runs", "run_index.json"))

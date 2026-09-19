@@ -35,8 +35,8 @@ Old Markdown improve logs are **legacy**. Carry their unresolved findings into `
 Use this hierarchy when deciding what is true:
 
 1. `soul/soul.md`: canonical stable intent. Only explicit user-approved constraints are authoritative; architecture and agent-inferred assumptions remain challengeable.
-2. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and eval reports.
-3. `evaluation/evaluation_plan.json`: measurement definition; fix it when it conflicts with `soul.md`.
+2. `runs/iteration-0/<group>/...`: current reality from actual outputs, tool logs, validation, and measurement rows.
+3. Producer measurements: run-scoped, evidence-backed outcomes stored by the producing steps, plus goal observations (`get_goal_metrics`): measurement definition; fix it when it conflicts with `soul.md`.
 4. `planning/plan.json`: current implementation attempt, judged against `soul.md` and iteration-0 evidence.
 5. `db/db.sqlite`: durable lifecycle and impact truth for reviews, findings, fixes, verification, finalization, and comparable goal observations.
 6. `builder/improve.html` + referenced archives: generated human-readable and publishable history; never use it to override SQLite lifecycle state.
@@ -47,9 +47,9 @@ Pulse separates review from mutation. Due modules inspect in parallel where safe
 
 Pulse Fixer and Goal Advisor are the two ends of an **exploit/explore** ladder against the success-criteria definition:
 
-- Pulse Fixer — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, or eval coverage need repair. It applies only findings supplied by read-only review and verifies each repair.
-- Goal Advisor proposal/application — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria — or run evidence reveals a materially better approach. Gate selects the Goal Advisor perspective inside the normal Pulse Review+Fix conversation. New material strategy changes are proposal-first: create a `source="goal_advisor"` human-input request with exact intended edits, rationale, expected impact, risk, and evidence; a later Pulse pass applies approved changes with normal plan/config/eval/report tools.
-- Eval-plan improvement: evaluation coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted — a success criterion is unmeasured, an eval step is orphaned or duplicates Pulse/pre-validation, the rubric drifts, or eval cost is out of proportion to run cost.
+- Pulse Fixer — **exploit: refine the current strategy.** The approach is right but execution/wiring is weak: prompts, config, validation, KB, learnings, db/report wiring, or measurement coverage need repair. It applies only findings supplied by read-only review and verifies each repair.
+- Goal Advisor proposal/application — **explore: a different strategy for better success.** The current approach is **capped** — even executed cleanly it cannot satisfy the success criteria — or run evidence reveals a materially better approach. Gate selects the Goal Advisor perspective inside the normal Pulse Review+Fix conversation. New material strategy changes are proposal-first: create a `source="goal_advisor"` human-input request with exact intended edits, rationale, expected impact, risk, and evidence; a later Pulse pass applies approved changes with normal plan/config/report tools.
+- Measurement improvement: measurement coverage, scoring, structured output, or validation schema is weak enough that measurement cannot be trusted — a success criterion is unmeasured, a metric duplicates Pulse/pre-validation, the rubric drifts, or measurement cost is out of proportion to run cost.
 - No action: evidence is weak, recent changes need more runs, or the workflow is already aligned.
 
 Each module may return multiple findings. Pulse keeps all material findings, but mutations remain ordered and bounded so parallel reviewers cannot race.
@@ -60,7 +60,6 @@ Each module may return multiple findings. Pulse keeps all material findings, but
 - `/pulse`: runs one complete manual Pulse against retained evidence without changing schedules or running the workflow.
 - `/engineering-review`: runs Engineering and LLM/Ops review, consolidates the findings, then applies and verifies bounded fixes in the same agent sequence.
 - The **Pulse** toolbar control enables the per-run review/fix pass via `post_run_monitor`.
-- `/improve-evaluation`: improves eval coverage and rubric quality.
 - Goal Advisor is selected dynamically by Pulse Gate; no separate recurring optimizer schedule is required.
 
 ## Audit Discipline

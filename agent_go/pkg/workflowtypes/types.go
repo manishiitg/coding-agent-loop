@@ -14,9 +14,7 @@ import (
 const (
 	WorkflowStatusPreVerification  = "execution"
 	WorkflowStatusPostVerification = "post-verification"
-	WorkflowStatusEvalExecution    = "evaluation-execution"
 	WorkflowStatusWorkflowBuilder  = "workflow-builder"
-	WorkflowStatusEvalBuilder      = "evaluation-builder"
 )
 
 const (

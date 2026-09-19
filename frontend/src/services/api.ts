@@ -81,7 +81,6 @@ import type {
   GmailAuthStatus,
   GmailTestResponse,
   ExecutionLogsResponse,
-  EvaluationReportsResponse,
   WorkflowReviewDataResponse,
   WorkflowCostsResponse,
   WorkspaceStateResponse,
@@ -113,7 +112,6 @@ import type {
   PulseAgentMetricsResponse,
   PulseImpactResponse,
   PulseContextResponse,
-  PulseEvalResultsResponse,
   OrgDashboardNotification,
   WhatsAppRoute,
   WhatsAppStatus,
@@ -153,9 +151,6 @@ export type {
   StepExecutionLogs,
   ValidationLog,
   ExecutionAttemptLog,
-  EvaluationReportsResponse,
-  EvaluationReport,
-  EvaluationStepScore,
   WorkFolderGrant,
   WorkFolderListResponse,
   WorkFolderAddRequest,
@@ -194,7 +189,6 @@ export interface WorkflowOverviewBatchResponse {
   workflows: Array<{
     workspace_path: string
     run_folders: WorkflowOverviewRunFolderDetail[]
-    eval_data: EvaluationReportsResponse
     last_updated?: string
     total_run_count: number
     active_run_paths?: string[]
@@ -1862,13 +1856,6 @@ export const agentApi = {
     return response.data as PulseContextResponse
   },
 
-  getPulseEvalResults: async (workspacePath: string) => {
-    const response = await api.get('/api/workflow/pulse-eval-results', {
-      params: { workspace_path: workspacePath },
-    })
-    return response.data as PulseEvalResultsResponse
-  },
-
   answerReportHumanInput: async (
     workspacePath: string,
     inputId: string,
@@ -2215,10 +2202,6 @@ export const agentApi = {
           phase_daily_costs: Array.isArray(response.data?.costs?.phase_daily_costs) ? response.data.costs.phase_daily_costs : [],
           run_daily_costs: Array.isArray(response.data?.costs?.run_daily_costs) ? response.data.costs.run_daily_costs : [],
         },
-        evaluations: {
-          ...response.data?.evaluations,
-          reports: Array.isArray(response.data?.evaluations?.reports) ? response.data.evaluations.reports : [],
-        },
       }
     })
   },
@@ -2230,19 +2213,6 @@ export const agentApi = {
       params: { file_path: filePath }
     })
     return response.data
-  },
-
-  // Get evaluation reports for a workflow
-  // If runFolder is empty, returns aggregate across all evaluation runs
-  // If runFolder is specified, returns report for that specific run
-  getEvaluationReports: async (workspacePath: string, runFolder?: string): Promise<EvaluationReportsResponse> => {
-    const response = await api.get('/api/workflow/evaluation-reports', {
-      params: { workspace_path: workspacePath, run_folder: runFolder || '' }
-    })
-    return {
-      ...response.data,
-      reports: Array.isArray(response.data?.reports) ? response.data.reports : [],
-    }
   },
 
   getBuilderDoc: async (workspacePath: string, doc: 'soul' | 'card-health' | 'card-progress' | 'card-cost'): Promise<{ success: boolean; doc: string; path: string; exists: boolean; content: string; error?: string }> => {

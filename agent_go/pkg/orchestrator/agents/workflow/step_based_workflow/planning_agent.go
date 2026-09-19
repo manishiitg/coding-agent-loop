@@ -265,7 +265,7 @@ type AgentConfigs struct {
 	// LegacyDeclaredExecutionMode / LegacyDeclaredExecutionModeReason are the
 	// RETIRED declared_execution_mode keys (PLAT-287). A step's execution model
 	// is decided by its plan type -- regular is scripted, message_sequence is
-	// conversational -- and for an evaluation step by EvaluationStep.ExecutionMode.
+	// conversational.
 	// Nothing sets these any more. They still round-trip through step_config.json
 	// for exactly two reasons: the runtime shim that keeps a not-yet-migrated
 	// legacy agentic regular step running as a message_sequence, and so that a
@@ -1348,8 +1348,6 @@ func completePlanChangelogEntry(entry *PlanChangelogEntry) {
 	tool := strings.ToLower(strings.TrimSpace(entry.Tool))
 	if entry.Target == "" {
 		switch {
-		case strings.Contains(tool, "evaluation"):
-			entry.Target = evaluationPlanRelPath
 		case strings.Contains(tool, "learning"):
 			entry.Target = "learnings/_global"
 		case strings.Contains(tool, "workflow_config"):
@@ -4127,7 +4125,7 @@ func buildAddedStepArtifactSetupNotice(stepID, stepType string) string {
 	b.WriteString("- DB: decide whether the step reads/writes db/ files; update db/README.md and schemas/merge rules if it does.\n")
 	b.WriteString("- KB: decide knowledgebase_access and knowledgebase_contribution for business context and notes.\n")
 	b.WriteString("- Scripted code: if " + stepType + " step " + stepID + " should run code, create or review learnings/" + stepID + "/main.py and set code execution config; otherwise make sure no stale script is implied.\n")
-	b.WriteString("- Downstream wiring: connect routes/next_step_id/context_dependencies, and update db/reports/index.html or evaluation/evaluation_plan.json if this step affects outputs.\n")
+	b.WriteString("- Downstream wiring: connect routes/next_step_id/context_dependencies, and update db/reports/index.html or the measurement step if this step affects outputs.\n")
 	b.WriteString("- Description & schema quality: before finalizing this step's description and validation_schema, call read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/step-description.md\"}]) and apply it.\n")
 	b.WriteString("- " + planEditImpactGuidance)
 	return b.String()
@@ -4153,7 +4151,7 @@ func buildDeletedStepArtifactCleanupNotice(deletedIDs []string, prunedConfigIDs 
 	b.WriteString("- Pre-validation: remove validation schemas that validate deleted-step outputs and update schemas that depended on them.\n")
 	b.WriteString("- Learnings/code: remove or archive stale learnings/<step-id>/ content and main.py scripts, unless intentionally kept as reusable docs.\n")
 	b.WriteString("- DB/KB: remove stale db writers/readers, db/README.md mentions, knowledgebase references, and contribution rules tied to deleted steps.\n")
-	b.WriteString("- Reports/evals/docs: update db/reports/index.html, evaluation/evaluation_plan.json, and docs that referenced deleted outputs.\n")
+	b.WriteString("- Reports/metrics/docs: update db/reports/index.html, measurement queries, and docs that referenced deleted outputs.\n")
 	b.WriteString("- " + planEditImpactGuidance)
 	return b.String()
 }
@@ -4273,9 +4271,6 @@ func createUpdateRegularStepExecutor(workspacePath string, logger loggerv2.Logge
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -4506,9 +4501,6 @@ func createUpdateMessageSequenceStepExecutor(workspacePath string, logger logger
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
@@ -4840,9 +4832,6 @@ func createUpdateHumanInputStepExecutor(workspacePath string, logger loggerv2.Lo
 		if err := validateStepIDUniqueness(plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
@@ -4947,9 +4936,6 @@ func createUpdateOrchestratorStepExecutor(workspacePath string, logger loggerv2.
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -5145,9 +5131,6 @@ func createUpdateRoutingStepExecutor(workspacePath string, logger loggerv2.Logge
 		if err := validateStepIDUniqueness(plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
 
 		if err := writePlanToFile(ctx, workspacePath, plan, readFile, writeFile, logger); err != nil {
 			return "", fmt.Errorf("failed to write plan: %w", err)
@@ -5237,9 +5220,6 @@ func createUpdateBranchStepExecutor(workspacePath string, logger loggerv2.Logger
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 
@@ -5396,9 +5376,6 @@ func createConvertRoutingBranchStepTypeExecutor(workspacePath string, logger log
 			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
 		}
 
@@ -5677,11 +5654,6 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
 		}
-	case *EvaluationStep:
-		s.ID = id
-		if strings.TrimSpace(s.Title) == "" {
-			s.Title = title
-		}
 	case *RoutingPlanStep:
 		s.ID = id
 		if strings.TrimSpace(s.Title) == "" {
@@ -5911,9 +5883,6 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		if err := validateStepIDUniqueness(newPlan); err != nil {
 			return "", fmt.Errorf("plan validation failed before writing: %w", err)
 		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, newPlan); err != nil {
-			return "", fmt.Errorf("plan validation failed before writing: %w", err)
-		}
 
 		// Write updated plan
 		if err := writePlanToFile(ctx, workspacePath, newPlan, readFile, writeFile, logger); err != nil {
@@ -6120,7 +6089,7 @@ func registerNativePlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"strip_declared_execution_mode",
-		"Product-managed workflow-version migration for contract v1.0.39 (PLAT-287, half 2). The plan type alone now decides how a step runs -- regular is scripted, message_sequence is conversational, an evaluation step is scripted when its evaluation_plan.json entry says execution_mode=\"scripted\" -- so the retired declared_execution_mode / declared_execution_mode_reason keys are removed from planning/step_config.json and evaluation/step_config.json. An evaluation step that was declared scripted gets execution_mode=\"scripted\" on its evaluation_plan.json entry first, so nothing changes how it runs. Every removed reason is preserved in the planning/changelog entry. Refuses, without changing anything, while any regular step still carries declared_execution_mode=\"agentic\" (run migrate_declared_execution_mode, the v1.0.38 step, first). Idempotent.",
+		"Product-managed workflow-version migration for contract v1.0.39 (PLAT-287, half 2). The plan type alone now decides how a step runs -- regular is scripted, message_sequence is conversational -- so the retired declared_execution_mode / declared_execution_mode_reason keys are removed from planning/step_config.json. Evaluation files are retired and left untouched. Every removed reason is preserved in the planning/changelog entry. Refuses, without changing anything, while any regular step still carries declared_execution_mode=\"agentic\" (run migrate_declared_execution_mode, the v1.0.38 step, first). Idempotent.",
 		stripDeclaredModeParams,
 		createStripDeclaredExecutionModeExecutor(workspacePath, logger, readFile, writeFile),
 		"workflow",
@@ -6505,43 +6474,6 @@ func registerNativePlanModificationTools(
 		return fmt.Errorf("failed to register update_validation_schema tool: %w", err)
 	}
 
-	if err := mcpAgent.RegisterCustomTool(
-		"add_evaluation_step",
-		"Add one new step to evaluation/evaluation_plan.json and record the full addition in planning/changelog. Use this to create the first step in an empty evaluation plan. IDs must be unique across both execution and evaluation plans. Provide id, title, description, and reason; the complete candidate plan is validated before it is written.",
-		parseSchemaForToolParametersMust(getAddEvaluationPlanStepSchema()),
-		createAddEvaluationPlanStepExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register add_evaluation_step tool: %w", err)
-	}
-
-	// The evaluation plan had no mutation tool, so every edit arrived by direct
-	// write and left nothing in planning/changelog for artifact drift review to
-	// read (AR-20260729-2).
-	if err := mcpAgent.RegisterCustomTool(
-		"update_evaluation_plan",
-		"Update one step in evaluation/evaluation_plan.json and record the change in planning/changelog. Provide step_id and reason (both required) plus at least one of title, description, context_output, context_dependencies, max_score, applies_to_routes, validation_schema, db_write. Use this instead of editing the file directly: a direct write leaves no changelog entry, so artifact drift review cannot see the change or judge it. Fields not named are preserved exactly, including any this tool does not model. applies_to_routes gates the step to specific routes selected by a routing step. Setting a field to its current value is reported as no change and writes no entry. Scripted-versus-agentic execution lives in evaluation/step_config.json via update_step_config, not here.",
-		parseSchemaForToolParametersMust(getUpdateEvaluationPlanSchema()),
-		createUpdateEvaluationPlanExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register update_evaluation_plan tool: %w", err)
-	}
-
-	// The evaluation plan had update_evaluation_plan but no way to remove a
-	// step at all -- the only path was a direct file write, the exact
-	// changelog-blind-spot failure update_evaluation_plan above was built to
-	// prevent, just for deletion instead of update (PLAT-282).
-	if err := mcpAgent.RegisterCustomTool(
-		"delete_evaluation_step",
-		"Delete one or more steps from evaluation/evaluation_plan.json by id and record the removal in planning/changelog. Provide step_ids (array, required) and reason (required). Use this instead of editing the file directly: a direct write leaves no changelog entry, so artifact drift review cannot see or judge the change. Fails if any id does not exist in the plan; no partial deletion. Eval steps carry no next_step_id/route graph to each other, so unlike delete_plan_steps this needs no downstream-reference cleanup — only that every step_id exists.",
-		parseSchemaForToolParametersMust(getDeleteEvaluationPlanStepsSchema()),
-		createDeleteEvaluationPlanStepsExecutor(workspacePath, logger, readFile, writeFile),
-		"workflow",
-	); err != nil {
-		return fmt.Errorf("failed to register delete_evaluation_step tool: %w", err)
-	}
-
 	if logger != nil {
 		logger.Info(fmt.Sprintf("✅ Registered all plan modification tools for %s", agentName))
 	}
@@ -6624,7 +6556,6 @@ func createValidatePlanChangeExecutor(
 			"planning/plan.json",
 			"planning/step_config.json",
 			"planning/variables.json",
-			"evaluation/evaluation_plan.json",
 			"db/reports/index.html",
 			"db/README.md",
 			"workflow.json",
@@ -6750,9 +6681,8 @@ func planChangeEqualStringSlices(left, right []string) bool {
 
 func withPlanMutationWriteAccess(workspacePath string, writeFile func(context.Context, string, string) error) func(context.Context, string, string) error {
 	planningPath := normalizePathForWorkspaceAPI("planning", workspacePath)
-	evaluationPlanPath := normalizePathForWorkspaceAPI(evaluationPlanRelPath, workspacePath)
 	return func(ctx context.Context, path, content string) error {
-		return writeFile(workspacepkg.WithSystemManagedWritePaths(ctx, planningPath, evaluationPlanPath), path, content)
+		return writeFile(workspacepkg.WithSystemManagedWritePaths(ctx, planningPath), path, content)
 	}
 }
 
@@ -7266,9 +7196,6 @@ func createUpdateValidationSchemaExecutor(workspacePath string, logger loggerv2.
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 		if err := validateStepIDUniqueness(plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after update: %w", err)
-		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after update: %w", err)
 		}
 

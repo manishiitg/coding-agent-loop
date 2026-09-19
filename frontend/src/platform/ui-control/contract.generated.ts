@@ -69,15 +69,6 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
-      "id": "evaluation",
-      "label": "Evaluation",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
       "id": "webhooks",
       "label": "Webhooks",
       "actions": [

@@ -83,7 +83,7 @@ Gate uses a **progressive evidence scan**. Start with compact state and metadata
 - `builder/improve.html` current dashboard, open items, recent timeline, and cadence
 - `soul/soul.md`
 - `planning/plan.json`, `planning/step_config.json`, and `planning/changelog/`
-- existence/freshness of evaluation reports and `evaluation/evaluation_plan.json`
+- existence/freshness of measurement rows (producer outputs, goal observations)
 - existence/freshness of `reports/report_plan.json` and report HTML
 - `db/README.md` and a compact DB schema summary
 - a compact KB note index; `knowledgebase/context` remains read-only user context
@@ -256,7 +256,7 @@ contract. Go does not invent an extra reviewer, residual Fixer, or recovery agen
    Use the existing specialist guidance as Workflow Review's ordered lens briefs: correctness uses
    `pulse-bug-review`; Stores Health applies `improve-learnings`,
    `improve-knowledge`, and `improve-database` as its three sub-checks; Report
-   truth uses `improve-report` and `improve-evaluation`; then run stores and
+   truth uses `improve-report` plus the measurement-route review (`measurement-plan`); then run stores and
    LLM/tool operations. Load all required focused docs in one `read_skill` call.
    These reference docs are read-only reviewer briefs in Pulse; they return
    fixer instructions rather than applying them.
@@ -618,22 +618,21 @@ verifies bounded report-only fixes and records the module outcome.
 
 #### Evaluation implementation evidence pack (Engineering Review; formerly eval_health)
 
-Load this Engineering evidence pack when evaluation evidence cannot be trusted
-because its implementation is broken. An evaluation that faithfully implements
-its current rubric but the rubric measures the wrong business outcome belongs
+Load this Engineering evidence pack when measurement evidence cannot be trusted
+because its implementation is broken. A measurement that faithfully implements
+its current queries but the queries measure the wrong business outcome belongs
 to Strategy Auditor:
 
-- `evaluation/evaluation_plan.json` is missing, stale, too lenient, or not mapped to `soul.md`
-- eval runs are missing, scoped to the wrong run/group, or using a stale `TARGET_RUN_PATH`
+- the measurement route is missing, stale, too lenient, or not mapped to `soul.md`
+- measurement rows are missing, scoped to the wrong run/group, or stale
 - rubric/thresholds can be gamed or mostly duplicate operational completion checks
-- eval reports make misleading claims or cannot be reconciled with DB/report evidence
-- plan, DB, report, or output contracts changed and eval coverage did not follow
+- measurement claims cannot be reconciled with DB/report evidence
+- plan, DB, report, or output contracts changed and measurement coverage did not follow
 
-The read-only reviewer follows
-`get_workflow_command_guidance(kind="improve-evaluation")` as its audit
+The read-only reviewer follows the `measurement-plan` reference as its audit
 checklist. It returns bounded recommendations and verification steps. The Pulse
-Fixer applies safe correctness repairs, validates them, and records changed eval
-artifacts as an `Eval fix` in `builder/improve.html`.
+Fixer applies safe correctness repairs, validates them, and records changed
+measurement artifacts as a `Measurement fix` in `builder/improve.html`.
 
 #### Store-integrity evidence pack (Engineering Review; formerly stores_health)
 
@@ -771,8 +770,8 @@ evidence is suspicious, not clean. Agentically judge necessity, impact, whether
 a retry/duplicate/serial call was justified, and the bounded recommendation.
 Do not label every alternative tool choice as a defect.
 
-For raw ledgers under `costs/execution/` and `costs/evaluation/`, preserve the
-immutable record identity: `execution_id` or `evaluation_id`. `date + scope +
+For raw ledgers under `costs/execution/`, preserve the
+immutable record identity: `execution_id`. `date + scope +
 group_folder` locates the ledger shard; `run_folder` and
 `archived_run_folder` are mutable display metadata, not identity. In particular,
 never merge two records merely because both say `iteration-0/<group>`: rotation

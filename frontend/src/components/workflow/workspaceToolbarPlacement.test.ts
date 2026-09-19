@@ -28,7 +28,7 @@ describe('workflow Ask AI placement', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
     expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'execution-logs'])")
-    expect(toolbar).toContain("new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'evaluation', 'backup', 'publish', 'notify'])")
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'backup', 'publish', 'notify'])")
     expect(toolbar).toContain("playbooks: 'Playbooks'")
     expect(toolbar).toContain("bots: 'Bots'")
     expect(toolbar).toContain("view.toolbarGroup === 'capabilities'")

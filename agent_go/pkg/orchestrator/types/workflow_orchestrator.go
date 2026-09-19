@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
@@ -55,19 +54,13 @@ func GetWorkflowConstants() WorkflowConstants {
 			{
 				ID:          workflowtypes.WorkflowStatusWorkflowBuilder,
 				Title:       "Workflow Builder",
-				Description: "Execute steps, update the plan, tweak configs, generate learnings, debug, manage schedules, and run evaluations — all in one conversation.",
+				Description: "Execute steps, update the plan, tweak configs, generate learnings, debug, and manage schedules — all in one conversation.",
 				Options:     []WorkflowPhaseOption{},
 			},
 			{
 				ID:          workflowtypes.WorkflowStatusPreVerification,
 				Title:       "Execution",
 				Description: "Execute the approved plan using MCP tools. This phase runs after planning is complete.",
-				Options:     []WorkflowPhaseOption{},
-			},
-			{
-				ID:          workflowtypes.WorkflowStatusEvalExecution,
-				Title:       "Evaluation Execution",
-				Description: "Execute the evaluation plan against workflow execution results to generate scores and feedback.",
 				Options:     []WorkflowPhaseOption{},
 			},
 		},
@@ -416,10 +409,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// IMPORTANT: Each phase is isolated and should NOT trigger other phases
 	// Note: Variable extraction is now handled by planning agent tools, no separate phase needed
 
-	if workflowStatus == workflowtypes.WorkflowStatusEvalExecution {
-		return wo.runEvaluationExecutionOnly(ctx, objective, selectedOptions)
-	}
-
 	if workflowStatus == workflowtypes.WorkflowStatusWorkflowBuilder {
 		return "", fmt.Errorf("%s is a chat-only phase — use phase chat mode instead of orchestrator execution", workflowStatus)
 	}
@@ -427,131 +416,6 @@ func (wo *WorkflowOrchestrator) executeFlow(
 	// All other workflow statuses (execution) go through execution phase
 	// Execution requires both variables.json and plan.json to exist
 	return wo.runPlanning(ctx, objective, selectedOptions)
-}
-
-// runEvaluationExecutionOnly runs only the evaluation execution phase
-func (wo *WorkflowOrchestrator) runEvaluationExecutionOnly(ctx context.Context, objective string, selectedOptions *workflowtypes.WorkflowSelectedOptions) (string, error) {
-	wo.GetLogger().Info("🚀 Starting Evaluation Execution Phase")
-
-	// Check execution options state BEFORE creating orchestrator
-	// Note: We'll fail fast later if execution options are missing, but log early for debugging
-	if wo.executionOptions == nil {
-		wo.GetLogger().Warn("⚠️ Execution options is NIL - evaluation execution will fail without execution options")
-	}
-
-	// Fast-fail: Check if evaluation plan exists before setting up orchestrator
-	// Note: evaluation_plan.json is stored in evaluation/ directory (not planning/) per documentation
-	// ReadWorkspaceFile will automatically prepend workspace path for relative paths
-	evalPlanPath := "evaluation/evaluation_plan.json"
-	_, err := wo.ReadWorkspaceFile(ctx, evalPlanPath)
-	if err != nil {
-		// Check if it's actually a "file not found" error vs other errors (parsing, network, etc.)
-		errMsg := err.Error()
-		errMsgLower := strings.ToLower(errMsg)
-		if strings.Contains(errMsgLower, "not found") || strings.Contains(errMsgLower, "no such file") || strings.Contains(errMsgLower, "document not found") || strings.Contains(errMsgLower, "file does not exist") || strings.Contains(errMsgLower, "file not found") {
-			return "", fmt.Errorf("evaluation plan not found at %s. Please run Evaluation Designer first to create an evaluation plan", evalPlanPath)
-		}
-		// Other errors (parsing, network, etc.) should be returned as-is
-		return "", fmt.Errorf("failed to read evaluation plan at %s: %w", evalPlanPath, err)
-	}
-
-	// Create human controlled planner orchestrator
-	llmConfig := wo.GetLLMConfig()
-	todoPlannerAgent, err := step_based_workflow.NewStepBasedWorkflowOrchestrator(
-		ctx,
-		"", // provider (not used - LLM comes from temp override/step config/preset)
-		"", // model (not used - LLM comes from temp override/step config/preset)
-		wo.GetTemperature(),
-		wo.GetAgentMode(),
-		wo.GetSelectedServers(),
-		wo.GetSelectedTools(),
-		wo.GetUseCodeExecutionMode(),
-		wo.GetMCPConfigPath(),
-		llmConfig,
-		wo.GetMaxTurns(),
-		wo.GetLogger(),
-		wo.GetTracer(),
-		wo.GetContextAwareBridge(),
-		wo.WorkspaceTools,
-		wo.WorkspaceToolExecutors,
-		wo.ToolCategories,
-		wo.presetBuilderLLM,
-		wo.presetPulseLLM,
-		wo.useKnowledgebase, // Feature toggle for knowledgebase
-		wo.tieredConfig,     // Tiered LLM config
-	)
-	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("❌ Failed to create orchestrator: %v", err), nil)
-		return "", fmt.Errorf("failed to create human controlled planner orchestrator: %w", err)
-	}
-
-	// Propagate workspace env ref BEFORE session ID so SetMCPSessionID can update it
-	if envRef := wo.GetWorkspaceEnvRef(); envRef != nil {
-		todoPlannerAgent.SetWorkspaceEnvRef(envRef)
-	}
-
-	// Propagate MCP session ID to child orchestrator for connection sharing
-	todoPlannerAgent.SetMCPSessionID(wo.getSessionID())
-	// Propagate HTTP session ID for MCP cleanup scoping
-	if wo.httpSessionID != "" {
-		todoPlannerAgent.SetHTTPSessionID(wo.httpSessionID)
-	}
-
-	// Propagate selected skills to child orchestrator
-	if skills := wo.GetSelectedSkills(); len(skills) > 0 {
-		todoPlannerAgent.SetSelectedSkills(skills)
-	}
-
-	// Propagate secrets to child orchestrator
-	if secrets := wo.GetSecrets(); len(secrets) > 0 {
-		todoPlannerAgent.SetSecrets(secrets)
-	}
-
-	// Propagate CDP port for browser mode detection
-	if len(wo.cdpPorts) > 0 {
-		todoPlannerAgent.SetCdpPorts(wo.cdpPorts)
-	} else if wo.cdpPort > 0 {
-		todoPlannerAgent.SetCdpPort(wo.cdpPort)
-	}
-	if wo.browserMode != "" {
-		todoPlannerAgent.SetBrowserMode(wo.browserMode)
-	}
-
-	// Propagate the declared KB shape.
-	todoPlannerAgent.SetKBShape(wo.kbShape)
-
-	// Pass execution options if set
-	// CRITICAL: Execution options are required for evaluation execution
-	if wo.executionOptions == nil {
-		wo.GetLogger().Error("❌ Execution options is NIL - evaluation execution requires execution options", nil)
-		return "", fmt.Errorf("evaluation execution requires execution options to be set (including selected run folder)")
-	}
-
-	// Validate that todoPlannerAgent was created successfully
-	if todoPlannerAgent == nil {
-		wo.GetLogger().Error("❌ todoPlannerAgent is nil after creation", nil)
-		return "", fmt.Errorf("failed to create orchestrator: orchestrator is nil")
-	}
-
-	// Set execution options on the orchestrator
-	todoPlannerAgent.SetExecutionOptions(wo.executionOptions)
-
-	// Extract target run folder from execution options
-	targetRunFolder := wo.executionOptions.SelectedRunFolder
-	if targetRunFolder == "" {
-		wo.GetLogger().Error("❌ targetRunFolder is empty in execution options - cannot proceed", nil)
-		return "", fmt.Errorf("evaluation execution requires a selected run folder (iteration or group) in execution options")
-	}
-
-	// Run evaluation execution
-	result, err := todoPlannerAgent.ExecuteEvaluationOnly(ctx, objective, wo.GetWorkspacePath(), targetRunFolder)
-	if err != nil {
-		wo.GetLogger().Error(fmt.Sprintf("❌ Evaluation execution failed: %v", err), nil)
-		return "", fmt.Errorf("evaluation execution failed: %w", err)
-	}
-
-	wo.GetLogger().Info("✅ Evaluation execution completed successfully")
-	return result, nil
 }
 
 // runPlanning runs the execution phase (requires both variables.json and plan.json to exist)
@@ -721,7 +585,6 @@ func (wo *WorkflowOrchestrator) Execute(ctx context.Context, objective string, w
 				// Validate it's a known workflow status
 				validStatuses := []string{
 					workflowtypes.WorkflowStatusPreVerification,
-					workflowtypes.WorkflowStatusEvalExecution,
 					workflowtypes.WorkflowStatusWorkflowBuilder,
 				}
 				valid := false

@@ -36,7 +36,7 @@ var scheduleRunStatusesStillOwningIterationZero = map[string]bool{
 //
 // The visible damage is in the schedule popup. Cost and token totals are looked
 // up per run folder, and rotation already archives cost records
-// (ArchiveRunCostPaths) and evaluation scores to the new name — correctly. So
+// (ArchiveRunCostPaths) to the new name — correctly. So
 // every history row resolved to the one folder still called iteration-0 and
 // displayed the CURRENT run's spend, identically, on every row. The rows were
 // not stale, they were all reading the same live cell.

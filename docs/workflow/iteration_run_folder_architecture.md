@@ -130,7 +130,7 @@ Evaluation and final report generation have their own internal sandbox behavior.
 They do **not** mean “evaluate directly inside the archived target iteration.”
 
 Instead:
-- evaluation executes in `evaluation/runs/iteration-0[/group]`
+- (retired) evaluation used to execute in `evaluation/runs/iteration-0[/group]`; measurement now comes from the producing steps' own stored outputs
 - final report generation uses an internal `iteration-0`-based report-generation area and then publishes output back to the requested target run
 
 So `iteration-0` is also the internal scratch space for non-primary execution modes.

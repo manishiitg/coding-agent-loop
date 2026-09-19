@@ -212,11 +212,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigs(ctx context.Context) 
 	// Build run folder path if selectedRunFolder is set
 	var runWorkspacePath string
 
-	// Determine config subdir based on mode
 	configSubdir := "planning"
-	if hcpo.isEvaluationMode {
-		configSubdir = "evaluation"
-	}
 
 	if hcpo.selectedRunFolder != "" {
 		runWorkspacePath = filepath.Join(workspacePath, "runs", hcpo.selectedRunFolder)
@@ -247,11 +243,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ReadStepConfigsFromSubdir(ctx context
 // Note: Directory creation is handled automatically by the workspace API
 // WriteWorkspaceFile auto-prepends the workspace path, so we only pass the relative path
 func (hcpo *StepBasedWorkflowOrchestrator) WriteStepConfigs(ctx context.Context, configs []StepConfig) error {
-	// Determine config subdir based on mode
 	configSubdir := "planning"
-	if hcpo.isEvaluationMode {
-		configSubdir = "evaluation"
-	}
 	return hcpo.WriteStepConfigsToSubdir(ctx, configSubdir, configs)
 }
 
@@ -556,8 +548,6 @@ func ApplyStepConfigFromFile(
 				s.AgentConfigs = matchedConfig
 			case *HumanInputPlanStep:
 				s.AgentConfigs = matchedConfig
-			case *EvaluationStep:
-				s.AgentConfigs = matchedConfig
 			case *RoutingPlanStep:
 				s.AgentConfigs = matchedConfig
 			case *BranchPlanStep:
@@ -591,8 +581,6 @@ func ApplyStepConfigFromFile(
 			case *OrchestratorPlanStep:
 				s.AgentConfigs = overrides
 			case *HumanInputPlanStep:
-				s.AgentConfigs = overrides
-			case *EvaluationStep:
 				s.AgentConfigs = overrides
 			case *RoutingPlanStep:
 				s.AgentConfigs = overrides

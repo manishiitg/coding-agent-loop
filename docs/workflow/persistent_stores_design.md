@@ -84,11 +84,11 @@ For reliability a typed helper (`db_upsert(file, key, rows)`) is preferable to r
 | `execution_only_agent.go` | Tell agents about `db/` path and JSON convention |
 | `todo_task_orchestrator_agent.go` | Same |
 | `pre_validation.go:1080` | Add `"db"` to known workflow folder names |
-| `evaluation_types.go` | Add `DBWrite bool` to `EvaluationStep` |
-| `controller_agent_factory.go:800` | Evaluation folder guard: always add `db/` to read; add `db/` to write if `DBWrite: true` |
-| Workflow builder prompt | Recommend `db/eval/` subfolder for eval outputs; warn when enabling `db_write` on an eval step |
+| ~~`evaluation_types.go`~~ (retired) | ~~Add `DBWrite bool` to `EvaluationStep`~~ |
+| ~~`controller_agent_factory.go:800`~~ (retired) | ~~Evaluation folder guard~~ |
+| Workflow builder prompt | Recommend a dedicated subfolder for measurement outputs |
 
-### Evaluation runs and `db/`
+### Evaluation runs and `db/` (retired — eval subsystem removed; kept as history)
 
 Evaluation steps can read and write `db/` — write access is opt-in per step via a `DBWrite` flag. There is no hard folder-guard split between regular and eval writes; the folder guard grants read and (optionally) write on all of `db/`. How `db/` is organized is up to the plan author.
 

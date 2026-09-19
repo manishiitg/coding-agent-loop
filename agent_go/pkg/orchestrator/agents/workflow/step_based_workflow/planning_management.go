@@ -195,9 +195,6 @@ func validateLoadedPlanStepWithOptions(typedStep PlanStepInterface, stepIndex in
 		}
 		return nil
 
-	case *EvaluationStep:
-		return nil
-
 	case *HumanInputPlanStep:
 		return validateHumanInputStepFieldsTyped(step)
 
@@ -599,14 +596,6 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		step.AgentConfigs = agentConfigs
 		if validationSchemaOverride != nil {
 			step.ValidationSchema = validationSchemaOverride
-		}
-		return nil
-
-	case *EvaluationStep:
-		// Evaluation step
-		step.AgentConfigs = agentConfigs
-		if validationSchemaOverride != nil {
-			step.PreValidation = validationSchemaOverride
 		}
 		return nil
 

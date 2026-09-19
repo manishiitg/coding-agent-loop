@@ -241,7 +241,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceClosingItems(ctx conte
 	// knowledgebase item. Appending them separately reproduced the same defect
 	// the regular-step path had: the agent chose a destination based on which
 	// turn it happened to be in rather than on which store owns the content.
-	learningsDue := shouldDirectWriteLearnings(cfg, seq, hcpo.isEvaluationMode)
+	learningsDue := shouldDirectWriteLearnings(cfg, seq)
 	kbAccess := resolveKnowledgebaseAccess(cfg, hcpo.UseKnowledgebase())
 	kbContribution := strings.TrimSpace(kbContributionForPrompt(cfg))
 	// Under write_method=agent the constraint layer strips KB from every item's
@@ -506,7 +506,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 		if item.Type != "scripted" {
 			continue
 		}
-		plan, err := hcpo.ReadCurrentPlan(ctx, hcpo.isEvaluationMode)
+		plan, err := hcpo.ReadCurrentPlan(ctx)
 		if err != nil {
 			return "", session.ConversationHistory, fmt.Errorf("load sequence script definitions: %w", err)
 		}
@@ -1282,7 +1282,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	}
 
 	agentName := fmt.Sprintf("message-sequence-%s", step.GetID())
-	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step, step.GetID(), "", false)
+	agent, err := hcpo.createExecutionOnlyAgent(agentCtx, "execution_only", stepPath, agentName, step.AgentConfigs, step, step.GetID(), "")
 	if err != nil {
 		return nil, agentCtx, err
 	}
@@ -1442,9 +1442,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveMessageSequenceItemWriteAccess
 			Learnings:     resolveLearningsAccess(stepConfig) == LearningsAccessReadWrite,
 		}
 	}
-	if hcpo.isEvaluationMode {
-		resolved.Learnings = false
-	}
 	return resolved
 }
 
@@ -1459,9 +1456,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceStepFullWriteAccess(st
 		DB:            resolveDBAccess(stepConfig) == DBAccessReadWrite,
 		Knowledgebase: kbAccessAllowsWrite(kbAccess),
 		Learnings:     resolveLearningsAccess(stepConfig) == LearningsAccessReadWrite,
-	}
-	if hcpo.isEvaluationMode {
-		resolved.Learnings = false
 	}
 	return resolved
 }
@@ -1509,9 +1503,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	}
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
 	learningsAccess := resolveLearningsAccess(stepConfig)
-	if hcpo.isEvaluationMode {
-		learningsAccess = LearningsAccessNone
-	}
 	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, nil)
 	if kbAccessAllowsRead(kbAccess) {
 		readPaths = append(readPaths, getKnowledgebasePath(baseWorkspacePath))

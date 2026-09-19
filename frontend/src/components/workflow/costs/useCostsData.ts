@@ -176,7 +176,7 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
       for (const runFolder of foldersToLoad) {
         try {
           const data = costEntriesByRunFolder.get(runFolder)
-          if (data?.token_usage || data?.evaluation_token_usage) {
+          if (data?.token_usage) {
             // Fetch step titles only for the selected run. Loading the immutable
             // history must stay one bounded request rather than an N+1 request
             // for every webhook execution ever recorded.
@@ -190,11 +190,11 @@ export function useCostsData({ active, workspacePath, selectedRunFolder }: UseCo
                 console.warn(`Failed to load steps for ${runFolder}:`, err)
               }
             }
-            const costSummary = calculateCostSummary(data.token_usage ?? null, data.evaluation_token_usage, steps)
+            const costSummary = calculateCostSummary(data.token_usage ?? null, null, steps)
             costs.push({
               runFolder,
               tokenUsage: data.token_usage ?? null,
-              evaluationTokenUsage: data.evaluation_token_usage,
+              evaluationTokenUsage: null,
               steps, // Store steps for later use in model breakdown
               costSummary
             })

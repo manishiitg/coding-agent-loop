@@ -16,9 +16,9 @@ const (
 	maxRunRetentionCount     = 50
 )
 
-// prepareCurrentRun rotates the previous iteration-0 into a paired archive, then
+// prepareCurrentRun rotates the previous iteration-0 into an archive, then
 // returns the fresh current run slot. workflow.json run_retention_count controls
-// the number of archives retained for both the workflow and evaluation trees.
+// the number of archives retained.
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCurrentRun(ctx context.Context, workspacePath string) (string, error) {
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.WebhookInputFile != "" {
 		if !regexp.MustCompile(`^iteration-[0-9]+-(?:hook|slack-[a-f0-9]+)$`).MatchString(opts.SelectedRunFolder) {
@@ -33,9 +33,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCurrentRun(ctx context.Context
 		return opts.SelectedRunFolder, hcpo.createRunFolderStructure(ctx, filepath.Join(workspacePath, "runs", opts.SelectedRunFolder))
 	}
 	runsPath := fmt.Sprintf("%s/runs", workspacePath)
-	evalRunsPath := fmt.Sprintf("%s/evaluation/runs", workspacePath)
 	runRetentionCount := hcpo.resolveRunRetentionCount(ctx)
-	if err := hcpo.rotatePairedIterationZero(ctx, runsPath, evalRunsPath, runRetentionCount); err != nil {
+	if err := hcpo.rotateIterationZero(ctx, runsPath, runRetentionCount); err != nil {
 		return "", err
 	}
 	hcpo.GetLogger().Info(fmt.Sprintf("Using iteration-0 for workflow execution (keeping %d backup iteration(s))", runRetentionCount))
@@ -66,48 +65,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveRunRetentionCount(ctx context.
 	return *manifest.RunRetentionCount
 }
 
-// rotatePairedIterationZero rotates iteration-0 in both the workflow runs tree
-// and the eval runs tree to the SAME backup name. This keeps run N and its
-// eval N paired, so Pulse reviewers and report viewers can resolve both halves
-// from one index.
-//
-// The next backup name is computed across both trees (max+1 of any iteration-N
-// in either), so the chosen name is fresh in both. If only one of the iteration-0
-// folders exists, only that one is moved — the other tree just doesn't get a
-// new backup at this index.
-//
-// A fresh workflow iteration-0 is then created. Eval iteration-0 is created
-// lazily by ExecuteEvaluationOnly when an eval run actually starts.
-func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context.Context, runsPath, evalRunsPath string, keep int) error {
+// rotateIterationZero rotates the workflow runs tree's iteration-0 to the next
+// backup name, then creates a fresh iteration-0.
+func (hcpo *StepBasedWorkflowOrchestrator) rotateIterationZero(ctx context.Context, runsPath string, keep int) error {
 	workflowIter0 := fmt.Sprintf("%s/iteration-0", runsPath)
-	evalIter0 := fmt.Sprintf("%s/iteration-0", evalRunsPath)
 
 	workflowExists := hcpo.workspaceFileExists(ctx, workflowIter0)
-	evalExists := hcpo.workspaceFileExists(ctx, evalIter0)
 
-	if workflowExists || evalExists {
-		backupName := hcpo.nextAvailableIterationAcross(ctx, runsPath, evalRunsPath)
+	if workflowExists {
+		backupName := hcpo.nextAvailableIterationAcross(ctx, runsPath)
 		workflowBackup := fmt.Sprintf("%s/%s", runsPath, backupName)
-		workflowMoved := false
 
-		if workflowExists {
-			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s", runsPath, backupName))
-			if err := hcpo.MoveWorkspaceFile(ctx, workflowIter0, workflowBackup); err != nil {
-				return fmt.Errorf("refusing to rotate runs: failed to back up workflow iteration-0 to %s: %w", backupName, err)
-			}
-			workflowMoved = true
-		}
-		if evalExists {
-			evalBackup := fmt.Sprintf("%s/%s", evalRunsPath, backupName)
-			hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s (paired with workflow)", evalRunsPath, backupName))
-			if err := hcpo.MoveWorkspaceFile(ctx, evalIter0, evalBackup); err != nil {
-				if workflowMoved {
-					if rollbackErr := hcpo.MoveWorkspaceFile(ctx, workflowBackup, workflowIter0); rollbackErr != nil {
-						return fmt.Errorf("failed to back up eval iteration-0 to %s: %w; workflow backup rollback also failed: %w", backupName, err, rollbackErr)
-					}
-				}
-				return fmt.Errorf("refusing to rotate runs: failed to back up eval iteration-0 to %s: %w", backupName, err)
-			}
+		hcpo.GetLogger().Info(fmt.Sprintf("Backing up %s/iteration-0 -> %s", runsPath, backupName))
+		if err := hcpo.MoveWorkspaceFile(ctx, workflowIter0, workflowBackup); err != nil {
+			return fmt.Errorf("refusing to rotate runs: failed to back up workflow iteration-0 to %s: %w", backupName, err)
 		}
 		// Cost records keep the UUID as their immutable identity. Rotation only
 		// updates their human-readable archived path, so the next iteration-0
@@ -115,21 +86,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context
 		if err := hcpo.ArchiveRunCostPaths(ctx, "iteration-0", backupName); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not update archived cost paths for %s: %v", backupName, err))
 		}
-		if err := hcpo.archiveEvaluationScoreRunFolder(ctx, "iteration-0", backupName); err != nil {
-			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not update archived evaluation paths for %s: %v", backupName, err))
-		}
-		// Run history is the third thing that names this folder, and the only
-		// one that was never repointed. Cost and evaluation records above follow
-		// the rotation; the history entry kept claiming iteration-0, so the
-		// schedule popup looked every historical run's cost up against the live
-		// slot and showed the current run's spend on every row.
+		// Run history is the second thing that names this folder, and the only
+		// one that was never repointed. Cost records above follow the rotation;
+		// the history entry kept claiming iteration-0, so the schedule popup
+		// looked every historical run's cost up against the live slot and
+		// showed the current run's spend on every row.
 		if err := hcpo.ArchiveScheduleRunFolder(ctx, "iteration-0", backupName); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Could not update run history folder for %s: %v", backupName, err))
 		}
 	}
 
 	hcpo.pruneOldIterations(ctx, runsPath, keep)
-	hcpo.pruneOldIterations(ctx, evalRunsPath, keep)
 
 	if err := hcpo.createRunFolderStructure(ctx, workflowIter0); err != nil {
 		return fmt.Errorf("failed to create workflow iteration-0: %w", err)
@@ -141,9 +108,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) rotatePairedIterationZero(ctx context
 }
 
 // nextAvailableIterationAcross returns "iteration-{N+1}" where N is the highest
-// iteration-N found across all supplied runs paths. Used to pick a backup name
-// that is fresh in BOTH workflow runs/ and evaluation/runs/, keeping the paired
-// rotation aligned.
+// iteration-N found across all supplied runs paths.
 func (hcpo *StepBasedWorkflowOrchestrator) nextAvailableIterationAcross(ctx context.Context, paths ...string) string {
 	maxIter := 0
 	// Builder archives, webhook runs, and scheduled runs share one numeric

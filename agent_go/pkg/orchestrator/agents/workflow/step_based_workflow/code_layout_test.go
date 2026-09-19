@@ -60,18 +60,15 @@ func codeLayoutController(t *testing.T, version int32) *StepBasedWorkflowOrchest
 	return c
 }
 
-func TestCodeLayoutSourceAndEvaluationCompatibility(t *testing.T) {
+func TestCodeLayoutSourceCompatibility(t *testing.T) {
 	for _, version := range []int32{0, 1} {
 		c := codeLayoutController(t, version)
-		for _, evaluation := range []bool{false, true} {
-			c.isEvaluationMode = evaluation
-			source, working := "learnings/step", "Workflow/testing/runs/run/execution/step/code"
-			if version == 1 {
-				source, working = "code/step", "Workflow/testing/code/step"
-			}
-			if c.scriptedSourceDir("step") != source || c.scriptedWorkingDir("step", "Workflow/testing/runs/run/execution/step") != working {
-				t.Fatalf("version=%d eval=%v source/working mismatch", version, evaluation)
-			}
+		source, working := "learnings/step", "Workflow/testing/runs/run/execution/step/code"
+		if version == 1 {
+			source, working = "code/step", "Workflow/testing/code/step"
+		}
+		if c.scriptedSourceDir("step") != source || c.scriptedWorkingDir("step", "Workflow/testing/runs/run/execution/step") != working {
+			t.Fatalf("version=%d source/working mismatch", version)
 		}
 	}
 	for _, tc := range []struct{ manifest, want string }{{`{}`, "learnings/step"}, {`{"code_layout_version":1}`, "code/step"}} {
@@ -107,7 +104,7 @@ func TestCodeLayoutVersionOneNeverFallsBackToLegacyScript(t *testing.T) {
 func TestCodeLayoutGrantsRespectLock(t *testing.T) {
 	c := codeLayoutController(t, 1)
 	for _, locked := range []bool{false, true} {
-		reads, writes := c.setupExecutionFolderGuard("step", "out", KBAccessNone, LearningsAccessNone, resolveEffectiveDBAccess(nil, true, false), &AgentConfigs{LockCode: &locked})
+		reads, writes := c.setupExecutionFolderGuard("step", "out", KBAccessNone, LearningsAccessNone, resolveDBAccess(nil), &AgentConfigs{LockCode: &locked})
 		if !slices.Contains(reads, "Workflow/testing/code") {
 			t.Fatal("missing code read grant")
 		}

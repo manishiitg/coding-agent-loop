@@ -29,13 +29,13 @@ If you renamed a field, removed an output, changed a file path, changed what's w
 Start with the changed step and its declared consumers. Search the relevant artifacts for actual changed references (output file/field, db table/column, route, behavior). Expand only when a concrete reference shows another affected consumer; the list below is a map of possible dependencies, not a mandatory full-workspace sweep. Skip dimensions that the change does not affect.
 
 - **Downstream steps** — search `planning/plan.json` and step descriptions for the step id / output file / changed field. A later step that consumes a field you changed must have its expectation **and** its `validation_schema` updated. (`read_skill(skills=[{"name":"builder-reference","path":"references/step-config.md"}])`)
-- **Evals** — search `evaluation/` for the step id / output path. An eval that reads the changed output must be updated so it still resolves and scores the right thing. (`read_skill(skills=[{"name":"builder-reference","path":"references/evaluation-plan.md"}])`)
+- **Measurement** — search the producing steps' stored-measurement queries and goal observations for the step id / output path. A query reading the changed output must be updated so it still resolves and scores the right thing. (`read_skill(skills=[{"name":"builder-reference","path":"references/measurement-plan.md"}])`)
 - **Report dashboard** — search `db/reports/index.html` and its `window.report.query` SQL for the db tables/columns and output fields. A query that reads changed data must be fixed. (`read_skill(skills=[{"name":"builder-reference","path":"references/reporting-policy.md"}])`)
 - **db** — read `db/README.md` (it already lists each table's writers + shape). If this step writes db and the shape changed, update the schema, the README contract, and any readers. (`read_skill(skills=[{"name":"builder-reference","path":"references/stores.md"}])`)
 - **Learnings** — the step's `learnings/{step-id}/` and `learnings/_global/SKILL.md` were generated against the old behavior. If behavior changed, reassess `learnings_access`, clear `lock_code` when saved code must regenerate, and prune any now-wrong notes.
 - **KB** — search `knowledgebase/notes/` for the step's topic. Notes describing the old behavior must be updated or flagged.
 
-It is tractable **because the contracts already exist** — `db/README.md` lists writers and shape, report HTML declares its queries, the eval plan declares scope, the plan holds the step handoffs. You are cross-linking what is already written, not inventing a dependency graph.
+It is tractable **because the contracts already exist** — `db/README.md` lists writers and shape, report HTML declares its queries, `get_goal_metrics` returns configured metric scope and observation history, and the plan holds the step handoffs. You are cross-linking what is already written, not inventing a dependency graph.
 
 ## 3. Reconcile or flag
 For each affected dependent:

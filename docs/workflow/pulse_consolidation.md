@@ -242,14 +242,14 @@ The Fixer is a full Workflow Builder writer: its tool allow-list is derived
 directly from the canonical Workshop profile rather than copied into a smaller
 Pulse-specific subset, and its folder guard uses the same Workshop write paths.
 This includes plan/route add-delete, schedules, skills, LLM configuration,
-execution/debugging, reports/evals, secrets, and managed DB/store mutation.
+execution/debugging, reports/measurements, secrets, and managed DB/store mutation.
 Pulse-run identity, finding lifecycle, external-side-effect rules, and explicit
 strategy/goal approvals still govern when those tools may be used.
 
 Direct shell/file writes to protected plan artifacts remain denied. In
-particular, `update_evaluation_plan` receives a scoped in-process capability for
-exactly `evaluation/evaluation_plan.json` (plus the existing managed
-planning/changelog capability); it does not unlock sibling evaluation files or
+particular, each plan-mod tool receives a scoped in-process capability for
+exactly the file it owns (plus the existing managed
+planning/changelog capability); it does not unlock sibling files or
 leak authority back into the session.
 
 ### Verification has two valid timings (2026-08-01)

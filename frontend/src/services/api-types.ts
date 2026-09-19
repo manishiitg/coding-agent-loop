@@ -3,7 +3,6 @@ import type { PollingEventSchema } from '../generated/event-types'
 import type { EventTypeString } from '../generated/event-types'
 import type { PollingEvent, RuntimeSnapshot, TerminalSnapshot } from '../../shared/session/types'
 export type { PollingEvent, RuntimePhase, RuntimeSnapshot, GetEventsResponse, TerminalEventsResponse, TerminalSnapshot, TerminalSnapshotRow, TerminalStatus, SSEEventMessage, SSEStatusMessage } from '../../shared/session/types'
-import type { ValidationSchema, AgentConfigs } from '../utils/stepConfigMatching'
 
 export type LLMProvider =
   | 'openrouter'
@@ -651,27 +650,6 @@ export interface PulseContextResponse {
   success: boolean
   records: PulseContextRecord[]
   total: number
-  error?: string
-}
-
-export interface EvalResultRecord {
-  run_folder: string
-  step_id: string
-  title?: string
-  description?: string
-  score: number
-  max_score: number
-  score_captured: boolean
-  reasoning: string
-  evidence: string
-  skipped: boolean
-  generated_at: string
-  historical?: boolean
-}
-
-export interface PulseEvalResultsResponse {
-  success: boolean
-  results: EvalResultRecord[]
   error?: string
 }
 
@@ -1912,34 +1890,6 @@ export const ExecutionStrategy = {
 // Execution strategies
 export type ExecutionStrategyType = typeof ExecutionStrategy[keyof typeof ExecutionStrategy];
 
-// Evaluation types
-export interface EvaluationStep {
-  id: string
-  title: string
-  description: string
-  pre_validation?: ValidationSchema
-  success_criteria: string
-  // How the eval runs (PLAT-287): "scripted" replays learnings/<id>/main.py,
-  // "agentic" (the default when absent) lets the agent judge each run. Lives
-  // on the eval step itself; the old agent_configs.declared_execution_mode is
-  // legacy and stripped by the v1.0.39 migration.
-  execution_mode?: 'scripted' | 'agentic'
-  agent_configs?: AgentConfigs
-  applies_to_routes?: Array<{
-    routing_step_id: string
-    route_ids: string[]
-  }>
-}
-
-export interface EvaluationPlan {
-  steps: EvaluationStep[]
-}
-
-export interface EvaluationStepConfig {
-  id: string
-  agent_configs: AgentConfigs
-}
-
 // Variable Groups API types
 export interface Variable {
   name: string;
@@ -2202,7 +2152,6 @@ export interface PhaseTokenUsageFile {
 export interface WorkflowRunCostsEntry {
   run_folder: string;
   token_usage?: TokenUsageFile;
-  evaluation_token_usage?: TokenUsageFile;
 }
 
 export interface WorkflowPhaseDailyCostsEntry {
@@ -2332,50 +2281,9 @@ export interface BatchExecutionCanceledEvent {
   reason: string;
 }
 
-// Evaluation Report types
-// step_title and success_criteria are intentionally absent — UI consumers look
-// them up by step_id from the evaluation_plan returned alongside reports.
-// summary is also absent — per-step reasoning + evidence is the entire output.
-export interface EvaluationStepScore {
-  step_id: string;
-  score?: number;
-  max_score?: number;
-  score_captured?: boolean;
-  reasoning?: string | null;
-  evidence?: string | null;
-  skipped?: boolean;
-  context_output?: string | null;
-  output_content?: StepOutputContent | null;
-}
-
-export interface EvaluationReport {
-  target_run_folder: string;
-  generated_at: string;
-  step_scores?: EvaluationStepScore[] | null;
-}
-
-// Evaluation reports response for aggregate view
-export interface EvaluationReportsResponse {
-  success: boolean;
-  reports: EvaluationReportEntry[];
-  aggregate?: EvaluationAggregate;
-  evaluation_plan?: string;
-  error?: string;
-}
-
 export interface WorkflowReviewDataResponse {
   success: boolean;
   costs: WorkflowCostsResponse;
-  evaluations: EvaluationReportsResponse;
-}
-
-export interface EvaluationReportEntry {
-  run_folder: string;
-  report: EvaluationReport | null;
-}
-
-export interface EvaluationAggregate {
-  total_runs: number;
 }
 
 // ---------------------------------------------------------------------------

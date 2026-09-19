@@ -1,59 +1,8 @@
 import type {
   CostSummary,
-  EvalResultRecord,
   WorkflowCostsResponse,
 } from "../../../services/api-types";
 import type { ReportCostOptions, ReportDataApi } from "./reportEmbedContext";
-
-export interface ReportEvaluations {
-  results: EvalResultRecord[];
-  criteria: Array<{
-    id: string;
-    title: string;
-    historical: boolean;
-    latest: EvalResultRecord;
-    history: EvalResultRecord[];
-  }>;
-  run_count: number;
-  result_limit: number;
-  possibly_truncated: boolean;
-}
-export async function getReportEvaluations(
-  api: ReportDataApi,
-): Promise<ReportEvaluations> {
-  if (!api.getEvaluations)
-    throw new Error("Evaluation data is unavailable in this report host");
-  const response = await api.getEvaluations();
-  if (!response.success || !Array.isArray(response.results))
-    throw new Error(response.error || "Evaluation data unavailable");
-  const results = [...response.results].sort(
-    (a, b) =>
-      (Date.parse(b.generated_at) || 0) - (Date.parse(a.generated_at) || 0) ||
-      b.run_folder.localeCompare(a.run_folder),
-  );
-  const grouped = new Map<string, ReportEvaluations["criteria"][number]>();
-  for (const result of results) {
-    let criterion = grouped.get(result.step_id);
-    if (!criterion) {
-      criterion = {
-        id: result.step_id,
-        title: result.title || result.step_id,
-        historical: !!result.historical,
-        latest: result,
-        history: [],
-      };
-      grouped.set(result.step_id, criterion);
-    }
-    criterion.history.push(result);
-  }
-  return {
-    results,
-    criteria: [...grouped.values()],
-    run_count: new Set(results.map((r) => r.run_folder)).size,
-    result_limit: 200,
-    possibly_truncated: results.length >= 200,
-  };
-}
 
 export interface ReportCosts {
   summary: CostSummary | null;
@@ -125,14 +74,6 @@ const money = (n: number) =>
     minimumFractionDigits: 2,
     maximumFractionDigits: 4,
   }).format(n);
-const score = (r: EvalResultRecord) =>
-  r.skipped
-    ? "Skipped"
-    : !r.score_captured || !Number.isFinite(r.score)
-      ? "Score not captured"
-      : r.max_score > 0
-        ? `${number(r.score)} / ${number(r.max_score)}`
-        : number(r.score);
 function element<K extends keyof HTMLElementTagNameMap>(
   doc: Document,
   tag: K,
@@ -220,81 +161,6 @@ async function renderWidget<T>(
   } finally {
     if (versions.get(host) === version) host.setAttribute("aria-busy", "false");
   }
-}
-export function renderReportEvaluations(
-  doc: Document,
-  api: ReportDataApi,
-  target: string | HTMLElement,
-) {
-  return renderWidget(
-    doc,
-    target,
-    "Evaluations",
-    () => getReportEvaluations(api),
-    (data, section) => {
-      const el = <K extends keyof HTMLElementTagNameMap>(
-        tag: K,
-        text = "",
-        cls = "",
-      ) => element(doc, tag, text, cls);
-      if (!data.results.length) {
-        section.append(
-          el("p", "No evaluation results recorded yet.", "message"),
-        );
-        return;
-      }
-      section.append(
-        el(
-          "p",
-          `Scores by criterion · ${data.run_count} ${data.run_count === 1 ? "run" : "runs"} in this history${data.possibly_truncated ? " · Latest 200 results; older history may exist" : ""}`,
-          "meta",
-        ),
-      );
-      const grid = el("div", "", "grid"),
-        historical = el("details"),
-        oldGrid = el("div", "", "grid");
-      historical.append(el("summary", "Previous evaluation criteria"));
-      for (const criterion of data.criteria) {
-        const latest = criterion.latest,
-          card = el("article");
-        card.append(
-          el("h3", criterion.title),
-          el("p", score(latest), "value"),
-          el(
-            "p",
-            `${latest.run_folder} · ${latest.generated_at ? new Date(latest.generated_at).toLocaleString() : "Date not recorded"}`,
-            "meta",
-          ),
-        );
-        if (latest.description)
-          card.append(el("p", latest.description, "meta"));
-        const details = el("details");
-        details.append(el("summary", "Reasoning, evidence and history"));
-        details.append(
-          table(
-            doc,
-            "Recorded evaluations",
-            ["Run", "Score", "Details"],
-            criterion.history.map((r) => {
-              const evidence = el("div");
-              evidence.append(
-                el("p", r.reasoning || "No reasoning recorded"),
-                el("p", r.evidence || "No evidence recorded"),
-              );
-              return [`${r.run_folder}\n${r.generated_at}`, score(r), evidence];
-            }),
-          ),
-        );
-        card.append(details);
-        (criterion.historical ? oldGrid : grid).append(card);
-      }
-      section.append(grid);
-      if (oldGrid.childElementCount) {
-        historical.append(oldGrid);
-        section.append(historical);
-      }
-    },
-  );
 }
 export function renderReportCosts(
   doc: Document,

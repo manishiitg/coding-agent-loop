@@ -185,7 +185,7 @@ examples, not required metrics for every workflow. Missing target/source/outcome
 is a measurement gap only for the particular inference it prevents; identify that
 question and check other evidence before asking for instrumentation.
 
-An empty evaluation_plan.json is not a prerequisite failure for strategic thinking.
+Missing measurement is not a prerequisite failure for strategic thinking.
 Reports, domain measurements, recommendations, and user feedback may be sufficient.
 Missing scores alone are technical configuration work. A strategic measurement gap
 must name the decision that cannot be made and why existing evidence cannot answer it.

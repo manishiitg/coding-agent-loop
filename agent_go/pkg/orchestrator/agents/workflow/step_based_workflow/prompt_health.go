@@ -11,7 +11,7 @@ import (
 
 // currentPlanPromptHealth measures a fresh authored snapshot, never the run snapshot.
 func (hcpo *StepBasedWorkflowOrchestrator) currentPlanPromptHealth(ctx context.Context) (PromptHealthReport, error) {
-	plan, err := hcpo.ReadCurrentPlan(ctx, hcpo.isEvaluationMode)
+	plan, err := hcpo.ReadCurrentPlan(ctx)
 	if err != nil {
 		return PromptHealthReport{}, err
 	}

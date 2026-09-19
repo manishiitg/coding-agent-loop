@@ -10,8 +10,7 @@ import (
 type CostScope string
 
 const (
-	CostScopeExecution  CostScope = "execution"
-	CostScopeEvaluation CostScope = "evaluation"
+	CostScopeExecution CostScope = "execution"
 )
 
 type DailyGroupTokenUsageFile struct {
@@ -71,12 +70,6 @@ func NormalizeCostScopeAndRunFolder(iterationFolder string) (CostScope, string) 
 		return CostScopeExecution, ""
 	}
 
-	if strings.HasPrefix(cleaned, "../evaluation/runs/") {
-		return CostScopeEvaluation, strings.TrimPrefix(cleaned, "../evaluation/runs/")
-	}
-	if strings.HasPrefix(cleaned, "evaluation/runs/") {
-		return CostScopeEvaluation, strings.TrimPrefix(cleaned, "evaluation/runs/")
-	}
 	if strings.HasPrefix(cleaned, "runs/") {
 		return CostScopeExecution, strings.TrimPrefix(cleaned, "runs/")
 	}

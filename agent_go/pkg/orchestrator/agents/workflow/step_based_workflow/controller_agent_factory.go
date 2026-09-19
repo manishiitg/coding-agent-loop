@@ -89,8 +89,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkflowTransportToAgentConfig(c
 
 // publishWorkflowTransportContext tags the live event stream with the
 // transport and, when the caller knows the plan step, its execution mode
-// (PLAT-287: derived from the step type — "scripted" for regular /
-// scripted evaluation steps, "agentic" for message sequences; "" when no
+// (PLAT-287: derived from the step type — "scripted" for regular,
+// "agentic" for message sequences; "" when no
 // step is in scope, e.g. KB maintenance agents).
 func (hcpo *StepBasedWorkflowOrchestrator) publishWorkflowTransportContext(effectiveTransport string, executionMode string) {
 	cab, ok := hcpo.GetContextAwareBridge().(*orchestrator.ContextAwareEventBridge)
@@ -292,10 +292,6 @@ func registerStepSessionShellEnv(sessionID, stepOutputAbsPath, stepExecutionAbsP
 	}
 	env["RUN_FOLDER"] = runFolder
 	common.SetSessionShellEnv(sessionID, env)
-}
-
-func resolveEffectiveDBAccess(stepConfig *AgentConfigs, _, _ bool) string {
-	return resolveDBAccess(stepConfig)
 }
 
 const workflowDBAccessEnv = "WORKFLOW_DB_ACCESS"
@@ -527,22 +523,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// are responsible for skipping knowledgebase/context/ so user-supplied content
 	// is never silently rewritten.
 
-	// Check if TARGET_RUN_PATH variable is set (used for evaluation) and add to read paths
-	// This allows evaluation agents to read the artifacts of the run they are evaluating.
-	// Also grant the parent run folder so evals can reach sibling logs (e.g. logs/<step>/execution/
-	// scripted_fast_path.json) — under sandbox-exec, stat() on a denied path raises EPERM, which
-	// Python surfaces as PermissionError and breaks callers that only guard against FileNotFoundError.
-	if targetRunPath, ok := hcpo.variableValues["TARGET_RUN_PATH"]; ok && targetRunPath != "" {
-		readPaths = append(readPaths, targetRunPath)
-		targetRunParent := filepath.Dir(targetRunPath)
-		if targetRunParent != "" && targetRunParent != "." && targetRunParent != "/" {
-			readPaths = append(readPaths, targetRunParent)
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH (+parent for sibling logs) to read paths for evaluation: %s, %s", targetRunPath, targetRunParent))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("🔓 Added TARGET_RUN_PATH to read paths for evaluation: %s", targetRunPath))
-		}
-	}
-
 	if opts := hcpo.GetExecutionOptions(); opts != nil && opts.TriggerContextFile != "" {
 		readPaths = append(readPaths, opts.TriggerContextFile)
 	}
@@ -721,16 +701,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectExecutionLLM(
 		// No automatic history-based tier promotion. Architecture review proposes
 		// explicit configuration changes; an unconfigured execution step stays High.
 
-		// Evaluation mode defaults to medium tier — eval steps are verification checks
-		// that don't need the most powerful model. Step config can still override via ExecutionLLM (step 3).
-		if hcpo.isEvaluationMode {
-			llmConfig := hcpo.tierResolver.ResolveTier(TierMedium)
-			if llmConfig != nil {
-				hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Evaluation step %s defaulting to Tier 2 (Medium): %s/%s",
-					stepPath, llmConfig.Primary.Provider, llmConfig.Primary.ModelID))
-			}
-			return llmConfig
-		}
 		llmConfig, tier := hcpo.tierResolver.ResolveForExecution()
 		if llmConfig != nil {
 			hcpo.GetLogger().Info(fmt.Sprintf("🏷️ [TIERED] Execution agent for step %s using Tier %d (%s): %s/%s",
@@ -1251,7 +1221,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // artifactFolderNameOverride: Optional execution/log folder name. This keeps logical step ID stable while isolating per-call artifacts.
 //
 //	When empty, the step ID will be derived from stepPath.
-func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, planStep PlanStepInterface, stepIDOverride string, artifactFolderNameOverride string, evaluationDBWrite bool) (agents.OrchestratorAgent, error) {
+func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, planStep PlanStepInterface, stepIDOverride string, artifactFolderNameOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
 	artifactStepID := stepID
@@ -1263,8 +1233,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 2. Setup folder guard (extracted method). Empty kbAccess defaults to orchestrator-level UseKnowledgebase.
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
-	learningsAccess := resolveExecutionLearningsAccess(stepConfig, planStep, hcpo.isEvaluationMode)
-	dbAccess := resolveEffectiveDBAccess(stepConfig, hcpo.isEvaluationMode, evaluationDBWrite)
+	learningsAccess := resolveExecutionLearningsAccess(stepConfig, planStep)
+	dbAccess := resolveDBAccess(stepConfig)
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, dbAccess, stepConfig)
 	stepEnvOutputPathOverride := ""
 	if override, ok := ctx.Value(messageSequenceFolderGuardOverrideKey{}).(*messageSequenceFolderGuardOverride); ok && override != nil {
@@ -1451,7 +1421,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 		return nil, fmt.Errorf("base agent is nil after creation for %s - this should never happen", agentName)
 	}
 	// Inject supplementary prompts (skills, secrets, browser instructions)
-	attachGlobalLearnings := !hcpo.isEvaluationMode && learningsAccess != LearningsAccessNone
+	attachGlobalLearnings := learningsAccess != LearningsAccessNone
 	hcpo.appendSupplementaryPrompts(ctx, baseAgent, config, effectiveSkills, attachGlobalLearnings, registeredToolNames(toolsToRegister), isScriptedStep(planStep, stepConfig))
 
 	// Apply post-setup configuration (folder guard paths and optional registry update)
@@ -1690,7 +1660,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 	todoReadPaths, todoWritePaths := hcpo.GetFolderGuardPaths()
 	todoSessionID := hcpo.setupSubAgentSessionGuard("todo", stepID, todoReadPaths, todoWritePaths)
 	config.MCPSessionID = todoSessionID
-	dbAccess := resolveEffectiveDBAccess(stepConfig, hcpo.isEvaluationMode, false)
+	dbAccess := resolveDBAccess(stepConfig)
 	// An orchestrator step is never scripted (its job is runtime delegation),
 	// so it never gets the scripted executor's direct DB path.
 	directDBAccess := false
@@ -1915,7 +1885,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 	effectiveSkills := GetEffectiveSkills(stepConfig, hcpo.BaseOrchestrator)
 	if baseAgent := agent.GetBaseAgent(); baseAgent != nil {
 		if baseAgent.Agent() != nil {
-			attachGlobalLearnings := !hcpo.isEvaluationMode && resolveLearningsAccess(stepConfig) != LearningsAccessNone
+			attachGlobalLearnings := resolveLearningsAccess(stepConfig) != LearningsAccessNone
 			// An orchestrator step is never scripted (PLAT-287).
 			hcpo.appendSupplementaryPrompts(ctx, baseAgent, config, effectiveSkills, attachGlobalLearnings, registeredToolNames(toolsToRegister), false)
 			if inherited := backgroundAgentSkillsFromContext(ctx); len(inherited) > 0 {

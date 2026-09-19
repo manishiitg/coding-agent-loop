@@ -252,12 +252,12 @@ func toUnreviewedPlanChange(e PlanChangelogEntry, sourceFile string) UnreviewedP
 // that has no plan-modification tool of its own.
 //
 // planning/changelog only ever receives entries from plan-mod tool calls, and
-// Artifact Review reads that changelog to detect drift. evaluation_plan.json and
-// workflow.json have no such tool — nothing in the tool surface edits them — so
-// every change to them arrived by direct write and left no record. Artifact
-// Review filed this three times on social-media (AR-20260729-2) and could not
-// close it: the newest eval-step changelog entry was 2026-05-29 while git showed
-// four later evaluation-plan commits, and no safe backfill existed because the
+// Artifact Review reads that changelog to detect drift. workflow.json has no
+// such tool — nothing in the tool surface edits it — so every change to it
+// arrived by direct write and left no record. Artifact Review filed this on
+// social-media (AR-20260729-2) and could not close it: git showed later
+// workflow.json commits with no changelog entry, and no safe backfill existed
+// because the
 // writes were never recorded in the first place.
 //
 // Best-effort by contract, like the plan tools: a workflow change that succeeded

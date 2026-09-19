@@ -20,7 +20,6 @@ import { WorkspaceViewActions } from '../WorkspaceViewActions'
 import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
-import { useEvaluationPlanData } from '../hooks/useEvaluationPlanData'
 import { useWorkflowExecution } from '../hooks/useWorkflowExecution'
 import { useWorkspaceState } from '../hooks/useWorkspaceState'
 import { useWorkflowStore } from '../../../stores/useWorkflowStore'
@@ -66,7 +65,6 @@ const ExecutionLogsPopup = lazy(() => import('../ExecutionLogsPopup'))
 const LearningsView = lazy(() => import('../LearningsView'))
 const KnowledgebaseView = lazy(() => import('../KnowledgebaseView'))
 const DatabaseView = lazy(() => import('../DatabaseView'))
-const PulseEvalSummary = lazy(() => import('../PulseEvalSummary').then(module => ({ default: module.PulseEvalSummary })))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
 const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
@@ -192,12 +190,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         return <KnowledgebaseView workspacePath={workspacePath} headerAction={askAI('knowledgebase')} />
       case 'database':
         return <DatabaseView workspacePath={workspacePath} headerAction={askAI('database')} />
-      case 'evaluation':
-        return (
-          <div className="h-full overflow-y-auto">
-            <PulseEvalSummary workspacePath={workspacePath || ''} className="min-h-full rounded-none border-0" headerAction={askAI('evaluation')} />
-          </div>
-        )
       case 'schedules':
         return (
           <WorkflowScheduleRunsPanel
@@ -334,7 +326,6 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
 
   // --- Toolbar data, loaded once for every view ---------------------------
   const planData = usePlanData(workspacePath)
-  const evalData = useEvaluationPlanData(workspacePath)
   const { status } = useWorkflowExecution()
   const workspace = useWorkspaceState(workspacePath, selectedRunFolder)
   const plan = planData.plan
@@ -527,7 +518,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   // while its data is loading or errored. Computed here so the toolbar and
   // the body agree.
   const [isRefreshingPlan, setIsRefreshingPlan] = useState(false)
-  const flowLoading = (planData.loading && !isRefreshingPlan) || evalData.loading
+  const flowLoading = planData.loading && !isRefreshingPlan
   const isPlanNotFoundError = planData.error && /not found|does not exist|planning must be run first/i.test(planData.error)
   const flowError = isPlanNotFoundError ? null : planData.error
   const flowShell: FlowShell = (flowLoading || isLoadingWorkspaceState)
@@ -629,11 +620,10 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     }
   }, [workspacePath, workspaceViewTarget, setBinaryFileData, setFileContent, setLoadingFileContent, setSelectedFile, setShowFileContent])
   const loadPlanRefresh = planData.refresh
-  const refreshEvaluationPlan = evalData.refresh
   const refreshWorkspaceState = workspace.refresh
   const sharedRefresh = useCallback(async () => {
-    await Promise.all([loadPlanRefresh(), refreshEvaluationPlan(), refreshWorkspaceState()])
-  }, [loadPlanRefresh, refreshEvaluationPlan, refreshWorkspaceState])
+    await Promise.all([loadPlanRefresh(), refreshWorkspaceState()])
+  }, [loadPlanRefresh, refreshWorkspaceState])
   useImperativeHandle(ref, () => ({
     refresh: async (changedStepIDs?: string[], deletedStepIDs?: string[]) => {
       if (kind === 'canvas' && flowRef.current) {
@@ -653,7 +643,6 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
 
   const data = useMemo<WorkspaceViewData>(() => ({
     planData,
-    evalData,
     status,
     workspace,
     selectedRunFolder,
@@ -668,7 +657,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     registerExportHandler,
     pulse,
   }), [
-    planData, evalData, status, workspace, selectedRunFolder, runFolderNames,
+    planData, status, workspace, selectedRunFolder, runFolderNames,
     variablesManifest, isLoadingVariables, isRefreshingPlan, flowShell, flowError, registerExportHandler,
     pulse,
   ])

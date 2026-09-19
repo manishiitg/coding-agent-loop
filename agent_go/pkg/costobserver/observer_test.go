@@ -61,7 +61,6 @@ func TestInferScope(t *testing.T) {
 		{"simple", "", ScopeChat},
 		{"chat", "post_run_monitor", ScopePulse},
 		{"chat", "pulse-fixer", ScopePulse},
-		{"chat", "evaluation", ScopeEvaluation},
 		{"multi-agent", "", ScopeChat},
 		{"workflow", "", ScopeBuilder},
 	}
@@ -85,13 +84,6 @@ func TestInferWorkflowScope(t *testing.T) {
 			agentMode:   "simple",
 			identifiers: []string{"pulse-reviewer-stores-health-1785", "Background: Pulse reviewer - stores-health", ""},
 			want:        ScopePulse,
-		},
-		{
-			name:         "evaluation run folder",
-			agentMode:    "simple",
-			hasRunFolder: true,
-			identifiers:  []string{"execution", "execution-agent-step-1", "../evaluation/runs/iteration-0/default"},
-			want:         ScopeEvaluation,
 		},
 		{
 			name:         "live workflow step",

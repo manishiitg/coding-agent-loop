@@ -1190,7 +1190,7 @@ func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	}
 }
 
-func TestPulseEvalGuidanceSeparatesCorrectnessRepairsFromSemanticApproval(t *testing.T) {
+func TestGoalAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *testing.T) {
 	repoRoot := findRepoRoot(t)
 	read := func(rel string) string {
 		t.Helper()
@@ -1199,22 +1199,6 @@ func TestPulseEvalGuidanceSeparatesCorrectnessRepairsFromSemanticApproval(t *tes
 			t.Fatalf("read %s: %v", rel, err)
 		}
 		return string(raw)
-	}
-
-	evalGuidance := read("agent_go/cmd/server/guidance/templates/improve/improve-evaluation.md")
-	for _, want := range []string{
-		"CORRECTNESS REPAIR — recommend automatic application by the Pulse Fixer; no user question",
-		"binding evidence to the current run/group instead of accepting an older receipt",
-		"making missing, null, empty, stale, malformed, or provider-unconfirmed evidence fail closed",
-		"SEMANTIC CHANGE — require user/business approval",
-		"changing a success criterion, threshold, weight, rubric interpretation",
-	} {
-		if !strings.Contains(evalGuidance, want) {
-			t.Fatalf("improve-evaluation guidance missing %q", want)
-		}
-	}
-	if strings.Contains(evalGuidance, "Do not edit `evaluation/evaluation_plan.json` until the user confirms.") {
-		t.Fatal("improve-evaluation guidance still contains blanket approval gate")
 	}
 
 	advisorGuidance := read("agent_go/cmd/server/guidance/templates/system/strategy-auditor.md")

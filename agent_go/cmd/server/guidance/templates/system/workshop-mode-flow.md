@@ -76,15 +76,15 @@ reliability. Use Goal Advisor for strategy or path redesign.
 
 1. **Run the workflow** — execute the full workflow or individual steps
    against `iteration-0`.
-2. **Run evaluation** — `run_full_evaluation(group_name="...")` for
-   each group you need to score. Evaluation always targets
-   `iteration-0`.
+2. **Check measurement** — read the producing steps' stored outputs and
+   goal observations for each group run you need to score. Measurement
+   always targets `iteration-0`.
 3. **Classify** — decide whether the evidence calls for a reliability fix, Goal Advisor plan change,
-   eval-plan improvement, or no action/blocker.
+   measurement improvement, or no action/blocker.
 4. **Act** — call the matching tool or apply the matching bounded edit.
 5. **Re-run and verify** — execute again only when one targeted
    verification would materially reduce uncertainty.
-6. **Repeat** until eval evidence and success criteria are healthy,
+6. **Repeat** until measurement evidence and success criteria are healthy,
    not merely until local step checks pass.
 
 ### Progressive reliability loop
@@ -97,12 +97,12 @@ the next group runs:
 2. For each group (one by one):
    a. Execute the workflow for this group only (`execute_step` with
       `group_name`, or `run_full_workflow` with a single group).
-   b. Run evaluation for this group's `iteration-0` results with
-      `run_full_evaluation(group_name="...")`.
+   b. Read the measurement rows the producing steps stored for this
+      group's `iteration-0` results.
   c. Classify the failure. For local reliability/contract failures,
       collect a read-only Bug Review and let the parent fixer apply bounded repairs. For strategy/path,
       create/apply a Goal Advisor plan-change proposal as appropriate; for
-      measurement failures, use eval tools.
+      measurement failures, fix the measurement at its producer.
 3. After all groups have run: summarize overall scores and remaining
    issues.
 4. If any groups still failing: repeat the loop (max 2 full iterations
@@ -115,7 +115,7 @@ validation/extraction step, remove an obsolete step, split/merge a
 clearly broken boundary), the parent fixer may use the plan
 modification tools directly.
 
-Use a Goal Advisor plan-change proposal/application when run/eval
+Use a Goal Advisor plan-change proposal/application when run/measurement
 evidence shows the workflow path itself is misaligned with the objective
 or success criteria — for example, it is doing the wrong business work,
 collecting the wrong evidence, optimizing the wrong artifact, or
@@ -126,22 +126,22 @@ when the user is asking for improvement and the evidence is strong.
 
 ## When to redirect to another mode
 
-Workshop is for the run/eval/classify/act loop. If the user asks about:
+Workshop is for the run/measure/classify/act loop. If the user asks about:
 
 - **Report documents (HTML/Markdown), themes, tabs, custom colors** → handle them
   here with normal report HTML edits and `validate_report_html`; read `reporting-policy` first. Workshop can maintain
   `db/reports/index.html` when report changes need to reflect
-  run/eval evidence.
+  run/measurement evidence.
 - **Greenfield workflow design — adding new execution steps or
   defining a new workflow's structure from scratch** → handle it here.
   Workshop owns both greenfield design and repair of an existing structure.
-- **Evaluation coverage — drafting or improving
-  `evaluation/evaluation_plan.json`** → handle it in Workshop. Workshop
-  owns eval design, validation, scoring, and repair.
+- **Measurement coverage — drafting or improving a measurement at its
+  producer step** → handle it in Workshop. Workshop owns measurement design,
+  validation, scoring, and repair. See `measurement-plan`.
 - **Just running the finished workflow / inspecting prior runs in
   plain English** → switch to **Run mode**, which is the user-friendly
   execution surface (also used over WhatsApp/Slack).
 
-Handle all editable design, repair, eval, and report work in Workshop. Only
+Handle all editable design, repair, measurement, and report work in Workshop. Only
 plain execution/inspection belongs in Run mode; suggest that switch when the
 user asks for a finished-workflow runtime experience.

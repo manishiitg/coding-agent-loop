@@ -102,7 +102,7 @@ func boundUI(t *testing.T) (*uiControlBroker, *uiBinding) {
 	return b, c
 }
 func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
-	if len(uiControlContract.Views) != 26 {
+	if len(uiControlContract.Views) != 25 {
 		t.Fatal("registry coverage changed")
 	}
 	for _, v := range uiControlContract.Views {

@@ -18,9 +18,8 @@ import (
 func TestPlanMutationWriteAccessDoesNotUnblockGeneralFileWrites(t *testing.T) {
 	const sessionID = "plan-mutation-write-access"
 	const planPath = "Workflow/demo/planning/plan.json"
-	const evaluationPlanPath = "Workflow/demo/evaluation/evaluation_plan.json"
 	workspacepkg.SetSessionFolderGuard(sessionID, []string{"Workflow/demo"}, []string{"Workflow/demo"})
-	workspacepkg.SetSessionFolderGuardBlockedWritePaths(sessionID, []string{"Workflow/demo/planning", evaluationPlanPath})
+	workspacepkg.SetSessionFolderGuardBlockedWritePaths(sessionID, []string{"Workflow/demo/planning"})
 	defer workspacepkg.ClearSessionShellConfig(sessionID)
 
 	client := workspacepkg.NewClient("http://unused")
@@ -37,46 +36,12 @@ func TestPlanMutationWriteAccessDoesNotUnblockGeneralFileWrites(t *testing.T) {
 	if err := writeFile(ctx, planPath, `{}`); err != nil {
 		t.Fatalf("dedicated plan mutation write was blocked: %v", err)
 	}
-	if err := writeFile(ctx, evaluationPlanPath, `{}`); err != nil {
-		t.Fatalf("dedicated evaluation-plan mutation write was blocked: %v", err)
-	}
 	if !called {
 		t.Fatal("plan mutation write callback was not called")
 	}
 
 	if err := client.ValidatePathWithContext(ctx, planPath, true); err == nil || !strings.Contains(err.Error(), "blocked for writes") {
 		t.Fatalf("plan capability leaked back into the caller context: %v", err)
-	}
-	if err := client.ValidatePathWithContext(ctx, evaluationPlanPath, true); err == nil || !strings.Contains(err.Error(), "blocked for writes") {
-		t.Fatalf("evaluation-plan capability leaked back into the caller context: %v", err)
-	}
-}
-
-func TestPlanMutationWriteAccessDoesNotUnlockEvaluationSiblings(t *testing.T) {
-	const (
-		sessionID     = "evaluation-plan-mutation-write-access"
-		workspacePath = "Workflow/demo"
-	)
-	workspacepkg.SetSessionFolderGuard(sessionID, []string{workspacePath}, []string{workspacePath})
-	workspacepkg.SetSessionFolderGuardBlockedWritePaths(sessionID, []string{workspacePath + "/evaluation"})
-	defer workspacepkg.ClearSessionShellConfig(sessionID)
-
-	client := workspacepkg.NewClient("http://unused")
-	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sessionID)
-	writeFile := withPlanMutationWriteAccess(workspacePath, func(callCtx context.Context, path, _ string) error {
-		return client.ValidatePathWithContext(callCtx, path, true)
-	})
-
-	if err := writeFile(ctx, workspacePath+"/"+evaluationPlanRelPath, `{}`); err != nil {
-		t.Fatalf("canonical evaluation-plan tool path was blocked: %v", err)
-	}
-	for _, sibling := range []string{
-		workspacePath + "/evaluation/step_config.json",
-		workspacePath + "/evaluation/other.json",
-	} {
-		if err := writeFile(ctx, sibling, `{}`); err == nil || !strings.Contains(err.Error(), "blocked for writes") {
-			t.Fatalf("managed evaluation-plan capability unlocked sibling %s: %v", sibling, err)
-		}
 	}
 }
 

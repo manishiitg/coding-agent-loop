@@ -668,10 +668,7 @@ func reviewMainPyScript(script string, declaredEnvVars ...string) []string {
 }
 
 // getScriptedDirRelPath returns the learnings subdirectory (relative to workspace root).
-// Execution and evaluation steps share the same learnings/ namespace; isEvalMode
-// is retained for call-site clarity and future differentiation if ever needed.
-func getScriptedDirRelPath(stepID string, isEvalMode bool) string {
-	_ = isEvalMode
+func getScriptedDirRelPath(stepID string) string {
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 
@@ -848,7 +845,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) resolveScriptedShellGuard(
 ) (*workspace.FolderGuardConfig, error) {
 	stepConfig := getAgentConfigs(step)
 	kbAccess := resolveKnowledgebaseAccess(stepConfig, hcpo.UseKnowledgebase())
-	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step, hcpo.isEvaluationMode)
+	learningsAccess := resolveExecutionLearningsAccess(stepConfig, step)
 
 	readPaths, writePaths := hcpo.setupExecutionFolderGuard(stepPath, step.GetID(), kbAccess, learningsAccess, resolveDBAccess(stepConfig), stepConfig)
 	// Sequence batches use an invocation-specific output folder while retaining

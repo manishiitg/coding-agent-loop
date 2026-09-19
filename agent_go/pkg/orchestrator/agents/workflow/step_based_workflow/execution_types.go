@@ -112,7 +112,6 @@ func (es *ExecutionSetup) Clone() *ExecutionSetup {
 			SkipHumanInput:    es.Context.SkipHumanInput,
 			RunSingleStepOnly: es.Context.RunSingleStepOnly,
 			SingleStepTarget:  es.Context.SingleStepTarget,
-			IsEvaluationMode:  es.Context.IsEvaluationMode,
 		}
 	}
 

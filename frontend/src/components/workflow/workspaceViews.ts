@@ -6,7 +6,6 @@ import {
   Bot,
   BrainCircuit,
   CalendarClock,
-  ClipboardCheck,
   Cloud,
   Database,
   DollarSign,
@@ -82,7 +81,6 @@ const VIEWS = [
   { id: 'learnings', kind: 'inspector', label: 'Learnings', icon: BookOpen, toolbarGroup: 'views', pane: true },
   { id: 'knowledgebase', kind: 'inspector', label: 'Knowledgebase', icon: Database, toolbarGroup: 'views', pane: true },
   { id: 'database', kind: 'inspector', label: 'Database', icon: Table2, toolbarGroup: 'views', pane: true },
-  { id: 'evaluation', kind: 'inspector', label: 'Evaluation', icon: ClipboardCheck, toolbarGroup: 'views', pane: true },
   { id: 'webhooks', kind: 'inspector', label: 'Webhooks', icon: Webhook, toolbarGroup: 'views', pane: true },
   { id: 'schedules', kind: 'inspector', label: 'Schedules', icon: CalendarClock, toolbarGroup: 'views', pane: true },
   // -- files (last button of the "views" cluster) --------------------------
@@ -125,10 +123,10 @@ export const WORKSPACE_VIEWS: readonly WorkspaceView[] = VIEWS
 
 /** Views rendered by the generic Views toolbar loop. Plan stays in this list
  * even before the workflow has steps: opening it is how a new workflow reaches
- * the existing "No Plan Yet" / "Build Plan" state. Evaluation and schedules
- * are rendered separately because their buttons carry status affordances. */
+ * the existing "No Plan Yet" / "Build Plan" state. Schedules is rendered
+ * separately because its button carries status affordances. */
 export const PRIMARY_WORKSPACE_TOOLBAR_VIEWS = WORKSPACE_VIEWS.filter(
-  view => view.toolbarGroup === 'views' && view.id !== 'evaluation' && view.id !== 'schedules',
+  view => view.toolbarGroup === 'views' && view.id !== 'schedules',
 )
 
 type ViewOfKind<K extends WorkspaceViewKind> = Extract<typeof VIEWS[number], { kind: K }>['id']

@@ -188,11 +188,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	dbPath := templateVars["DBPath"]                       // DB folder path (structured JSON, always enabled)
 	dbAccess := strings.TrimSpace(templateVars["DBAccess"])
 	if dbAccess == "" {
-		if templateVars["IsEvaluationMode"] == "true" {
-			dbAccess = DBAccessRead
-		} else {
-			dbAccess = DBAccessReadWrite
-		}
+		dbAccess = DBAccessReadWrite
 	}
 	dbDirectAccess := templateVars["DBDirectAccess"]
 	if dbDirectAccess == "" {
@@ -301,7 +297,6 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		"FolderGuardReadPaths":      folderGuardReadPaths,                      // Folder guard read paths for agent guidance
 		"FolderGuardWritePaths":     folderGuardWritePaths,                     // Folder guard write paths for agent guidance
 		"MessageSequenceAccessNote": templateVars["MessageSequenceAccessNote"], // Effective inherited/narrowed access for message_sequence turns
-		"IsEvaluationMode":          templateVars["IsEvaluationMode"],          // Evaluation mode flag
 		"IsScriptedMode":            templateVars["IsScriptedMode"],            // Learn code mode flag (validation schema shown in scripted section instead)
 		"WorkflowRoot":              templateVars["WorkflowRoot"],              // Workflow root path for absolute cwd display
 		"DocsRoot":                  GetPromptDocsRoot(),                       // Workspace docs base path — differs between macOS dev (/Users/.../workspace-docs) and Docker (/app/workspace-docs); do NOT hardcode.
@@ -342,11 +337,7 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(tem
 	isScriptedMode := templateVars["IsScriptedMode"] == "true"
 	dbAccess := strings.TrimSpace(templateVars["DBAccess"])
 	if dbAccess == "" {
-		if templateVars["IsEvaluationMode"] == "true" {
-			dbAccess = DBAccessRead
-		} else {
-			dbAccess = DBAccessReadWrite
-		}
+		dbAccess = DBAccessReadWrite
 	}
 	dbDirectAccess := templateVars["DBDirectAccess"]
 	if dbDirectAccess == "" {

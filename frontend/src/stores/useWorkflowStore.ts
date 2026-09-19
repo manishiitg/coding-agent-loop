@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { WORKFLOW_REPORT_REFRESH_EVENT } from '../components/workflow/reportRefreshEvent'
-import type { WorkflowPhase, ExecutionOptions, VariablesManifest, EvaluationPlan } from '../services/api-types'
+import type { WorkflowPhase, ExecutionOptions, VariablesManifest } from '../services/api-types'
 import type { WorkshopMode } from '../commands/types'
 import type { AgentConfigs } from '../utils/stepConfigMatching'
 
@@ -328,12 +328,10 @@ interface WorkflowStore {
   activeWorkflowTabId: string | null  // Currently selected tab
 
   // === WORKFLOW MODE STATE ===
-  workflowMode: 'plan' | 'eval' | 'output'
+  workflowMode: 'plan'
   workshopMode: WorkshopMode
   workshopModeByPreset: Record<string, WorkshopMode>
   setWorkshopMode: (mode: WorkshopMode) => void
-  evaluationPlan: EvaluationPlan | null
-  isLoadingEvaluationPlan: boolean
 
   // Global step override (from step_override.json - applies to all steps)
   stepOverride: AgentConfigs | null
@@ -421,9 +419,7 @@ interface WorkflowStore {
   setStepOverride: (override: AgentConfigs | null) => void
 
   // Workflow Mode Actions
-  setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => void
-  setEvaluationPlan: (plan: EvaluationPlan | null) => void
-  loadEvaluationPlan: (workspacePath: string) => Promise<void>
+  setWorkflowMode: (mode: 'plan') => void
 
   // Persistence (localStorage)
   loadSavedSettings: (presetId: string) => void
@@ -604,8 +600,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           }
         })
       },
-      evaluationPlan: null,
-      isLoadingEvaluationPlan: false,
 
       // Global step override
       stepOverride: null,
@@ -1494,21 +1488,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       // Workflow Mode Actions
-      // workflowMode='plan' is the only meaningful value (eval/output sub-modes
-      // folded into the merged Workshop workshop mode). The 'eval' / 'output'
-      // workflowMode values are retained in the type signature for API
-      // compatibility but the setter coerces them to 'plan' and migrates the
-      // workshop mode to 'workshop' (was 'builder' before the merge).
-      setWorkflowMode: (mode: 'plan' | 'eval' | 'output') => {
+      // workflowMode='plan' is the only value; all workshop modes live under it.
+      setWorkflowMode: (_mode: 'plan') => {
         const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
         set(state => {
-          // Legacy callers passing 'eval' / 'output' get folded into 'plan' + 'workshop'.
           const normalizedMode = 'plan' as const
           const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
           const resolvedWorkshopMode: WorkshopMode =
-            (mode === 'eval' || mode === 'output')
-              ? 'workshop'
-              : migrateWorkshopMode(rememberedForPreset ?? state.workshopMode)
+            migrateWorkshopMode(rememberedForPreset ?? state.workshopMode)
           const updated = presetId
             ? {
                 ...state.workshopModeByPreset,
@@ -1528,43 +1515,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             workshopModeByPreset: updated,
           }
         })
-      },
-
-      setEvaluationPlan: (plan: EvaluationPlan | null) => {
-        set({ evaluationPlan: plan })
-      },
-
-      loadEvaluationPlan: async (workspacePath: string) => {
-        if (!workspacePath) {
-          set({ evaluationPlan: null })
-          return
-        }
-
-        set({ isLoadingEvaluationPlan: true })
-        try {
-          // Note: agentApi.getEvaluationPlan needs to be implemented or we use getPlannerFileContent
-          // Assuming we use getPlannerFileContent for consistency with usePlanData pattern initially,
-          // but eventually we should use a typed API if available. 
-          // For now, we'll implement this logic in the hook useEvaluationPlanData 
-          // and just store the result here, or call the API here.
-          // Let's defer actual API call logic to the hook to keep store simpler, 
-          // but we provide the action to update state.
-          // Wait, the requirement says "loadEvaluationPlan: (workspacePath: string) => Promise<void>" in store.
-          // Let's implement it using file content API for now as per `usePlanData`.
-          
-          const path = `${workspacePath}/evaluation/evaluation_plan.json`
-          const response = await agentApi.getPlannerFileContent(path)
-          
-          if (response.success && response.data?.content) {
-            const plan = JSON.parse(response.data.content) as EvaluationPlan
-            set({ evaluationPlan: plan, isLoadingEvaluationPlan: false })
-          } else {
-            set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to load evaluation plan:', error)
-          set({ evaluationPlan: null, isLoadingEvaluationPlan: false })
-        }
       },
 
       // Load saved settings from localStorage for a preset

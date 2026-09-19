@@ -51,7 +51,7 @@ and the removal of Versions as a standalone feature.**
   `partial`, `failed`.
 - Tracked for staleness (`workflow_backup.go:161,172`): `workflow.json`,
   `planning/*.json`, `reports/report_plan.json`, `variables/variables.json`,
-  `evaluation/evaluation_plan.json`, **+ `knowledgebase/` and `learnings/` folders**.
+  **+ `knowledgebase/` and `learnings/` folders**.
 - UI: dedicated **Backup popup** + toolbar button with status dot (added 2026-06-19).
 
 ### Versions (remove)

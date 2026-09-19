@@ -2137,9 +2137,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const workshopModeMatches = requiredWorkshopModes.length === 0 || requiredWorkshopModes.includes(currentWorkshopMode)
     // When we need to switch, pick the first allowed mode
     const targetWorkshopMode = workshopModeMatches ? undefined : requiredWorkshopModes[0]
-    // After the 6→4 mode consolidation, all workshop modes live under workflowMode='plan'.
-    // The legacy 'eval' / 'output' workflow-mode values are gone; eval-plan and report-widget
-    // editing both happen in Builder mode.
+    // All workshop modes live under workflowMode='plan'.
     const targetWorkflowMode = cmd.requiredWorkflowMode
       ?? (targetWorkshopMode || (requiredWorkshopModes.length > 0 && !workshopModeMatches) ? 'plan' : undefined)
 

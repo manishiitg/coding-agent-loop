@@ -2447,7 +2447,7 @@ func TestPulseReviewFocusCatalogUsesValidationContractHealthWithoutSafety(t *tes
 		"validation_contract_health",
 		"store_integrity",
 		"report_quality_truth",
-		"evaluation_quality_truth",
+		"measurement_quality_truth",
 	}
 	if got := pulseReviewFocusCatalog[pulseModuleTechnicalReview]; !slices.Equal(got, want) {
 		t.Fatalf("technical focus catalog = %v, want %v", got, want)

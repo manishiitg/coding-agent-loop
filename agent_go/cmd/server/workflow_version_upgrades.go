@@ -62,6 +62,7 @@ func workflowContractVersionRank(version string) (int, bool) {
 		workflowContractRouteSummariesVersion,
 		workflowContractExplicitSchedulePulseVersion,
 		workflowContractRunScopedRoutesVersion,
+		workflowContractEvalRetirementVersion,
 	}
 	for rank, candidate := range known {
 		if version == candidate {
@@ -86,7 +87,7 @@ This workflow predates inline knowledgebase writes. Do only this migration. Insp
 
 const upgradeEvalVerdictSchema = `WORKFLOW CONTRACT UPGRADE: EVALUATION VERDICTS.
 
-This workflow predates the current evaluation output contract. Do only this migration. If evaluation/evaluation_plan.json is absent, this is a no-op. Otherwise load the evaluation-plan reference, inspect every evaluation step, and make each step emit numeric output_content.score on the current 0-10 scale without changing what it measures. Update validation schemas to require the emitted score and use validate_evaluation_plan. Do not run a normal workflow execution. If a representative evaluation can safely be run, use it to verify changed steps produce scores; otherwise record the exact evidence boundary. Do not stamp on a validation failure. When the plan is compliant, call set_workflow_contract_version(version="1.0.16") and stop.`
+The evaluation subsystem this migration once normalized is retired; the later 1.0.43 contract migration handles conditional retirement and producer-owned measurement. Do only this historical migration: verify planning/plan.json and workflow.json parse, change nothing, and call set_workflow_contract_version(version="1.0.16") and stop. Do not create, edit, or score any evaluation plan.`
 
 const upgradeCurrentArtifactContract = `WORKFLOW CONTRACT UPGRADE: CURRENT ARTIFACT CONTRACT.
 
@@ -163,14 +164,15 @@ decisions, ticket references, watchdog/idle-wait stories, implementation folder
 or database probes, and old workaround narratives. A recurring prompt must state
 the current contract, not narrate why an older platform version needed it.
 
-Evaluation ownership must remain correct:
-1. If a schedule currently owns a routine evaluation, keep that behavior as one
-   concise instruction immediately after the selected work completes. Do not
-   turn it into a conditional probe/retry of an undocumented automatic pass.
-2. If a higher-frequency schedule deliberately skips evaluation because one
+Measurement ownership must remain correct:
+1. If a schedule currently owns routine measurement (an evaluation pass or a
+   measurement route), keep that behavior as one concise instruction
+   immediately after the selected work completes. Do not turn it into a
+   conditional probe/retry of an undocumented automatic pass.
+2. If a higher-frequency schedule deliberately skips measurement because one
    designated daily/closing schedule owns it, preserve that division plainly.
-3. Do not add evaluation to a schedule that did not already own it, and do not
-   remove a routine evaluation merely to shorten the message.
+3. Do not add measurement to a schedule that did not already own it, and do
+   not remove routine measurement merely to shorten the message.
 
 Keep a schedule message only when it carries genuinely schedule-specific work
 that cannot be represented by its existing groups and route selections. Make it
@@ -188,9 +190,9 @@ Use the schedule-management tools to make any required schedule updates. Re-read
 workflow.json afterwards. Confirm every retained message is concise and current,
 no retained schedule prose contains a historical incident date or workaround,
 and normal workflow schedules do not perform Pulse Gate/Review/Fix inline. Do
-not run the workflow. If any change would make evaluation, backup, safety, or a
-public action ambiguous, preserve that schedule unchanged, report the blocker,
-and do not stamp. Otherwise call
+not run the workflow. If any change would make measurement, backup, safety, or
+a public action ambiguous, preserve that schedule unchanged, report the
+blocker, and do not stamp. Otherwise call
 set_workflow_contract_version(version="1.0.28") and stop.`
 
 const upgradeScheduleFinalizerOwnership = `WORKFLOW CONTRACT UPGRADE: SCHEDULE ROUTE AND FINALIZER OWNERSHIP.
@@ -206,12 +208,12 @@ The platform owns normal run finalization: backup, execution-report publish,
 run notification, and—when pulse.enabled is true—the post-run Pulse Gate,
 Review, and Fixer. Remove a normal schedule message when it merely tells the
 agent to do any of the following after selected work completes: routine
-evaluation, generic completion reporting, backup/status.json updates, Git
+measurement, generic completion reporting, backup/status.json updates, Git
 commit/push, report publishing, notification, or Pulse review/fixing. These
 are platform lifecycle duties and must not be copied into schedule prose.
 
 Preserve genuine schedule-specific work and its safety boundary. In particular,
-do not delete a direct schedule message just because it mentions evaluation or
+do not delete a direct schedule message just because it mentions measurement or
 backup if its primary purpose is a distinct time-bound procedure that cannot be
 expressed by the selected route (for example a market-close-only operation).
 Remove only the copied generic lifecycle tail, leaving the special procedure
@@ -327,9 +329,9 @@ Do not hand-edit plan.json or step_config.json and do not run the workflow. The 
 
 const upgradeDeclaredExecutionModeStripped = `WORKFLOW CONTRACT UPGRADE: THE RETIRED declared_execution_mode KEY IS REMOVED (PLAT-287, HALF 2).
 
-Do only this migration. Since contract v1.0.38 every step's plan type states its execution model, and the runtime now reads only that: a "regular" step is scripted (it runs the checked-in learnings/<step-id>/main.py), a "message_sequence" step is conversational, and an evaluation step is scripted exactly when its evaluation/evaluation_plan.json entry has execution_mode="scripted". The declared_execution_mode and declared_execution_mode_reason keys in step_config.json are therefore dead and are removed. Call strip_declared_execution_mode() once. It removes both keys from planning/step_config.json and evaluation/step_config.json, first marking every evaluation step that was declared scripted with execution_mode="scripted" in evaluation/evaluation_plan.json so nothing changes how it runs, and records every removed reason in planning/changelog. It is idempotent and a no-op when nothing is left to strip.
+Do only this migration. Since contract v1.0.38 every step's plan type states its execution model, and the runtime now reads only that: a "regular" step is scripted (it runs the checked-in learnings/<step-id>/main.py) and a "message_sequence" step is conversational. The declared_execution_mode and declared_execution_mode_reason keys in planning/step_config.json are therefore dead and are removed. Call strip_declared_execution_mode() once. It removes both keys from planning/step_config.json only -- evaluation files are retired and left untouched -- and records every removed reason in planning/changelog. It is idempotent and a no-op when nothing is left to strip.
 
-Do not hand-edit plan.json, evaluation_plan.json or either step_config.json, and do not run the workflow. The tool refuses, without changing anything, while a regular step still carries declared_execution_mode="agentic": that means the v1.0.38 migration (migrate_declared_execution_mode) did not complete -- run it, then retry; if it still refuses, do not stamp and report what blocked it. Otherwise call set_workflow_contract_version(version="1.0.39") and stop.`
+Do not hand-edit plan.json or step_config.json, and do not run the workflow. The tool refuses, without changing anything, while a regular step still carries declared_execution_mode="agentic": that means the v1.0.38 migration (migrate_declared_execution_mode) did not complete -- run it, then retry; if it still refuses, do not stamp and report what blocked it. Otherwise call set_workflow_contract_version(version="1.0.39") and stop.`
 
 const workflowUpgradeWorkspacePathPlaceholder = "{{WORKSPACE_PATH}}"
 
@@ -439,6 +441,9 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 	}
 	if rank < 41 {
 		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractRunScopedRoutesVersion, label: "upgrade-run-scoped-routes", query: upgradeRunScopedRoutes})
+	}
+	if rank < 42 {
+		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractEvalRetirementVersion, label: "upgrade-eval-retirement", query: upgradeEvalRetirement})
 	}
 	// Attached here rather than at the call site so the turn text is identical
 	// wherever it is built. The version pair used to be added only on the Pulse

@@ -435,7 +435,7 @@ func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)
 	workspacePath := "Workflow/proposal"
-	proposalContext := "Proposal: add a validation step before delivery. Exact edits: add regular step validate-offer after draft-offer; update delivery dependency. Rationale: two clean runs still sent weak offers. Expected impact: fewer off-goal deliveries. Risk: extra runtime. Evidence: runs/iteration-0/group-1/evaluation_report.json"
+	proposalContext := "Proposal: add a validation step before delivery. Exact edits: add regular step validate-offer after draft-offer; update delivery dependency. Rationale: two clean runs still sent weak offers. Expected impact: fewer off-goal deliveries. Risk: extra runtime. Evidence: runs/iteration-0/group-1/logs/deliver-offer/execution/execution-attempt-1-iteration-0.json"
 
 	_, err := createReportHumanInput(ctx, workspacePath, ReportHumanInputCreateRequest{
 		InputID:  "plan-proposal-validate-offer",
@@ -443,7 +443,7 @@ func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
 		Priority: "high",
 		Question: "Approve adding an offer-validation step?",
 		Context:  proposalContext,
-		Evidence: "runs/iteration-0/group-1/evaluation_report.json",
+		Evidence: "runs/iteration-0/group-1/logs/deliver-offer/execution/execution-attempt-1-iteration-0.json",
 		Options: []ReportHumanInputOption{
 			{ID: "approve", Title: "Approve", Description: "Apply this plan change in the next Pulse pass."},
 			{ID: "reject", Title: "Reject", Description: "Keep the current plan."},
@@ -466,7 +466,7 @@ func TestAnsweredGoalAdvisorPlanProposalCarriesContext(t *testing.T) {
 		"plan-proposal-validate-offer",
 		"option=approve",
 		"add regular step validate-offer",
-		"apply it only with normal plan modification/config/eval/report tools",
+		"apply it only with normal plan modification/config/measurement/report tools",
 		"mark_human_input_consumed",
 	} {
 		if !strings.Contains(contextBlock, want) {

@@ -170,7 +170,7 @@ type DateAggregate struct {
 
 // ScopeAggregate rolls a scope up while retaining the individual runtime
 // executions that produced it. This is the canonical hierarchy used by the
-// cost UI: builder/pulse/workflow/evaluation, then their child agents/steps.
+// cost UI: builder/pulse/workflow, then their child agents/steps.
 type ScopeAggregate struct {
 	Aggregate
 	ByExecution map[string]*ExecutionAggregate `json:"by_execution,omitempty"`

@@ -199,7 +199,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueWorkflowContinuationRecovery(ctx
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) buildWorkflowContinuationStepRuntime(ctx context.Context, state *WorkflowContinuationState) (*workflowContinuationStepRuntime, error) {
-	plan, err := hcpo.readRunPlanSnapshot(context.WithoutCancel(ctx), state.RunFolder, hcpo.isEvaluationMode)
+	plan, err := hcpo.readRunPlanSnapshot(context.WithoutCancel(ctx), state.RunFolder)
 	if err != nil {
 		return nil, fmt.Errorf("read continuation run plan: %w", err)
 	}
@@ -314,7 +314,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) queueRecoveredDirectLearning(state *W
 		return
 	}
 	stepCfg := getAgentConfigs(runtime.Step)
-	if !shouldDirectWriteLearnings(stepCfg, runtime.Step, hcpo.isEvaluationMode) {
+	if !shouldDirectWriteLearnings(stepCfg, runtime.Step) {
 		hcpo.recordWorkflowContinuationPhaseForRunFolder(context.Background(), state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, workflowContinuationPhaseDirectLearning, workflowContinuationStatusSkipped, "direct learning gates disabled", nil)
 		return
 	}
@@ -438,11 +438,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) startRecoveredDirectContinuation(
 			}()
 			hcpo.recordWorkflowContinuationPhaseForRunFolder(execCtx, state.RunFolder, state.StepID, state.StepPath, workflowContinuationOwnerStepExecution, phase, workflowContinuationStatusRunning, "", nil)
 			agentName := fmt.Sprintf("%s-recovery-%s", state.StepID, phase)
-			evaluationDBWrite := false
-			if evalStep, ok := runtime.Step.(*EvaluationStep); ok {
-				evaluationDBWrite = evalStep.DBWrite
-			}
-			agent, err := hcpo.createExecutionOnlyAgent(execCtx, "execution_only", runtime.StepPath, agentName, getAgentConfigs(runtime.Step), runtime.Step, state.StepID, "", evaluationDBWrite)
+			agent, err := hcpo.createExecutionOnlyAgent(execCtx, "execution_only", runtime.StepPath, agentName, getAgentConfigs(runtime.Step), runtime.Step, state.StepID, "")
 			if err != nil {
 				execErr = err
 				result = fmt.Sprintf("%s failed for %s: %v", labelPrefix, stepLabel, err)

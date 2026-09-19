@@ -217,8 +217,6 @@ func PhaseChatSystemPrompt(phaseId string, templateVars map[string]string) strin
 		templateData["AbsDocsRoot"] = GetPromptDocsRoot()
 		templateData["PlanJSON"] = ""    // Intentionally empty — agent reads plan.json on demand via shell command
 		templateData["UserRequest"] = "" // Not applicable in chat mode — user messages come via conversation
-		// EvaluationPlanJSON and EvaluationReportJSON are intentionally NOT injected —
-		// the agent reads them on demand via execute_shell_command.
 		tmpl = interactiveWorkshopSystemTemplate
 		if templateVars["WorkshopMode"] != "workshop" {
 			tmpl = interactiveRunSystemTemplate
@@ -658,8 +656,6 @@ type WorkshopConfig struct {
 	// TmuxLookupFunc resolves the live tmux session name for a tmux-backed (coding-CLI)
 	// step so query_step can surface it. Set by server.go (has the terminal store).
 	TmuxLookupFunc TmuxLookupFunc
-	// IsEvaluationMode when true, the controller uses evaluation/ paths for step_config, learnings, etc.
-	IsEvaluationMode bool
 	// SchedulerWorkspacePath is the workspace folder path (needed for schedule management)
 	SchedulerWorkspacePath string
 	// SchedulerFuncs provides callbacks for schedule CRUD operations.
@@ -746,11 +742,6 @@ func NewWorkshopChatSession(ctx context.Context, cfg *WorkshopConfig) (*Workshop
 		mode, ports := cfg.BrowserRuntime.Snapshot()
 		controller.SetBrowserMode(mode)
 		controller.SetCdpPorts(ports)
-	}
-
-	// Set evaluation mode if configured (uses evaluation/ paths for step_config, learnings, etc.)
-	if cfg.IsEvaluationMode {
-		controller.isEvaluationMode = true
 	}
 
 	// Propagate the HTTP session ID for chat history, but keep the controller's
@@ -952,8 +943,8 @@ func (s *WorkshopChatSession) UpdatePresetSettings(
 	}
 	s.controller.SetSecrets(secrets)
 
-	// Sync back to session.config so run_full_workflow / run_full_evaluation (which
-	// create fresh controllers from cfg) pick up the latest values.
+	// Sync back to session.config so run_full_workflow (which
+	// creates fresh controllers from cfg) picks up the latest values.
 	if s.config != nil {
 		s.config.SelectedServers = selectedServers
 		if toolsParsed {
@@ -1338,179 +1329,6 @@ func RegisterConsolidateKnowledgebaseTool(
 	}
 }
 
-// RegisterRunFullEvaluationTool registers a run_full_evaluation tool that executes all
-// evaluation steps against a target execution run and publishes their outputs. Runs in background.
-func RegisterRunFullEvaluationTool(
-	mcpAgent DefinitionToolRegistrar,
-	session *WorkshopChatSession,
-	logger loggerv2.Logger,
-) {
-	if session.config != nil {
-		mcpAgent = GuardScheduleTools(mcpAgent, session.config.ScheduleCollisionCheck)
-	}
-	if err := mcpAgent.RegisterCustomTool(
-		"run_full_evaluation",
-		"Run the full evaluation pipeline against the current execution run and publish evaluation_report.json. Interactive Builder use targets iteration-0; a saved schedule targets its server-bound iteration-N-sched run. Runs in background — you will be notified when complete.",
-		map[string]interface{}{
-			"type": "object",
-			"properties": map[string]interface{}{
-				"group_name": map[string]interface{}{
-					"type":        "string",
-					"description": "The group/user subfolder within the iteration (e.g., 'saurabh', 'xspaces', 'group-1'). Required for grouped/batch workflows where each group has its own execution folder.",
-				},
-			},
-			"required": []string{"group_name"},
-		},
-		func(ctx context.Context, args map[string]interface{}) (string, error) {
-			iteration := currentWorkflowRunFolder
-			if session.config != nil && session.config.ScheduleInvocation != nil {
-				iteration = session.config.ScheduleInvocation.BoundRunFolder()
-			}
-			groupName, _ := args["group_name"].(string)
-			if groupName == "" {
-				return "group_name is required — evaluation needs a specific group's execution folder (e.g., 'saurabh', 'xspaces')", nil
-			}
-			// Resolve group_name to actual folder name (e.g. "group-11" → "excellence")
-			groupFolderName := session.resolveGroupFolderName(ctx, groupName)
-			targetRunFolder := iteration + "/" + groupFolderName
-
-			cfg := session.config
-			if cfg == nil {
-				return "session config not available — cannot create evaluation controller", nil
-			}
-
-			execID := fmt.Sprintf("eval-full-%s-%d", targetRunFolder, time.Now().UnixNano())
-			execCtx, cancel := context.WithCancel(session.sessionCtx)
-			execCtx = withWorkshopExecutionParent(execCtx, ctx)
-
-			// Inject correlation IDs so eval execution events are tagged as sub-agent events.
-			// Without this, query_step_tools cannot find tool calls — it matches by correlationID
-			// which is only set when ForceCorrelationIDKey is in the context.
-			agentSessionID := fmt.Sprintf("workshop-eval-%s-%d", targetRunFolder, time.Now().UnixNano())
-			execCtx = context.WithValue(execCtx, orchestrator_events.AgentSessionIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ForceCorrelationIDKey, agentSessionID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.IsSubAgentContextKey, true)
-
-			exec := &WorkshopStepExecution{
-				ID:             execID,
-				StepID:         fmt.Sprintf("full-eval-%s", targetRunFolder),
-				AgentSessionID: agentSessionID,
-				Status:         WorkshopStepRunning,
-				cancel:         cancel,
-			}
-			session.StepRegistry.Register(exec)
-			displayName := formatWorkshopExecutionName("Evaluation", targetRunFolder)
-			iterationName, groupName := splitWorkshopRunFolderParts(targetRunFolder)
-			if session.executionNotifier != nil {
-				session.executionNotifier.OnExecutionStart(WorkshopExecutionStart{
-					ID:                execID,
-					ParentExecutionID: currentWorkshopParentExecutionID(execCtx),
-					Name:              displayName,
-					Cancel:            cancel,
-				})
-			}
-			execCtx = virtualtools.WithBackgroundAgentID(execCtx, execID)
-			execCtx = context.WithValue(execCtx, orchestrator_events.ParentExecutionIDKey, execID)
-
-			go func() {
-				var result string
-				var execErr error
-				execMeta := map[string]string{
-					"workshop_mode":  "eval",
-					"execution_type": "full-evaluation",
-					"run_folder":     targetRunFolder,
-				}
-				if iterationName != "" {
-					execMeta["iteration"] = iterationName
-				}
-				if groupName != "" {
-					execMeta["group_name"] = groupName
-				}
-				defer func() {
-					skipNotify := finalizeExecStatus(exec, execCtx, &result, &execErr)
-					if !skipNotify && session.executionNotifier != nil {
-						session.executionNotifier.OnExecutionComplete(execID, displayName, result, execMeta, execErr)
-					}
-				}()
-
-				// Wrap event bridge with the progress listener so eval steps send
-				// per-step notifications to the main agent — same as run_full_workflow.
-				// Without this an evaluation run was silent per-step (no step type
-				// notified the main agent until the single end-of-eval completion).
-				evalProgressBridge := &workflowProgressBridge{
-					inner:     cfg.EventBridge,
-					session:   session,
-					logger:    logger,
-					parentID:  execID,
-					iteration: iterationName,
-					groupName: groupName,
-				}
-
-				// Create a fresh controller for the full evaluation run
-				evalController, err := NewStepBasedWorkflowOrchestrator(
-					execCtx,
-					"", "", 0.7, "simple",
-					cfg.SelectedServers,
-					cfg.SelectedTools,
-					cfg.UseCodeExecutionMode,
-					cfg.MCPConfigPath,
-					cfg.LLMConfig,
-					100,
-					logger,
-					nil,                // tracer
-					evalProgressBridge, // wrapped bridge with per-step notifications
-					cfg.CustomTools,
-					cfg.CustomToolExecutors,
-					cfg.ToolCategories,
-					cfg.PresetPhaseLLM,
-					cfg.PresetPulseLLM,
-					cfg.UseKnowledgebase,
-					cfg.TieredConfig,
-				)
-				if err != nil {
-					execErr = fmt.Errorf("failed to create evaluation controller: %w", err)
-					return
-				}
-				defer evalController.CloseWorkshopGroupSessions()
-				evalController.SetSubAgentNotifier(session.combinedSubAgentNotifier())
-				evalController.SetWorkshopExecutionContext(execCtx, session.StepRegistry)
-				// Wire the direct execution notifier so message_sequence items,
-				// kb-update, and continuation recovery notify during eval too
-				// (these emit via workshopExecutionNotifier, which the bridge skips).
-				evalController.SetWorkshopExecutionNotifier(session.executionNotifier)
-
-				// Propagate HTTP session ID only; keep an independent MCP session for
-				// stateful connection isolation.
-				if cfg.SessionID != "" {
-					evalController.SetHTTPSessionID(cfg.SessionID)
-					logger.Debug(fmt.Sprintf("[WORKSHOP-EVAL] Session ID propagation: HTTP=%s, MCP=%s (kept separate for stateful connection isolation)",
-						cfg.SessionID, evalController.GetMCPSessionID()))
-				}
-				if len(cfg.Secrets) > 0 {
-					evalController.SetSecrets(cfg.Secrets)
-				}
-				if cfg.WorkspaceEnvRef != nil {
-					evalController.SetWorkspaceEnvRef(cfg.WorkspaceEnvRef)
-				}
-				evalController.SetBrowserMode(session.controller.GetBrowserMode())
-				evalController.SetCdpPorts(session.controller.GetCdpPorts())
-
-				result, execErr = evalController.ExecuteEvaluationOnly(
-					execCtx,
-					session.controller.GetObjective(),
-					cfg.WorkspacePath,
-					targetRunFolder,
-				)
-			}()
-
-			return fmt.Sprintf("Full evaluation started for run %q.\nexecution_id: %q\nThis will execute all evaluation steps and generate a scoring report.\nYou will be automatically notified when it completes.", targetRunFolder, execID), nil
-		},
-		"workflow",
-	); err != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_evaluation tool: %v", err))
-	}
-}
-
 // workflowProgressBridge wraps an existing event bridge and intercepts step completion
 // events to send progress notifications to the main workshop agent via bgAgentRegistry.
 type workflowProgressBridge struct {
@@ -1712,7 +1530,7 @@ func (b *workflowProgressBridge) notifyWorkflowExecutionPhaseComplete(groupEnd *
 		return
 	}
 	status := "completed"
-	result := fmt.Sprintf("Workflow execution phase completed for group %q. Completed %d/%d steps in %s. Auto-evaluation may start next if enabled.", groupEnd.GroupName, groupEnd.CompletedSteps, groupEnd.TotalSteps, groupEnd.Duration.Round(time.Second))
+	result := fmt.Sprintf("Workflow execution phase completed for group %q. Completed %d/%d steps in %s.", groupEnd.GroupName, groupEnd.CompletedSteps, groupEnd.TotalSteps, groupEnd.Duration.Round(time.Second))
 	var execErr error
 	if !groupEnd.Success {
 		status = "failed"
@@ -1737,9 +1555,6 @@ func (b *workflowProgressBridge) notifyWorkflowExecutionPhaseComplete(groupEnd *
 		"completed_steps": fmt.Sprintf("%d", groupEnd.CompletedSteps),
 		"total_steps":     fmt.Sprintf("%d", groupEnd.TotalSteps),
 		"status":          status,
-	}
-	if groupEnd.Success {
-		meta["next_phase"] = "auto-evaluation"
 	}
 	if b.iteration != "" {
 		meta["iteration"] = b.iteration
@@ -1906,7 +1721,7 @@ func RegisterRunFullWorkflowTool(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"run_full_workflow",
-		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Interactive Builder runs use iteration-0; a saved schedule or webhook uses its server-bound immutable run folder. Starts from the beginning and runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. Use human_inputs for run-specific instructions or responses, keyed by the exact target step ID; each value is visible only to that step. If the plan contains human_input steps on the selected path, you MUST provide a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID. Pass disable_eval=true to skip the automatic evaluation pass after the workflow completes.",
+		"Execute the complete workflow: load the plan, resolve variables, and run all steps for a single variable group. Interactive Builder runs use iteration-0; a saved schedule or webhook uses its server-bound immutable run folder. Starts from the beginning and runs in background - you will be notified when complete. Use send_step_message with the returned execution_id to steer whichever workflow child-agent turn is currently active. Use human_inputs for run-specific instructions or responses, keyed by the exact target step ID; each value is visible only to that step. If the plan contains human_input steps on the selected path, you MUST provide a response for each one. If the plan contains deterministic routing steps and the user's request already selected a branch, pass route_selections keyed by routing step ID.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -1927,10 +1742,6 @@ func RegisterRunFullWorkflowTool(
 					"additionalProperties": map[string]interface{}{
 						"type": "string",
 					},
-				},
-				"disable_eval": map[string]interface{}{
-					"type":        "boolean",
-					"description": "Optional. When true, skip the automatic evaluation pass after this workflow run completes. Defaults to false.",
 				},
 			},
 			"required": []string{"group_name"},
@@ -1958,7 +1769,6 @@ func RegisterRunFullWorkflowTool(
 				return "group_name is required. Read variables.json to see available groups.", nil
 			}
 			enabledGroupNames := []string{groupName}
-			disableEval, _ := args["disable_eval"].(bool)
 
 			// Parse human_inputs strictly. The old assertion silently discarded
 			// alternate decoded map shapes and non-string values, allowing a run
@@ -2000,7 +1810,7 @@ func RegisterRunFullWorkflowTool(
 			// Validate: if the selected route has human_input steps, human_inputs must cover them.
 			// Route-scoped validation matters for workflows like Upwork where one plan contains
 			// bid/search/profile branches; a search run must not be forced to answer bid approval.
-			plan, err := session.controller.ReadCurrentPlan(ctx, session.controller.isEvaluationMode)
+			plan, err := session.controller.ReadCurrentPlan(ctx)
 			if err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
@@ -2143,9 +1953,6 @@ func RegisterRunFullWorkflowTool(
 			if cfg.WebhookInvocation != nil {
 				execMeta["trigger_source"] = "webhook"
 			}
-			if disableEval {
-				execMeta["disable_eval"] = "true"
-			}
 			if iteration != "" {
 				execMeta["iteration"] = iteration
 			}
@@ -2275,7 +2082,6 @@ func RegisterRunFullWorkflowTool(
 					EnabledGroupNames: enabledGroupNames,
 					HumanInputs:       humanInputs,
 					RouteSelections:   routeSelections,
-					DisableEval:       disableEval,
 				}
 				if cfg.ScheduleInvocation != nil {
 					execOpts.RunKind = cfg.ScheduleInvocation.RunKind()
@@ -2329,31 +2135,12 @@ func RegisterRunFullWorkflowTool(
 			if iteration != "" {
 				iterInfo = fmt.Sprintf("\nIteration: %s (reusing)", iteration)
 			}
-			evalInfo := "\nAuto-evaluation: enabled"
-			if disableEval {
-				evalInfo = "\nAuto-evaluation: disabled"
-			}
-			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s%s\nAll steps will be executed end-to-end. Use send_step_message(execution_id=%q, message=...) for a live correction while a child-agent turn is active.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo, evalInfo, execID), nil
+			return fmt.Sprintf("Full workflow execution started.\nexecution_id: %q\nStrategy: %s%s%s\nAll steps will be executed end-to-end. Use send_step_message(execution_id=%q, message=...) for a live correction while a child-agent turn is active.\nYou will be automatically notified when it completes.", execID, strategy, groupInfo, iterInfo, execID), nil
 		},
 		"workflow",
 	); err != nil {
 		logger.Warn(fmt.Sprintf("⚠️ Failed to register run_full_workflow tool: %v", err))
 	}
-}
-
-// RegisterEvaluationValidationTools is the exported wrapper for registering evaluation
-// plan validation tools on an MCP agent. Used by server.go for workflow-builder chat sessions.
-func RegisterEvaluationValidationTools(
-	mcpAgent DefinitionToolRegistrar,
-	workspacePath string,
-	logger loggerv2.Logger,
-	readFile func(context.Context, string) (string, error),
-	writeFile func(context.Context, string, string) error,
-	moveFile func(context.Context, string, string) error,
-) error {
-	_ = writeFile
-	_ = moveFile
-	return registerEvaluationValidationTools(mcpAgent, workspacePath, logger, readFile)
 }
 
 // RegisterHTMLReportTools registers the HTML-only report contract for a

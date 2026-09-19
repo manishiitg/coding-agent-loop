@@ -20,7 +20,6 @@ func TestExecutionOnlyPromptIncludesCodeExecutionInstructions(t *testing.T) {
 		"UseKnowledgebase":      "true",
 		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution",
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
-		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "true",
 		"IsScriptedMode":        "false",
 	})
@@ -65,7 +64,6 @@ func TestExecutionOnlyPromptUsesManagedWorkflowDBTools(t *testing.T) {
 		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
 		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution, /app/workspace-docs/Workflow/test/db",
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample, /app/workspace-docs/Workflow/test/db",
-		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "false",
 		"IsScriptedMode":        "false",
 		"DBAccess":              DBAccessReadWrite,
@@ -90,44 +88,6 @@ func TestExecutionOnlyPromptUsesManagedWorkflowDBTools(t *testing.T) {
 	}
 }
 
-func TestEvaluationPromptsUseOnlyFileOutputContract(t *testing.T) {
-	agent := &WorkflowExecutionOnlyAgent{}
-	vars := map[string]string{
-		"WorkspacePath":           "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution",
-		"WorkflowRoot":            "/app/workspace-docs/Workflow/test",
-		"StepExecutionPath":       "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution/eval-result",
-		"StepContextOutput":       defaultEvaluationContextOutput,
-		"StepDescription":         "Score the source-grounded result.",
-		"StepContextDependencies": "",
-		"LearningHistory":         "",
-		"StepNumber":              "eval-result",
-		"KnowledgebasePath":       "/app/workspace-docs/Workflow/test/knowledgebase",
-		"FolderGuardReadPaths":    "/app/workspace-docs/Workflow/test/db",
-		"FolderGuardWritePaths":   "/app/workspace-docs/Workflow/test/evaluation/runs/iteration-0/default/execution/eval-result",
-		"IsEvaluationMode":        "true",
-		"IsCodeExecutionMode":     "false",
-		"IsScriptedMode":          "false",
-	}
-
-	systemPrompt := agent.executionOnlySystemPromptProcessor(vars)
-	userPrompt := agent.executionOnlyUserMessageProcessor(vars)
-	for _, prompt := range []string{systemPrompt, userPrompt} {
-		if !strings.Contains(prompt, defaultEvaluationContextOutput) {
-			t.Fatalf("evaluation prompt must name %q\n\nPrompt:\n%s", defaultEvaluationContextOutput, prompt)
-		}
-		for _, forbidden := range []string{"Output to the db", "persist your results to the workflow database", "No output file"} {
-			if strings.Contains(prompt, forbidden) {
-				t.Fatalf("evaluation prompt contains conflicting DB-output instruction %q\n\nPrompt:\n%s", forbidden, prompt)
-			}
-		}
-	}
-	for _, required := range []string{"READ-ONLY workflow evidence", "Read it with `query_workflow_db`"} {
-		if !strings.Contains(systemPrompt, required) {
-			t.Fatalf("evaluation system prompt missing %q\n\nPrompt:\n%s", required, systemPrompt)
-		}
-	}
-}
-
 func TestReadOnlyExecutionPromptCannotRecommendMutationOrRawSQLite(t *testing.T) {
 	agent := &WorkflowExecutionOnlyAgent{}
 	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
@@ -138,7 +98,6 @@ func TestReadOnlyExecutionPromptCannotRecommendMutationOrRawSQLite(t *testing.T)
 		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
 		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/db",
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/run/execution/reader",
-		"IsEvaluationMode":      "false",
 		"IsScriptedMode":        "false",
 		"DBAccess":              DBAccessRead,
 	})
@@ -199,7 +158,6 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 		"KnowledgebasePath":     "/app/workspace-docs/Workflow/test/knowledgebase",
 		"FolderGuardReadPaths":  "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution, /app/workspace-docs/Workflow/test/learnings/_global",
 		"FolderGuardWritePaths": "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-sample",
-		"IsEvaluationMode":      "false",
 		"IsCodeExecutionMode":   "false",
 		"IsScriptedMode":        "false",
 	})
@@ -247,7 +205,6 @@ func TestExecutionOnlyCLIPromptUsesProjectedReferencesAndStaysUnderBudget(t *tes
 		"KbAccessLabel":               "READ/WRITE",
 		"FolderGuardReadPaths":        "/app/workspace-docs/Workflow/test, /app/workspace-docs/Workflow/test/learnings/_global",
 		"FolderGuardWritePaths":       "/app/workspace-docs/Workflow/test/runs/iteration-0/default/execution/step-browser, /app/workspace-docs/Workflow/test/db",
-		"IsEvaluationMode":            "false",
 		"IsCodeExecutionMode":         "true",
 		"IsScriptedMode":              "true",
 		"HasBrowserAccess":            "true",

@@ -32,6 +32,5 @@ func bindWebhookStep(opts *ExecutionOptions, steps []PlanStepInterface) error {
 	}
 	opts.ExecutionStrategy = ExecutionStrategyRunSingleStep
 	opts.ResumeFromStep = index + 1
-	opts.DisableEval = true // A standalone step does not launch evaluation steps.
 	return nil
 }

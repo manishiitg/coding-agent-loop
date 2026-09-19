@@ -51,8 +51,6 @@ var executablePlanRevisionFiles = []string{
 	"workflow.json",
 	"planning/plan.json",
 	"planning/step_config.json",
-	"evaluation/evaluation_plan.json",
-	"evaluation/step_config.json",
 }
 
 func canonicalJSONDocument(raw string) (interface{}, error) {
@@ -81,9 +79,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ensureExecutablePlanRevision(ctx cont
 		// Persist the plan this execution actually loaded, even if a builder
 		// changed the current file between dispatch and run-metadata creation.
 		snapshotPath := "planning/plan.json"
-		if hcpo.isEvaluationMode {
-			snapshotPath = "evaluation/evaluation_plan.json"
-		}
 		if snapshot := executionPlanFromContext(ctx); snapshot != nil && path == snapshotPath {
 			encoded, err := json.Marshal(snapshot)
 			if err != nil {

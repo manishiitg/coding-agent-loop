@@ -7,7 +7,6 @@ import {
   Activity,
   BellRing,
   ChevronDown,
-  Gauge,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
@@ -35,7 +34,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'execution-logs'])
-const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'evaluation', 'backup', 'publish', 'notify'])
+const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   playbooks: 'Playbooks',
   skills: 'Skills',
@@ -464,12 +463,11 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             label="Ops"
             open={openToolbarMenu === 'ops'}
             onToggle={() => toggleToolbarMenu('ops')}
-            title="Operations: costs, learnings, database, files, evaluation, backup, publish and notifications"
+            title="Operations: costs, learnings, database, files, backup, publish and notifications"
           >
             {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
               return <ToolbarPopoverItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openFromToolbarMenu(view)} />
             })}
-            <ToolbarPopoverItem label="Evaluation" Icon={Gauge} active={activeWorkspaceView === 'evaluation'} onClick={() => openFromToolbarMenu('evaluation')} />
             <ToolbarPopoverItem label="Backup" Icon={Cloud} active={activeWorkspaceView === 'backup'} onClick={() => openFromToolbarMenu('backup')} indicatorClass={getBackupDotClass(backupState)} />
             <ToolbarPopoverItem label="Publish" Icon={Globe} active={activeWorkspaceView === 'publish'} onClick={() => openFromToolbarMenu('publish')} indicatorClass={getPublishDotClass(publishState)} />
             <ToolbarPopoverItem label="Notifications" Icon={BellRing} active={activeWorkspaceView === 'notify'} onClick={() => openFromToolbarMenu('notify')} indicatorClass={getNotificationDotClass(notificationState)} data-testid="workflow-notification-settings-button" />

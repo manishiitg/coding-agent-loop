@@ -1,6 +1,6 @@
 import { memo } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { BarChart3, CheckCircle2, CircleDashed, FileText } from 'lucide-react'
+import { CheckCircle2, CircleDashed, FileText } from 'lucide-react'
 import type { WorkflowArtifactNodeData } from '../hooks/usePlanToFlow'
 
 interface WorkflowArtifactNodeProps {
@@ -9,15 +9,6 @@ interface WorkflowArtifactNodeProps {
 }
 
 const styles = {
-  evaluation: {
-    border: 'border-sky-300 dark:border-sky-500/50',
-    surface: 'bg-white dark:bg-slate-900/95',
-    iconBg: 'bg-sky-100 dark:bg-sky-500/15',
-    accent: 'text-sky-700 dark:text-sky-300',
-    badge: 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-300',
-    shadow: 'shadow-sky-500/10',
-    icon: BarChart3
-  },
   output: {
     border: 'border-amber-300 dark:border-amber-500/50',
     surface: 'bg-white dark:bg-slate-900/95',

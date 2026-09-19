@@ -100,9 +100,6 @@ type StepBasedWorkflowOrchestrator struct {
 	// Skip human input mode tracking (runs learning but skips human feedback)
 	skipHumanInput bool // Whether to skip human feedback requests (auto-approve steps)
 
-	// Evaluation mode tracking
-	isEvaluationMode bool // Whether we're running evaluation steps
-
 	// Plans are passed through execution contexts, never cached on a chat session.
 
 	// Run folder management
@@ -117,7 +114,7 @@ type StepBasedWorkflowOrchestrator struct {
 	executionOptions *ExecutionOptions
 
 	// Preset-level agent defaults (used when step config doesn't specify)
-	presetPhaseLLM *AgentLLMConfig // The Builder model: workshop chat, planning, evaluation setup, scheduled runs and every turn of the Pulse conversation (Gate, dispatch, Finalize).
+	presetPhaseLLM *AgentLLMConfig // The Builder model: workshop chat, planning, measurement setup, scheduled runs and every turn of the Pulse conversation (Gate, dispatch, Finalize).
 	presetPulseLLM *AgentLLMConfig // The Pulse model: background review agents launched by Pulse turns (plan drift / technical / strategic review) and KB upkeep -- work that starts its own process.
 
 	// Preset-level feature toggles
@@ -1273,11 +1270,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildExecutionContext() *ExecutionCon
 		SkipHumanInput:    hcpo.skipHumanInput,
 		RunSingleStepOnly: hcpo.runSingleStepOnly,
 		SingleStepTarget:  hcpo.singleStepTarget,
-		IsEvaluationMode:  hcpo.isEvaluationMode,
 		HumanInputs:       cloneWorkflowStringMap(hcpo.humanInputOverrides),
 	}
 
-	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, runSingleStepOnly=%v, singleStepTarget=%d, isEvaluationMode=%v", execCtx.SkipHumanInput, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget, execCtx.IsEvaluationMode))
+	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Built ExecutionContext: skipHumanInput=%v, runSingleStepOnly=%v, singleStepTarget=%d", execCtx.SkipHumanInput, execCtx.RunSingleStepOnly, execCtx.SingleStepTarget))
 
 	return execCtx
 }

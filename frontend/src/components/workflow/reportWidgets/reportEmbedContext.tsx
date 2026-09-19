@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { PulseEvalResultsResponse, WorkflowCostsResponse } from '../../../services/api-types'
+import type { WorkflowCostsResponse } from '../../../services/api-types'
 
 export interface ReportCostOptions { days?: number; before?: string }
 
@@ -17,7 +17,6 @@ export type ReportChatOptions = {
 // demand. Exposed inside the iframe as `window.report`.
 export interface ReportDataApi {
   workspacePath: string
-  getEvaluations?: () => Promise<PulseEvalResultsResponse>
   getCosts?: (options: ReportCostOptions) => Promise<WorkflowCostsResponse>
   // Sends directly from a report action through the human-decision chat queue.
   // Reuses an interactive automation chat, or creates one only if none exists.

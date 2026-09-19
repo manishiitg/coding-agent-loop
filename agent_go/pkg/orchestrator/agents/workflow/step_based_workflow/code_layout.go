@@ -54,14 +54,14 @@ func savedCodeDirectory(ctx context.Context, workspace, stepID string, readFile 
 	if err == nil && json.Unmarshal([]byte(content), &manifest) == nil && manifest.Version == 1 {
 		return "code/" + stepID
 	}
-	return getScriptedDirRelPath(stepID, false)
+	return getScriptedDirRelPath(stepID)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) scriptedSourceDir(stepID string) string {
 	if hcpo.usesCodeTree() {
 		return "code/" + stepID
 	}
-	return getScriptedDirRelPath(stepID, hcpo.isEvaluationMode)
+	return getScriptedDirRelPath(stepID)
 }
 
 // Returns workspace-qualified path, matching getExecutionFolderPath's contract.

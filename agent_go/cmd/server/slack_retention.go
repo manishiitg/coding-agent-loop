@@ -3,7 +3,6 @@ package server
 import (
 	"encoding/json"
 	"io/fs"
-	"os"
 	"path"
 	"sort"
 	"strings"
@@ -96,9 +95,6 @@ func (api *StreamingAPI) pruneSlackRuns(workspace string) error {
 	removed := map[string]bool{}
 	for _, run := range completed[keep:] {
 		if err := root.RemoveAll("runs/" + run.name); err != nil {
-			return err
-		}
-		if err := root.RemoveAll("evaluation/runs/" + run.name); err != nil && !os.IsNotExist(err) {
 			return err
 		}
 		removed[run.name] = true

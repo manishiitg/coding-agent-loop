@@ -33,8 +33,7 @@ const KnowledgebaseContextFolderName = "context"
 
 // DBFolderName is the name of the persistent structured-data folder at workspace root.
 // Always created on workspace init (no preset toggle, unlike knowledgebase). All regular steps
-// get read+write by default. Evaluation steps get read always, write only if DBWrite: true
-// on the step. State lives in db/db.sqlite (one table per entity); steps should upsert via
+// get read+write by default. State lives in db/db.sqlite (one table per entity); steps should upsert via
 // INSERT ... ON CONFLICT rather than recreate tables. See docs/workflow/persistent_stores_design.md section 1.
 const DBFolderName = "db"
 
@@ -64,7 +63,7 @@ func getDBPath(workspaceRoot string) string {
 // unconditionally (see setupExecutionFolderGuard, which puts soul/ in readPaths alongside
 // execution/ and builder/), and `## Objective` / `## Success Criteria` / `## Constraints`
 // are extracted and injected into agent prompts — see soul_helpers.go. An earlier version
-// of this comment claimed soul/ was "not read by execution, evaluation, learning, or KB
+// of this comment claimed soul/ was "not read by execution, learning, or KB
 // agents"; that was never true of the folder guard and is not true of prompt injection.
 //
 // Kept outside planning/ because planning/ is read-only to the builder (modifications go
@@ -730,15 +729,13 @@ func getExecutionFolderPathForLogs(validationWorkspacePath string, stepID string
 const finalExecutionSummaryFilename = "execution-final-summary.json"
 
 // getLearningFolderPathByStepID returns the RELATIVE learning folder path using step ID.
-// All steps (regular, nested sub-agent, evaluation) share the "learnings/{stepID}/"
-// namespace; validateCrossPlanStepIDUniqueness guarantees no collision between
-// plan.json and evaluation_plan.json step IDs.
+// All steps share the "learnings/{stepID}/" namespace; step-ID uniqueness
+// within plan.json guarantees no collision.
 // Returns a RELATIVE path for use with workspace functions — they auto-prepend workspacePath.
-// baseWorkspacePath and isEvaluationMode are retained for call-site compatibility.
-func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string, isEvaluationMode bool) string {
+// baseWorkspacePath and stepPath are retained for call-site compatibility.
+func getLearningFolderPathByStepID(baseWorkspacePath string, stepID string, stepPath string) string {
 	_ = baseWorkspacePath
 	_ = stepPath
-	_ = isEvaluationMode
 	return fmt.Sprintf("learnings/%s", stepID)
 }
 
@@ -1378,7 +1375,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 	if sessionID := hcpo.GetMCPSessionID(); sessionID != "" && !isSubAgent {
 		narrowAgentCfg := getAgentConfigs(step)
 		narrowKBAccess := resolveKnowledgebaseAccess(narrowAgentCfg, hcpo.UseKnowledgebase())
-		narrowLearningsAccess := resolveExecutionLearningsAccess(narrowAgentCfg, step, hcpo.isEvaluationMode)
+		narrowLearningsAccess := resolveExecutionLearningsAccess(narrowAgentCfg, step)
 		narrowRead, narrowWrite := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, narrowKBAccess, narrowLearningsAccess, resolveDBAccess(narrowAgentCfg), narrowAgentCfg)
 		var prevRead, prevWrite []string
 		if prevCfg := common.GetSessionShellConfig(sessionID); prevCfg != nil {
@@ -1506,12 +1503,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 		}
 
 		// Get folder guard paths for template (so agent knows exact paths it can access)
-		learningsAccess := resolveExecutionLearningsAccess(agentConfigs, step, hcpo.isEvaluationMode)
-		evaluationDBWrite := false
-		if evalStep, ok := step.(*EvaluationStep); ok {
-			evaluationDBWrite = evalStep.DBWrite
-		}
-		dbAccess := resolveEffectiveDBAccess(agentConfigs, hcpo.isEvaluationMode, evaluationDBWrite)
+		learningsAccess := resolveExecutionLearningsAccess(agentConfigs, step)
+		dbAccess := resolveDBAccess(agentConfigs)
 		folderGuardReadPaths, folderGuardWritePaths := hcpo.setupExecutionFolderGuard(artifactStepPath, artifactStepID, kbAccess, learningsAccess, dbAccess, agentConfigs)
 
 		// Learn code mode: add code/ subdir to write paths so LLM can write main.py there
@@ -1615,7 +1608,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			"StepExecutionPath":         toAbsPath(stepExecutionPath),                                                                         // Absolute step execution folder path
 			"FolderGuardReadPaths":      strings.Join(toAbsPathSlice(folderGuardReadPaths), ", "),                                             // Absolute folder guard read paths
 			"FolderGuardWritePaths":     strings.Join(toAbsPathSlice(folderGuardWritePaths), ", "),                                            // Absolute folder guard write paths
-			"IsEvaluationMode":          fmt.Sprintf("%v", hcpo.isEvaluationMode),                                                             // Evaluation mode flag for eval-specific prompt guidance
 			"WorkflowRoot":              toAbsPath(workflowRoot),                                                                              // Absolute workflow root path (e.g., "/app/workspace-docs/Workflow/HRMS")
 			"IsScriptedMode":            fmt.Sprintf("%v", isScriptedMode),
 			"ScriptedWorkingDir":        toAbsPath(hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath)),
@@ -1634,20 +1626,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 			templateVars["ScriptedDelegationInstructions"] = scriptedDelegation.Instructions
 			if payload, marshalErr := json.Marshal(scriptedDelegation.Parameters); marshalErr == nil && len(scriptedDelegation.Parameters) > 0 {
 				templateVars["ScriptedParameterValues"] = string(payload)
-			}
-		}
-
-		// In evaluation mode, inject TARGET_RUN_PATH into the prompt so the agent
-		// knows where the original execution artifacts are located.
-		if hcpo.isEvaluationMode {
-			if targetRunPath, ok := hcpo.variableValues["TARGET_RUN_PATH"]; ok && targetRunPath != "" {
-				varMapping := templateVars["ScriptedVarMapping"]
-				targetLine := fmt.Sprintf("{{TARGET_RUN_PATH}} → os.environ['VAR_TARGET_RUN_PATH']  (= %s)", targetRunPath)
-				if varMapping != "" {
-					templateVars["ScriptedVarMapping"] = varMapping + "\n" + targetLine
-				} else {
-					templateVars["ScriptedVarMapping"] = targetLine
-				}
 			}
 		}
 
@@ -1862,9 +1840,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 
 			// Learnings READ gate — controlled by learnings_access.
 			// Default is "read": every step sees _global/SKILL.md in its prompt.
-			// Only routing/eval steps or explicit learnings_access="none" opt out.
+			// Only routing steps or explicit learnings_access="none" opt out.
 			// Contribution (write) is a separate gate further below.
-			if !canReadLearnings(agentConfigs, step, hcpo.isEvaluationMode) {
+			if !canReadLearnings(agentConfigs, step) {
 				formattedLearningHistory = ""
 				hcpo.GetLogger().Info(fmt.Sprintf("⏭️ Learnings read disabled for step %d (learnings_access=%s) - skipping _global/ injection", stepIndex+1, resolveLearningsAccess(agentConfigs)))
 			} else {
@@ -1997,7 +1975,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					// Pass stepPath to createExecutionOnlyAgent so nested sub-agent folders resolve correctly.
 					// For learnings / metadata selection, use the concrete step ID so sub-agents align with their own learnings folder.
 					// allSteps is already []PlanStepInterface - no conversion needed
-					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step, step.GetID(), getExecutionArtifactFolderOverride(execCtx), evaluationDBWrite)
+					executionAgent, err = hcpo.createExecutionOnlyAgent(executionAgentCtx, "execution_only", stepPath, executionAgentName, agentConfigs, step, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
 					if err != nil {
 						return "", updatedContextFiles, fmt.Errorf("failed to create execution-only agent for step %d: %w", stepIndex+1, err)
 					}
@@ -2349,7 +2327,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						// Force Tier 1 (High) for repair agents — they need to fix a failure,
 						// so they should use at least the same tier as the original execution.
 						repairCtx := context.WithValue(ctx, WorkshopTierOverrideKey, int(TierHigh))
-						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step, step.GetID(), getExecutionArtifactFolderOverride(execCtx), evaluationDBWrite)
+						repairAgent, repairErr := hcpo.createExecutionOnlyAgent(repairCtx, "execution_only", stepPath, repairAgentName, agentConfigs, step, step.GetID(), getExecutionArtifactFolderOverride(execCtx))
 						if repairErr != nil {
 							hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ [scripted] failed to create repair agent for step %d fix %d: %v", stepIndex+1, fixIter+1, repairErr))
 							break
@@ -2622,7 +2600,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 				// "empty objective" used to also kill read access; with learnings_access
 				// split, write is honest opt-in and read is default-on.
 				agentConfigs = getAgentConfigs(step)
-				isLearningDisabled := !canWriteLearnings(agentConfigs, step, hcpo.isEvaluationMode)
+				isLearningDisabled := !canWriteLearnings(agentConfigs, step)
 				if isScriptedMode {
 					hcpo.GetLogger().Info(fmt.Sprintf("🐍 [scripted_code] Step %d — main.py remains executable truth; SKILL.md writes gated by learnings_access=%s", stepIndex+1, resolveLearningsAccess(agentConfigs)))
 				}
@@ -3140,8 +3118,6 @@ func getAgentConfigs(step PlanStepInterface) *AgentConfigs {
 	case *OrchestratorPlanStep:
 		return s.AgentConfigs
 	case *HumanInputPlanStep:
-		return s.AgentConfigs
-	case *EvaluationStep:
 		return s.AgentConfigs
 	case *RoutingPlanStep:
 		return s.AgentConfigs

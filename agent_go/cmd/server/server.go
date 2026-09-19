@@ -2375,7 +2375,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/pulse-agent-metrics", api.handleGetPulseAgentMetrics).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/pulse-impact", api.handleGetPulseImpact).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/pulse-context", api.handleGetPulseContext).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/pulse-eval-results", api.handleGetPulseEvalResults).Methods("GET", "OPTIONS")
 
 	// Workflow running-session API (decoupled from chat session storage).
 	apiRouter.HandleFunc("/workflow/running", api.handleListRunningWorkflows).Methods("GET")
@@ -2610,7 +2609,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/report-preview/file", api.handleReportPreviewFile).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/query", api.handleReportPreviewQuery).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-preview/costs", api.handleReportPreviewMetrics).Methods("GET")
-	apiRouter.HandleFunc("/workflow/report-preview/evaluations", api.handleReportPreviewMetrics).Methods("GET")
 	apiRouter.HandleFunc("/workflow/report-preview/media-url", api.handleReportMediaURL).Methods("POST")
 	apiRouter.HandleFunc("/workflow/report-media", api.handleReportMediaStream).Methods("GET", "HEAD")
 
@@ -2636,7 +2634,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/logs/webhook-payload", api.handleGetExecutionWebhookPayload).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/logs/file", api.handleGetLogFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/costs", api.handleGetCosts).Methods("GET", "OPTIONS")
-	apiRouter.HandleFunc("/workflow/evaluation-reports", api.handleGetEvaluationReports).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/review-data", api.handleGetWorkflowReviewData).Methods("GET", "OPTIONS")
 
 	// Auto-improvement framework — see docs/workflow/auto_improvement_framework.md
@@ -5372,7 +5369,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// full structs, not raw writes.
 			var fileContextBlockedWriteFolders []string
 			if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
-				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, workflowPhaseFolder+"/runs/iteration-0/", workflowPhaseFolder+"/evaluation/runs/iteration-0/")
+				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, workflowPhaseFolder+"/runs/iteration-0/")
 			}
 			// PLAT-262: a read-only identity gets none of the whole-workflow write
 			// grant below — effectiveWorkflowPhaseFolderForWrites stays "" for them,
@@ -6335,7 +6332,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 
-				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder || workflowPhaseID == workflowtypes.WorkflowStatusEvalBuilder {
+				if workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder {
 					// Secrets
 					phaseSecrets := mergeGlobalSecrets(req.DecryptedSecrets, req.SelectedGlobalSecrets)
 					if len(phaseSecrets) > 0 {

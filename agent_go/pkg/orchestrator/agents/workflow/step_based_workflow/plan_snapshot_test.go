@@ -23,13 +23,13 @@ func TestCurrentPlanReadsCannotReplaceExecutionSnapshots(t *testing.T) {
 	const planPath = "Workflow/instagram/planning/plan.json"
 	files := map[string]string{planPath: snapshotTestPlan(t, "old-step", "old description")}
 	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files)}
-	first, err := controller.ReadCurrentPlan(t.Context(), false)
+	first, err := controller.ReadCurrentPlan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
 	firstCtx := withExecutionPlan(t.Context(), first)
 	files[planPath] = snapshotTestPlan(t, "new-step", "new description")
-	second, err := controller.ReadCurrentPlan(firstCtx, false)
+	second, err := controller.ReadCurrentPlan(firstCtx)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,34 +52,24 @@ func TestCurrentPlanReadsCannotReplaceExecutionSnapshots(t *testing.T) {
 		t.Fatal("execution snapshot leaked into parent context")
 	}
 	files[planPath] = "invalid"
-	if _, err := controller.ReadCurrentPlan(firstCtx, false); err == nil {
+	if _, err := controller.ReadCurrentPlan(firstCtx); err == nil {
 		t.Fatal("invalid current plan fell back to execution snapshot")
 	}
 }
 
-func TestStepConfigLookupsReadFreshWithoutSwitchingExecutionMode(t *testing.T) {
+func TestStepConfigLookupsReadFreshFromCurrentPlan(t *testing.T) {
 	const planPath = "Workflow/instagram/planning/plan.json"
-	files := map[string]string{
-		planPath: snapshotTestPlan(t, "first", "original"),
-		"Workflow/instagram/evaluation/evaluation_plan.json": `{"steps":[{"id":"eval","title":"Eval","description":"Evaluate"}]}`,
-	}
-	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files), isEvaluationMode: true}
+	files := map[string]string{planPath: snapshotTestPlan(t, "first", "original")}
+	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files)}
 	for _, id := range []string{"first", "added"} {
 		files[planPath] = snapshotTestPlan(t, id, "latest")
-		got, scope, eval, err := resolveWorkshopStepConfigTarget(t.Context(), controller, id)
-		if err != nil || got != id || scope != "planning" || eval {
-			t.Fatalf("current target = %s/%s/%v: %v", got, scope, eval, err)
-		}
-		if !controller.isEvaluationMode {
-			t.Fatal("lookup changed execution mode")
+		got, err := resolveWorkshopStepConfigTarget(t.Context(), controller, id)
+		if err != nil || got != id {
+			t.Fatalf("current target = %s: %v", got, err)
 		}
 	}
-	if _, _, _, err := resolveWorkshopStepConfigTarget(t.Context(), controller, "first"); err == nil {
+	if _, err := resolveWorkshopStepConfigTarget(t.Context(), controller, "first"); err == nil {
 		t.Fatal("deleted step still resolved")
-	}
-	got, scope, eval, err := resolveWorkshopStepConfigTarget(t.Context(), controller, "eval")
-	if err != nil || got != "eval" || scope != "evaluation" || !eval {
-		t.Fatalf("evaluation target = %s/%s/%v: %v", got, scope, eval, err)
 	}
 }
 
@@ -125,7 +115,7 @@ func TestRegisteredStepPromptsUseRunRevisionNotCurrentPlan(t *testing.T) {
 	// Refuse a revision whose contents no longer match its content-addressed ID.
 	files[metadataPath] = `{"plan_revision":"` + id + `"}`
 	files["Workflow/instagram/planning/revisions/"+id+".json"] = `{"revision_id":"` + id + `","files":{}}`
-	if _, err := controller.readRunPlanSnapshot(t.Context(), "iteration-2/default", false); err == nil {
+	if _, err := controller.readRunPlanSnapshot(t.Context(), "iteration-2/default"); err == nil {
 		t.Fatal("accepted mismatched revision contents")
 	}
 }
@@ -134,7 +124,7 @@ func TestRunRevisionUsesExecutionSnapshotAfterCurrentPlanChanges(t *testing.T) {
 	const planPath = "Workflow/instagram/planning/plan.json"
 	files := map[string]string{planPath: snapshotTestPlan(t, "running-step", "Executing contract")}
 	controller := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, files)}
-	plan, err := controller.ReadCurrentPlan(t.Context(), false)
+	plan, err := controller.ReadCurrentPlan(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

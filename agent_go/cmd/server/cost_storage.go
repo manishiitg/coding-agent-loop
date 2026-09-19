@@ -53,9 +53,6 @@ func migrateLegacyCostFiles(ctx context.Context, workspacePath string) error {
 	if err := migrateLegacyScopedTokenUsage(ctx, workspacePath, workspaceCostPath(workspacePath, "runs"), orchestrator.CostScopeExecution); err != nil {
 		return err
 	}
-	if err := migrateLegacyScopedTokenUsage(ctx, workspacePath, workspaceCostPath(workspacePath, "evaluation", "runs"), orchestrator.CostScopeEvaluation); err != nil {
-		return err
-	}
 	if err := migrateLegacyPhaseTokenUsage(ctx, workspacePath); err != nil {
 		return err
 	}
@@ -365,11 +362,10 @@ func readAllRunTokenUsageFromCosts(ctx context.Context, workspacePath string, sc
 }
 
 type workflowRunCostEntry struct {
-	ExecutionID          string                       `json:"execution_id,omitempty"`
-	RunFolder            string                       `json:"run_folder"`
-	ArchivedRunFolder    string                       `json:"archived_run_folder,omitempty"`
-	TokenUsage           *orchestrator.TokenUsageFile `json:"token_usage,omitempty"`
-	EvaluationTokenUsage *orchestrator.TokenUsageFile `json:"evaluation_token_usage,omitempty"`
+	ExecutionID       string                       `json:"execution_id,omitempty"`
+	RunFolder         string                       `json:"run_folder"`
+	ArchivedRunFolder string                       `json:"archived_run_folder,omitempty"`
+	TokenUsage        *orchestrator.TokenUsageFile `json:"token_usage,omitempty"`
 }
 
 type workflowRunDailyCostEntry struct {
@@ -387,19 +383,13 @@ type workflowPhaseDailyCostEntry struct {
 	TokenUsage *orchestrator.PhaseTokenUsageFile `json:"token_usage,omitempty"`
 }
 
-func buildWorkflowRunCostEntries(executionCosts, evaluationCosts map[string]*storedRunTokenUsage) []workflowRunCostEntry {
-	entries := make([]workflowRunCostEntry, 0, len(executionCosts)+len(evaluationCosts))
+func buildWorkflowRunCostEntries(executionCosts map[string]*storedRunTokenUsage) []workflowRunCostEntry {
+	entries := make([]workflowRunCostEntry, 0, len(executionCosts))
 	for _, cost := range executionCosts {
 		if cost == nil {
 			continue
 		}
 		entries = append(entries, workflowRunCostEntry{ExecutionID: cost.ExecutionID, RunFolder: cost.RunFolder, ArchivedRunFolder: cost.ArchivedRunFolder, TokenUsage: cost.TokenUsage})
-	}
-	for _, cost := range evaluationCosts {
-		if cost == nil {
-			continue
-		}
-		entries = append(entries, workflowRunCostEntry{ExecutionID: cost.ExecutionID, RunFolder: cost.RunFolder, ArchivedRunFolder: cost.ArchivedRunFolder, EvaluationTokenUsage: cost.TokenUsage})
 	}
 
 	sort.Slice(entries, func(i, j int) bool {
@@ -424,14 +414,6 @@ func workflowRunCostEntryTime(entry workflowRunCostEntry) time.Time {
 		}
 		if !entry.TokenUsage.CreatedAt.IsZero() {
 			return entry.TokenUsage.CreatedAt
-		}
-	}
-	if entry.EvaluationTokenUsage != nil {
-		if !entry.EvaluationTokenUsage.UpdatedAt.IsZero() {
-			return entry.EvaluationTokenUsage.UpdatedAt
-		}
-		if !entry.EvaluationTokenUsage.CreatedAt.IsZero() {
-			return entry.EvaluationTokenUsage.CreatedAt
 		}
 	}
 	return time.Time{}

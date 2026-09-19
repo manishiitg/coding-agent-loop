@@ -92,7 +92,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	}
 
 	// 2. Re-read plan.json + populate runtime fields from step_config.json
-	plan, err := hcpo.ReadCurrentPlan(ctx, hcpo.isEvaluationMode)
+	plan, err := hcpo.ReadCurrentPlan(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to load plan: %w", err)
 	}
@@ -163,12 +163,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		stepID, targetIndex, totalSteps, isInnerStep, hcpo.selectedRunFolder))
 
 	// 4. Ensure run folder exists
-	// In evaluation mode, redirect outputs to evaluation/runs/ instead of runs/
-	if hcpo.isEvaluationMode && !strings.Contains(hcpo.selectedRunFolder, "evaluation") {
-		hcpo.selectedRunFolder = fmt.Sprintf("../evaluation/runs/%s", hcpo.selectedRunFolder)
-		hcpo.SetIterationFolder(hcpo.selectedRunFolder)
-		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Evaluation mode: redirected run folder to %s", hcpo.selectedRunFolder))
-	}
 	fullRunFolderPath := fmt.Sprintf("%s/runs/%s", hcpo.GetWorkspacePath(), hcpo.selectedRunFolder)
 	if err := hcpo.createRunFolderStructure(ctx, fullRunFolderPath); err != nil {
 		hcpo.GetLogger().Warn(fmt.Sprintf("[WORKSHOP] Failed to create run folder structure: %v (continuing)", err))
@@ -269,7 +263,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 	// 6. Run via the standard execution pipeline.
 	retryStarted := time.Now().UTC()
 	retryFolder, retryExecutionID, retryRevision := hcpo.selectedRunFolder, "", ""
-	if !isInnerStep && !hcpo.isEvaluationMode {
+	if !isInnerStep {
 		if raw, err := hcpo.ReadWorkspaceFile(ctx, workflowRunMetadataPath(retryFolder)); err == nil {
 			var meta map[string]interface{}
 			if json.Unmarshal([]byte(raw), &meta) == nil && meta["status"] == "failed" {

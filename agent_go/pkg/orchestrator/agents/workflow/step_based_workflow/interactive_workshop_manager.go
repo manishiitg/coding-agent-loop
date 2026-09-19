@@ -450,22 +450,15 @@ func canonicalDeclaredExecutionMode(mode string) string {
 // isScriptedStep reports whether a step runs through the scripted executor
 // (a persistent learnings/{step-id}/main.py, replayed across runs). The plan
 // decides (PLAT-287): a regular step IS scripted, a message_sequence is
-// conversational, and an evaluation step says so itself in execution_mode.
-// The one exception is transitional: a regular step whose step_config.json
-// still carries the retired declared_execution_mode="agentic" key (not yet
-// stripped by v1.0.39) is a legacy agentic step the runtime keeps running as
-// a message_sequence; an evaluation step whose config still declares
-// scripted is honored until v1.0.39 moves that onto the eval plan.
+// conversational. The one exception is transitional: a regular step whose
+// step_config.json still carries the retired declared_execution_mode="agentic"
+// key (not yet stripped by v1.0.39) is a legacy agentic step the runtime keeps
+// running as a message_sequence.
 // cfg may be nil.
 func isScriptedStep(step PlanStepInterface, cfg *AgentConfigs) bool {
-	switch s := step.(type) {
+	switch step.(type) {
 	case *RegularPlanStep:
 		return cfg.legacyDeclared() != StepModeAgentic
-	case *EvaluationStep:
-		if canonicalDeclaredExecutionMode(s.ExecutionMode) == StepModeScripted {
-			return true
-		}
-		return cfg.legacyDeclared() == StepModeScripted
 	default:
 		return false
 	}
@@ -479,7 +472,7 @@ func workshopPlanStepIndex(ctx context.Context, controller *StepBasedWorkflowOrc
 	if controller == nil {
 		return index
 	}
-	plan, err := controller.ReadCurrentPlan(ctx, false)
+	plan, err := controller.ReadCurrentPlan(ctx)
 	if err != nil || plan == nil {
 		return index
 	}
@@ -538,7 +531,7 @@ func (iwm *InteractiveWorkshopManager) enrichQueryForComplexStep(
 	ctx context.Context,
 	stepID string,
 ) string {
-	plan, err := iwm.controller.ReadCurrentPlan(ctx, iwm.controller.isEvaluationMode)
+	plan, err := iwm.controller.ReadCurrentPlan(ctx)
 	if err != nil {
 		return ""
 	}
@@ -1405,7 +1398,6 @@ func (iwm *InteractiveWorkshopManager) SetToolCallQuery(mainSessionID string, qu
 //   - Variable/config tools: update_variable, groups, workflow config
 //   - Schedule tools: list/create/update/delete schedules
 //   - Skill tools: list/search/install/uninstall skills
-//   - Eval tools: validate_evaluation_plan, run_full_evaluation
 func GetToolsForWorkshopMode(mode string) []string {
 	// System tools — always available regardless of mode.
 	// Includes workspace, shell, virtual tools, and human interaction/notification.
@@ -1478,7 +1470,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
 		"update_validation_schema",
-		"update_evaluation_plan", "delete_evaluation_step",
 		"change_step_type",
 		"record_plan_drift_review",
 	}
@@ -1499,11 +1490,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 	// Skill tools
 	skills := []string{
 		"list_skills", "search_skills", "install_skill", "uninstall_skill", "import_skill",
-	}
-
-	// Eval tools
-	eval := []string{
-		"validate_evaluation_plan", "run_full_evaluation",
 	}
 
 	// Report tools — validate the workflow-owned db/reports/index.html UI.
@@ -1546,11 +1532,11 @@ func GetToolsForWorkshopMode(mode string) []string {
 	case "workshop":
 		tools = append(tools, "get_plan_prompt_health")
 		// WORKSHOP: full toolkit for designing,
-		// running, evaluating, reviewing, and evolving a workflow. The agent
+		// running, reviewing, and evolving a workflow. The agent
 		// derives the current "phase" from workspace state (does a plan
 		// exist? are there successful runs?) and uses the appropriate tools.
-		// Tools that only make sense post-runs (Bug Review,
-		// eval, and plan-edit tools are present here; their
+		// Tools that only make sense post-runs (Bug Review
+		// and plan-edit tools are present here; their
 		// downstream agents check evidence and refuse
 		// when state isn't ready.
 		tools = append(tools, execution...)
@@ -1564,7 +1550,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, "run_full_workflow")
 		tools = append(tools, "review_workflow_timing")
 		tools = append(tools, "review_workflow_costs")
-		tools = append(tools, eval...)
 		tools = append(tools, report...)
 		tools = append(tools, autoImprovement...)
 		tools = append(tools, pulseState...)
@@ -1594,7 +1579,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, schedule...)
 		tools = append(tools, skills...)
 		tools = append(tools, llmConfig...)
-		tools = append(tools, eval...)
 		tools = append(tools, report...)
 		tools = append(tools, "debug_step")
 	}
@@ -1910,18 +1894,14 @@ func (iwm *InteractiveWorkshopManager) setupWorkshopToolAgentSession(agentKind s
 		dbAccess = DBAccessReadWrite
 	}
 	configureWorkflowDBSession(sessionID, workspacePath, dbAccess, false)
-	blockedWrites := workshopBlockedWritePaths(workspacePath, writePaths)
-	if len(blockedWrites) > 0 {
-		common.SetSessionFolderGuardBlockedWritePaths(sessionID, blockedWrites)
-	}
 	iwm.controller.grantSessionCDPHostDownloadsReadWrite(sessionID)
 	if workspacePath != "" {
 		common.SetSessionWorkingDir(sessionID, workspacePath)
 	}
 
 	iwm.controller.GetLogger().Info(fmt.Sprintf(
-		"🔒 Workshop tool-agent session %q (%s) — cwd=%q Read=%v Write=%v BlockedWrite=%v",
-		sessionID, agentKind, workspacePath, readPaths, writePaths, blockedWrites,
+		"🔒 Workshop tool-agent session %q (%s) — cwd=%q Read=%v Write=%v",
+		sessionID, agentKind, workspacePath, readPaths, writePaths,
 	))
 	return sessionID
 }
@@ -1942,44 +1922,6 @@ func configureWorkshopToolAgentBridgeSession(sessionID string) {
 	}
 	common.PopulateMCPBridgeShortEnv(env)
 	common.SetSessionShellEnv(sessionID, env)
-}
-
-// workshopBlockedWritePaths denies writes to canonical files that must only
-// change through a tool, while leaving the folder around them writable.
-//
-// planning/ gets this for free by not being a write path at all, which is why
-// plan.json has always been tool-only and therefore always recorded in the
-// changelog. evaluation/ cannot use that trick: runs/ lives inside it and eval
-// executions write there constantly, so the whole folder is writable and
-// evaluation_plan.json was caught in the blast radius. It had no tool and no
-// protection, so every edit was a direct write that left no changelog entry —
-// social-media filed AR-20260729-2 three times over it and could not close it,
-// and the workflow still carries the hand-made .bak copies agents left behind
-// before editing it by hand.
-//
-// Reads stay permitted; only writes are denied, and the deny reaches the kernel
-// sandbox (macOS `(deny file-write*)`, Linux read-only bind-mount) so a shell
-// command cannot route around it either.
-func workshopBlockedWritePaths(workspacePath string, writePaths []string) []string {
-	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
-	if workspacePath == "" {
-		return nil
-	}
-	evaluationRoot := workspacePath + "/evaluation"
-	writable := false
-	for _, path := range writePaths {
-		if strings.Trim(strings.TrimSpace(path), "/") == evaluationRoot {
-			writable = true
-			break
-		}
-	}
-	// Only deny what this session could otherwise write. Adding a deny for a
-	// path already outside the write set would claim protection this function
-	// is not providing.
-	if !writable {
-		return nil
-	}
-	return []string{workspacePath + "/" + evaluationPlanRelPath}
 }
 
 func (iwm *InteractiveWorkshopManager) configureWorkshopToolAgentSession(config *agents.OrchestratorAgentConfig, agentKind string, readPaths []string, writePaths []string) func() {
@@ -2059,25 +2001,16 @@ func resolveWorkshopStepID(plan *PlanningResponse, inputID string) (string, erro
 }
 
 func resolveWorkshopStepConfigTarget(ctx context.Context, controller interface {
-	ReadCurrentPlan(context.Context, bool) (*PlanningResponse, error)
-}, inputID string) (resolvedID string, configSubdir string, isEvalStep bool, err error) {
-	plan, loadErr := controller.ReadCurrentPlan(ctx, false)
-	if loadErr == nil {
-		if id, resolveErr := resolveWorkshopStepID(plan, inputID); resolveErr == nil {
-			return id, "planning", false, nil
-		}
+	ReadCurrentPlan(context.Context) (*PlanningResponse, error)
+}, inputID string) (resolvedID string, err error) {
+	plan, loadErr := controller.ReadCurrentPlan(ctx)
+	if loadErr != nil {
+		return "", fmt.Errorf("step %q: cannot read planning/plan.json: %w", inputID, loadErr)
 	}
-	evalPlan, err := controller.ReadCurrentPlan(ctx, true)
-	if err != nil {
-		if loadErr != nil {
-			return "", "", false, fmt.Errorf("step %q: cannot read planning/plan.json: %w; cannot read evaluation/evaluation_plan.json: %w", inputID, loadErr, err)
-		}
-		return "", "", false, fmt.Errorf("step %q not found in planning/plan.json; cannot read evaluation/evaluation_plan.json: %w", inputID, err)
+	if id, resolveErr := resolveWorkshopStepID(plan, inputID); resolveErr == nil {
+		return id, nil
 	}
-	if id, resolveErr := resolveWorkshopStepID(evalPlan, inputID); resolveErr == nil {
-		return id, "evaluation", true, nil
-	}
-	return "", "", false, fmt.Errorf("step %q not found in planning/plan.json or evaluation/evaluation_plan.json", inputID)
+	return "", fmt.Errorf("step %q not found in planning/plan.json", inputID)
 }
 
 // registerInteractiveWorkshopTools registers the custom workshop tools on the agent.
@@ -2415,7 +2348,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			// Resolve flexible step ID (handles "1", "step-1", "step1" etc.)
-			plan, err := iwm.controller.ReadCurrentPlan(ctx, iwm.controller.isEvaluationMode)
+			plan, err := iwm.controller.ReadCurrentPlan(ctx)
 			if err != nil {
 				return fmt.Sprintf("Failed to load plan: %v. Cannot resolve step ID.", err), nil
 			}
@@ -2934,7 +2867,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "step_id or execution_id is required", nil
 			}
 			if stepID != "" {
-				if plan, err := iwm.controller.ReadCurrentPlan(ctx, iwm.controller.isEvaluationMode); err == nil {
+				if plan, err := iwm.controller.ReadCurrentPlan(ctx); err == nil {
 					if resolvedID, resolveErr := resolveWorkshopStepID(plan, stepID); resolveErr == nil {
 						stepID = resolvedID
 					}
@@ -3183,7 +3116,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			iwm.controller.SetSelectedRunFolder(runFolder)
 
 			// Resolve step ID
-			plan, err := iwm.controller.ReadCurrentPlan(ctx, iwm.controller.isEvaluationMode)
+			plan, err := iwm.controller.ReadCurrentPlan(ctx)
 			if err != nil {
 				return fmt.Sprintf("Failed to load plan: %v", err), nil
 			}
@@ -3201,7 +3134,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			result.WriteString(fmt.Sprintf("## Debug: %s (%s)\n\n", stepInfo.Step.GetTitle(), resolvedID))
 
 			// Section 1: Learning status
-			learningsPath := getLearningFolderPathByStepID("", resolvedID, "", iwm.controller.isEvaluationMode)
+			learningsPath := getLearningFolderPathByStepID("", resolvedID, "")
 			learningFiles, _ := iwm.controller.readStepLearningFiles(ctx, learningsPath)
 
 			stepConfigs, _ := iwm.controller.ReadStepConfigs(ctx)
@@ -3568,7 +3501,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 			resolvedForPrompts := stepID
 			var stepInfo *WorkshopStepInfo
-			plan, planErr := iwm.controller.readRunPlanSnapshot(ctx, iwm.controller.selectedRunFolder, iwm.controller.isEvaluationMode)
+			plan, planErr := iwm.controller.readRunPlanSnapshot(ctx, iwm.controller.selectedRunFolder)
 			if planErr == nil {
 				resolved, resolveErr := resolveWorkshopStepID(plan, stepID)
 				if resolveErr != nil {
@@ -7595,8 +7528,8 @@ controller deliberately does not paste or summarize them into this prompt:
 The files are the authority. Do not infer their content from controller prose,
 route labels, or prior review text.
 
-## EVALUATION PLAN
-Read `+"`evaluation/evaluation_plan.json`"+` using shell commands if it exists. If it does not exist, treat missing evaluation as a review finding when the workflow clearly needs measurable verification.
+## MEASUREMENT
+Read run-scoped, evidence-backed measurements where the producing steps already store them (`+"`db/db.sqlite`"+` tables, run outputs) and recent goal observations via `+"`get_goal_metrics`"+`, using shell commands. If no measurement exists, treat missing measurement as a review finding when the workflow clearly needs measurable verification.
 
 ## DEPENDENT ARTIFACTS
 Review these files/directories when present. Stay read-only:
@@ -7614,7 +7547,7 @@ Review these files/directories when present. Stay read-only:
 If useful, read:
 - execution outputs under `+"`runs/{{.TargetRunFolder}}/execution/`"+`
 - logs under `+"`runs/{{.TargetRunFolder}}/logs/`"+`
-- evaluation report at `+"`evaluation/runs/{{.TargetRunFolder}}/evaluation_report.json`"+`
+- measurement rows the producing steps stored for the target run (`+"`db`"+` tables, run outputs, goal observations)
 Use the run evidence to assess whether the plan decisions were justified in practice.
 {{end}}
 
@@ -7725,7 +7658,7 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
    - `+"`phase`"+` to tell the files apart: the `+"`execution-attempt-*`"+` files are the step's own work, while `+"`reflection-timing.json`"+` is its post-completion reflection turn. A step's true elapsed cost is execution PLUS reflection — reporting execution alone understates it, and reflection has measured around a fifth of total LLM time on a real workflow. Attribute them separately: a slow execution phase is a step-instruction problem, a slow reflection phase is a learning/KB objective problem, and the two have different fixes.
    - `+"`wrote_learnings`"+` / `+"`wrote_kb`"+` on a reflection file as the yield question — a reflection turn that cost real time while writing to neither store is pure overhead, and the fix is to sharpen the objective or drop the step to `+"`learnings_access: \"read\"`"+`, not to speed the turn up.
 4. Read conversation logs only after the timing files show where the time went.
-5. Read `+"`evaluation/evaluation_plan.json`"+` and the eval report if they help determine whether a proposed speedup would threaten success criteria.
+5. Read the producing steps' stored measurements (and goal observations via `+"`get_goal_metrics`"+`) if they help determine whether a proposed speedup would threaten success criteria.
 
 {{if .Focus}}## FOCUS
 Prioritize this area: **{{.Focus}}**
@@ -7838,9 +7771,8 @@ For shell commands, use absolute workspace paths: `+"`{{.AbsWorkspacePath}}/...`
 2. Read cost ledgers under:
    - `+"`costs/phase/token_usage.json`"+`
    - `+"`costs/execution/`"+`
-   - `+"`costs/evaluation/`"+` when evaluation spend matters
 3. Read step execution summaries under `+"`runs/<target>/logs/<step-id>/execution/`"+` to correlate cost with retries, LLM calls, and tool calls.
-4. Read `+"`evaluation/evaluation_plan.json`"+` and eval reports when evaluation cost might be disproportionate or misaligned to the real goal.
+4. Read the producing steps' stored measurements when measurement cost might be disproportionate or misaligned to the real goal.
 5. Read enough run evidence to judge whether a lower-cost recommendation would threaten success criteria.
 
 {{if .Focus}}## FOCUS
@@ -8388,7 +8320,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	workspacePath := iwm.controller.GetWorkspacePath()
 	logger := iwm.controller.GetLogger()
 
-	plan, err := iwm.controller.ReadCurrentPlan(ctx, iwm.controller.isEvaluationMode)
+	plan, err := iwm.controller.ReadCurrentPlan(ctx)
 	if err != nil {
 		return "", fmt.Errorf("failed to load plan: %w", err)
 	}
@@ -8406,29 +8338,11 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 	for i := range stepConfigs {
 		workflowStepConfigMap[stepConfigs[i].ID] = &stepConfigs[i]
 	}
-	evalStepConfigs, _ := iwm.controller.ReadStepConfigsFromSubdir(ctx, "evaluation")
-	evalStepConfigMap := map[string]*StepConfig{}
-	for i := range evalStepConfigs {
-		evalStepConfigMap[evalStepConfigs[i].ID] = &evalStepConfigs[i]
-	}
-	evalPlanExists, evalPlan, evalPlanErr := iwm.controller.checkExistingEvaluationPlan(ctx, "evaluation/evaluation_plan.json")
-	if evalPlanErr != nil {
-		logger.Warn(fmt.Sprintf("⚠️ Failed to read evaluation/evaluation_plan.json for review_step_code: %v", evalPlanErr))
-	}
-
 	// The plan type decides whether a target is scripted (PLAT-287).
 	planStepsByID := map[string]PlanStepInterface{}
 	for _, info := range append(allSteps, collectAllSteps(plan.OrphanSteps)...) {
 		if info.Step != nil {
 			planStepsByID[info.Step.GetID()] = info.Step
-		}
-	}
-	evalStepsByID := map[string]PlanStepInterface{}
-	if evalPlanExists && evalPlan != nil {
-		for _, evalStep := range evalPlan.Steps {
-			if evalStep != nil {
-				evalStepsByID[evalStep.ID] = evalStep
-			}
 		}
 	}
 
@@ -8444,11 +8358,7 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		hasSavedScript := scriptErr == nil && strings.TrimSpace(scriptContent) != ""
 		isScriptedConfig := false
 		if sc != nil {
-			if scope == "evaluation" {
-				isScriptedConfig = isScriptedStep(evalStepsByID[sid], sc.AgentConfigs)
-			} else {
-				isScriptedConfig = isScriptedStep(planStepsByID[sid], sc.AgentConfigs)
-			}
+			isScriptedConfig = isScriptedStep(planStepsByID[sid], sc.AgentConfigs)
 		}
 
 		if !hasSavedScript && !isScriptedConfig {
@@ -8505,24 +8415,14 @@ func (iwm *InteractiveWorkshopManager) runReviewStepCodeAgent(ctx context.Contex
 		appendCodeReviewTarget("workflow", sid, info.Step.GetTitle(), info.Step.GetDescription(), info.Step.GetValidationSchema(), workflowStepConfigMap[sid])
 	}
 
-	if evalPlanExists && evalPlan != nil {
-		for _, evalStep := range evalPlan.Steps {
-			if evalStep == nil {
-				continue
-			}
-			appendCodeReviewTarget("evaluation", evalStep.ID, evalStep.Title, evalStep.Description, evalStep.PreValidation, evalStepConfigMap[evalStep.ID])
-		}
-	}
-
 	if reviewCount == 0 {
-		return "No saved main.py scripts found to review across workflow steps or evaluation steps.", nil
+		return "No saved main.py scripts found to review across workflow steps.", nil
 	}
 
 	// Set up read-only folder guard
 	readPaths := []string{
 		workspacePath,
 		fmt.Sprintf("%s/planning", workspacePath),
-		fmt.Sprintf("%s/evaluation", workspacePath),
 		fmt.Sprintf("%s/learnings", workspacePath),
 		fmt.Sprintf("%s/code", workspacePath),
 	}
@@ -8881,7 +8781,6 @@ func (iwm *InteractiveWorkshopManager) runBackgroundOrchestratorAgent(ctx contex
 		SkipHumanInput:    true,
 		RunSingleStepOnly: false,
 		SingleStepTarget:  -1,
-		IsEvaluationMode:  false,
 	}
 
 	_, _, err := iwm.controller.executeOrchestratorStep(

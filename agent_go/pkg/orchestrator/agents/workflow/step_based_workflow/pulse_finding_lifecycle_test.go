@@ -291,7 +291,7 @@ func TestPulseFindingIssueIDUpdateReloadsExistingStepFindingAcrossReviewerModule
 			Severity:       "high",
 			Summary:        "Evaluator source-of-truth is inconsistent.",
 			Impact:         "A successful run can receive a false zero score.",
-			Evidence:       []string{"evaluation/runs/iteration-0/default/evaluation_report.json"},
+			Evidence:       []string{"runs/iteration-0/default/logs/score-step/execution/execution-attempt-1-iteration-0.json"},
 		},
 	})
 	if err != nil {

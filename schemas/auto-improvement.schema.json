@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://mcp-agent-builder.local/schemas/auto-improvement.schema.json",
   "title": "Auto-Improvement Framework Schemas",
-  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, planning/metrics.json, structured builder/improve.md / builder/improve-archive decision entries, and the LLM-callable metric tool inputs.",
+  "description": "Canonical schemas for the auto-improvement framework. Companion to docs/workflow/auto_improvement_framework.md. Covers workflow.json extensions, structured builder/improve.md / builder/improve-archive decision entries, and context-capture tool inputs.",
   "$defs": {
 
     "OversightMode": {
@@ -18,129 +18,6 @@
       "description": "append_only allows superseding edits via append; append_only_strict forbids any edit, even corrective. Used by compliance workflows."
     },
 
-    "MetricDirection": {
-      "type": "string",
-      "enum": ["higher_better", "lower_better"]
-    },
-
-    "MetricMode": {
-      "type": "string",
-      "enum": ["target", "slo"],
-      "description": "target = drive toward a number; slo = stay above floor / below ceiling."
-    },
-
-    "MetricRole": {
-      "type": "string",
-      "enum": ["primary", "secondary"],
-      "description": "primary = the small set of north-star or must-not-break metrics that steer optimization; secondary = diagnostic/supporting metrics that explain or protect primary movement."
-    },
-
-    "MetricSource": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["type"],
-      "properties": {
-        "type": {
-          "type": "string",
-          "enum": ["eval_step", "telemetry"],
-          "description": "Two source types: eval_step (value computed by a Python eval step) or telemetry (engine-recorded run data like cost or duration). For external feeds, schema validation, lineage, or delayed-outcome attribution, write a Python eval step that does the work and use type=eval_step."
-        },
-        "id": {
-          "type": "string",
-          "description": "For type=eval_step, the eval step's id (must exist in evaluation/evaluation_plan.json)."
-        },
-        "field": {
-          "type": "string",
-          "description": "For type=telemetry, the dotted path to the value (e.g., run.total_cost_usd). For type=eval_step, optional field key into the step's structured JSON output (omit to read the step's percent score)."
-        }
-      }
-    },
-
-    "Metric": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["id", "unit", "direction", "mode", "source"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$",
-          "description": "Unique within planning/metrics.json. kebab.dot pattern (e.g., audit.accuracy)."
-        },
-        "label": {
-          "type": "string",
-          "description": "Human-readable name."
-        },
-        "role": { "$ref": "#/$defs/MetricRole" },
-        "category": {
-          "type": "string",
-          "description": "Freeform grouping for UI and optimizer reasoning, e.g. outcome, execution, guardrail, content_quality, strategy_learning, telemetry."
-        },
-        "unit": {
-          "type": "string",
-          "description": "percent | usd | seconds | count | days | ratio | bps | etc."
-        },
-        "direction": { "$ref": "#/$defs/MetricDirection" },
-        "mode": { "$ref": "#/$defs/MetricMode" },
-        "target": {
-          "type": "number",
-          "description": "Required when mode=target."
-        },
-        "floor": {
-          "type": "number",
-          "description": "Required when mode=slo and direction=higher_better."
-        },
-        "ceiling": {
-          "type": "number",
-          "description": "Required when mode=slo and direction=lower_better."
-        },
-	        "source": { "$ref": "#/$defs/MetricSource" },
-	        "success_criteria": {
-	          "type": "string",
-	          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion; UI warns when this is absent."
-	        },
-	        "parent": {
-          "type": "string",
-          "description": "Optional id of a parent metric for grouping in UI. NO weighted rollup."
-        },
-        "version": {
-          "type": "integer",
-          "minimum": 1,
-          "description": "Incremented on amend. Series prior to this version are archived; chart renderers should break the line at the version transition."
-        }
-      }
-    },
-
-    "MetricsFile": {
-      "type": "object",
-      "additionalProperties": false,
-      "required": ["metrics"],
-      "properties": {
-        "metrics": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/Metric" }
-        },
-        "archive": {
-          "type": "array",
-          "description": "Prior versions of amended metrics. Append-only.",
-          "items": {
-            "type": "object",
-            "required": ["id", "version", "archived_at", "archived_reason", "definition"],
-            "properties": {
-              "id": { "type": "string" },
-              "version": { "type": "integer" },
-              "archived_at": { "type": "string", "format": "date-time" },
-              "archived_reason": { "type": "string" },
-              "definition": { "$ref": "#/$defs/Metric" }
-            }
-          }
-        },
-        "active_mode": {
-          "type": "string",
-          "description": "Runtime state for dual-mode workflows (declared in builder/improve.md's Workflow Profile). The active mode value (e.g. 'explore' / 'exploit' for social-media; mode names are workflow-defined) — steps branch on this via the variable resolver. Empty for single-mode workflows."
-        }
-      }
-    },
-
     "WorkflowExtensions": {
       "type": "object",
       "description": "Additions to workflow.json that the auto-improvement framework and runtime read as structured config. Workflow profile (primary type, secondary traits, plan stability, runtime mode, business-context accumulation) lives as prose in builder/improve.md under a '## Workflow Profile' section — the agent reads improve.md every turn anyway, and prose captures nuance enums can't.",
@@ -151,7 +28,7 @@
           "type": "integer",
           "minimum": 1,
           "maximum": 50,
-          "description": "Number of backup run iterations to keep in runs/ and evaluation/runs/, excluding iteration-0. Defaults to 5 when omitted."
+          "description": "Number of backup run iterations to keep in runs/, excluding iteration-0. Defaults to 5 when omitted."
         }
       }
     },
@@ -176,7 +53,7 @@
         "source": { "$ref": "#/$defs/DecisionSource" },
         "trigger": {
           "type": "string",
-          "description": "Origin of the decision. Slash command name (e.g., improve-evaluation, capture-context), system action name, or override action."
+          "description": "Origin of the decision. Slash command name (e.g., improve-report, capture-context), system action name, or override action."
         },
         "rationale": {
           "type": "string",
@@ -229,47 +106,6 @@
           "type": "array",
           "items": { "type": "string" },
           "description": "Context capture: workflow-relative paths under knowledgebase/context/examples/ associated with this captured context."
-        }
-      }
-    },
-
-    "ToolInput_propose_metric": {
-      "type": "object",
-      "description": "Input schema for the propose_metric tool. Used by the proposer.",
-      "additionalProperties": false,
-      "required": ["id", "unit", "direction", "mode", "source"],
-      "properties": {
-        "id": {
-          "type": "string",
-          "pattern": "^[a-z][a-z0-9_]*(\\.[a-z][a-z0-9_]*)*$"
-        },
-        "label": { "type": "string" },
-        "role": { "$ref": "#/$defs/MetricRole" },
-        "category": {
-          "type": "string",
-          "description": "Freeform grouping for UI and optimizer reasoning, e.g. outcome, execution, guardrail, content_quality, strategy_learning, telemetry."
-        },
-        "unit": { "type": "string" },
-        "direction": { "$ref": "#/$defs/MetricDirection" },
-        "mode": { "$ref": "#/$defs/MetricMode" },
-        "target": { "type": "number" },
-        "floor": { "type": "number" },
-        "ceiling": { "type": "number" },
-        "source": { "$ref": "#/$defs/MetricSource" },
-        "success_criteria": {
-          "type": "string",
-          "description": "The soul.md success criterion this metric operationalizes. Quote or summarize the exact criterion."
-        },
-        "parent": { "type": "string" },
-        "amend_existing": {
-          "type": "object",
-          "additionalProperties": false,
-          "description": "Set when amending an existing active metric id. The previous active definition is archived and the new active definition gets version+1.",
-          "required": ["id", "reason"],
-          "properties": {
-            "id": { "type": "string" },
-            "reason": { "type": "string" }
-          }
         }
       }
     },

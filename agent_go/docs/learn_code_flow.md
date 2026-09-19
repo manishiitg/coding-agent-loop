@@ -19,7 +19,6 @@ Read `workflow.json.code_layout_version` first. New workflows have version 1:
   locked code is read-only. Execution outputs remain in `STEP_OUTPUT_DIR`.
 - Statistics live beside the source in `code/<step-id>/script_metadata.json`.
   Entry-point hashes track entry revisions; they are not whole-tree snapshots.
-- Evaluation uses the same source layout and the evaluation runtime's own inputs.
 - Imports and clones preserve the source manifest's version. Manifest capability
   updates preserve the existing version; no implicit migration is performed.
 
@@ -70,8 +69,6 @@ Tools:
 - `change_step_type(step_id, target_type="scripted"|"message_sequence", reason)` moves an existing step between the two in place — same id, description, dependencies, validation and position — and records the change (with the reason) in the plan changelog. To scripted, its conversational items are dropped and `learnings/{step-id}/main.py` must then be written with `update_scripted_step(code=...)`; to a sequence, one execute-and-verify item is synthesized and `lock_code` is cleared.
 - `update_step_config(...)` no longer accepts an execution-mode field; it still owns `use_code_execution_mode`, `lock_code`, tiers, models and access flags.
 - `run_saved_main_py(step_id, group_id?)` is valid only for `regular` steps, because only those have a persistent saved-script fast path.
-
-Evaluation steps (`evaluation/evaluation_plan.json`) have no `regular`/`message_sequence` split; their choice is the explicit `execution_mode: "scripted"|"agentic"` field on the eval step itself (empty = agentic), set with `update_evaluation_plan(step_id, execution_mode=...)`.
 
 ## Configuration
 
@@ -127,7 +124,7 @@ This is the same bridge used by CLI-style providers that require HTTP tool routi
 
 The execution loop resolves the model in two layers:
 
-1. Is the step scripted? — yes iff its plan type is `regular` (an eval step: iff its `execution_mode` is `"scripted"`).
+1. Is the step scripted? — yes iff its plan type is `regular`.
 2. Is code execution enabled at all?
    - step config `use_code_execution_mode`
    - otherwise workflow/preset default

@@ -124,7 +124,7 @@ func getWorkflowPhaseWorkspaceMapForMode(docsRoot, workflowFolder, mode string) 
 	active := resolveWorkspacePath(docsRoot, path.Clean(workflowFolder))
 	access := "Workshop may write workflow-owned artifacts here; planning/config changes require dedicated tools."
 	if mode == "run" {
-		access = "Run may read workflow artifacts and execute authorized business work; it cannot edit workflow design, config, learnings, KB, eval, or report files."
+		access = "Run may read workflow artifacts and execute authorized business work; it cannot edit workflow design, config, learnings, KB, measurement, or report files."
 	}
 	return "\n## Workspace\n\nWorkspace docs root: `" + docsRoot + "`. Active workflow: `" + active + "/`. " + access +
 		"\nOther workflows are read-only. `config/` is tool-only. Use quoted absolute paths under the docs root in shell commands. Store workflow outputs and scratch artifacts under the active workflow, not Chats. `" +
@@ -188,8 +188,8 @@ List workflows with ` + "`execute_shell_command(command: \"ls " + absWorkflow + 
 Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 **Planning & config:**
-- ` + "`soul/soul.md`" + ` — canonical stable workflow intent: ` + "`## Objective`" + `, ` + "`## Success Criteria`" + `, and optional explicit user-approved constraints. Read before review, improve, eval, harden, and ambiguous execution decisions. **Do not store architecture, current step design, provider/tool choices, implementation details, historical decisions, references, agent-inferred assumptions, or notification preferences in soul.md** — per-workflow notification preferences live in workflow.json ` + "`notifications`" + ` (` + "`run_summary_instructions`" + ` and ` + "`run_summary_channels`" + ` for execution outcomes, ` + "`pulse_summary_instructions`" + ` and ` + "`pulse_summary_channels`" + ` for Pulse activity, ` + "`run_summary_recipients`" + ` and ` + "`pulse_summary_recipients`" + ` for WHO each summary is emailed to (empty = the account default recipient), ` + "`run_summary_slack_webhook_secret_names`" + ` and ` + "`pulse_summary_slack_webhook_secret_names`" + ` for WHICH Slack channel(s) each summary posts to — one Incoming Webhook is one channel, so a second channel needs a second webhook secret (empty = the single ` + "`slack_webhook_secret_name`" + `),` + "`exclude_channels`" + ` for workflow-wide channel opt-outs, and ` + "`block_recipients`" + ` for the email denylist, and ` + "`gmail_connection_id`" + ` for WHICH configured Gmail account sends this workflow's mail — empty inherits the account default connection, and an unknown or disabled connection fails the send rather than falling back to another account). The backend applies delivery rules automatically, exposes the preferences to Workflow Builder, and supplies them to the Pulse finalizer for their matching notification sends. Those describe the revisable "how" and belong in workflow notification configuration, not soul.md. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings), and AgentWorks renders it directly in Goal. Typed Pulse records store time-based review, analysis, and improvement history; they may report evidence-stamped goal progress but must not copy a Goal/Profile card. soul.md is the single source; leave it Markdown.
-- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (completed run/eval folders to keep per Builder, schedule, and webhook family; default 10). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
+- ` + "`soul/soul.md`" + ` — canonical stable workflow intent: ` + "`## Objective`" + `, ` + "`## Success Criteria`" + `, and optional explicit user-approved constraints. Read before review, improve, measure, harden, and ambiguous execution decisions. **Do not store architecture, current step design, provider/tool choices, implementation details, historical decisions, references, agent-inferred assumptions, or notification preferences in soul.md** — per-workflow notification preferences live in workflow.json ` + "`notifications`" + ` (` + "`run_summary_instructions`" + ` and ` + "`run_summary_channels`" + ` for execution outcomes, ` + "`pulse_summary_instructions`" + ` and ` + "`pulse_summary_channels`" + ` for Pulse activity, ` + "`run_summary_recipients`" + ` and ` + "`pulse_summary_recipients`" + ` for WHO each summary is emailed to (empty = the account default recipient), ` + "`run_summary_slack_webhook_secret_names`" + ` and ` + "`pulse_summary_slack_webhook_secret_names`" + ` for WHICH Slack channel(s) each summary posts to — one Incoming Webhook is one channel, so a second channel needs a second webhook secret (empty = the single ` + "`slack_webhook_secret_name`" + `),` + "`exclude_channels`" + ` for workflow-wide channel opt-outs, and ` + "`block_recipients`" + ` for the email denylist, and ` + "`gmail_connection_id`" + ` for WHICH configured Gmail account sends this workflow's mail — empty inherits the account default connection, and an unknown or disabled connection fails the send rather than falling back to another account). The backend applies delivery rules automatically, exposes the preferences to Workflow Builder, and supplies them to the Pulse finalizer for their matching notification sends. Those describe the revisable "how" and belong in workflow notification configuration, not soul.md. **Stays Markdown — never create a ` + "`soul.html`" + `, a "readable mirror", or any HTML copy.** It is parsed as Markdown (the framework-health check and run-time objective injection read the ` + "`## Objective`" + ` / ` + "`## Success Criteria`" + ` headings), and AgentWorks renders it directly in Goal. Typed Pulse records store time-based review, analysis, and improvement history; they may report evidence-stamped goal progress but must not copy a Goal/Profile card. soul.md is the single source; leave it Markdown.
+- ` + "`workflow.json`" + ` — workflow-level config: schedules, MCP servers, skills, LLM config, optional ` + "`run_retention_count`" + ` (completed run folders to keep per Builder, schedule, and webhook family; default 10). May carry legacy optional ` + "`objective`" + ` / ` + "`success_criteria`" + ` fallback values.
 - ` + "`planning/plan.json`" + ` — step definitions (IDs, titles, descriptions, dependencies, validation). It no longer owns root objective/success fields; use ` + "`soul/soul.md`" + ` for that.
 - ` + "`planning/step_config.json`" + ` — per-step settings. Each step's ` + "`agent_configs`" + ` object controls execution mode:
   - ` + "`use_code_execution_mode`" + ` (bool) — ` + "`false`" + ` = direct tool calls, ` + "`true`" + ` = scripted Python (main.py)
@@ -205,16 +205,15 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 - ` + "`code/<step-id>/script_metadata.json (legacy: learnings/<step-id>/script_metadata.json)`" + ` — version history + run stats for the saved script
 
 **Runs (execution output):**
-- ` + "`runs/iteration-0/`" + ` — mutable Builder/manual-workflow slot. A new Builder full run rotates the previous slot to plain ` + "`iteration-{N}`" + `. Producing saved schedules use immutable ` + "`iteration-{N}-sched`" + ` folders and webhooks use ` + "`iteration-{N}-hook`" + `. ` + "`workflow.json::run_retention_count`" + ` controls how many completed run/eval folders are kept independently for each family; default 10.
+- ` + "`runs/iteration-0/`" + ` — mutable Builder/manual-workflow slot. A new Builder full run rotates the previous slot to plain ` + "`iteration-{N}`" + `. Producing saved schedules use immutable ` + "`iteration-{N}-sched`" + ` folders and webhooks use ` + "`iteration-{N}-hook`" + `. ` + "`workflow.json::run_retention_count`" + ` controls how many completed run folders are kept independently for each family; default 10.
 - ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/`" + ` — per-step execution outputs, keyed by the declared ID in ` + "`planning/plan.json`" + ` (when variable groups are in use, each group runs in its own subfolder)
 - ` + "`runs/iteration-{N}/{group-name}/execution/{step-id}/code/main.py`" + ` — per-run working copy of the ` + "`scripted`" + ` script
 - ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + ` — per-step logs (see Log Layout below). Generated nested routes may use composite folders; inspect the actual directory for those executions.
 
-**Reports & evaluation:**
+**Reports & measurement:**
 - ` + "`db/reports/*.html`" + ` — workflow-owned live report documents. ` + "`index.html`" + ` is the default; the shared toolbar discovers other documents and optional ` + "`views.json`" + ` controls titles/order/default. Each document owns its internal layout and reads ` + "`db/db.sqlite`" + ` through ` + "`window.report`" + `.
 - ` + "`reports/{group-name}/{timestamp}.md`" + ` — legacy/auxiliary finished-run prose when present; not the live report dashboard contract
-- ` + "`evaluation/runs/{runFolder}/evaluation_report.json`" + ` — evaluation step outputs and evidence (eval pipeline only, separate from normal runs)
-- ` + "`evaluation/runs/iteration-0/`" + ` — ephemeral eval sandbox used during evaluation execution
+- producer tables in ` + "`db/db.sqlite`" + ` — measurement lives with its producer (see ` + "`measurement-plan`" + `)
 
 **Interactive builder / workshop:**
 - ` + "`builder/conversation/users/{user-id}/YYYY-MM-DD/session-{id}-conversation.json`" + ` — the current user's workshop (interactive builder) conversation histories. Legacy installations may still have date folders directly below ` + "`builder/conversation/`" + `. These are JSON files with ` + "`conversation_history`" + ` entries. User messages have ` + "`Role`" + `=` + "`human`" + `/` + "`user`" + ` and text in ` + "`Parts[].Text`" + `; assistant replies have ` + "`Role`" + `=` + "`ai`" + `/` + "`assistant`" + `. Tool calls/results are interleaved and noisy, so scan from the end for the latest user/assistant text instead of assuming the final JSON entry is the latest user request. Other users' folders are private and blocked by the folder guard.
@@ -226,7 +225,7 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 **Operating model and oversight:**
 - ` + "`/define-success`" + ` records the confirmed operating-model assessment (primary type, secondary traits, plan stability, runtime mode, business-context accumulation, and cadence) as a typed decision record. It is historical reasoning, not a permanent Goal/Profile card. Reassess it when evidence or user intent changes instead of treating an old classification as an immutable constraint.
 - ` + "`oversight_mode`" + ` (in ` + "`workflow.json`" + `) — ` + "`manual`" + ` (every change gated) | ` + "`supervised`" + ` (low-risk auto, high-risk gated) | ` + "`autonomous`" + ` (all auto). Default: ` + "`supervised`" + `. Hard gate: drives auto-vs-human-approval flow.
-- ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of completed run/eval folders to keep independently for plain Builder archives, saved-schedule ` + "`-sched`" + ` runs, and webhook ` + "`-hook`" + ` runs, excluding active ` + "`iteration-0`" + `. Default: 10. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
+- ` + "`run_retention_count`" + ` (in ` + "`workflow.json`" + `) — optional integer, 1-50. Number of completed run folders to keep independently for plain Builder archives, saved-schedule ` + "`-sched`" + ` runs, and webhook ` + "`-hook`" + ` runs, excluding active ` + "`iteration-0`" + `. Default: 10. Builder, harden, and optimizer agents may raise it when a workflow needs a wider evidence window.
 ### Log Layout (inside ` + "`runs/iteration-{N}/{group-name}/logs/{step-id}/`" + `)
 - ` + "`validation-{N}.json`" + ` — validation attempts for the step
 - ` + "`execution/execution-attempt-{A}-iteration-{I}.json`" + ` — execution result per attempt
@@ -271,31 +270,31 @@ Each workflow lives in ` + "`" + absWorkflow + `/<name>/` + "`" + ` with:
 
 ## Pulse and Goal Advisor — When to Use the Tools
 
-Scheduled Goal Advisor, selected by Pulse Gate as a maintenance module, reads eval reports, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed plan-change proposal is warranted. Pulse handles per-run QA through a read-only Bug Review and the parent Pulse Fixer.
+Scheduled Goal Advisor, selected by Pulse Gate as a maintenance module, reads goal observations via ` + "`get_goal_metrics`" + `, producer steps' stored outputs, run outputs, ` + "`soul.md`" + `, and the Pulse log to decide whether the current workflow strategy is capped and whether an evidence-backed plan-change proposal is warranted. Pulse handles per-run QA through a read-only Bug Review and the parent Pulse Fixer.
 
 **Two-layer mental model — internalize this before reasoning about any /improve-* flow:**
 
 1. **Plan — what the workflow does.** Lives in ` + "`planning/plan.json`" + ` plus ` + "`soul/soul.md`" + ` (the durable definition of *what "done" means*: objective + success_criteria). The plan is the blueprint; ` + "`soul.md`" + ` is the goal it serves.
-2. **Eval — how we know it worked.** Lives in ` + "`evaluation/evaluation_plan.json`" + ` and per-run reports. Eval tracks BOTH operational quality and goal achievement.
+2. **Measurement — how we know it worked.** Run-scoped outcomes stored by producing steps; tracks BOTH operational quality and goal achievement.
 
-Said simply: **plan defines the work and goal; eval plus run evidence shows where harden or replan is needed.**
+Said simply: **plan defines the work and goal; measurement plus run evidence shows where harden or replan is needed.**
 
 **Decision model:**
-- Pulse selects ` + "`bug_review`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/eval wiring may need repair. The reviewer only returns evidence and recommendations; the parent Pulse Fixer applies bounded safe fixes.
+- Pulse selects ` + "`bug_review`" + ` when the workflow path is basically right but prompts/config/validation/learnings/KB/db/report/measurement wiring may need repair. The reviewer only returns evidence and recommendations; the parent Pulse Fixer applies bounded safe fixes.
 - Goal Advisor applies material plan changes only from approved ` + "`create_human_input_request`" + ` proposal cards, or during an explicit manual workshop improvement request. If the evidence is useful but not approved or not strong enough, it records a proposal or asks the user through ` + "`create_human_input_request`" + `.
 
 ### Goal readiness: ` + "`/define-success`" + `
 
 Recurring improvement needs a clear Goal in ` + "`soul/soul.md`" + `, not a permanent profile card in Pulse. ` + "`/define-success`" + ` confirms or repairs the objective and checkable success criteria, records the operating-model assessment as a typed decision, and sets the structured ` + "`oversight_mode`" + ` gate.
 
-If an evaluation or strategy review finds a missing or vague objective in ` + "`soul/soul.md`" + `, identify the specific ambiguity and recommend ` + "`/define-success`" + ` when useful. Strategic review can still assess available outputs and propose improvements with explicit assumptions; do not block the whole review for missing evaluation coverage or an old Workflow Profile card.
+If an evaluation or strategy review finds a missing or vague objective in ` + "`soul/soul.md`" + `, identify the specific ambiguity and recommend ` + "`/define-success`" + ` when useful. Strategic review can still assess available outputs and propose improvements with explicit assumptions; do not block the whole review for missing measurement coverage or an old Workflow Profile card.
 
 ### Tool: ` + "`get_workflow_command_guidance`" + `
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/improve-evaluation`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
-  2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the eval plan"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
+  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/improve-report`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the measurement step"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
 **Kinds — match to intent:**
@@ -312,7 +311,6 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Improvements:
     - define-success           → one-time framework bootstrap
-    - improve-evaluation       → evaluation_plan changes
     - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
     - engineering-review       → read-only Technical Review phase; manual pulse-review aliases supply an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
@@ -341,7 +339,7 @@ SQLite is the finding and fix lifecycle source of truth; the Pulse popup is the 
 ### Honesty rules
 
 - Never fabricate baselines or measurement values. The system reads them from real run history.
-- Never claim a harden/replan action improved the workflow until real run/eval evidence supports it.
+- Never claim a harden/replan action improved the workflow until real run/measurement evidence supports it.
 - Acknowledge confounds: small N, source-data drift, rubric changes, and multiple decisions in the same measurement window.
 
 ## Modifying Existing Workflows
@@ -433,7 +431,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`llm_config`" + ` — set to ` + "`null`" + ` unless the user asked for a specific provider/model
 
 **Optional workflow-level fields**:
-- ` + "`run_retention_count`" + ` — number of completed run/eval folders to keep independently for Builder archives, saved schedules, and webhooks, excluding active ` + "`iteration-0`" + `. Omit for the default 10; set 1-50 when the workflow needs a wider or narrower evidence window.
+- ` + "`run_retention_count`" + ` — number of completed run folders to keep independently for Builder archives, saved schedules, and webhooks, excluding active ` + "`iteration-0`" + `. Omit for the default 10; set 1-50 when the workflow needs a wider or narrower evidence window.
 
 **` + "`schedules`" + `** is an array; leave empty ` + "`[]`" + ` unless the user asked for cron scheduling. Each schedule (if any) needs: ` + "`id`" + `, ` + "`name`" + `, ` + "`cron_expression`" + `, ` + "`timezone`" + `, ` + "`enabled`" + ` (bool), ` + "`group_names`" + ` (array).
 

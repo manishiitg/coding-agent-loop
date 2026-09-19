@@ -375,7 +375,6 @@ type WorkflowOverviewRunFolderDetail struct {
 type WorkflowOverview struct {
 	WorkspacePath  string                            `json:"workspace_path"`
 	RunFolders     []WorkflowOverviewRunFolderDetail `json:"run_folders"`
-	EvalData       workflowEvaluationReportsResponse `json:"eval_data"`
 	LastUpdated    *string                           `json:"last_updated,omitempty"`
 	TotalRunCount  int                               `json:"total_run_count"`
 	ActiveRunPaths []string                          `json:"active_run_paths,omitempty"`
@@ -624,11 +623,6 @@ func (api *StreamingAPI) handleGetWorkflowsOverview(w http.ResponseWriter, r *ht
 				return
 			}
 			overview.TotalRunCount = len(folders)
-
-			overview.EvalData = workflowEvaluationReportsResponse{
-				Success: true,
-				Reports: []EvaluationReportEntry{},
-			}
 
 			costResp := loadWorkflowCosts(ctx, workspacePath)
 			costByFolder := make(map[string]workflowRunCostEntry, len(costResp.Runs))

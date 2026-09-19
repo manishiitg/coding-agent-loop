@@ -110,7 +110,7 @@ func FilterCustomToolsByCategory(
 	return filteredTools, filteredExecutors
 }
 
-// PreparePhaseAgentTools returns a minimal tool set for phase agents (planning, evaluation, debugging, etc.)
+// PreparePhaseAgentTools returns a minimal tool set for phase agents (planning, debugging, etc.)
 // Phase agents only need shell_command (for file operations) and human tools (for feedback).
 // They do NOT need the full workspace_advanced tool set.
 func (bo *BaseOrchestrator) PreparePhaseAgentTools() ([]llmtypes.Tool, map[string]interface{}) {

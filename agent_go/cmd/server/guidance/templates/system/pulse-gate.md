@@ -164,7 +164,7 @@ focus keys when applicable:
 - `validation_contract_health`
 - `store_integrity`
 - `report_quality_truth` — report accuracy plus reporting UI, accessibility, and performance practices
-- `evaluation_quality_truth` — evaluator truth, rubrics, thresholds, negative tests, and reproducibility
+- `measurement_quality_truth` — measurement truth (producer outputs, goal observations), rubrics, thresholds, negative tests, and reproducibility
 
 This is agentic selection, not a Go threshold or semantic classifier. A large
 run can be justified by adaptive research, browser dwell, or independent
@@ -410,7 +410,7 @@ the selected scope in `reason` and `evidence`; the later reviewer records one
 terminal review result after inspecting the evidence. An unknown field rejects the whole worklist and prevents all review
 and repair work from starting.
 
-Workflow steps and evaluation/collector steps own metric observations. Gate
+Workflow steps and measurement/collector steps own metric observations. Gate
 must not duplicate them through an impact ledger. The later retained module
 tasks own selected architecture, technical and strategic work, canonical issue
 updates, genuine decisions and one terminal review result. Stop after recording

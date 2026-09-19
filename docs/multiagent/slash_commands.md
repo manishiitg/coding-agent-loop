@@ -100,7 +100,6 @@ Workflow slash commands are wrappers around the backend `get_workflow_command_gu
 | `/improve-data` | Improve durable data contracts, schemas, and report compatibility | Builder, Optimizer | `improve-data` |
 | `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
 | `/define-success` | Confirm Goal and success criteria in `soul/soul.md`; record the operating-model assessment in Pulse Reflection history | Workshop | `define-success` |
-| `/improve-evaluation` | Validate `evaluation/evaluation_plan.json` and improve goal/criteria coverage | Optimizer | `improve-evaluation` |
 | `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
 
 The workflow command source of truth is split across:

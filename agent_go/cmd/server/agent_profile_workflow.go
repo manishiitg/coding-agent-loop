@@ -46,13 +46,6 @@ func (r *agentProfileWorkflowRegistrar) wrap(name string, execute func(context.C
 		if args == nil {
 			args = make(map[string]interface{})
 		}
-		if name == "run_full_workflow" {
-			if _, exists := args["disable_eval"]; !exists {
-				// Video/product profiles can provide a fixed production plan without
-				// also defining AgentWorks' optional evaluation plan.
-				args["disable_eval"] = true
-			}
-		}
 		if r.prepare != nil {
 			if err := r.prepare(ctx, name, args); err != nil {
 				return "Could not prepare this workflow run: " + err.Error(), nil

@@ -535,8 +535,6 @@ func workflowRunMetadataPath(runFolder string) string {
 	switch {
 	case cleaned == "":
 		return ""
-	case strings.HasPrefix(cleaned, "evaluation/runs/"):
-		return filepath.Join(cleaned, "run_metadata.json")
 	default:
 		return filepath.Join("runs", cleaned, "run_metadata.json")
 	}

@@ -146,7 +146,6 @@ Depending on mode, it may also expose:
 - `run_saved_main_py`
 - `debug_step`
 - `run_full_workflow`
-- `run_full_evaluation`
 - `run_full_report`
 - `Pulse Bug Review/Fixer`
 

@@ -74,51 +74,9 @@ type StepOutputContent struct {
 	IsJSON   bool        `json:"is_json"`
 }
 
-type EvaluationStepScore struct {
-	StepID   string  `json:"step_id"`
-	Score    float64 `json:"score"`
-	MaxScore float64 `json:"max_score,omitempty"`
-	// Pointer preserves the difference between a new report's explicit false
-	// (source output had no score) and a legacy report where the field did not
-	// exist. The frontend can safely apply compatibility inference only to nil.
-	ScoreCaptured *bool              `json:"score_captured,omitempty"`
-	Reasoning     string             `json:"reasoning"`
-	Evidence      string             `json:"evidence"`
-	Skipped       bool               `json:"skipped,omitempty"`
-	ContextOutput string             `json:"context_output,omitempty"`
-	OutputContent *StepOutputContent `json:"output_content,omitempty"`
-}
-
-type EvaluationReport struct {
-	EvaluationID    string                `json:"evaluation_id,omitempty"`
-	TargetRunFolder string                `json:"target_run_folder"`
-	GeneratedAt     string                `json:"generated_at"`
-	StepScores      []EvaluationStepScore `json:"step_scores"`
-}
-
-type EvaluationReportEntry struct {
-	EvaluationID      string           `json:"evaluation_id,omitempty"`
-	RunFolder         string           `json:"run_folder"`
-	ArchivedRunFolder string           `json:"archived_run_folder,omitempty"`
-	Report            EvaluationReport `json:"report"`
-}
-
-type EvaluationAggregate struct {
-	TotalRuns int `json:"total_runs"`
-}
-
-type workflowEvaluationReportsResponse struct {
-	Success        bool                    `json:"success"`
-	Reports        []EvaluationReportEntry `json:"reports"`
-	Aggregate      *EvaluationAggregate    `json:"aggregate,omitempty"`
-	EvaluationPlan *string                 `json:"evaluation_plan,omitempty"`
-	Error          string                  `json:"error,omitempty"`
-}
-
 type workflowReviewDataResponse struct {
-	Success     bool                              `json:"success"`
-	Costs       workflowCostsResponse             `json:"costs"`
-	Evaluations workflowEvaluationReportsResponse `json:"evaluations"`
+	Success bool                  `json:"success"`
+	Costs   workflowCostsResponse `json:"costs"`
 }
 
 func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsResponse {
@@ -143,11 +101,6 @@ func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsR
 		executionCosts = map[string]*storedRunTokenUsage{}
 	}
 
-	evaluationCosts, err := readAllRunTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeEvaluation)
-	if err != nil {
-		evaluationCosts = map[string]*storedRunTokenUsage{}
-	}
-
 	runDailyCosts := readWorkflowRunDailyCosts(ctx, workspacePath)
 
 	return workflowCostsResponse{
@@ -156,7 +109,7 @@ func loadWorkflowCosts(ctx context.Context, workspacePath string) workflowCostsR
 		PhaseTokenUsage: phaseTokenUsage,
 		PhaseDailyCosts: phaseDailyCosts,
 		RunDailyCosts:   runDailyCosts,
-		Runs:            buildWorkflowRunCostEntries(executionCosts, evaluationCosts),
+		Runs:            buildWorkflowRunCostEntries(executionCosts),
 		ActivityTiming:  loadWorkflowActivityTiming(ctx, workspacePath),
 	}
 }
@@ -274,7 +227,6 @@ func loadWorkflowActivityTiming(ctx context.Context, workspacePath string) workf
 
 	workspaceRoot := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(workspacePath))
 	loadWorkflowTimingFiles(&summary, filepath.Join(workspaceRoot, "runs"), "workflow_execution", "step:")
-	loadWorkflowTimingFiles(&summary, filepath.Join(workspaceRoot, "evaluation", "runs"), "evaluation", "evaluation:")
 	return summary
 }
 
@@ -311,9 +263,6 @@ func readWorkflowRunDailyCosts(ctx context.Context, workspacePath string) []work
 	if executionDailyCosts, err := readAllRunDailyTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeExecution); err == nil {
 		entries = append(entries, executionDailyCosts...)
 	}
-	if evaluationDailyCosts, err := readAllRunDailyTokenUsageFromCosts(ctx, workspacePath, orchestrator.CostScopeEvaluation); err == nil {
-		entries = append(entries, evaluationDailyCosts...)
-	}
 	sort.Slice(entries, func(i, j int) bool {
 		if entries[i].Date != entries[j].Date {
 			return entries[i].Date > entries[j].Date
@@ -324,78 +273,6 @@ func readWorkflowRunDailyCosts(ctx context.Context, workspacePath string) []work
 		return entries[i].Scope < entries[j].Scope
 	})
 	return entries
-}
-
-func loadWorkflowEvaluationReports(ctx context.Context, workspacePath, runFolder string) workflowEvaluationReportsResponse {
-	evaluationPlan := readWorkflowEvaluationPlan(ctx, workspacePath)
-	reportMap, err := readAllEvaluationReportsFromScores(ctx, workspacePath)
-	if err != nil {
-		return workflowEvaluationReportsResponse{
-			Success: false,
-			Error:   fmt.Sprintf("Failed to read evaluation scores: %v", err),
-		}
-	}
-
-	var reports []EvaluationReportEntry
-	for evaluationID, stored := range reportMap {
-		if stored == nil || stored.Report == nil || !workflowRunFolderMatches(stored.effectiveRunFolder(), runFolder) {
-			continue
-		}
-		reports = append(reports, EvaluationReportEntry{
-			EvaluationID:      evaluationID,
-			RunFolder:         stored.RunFolder,
-			ArchivedRunFolder: stored.ArchivedRunFolder,
-			Report:            *stored.Report,
-		})
-	}
-
-	sort.Slice(reports, func(i, j int) bool {
-		return reports[i].Report.GeneratedAt > reports[j].Report.GeneratedAt
-	})
-
-	return workflowEvaluationReportsResponse{
-		Success:        true,
-		Reports:        reports,
-		Aggregate:      buildEvaluationAggregate(reports),
-		EvaluationPlan: evaluationPlan,
-	}
-}
-
-func workflowRunFolderMatches(candidate, requested string) bool {
-	if strings.TrimSpace(requested) == "" {
-		return true
-	}
-	return candidate == requested ||
-		strings.HasPrefix(candidate, requested+"/") ||
-		strings.HasPrefix(requested, candidate+"/")
-}
-
-func buildEvaluationAggregate(reports []EvaluationReportEntry) *EvaluationAggregate {
-	if len(reports) == 0 {
-		return nil
-	}
-
-	return &EvaluationAggregate{
-		TotalRuns: len(reports),
-	}
-}
-
-func readWorkflowEvaluationPlan(ctx context.Context, workspacePath string) *string {
-	evaluationPlanPath := filepath.Join(workspacePath, "evaluation", "evaluation_plan.json")
-	planContent, exists, err := readFileFromWorkspace(ctx, evaluationPlanPath)
-	if err != nil || !exists {
-		return nil
-	}
-
-	var planJSON interface{}
-	if err := json.Unmarshal([]byte(planContent), &planJSON); err == nil {
-		if formatted, err := json.MarshalIndent(planJSON, "", "  "); err == nil {
-			formattedStr := string(formatted)
-			return &formattedStr
-		}
-	}
-
-	return &planContent
 }
 
 func (api *StreamingAPI) handleGetWorkflowReviewData(w http.ResponseWriter, r *http.Request) {
@@ -414,7 +291,6 @@ func (api *StreamingAPI) handleGetWorkflowReviewData(w http.ResponseWriter, r *h
 	}
 
 	workspacePath := r.URL.Query().Get("workspace_path")
-	runFolder := r.URL.Query().Get("run_folder")
 	if workspacePath == "" {
 		http.Error(w, "workspace_path parameter is required", http.StatusBadRequest)
 		return
@@ -427,9 +303,8 @@ func (api *StreamingAPI) handleGetWorkflowReviewData(w http.ResponseWriter, r *h
 	}
 
 	response := workflowReviewDataResponse{
-		Success:     true,
-		Costs:       loadWorkflowCosts(r.Context(), cleanedWorkspacePath),
-		Evaluations: loadWorkflowEvaluationReports(r.Context(), cleanedWorkspacePath, runFolder),
+		Success: true,
+		Costs:   loadWorkflowCosts(r.Context(), cleanedWorkspacePath),
 	}
 
 	w.Header().Set("Content-Type", "application/json")

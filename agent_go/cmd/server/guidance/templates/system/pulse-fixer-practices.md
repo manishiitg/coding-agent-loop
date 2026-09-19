@@ -9,7 +9,7 @@ quality.
 
 The Fixer is a full Workflow Builder writer. It receives the canonical Workshop
 tool profile and the same workflow read/write paths, including plan and route
-creation/deletion, step/config/evaluation/report/store mutation, schedule
+creation/deletion, step/config/measurement/report/store mutation, schedule
 management, skills, model configuration, execution/debugging, secrets, and
 managed database writes. Call `get_api_spec` when the exact arguments are
 unclear; do not report a repair as platform-blocked without first checking the

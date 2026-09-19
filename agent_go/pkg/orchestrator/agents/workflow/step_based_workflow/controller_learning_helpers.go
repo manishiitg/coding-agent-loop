@@ -39,21 +39,20 @@ func resolveLearningsAccess(agentConfigs *AgentConfigs) string {
 
 // canReadLearnings reports whether this step's execution prompt should include
 // the global SKILL.md content. Read is the default unless explicitly set to
-// "none"; routing steps and evaluation-mode runs always skip to keep their
-// prompts lean.
-func canReadLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
-	if isEvalMode || (step != nil && isRoutingStep(step)) {
+// "none"; routing steps always skip to keep their prompts lean.
+func canReadLearnings(agentConfigs *AgentConfigs, step PlanStepInterface) bool {
+	if step != nil && isRoutingStep(step) {
 		return false
 	}
 	return resolveLearningsAccess(agentConfigs) != LearningsAccessNone
 }
 
 // resolveExecutionLearningsAccess is the single capability decision used by
-// both prompt injection and filesystem guards. Evaluation and deterministic
-// routing steps intentionally consume no workflow learnings; returning none
-// here prevents their shell access from being broader than their prompt.
-func resolveExecutionLearningsAccess(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) string {
-	if !canReadLearnings(agentConfigs, step, isEvalMode) {
+// both prompt injection and filesystem guards. Deterministic routing steps
+// intentionally consume no workflow learnings; returning none here prevents
+// their shell access from being broader than their prompt.
+func resolveExecutionLearningsAccess(agentConfigs *AgentConfigs, step PlanStepInterface) string {
+	if !canReadLearnings(agentConfigs, step) {
 		return LearningsAccessNone
 	}
 	return resolveLearningsAccess(agentConfigs)
@@ -62,9 +61,9 @@ func resolveExecutionLearningsAccess(agentConfigs *AgentConfigs, step PlanStepIn
 // canWriteLearnings reports whether the step agent should run its direct
 // post-completion learnings turn. Requires learnings_access == "read-write"
 // AND a non-empty learning_objective (the extraction target for the writer).
-// Routing and eval mode always skip.
-func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
-	if isEvalMode || (step != nil && isRoutingStep(step)) {
+// Routing steps always skip.
+func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface) bool {
+	if step != nil && isRoutingStep(step) {
 		return false
 	}
 	if agentConfigs == nil {
@@ -80,8 +79,8 @@ func canWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEva
 // learnings writes. Since direct is now the only mode, this collapses to
 // "is the step access+objective gate satisfied?". Kept as a named helper so
 // the call sites still read intuitively.
-func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface, isEvalMode bool) bool {
-	return canWriteLearnings(agentConfigs, step, isEvalMode)
+func shouldDirectWriteLearnings(agentConfigs *AgentConfigs, step PlanStepInterface) bool {
+	return canWriteLearnings(agentConfigs, step)
 }
 
 // PLAT-060. Architecture-owned config decisions must carry the reason that justified

@@ -168,7 +168,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runKBConsolidatePhase(ctx context.Con
 
 	// Consolidation is a builder operation, not a continuation of whichever
 	// execution last ran in this session. Read current declarations explicitly.
-	plan, err := hcpo.ReadCurrentPlan(ctx, false)
+	plan, err := hcpo.ReadCurrentPlan(ctx)
 	if err != nil {
 		return "", fmt.Errorf("load current KB contribution plan: %w", err)
 	}

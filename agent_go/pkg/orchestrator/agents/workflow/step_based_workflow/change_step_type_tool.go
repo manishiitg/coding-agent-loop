@@ -214,9 +214,6 @@ func createChangeStepTypeExecutor(
 		if err := validateStepIDUniqueness(plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
 		}
-		if err := validateCrossPlanStepIDUniqueness(ctx, workspacePath, readFile, plan); err != nil {
-			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
-		}
 		if err := ValidatePlanStructure(plan); err != nil {
 			return "", fmt.Errorf("plan validation failed after conversion: %w", err)
 		}

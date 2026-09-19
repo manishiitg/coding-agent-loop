@@ -75,9 +75,6 @@ type ExecutionOptions struct {
 	// RouteSelections overrides routing steps deterministically by step ID.
 	// Values may be route_id or a unique next_step_id for that routing step.
 	RouteSelections map[string]string `json:"route_selections,omitempty"`
-
-	// DisableEval skips the automatic evaluation pass after a successful full workflow run.
-	DisableEval bool `json:"disable_eval,omitempty"`
 }
 
 // BatchExecutionProgress tracks execution progress across multiple variable groups
@@ -98,7 +95,6 @@ type ExecutionContext struct {
 	RunSingleStepOnly bool   // Whether to run only a single step and stop
 	SingleStepTarget  int    // Target step index to run (0-based)
 	SavedScriptOnly   bool   // Whether to run only saved learnings/{step-id}/main.py with no LLM fallback
-	IsEvaluationMode  bool   // Whether we're running evaluation steps
 	StepPathOverride  string // If set, overrides the default "step-{N}" path for the target step (used for inner steps in workshop)
 
 	// ArtifactFolderNameOverride writes execution artifacts/logs to this folder

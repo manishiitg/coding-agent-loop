@@ -115,15 +115,15 @@ Audit procedure:
 3. For every deleted step ID, search dependent artifacts for a dangling
    reference to it: other steps' `next_step_id`/`routes[].next_step_id`/
    `predefined_routes` (a route or chain that still points at the deleted
-   ID), `evaluation/evaluation_plan.json` (`applies_to_routes` naming the
-   deleted step, or an eval step whose whole purpose was evaluating it),
+   ID), producer measurements (a measurement reading the
+   deleted step's outputs, left pointing at artifacts that no longer exist),
    `db/reports/index.html` and `db/README.md` (mentions of the deleted step
    by name/id), and `learnings/_global/` notes referencing it. A route/chain
    left pointing at a deleted step is real drift — the workflow can no longer
    execute that path.
 4. Fix what is safe and workflow-owned directly: update a stale reference only
    when its intended replacement or removal is unambiguous in the approved plan.
-   Do not guess a new successor, drop a needed evaluation, or redesign a route;
+   Do not guess a new successor, drop a needed measurement, or redesign a route;
    use a decision for ambiguous behavior. Confirm applied edits and route anything you cannot safely
    fix in this turn using the exact same classification scheme as step 4
    below (`step_id="__workflow_drift_review__"` on every `record_pulse_finding`
@@ -225,33 +225,24 @@ judge:
   (reached before either route's own convergence point) is reachable from
   more than one route: that means the routes are silently sharing exclusive
   path segments they shouldn't, not deliberately rejoining.
-- **`route_eval_pairing`** — check whether the workflow has an
-  `evaluation/evaluation_plan.json` at all. If it does not, this check is
-  out of scope for this step — record it `pass` with evidence saying the
-  workflow has no eval plan, nothing to pair. If it does, this check is
-  about preserving the workflow's intended evaluation coverage. First establish
-  that policy from the current approved contract: an intentionally absent/empty
-  eval plan is not a reason to manufacture evaluations or restore retired criteria.
-  When every route is intended to be evaluated, check **coverage of every route
-  this step declares, not just any one eval reference** (a single eval covering 1 of this step's 5 routes must
-  not pass): collect every eval step whose `applies_to_routes` names this
-  routing step's ID (e.g. `applies_to_routes:
-  [{"routing_step_id":"<this step's id>", "route_ids":[...]}]` — see
-  `references/evaluation-plan.md`), union their `route_ids`, and compare
-  that union against this step's own declared `routes[].route_id` set.
-  Missing routes are the finding — name them by `route_id` in the
-  evidence. Two carve-outs, both judgment calls, not mechanical: (1) an
-  eval step with no `applies_to_routes` at all runs for every execution
-  regardless of route, so if it genuinely evaluates something the routing
-  decision itself doesn't affect (e.g. a global output-format or
-  cost-discipline check), it can count as intentionally route-agnostic
-  coverage for routes that have no route-specific eval step — but if it
-  only evaluates the behavior of the specific branch the run happened to
-  take, it does not count as covering the routes it never sees. (2) a
-  route whose destination is a trivial no-op (e.g. `next_step_id` goes
-  straight to `"end"` with nothing produced) may legitimately have nothing
-  worth evaluating — judge whether that's really true before treating it
-  as covered.
+- **`route_measurement_pairing`** — check whether the workflow's
+  measurements cover this routing step's branches. Read the producing
+  steps' stored measurements and goal observations: when every route is
+  intended to be measured, check **coverage of
+  every route this step declares** (a measurement that only observes 1 of
+  this step's 5 branches must not pass). Missing branches are the finding —
+  name them by `route_id` in the evidence. Two carve-outs, both judgment
+  calls, not mechanical: (1) a measurement query that genuinely observes
+  something the routing decision itself doesn't affect (e.g. a global
+  output-format or cost-discipline check) counts as intentionally
+  route-agnostic coverage — but if it only observes the behavior of the
+  specific branch the run happened to take, it does not count as covering
+  the branches it never sees. (2) a route whose destination is a trivial
+  no-op (e.g. `next_step_id` goes straight to `"end"` with nothing
+  produced) may legitimately have nothing worth measuring — judge whether
+  that's really true before treating it as covered. An intentionally
+  unmeasured branch set is not a reason to manufacture metrics; record the
+  intended policy from the approved contract.
 
 ### 3. Apply safe fixes and close them
 

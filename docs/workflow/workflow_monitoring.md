@@ -19,8 +19,8 @@ There are three practical scopes:
 - **Final outputs**: generated final reports for a run folder
 
 ### 3. Cross-workflow operational views
-- **Workflow overview**: recent run folders, status, timestamps, costs, and evaluation presence across workflows
-- **Scheduled runs panel**: cron job history, latest runs, live sessions, and drill-down into logs/costs/evaluation for scheduled executions
+- **Workflow overview**: recent run folders, status, timestamps, costs, and measurement presence across workflows
+- **Scheduled runs panel**: cron job history, latest runs, live sessions, and drill-down into logs/costs/measurement for scheduled executions
 
 ## Pulse — structured workspace plus generated dashboard
 
@@ -69,14 +69,11 @@ The cost UI is still workflow-level, not step-config architecture.
 
 ## Evaluation Reports
 
-Evaluation reports are still current and should stay documented.
-
-Current behavior:
-- Backend data comes from `/api/workflow/evaluation-reports`.
-- The UI supports both **All Iterations** and **Single Iteration** views.
-- The active run folder is highlighted as **Current** when present.
-
-This remains a separate testing and benchmarking surface, not part of the learning or pre-validation model.
+Retired with the eval subsystem. The `/api/workflow/evaluation-reports`
+endpoint and its All Iterations / Single Iteration UI are gone; old
+`evaluation_report.json` files on disk are read-only history. Outcome
+visibility now comes from producer outputs, goal observations
+(`get_goal_metrics`), and the dashboard.
 
 ## Learnings
 

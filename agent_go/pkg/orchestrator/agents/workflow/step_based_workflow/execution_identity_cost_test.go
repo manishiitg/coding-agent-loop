@@ -14,7 +14,7 @@ import (
 // two real executions reuse iteration-0/default, then rotation archives the
 // first path. Their spend must remain two records, never one mixed aggregate.
 func TestExecutionKeyedCostLedgerSeparatesIterationZeroReuse(t *testing.T) {
-	hcpo, _ := newEvalReportPhaseWiringTestOrchestrator(t)
+	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, map[string]string{})}
 	ctx := context.Background()
 	runFolder := "iteration-0/default"
 
@@ -53,34 +53,4 @@ func TestExecutionKeyedCostLedgerSeparatesIterationZeroReuse(t *testing.T) {
 		t.Fatal("execution-B token total was not retained independently")
 	}
 
-}
-
-func TestEvaluationLedgerSeparatesRepeatedIterationZeroEvaluations(t *testing.T) {
-	hcpo, _ := newEvalReportPhaseWiringTestOrchestrator(t)
-	ctx := context.Background()
-	const runFolder = "iteration-0/default"
-	const generatedAt = "2026-08-06T06:00:00Z"
-
-	for _, evaluationID := range []string{"evaluation-A", "evaluation-B"} {
-		report := &EvaluationReport{EvaluationID: evaluationID, TargetRunFolder: runFolder, GeneratedAt: generatedAt}
-		if err := hcpo.persistEvaluationScoreLedger(ctx, report, runFolder); err != nil {
-			t.Fatalf("persistEvaluationScoreLedger(%s): %v", evaluationID, err)
-		}
-	}
-
-	path := filepath.Join("scores", "evaluation", "default", "2026-08-06.json")
-	content, err := hcpo.ReadWorkspaceFile(ctx, path)
-	if err != nil {
-		t.Fatalf("read evaluation ledger: %v", err)
-	}
-	var daily EvaluationScoreDailyFile
-	if err := json.Unmarshal([]byte(content), &daily); err != nil {
-		t.Fatalf("decode evaluation ledger: %v", err)
-	}
-	if len(daily.Evaluations) != 2 || daily.Evaluations["evaluation-A"] == nil || daily.Evaluations["evaluation-B"] == nil {
-		t.Fatalf("evaluations = %#v, want two immutable evaluation records", daily.Evaluations)
-	}
-	if len(daily.RunFolders) != 0 {
-		t.Fatalf("new evaluation writes must not fall back to reusable run_folders: %#v", daily.RunFolders)
-	}
 }

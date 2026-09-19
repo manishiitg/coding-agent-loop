@@ -5,12 +5,10 @@ import (
 	"testing"
 )
 
-func TestCompletePlanChangelogEntryTypesEvaluationAndLearningMutations(t *testing.T) {
+func TestCompletePlanChangelogEntryTypesLearningMutations(t *testing.T) {
 	for _, tc := range []struct {
 		tool, target, dependency string
 	}{
-		{"update_evaluation_plan", "evaluation/evaluation_plan.json", "evaluation_contract"},
-		{"add_evaluation_step", "evaluation/evaluation_plan.json", "evaluation_contract"},
 		{"runtime_learning_update", "learnings/_global", "runtime_guidance"},
 	} {
 		entry := PlanChangelogEntry{

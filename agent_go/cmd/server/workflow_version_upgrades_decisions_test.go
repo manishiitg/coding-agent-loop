@@ -85,3 +85,40 @@ func TestNoParallelContractUpgradeDecisionChannel(t *testing.T) {
 		}
 	}
 }
+
+// The retired mandatory measurement design imposed one topology on every
+// workflow. The replacement 1.0.43 rung is agentic and conditional: it reuses
+// producer-owned evidence, changes nothing when no dependency survives, and
+// adds an ordinary producer only when a required measurement has no owner.
+func TestEvalRetirementUpgradeIsConditionalAndTopologyNeutral(t *testing.T) {
+	if WorkflowContractCurrentVersion != workflowContractEvalRetirementVersion {
+		t.Fatalf("current contract = %s, want eval retirement %s", WorkflowContractCurrentVersion, workflowContractEvalRetirementVersion)
+	}
+	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: workflowContractRunScopedRoutesVersion})
+	if len(plan) != 1 || plan[0].label != "upgrade-eval-retirement" || plan[0].to != workflowContractEvalRetirementVersion {
+		t.Fatalf("unexpected eval-retirement plan: %+v", plan)
+	}
+	for _, want := range []string{
+		"evaluation/evaluation_plan.json", "presence alone does not require a new step or route",
+		"get_goal_metrics", "record_goal_observations", "existing ordinary step", "route-local step",
+		"scheduled collector", "engine telemetry", "verified no-op", "do not create any step, route, table",
+		"list_schedules", "db/reports/index.html", "read-only history", "do not stamp",
+		`set_workflow_contract_version(version="1.0.43")`,
+	} {
+		if !strings.Contains(plan[0].query, want) {
+			t.Errorf("eval-retirement query missing %q", want)
+		}
+	}
+	for _, forbidden := range []string{
+		"measurement-router", "measure-outcomes", "workflow_metrics",
+		"upgrade-measurement-route", "route-skip-measurement", "planning/metrics.json",
+	} {
+		if strings.Contains(plan[0].query, forbidden) || strings.Contains(plan[0].label, forbidden) {
+			t.Errorf("eval-retirement migration mandates removed design (%q)", forbidden)
+		}
+	}
+	bound := bindWorkflowUpgradeWorkspacePath(plan[0].query, "Workflow/demo")
+	if strings.Contains(bound, workflowUpgradeWorkspacePathPlaceholder) || !strings.Contains(bound, `get_goal_metrics(workspace_path="Workflow/demo")`) {
+		t.Fatalf("eval-retirement workspace path was not bound safely: %s", bound)
+	}
+}

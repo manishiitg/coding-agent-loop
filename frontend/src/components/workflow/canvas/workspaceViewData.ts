@@ -1,6 +1,5 @@
 import { createContext, useContext } from 'react'
 import type { UsePlanDataReturn } from '../hooks/usePlanData'
-import type { UseEvaluationPlanDataReturn } from '../hooks/useEvaluationPlanData'
 import type { UseWorkspaceStateReturn } from '../hooks/useWorkspaceState'
 import type { WorkflowExecutionStatus } from '../hooks/useWorkflowExecution'
 import type {
@@ -50,7 +49,6 @@ export type FlowShell = 'loading' | 'error' | 'ready'
  */
 export interface WorkspaceViewData {
   planData: UsePlanDataReturn
-  evalData: UseEvaluationPlanDataReturn
   status: WorkflowExecutionStatus
   workspace: UseWorkspaceStateReturn
   selectedRunFolder: string | null

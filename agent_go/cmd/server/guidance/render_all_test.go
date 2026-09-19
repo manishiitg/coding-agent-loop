@@ -328,51 +328,29 @@ func TestOrchestratorEligibilityStaysConsistentAcrossGuidance(t *testing.T) {
 	}
 }
 
-func TestEvaluationPlanGuidanceAcceptsSourceGroundedValidEmptyResults(t *testing.T) {
-	guidance, err := renderFromRegistry("evaluation-plan", tmplData{}, referenceKinds)
+func TestMeasurementPlanGuidanceCoversFlexibleContract(t *testing.T) {
+	guidance, err := renderFromRegistry("measurement-plan", tmplData{}, referenceKinds)
 	if err != nil {
-		t.Fatalf("render evaluation-plan: %v", err)
+		t.Fatalf("render measurement-plan: %v", err)
 	}
 	for _, want := range []string{
-		"Empty is not automatically missing",
-		"source-grounded legitimate zero-cardinality state",
-		"fabricated or silently missing data still fails closed",
+		"evidence-backed",
+		"record_goal_observations",
+		"get_goal_metrics",
+		"no topology change",
+		"read-only history",
 	} {
 		if !strings.Contains(guidance, want) {
-			t.Fatalf("evaluation guidance missing %q\n\nGuidance:\n%s", want, guidance)
+			t.Fatalf("measurement guidance missing %q\n\nGuidance:\n%s", want, guidance)
 		}
 	}
-}
-
-func TestEvaluationPlanGuidanceCoversOutcomeBasedDurableJudgmentSteps(t *testing.T) {
-	guidance, err := renderFromRegistry("evaluation-plan", tmplData{}, referenceKinds)
-	if err != nil {
-		t.Fatalf("render evaluation-plan: %v", err)
-	}
-	for _, want := range []string{
-		"Self-claimed resolution is not human judgment",
-		"a rolling rate over the last N outcomes",
-		"says nothing about recall",
+	for _, forbidden := range []string{
+		"measurement-router",
+		"measure-outcomes",
+		"workflow_metrics",
 	} {
-		if !strings.Contains(guidance, want) {
-			t.Fatalf("evaluation guidance missing %q\n\nGuidance:\n%s", want, guidance)
-		}
-	}
-}
-
-func TestEvaluationPlanGuidanceAnchorsSubjectiveRatingScales(t *testing.T) {
-	guidance, err := renderFromRegistry("evaluation-plan", tmplData{}, referenceKinds)
-	if err != nil {
-		t.Fatalf("render evaluation-plan: %v", err)
-	}
-	for _, want := range []string{
-		"Write what every point on the scale looks like, not just the ends",
-		"Extract the facts first, judge second",
-		"leniency drift",
-		"Subjective does not mean lower rigor",
-	} {
-		if !strings.Contains(guidance, want) {
-			t.Fatalf("evaluation guidance missing %q\n\nGuidance:\n%s", want, guidance)
+		if strings.Contains(guidance, forbidden) {
+			t.Fatalf("measurement guidance mandates removed topology (%q)\n\nGuidance:\n%s", forbidden, guidance)
 		}
 	}
 }
@@ -382,7 +360,6 @@ func TestPulseCostGuidanceReconcilesRawLedgersWithoutDoubleCounting(t *testing.T
 
 	for _, want := range []string{
 		"execution_id",
-		"evaluation_id",
 		"archived_run_folder",
 		"legacy fallback",
 		"group_folder",
@@ -712,7 +689,7 @@ func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *
 		"No obligatory raw-log pass or per-step log inventory",
 		"optional reasoning lenses",
 		"Deferred or unexamined areas are unassessed",
-		"An empty evaluation_plan.json is not a prerequisite failure",
+		"Missing measurement is not a prerequisite failure",
 		"Successful report production or ticket reconciliation alone does not establish strategic effectiveness",
 		"strategic_opportunity",
 		"Do not force one primary classification over a mixed review",
@@ -1002,12 +979,6 @@ func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) 
 			"Pulse Fixer",
 			"recommended_fix",
 		},
-		"improve-evaluation": {
-			"ENGINEERING REVIEW — EVALUATION LENS",
-			"The reviewer does not edit or run anything",
-			"Pulse Fixer",
-			"GOAL_SEMANTIC",
-		},
 	}
 	for kind, wants := range cases {
 		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
@@ -1101,7 +1072,6 @@ func TestPulseSpecialistsReturnStructuredPacketsAndParentOwnsHTML(t *testing.T) 
 		"improve-learnings":     append([]string{"finding_id", "target_key"}, commonWants...),
 		"improve-knowledge":     append([]string{"finding_id", "target_key"}, commonWants...),
 		"improve-database":      append([]string{"finding_id", "target_key"}, commonWants...),
-		"improve-evaluation":    {"finding_id", "target_key", "smallest useful action", "user_judgment_required"},
 		"improve-report":        append([]string{"finding_id", "target_key"}, commonWants...),
 	}
 	for kind, wants := range kinds {
@@ -1164,7 +1134,6 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 		"design-plan",
 		"review-artifact-drift",
 		"strategy-auditor",
-		"improve-evaluation",
 		"improve-report",
 		"improve-knowledge",
 		"improve-learnings",
@@ -1199,7 +1168,6 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 		t.Fatal("review-plan must remain merged into design-plan")
 	}
 	for _, kind := range []string{
-		"improve-evaluation",
 		"improve-report",
 		"improve-knowledge",
 		"improve-learnings",

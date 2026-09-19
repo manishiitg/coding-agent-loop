@@ -7,7 +7,7 @@ import (
 	"strings"
 )
 
-// Reuse the app's evaluation/cost readers for the preview token's bound workflow.
+// Reuse the app's cost readers for the preview token's bound workflow.
 // The report cannot choose another workspace or request the unbounded cost view.
 func (api *StreamingAPI) handleReportPreviewMetrics(w http.ResponseWriter, r *http.Request) {
 	claims := GetUserFromContext(r.Context())
@@ -40,9 +40,6 @@ func (api *StreamingAPI) handleReportPreviewMetrics(w http.ResponseWriter, r *ht
 		params.Set("before", r.URL.Query().Get("before"))
 		cloned.URL.RawQuery = params.Encode()
 		api.handleGetCosts(w, cloned)
-	case reportPreviewAPIPrefix + "evaluations":
-		cloned.URL.RawQuery = params.Encode()
-		api.handleGetPulseEvalResults(w, cloned)
 	default:
 		http.NotFound(w, r)
 	}

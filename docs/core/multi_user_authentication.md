@@ -169,7 +169,17 @@ ADMIN_USERS=you@gmail.com        # your first Google login becomes admin
 AUTH_ALLOWED_EMAILS=you@gmail.com,teammate@example.com  # optional exact OAuth allowlist
 ```
 
-When `AUTH_ALLOWED_EMAILS` is set, OAuth sign-in accepts only those exact email addresses and rejects providers that return no email. A pre-provisioned account with a matching email keeps its existing AgentWorks user ID, projects, history, and permissions; its first successful Google login links the SSO identity to that account. Otherwise, the first Google login auto-creates an account with nothing enabled unless `ADMIN_USERS` names the email, and an admin then sets role/products in Users & access. Unlike Cognito, Supabase does not echo our CSRF state back — the callback falls back to its session-stored state, and the server-side PKCE verifier still binds the code to the flow that started it.
+When `AUTH_ALLOWED_EMAILS` is set, OAuth sign-in accepts either an exact email from that legacy allowlist or an account that an administrator has already provisioned in `config/users.json`. The user directory is the durable source of truth for invitations, so adding a user in **Users & access** never requires a second environment-variable edit or service restart. Providers that return no email are rejected. A pre-provisioned account with a matching normalized email keeps its existing AgentWorks user ID, projects, history, and permissions; its first successful Google login links the SSO identity to that account. A disabled directory account remains rejected. Otherwise, the first Google login auto-creates an account with nothing enabled unless `ADMIN_USERS` names the email, and an admin then sets role/products in Users & access. Unlike Cognito, Supabase does not echo our CSRF state back — the callback falls back to its session-stored state, and the server-side PKCE verifier still binds the code to the flow that started it.
+
+**Deterministic invite and first-login contract:**
+
+1. An administrator creates the account in **Users & access** with the exact email the person will use with SSO and assigns products and account permissions there.
+2. That persisted directory record is sufficient admission approval. Deployment scripts do not edit `AUTH_ALLOWED_EMAILS` for individual invitations.
+3. On first SSO login, the callback matches the verified provider email case-insensitively, links the provider and external ID to the existing record, and keeps the record's stable AgentWorks user ID.
+4. Every later request reloads account and workflow permissions from the directory and workflow manifests. SSO linkage does not grant additional products or workflow access.
+5. Disabling the directory record blocks login and authenticated requests. Removing a person only from `AUTH_ALLOWED_EMAILS` does not revoke an explicitly provisioned account; disable the account in **Users & access** instead.
+
+Regression tests must prove all three admission branches: a provisioned email succeeds even when absent from `AUTH_ALLOWED_EMAILS`, a legacy allowlisted email succeeds, and an unknown email is denied. The existing SSO-link test also proves that first login retains the pre-provisioned user ID.
 
 **Features:**
 - Social login via Supabase-hosted Google OAuth

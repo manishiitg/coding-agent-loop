@@ -142,10 +142,13 @@ workflow/project** from removal **for everyone on the server**.
 - **Password**: `POST /api/auth/login` checks `users.json` (argon2id).
   Admins create users and set an initial password from the admin page; users
   change their own. No self-registration (unchanged).
-- **SSO**: Cognito/Supabase stay as they are. On first SSO login the user is
-  created in `users.json` with `can_create: false` and no products, so an
-  admin has to switch them on. This is the safe default for an open sign-in
-  provider.
+- **SSO**: Cognito/Supabase authenticate the external identity, then the
+  verified email is resolved against `users.json`. An admin-provisioned record
+  is itself admission approval and does not also need to appear in
+  `AUTH_ALLOWED_EMAILS`; first login links the provider identity while keeping
+  the stable AgentWorks user ID and assigned permissions. An unknown SSO user
+  is created with `can_create: false` and no products only when the deployment's
+  OAuth admission policy allows that email. Disabled records remain blocked.
 - JWT claims stay identity-only (no roles in the token); permissions are
   re-read per request from `users.json`, as today.
 

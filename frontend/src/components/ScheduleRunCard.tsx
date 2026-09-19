@@ -69,6 +69,7 @@ export function ScheduleRunCard({
   const outcome = latestAgentUpdate || presentation.detail
   const triggerLabel = workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source || (job.schedule_type === 'webhook' ? 'webhook' : 'cron') })
   const slotLabel = scheduleRunSlotLabel(job, run)
+  const isWebhookRun = run.trigger_source === 'webhook' || job.schedule_type === 'webhook'
 
   const loadPayload = async () => {
     if (!run.webhook || webhookPayload !== undefined || isLoadingWebhookPayload) return
@@ -102,20 +103,21 @@ export function ScheduleRunCard({
         </div>
         <div className="min-w-0 flex-1">
           {showScheduleName && (
-            <div className="flex items-center gap-1 text-[11px] font-medium text-muted-foreground">
-              <ChevronRight className="h-3 w-3 shrink-0" />
+            <div className={`flex items-center gap-1 font-medium ${isWebhookRun ? 'text-sm text-foreground' : 'text-[11px] text-muted-foreground'}`}>
+              {!isWebhookRun && <ChevronRight className="h-3 w-3 shrink-0" />}
               <span className="truncate">{run.webhook?.trigger_name || job.name}</span>
             </div>
           )}
-          <div className="text-sm font-medium text-foreground">
+          {(!isWebhookRun || !showScheduleName) && <div className="text-sm font-medium text-foreground">
             {run.status === 'success'
               ? duration ? `Completed in ${duration}` : 'Completed'
               : run.status === 'running'
                 ? 'Run in progress'
                 : duration ? `Stopped after ${duration}` : 'Run stopped'}
-          </div>
+          </div>}
           <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
             {triggerLabel && <span className="rounded border border-border px-1.5 py-0.5" aria-label={`Trigger: ${triggerLabel}`}>{triggerLabel}</span>}
+            {isWebhookRun && duration && <span>{duration}</span>}
             {run.run_folder && <span>{run.run_folder}</span>}
             {run.artifacts_expired && <span className="rounded border border-border px-1.5 py-0.5">Artifacts expired</span>}
             {run.webhook?.event && <span>{run.webhook.event}</span>}
@@ -154,39 +156,45 @@ export function ScheduleRunCard({
         </div>
       </div>
 
-      <div className="space-y-2 border-l-2 border-border/80 pl-3">
-        <div>
+      {(!isWebhookRun || latestAgentUpdate) && <div className="space-y-2 border-l-2 border-border/80 pl-3">
+        {!isWebhookRun && <div>
           <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Started with</div>
           <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{scheduleRunExcerpt(startedWith)}</p>
-        </div>
-        <div>
+        </div>}
+        {(!isWebhookRun || latestAgentUpdate) && <div>
           <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{run.final_response || (job.schedule_type === 'webhook' && latestAgentUpdate) ? 'Final response' : latestAgentUpdate ? 'Latest agent update' : 'Outcome'}</div>
           <p className="line-clamp-3 text-xs leading-5 text-foreground/90">{scheduleRunExcerpt(outcome)}</p>
-        </div>
-      </div>
+        </div>}
+      </div>}
 
-      {run.webhook && (
+      {isWebhookRun && (
         <details
           className="text-[11px] text-muted-foreground"
           onToggle={event => {
-            if (event.currentTarget.open) void loadPayload()
+            if (event.currentTarget.open && run.webhook) void loadPayload()
           }}
         >
           <summary className="cursor-pointer font-medium">Delivery details</summary>
-          <dl className="mt-1 space-y-1 break-words rounded border border-border p-2">
-            <dt>Trigger</dt><dd>{run.webhook.trigger_name}</dd>
-            <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
-            {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
-            <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
-            <dt>Payload (JSON body)</dt>
-            <dd>
-              {isLoadingWebhookPayload && <span>Loading payload…</span>}
-              {webhookPayloadError && <span>{webhookPayloadError}</span>}
-              {webhookPayload !== undefined && (
-                <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[10px] leading-4 text-foreground">{webhookPayload}</pre>
-              )}
-            </dd>
-          </dl>
+          {run.webhook ? (
+            <dl className="mt-1 space-y-1 break-words rounded border border-border p-2">
+              <dt>Trigger</dt><dd>{run.webhook.trigger_name}</dd>
+              <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
+              {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
+              <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
+              <dt>Payload (JSON body)</dt>
+              <dd>
+                {isLoadingWebhookPayload && <span>Loading payload…</span>}
+                {webhookPayloadError && <span>{webhookPayloadError}</span>}
+                {webhookPayload !== undefined && (
+                  <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[10px] leading-4 text-foreground">{webhookPayload}</pre>
+                )}
+              </dd>
+            </dl>
+          ) : (
+            <p className="mt-1 rounded border border-border p-2">
+              Payload and final response were not retained for this delivery because it ran before delivery history capture was enabled. Send a new delivery to record both.
+            </p>
+          )}
         </details>
       )}
 

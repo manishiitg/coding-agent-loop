@@ -360,14 +360,14 @@ func TestWorkflowWebhookPreservesCredentialsAndBodyWithoutAppLogin(t *testing.T)
 	}
 }
 
-func TestWorkflowWebhookExceptionDoesNotExposeManagementOrOtherMethods(t *testing.T) {
+func TestWebhookExceptionDoesNotExposeManagementOrOtherMethods(t *testing.T) {
 	for _, path := range []string{"/api/workflow-webhooks", "/api/workflow-webhooks/id", "/api/hooks/workflow/", "/api/hooks/workflow/id/extra", "/api/hooks/workflow/..", "/api/wp/execute"} {
-		if isWorkflowWebhookRequest(httptest.NewRequest(http.MethodPost, path, nil)) {
+		if isWebhookRequest(httptest.NewRequest(http.MethodPost, path, nil)) {
 			t.Errorf("unexpected webhook exception: %s", path)
 		}
 	}
 	for _, method := range []string{http.MethodGet, http.MethodPut, http.MethodDelete} {
-		if isWorkflowWebhookRequest(httptest.NewRequest(method, "/api/hooks/workflow/id", nil)) {
+		if isWebhookRequest(httptest.NewRequest(method, "/api/hooks/workflow/id", nil)) {
 			t.Errorf("unexpected webhook method: %s", method)
 		}
 	}
@@ -392,7 +392,39 @@ func TestWebhookReadRoutesPreserveCredentials(t *testing.T) {
 			t.Fatalf("read route: %d", w.Code)
 		}
 	}
-	if isWorkflowWebhookRequest(httptest.NewRequest("DELETE", "/api/hooks/workflow/id/runs/run", nil)) {
+	if isWebhookRequest(httptest.NewRequest("DELETE", "/api/hooks/workflow/id/runs/run", nil)) {
 		t.Fatal("mutation bypass")
+	}
+}
+
+func TestProductWebhookBypassesGatewayButManagementStaysPrivate(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "Bearer product-trigger-secret" {
+			t.Fatalf("credential changed: %q", r.Header.Get("Authorization"))
+		}
+		if r.Header.Get("X-User-ID") != "" {
+			t.Fatalf("spoofed user header reached product webhook: %q", r.Header.Get("X-User-ID"))
+		}
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer upstream.Close()
+	target, _ := url.Parse(upstream.URL)
+	g := &gateway{agent: httputil.NewSingleHostReverseProxy(target)}
+	req := httptest.NewRequest(http.MethodPost, "/api/hooks/product/trigger-id", strings.NewReader(`{"marker":"test"}`))
+	req.Header.Set("Authorization", "Bearer product-trigger-secret")
+	req.Header.Set("X-User-ID", "spoofed-user")
+	rec := httptest.NewRecorder()
+	g.ServeHTTP(rec, req)
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("product webhook response = %d", rec.Code)
+	}
+	for _, candidate := range []*http.Request{
+		httptest.NewRequest(http.MethodGet, "/api/hooks/product/trigger-id", nil),
+		httptest.NewRequest(http.MethodPost, "/api/hooks/product/trigger-id/extra", nil),
+		httptest.NewRequest(http.MethodPost, "/api/product-webhooks/trigger-id", nil),
+	} {
+		if isWebhookRequest(candidate) {
+			t.Fatalf("unexpected product webhook exception: %s %s", candidate.Method, candidate.URL.Path)
+		}
 	}
 }

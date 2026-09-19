@@ -357,9 +357,14 @@ func (g *gateway) login(w http.ResponseWriter, r *http.Request) {
 
 // Webhook receivers authenticate the original request with their own secret.
 // Keep management endpoints behind the normal user gate.
-func isWorkflowWebhookRequest(r *http.Request) bool {
-	const prefix = "/api/hooks/workflow/"
-	if !strings.HasPrefix(r.URL.Path, prefix) {
+func isWebhookRequest(r *http.Request) bool {
+	prefix := ""
+	switch {
+	case strings.HasPrefix(r.URL.Path, "/api/hooks/workflow/"):
+		prefix = "/api/hooks/workflow/"
+	case strings.HasPrefix(r.URL.Path, "/api/hooks/product/"):
+		prefix = "/api/hooks/product/"
+	default:
 		return false
 	}
 	id := strings.TrimPrefix(r.URL.Path, prefix)
@@ -372,6 +377,9 @@ func isWorkflowWebhookRequest(r *http.Request) bool {
 	if r.Method == http.MethodPost {
 		return len(parts) == 1
 	}
+	if prefix == "/api/hooks/product/" {
+		return false
+	}
 	if r.Method != http.MethodGet && r.Method != http.MethodHead {
 		return false
 	}
@@ -379,7 +387,7 @@ func isWorkflowWebhookRequest(r *http.Request) bool {
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if isWorkflowWebhookRequest(r) {
+	if isWebhookRequest(r) {
 		r.Header.Del("X-User-ID")
 		g.agent.ServeHTTP(w, r)
 		return

@@ -56,3 +56,39 @@ it('loads Crew trigger runs from the product trigger source and opens their chat
   act(() => root.unmount())
   host.remove()
 })
+
+it('keeps older webhook rows compact and explains why their payload is unavailable', async () => {
+  vi.mocked(productWebhooksApi.list).mockResolvedValue({ triggers: [{
+    id: 'trigger-old', name: 'Older delivery', enabled: true, message: 'A long saved webhook instruction',
+    auth_mode: 'bearer', path: '/api/hooks/product/trigger-old', run_destination: 'crew_chat',
+  }] })
+  vi.mocked(productWebhooksApi.runs).mockResolvedValue({ runs: [{
+    id: 'run-old', job_id: 'product-project:work:crew-1:trigger-old', trigger_source: 'webhook',
+    session_id: 'old-session', status: 'success', duration_ms: 10000, started_at: '2026-09-19T08:00:00Z',
+  }], total: 1, limit: 30, offset: 0 })
+
+  const host = document.createElement('div')
+  document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(<TriggerDeliveryHistoryPanel
+    workspacePath="Chats/Work/projects/crew-1"
+    entityType="product"
+    productTriggerScope={{ profileId: 'work', projectId: 'crew-1' }}
+  />))
+
+  expect(host.textContent).toContain('Older delivery')
+  expect(host.textContent).not.toContain('Completed in 10s')
+  expect(host.textContent).not.toContain('STARTED WITH')
+  expect(host.textContent).not.toContain('Finished successfully')
+  expect(host.textContent).toContain('Delivery details')
+  const details = host.querySelector('details')!
+  await act(async () => {
+    details.open = true
+    details.dispatchEvent(new Event('toggle', { bubbles: true }))
+  })
+  expect(host.textContent).toContain('ran before delivery history capture was enabled')
+  expect(productWebhooksApi.getPayload).not.toHaveBeenCalled()
+
+  act(() => root.unmount())
+  host.remove()
+})

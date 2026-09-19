@@ -1129,7 +1129,13 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 	// subsequent lookups see the cleaned-up manifest. Skip the write-back when
 	// we had to drop a malformed config block on read — rewriting now would
 	// silently erase the user's backup/publish config from disk.
-	if (hadMissingLabel || hadEmptyScheduleID || llmConfigMigrated || hasStaleFields) && len(m.MalformedConfig) == 0 {
+	// Crew deliberately shares the AgentWorks runtime reader for capabilities,
+	// but its workflow.json is owned by the Work product schema. Rewriting that
+	// file through WorkflowManifest drops Crew-only fields such as identity and
+	// authenticated triggers (and can narrow its schedule records). Keep this
+	// path read-only; Crew's product services own all of its migrations/writes.
+	mayPersistManifestMigrations := !isCrewRuntimeManifestWorkspace(workspacePath)
+	if mayPersistManifestMigrations && (hadMissingLabel || hadEmptyScheduleID || llmConfigMigrated || hasStaleFields) && len(m.MalformedConfig) == 0 {
 		if hasStaleFields {
 			log.Printf("[MANIFEST] %s: pruning retired field(s) no longer in schema — top-level=%v execution_defaults=%v capabilities=%v",
 				workspacePath, staleTopLevel, staleExecutionDefaults, staleCapabilities)
@@ -1139,6 +1145,11 @@ func ReadWorkflowManifest(ctx context.Context, workspacePath string) (*WorkflowM
 		}
 	}
 	return &m, true, nil
+}
+
+func isCrewRuntimeManifestWorkspace(workspacePath string) bool {
+	normalized := "/" + strings.ToLower(strings.Trim(strings.ReplaceAll(strings.TrimSpace(workspacePath), "\\", "/"), "/")) + "/"
+	return strings.Contains(normalized, "/chats/work/projects/")
 }
 
 func workflowLabelFromWorkspacePath(workspacePath string) string {

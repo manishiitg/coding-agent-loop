@@ -37,6 +37,8 @@ interface ScheduleRunCardProps {
   showScheduleName?: boolean
   /** Show the durable chat/session identifier for debugging. */
   showCopySessionId?: boolean
+  loadWebhookPayload?: (job: ScheduledJob, run: ScheduledJobRun) => Promise<{ raw_payload: string }>
+  openLabel?: string
 }
 
 export function ScheduleRunCard({
@@ -49,6 +51,8 @@ export function ScheduleRunCard({
   compact = false,
   showScheduleName = false,
   showCopySessionId = false,
+  loadWebhookPayload: loadWebhookPayloadProp,
+  openLabel,
 }: ScheduleRunCardProps) {
   const [webhookPayload, setWebhookPayload] = useState<string>()
   const [webhookPayloadError, setWebhookPayloadError] = useState<string>()
@@ -61,17 +65,19 @@ export function ScheduleRunCard({
   const duration = formatScheduleRunDuration(run.duration_ms)
   const isDeleting = !!run.session_id && deletingRunIds.has(run.session_id)
   const startedWith = scheduleRunStartMessage(job, session)
-  const latestAgentUpdate = scheduleRunLatestAgentMessage(session)
+  const latestAgentUpdate = run.final_response || scheduleRunLatestAgentMessage(session)
   const outcome = latestAgentUpdate || presentation.detail
   const triggerLabel = workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source || (job.schedule_type === 'webhook' ? 'webhook' : 'cron') })
   const slotLabel = scheduleRunSlotLabel(job, run)
 
-  const loadWebhookPayload = async () => {
+  const loadPayload = async () => {
     if (!run.webhook || webhookPayload !== undefined || isLoadingWebhookPayload) return
     setIsLoadingWebhookPayload(true)
     setWebhookPayloadError(undefined)
     try {
-      const result = await workflowWebhooksApi.getPayload(job.id, run.id)
+      const result = await (loadWebhookPayloadProp
+        ? loadWebhookPayloadProp(job, run)
+        : workflowWebhooksApi.getPayload(job.id, run.id))
       let formatted = result.raw_payload
       try {
         formatted = JSON.stringify(JSON.parse(result.raw_payload), null, 2)
@@ -130,7 +136,7 @@ export function ScheduleRunCard({
               className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
             >
               {canResume ? <RotateCcw className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />}
-              {!compact && <span>{canResume ? 'Resume' : 'Open'}</span>}
+              {!compact && <span>{canResume ? 'Resume' : (openLabel || 'View chat')}</span>}
             </button>
           )}
           {run.session_id && onDelete && (
@@ -154,7 +160,7 @@ export function ScheduleRunCard({
           <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{scheduleRunExcerpt(startedWith)}</p>
         </div>
         <div>
-          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{latestAgentUpdate ? 'Latest agent update' : 'Outcome'}</div>
+          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{run.final_response || (job.schedule_type === 'webhook' && latestAgentUpdate) ? 'Final response' : latestAgentUpdate ? 'Latest agent update' : 'Outcome'}</div>
           <p className="line-clamp-3 text-xs leading-5 text-foreground/90">{scheduleRunExcerpt(outcome)}</p>
         </div>
       </div>
@@ -163,7 +169,7 @@ export function ScheduleRunCard({
         <details
           className="text-[11px] text-muted-foreground"
           onToggle={event => {
-            if (event.currentTarget.open) void loadWebhookPayload()
+            if (event.currentTarget.open) void loadPayload()
           }}
         >
           <summary className="cursor-pointer font-medium">Delivery details</summary>

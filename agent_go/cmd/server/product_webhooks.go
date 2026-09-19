@@ -102,7 +102,64 @@ func ProductWebhookRoutes(router *mux.Router, svc *ProductScheduleService) {
 	router.HandleFunc("/api/product-webhooks/{id}", svc.saveProductWebhook).Methods("PUT")
 	router.HandleFunc("/api/product-webhooks/{id}", svc.deleteProductWebhook).Methods("DELETE")
 	router.HandleFunc("/api/product-webhooks/{id}/runs", svc.listProductWebhookRuns).Methods("GET")
+	router.HandleFunc("/api/product-webhooks/{id}/runs/{run}/payload", svc.getProductWebhookPayload).Methods("GET")
 	router.HandleFunc("/api/hooks/product/{id}", svc.receiveProductWebhook).Methods("POST")
+}
+
+func (s *ProductScheduleService) getProductWebhookPayload(w http.ResponseWriter, r *http.Request) {
+	profileID, projectID := productWebhookCoordinates(r)
+	if profileID == "" {
+		profileID = "work"
+	}
+	profile, binding, manifest, err := s.projectManifest(r.Context(), productWorkspaceUserID(r.Context()), profileID, projectID)
+	if err != nil {
+		http.Error(w, "trigger not found", http.StatusNotFound)
+		return
+	}
+	triggerID, runID := mux.Vars(r)["id"], mux.Vars(r)["run"]
+	foundTrigger := false
+	for _, trigger := range manifest.Triggers {
+		if trigger.ID == triggerID {
+			foundTrigger = true
+			break
+		}
+	}
+	if !foundTrigger {
+		http.Error(w, "trigger not found", http.StatusNotFound)
+		return
+	}
+	runsWorkspace := agentProfileRuntimeWorkspace(productWorkspaceUserID(r.Context()), binding.WorkspacePath)
+	runs, _, err := ListScheduleRuns(r.Context(), runsWorkspace, projectScheduleJobID(profile.ID, manifest.ID, triggerID), maxScheduleRuns, 0)
+	if err != nil {
+		http.Error(w, "could not read trigger history", http.StatusInternalServerError)
+		return
+	}
+	foundRun := false
+	for _, run := range runs {
+		if run.ID == runID && run.Webhook != nil {
+			foundRun = true
+			break
+		}
+	}
+	if !foundRun {
+		http.Error(w, "trigger run not found", http.StatusNotFound)
+		return
+	}
+	content, exists, err := s.readFile(r.Context(), filepath.ToSlash(filepath.Join(binding.WorkspacePath, "triggers", "deliveries", runID+".json")))
+	if err != nil {
+		http.Error(w, "could not read trigger payload", http.StatusInternalServerError)
+		return
+	}
+	if !exists {
+		http.Error(w, "trigger payload is no longer available", http.StatusNotFound)
+		return
+	}
+	if !json.Valid([]byte(content)) {
+		http.Error(w, "stored trigger payload is invalid", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]string{"raw_payload": strings.TrimSpace(content)})
 }
 
 func (s *ProductScheduleService) listProductWebhookRuns(w http.ResponseWriter, r *http.Request) {
@@ -432,8 +489,11 @@ func (s *ProductScheduleService) receiveProductWebhook(w http.ResponseWriter, r 
 	}
 	message := strings.TrimSpace(match.Trigger.Message) + "\n\nThis turn was started by an authenticated webhook. Read its JSON payload from `" + relativePayloadPath + "` and use it as input."
 	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: strings.EqualFold(match.Trigger.RunDestination, runDestinationIsolated), Messages: []string{message}}}
+	receivedAt := time.Now().UTC()
+	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
+	metadata := &WebhookRunMetadata{TriggerName: match.Trigger.Name, DeliveryID: deliveryID, Event: event, ReceivedAt: receivedAt}
 	go func() {
-		_, _ = s.Run(context.Background(), job, "webhook", time.Time{})
+		_, _ = s.runWithOptions(context.Background(), job, "webhook", time.Time{}, productScheduleRunOptions{RunID: runID, Webhook: metadata})
 	}()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusAccepted)

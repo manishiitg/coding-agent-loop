@@ -8,8 +8,27 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	internalevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	pkgevents "github.com/manishiitg/mcpagent/events"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
+
+func TestFinalResponseForExecutionUsesTheExactTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	api := &StreamingAPI{eventStore: store}
+	for _, item := range []struct {
+		executionID string
+		response    string
+	}{{"turn-1", "first answer"}, {"turn-2", "second answer"}} {
+		completion := pkgevents.NewUnifiedCompletionEvent("coding_agent", "retained", "", item.response, "completed", time.Second, 1)
+		store.AddEvent("shared-session", internalevents.Event{
+			ID: item.executionID, Type: "unified_completion", SessionID: "shared-session", ExecutionID: item.executionID,
+			Data: &pkgevents.AgentEvent{Type: pkgevents.EventType("unified_completion"), Data: completion},
+		})
+	}
+	if got := api.finalResponseForExecution("shared-session", "turn-1"); got != "first answer" {
+		t.Fatalf("final response = %q, want exact first turn", got)
+	}
+}
 
 func TestInternalBotRequestContextUsesThePairedAccountsLiveRole(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")

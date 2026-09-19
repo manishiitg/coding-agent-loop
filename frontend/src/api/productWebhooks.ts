@@ -36,6 +36,9 @@ export const productWebhooksApi = {
   runs: (scope: ProductTriggerScope, id: string, limit = 30) => axios.get<ListScheduledJobRunsResponse>(`/api/product-webhooks/${encodeURIComponent(id)}/runs`, {
     ...config(), params: { profile_id: scope.profileId, project_id: scope.projectId, limit },
   }).then(response => response.data),
+  getPayload: (scope: ProductTriggerScope, id: string, runId: string) => axios.get<{ raw_payload: string }>(`/api/product-webhooks/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/payload`, {
+    ...config(), params: { profile_id: scope.profileId, project_id: scope.projectId },
+  }).then(response => response.data),
 }
 
 export function apiTriggerURL(path: string): string {

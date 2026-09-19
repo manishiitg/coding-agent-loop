@@ -999,7 +999,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       job={job}
                       run={run}
                       resolveSession={r => (r.session_id ? sessionsByID.get(r.session_id) : undefined)}
-                      onOpen={readOnly ? undefined : r => openScheduleActivity({ id: r.id, job, run: r, kind: 'run', occurredAt: r.started_at })}
+                      onOpen={readOnly && !allowOpen ? undefined : r => openScheduleActivity({ id: r.id, job, run: r, kind: 'run', occurredAt: r.started_at })}
                       onDelete={r => {
                         const session = r.session_id ? sessionsByID.get(r.session_id) : undefined
                         if (session) void handleDeleteSession(session)
@@ -1008,6 +1008,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       compact={compact}
                       showScheduleName
                       showCopySessionId
+                      openLabel={actionLabel}
                     />
                   </div>
                 ))}

@@ -1,9 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
-import { ArrowUpRight, Loader2 } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import { productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
-import type { ScheduledJobRun } from '../../services/api-types'
+import type { ScheduledJob, ScheduledJobRun } from '../../services/api-types'
 import { useResumePreviousChat } from '../../hooks/useResumePreviousChat'
 import { PreviousChatHistoryPanel } from '../PreviousChatHistoryPanel'
+import { ScheduleRunCard } from '../ScheduleRunCard'
+
+function productTriggerJob(trigger: ProductAPITrigger): ScheduledJob {
+  return {
+    id: trigger.id,
+    name: trigger.name,
+    description: trigger.message,
+    entity_type: 'product',
+    messages: [trigger.message],
+    schedule_type: 'webhook',
+    cron_expression: '',
+    timezone: 'UTC',
+    enabled: trigger.enabled,
+    run_count: 0,
+    consecutive_failures: 0,
+    run_destination: trigger.run_destination,
+  }
+}
 
 function ProductTriggerDeliveryHistory({ scope }: { scope: ProductTriggerScope }) {
   const [items, setItems] = useState<Array<{ trigger: ProductAPITrigger; run: ScheduledJobRun }>>([])
@@ -40,24 +58,27 @@ function ProductTriggerDeliveryHistory({ scope }: { scope: ProductTriggerScope }
     {loading ? <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />Loading deliveries…</div>
       : failed ? <p className="px-3 py-4 text-xs text-destructive">Could not load delivery history.</p>
         : items.length === 0 ? <p className="px-3 py-4 text-xs text-muted-foreground">No webhook deliveries recorded yet.</p>
-          : <div className="divide-y divide-border">{items.map(({ trigger, run }) => <button
-            key={run.id}
-            type="button"
-            disabled={!run.session_id}
-            onClick={() => run.session_id && void openChat({
-              session_id: run.session_id,
-              title: trigger.name,
-              query: trigger.message,
-              workshop_mode: 'run',
-              created_at: run.started_at,
-              updated_at: run.completed_at || run.started_at,
-            })}
-            className="flex w-full items-center gap-3 px-3 py-2 text-left transition-colors hover:bg-muted/30 disabled:cursor-default"
-          >
-            <span className={`h-2 w-2 shrink-0 rounded-full ${run.status === 'success' ? 'bg-emerald-500' : run.status === 'running' ? 'animate-pulse bg-sky-500' : 'bg-destructive'}`} />
-            <span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-foreground">{trigger.name}</span><span className="block text-[10px] text-muted-foreground">{new Date(run.started_at).toLocaleString()} · {run.status}</span></span>
-            {run.session_id && <ArrowUpRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
-          </button>)}</div>}
+          : <div className="divide-y divide-border">{items.map(({ trigger, run }) => {
+            const job = productTriggerJob(trigger)
+            return <div key={run.id} className="px-3 py-3 transition-colors hover:bg-muted/20">
+              <ScheduleRunCard
+                job={job}
+                run={run}
+                deletingRunIds={new Set()}
+                showScheduleName
+                openLabel="View chat"
+                loadWebhookPayload={(_, selectedRun) => productWebhooksApi.getPayload(scope, trigger.id, selectedRun.id)}
+                onOpen={selectedRun => selectedRun.session_id && void openChat({
+                  session_id: selectedRun.session_id,
+                  title: trigger.name,
+                  query: trigger.message,
+                  workshop_mode: 'run',
+                  created_at: selectedRun.started_at,
+                  updated_at: selectedRun.completed_at || selectedRun.started_at,
+                })}
+              />
+            </div>
+          })}</div>}
   </section>
 }
 
@@ -70,6 +91,7 @@ export function TriggerDeliveryHistoryPanel({
   entityType: 'workflow' | 'product'
   productTriggerScope?: ProductTriggerScope
 }) {
+  const openChat = useResumePreviousChat()
   if (entityType === 'product' && productTriggerScope) {
     return <ProductTriggerDeliveryHistory scope={productTriggerScope} />
   }
@@ -81,8 +103,10 @@ export function TriggerDeliveryHistoryPanel({
       runOnly="webhook"
       runEntityType={entityType}
       readOnly
+      allowOpen
+      actionLabel="View chat"
       showAll
-      onSelectSession={() => {}}
+      onSelectSession={session => openChat(session)}
     />
   )
 }

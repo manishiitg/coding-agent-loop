@@ -3214,6 +3214,8 @@ export interface ScheduledJobRun {
   session_id?: string
   status: 'running' | 'success' | 'error' | 'failed' | 'partial' | 'stopped' | 'interrupted' | 'waiting_for_capacity' | 'waiting_for_workflow'
   error?: string
+  /** Exact assistant answer produced by this execution. */
+  final_response?: string
   duration_ms?: number
   group_names?: string[]
   started_at: string

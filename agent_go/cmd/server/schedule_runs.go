@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,10 +38,14 @@ type ScheduleRunEntry struct {
 	SessionID                string     `json:"session_id,omitempty"`
 	Status                   string     `json:"status"` // running, success, error, stopped, partial, interrupted
 	Error                    string     `json:"error,omitempty"`
-	DurationMs               *int64     `json:"duration_ms,omitempty"`
-	GroupNames               []string   `json:"group_names,omitempty"`
-	StartedAt                time.Time  `json:"started_at"`
-	CompletedAt              *time.Time `json:"completed_at,omitempty"`
+	// FinalResponse is the exact assistant answer produced by this run. Keeping
+	// it on the run avoids guessing from a persistent chat that may have received
+	// newer interactive or automation turns since this execution completed.
+	FinalResponse string     `json:"final_response,omitempty"`
+	DurationMs    *int64     `json:"duration_ms,omitempty"`
+	GroupNames    []string   `json:"group_names,omitempty"`
+	StartedAt     time.Time  `json:"started_at"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
 }
 
 const maxScheduleRuns = 200
@@ -153,6 +158,27 @@ func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, 
 		}
 	}
 
+	return fmt.Errorf("schedule run %q not found in %s", runID, path)
+}
+
+// UpdateScheduleRunFinalResponse durably associates one execution's exact
+// assistant answer with its history entry.
+func UpdateScheduleRunFinalResponse(ctx context.Context, workspacePath, runID, finalResponse string) error {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		if runs[i].ID == runID {
+			runs[i].FinalResponse = strings.TrimSpace(finalResponse)
+			return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
+		}
+	}
 	return fmt.Errorf("schedule run %q not found in %s", runID, path)
 }
 

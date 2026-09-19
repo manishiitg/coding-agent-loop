@@ -187,8 +187,28 @@ func (api *StreamingAPI) startSessionInternal(
 	userID string,
 	eventCallback func(event *events.AgentEvent),
 ) error {
+	_, err := api.startSessionInternalWithResult(ctx, reqMap, sessionID, userID, eventCallback)
+	return err
+}
+
+type internalSessionTurnResult struct {
+	QueryID       string
+	FinalResponse string
+}
+
+// startSessionInternalWithResult starts one exact turn and returns the final
+// assistant response emitted for that execution. Callers that record durable
+// automation history use this instead of later inspecting a shared chat whose
+// newest message may belong to another turn.
+func (api *StreamingAPI) startSessionInternalWithResult(
+	ctx context.Context,
+	reqMap map[string]interface{},
+	sessionID string,
+	userID string,
+	eventCallback func(event *events.AgentEvent),
+) (internalSessionTurnResult, error) {
 	if failure, ok := reqMap["_bot_prepare_error"].(string); ok {
-		return fmt.Errorf("prepare conversation: %s", failure)
+		return internalSessionTurnResult{}, fmt.Errorf("prepare conversation: %s", failure)
 	}
 	// Marshal the request map to JSON
 	wireRequest := maps.Clone(reqMap)
@@ -196,13 +216,13 @@ func (api *StreamingAPI) startSessionInternal(
 	delete(wireRequest, "_trusted_slack_app")
 	body, err := json.Marshal(wireRequest)
 	if err != nil {
-		return fmt.Errorf("failed to marshal query request: %w", err)
+		return internalSessionTurnResult{}, fmt.Errorf("failed to marshal query request: %w", err)
 	}
 
 	// Create a fake HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", "/api/query", io.NopCloser(bytes.NewReader(body)))
 	if err != nil {
-		return fmt.Errorf("failed to create internal request: %w", err)
+		return internalSessionTurnResult{}, fmt.Errorf("failed to create internal request: %w", err)
 	}
 	httpReq = httpReq.WithContext(internalBotRequestContext(httpReq.Context(), userID, reqMap))
 	if target, ok := reqMap["_trusted_resume_target"].(*resolvedResumeTarget); ok {
@@ -226,7 +246,7 @@ func (api *StreamingAPI) startSessionInternal(
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("handleQuery returned status %d: %s", resp.StatusCode, string(respBody))
+		return internalSessionTurnResult{}, fmt.Errorf("handleQuery returned status %d: %s", resp.StatusCode, string(respBody))
 	}
 
 	// Parse the response to get the actual queryID
@@ -247,7 +267,7 @@ func (api *StreamingAPI) startSessionInternal(
 		}
 	}
 	if strings.TrimSpace(queryResp.QueryID) == "" {
-		return fmt.Errorf("handleQuery did not return a query execution id")
+		return internalSessionTurnResult{}, fmt.Errorf("handleQuery did not return a query execution id")
 	}
 	err = api.waitForConversationTurnTree(ctx, sessionID, queryResp.QueryID, schedulerWorkshopMaxInactivity)
 	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
@@ -255,7 +275,37 @@ func (api *StreamingAPI) startSessionInternal(
 			log.Printf("[SLACK_RETENTION] %v", pruneErr)
 		}
 	}
-	return err
+	result := internalSessionTurnResult{QueryID: queryResp.QueryID}
+	if err == nil {
+		result.FinalResponse = api.finalResponseForExecution(sessionID, queryResp.QueryID)
+	}
+	return result, err
+}
+
+func (api *StreamingAPI) finalResponseForExecution(sessionID, executionID string) string {
+	if api == nil || api.eventStore == nil {
+		return ""
+	}
+	all := api.eventStore.GetAllEventsRaw(sessionID)
+	for i := len(all) - 1; i >= 0; i-- {
+		event := all[i]
+		if event.Type != "unified_completion" || strings.TrimSpace(event.ExecutionID) != strings.TrimSpace(executionID) || event.Data == nil {
+			continue
+		}
+		if completion, ok := event.Data.Data.(*events.UnifiedCompletionEvent); ok && completion != nil {
+			return strings.TrimSpace(completion.FinalResult)
+		}
+		// Persisted/reloaded event data can be represented by a generic payload.
+		if raw, marshalErr := json.Marshal(event.Data.Data); marshalErr == nil {
+			var payload struct {
+				FinalResult string `json:"final_result"`
+			}
+			if json.Unmarshal(raw, &payload) == nil {
+				return strings.TrimSpace(payload.FinalResult)
+			}
+		}
+	}
+	return ""
 }
 
 // sendFollowUpInternal injects a follow-up message into an existing session.

@@ -810,6 +810,15 @@ func (s *ProductScheduleService) Stop(userID, jobID string) bool {
 // record a run, send every message in turn, then record the outcome.
 // onStarted, when given, is called once the session id is known.
 func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob, triggerSource string, scheduledFor time.Time, onStarted ...func(sessionID string)) (string, error) {
+	return s.runWithOptions(ctx, job, triggerSource, scheduledFor, productScheduleRunOptions{}, onStarted...)
+}
+
+type productScheduleRunOptions struct {
+	RunID   string
+	Webhook *WebhookRunMetadata
+}
+
+func (s *ProductScheduleService) runWithOptions(ctx context.Context, job productScheduleJob, triggerSource string, scheduledFor time.Time, options productScheduleRunOptions, onStarted ...func(sessionID string)) (string, error) {
 	if s.api == nil {
 		return "", fmt.Errorf("product schedules: server not ready")
 	}
@@ -863,9 +872,10 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 	runsWorkspace := agentProfileRuntimeWorkspace(job.UserID, conversation.WorkspacePath)
 	startedAt := time.Now().UTC()
 	entry := &ScheduleRunEntry{
-		ID:            uuid.NewString(),
+		ID:            firstNonEmptyTrimmed(options.RunID, uuid.NewString()),
 		ScheduleID:    job.ID(),
 		TriggerSource: triggerSource,
+		Webhook:       options.Webhook,
 		SessionID:     sessionID,
 		Status:        "running",
 		StartedAt:     startedAt,
@@ -886,6 +896,7 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 
 	scheduleLogf("[PRODUCT-SCHEDULE] 🚀 %s (%s) for user %s: %d message(s), session %s", job.ID(), job.Schedule.Name, job.UserID, len(job.Schedule.Messages), sessionID)
 	var runErr error
+	finalResponse := ""
 	for i, message := range job.Schedule.Messages {
 		if err := runCtx.Err(); err != nil {
 			runErr = err
@@ -904,9 +915,13 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 		reqMap["triggered_by"] = firstNonEmptyTrimmed(triggerSource, "cron")
 		reqMap["session_title"] = firstNonEmptyTrimmed(conversation.Title, job.Profile.Name)
 		scheduleLogf("[PRODUCT-SCHEDULE] %s turn %d/%d for %s", job.ID(), i+1, len(job.Schedule.Messages), job.UserID)
-		if err := s.api.startSessionInternal(runCtx, reqMap, sessionID, job.UserID, nil); err != nil {
+		turnResult, err := s.api.startSessionInternalWithResult(runCtx, reqMap, sessionID, job.UserID, nil)
+		if err != nil {
 			runErr = fmt.Errorf("message %d/%d: %w", i+1, len(job.Schedule.Messages), err)
 			break
+		}
+		if strings.TrimSpace(turnResult.FinalResponse) != "" {
+			finalResponse = strings.TrimSpace(turnResult.FinalResponse)
 		}
 	}
 
@@ -921,6 +936,9 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 	}
 	duration := time.Since(startedAt).Milliseconds()
 	_ = UpdateScheduleRun(context.Background(), runsWorkspace, entry.ID, status, errMsg, &duration, "", sessionID)
+	if finalResponse != "" {
+		_ = UpdateScheduleRunFinalResponse(context.Background(), runsWorkspace, entry.ID, finalResponse)
+	}
 	_ = s.updateStateByKey(context.Background(), job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.LastStatus = status
 		st.LastError = errMsg

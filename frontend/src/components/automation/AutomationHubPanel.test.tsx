@@ -12,7 +12,11 @@ vi.mock('../../stores/useWorkflowStore', () => ({
     { getState: () => ({ openWorkspaceView }) },
   ),
 }))
-vi.mock('../scheduler/WorkflowScheduleRunsPanel', () => ({ default: () => <div data-testid="schedules">Schedule content</div> }))
+vi.mock('../scheduler/WorkflowScheduleRunsPanel', () => ({
+  default: ({ hideScheduleTitle }: { hideScheduleTitle?: boolean }) => (
+    <div data-testid="schedules" data-hide-schedule-title={String(Boolean(hideScheduleTitle))}>Schedule content</div>
+  ),
+}))
 vi.mock('../workflow/ProductAPITriggersView', () => ({ default: () => <div data-testid="triggers">Trigger content</div> }))
 vi.mock('../workflow/WorkflowAPITriggersView', () => ({ default: () => <div data-testid="workflow-triggers">Workflow trigger content</div> }))
 vi.mock('./TriggerDeliveryHistoryPanel', () => ({ TriggerDeliveryHistoryPanel: () => <div data-testid="delivery-history" /> }))
@@ -48,7 +52,7 @@ describe('AutomationHubPanel', () => {
       expect(host.querySelector('[data-testid="chats"]')).not.toBeNull()
 
       await act(async () => { tabs[0]!.click(); await Promise.resolve() })
-      expect(host.querySelector('[data-testid="schedules"]')).not.toBeNull()
+      expect(host.querySelector('[data-testid="schedules"]')?.getAttribute('data-hide-schedule-title')).toBe('true')
       await act(async () => { tabs[1]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="triggers"]')).not.toBeNull()
       await act(async () => { tabs[2]!.click(); await Promise.resolve() })

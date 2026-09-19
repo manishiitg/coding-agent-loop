@@ -1217,9 +1217,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
           ? 'schedules'
           : view === 'webhooks'
             ? 'triggers'
-            : view === 'bots'
-              ? 'bots'
-              : undefined
+            : undefined
         const resolvedView: WorkspaceViewId = automationTarget ? 'workshop' : view
         const resolvedTarget = target?.trim() || automationTarget
         const kind = getWorkspaceView(resolvedView).kind

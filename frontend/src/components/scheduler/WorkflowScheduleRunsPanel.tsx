@@ -31,9 +31,10 @@ interface WorkflowScheduleRunsPanelProps {
   productTriggerScope?: ProductTriggerScope
   botContent?: React.ReactNode
   showAutomationTabs?: boolean
+  hideScheduleTitle?: boolean
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent, showAutomationTabs = true }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent, showAutomationTabs = true, hideScheduleTitle = false }) => {
   const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType, canManage, active })
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
   const hasWorkflowWebhooks = entityType === 'workflow' && Boolean(workflowScope?.workspacePath)
@@ -143,7 +144,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         {/* Header */}
         <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction}
-          compact={compact} navigation={compact ? viewControls : undefined} />
+          compact={compact} navigation={compact ? viewControls : undefined} hideTitle={hideScheduleTitle} />
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">

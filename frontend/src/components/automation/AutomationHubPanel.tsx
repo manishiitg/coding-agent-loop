@@ -121,6 +121,7 @@ export function AutomationHubPanel({
           scopeNoun={scopeNoun}
           headerAction={scheduleHeaderAction}
           showAutomationTabs={false}
+          hideScheduleTitle
           onClose={() => {}}
         />}
         {section === 'triggers' && entityType === 'workflow' && <WorkflowAPITriggersView

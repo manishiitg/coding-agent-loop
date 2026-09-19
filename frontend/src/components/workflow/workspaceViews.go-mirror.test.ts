@@ -34,11 +34,11 @@ describe('primary workspace toolbar views', () => {
     ])
   })
 
-  it('maps former standalone automation destinations into the Automation center', () => {
+  it('maps schedule and trigger destinations into Automation while keeping Bots in Setup', () => {
     expect(WORKSPACE_VIEWS.map(view => view.id)).not.toContain('api-triggers')
     expect(normalizeWorkspaceViewId('api-triggers')).toBe('workshop')
     expect(normalizeWorkspaceViewId('schedules')).toBe('workshop')
     expect(normalizeWorkspaceViewId('webhooks')).toBe('workshop')
-    expect(normalizeWorkspaceViewId('bots')).toBe('workshop')
+    expect(normalizeWorkspaceViewId('bots')).toBe('bots')
   })
 })

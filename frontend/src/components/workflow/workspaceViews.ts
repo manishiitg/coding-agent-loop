@@ -193,7 +193,6 @@ const LEGACY_VIEW_IDS: Record<string, WorkspaceViewId | null> = {
   'api-triggers': 'workshop',
   schedules: 'workshop',
   webhooks: 'workshop',
-  bots: 'workshop',
 }
 
 /** Coerce a persisted/unknown value to a view id, or null. Legacy ids are

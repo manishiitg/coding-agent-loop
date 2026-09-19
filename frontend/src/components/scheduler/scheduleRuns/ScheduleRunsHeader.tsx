@@ -15,9 +15,11 @@ type ScheduleRunsHeaderProps = {
   headerAction?: React.ReactNode
   compact?: boolean
   navigation?: React.ReactNode
+  /** The parent already names the selected section (for example, a Schedules tab). */
+  hideTitle?: boolean
 }
 
-export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction, compact = false, navigation }) => {
+export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction, compact = false, navigation, hideTitle = false }) => {
   const {
     panelTitle,
     isLoading,
@@ -31,9 +33,62 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
     loadJobs,
   } = panel
 
+  const statusPills = !isLoading && (
+    <div className="flex flex-wrap gap-1.5">
+      {!isWorkflowScoped && (
+        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+          {workflowScheduleSummary.workflows} automation{workflowScheduleSummary.workflows === 1 ? '' : 's'}
+        </span>
+      )}
+      {isWorkflowScoped && (
+        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
+          {summary.total} schedule{summary.total === 1 ? '' : 's'}
+        </span>
+      )}
+      {isWorkflowScoped && summary.total > 0 && (
+        <span
+          className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
+          title={formatExactDateTime(summary.lastRunAt)}
+        >
+          {summary.lastRunAt ? `Last ran ${formatLastRunLabel(summary.lastRunAt)}` : 'Never run'}
+        </span>
+      )}
+      {!isWorkflowScoped && workflowScheduleSummary.running > 0 && (
+        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+          {workflowScheduleSummary.running} running
+        </span>
+      )}
+      {!isWorkflowScoped && workflowScheduleSummary.fullyPaused > 0 && (
+        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
+          {workflowScheduleSummary.fullyPaused} fully paused
+        </span>
+      )}
+      {!isWorkflowScoped && workflowScheduleSummary.partlyPaused > 0 && (
+        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+          {workflowScheduleSummary.partlyPaused} partly paused
+        </span>
+      )}
+      {isWorkflowScoped && summary.running > 0 && (
+        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+          {summary.running} running
+        </span>
+      )}
+      {isWorkflowScoped && (
+        <span className={`rounded-full border px-2 py-0.5 text-xs ${
+          isSchedulerPaused
+            ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+            : 'border-border bg-background text-muted-foreground'
+        }`}
+        >
+          {isSchedulerPaused ? 'globally paused' : `${summary.enabled} active`}
+        </span>
+      )}
+    </div>
+  )
+
   return (
-    <div className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 sm:px-6 ${compact ? 'py-2' : 'py-4'}`}>
-      {compact ? <div className="flex min-w-0 flex-wrap items-center gap-3">
+    <div className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 sm:px-6 ${compact || hideTitle ? 'py-2' : 'py-4'}`}>
+      {hideTitle ? <div className="min-w-0">{statusPills}</div> : compact ? <div className="flex min-w-0 flex-wrap items-center gap-3">
         {navigation}
         <span className="text-xs text-muted-foreground">{summary.total} schedules{isSchedulerPaused ? ' · Scheduling paused' : ''}</span>
       </div> : <div className="min-w-0 space-y-2">
@@ -43,58 +98,7 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
             {panelTitle}
           </h2>
         </div>
-        {!isLoading && (
-          <div className="flex flex-wrap gap-1.5">
-            {!isWorkflowScoped && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-                {workflowScheduleSummary.workflows} automation{workflowScheduleSummary.workflows === 1 ? '' : 's'}
-              </span>
-            )}
-            {isWorkflowScoped && (
-              <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-                {summary.total} schedule{summary.total === 1 ? '' : 's'}
-              </span>
-            )}
-            {isWorkflowScoped && summary.total > 0 && (
-              <span
-                className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
-                title={formatExactDateTime(summary.lastRunAt)}
-              >
-                Last ran {formatLastRunLabel(summary.lastRunAt)}
-              </span>
-            )}
-            {!isWorkflowScoped && workflowScheduleSummary.running > 0 && (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-                {workflowScheduleSummary.running} running
-              </span>
-            )}
-            {!isWorkflowScoped && workflowScheduleSummary.fullyPaused > 0 && (
-              <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-                {workflowScheduleSummary.fullyPaused} fully paused
-              </span>
-            )}
-            {!isWorkflowScoped && workflowScheduleSummary.partlyPaused > 0 && (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-                {workflowScheduleSummary.partlyPaused} partly paused
-              </span>
-            )}
-            {isWorkflowScoped && summary.running > 0 && (
-              <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-                {summary.running} running
-              </span>
-            )}
-            {isWorkflowScoped && (
-              <span className={`rounded-full border px-2 py-0.5 text-xs ${
-                isSchedulerPaused
-                  ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-                  : 'border-border bg-background text-muted-foreground'
-              }`}
-              >
-                {isSchedulerPaused ? 'globally paused' : `${summary.enabled} active`}
-              </span>
-            )}
-          </div>
-        )}
+        {statusPills}
       </div>}
       <div className="ml-auto flex shrink-0 items-center gap-2">
         {!isWorkflowScoped && !isReadOnlyUser && (

@@ -78,7 +78,10 @@ export function AutomationHubPanel({
   }, [availableSections, workspaceViewTarget])
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div
+      data-testid="automation-hub-panel"
+      className="flex h-full min-h-0 min-w-0 w-full max-w-none flex-1 flex-col bg-background"
+    >
       <div className="shrink-0 border-b border-border px-4 pt-4 sm:px-6">
         <div className="flex items-start gap-3 pb-3">
           <EntityIdentityIcon icon={entityIcon} label={entityLabel} className="h-9 w-9 rounded-lg text-lg" />

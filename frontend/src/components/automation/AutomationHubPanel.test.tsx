@@ -39,6 +39,10 @@ describe('AutomationHubPanel', () => {
     try {
       expect(host.textContent).toContain('🚀')
       expect(host.textContent).toContain('Release Crew')
+      const panel = host.querySelector('[data-testid="automation-hub-panel"]')
+      expect(panel?.className).toContain('w-full')
+      expect(panel?.className).toContain('flex-1')
+      expect(panel?.className).toContain('min-w-0')
       const tabs = Array.from(host.querySelectorAll<HTMLButtonElement>('[aria-label="Automation center"] [role="tab"]'))
       expect(tabs.map(tab => tab.getAttribute('aria-label'))).toEqual(['Schedules', 'Triggers', 'Bots', 'Chats'])
       expect(host.querySelector('[data-testid="chats"]')).not.toBeNull()

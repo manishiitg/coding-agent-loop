@@ -38,6 +38,15 @@ func TestProductWebhookTriggerValidationAndDTO(t *testing.T) {
 	}
 }
 
+func TestProductWebhookUsesItsOwnAuthenticationBoundary(t *testing.T) {
+	if !shouldSkipAuth("/api/hooks/product/4c98bba9-b433-4bf8-b1de-68eebd143a6c") {
+		t.Fatal("product webhook delivery must reach its own secret verifier without a user JWT")
+	}
+	if shouldSkipAuth("/api/product-webhooks") {
+		t.Fatal("product webhook configuration must still require user authentication")
+	}
+}
+
 func TestProductManifestStoresTriggersWithoutPlaintextSecret(t *testing.T) {
 	manifest := productProjectManifest{Product: "work", ID: "project-1"}
 	manifest.Triggers = []productWebhookTrigger{{

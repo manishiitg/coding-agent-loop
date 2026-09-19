@@ -274,6 +274,7 @@ func shouldSkipAuth(path string) bool {
 		"/api/health",
 		"/api/capabilities",
 		"/api/hooks/workflow/", // Inbound webhook handlers verify their own secret/signature.
+		"/api/hooks/product/",  // Product/Crew webhook handlers verify their own secret/signature.
 		"/api/shared/",         // Shared session links are public
 		"/api/oauth/callback",  // OAuth callback comes from external provider without our JWT
 		// Google redirects the user's browser here after they consent. It is a

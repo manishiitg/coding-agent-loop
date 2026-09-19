@@ -1,70 +1,46 @@
 # Confida deployment checklist
 
-Deploy from the application repository:
+Confida uses the reusable rootless Linux deployment pipeline. Its product
+settings and assets live in `deploy/rootless-linux/products/confida`; build,
+activation, verification, and retention logic remain shared with SparkQuill.
+
+Run the checks and deploy from the application repository:
 
 ```sh
-python3 -m unittest discover -s deploy/cf -p 'test_*.py'
-bash -n deploy/cf/deploy-cf.sh deploy/cf/server-bootstrap-build.sh deploy/cf/server-build-and-activate.sh
-DEPLOY_BRANCH=main bash deploy/cf/deploy-cf.sh
+python3 -m unittest discover -s deploy/rootless-linux -p 'test_*.py'
+python3 -m unittest discover -s deploy/common -p 'test_*.py'
+bash -n deploy/rootless-linux/deploy.sh deploy/rootless-linux/bootstrap-build.sh deploy/rootless-linux/build-and-activate.sh deploy/cf/deploy-cf.sh
+DEPLOY_BRANCH=main bash deploy/rootless-linux/deploy.sh confida
 ```
 
-The deploy scripts enforce the following checks. Any required check failure exits
-nonzero; do not report success or bypass it. Confida alone is in scope: the
-`confida` account, `/srv/confida`, and the three `confida-*` user services.
+`DEPLOY_BRANCH=main bash deploy/cf/deploy-cf.sh` remains as a compatibility
+wrapper and executes that same shared command.
 
-## Before build and activation
+The deployment fails unless all of these gates pass:
 
-- [ ] The target is Linux and the executing account is `confida`.
-- [ ] `/srv/confida/.env` contains exactly one
-  `PUBLIC_URL=https://confida.agentworkshq.com`, and the agent unit loads that file.
-  The check runs before dependency installation, again from the freshly cloned
-  deployment code, and immediately before release activation. Missing, empty,
-  duplicate, or incorrect values stop deployment; secrets are never printed.
-- [ ] Confida's pinned Node archive passes its checksum and version checks;
-  required provider and browser CLIs are available in persistent Confida paths.
-- [ ] The Confida deployment lock is acquired; source comes from fresh remote
-  `main` clones, with all three exact revisions saved in `SOURCE_REVISIONS`.
-- [ ] Native Linux binaries build successfully, including the sandbox runner.
-- [ ] Frontend TypeScript, Vite build, release-asset checks, and bundle-budget
-  checks pass. Runtime configuration keeps CDP disabled.
-- [ ] The source playbook catalog passes its schema/link validator; the complete
-  catalog is copied into the immutable release and the packaged copy passes the
-  same validator. A missing known manifest stops activation.
-- [ ] The versioned Workflow Builder chat migration runs once, with the agent
-  stopped, before the new agent starts. Its durable marker is stored at
-  `/srv/confida/state/migrations/workflow-builder-chats-v1.done`; it scans only
-  `/srv/confida/data/docs/Workflow` and never Crew projects under `_users/`.
+- the target is Linux, the service account is `confida`, and
+  `/srv/confida/.env` has exactly one expected public URL;
+- the source comes from fresh remote branch clones, and exact revisions for
+  all three repositories are recorded in the immutable release;
+- pinned Node, required provider CLIs, Slack CLI, browser automation, native
+  binaries, frontend assets, runtime config, and playbooks validate;
+- the Workflow Builder chat migration runs once with a durable marker;
+- MCP overlay state lives outside releases at `/srv/confida/state/mcp`;
+- workspace, agent, and gateway services restart successfully and their live
+  process environments contain the required product values;
+- local health, public `/api/health`, and public `/login` all succeed;
+- old releases are pruned only after the new release passes verification.
 
-## After activation, before success or release pruning
-
-- [ ] Workspace, agent, and gateway services are active.
-- [ ] The running agent's `/proc/<pid>/environ` contains the exact `PUBLIC_URL`.
-  A correct file alone is insufficient: this catches missed restarts and runtime
-  overrides. Callback URL: `https://confida.agentworkshq.com/api/oauth/callback`.
-- [ ] Agent/workspace processes received the expected tools PATH and Confida
-  browser namespaces, plus `DISPLAY_TIME_ZONE=America/New_York` for
-  deployment-consistent UI timestamps.
-- [ ] Work is available to every approved user through
-  `AGENTWORKS_PRODUCTS_AVAILABLE_TO_ALL=work`; its project data remains under
-  each user's private `_users/<id>/Chats/Work/projects` root.
-- [ ] The running agent received
-  `AGENTWORKS_PLAYBOOKS_DIR=/srv/confida/current/playbooks`, and its working
-  directory can read the packaged Basic Browser Setup manifest.
-- [ ] Local agent/workspace health and public `/api/health` and `/login` succeed.
-- [ ] Only after verification is the release marked complete and old releases
-  pruned. Record the release ID and source revisions when reporting deployment.
-
-The checks can also run independently over SSH, without exposing the environment:
+The shared gates can also run independently over SSH without printing secrets:
 
 ```sh
 ssh -p 2299 -i ~/.ssh/confida_deploy confida@116.202.210.102 \
-  'python3 - preflight' < deploy/cf/deployment_checks.py
+  'PRODUCT=confida EXPECTED_PUBLIC_URL=https://confida.agentworkshq.com python3 - preflight' \
+  < deploy/rootless-linux/deployment_checks.py
 ssh -p 2299 -i ~/.ssh/confida_deploy confida@116.202.210.102 \
-  'python3 - running' < deploy/cf/deployment_checks.py
+  'PRODUCT=confida EXPECTED_PUBLIC_URL=https://confida.agentworkshq.com python3 - running' \
+  < deploy/rootless-linux/deployment_checks.py
 ```
 
-These are deterministic deployment gates, not a claim of byte-reproducible
-builds: CLI installers still use `latest`, and each deployment resolves current
-remote branch heads. The checks validate callback configuration, not completion
-of a user's OAuth consent flow. No automatic rollback is currently implemented;
-a post-activation failure must be investigated before calling the release healthy.
+These checks are deterministic deployment gates. Provider CLI installers still
+resolve their current releases, so this is not a byte-reproducible build.

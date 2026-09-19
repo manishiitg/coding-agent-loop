@@ -2,15 +2,14 @@
 
 A repeatable redeploy pipeline for fixed-workspace products running as their
 own isolated Linux account on a shared rootless-systemd host, generalized
-from `deploy/cf/` (confida). One host can run several products, each under
+from Confida's original deployer. One host can run several products, each under
 its own system account (`sparkquill`, `confida`, `dominion`, ...); this
 pipeline only ever touches the one account and `$PRODUCT-*` systemd units
 named on the command line.
 
-`deploy/cf/`, `deploy/aws-ec2/` (video-studio), and dominion's deploy path
-still have their own copies of this same shape and keep working as-is.
-Migrating them onto this template is a deliberate later step per product,
-not automatic.
+Confida and SparkQuill use this shared pipeline. `deploy/cf/deploy-cf.sh`
+remains as a compatibility wrapper. Video Studio and Dominion keep their
+separate deployment paths because their host/bootstrap contracts differ.
 
 ## How it works
 
@@ -71,6 +70,7 @@ Requirements this template assumes:
 
 ```
 ./deploy.sh sparkquill
+./deploy.sh confida
 ```
 
 Env overrides (all default from `product.env`): `HOST_IP`, `SSH_PORT`,

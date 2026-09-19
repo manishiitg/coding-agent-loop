@@ -4,10 +4,9 @@ set -euo pipefail
 # Repeatable redeploy script for any fixed-workspace product running as its
 # own isolated Linux account on a shared rootless-systemd Hetzner box.
 #
-# Generalized from deploy/cf/deploy-cf.sh (confida), which stays as-is and
-# keeps working; this is a separate, parameterized template. Migrating
-# confida/video-studio/dominion onto it is a deliberate later step, not part
-# of adding a new product here.
+# Generalized from the original Confida deployer. Confida and SparkQuill now
+# both use this parameterized pipeline; target-specific settings live under
+# products/<product>/ instead of being duplicated in deployment scripts.
 #
 # This host also runs other products, each under its own account and its own
 # deploy path. This script only ever touches /srv/$PRODUCT and the
@@ -198,6 +197,13 @@ echo "==> [$PRODUCT] Verifying"
 # routed gateway; only a connection failure or a 5xx means something is wrong.
 public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/health")"
 echo "public /api/health: $public_code"
-[[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
+if [[ -n "${PUBLIC_HEALTH_STATUS:-}" ]]; then
+  [[ "$public_code" == "$PUBLIC_HEALTH_STATUS" ]] || { echo "https://$DOMAIN/api/health returned $public_code, expected $PUBLIC_HEALTH_STATUS" >&2; exit 1; }
+else
+  [[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
+fi
+for path in "${PUBLIC_CHECK_PATHS[@]:-}"; do
+  [[ -z "$path" ]] || curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN$path"
+done
 
 echo "==> [$PRODUCT] Done."

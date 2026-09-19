@@ -4,8 +4,8 @@
 # name), this clones fresh on the target host, then hands off to the actual
 # build script living INSIDE that fresh checkout -- so the build logic itself
 # always tracks whatever is on the deployed branch, not a stale copy shipped
-# from the caller. Mirrors deploy/cf/server-bootstrap-build.sh (confida) and
-# deploy/aws-ec2/server/bootstrap-build.sh (video-studio).
+# from the caller. Shared by Confida and SparkQuill; mirrors the separate
+# deploy/aws-ec2/server/bootstrap-build.sh used by Video Studio.
 set -euo pipefail
 JOB="$1"
 PRODUCT="$(cat "$JOB/product")"

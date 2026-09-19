@@ -2,9 +2,9 @@
 # Invoked only inside a fresh $PRODUCT@<host> checkout by bootstrap-build.sh.
 # Everything below runs directly on the target host -- there is no
 # cross-compile and no artifact upload, matching
-# deploy/aws-ec2/server/build-and-activate.sh's (video-studio's) and
-# deploy/cf/server-build-and-activate.sh's (confida's) on-server build shape.
-# This is the generalized, parameterized version of the latter: per-product
+# deploy/aws-ec2/server/build-and-activate.sh's (video-studio's) on-server
+# build shape. Confida and SparkQuill share this parameterized version:
+# per-product
 # facts (ports, provider/model, CLI list, extra env, runtime-config.js,
 # mcp-servers.json) live under deploy/rootless-linux/products/$PRODUCT/ and
 # are read from the checkout on the deployed branch, never from the
@@ -24,6 +24,13 @@ test -f "$PRODUCT_DIR/product.env" || { echo "No such product: $PRODUCT_DIR/prod
 # shellcheck disable=SC1091
 source "$PRODUCT_DIR/product.env"
 [[ "$PRODUCT" == "$(basename "$PRODUCT_DIR")" ]] || { echo "product.env PRODUCT=$PRODUCT does not match directory $(basename "$PRODUCT_DIR")" >&2; exit 1; }
+
+for snippet in "${RUNTIME_CONFIG_REQUIRED_SNIPPETS[@]:-}"; do
+  [[ -z "$snippet" ]] || grep -Fq "$snippet" "$PRODUCT_DIR/runtime-config.js" || {
+    echo "$PRODUCT runtime config is missing required setting: $snippet" >&2
+    exit 1
+  }
+done
 
 for command in git go gcc npm python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$SCRIPT_DIR/deployment_checks.py" preflight
@@ -93,6 +100,9 @@ if [[ "${COPY_PLAYBOOKS:-false}" == "true" ]]; then
   mkdir -p "$BUILD_DIR/playbooks"
   cp -R "$REPO_ROOT/playbooks/." "$BUILD_DIR/playbooks/"
   python3 "$BUILD_DIR/playbooks/scripts/validate_playbooks.py"
+  if [[ -n "${PLAYBOOK_SMOKE_PATH:-}" ]]; then
+    test -f "$BUILD_DIR/playbooks/$PLAYBOOK_SMOKE_PATH"
+  fi
 fi
 
 # Carry the previous release's hashed frontend assets into the new one. A tab
@@ -114,6 +124,16 @@ PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$SCRI
 chmod +x "$BUILD_DIR"/bin/*
 ln -sfn "$REMOTE_APP/logs" "$BUILD_DIR/logs"
 
+if [[ "${PERSIST_MCP_STATE:-false}" == "true" ]]; then
+  mcp_state="$REMOTE_APP/state/mcp"
+  install -d -m 0700 "$mcp_state"
+  legacy_mcp="$REMOTE_APP/current/configs/mcp_servers_${PRODUCT}_user.json"
+  if [[ -f "$legacy_mcp" && ! -e "$mcp_state/mcp_servers_${PRODUCT}_user.json" ]]; then
+    cp -n "$legacy_mcp" "$mcp_state/mcp_servers_${PRODUCT}_user.json"
+    chmod 0600 "$mcp_state/mcp_servers_${PRODUCT}_user.json"
+  fi
+fi
+
 runtime_path="$REMOTE_APP/tools/node/bin:$REMOTE_APP/tools/bin:$REMOTE_APP/home/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 
 # EnvironmentFile= values are applied after Environment= and therefore win
@@ -121,22 +141,51 @@ runtime_path="$REMOTE_APP/tools/node/bin:$REMOTE_APP/tools/bin:$REMOTE_APP/home/
 # `systemctl show` while the executed process still receives whatever PATH
 # is (or is not) in .env. Replace just that one line atomically so the
 # managed PATH always wins regardless of what the drop-in also says, and
-# preserve every other line in .env untouched (confida hit this live,
-# 2026-09-11: see deploy/cf/server-build-and-activate.sh).
+# preserve every other line in .env untouched (Confida hit this live on
+# 2026-09-11).
 env_file="$REMOTE_APP/.env"
 if [[ -f "$env_file" ]]; then
   env_next="$(mktemp "$REMOTE_APP/.env.runtime.XXXXXX")"
-  awk -v managed_path="$runtime_path" '
-    BEGIN { wrote_path = 0 }
-    /^PATH=/ { if (!wrote_path) { print "PATH=" managed_path; wrote_path = 1 }; next }
-    { print }
-    END { if (!wrote_path) print "PATH=" managed_path }
-  ' "$env_file" > "$env_next"
+  python3 - "$env_file" "$env_next" "$runtime_path" "${EXTRA_ENV[@]:-}" <<'PY'
+from pathlib import Path
+import sys
+
+source, destination, runtime_path, *managed_entries = sys.argv[1:]
+managed = {"PATH": runtime_path}
+for entry in managed_entries:
+    if not entry:
+        continue
+    key, separator, value = entry.partition("=")
+    if not separator or not key:
+        raise SystemExit("EXTRA_ENV entries must use KEY=value")
+    managed[key] = value
+
+output = []
+written = set()
+for line in Path(source).read_text().splitlines():
+    key, separator, _ = line.partition("=")
+    if separator and key in managed:
+        if key not in written:
+            output.append(f"{key}={managed[key]}")
+            written.add(key)
+        continue
+    output.append(line)
+for key, value in managed.items():
+    if key not in written:
+        output.append(f"{key}={value}")
+Path(destination).write_text("\n".join(output) + "\n")
+PY
   chmod 0600 "$env_next"
   mv "$env_next" "$env_file"
 fi
 
 mkdir -p "$HOME/.config/systemd/user/$PRODUCT-agent.service.d" "$HOME/.config/systemd/user/$PRODUCT-workspace.service.d"
+for obsolete in "${REMOVE_DEPLOY_DROPINS[@]:-}"; do
+  [[ -z "$obsolete" ]] || {
+    rm -f "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/$obsolete"
+    rm -f "$HOME/.config/systemd/user/$PRODUCT-workspace.service.d/$obsolete"
+  }
+done
 {
   echo '[Service]'
   echo "Environment=PATH=$runtime_path"
@@ -146,6 +195,16 @@ mkdir -p "$HOME/.config/systemd/user/$PRODUCT-agent.service.d" "$HOME/.config/sy
 } > "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf"
 cp "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf" \
    "$HOME/.config/systemd/user/$PRODUCT-workspace.service.d/zz-deploy-managed.conf"
+for entry in "${AGENT_EXTRA_ENV[@]:-}"; do
+  [[ -n "$entry" ]] && echo "Environment=$entry" >> "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf"
+done
+
+export XDG_RUNTIME_DIR="/run/user/$(id -u)"
+
+# Activate the immutable release before any opted-in migration. The migration
+# marker and data live outside releases, while every subsequent service start
+# must resolve binaries and assets from this exact candidate.
+ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 # One-time migration of legacy Workflow Builder chats, if this product opted
 # in. Runs after `current` points at code that understands the new nested
@@ -160,7 +219,7 @@ if [[ "${RUN_WORKFLOW_BUILDER_MIGRATION:-false}" == "true" ]]; then
     echo "==> [$RELEASE_ID] Migrating legacy Workflow Builder chats"
     mkdir -p "$BUILD_DIR/migrations"
     install -m 0755 "$REPO_ROOT/scripts/migrate_workflow_builder_chats.py" "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py"
-    install -m 0644 "$SCRIPT_DIR/workflow-builder-chat-owners-v1.json" "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json"
+    install -m 0644 "$PRODUCT_DIR/workflow-builder-chat-owners-v1.json" "$BUILD_DIR/migrations/workflow-builder-chat-owners-v1.json"
     MIGRATION_STOPPED_AGENT=1
     systemctl --user stop "$PRODUCT-agent"
     python3 "$BUILD_DIR/migrations/migrate_workflow_builder_chats.py" \
@@ -173,8 +232,6 @@ if [[ "${RUN_WORKFLOW_BUILDER_MIGRATION:-false}" == "true" ]]; then
     mv "$marker_tmp" "$migration_marker"
   fi
 fi
-
-ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
 
 # Drain before the restart: restarting while a turn is running hands the user
 # a 502 mid-message. Poll the agent's /health "drain" block until it is idle,
@@ -222,6 +279,18 @@ for unit in "$PRODUCT-agent" "$PRODUCT-workspace"; do
   done
 done
 
+agent_pid="$(systemctl --user show "$PRODUCT-agent" -p MainPID --value)"
+for entry in "${AGENT_EXTRA_ENV[@]:-}"; do
+  [[ -n "$entry" ]] && { tr '\0' '\n' < "/proc/$agent_pid/environ" | grep -Fqx "$entry" || { echo "$PRODUCT-agent did not receive $entry" >&2; exit 1; }; }
+done
+if [[ -n "${PLAYBOOK_SMOKE_PATH:-}" ]]; then
+  test -f "/proc/$agent_pid/cwd/playbooks/$PLAYBOOK_SMOKE_PATH"
+fi
+
+if [[ -n "${PIN_NODE_VERSION:-}" ]]; then
+  test "$(node --version)" = "v$PIN_NODE_VERSION"
+fi
+
 echo "==> [$RELEASE_ID] Verifying"
 PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$BUILD_DIR/deployment_checks.py" running
 curl -fsS -o /dev/null -w "agent  /api/health: %{http_code}\n" "http://127.0.0.1:$AGENT_PORT/api/health"
@@ -232,7 +301,14 @@ curl -fsS "http://127.0.0.1:$WORKSPACE_PORT/health"; echo
 # means the gateway itself is broken.
 public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/health")"
 echo "public /api/health: $public_code"
-[[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
+if [[ -n "${PUBLIC_HEALTH_STATUS:-}" ]]; then
+  [[ "$public_code" == "$PUBLIC_HEALTH_STATUS" ]] || { echo "https://$DOMAIN/api/health returned $public_code, expected $PUBLIC_HEALTH_STATUS" >&2; exit 1; }
+else
+  [[ "$public_code" -lt 500 ]] || { echo "https://$DOMAIN/api/health returned $public_code" >&2; exit 1; }
+fi
+for path in "${PUBLIC_CHECK_PATHS[@]:-}"; do
+  [[ -z "$path" ]] || curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN$path"
+done
 
 rm -f "$BUILD_DIR/.deploying"
 python3 "$BUILD_DIR/prune-releases.py" "$REMOTE_APP" --apply \

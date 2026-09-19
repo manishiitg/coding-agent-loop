@@ -12,12 +12,15 @@ See the [Linux release gate](ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md#release-gate
 | **Dedicated VM** (legacy, shared host) | [deploy/dedicated-vm/](dedicated-vm/) | Hetzner VM, hybrid Docker + bare-metal systemd, root-owned. Live at https://agents.excellencetechnologies.in |
 | **Dominion** (dedicated VM) | [deploy/dedicated-vm/dominion-hetzner.md](dedicated-vm/dominion-hetzner.md) | Isolated Hetzner VM, rootless `systemd --user`. Live at https://trader.tectonicmarkets.com |
 | **Video Studio** (AWS EC2) | [deploy/aws-ec2/](aws-ec2/) | Isolated EC2 host, rootless `systemd --user`. Live at https://video.realtrainingsys.com |
+| **Rootless Linux products** | [deploy/rootless-linux/](rootless-linux/) | Shared deterministic deployer used by Confida and SparkQuill |
 | **Kubernetes** | [deploy/k8s/](k8s/) | Manifests (agent, frontend, workspace-api), shared config, and deploy script |
 | **Azure** | [deploy/azure/](azure/) | Terraform for Azure Container Apps |
 
 - **Dedicated VM** (legacy): `cd deploy/dedicated-vm && ./quick-deploy.sh all`. See [dedicated-vm/README.md](dedicated-vm/README.md) for access, architecture, and gotchas.
 - **Dominion**: see [dedicated-vm/dominion-hetzner.md](dedicated-vm/dominion-hetzner.md) — no automated deploy script; manual `rsync` + `systemctl --user restart`, documented step by step.
 - **Video Studio**: `bash deploy/aws-ec2/deploy-rootless.sh`. See [aws-ec2/README.md](aws-ec2/README.md).
+- **Confida**: `DEPLOY_BRANCH=main bash deploy/rootless-linux/deploy.sh confida`.
+- **SparkQuill**: `DEPLOY_BRANCH=main bash deploy/rootless-linux/deploy.sh sparkquill`.
 - **K8s**: run `./deploy/k8s/scripts/deploy-k8s.sh` from repo root. See [k8s/README.md](k8s/README.md).
 - **Azure**: `cd deploy/azure` then Terraform / `deploy.sh`. See [azure/README.md](azure/README.md).
 

@@ -13,6 +13,15 @@ function event(id: string, type: string, data: Record<string, unknown>, extra: P
 }
 
 describe('buildCleanConversationItems', () => {
+  it('classifies provider restart context as continuity instead of a user message', () => {
+    const content = '[AGENTWORKS CONVERSATION CONTINUITY]\nRead the complete 423-message conversation archive.'
+    expect(buildCleanConversationItems([
+      event('continuity', 'user_message', { content }),
+    ])).toEqual([
+      expect.objectContaining({ role: 'continuity', content }),
+    ])
+  })
+
   it('keeps the human conversation, surfaces auto-notifications, and removes other internal runtime messages', () => {
     const items = buildCleanConversationItems([
       event('user-1', 'user_message', {

@@ -8,10 +8,11 @@ import {
   type ProductChatFailure,
 } from '../platform/chat/productChatFailure'
 import { pairToolCalls, isAssistantUpdate } from './terminalEventTranscript'
+import { isConversationContinuityNotice } from '../components/ConversationContinuityNotice'
 
 export type ConversationItem = {
   id: string
-  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification'
+  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification' | 'continuity'
   content: string
   timestamp?: string
   assistantUpdate?: boolean
@@ -140,6 +141,10 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
     if (event.type === 'user_message') {
       const content = displaySafeUserMessage(firstText(payload.content, asRecord(event.data)?.content))
       if (!content) continue
+      if (isConversationContinuityNotice(content)) {
+        pushUnique({ id: event.id, role: 'continuity', content, timestamp: event.timestamp })
+        continue
+      }
       if (content.startsWith('[AUTO-NOTIFICATION]')) {
         // Surfaced directly for now — background execute_step / run_full_workflow
         // completions were previously only inferable from the assistant's next

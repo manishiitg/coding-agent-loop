@@ -4,6 +4,7 @@ import type { PollingEvent } from '../services/api-types'
 import { buildCleanConversationItems, buildProductionActivityTurns } from '../utils/cleanConversation'
 import type { ProductionActivityItem, ProductionActivityTurn } from '../utils/cleanConversation'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
+import { ConversationContinuityNotice } from './ConversationContinuityNotice'
 
 // The agent's foreground and background status travel in separate event
 // updates. During a hand-off both can briefly read false even though work is
@@ -174,7 +175,9 @@ export function CleanConversationSurface({
         {rows.map(({ item, activityBefore }) => (
           <Fragment key={`row:${item.id}`}>
             {activityBefore ? <ProductionActivityDetails items={activityBefore.items} /> : null}
-            {item.role === 'user' ? (
+            {item.role === 'continuity' ? (
+          <ConversationContinuityNotice content={item.content} timestamp={messageTime(item.timestamp)} />
+        ) : item.role === 'user' ? (
           <article key={item.id} className="ml-auto max-w-full rounded-2xl rounded-br-md bg-violet-600 px-4 py-3 text-sm leading-6 text-white shadow-sm" data-testid="clean-user-message">
             <p className="whitespace-pre-wrap break-words">{item.content}</p>
           </article>

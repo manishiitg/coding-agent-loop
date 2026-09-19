@@ -23,6 +23,7 @@ import { formatDurationCompact } from '../utils/duration'
 import { formatToolCallArguments, formatToolCallResult } from '../utils/toolCallFormatting'
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { parseProductInteraction, type ProductInteraction } from '../../shared/session/interactions'
+import { ConversationContinuityNotice, isConversationContinuityNotice } from './ConversationContinuityNotice'
 
 // Message text sizes multiply --chat-scale (default 1), so a product can offer
 // a bigger reading size (SparkQuill's Child Mode "T" button sets it on the
@@ -199,6 +200,10 @@ const TranscriptEvent: React.FC<{
 
   if (event.type !== 'user_message') {
     return <EventDispatcher event={event} onSendMessage={onSendMessage} compact hideOrchestratorContext />
+  }
+
+  if (isConversationContinuityNotice(content)) {
+    return <ConversationContinuityNotice content={content} timestamp={timestamp} />
   }
 
   return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} compactBottom={compactUserBottom} />

@@ -35,6 +35,16 @@ async function mount(events: PollingEvent[], retry?: () => Promise<void>) {
 }
 
 describe('shared transcript failure retry', () => {
+  it('renders provider restart context as a compact continuity notice', async () => {
+    const raw = '[AGENTWORKS CONVERSATION CONTINUITY]\nThis provider session was restarted. Before answering, read the complete 423-message conversation archive at builder/conversation/private.json.'
+    const host = await mount([event('continuity', 'user_message', { content: raw })])
+    const notice = host.querySelector('[data-testid="conversation-continuity-notice"]')!
+    expect(notice.textContent).toContain('Conversation restored')
+    expect(notice.textContent).toContain('423 earlier messages loaded')
+    expect((notice as HTMLDetailsElement).open).toBe(false)
+    expect(notice.querySelector('summary')?.textContent).not.toContain('builder/conversation/private.json')
+  })
+
   it('renders Muse progress as an assistant response without a Thinking disclosure', async () => {
     const host = await mount([event('muse-update', 'conversation_thinking', {
       thinking: 'Checking the supplied files.', metadata: { presentation: 'assistant_update' },

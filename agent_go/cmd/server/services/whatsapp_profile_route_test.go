@@ -3,16 +3,20 @@ package services
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/manishiitg/mcpagent/events"
+	"go.mau.fi/whatsmeow/types"
 )
 
 // An @token that is not a workflow slug is offered to the default product's
 // router; a workflow slug still wins, and a token nobody knows is unknown.
 func TestResolveFallsBackToTheProductRouterAfterWorkflowSlugs(t *testing.T) {
-	svc := &WhatsAppService{routing: WhatsAppRouting{"report": {WorkflowID: "wf-report", WorkspacePath: "Workflow/report"}}}
+	// An owner marks the pairing as claimed; without one every workflow slug
+	// is denied before the product router is even consulted.
+	svc := &WhatsAppService{routing: WhatsAppRouting{"report": {WorkflowID: "wf-report", WorkspacePath: "Workflow/report"}}, owner: &WhatsAppOwner{UserID: "user-1"}}
 	svc.SetProfileRouter(func(_ context.Context, token string) (*ProfileRoute, error) {
 		switch token {
 		case "child":
@@ -88,5 +92,82 @@ func TestProfileRoutedMessageKeepsItsProfileAcrossTurns(t *testing.T) {
 	req := manager.turnRequestForActive(active, "is it 3/5?", "user-1", "whatsapp", active.ThreadID)
 	if req["agent_profile_id"] != "sparkquill-child" || req["query"] != "is it 3/5?" {
 		t.Fatalf("follow-up = %#v, want built as the child's turn", req)
+	}
+}
+
+// A bot reply must not drop the chat out of a product route: @child is not
+// a workflow slug, so the outbound bookkeeping used to treat it as stale
+// and clear it — every message after the first @child turn then ran in the
+// default (parent) profile. Workflow slugs keep their hint; a slug nobody
+// knows is still dropped when no product router is in play.
+func TestOutboundReplyKeepsTheActiveProductRoute(t *testing.T) {
+	chat := "15551234567@s.whatsapp.net"
+
+	child := &WhatsAppService{routing: WhatsAppRouting{"report": {WorkflowID: "wf-report", WorkspacePath: "Workflow/report"}}}
+	child.SetProfileRouter(func(_ context.Context, token string) (*ProfileRoute, error) {
+		if token == "child" {
+			return &ProfileRoute{ProfileID: "sparkquill-child", ConversationKey: "fractions", Label: "Myra's tutor"}, nil
+		}
+		return nil, nil
+	})
+	child.setActiveSlug(chat, "child")
+	if out := child.applyActiveRouteHint(chat, "2/5 + 1/5 = 3/5."); out != "2/5 + 1/5 = 3/5." {
+		t.Fatalf("reply with @child active = %q, want the message untouched", out)
+	}
+	if active := child.activeSlug(chat); active != "child" {
+		t.Fatalf("active route after a bot reply = %q, want @child to stick", active)
+	}
+
+	workflow := &WhatsAppService{routing: WhatsAppRouting{"report": {WorkflowID: "wf-report", WorkspacePath: "Workflow/report"}}}
+	workflow.setActiveSlug(chat, "report")
+	if out := workflow.applyActiveRouteHint(chat, "done"); !strings.HasSuffix(out, "[report active | @off]") {
+		t.Fatalf("reply with @report active = %q, want the sticky-route hint", out)
+	}
+	if active := workflow.activeSlug(chat); active != "report" {
+		t.Fatalf("active route after a bot reply = %q, want @report kept", active)
+	}
+
+	stale := &WhatsAppService{}
+	stale.setActiveSlug(chat, "ghost")
+	stale.applyActiveRouteHint(chat, "done")
+	if active := stale.activeSlug(chat); active != "" {
+		t.Fatalf("stale active route after a bot reply = %q, want it cleared", active)
+	}
+}
+
+// @status must report a product route, not clear it as an unknown workflow.
+func TestStatusKeepsTheActiveProductRoute(t *testing.T) {
+	chat := "15551234567@s.whatsapp.net"
+	owner := &WhatsAppOwner{UserID: "user-1", Email: "user@example.com"}
+	info := types.MessageInfo{
+		MessageSource: types.MessageSource{
+			Chat:   types.JID{User: "15551234567", Server: types.DefaultUserServer},
+			Sender: types.JID{User: "15551234567", Server: types.DefaultUserServer},
+		},
+		ID: "msg-1", Timestamp: time.Now(), PushName: "User",
+	}
+
+	svc := &WhatsAppService{messageHandler: func(BotIncomingMessage) {}}
+	svc.SetProfileRouter(func(_ context.Context, token string) (*ProfileRoute, error) {
+		if token == "child" {
+			return &ProfileRoute{ProfileID: "sparkquill-child", ConversationKey: "fractions", Label: "Myra's tutor"}, nil
+		}
+		return nil, nil
+	})
+	svc.setActiveSlug(chat, "child")
+	if !svc.handleWorkflowCommand(context.Background(), "@status", chat, owner, info) {
+		t.Fatal("expected @status to be handled")
+	}
+	if active := svc.activeSlug(chat); active != "child" {
+		t.Fatalf("active route after @status = %q, want @child to stick", active)
+	}
+
+	stale := &WhatsAppService{messageHandler: func(BotIncomingMessage) {}}
+	stale.setActiveSlug(chat, "ghost")
+	if !stale.handleWorkflowCommand(context.Background(), "@status", chat, owner, info) {
+		t.Fatal("expected @status to be handled")
+	}
+	if active := stale.activeSlug(chat); active != "" {
+		t.Fatalf("stale active route after @status = %q, want it cleared", active)
 	}
 }

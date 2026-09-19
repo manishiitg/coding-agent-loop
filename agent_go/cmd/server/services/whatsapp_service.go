@@ -1303,6 +1303,15 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		}
 		route := w.resolveSlugRoute(active)
 		if route == nil {
+			if profile, err := w.resolveProfileRoute(ctx, active); err == nil && profile != nil {
+				label := strings.TrimSpace(profile.Label)
+				if label == "" {
+					label = "@" + active
+				}
+				w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Talking to %s (@%s). %s Off: @off", label, active, w.formatWhatsAppDetailModeStatus(chatJID)))
+				w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
+				return true
+			}
 			w.clearActiveSlug(chatJID)
 			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active workflow. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
 			w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
@@ -1857,6 +1866,44 @@ func (w *WhatsAppService) shouldSendActiveRouteHint(chatJID, slug string) bool {
 	}
 	w.activeRouteHints[key] = now
 	return true
+}
+
+// applyActiveRouteHint runs the sticky-route bookkeeping for one outbound
+// message: a workflow slug gets the periodic "[slug active | @off]" suffix,
+// and a slug that names nothing is dropped. A product @token (SparkQuill's
+// @child/@parent) is neither: it is left alone, without the hint. The
+// inbound router re-resolves a remembered token on every message and
+// deactivates it when the product no longer serves it, so the outbound path
+// must not second-guess it — clearing here is what silently dropped a chat
+// out of @child back into the default profile on the first bot reply.
+func (w *WhatsAppService) applyActiveRouteHint(channelID, message string) string {
+	activeSlug := w.activeSlug(channelID)
+	if activeSlug == "" {
+		return message
+	}
+	if w.resolveSlugRoute(activeSlug) != nil {
+		deactivateHint := fmt.Sprintf("@%s deactivate", activeSlug)
+		if strings.Contains(strings.ToLower(message), strings.ToLower(deactivateHint)) {
+			w.markActiveRouteHintSent(channelID, activeSlug)
+		} else if w.shouldSendActiveRouteHint(channelID, activeSlug) {
+			message = strings.TrimSpace(message) + fmt.Sprintf("\n\n[%s active | @off]", activeSlug)
+		}
+		return message
+	}
+	if w.hasProfileRouter() {
+		return message
+	}
+	w.clearActiveSlug(channelID)
+	return message
+}
+
+// hasProfileRouter reports whether a default product's @tokens are in play
+// for this pairing (see Resolve). When one is, an active slug the workflow
+// table does not know may still be a live product route.
+func (w *WhatsAppService) hasProfileRouter() bool {
+	w.mu.RLock()
+	defer w.mu.RUnlock()
+	return w.profileRouter != nil
 }
 
 func unknownWhatsAppWorkflowCommandMessage(slug string) string {
@@ -2490,18 +2537,7 @@ func (w *WhatsAppService) SendThreadMessage(ctx context.Context, threadID Thread
 	formatter := WhatsAppFormatter{}
 	message = formatter.FormatMessage(message)
 
-	if activeSlug := w.activeSlug(threadID.ChannelID); activeSlug != "" {
-		if w.resolveSlugRoute(activeSlug) != nil {
-			deactivateHint := fmt.Sprintf("@%s deactivate", activeSlug)
-			if strings.Contains(strings.ToLower(message), strings.ToLower(deactivateHint)) {
-				w.markActiveRouteHintSent(threadID.ChannelID, activeSlug)
-			} else if w.shouldSendActiveRouteHint(threadID.ChannelID, activeSlug) {
-				message = strings.TrimSpace(message) + fmt.Sprintf("\n\n[%s active | @off]", activeSlug)
-			}
-		} else {
-			w.clearActiveSlug(threadID.ChannelID)
-		}
-	}
+	message = w.applyActiveRouteHint(threadID.ChannelID, message)
 
 	if w.selfChatPrefix != "" && w.isSelfChat(jid) {
 		message = w.selfChatPrefix + message

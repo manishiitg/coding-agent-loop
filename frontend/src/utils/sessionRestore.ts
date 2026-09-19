@@ -503,19 +503,6 @@ async function tryFetchChatHistoryConversation(
     if (isNotFoundError(error)) {
       return null
     }
-    // Shared observers may read history but cannot resume its owner's session.
-    // Only explicitly read-only tabs use this fallback; the history endpoint
-    // still enforces workspace read access.
-    const readOnly = Object.values(useChatStore.getState().chatTabs || {}).some(
-      tab => tab.sessionId === sessionId && tab.metadata?.isViewOnly,
-    )
-    if (readOnly && axios.isAxiosError(error) && error.response?.status === 403) {
-      // A shared/read-only transcript cannot use the resume endpoint because
-      // resuming is owner-only. Keep the fallback bounded too: calling the
-      // conversation endpoint without a preview limit downloaded the entire
-      // canonical archive (118 MB for a mature workflow chat) into the browser.
-      return agentApi.getChatHistoryConversation(sessionId, workspacePath, INITIAL_HISTORY_TURNS)
-    }
     throw error
   }
 }

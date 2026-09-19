@@ -77,14 +77,14 @@ describe('hydrateTabEvents restored chat fallback', () => {
 
   it('reads a shared bot transcript without resuming its owner session', async () => {
     mocks.chatTabs = { observer: { sessionId: 'shared-bot', metadata: { isViewOnly: true } } }
-    mocks.getChatHistoryResumeConversation.mockRejectedValue({ isAxiosError: true, response: { status: 403 } })
-    mocks.getChatHistoryConversation.mockResolvedValue({ session_id: 'shared-bot', conversation_history: [
+    mocks.getChatHistoryResumeConversation.mockResolvedValue({ session_id: 'shared-bot', conversation_history: [
       { Role: 'human', Parts: [{ Text: 'Hello' }] },
       { Role: 'ai', Parts: [{ Text: 'Saved bot answer' }] },
     ] })
     mocks.getRecentSessionEvents.mockRejectedValue({ isAxiosError: true, response: { status: 404 } })
     await hydrateTabEvents('shared-bot', { workspacePath: 'Workflow/shared' })
-    expect(mocks.getChatHistoryConversation).toHaveBeenCalledWith('shared-bot', 'Workflow/shared', 10)
+    expect(mocks.getChatHistoryResumeConversation).toHaveBeenCalledWith('shared-bot', 'Workflow/shared', 10)
+    expect(mocks.getChatHistoryConversation).not.toHaveBeenCalled()
     expect(mocks.setTabEvents).toHaveBeenCalledWith('shared-bot', expect.arrayContaining([
       expect.objectContaining({ type: 'unified_completion' }),
     ]))

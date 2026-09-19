@@ -981,9 +981,10 @@ export const agentApi = {
     return response.data
   },
 
-  // Formatted Resume needs the readable conversation plus its compact tool
-  // trace, never raw terminal frames. The server bounds by user turns and
-  // preserves meaningful assistant updates within each turn.
+  // Read a bounded, formatted history page for display. Despite the legacy
+  // resume_turns query name, this GET never resumes a provider session and is
+  // valid for both owners and permitted read-only viewers. Actual continuation
+  // is authorized separately by the mutating restore/start endpoint.
   getChatHistoryResumeConversation: async (sessionId: string, workspacePath?: string, resumeTurns = 100, resumeOffset = 0, includeUiEvents = false): Promise<ChatHistoryConversation> => {
     const params: Record<string, string> = { resume_turns: String(resumeTurns) }
     if (resumeOffset > 0) params.resume_offset = String(resumeOffset)

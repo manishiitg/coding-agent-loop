@@ -709,10 +709,11 @@ func getChatHistoryConversationHandler(api *StreamingAPI) http.HandlerFunc {
 				http.Error(w, "Builder chat access denied", http.StatusForbidden)
 				return
 			}
-			if parsePositiveQueryInt(r, "resume_turns") > 0 && !chatHistoryCanResume(ownerID, userID, false) {
-				http.Error(w, "another user's Builder chat is view-only", http.StatusForbidden)
-				return
-			}
+			// This GET projects history for display; it does not resume the
+			// provider session. Permitted read-only activity (for example a shared
+			// workflow bot run) receives the same bounded projection as its owner.
+			// The mutating terminal/provider continuation route keeps the owner
+			// check above in startRestoredTerminalHandler.
 		}
 
 		// A resume reads the durable record, but a builder chat continued

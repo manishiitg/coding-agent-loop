@@ -31,28 +31,32 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
 
   if (setup !== null) {
     return (
-      <div className="space-y-4">
-        <button
-          type="button"
-          onClick={() => setSetup(null)}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
-        >
-          <ArrowLeft className="h-4 w-4" />
-          Back to bots
-        </button>
-        <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-          {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
-          {setup === 'slack' ? 'Slack' : 'WhatsApp'}
-          <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>
+      <div className="flex h-full min-h-0 flex-col gap-4">
+        <div className="shrink-0 space-y-4">
+          <button
+            type="button"
+            onClick={() => setSetup(null)}
+            className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
+          >
+            <ArrowLeft className="h-4 w-4" />
+            Back to bots
+          </button>
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            {setup === 'slack' ? <MessageSquare className="h-4 w-4" /> : <Phone className="h-4 w-4" />}
+            {setup === 'slack' ? 'Slack' : 'WhatsApp'}
+            <span className="text-xs font-normal text-muted-foreground">· shared across AgentWorks</span>
+          </div>
+          {setup === 'slack' && askSlackSetup}
         </div>
-        {setup === 'slack' && askSlackSetup}
-        {setup === 'slack' ? <SlackSetup bots={bots} /> : <WhatsAppSetup bots={bots} />}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain pr-1">
+          {setup === 'slack' ? <SlackSetup bots={bots} /> : <WhatsAppSetup bots={bots} />}
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-4">
+    <div className="h-full min-h-0 space-y-4 overflow-y-auto overscroll-contain pr-1">
       {(['slack', 'whatsapp'] as const).map(kind => {
         const routes = workflowRoutes.filter(route => route.kind === kind)
         return (

@@ -56,12 +56,14 @@ If the domain changes, update [`quick-deploy.sh`](quick-deploy.sh) (`PUBLIC_URL`
 From your local machine, repo root:
 
 ```bash
-cd deploy/dedicated-vm
-./quick-deploy.sh all          # everything
-./quick-deploy.sh agent        # just agent_go + mcpagent + multi-llm + workspace (Go)
-./quick-deploy.sh frontend     # just frontend (builds locally, ships dist/)
-./quick-deploy.sh workspace    # just restart workspace
+./deploy.sh agents             # everything
+./deploy.sh agents agent       # just agent_go + mcpagent + multi-llm + workspace (Go)
+./deploy.sh agents frontend    # just frontend (builds locally, ships dist/)
+./deploy.sh agents workspace   # just restart workspace
 ```
+
+Run these from the repository root. They delegate to this directory's
+`quick-deploy.sh`; direct invocation remains supported.
 
 What `quick-deploy.sh all` does:
 1. Rsyncs `agent_go/`, `workspace/`, `mcpagent/`, `multi-llm-provider-go/` to `/opt/mcp-agent/src/`

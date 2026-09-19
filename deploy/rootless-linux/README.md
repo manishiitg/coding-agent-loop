@@ -73,6 +73,10 @@ Requirements this template assumes:
 ./deploy.sh confida
 ```
 
+Run those commands from the repository root. The shared root `deploy.sh`
+delegates to this directory's product deployer. Direct invocation remains
+available as `bash deploy/rootless-linux/deploy.sh <product>`.
+
 Env overrides (all default from `product.env`): `HOST_IP`, `SSH_PORT`,
 `SSH_KEY_PATH`, `DEPLOY_BRANCH` (defaults to `main`).
 

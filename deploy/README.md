@@ -16,11 +16,11 @@ See the [Linux release gate](ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md#release-gate
 | **Kubernetes** | [deploy/k8s/](k8s/) | Manifests (agent, frontend, workspace-api), shared config, and deploy script |
 | **Azure** | [deploy/azure/](azure/) | Terraform for Azure Container Apps |
 
-- **Dedicated VM** (legacy): `cd deploy/dedicated-vm && ./quick-deploy.sh all`. See [dedicated-vm/README.md](dedicated-vm/README.md) for access, architecture, and gotchas.
+- **Dedicated VM** (legacy): `./deploy.sh agents` (or `./deploy.sh agents frontend|agent|workspace`). See [dedicated-vm/README.md](dedicated-vm/README.md) for access, architecture, and gotchas.
 - **Dominion**: see [dedicated-vm/dominion-hetzner.md](dedicated-vm/dominion-hetzner.md) — no automated deploy script; manual `rsync` + `systemctl --user restart`, documented step by step.
-- **Video Studio**: `bash deploy/aws-ec2/deploy-rootless.sh`. See [aws-ec2/README.md](aws-ec2/README.md).
-- **Confida**: `DEPLOY_BRANCH=main bash deploy/rootless-linux/deploy.sh confida`.
-- **SparkQuill**: `DEPLOY_BRANCH=main bash deploy/rootless-linux/deploy.sh sparkquill`.
+- **Video Studio**: `./deploy.sh rts`. See [aws-ec2/README.md](aws-ec2/README.md).
+- **Confida**: `./deploy.sh confida`.
+- **SparkQuill**: `./deploy.sh sparkquill`.
 - **K8s**: run `./deploy/k8s/scripts/deploy-k8s.sh` from repo root. See [k8s/README.md](k8s/README.md).
 - **Azure**: `cd deploy/azure` then Terraform / `deploy.sh`. See [azure/README.md](azure/README.md).
 

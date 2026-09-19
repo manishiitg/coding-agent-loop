@@ -27,11 +27,14 @@ to the deployer's current public IP; it is not publicly open.
 From the repository root:
 
 ```bash
-AWS_PROFILE_NAME=RTS \
-AWS_REGION=us-west-2 \
-SSH_KEY_PATH=/Users/mipl/.ssh/id_ed25519 \
-bash deploy/aws-ec2/deploy-rootless.sh
+./deploy.sh rts
 ```
+
+The shared root command delegates to `deploy/aws-ec2/deploy-rootless.sh`, so
+the existing remote build, drain, activation, and health gates remain intact.
+Its defaults use the `RTS` AWS profile, `us-west-2`, and
+`~/.ssh/id_ed25519`; set `AWS_PROFILE_NAME`, `AWS_REGION`, or `SSH_KEY_PATH`
+only when overriding those defaults.
 
 This release path connects as `video-studio`, writes only its own application
 directory, and restarts only its user services. It neither runs `sudo` nor

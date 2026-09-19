@@ -112,7 +112,7 @@ it('shows a read-only webhook delivery feed inside Triggers', async () => {
   expect(host.textContent).toContain('Delivery history')
   expect(host.textContent).toContain('PR reviews')
   expect(host.textContent).not.toContain('Daily audit')
-  expect(host.querySelector('button[aria-label="Webhooks"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="Webhooks"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Schedules"]')).toBeNull()
   expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Open')).toBe(false)
   expect(agentApi.listChatHistorySessions).not.toHaveBeenCalled()
@@ -139,7 +139,7 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Open"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Open read-only conversation"]')).toBeNull()
-  expect(host.querySelector('button[aria-label="History"]')).not.toBeNull()
+  expect(host.querySelector('button[aria-label="History"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Recent"]')).toBeNull()
   const title = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Earlier project discussion'))
   expect(title).toBeDefined()
@@ -159,16 +159,19 @@ it('can open read-only Crew history in a separate tab without exposing managemen
   const root = createRoot(host)
   const onSelect = vi.fn()
   await act(async () => root.render(
-    <PreviousChatHistoryPanel workspacePath="Workflow/test" recentOnly readOnly allowOpen onSelectSession={onSelect} />,
+    <PreviousChatHistoryPanel workspacePath="Workflow/test" recentOnly readOnly allowOpen openOnRowClick onSelectSession={onSelect} />,
   ))
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
 
   expect(host.querySelector('button[aria-label="Rename chat"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Delete this chat"]')).toBeNull()
-  const open = host.querySelector<HTMLButtonElement>('button[aria-label="Open in new tab"]')
-  expect(open).not.toBeNull()
-  await act(async () => open!.click())
+  expect(host.querySelector('button[aria-label="Show chat details"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Open in new tab"]')).toBeNull()
+  const row = [...host.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent?.includes('Isolated trigger run'))
+  expect(row).toBeDefined()
+  await act(async () => row!.click())
   expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({ session_id: 'isolated-trigger-chat' }))
+  expect(agentApi.getChatHistoryConversation).not.toHaveBeenCalled()
 })
 
 it('identifies the open persistent chat even before it appears in history', async () => {

@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { getApiBaseUrl, getAuthToken } from '../services/api'
+import type { ListScheduledJobRunsResponse } from '../services/api-types'
 
 export interface ProductAPITrigger {
   id: string
@@ -32,6 +33,9 @@ export const productWebhooksApi = {
   delete: (scope: ProductTriggerScope, id: string) => axios.delete(`/api/product-webhooks/${encodeURIComponent(id)}`, {
     ...config(), params: { profile_id: scope.profileId, project_id: scope.projectId },
   }),
+  runs: (scope: ProductTriggerScope, id: string, limit = 30) => axios.get<ListScheduledJobRunsResponse>(`/api/product-webhooks/${encodeURIComponent(id)}/runs`, {
+    ...config(), params: { profile_id: scope.profileId, project_id: scope.projectId, limit },
+  }).then(response => response.data),
 }
 
 export function apiTriggerURL(path: string): string {

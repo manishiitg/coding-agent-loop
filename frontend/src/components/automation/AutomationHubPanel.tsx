@@ -130,7 +130,7 @@ export function AutomationHubPanel({
         />}
         {section === 'triggers' && entityType === 'product' && productTriggerScope && <ProductAPITriggersView
           scope={productTriggerScope}
-          deliveryHistory={<TriggerDeliveryHistoryPanel workspacePath={workspacePath} entityType="product" />}
+          deliveryHistory={<TriggerDeliveryHistoryPanel workspacePath={workspacePath} entityType="product" productTriggerScope={productTriggerScope} />}
           headerAction={triggerHeaderAction}
         />}
         {section === 'bots' && botContent}

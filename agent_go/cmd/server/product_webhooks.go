@@ -11,6 +11,7 @@ import (
 	"mime"
 	"net/http"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -100,7 +101,45 @@ func ProductWebhookRoutes(router *mux.Router, svc *ProductScheduleService) {
 	router.HandleFunc("/api/product-webhooks", svc.saveProductWebhook).Methods("POST")
 	router.HandleFunc("/api/product-webhooks/{id}", svc.saveProductWebhook).Methods("PUT")
 	router.HandleFunc("/api/product-webhooks/{id}", svc.deleteProductWebhook).Methods("DELETE")
+	router.HandleFunc("/api/product-webhooks/{id}/runs", svc.listProductWebhookRuns).Methods("GET")
 	router.HandleFunc("/api/hooks/product/{id}", svc.receiveProductWebhook).Methods("POST")
+}
+
+func (s *ProductScheduleService) listProductWebhookRuns(w http.ResponseWriter, r *http.Request) {
+	profileID, projectID := productWebhookCoordinates(r)
+	if profileID == "" {
+		profileID = "work"
+	}
+	profile, binding, manifest, err := s.projectManifest(r.Context(), productWorkspaceUserID(r.Context()), profileID, projectID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusNotFound)
+		return
+	}
+	triggerID := mux.Vars(r)["id"]
+	found := false
+	for _, trigger := range manifest.Triggers {
+		if trigger.ID == triggerID {
+			found = true
+			break
+		}
+	}
+	if !found {
+		http.Error(w, "trigger not found", http.StatusNotFound)
+		return
+	}
+	limit := 30
+	if requested, parseErr := strconv.Atoi(r.URL.Query().Get("limit")); parseErr == nil && requested > 0 && requested <= 100 {
+		limit = requested
+	}
+	jobID := projectScheduleJobID(profile.ID, manifest.ID, triggerID)
+	runsWorkspace := agentProfileRuntimeWorkspace(productWorkspaceUserID(r.Context()), binding.WorkspacePath)
+	runs, total, err := ListScheduleRuns(r.Context(), runsWorkspace, jobID, limit, 0)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"runs": runs, "total": total, "limit": limit, "offset": 0})
 }
 
 func productWebhookCoordinates(r *http.Request) (string, string) {

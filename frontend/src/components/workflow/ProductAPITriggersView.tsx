@@ -3,7 +3,7 @@ import axios from 'axios'
 import { Copy, RefreshCw, Webhook } from 'lucide-react'
 import { apiTriggerURL, productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
 
-const buttonClass = 'rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50'
+const buttonClass = 'rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50'
 
 function errorMessage(error: unknown): string {
   if (axios.isAxiosError(error) && typeof error.response?.data === 'string') return error.response.data
@@ -49,7 +49,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
     catch { setError('Clipboard access failed. Select and copy the displayed value.') }
   }
 
-  return <div className="h-full min-w-0 w-full max-w-none space-y-5 overflow-x-hidden overflow-y-auto p-4">
+  return <div className="h-full min-w-0 w-full max-w-none space-y-4 overflow-x-hidden overflow-y-auto p-4">
     <div className="flex items-start justify-between gap-3">
       <div>
         <h2 className="flex items-center gap-2 text-base font-semibold"><Webhook size={17} />Webhooks</h2>
@@ -57,8 +57,7 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
       </div>
       <div className="flex items-center gap-2"><button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button>{headerAction}</div>
     </div>
-    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Choose whether each automation queues work in the Crew chat or keeps its own persistent isolated conversation. Webhooks do not run AgentWorks routes or workflow steps. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
-    <p className="text-xs text-muted-foreground">Ask the project chat to create a webhook or change its saved message and authentication.</p>
+    <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Choose the main Crew chat or a persistent isolated conversation. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
     {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {issued?.secret && <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
       <h3 className="text-sm font-medium">New secret for {issued.name}</h3>
@@ -66,18 +65,20 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
       <code className="block break-all rounded bg-background p-2 text-xs select-all">{issued.secret}</code>
       <button type="button" className={buttonClass} onClick={() => void copy(issued.secret!, 'Secret copied')}>Copy secret</button>
     </section>}
-    <div className="min-w-0 max-w-full space-y-3">{triggers.map(trigger => <section key={trigger.id} className="min-w-0 max-w-full space-y-3 overflow-hidden rounded-lg border border-border p-3">
-      <div className="flex justify-between gap-2"><h3 className="text-sm font-medium">{trigger.name}</h3><span className="text-xs text-muted-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span></div>
+    <div className="min-w-0 max-w-full space-y-2">{triggers.map(trigger => <section key={trigger.id} className="min-w-0 max-w-full space-y-2 overflow-hidden rounded-lg border border-border p-3">
+      <div className="flex items-center justify-between gap-2"><h3 className="truncate text-sm font-medium">{trigger.name}</h3><span className="shrink-0 text-[11px] text-muted-foreground">{trigger.enabled ? 'Enabled' : 'Disabled'}</span></div>
       <div className="flex items-start gap-2"><code className="min-w-0 flex-1 break-all text-xs select-all">{apiTriggerURL(trigger.path)}</code><button type="button" aria-label={`Copy endpoint for ${trigger.name}`} className={buttonClass} onClick={() => void copy(apiTriggerURL(trigger.path), 'Endpoint copied')}><Copy size={13} /></button></div>
-      <p className="text-xs text-muted-foreground">{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'} · Message: {trigger.message}</p>
-      <label className="flex max-w-sm items-center justify-between gap-3 rounded-md border border-border bg-muted/20 px-3 py-2 text-xs">
-        <span><span className="block font-medium text-foreground">Run destination</span><span className="text-muted-foreground">{trigger.run_destination === 'isolated' ? 'Own persistent automation conversation' : 'Queue after the current Crew turn'}</span></span>
-        <select aria-label={`Run destination for ${trigger.name}`} disabled={busy} value={trigger.run_destination || 'crew_chat'} onChange={event => void save({ ...trigger, run_destination: event.target.value as 'crew_chat' | 'isolated' })} className="rounded-md border border-border bg-background px-2 py-1.5 text-xs text-foreground">
+      <p className="line-clamp-2 text-xs text-muted-foreground" title={trigger.message}>{trigger.auth_mode === 'github' ? 'GitHub signature' : 'Bearer token'} · {trigger.message}</p>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <label className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+        <span className="shrink-0 font-medium text-foreground">Run in</span>
+        <select aria-label={`Run destination for ${trigger.name}`} disabled={busy} value={trigger.run_destination || 'crew_chat'} onChange={event => void save({ ...trigger, run_destination: event.target.value as 'crew_chat' | 'isolated' })} className="rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground">
           <option value="crew_chat">Crew chat</option>
           <option value="isolated">Isolated run</option>
         </select>
-      </label>
-      <div className="flex flex-wrap gap-2"><button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button></div>
+        </label>
+        <div className="flex flex-wrap gap-1.5"><button type="button" disabled={busy} className={buttonClass} onClick={() => void save({ ...trigger, enabled: !trigger.enabled })}>{trigger.enabled ? 'Disable' : 'Enable'}</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void save(trigger, true)}>Rotate secret</button><button type="button" disabled={busy} className={buttonClass} onClick={() => void remove(trigger.id)}>Remove</button></div>
+      </div>
     </section>)}{triggers.length === 0 && <p className="rounded-lg border border-dashed border-border p-5 text-center text-sm text-muted-foreground">No webhooks configured. Ask the project chat to create one.</p>}</div>
     {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}
     {deliveryHistory && <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}

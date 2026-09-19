@@ -445,6 +445,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               recentOnly
               readOnly
               allowOpen
+              openOnRowClick
               fill
               showAll
               actionLabel="Open"

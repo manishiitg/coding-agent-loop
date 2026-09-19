@@ -441,6 +441,8 @@ interface PreviousChatHistoryPanelProps {
   /** Keep history management read-only while still allowing a conversation to
    *  open in its own tab. */
   allowOpen?: boolean
+  /** Use the row as the open action and omit inline transcript expansion. */
+  openOnRowClick?: boolean
   /** Show one automation run feed without the general history filters. */
   runOnly?: 'schedule' | 'webhook'
   /** Scheduler ownership for the run feed. */
@@ -461,6 +463,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   recentOnly = false,
   readOnly = false,
   allowOpen = false,
+  openOnRowClick = false,
   runOnly,
   runEntityType = 'workflow',
 }) => {
@@ -867,11 +870,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
     { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
   ].filter(({ filter }) => runOnly ? filter === runOnly : !recentOnly || filter === 'chat')
+  const showPanelHeader = Boolean((!compact && title) || (!isLoading && (
+    filterItems.length > 1 || (!readOnly && !isRunFilter && hasOldVisibleSessions)
+  )))
 
   return (
     <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
       <div className={`${fill ? 'flex min-h-0 flex-1 flex-col' : ''} w-full`}>
-        <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : title ? 'justify-between' : 'justify-start'}`}>
+        {showPanelHeader && <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : title ? 'justify-between' : 'justify-start'}`}>
           {/* The "Previous … chats" heading is redundant in the compact rail —
               the filter pills + list make the purpose obvious — so hide it there. */}
           {!compact && title && (
@@ -882,7 +888,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           )}
 
           {!isLoading && (
-            <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+              <div className="flex max-w-full flex-wrap items-center justify-end gap-2">
+                {filterItems.length > 1 && (
               <div className="flex max-w-full items-center gap-0.5 overflow-x-auto rounded-md border border-border bg-muted/30 p-0.5">
                 {filterItems.map(({ filter, label, icon: Icon }) => {
                 const isActive = activeFilter === filter
@@ -913,6 +920,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 )
                 })}
               </div>
+                )}
               {!readOnly && !isRunFilter && hasOldVisibleSessions && (
                 <CleanupOldChatsDropdown
                   counts={oldVisibleSessionCounts}
@@ -922,7 +930,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               )}
             </div>
           )}
-        </div>
+        </div>}
 
         {isLoading ? (
           <div className="px-3 py-3 text-xs text-muted-foreground">Loading conversation history...</div>
@@ -995,7 +1003,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
                   <div className={`flex items-start gap-2 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
-                    <button
+                    {!openOnRowClick && <button
                       type="button"
                       onClick={() => toggleExpanded(session)}
                       disabled={messages.length === 0 && !session.message_count}
@@ -1003,11 +1011,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                       aria-label={isExpanded ? 'Hide chat details' : 'Show chat details'}
                     >
                       {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </button>
+                    </button>}
 
                     <button
                       type="button"
-                      onClick={() => readOnly ? toggleExpanded(session) : handleSelect(session)}
+                      onClick={() => openOnRowClick ? handleSelect(session) : readOnly ? toggleExpanded(session) : handleSelect(session)}
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
@@ -1064,7 +1072,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
                         </button>
                       )}
-                      {(!readOnly || allowOpen) && (
+                      {(!openOnRowClick && (!readOnly || allowOpen)) && (
                         <button
                           type="button"
                           onClick={() => handleSelect(session)}
@@ -1079,7 +1087,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </div>
                   </div>
 
-                  {isExpanded && (
+                  {!openOnRowClick && isExpanded && (
                     <div className="px-10 pb-3">
                       <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-xs text-foreground">
                         {isLoadingDetails && !hasLoadedMessages && (

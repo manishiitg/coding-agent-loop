@@ -9202,33 +9202,38 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 	// wrapped turn and reports the transport that actually accepted the input.
 	tryColdRetainedFallback := true
 	if retainedSession, ok := mcpagent.LookupSession(sessionID); ok {
-		sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
-		delivery, err := retainedSession.Send(sessionInputCtx, message)
-		sessionInputCancel()
-		if err != nil {
-			log.Printf("[QUERY->LIVE] Delivery uncertain for session %s: %v", sessionID, err)
-			writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
-			return true
-		} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
-			provider := string(delivery.Provider)
-			api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
-			api.persistLiveInputUserMessage(r.Context(), sessionID, message)
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(QueryResponse{
-				QueryID: queryID, SessionID: sessionID,
-				Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent session",
-				DeliveryStatus: string(delivery.Status), Provider: provider,
-				DeliveryTransport: string(delivery.Transport), DeliverySource: queryDeliverySourceMCPAgentSession,
-			})
-			log.Printf("[QUERY->LIVE] Delivered /api/query through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, message)
-			return true
+		if api.closeIdleRetainedTmuxSessionWithoutLiveTerminal(sessionID, retainedSession) {
+			// Continue through cold-terminal compatibility and then the normal
+			// new-turn path. No send was attempted, so delivery is not uncertain.
 		} else {
-			// Queueing is an accepted non-tmux submission. It is not evidence that
-			// the durable session is broken, so do not bypass mcpagent via tmux.
-			// Send accepted a non-CLI queue entry. Do not inject it again.
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.Status), "provider": string(delivery.Provider)})
-			return true
+			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+			delivery, err := retainedSession.Send(sessionInputCtx, message)
+			sessionInputCancel()
+			if err != nil {
+				log.Printf("[QUERY->LIVE] Delivery uncertain for session %s: %v", sessionID, err)
+				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+				return true
+			} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
+				provider := string(delivery.Provider)
+				api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
+				api.persistLiveInputUserMessage(r.Context(), sessionID, message)
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(QueryResponse{
+					QueryID: queryID, SessionID: sessionID,
+					Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent session",
+					DeliveryStatus: string(delivery.Status), Provider: provider,
+					DeliveryTransport: string(delivery.Transport), DeliverySource: queryDeliverySourceMCPAgentSession,
+				})
+				log.Printf("[QUERY->LIVE] Delivered /api/query through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, message)
+				return true
+			} else {
+				// Queueing is an accepted non-tmux submission. It is not evidence that
+				// the durable session is broken, so do not bypass mcpagent via tmux.
+				// Send accepted a non-CLI queue entry. Do not inject it again.
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.Status), "provider": string(delivery.Provider)})
+				return true
+			}
 		}
 	}
 	if tryColdRetainedFallback {
@@ -9409,24 +9414,29 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	// remains addressable after the wrapped Go turn has completed.
 	tryColdRetainedFallback := true
 	if retainedSession, ok := mcpagent.LookupSession(sessionID); ok {
-		sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
-		delivery, err := retainedSession.Send(sessionInputCtx, req.Message)
-		sessionInputCancel()
-		if err != nil {
-			log.Printf("[LIVE INPUT] Delivery uncertain for session %s: %v", sessionID, err)
-			writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
-			return
-		} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
-			provider := string(delivery.Provider)
-			messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider)
-			writeRetainedTerminalLiveInputResponseWithMessageID(w, sessionID, provider, messageID)
-			log.Printf("[LIVE INPUT] Delivered through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, req.Message)
-			api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
-			return
+		if api.closeIdleRetainedTmuxSessionWithoutLiveTerminal(sessionID, retainedSession) {
+			// Continue through cold-terminal compatibility and then start the
+			// resumed turn. No provider delivery was attempted.
 		} else {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(LiveInputResponse{Success: true, Message: "User message accepted by provider session", DeliveryStatus: string(delivery.Status), Provider: string(delivery.Provider)})
-			return
+			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+			delivery, err := retainedSession.Send(sessionInputCtx, req.Message)
+			sessionInputCancel()
+			if err != nil {
+				log.Printf("[LIVE INPUT] Delivery uncertain for session %s: %v", sessionID, err)
+				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
+				return
+			} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
+				provider := string(delivery.Provider)
+				messageID := api.recordMCPAgentSessionLiveInput(sessionID, req.Message, provider)
+				writeRetainedTerminalLiveInputResponseWithMessageID(w, sessionID, provider, messageID)
+				log.Printf("[LIVE INPUT] Delivered through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, req.Message)
+				api.persistLiveInputUserMessage(r.Context(), sessionID, req.Message)
+				return
+			} else {
+				w.Header().Set("Content-Type", "application/json")
+				_ = json.NewEncoder(w).Encode(LiveInputResponse{Success: true, Message: "User message accepted by provider session", DeliveryStatus: string(delivery.Status), Provider: string(delivery.Provider)})
+				return
+			}
 		}
 	}
 	if tryColdRetainedFallback {

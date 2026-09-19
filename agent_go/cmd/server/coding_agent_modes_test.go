@@ -24,6 +24,7 @@ import (
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 func TestCodingAgentPersistentInteractiveFlags(t *testing.T) {
@@ -852,6 +853,93 @@ func TestTryDeliverQueryAsLiveInputRetainedCodingAgentWithoutLiveTmuxFallsThroug
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
 		t.Fatalf("stale retained CLI fall-through recorded %d events, want 0", got)
 	}
+}
+
+func TestTryDeliverQueryAsLiveInputClosesIdleDurableSessionAfterTmuxDisappears(t *testing.T) {
+	const sessionID = "durable-session-with-reaped-tmux"
+	retainedSession := startRegisteredTestTmuxSession(t, sessionID, "mlp-claude-code-reaped")
+	api := &StreamingAPI{
+		internalChatSubmissionStore: newTestChatSubmissionStore(),
+		runningAgents:               map[string]*mcpagent.Agent{},
+		runningAgentsMux:            sync.RWMutex{},
+		agentCancelFuncs:            map[string]context.CancelFunc{},
+		agentCancelMux:              sync.RWMutex{},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	rr := httptest.NewRecorder()
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "resume after reap", "query_after_reap") {
+		t.Fatalf("stale idle durable session handled request instead of falling through: status=%d body=%s", rr.Code, rr.Body.String())
+	}
+	if _, ok := mcpagent.LookupSession(sessionID); ok {
+		t.Fatal("stale durable session remained registered after its tmux disappeared")
+	}
+	if retainedSession.ActiveTurnID() != "" {
+		t.Fatal("closed stale session retained an active turn")
+	}
+}
+
+func TestHandleLiveInputMessageStartsNextTurnAfterTmuxReaperClosedDurableSession(t *testing.T) {
+	const sessionID = "live-input-after-reaper"
+	startRegisteredTestTmuxSession(t, sessionID, "mlp-claude-code-reaped-live-input")
+	queryStarted := make(chan struct{}, 1)
+	api := &StreamingAPI{
+		internalChatSubmissionStore: newTestChatSubmissionStore(),
+		runningAgents:               map[string]*mcpagent.Agent{},
+		runningAgentsMux:            sync.RWMutex{},
+		agentCancelFuncs:            map[string]context.CancelFunc{},
+		agentCancelMux:              sync.RWMutex{},
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {AgentMode: "multi-agent", Provider: string(llm.ProviderClaudeCode), ModelID: "claude-sonnet-4-6"},
+		},
+		internalQueryHandler: func(w http.ResponseWriter, _ *http.Request) {
+			queryStarted <- struct{}{}
+			_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: "resumed-after-reaper"})
+		},
+	}
+
+	body := bytes.NewBufferString(`{"message":"resume after tmux reaper"}`)
+	req := mux.SetURLVars(httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", body), map[string]string{"session_id": sessionID})
+	rr := httptest.NewRecorder()
+	api.handleLiveInputMessage(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want next-turn acceptance", rr.Code, rr.Body.String())
+	}
+	var response LiveInputResponse
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if !response.Success || response.DeliveryStatus != "next_turn_started" {
+		t.Fatalf("response = %#v, want next_turn_started", response)
+	}
+	select {
+	case <-queryStarted:
+	case <-time.After(time.Second):
+		t.Fatal("resumed query did not start")
+	}
+	if _, ok := mcpagent.LookupSession(sessionID); ok {
+		t.Fatal("stale durable session remained registered after resumed turn dispatch")
+	}
+}
+
+func startRegisteredTestTmuxSession(t *testing.T, sessionID, tmuxSession string) *mcpagent.Session {
+	t.Helper()
+	agent := testAgentWithHandle(sessionID, llmtypes.CodingProviderSessionHandle{
+		Provider:    string(llm.ProviderClaudeCode),
+		Transport:   llmtypes.CodingProviderTransportTmux,
+		TmuxSession: tmuxSession,
+		Status:      llmtypes.CodingProviderSessionStatusIdle,
+	})
+	session, err := agent.Start(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		_ = session.Close()
+		_ = agent.Close()
+	})
+	return session
 }
 
 func TestTryDeliverQueryAsLiveInputNoRetainedAgentFallsThrough(t *testing.T) {

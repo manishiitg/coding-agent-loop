@@ -11,6 +11,8 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminalleases"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"github.com/manishiitg/multi-llm-provider-go/pkg/pathidentity"
 )
 
@@ -78,11 +80,56 @@ func (api *StreamingAPI) cleanupStaleCodingAgentTmuxSessions(now time.Time) int 
 			registry.MarkClosed(tmuxSession, candidate.reason, now)
 		}
 		api.terminalStore.MarkArchived(snapshot.TerminalID, candidate.reason)
+		api.closeRetainedSessionForReapedTmux(snapshot.SessionID, tmuxSession)
 		closed++
 		log.Printf("[TMUX_REAPER] Closed stale coding-agent tmux session %q terminal=%q owner=%q session=%q reason=%s",
 			tmuxSession, snapshot.TerminalID, snapshot.OwnerID, snapshot.SessionID, candidate.reason)
 	}
 	return closed
+}
+
+// closeRetainedSessionForReapedTmux keeps the durable mcpagent registry in
+// lockstep with the provider process registry. Closing only the tmux pane leaves
+// Session.Send addressable and makes the next message look like an ambiguous
+// failed delivery instead of a clean resumed turn.
+func (api *StreamingAPI) closeRetainedSessionForReapedTmux(sessionID, tmuxSession string) bool {
+	retainedSession, ok := mcpagent.LookupSession(sessionID)
+	if !ok || retainedSession == nil {
+		return false
+	}
+	handle := retainedSession.Snapshot()
+	if handle == nil || handle.Provider.Transport != llmtypes.CodingProviderTransportTmux ||
+		strings.TrimSpace(handle.Provider.TmuxSession) != strings.TrimSpace(tmuxSession) {
+		return false
+	}
+	if err := retainedSession.Close(); err != nil {
+		log.Printf("[TMUX_REAPER] Failed to close retained session %q after reaping tmux %q: %v", sessionID, tmuxSession, err)
+		return false
+	}
+	return true
+}
+
+// closeIdleRetainedTmuxSessionWithoutLiveTerminal is the routing backstop for
+// stale state left by older cleanup paths after the terminal was marked closed.
+// It is deliberately limited to an idle Session: a failed send during an active
+// turn remains delivery-uncertain because the CLI may have accepted the bytes.
+func (api *StreamingAPI) closeIdleRetainedTmuxSessionWithoutLiveTerminal(sessionID string, retainedSession *mcpagent.Session) bool {
+	if api == nil || retainedSession == nil {
+		return false
+	}
+	if retainedSession.ActiveTurnID() != "" || api.hasActiveTurnCancel(sessionID) || api.sessionHasLiveMainCodingTmux(sessionID) {
+		return false
+	}
+	handle := retainedSession.Snapshot()
+	if handle == nil || handle.Provider.Transport != llmtypes.CodingProviderTransportTmux {
+		return false
+	}
+	if err := retainedSession.Close(); err != nil {
+		log.Printf("[LIVE INPUT] Failed to close stale retained tmux session %q: %v", sessionID, err)
+		return false
+	}
+	log.Printf("[LIVE INPUT] Closed idle retained tmux session %q with no live terminal; starting a resumed turn", sessionID)
+	return true
 }
 
 func (api *StreamingAPI) staleCodingAgentTmuxCleanupCandidates(now time.Time, idleTimeout time.Duration) []codingAgentTmuxCleanupCandidate {

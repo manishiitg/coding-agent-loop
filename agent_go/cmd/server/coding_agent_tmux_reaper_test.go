@@ -10,6 +10,7 @@ import (
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 
+	mcpagent "github.com/manishiitg/mcpagent/agent"
 	agentevents "github.com/manishiitg/mcpagent/events"
 )
 
@@ -61,6 +62,32 @@ func TestCleanupStaleCodingAgentTmuxSessionsClosesCompletedIdleBackstop(t *testi
 	}
 	if got := strings.Join(*gotArgs, " "); got != "kill-session -t "+tmuxSession {
 		t.Fatalf("tmux args = %q, want kill-session", got)
+	}
+}
+
+func TestCleanupStaleCodingAgentTmuxSessionsUnregistersMatchingDurableSession(t *testing.T) {
+	now := time.Now()
+	store := terminals.NewStore()
+	const sessionID = "completed-session-with-durable-registry"
+	const tmuxSession = "mlp-claude-code-idle-durable"
+	store.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(now.Add(-4*time.Hour), sessionID, "main:"+sessionID, tmuxSession))
+	retainedSession := startRegisteredTestTmuxSession(t, sessionID, tmuxSession)
+	api := &StreamingAPI{
+		terminalStore: store,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "completed"},
+		},
+	}
+	stubTerminalTmuxCommand(t)
+
+	if closed := api.cleanupStaleCodingAgentTmuxSessions(now); closed != 1 {
+		t.Fatalf("closed = %d, want 1", closed)
+	}
+	if _, ok := mcpagent.LookupSession(sessionID); ok {
+		t.Fatal("reaper left the matching durable session registered")
+	}
+	if retainedSession.ActiveTurnID() != "" {
+		t.Fatal("reaped durable session retained an active turn")
 	}
 }
 

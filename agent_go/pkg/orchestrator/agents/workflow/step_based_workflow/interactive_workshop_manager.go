@@ -1466,6 +1466,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"add_scripted_step", "add_message_sequence_step", "add_routing_step", "add_branch_step",
 		"add_human_input_step", "add_todo_task_step", "add_todo_task_route",
 		"add_orchestrator_step", "add_orchestrator_route", "update_orchestrator_step", "update_orchestrator_route", "delete_orchestrator_route",
+		"add_crew_step", "update_crew_step",
 		"update_scripted_step", "update_message_sequence_step", "update_routing_step", "update_branch_step",
 		"update_human_input_step", "update_todo_task_step", "update_todo_task_route",
 		"delete_todo_task_route", "delete_plan_steps", "cleanup_orphan_step_configs",
@@ -4426,6 +4427,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					Access *struct {
 						AllowedKBWriters []string `json:"allowed_kb_writers"`
 					} `json:"access"`
+					CrewAttachments []workflowtypes.CrewAttachment `json:"crew_attachments"`
 				}
 				if json.Unmarshal([]byte(content), &manifest) == nil {
 					sb.WriteString("\n### KB write grants (this workflow's own knowledgebase)\n")
@@ -4433,6 +4435,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 						sb.WriteString("No other workflow may write into this workflow's knowledgebase/notes/. Grant with update_workflow_config(kb_write_grants=[...]).\n")
 					} else {
 						sb.WriteString(fmt.Sprintf("Permitted writers: %s. Change with update_workflow_config(kb_write_grants=[...]).\n", strings.Join(manifest.Access.AllowedKBWriters, ", ")))
+					}
+					sb.WriteString("\n### Attached Crews (read-only)\n")
+					if len(manifest.CrewAttachments) == 0 {
+						sb.WriteString("No Crew projects are attached. Crew steps require their project attached; manage with manage_crew_attachment.\n")
+					} else {
+						for _, attachment := range manifest.CrewAttachments {
+							sb.WriteString(fmt.Sprintf("- **%s** → crew project %s (profile %s); read files as `%s/<path>`\n", attachment.Alias, attachment.CrewProjectID, attachment.CrewProfileID, attachment.Alias))
+						}
 					}
 				}
 			}

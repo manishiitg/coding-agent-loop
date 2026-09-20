@@ -127,6 +127,21 @@ func GrantSessionCDPHostDownloadsReadOnly(sessionID, browserMode string) string 
 
 // GrantSessionCDPHostDownloadsReadWrite adds the host Downloads directory to
 // both read and write paths for a CDP session.
+// GrantSessionCrewAttachmentReads adds crew attachment roots to a session's
+// read paths and blocked-write paths: workflow steps may read crew files
+// through attachment aliases but never write them. Appends only, so it
+// composes with other session grants.
+func GrantSessionCrewAttachmentReads(sessionID string, roots []string) {
+	if strings.TrimSpace(sessionID) == "" || len(roots) == 0 {
+		return
+	}
+	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
+		cfg.ReadPaths = DeduplicateStrings(append(cfg.ReadPaths, roots...))
+		cfg.BlockedWritePaths = DeduplicateStrings(append(cfg.BlockedWritePaths, roots...))
+	})
+	log.Printf("[SHELL] Granted read-only crew attachments for session %s: %v", sessionID, roots)
+}
+
 func GrantSessionCDPHostDownloadsReadWrite(sessionID, browserMode string) string {
 	hostDownloads := CDPHostDownloadsPath(browserMode)
 	if strings.TrimSpace(sessionID) == "" || hostDownloads == "" {

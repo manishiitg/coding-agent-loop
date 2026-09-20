@@ -448,6 +448,9 @@ const (
 	// can tell it apart from routing, which is now the "route" (major fork)
 	// concept. See PLAT-259.
 	StepTypeBranch StepType = "branch"
+	// StepTypeCrew invokes a Crew project's trigger and waits for its final
+	// response. Top-level only; nested crew steps parse but never execute.
+	StepTypeCrew StepType = "crew"
 )
 
 // CommonStepFields contains fields shared by all step types
@@ -990,7 +993,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 	}
 
 	if stepWithType.Type == "" {
-		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, human_input, todo_task, routing, branch, or message_sequence)", label, index)
+		return nil, fmt.Errorf("%s %d is missing required 'type' field (must be: regular, human_input, todo_task, routing, branch, message_sequence, or crew)", label, index)
 	}
 
 	switch stepWithType.Type {
@@ -998,6 +1001,12 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		var step RegularPlanStep
 		if err := json.Unmarshal(stepData, &step); err != nil {
 			return nil, fmt.Errorf("failed to parse regular %s %d: %w", label, index, err)
+		}
+		return &step, nil
+	case "crew":
+		var step CrewPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse crew %s %d: %w", label, index, err)
 		}
 		return &step, nil
 	case "human_input":
@@ -1032,7 +1041,7 @@ func parseStepFromJSON(stepData json.RawMessage, index int, label string) (PlanS
 		}
 		return &step, nil
 	default:
-		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, human_input, todo_task, routing, branch, or message_sequence)", stepWithType.Type, label, index)
+		return nil, fmt.Errorf("unknown step type %q in %s %d (must be: regular, human_input, todo_task, routing, branch, message_sequence, or crew)", stepWithType.Type, label, index)
 	}
 }
 
@@ -1151,6 +1160,12 @@ type PartialPlanStep struct {
 	ScriptParameters map[string]ScriptParameterDefinition `json:"script_parameters,omitempty"`   // Optional: replace the scripted runtime parameter contract; pass {} to clear
 	// Message sequence fields
 	Items []MessageSequenceItem `json:"items,omitempty"`
+	// Crew step fields
+	CrewProfileID      string `json:"crew_profile_id,omitempty"` // Optional: Updated crew profile ID
+	CrewProjectID      string `json:"crew_project_id,omitempty"` // Optional: Updated crew project ID
+	CrewTriggerID      string `json:"trigger_id,omitempty"`      // Optional: Updated crew trigger ID
+	CrewInstruction    string `json:"instruction,omitempty"`     // Optional: Updated crew instruction
+	CrewTimeoutSeconds int    `json:"timeout_seconds,omitempty"` // Optional: Updated crew timeout; 0 leaves the existing value
 }
 
 // planFileMutex ensures thread-safe access to plan.json
@@ -2452,6 +2467,8 @@ func updateToolForStepType(stepType StepType) string {
 		return "update_human_input_step"
 	case StepTypeRegular:
 		return "update_scripted_step"
+	case StepTypeCrew:
+		return "update_crew_step"
 	default:
 		return ""
 	}
@@ -2634,6 +2651,13 @@ func convertMapToStep(stepMap map[string]interface{}) (PlanStepInterface, error)
 			return nil, fmt.Errorf("failed to parse regular step: %w", err)
 		}
 		typedStep = &step
+	case "crew":
+		var step CrewPlanStep
+		if err := json.Unmarshal(stepJSON, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse crew step: %w", err)
+		}
+		step.Type = StepTypeCrew
+		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
 		if err := json.Unmarshal(stepJSON, &step); err != nil {
@@ -2699,6 +2723,13 @@ func unmarshalStepFromJSON(stepData json.RawMessage) (PlanStepInterface, error) 
 		}
 		// Ensure Type field is set (may be empty if not in JSON)
 		step.Type = StepTypeRegular
+		typedStep = &step
+	case "crew":
+		var step CrewPlanStep
+		if err := json.Unmarshal(stepData, &step); err != nil {
+			return nil, fmt.Errorf("failed to parse crew step: %w", err)
+		}
+		step.Type = StepTypeCrew
 		typedStep = &step
 	case "human_input":
 		var step HumanInputPlanStep
@@ -2983,6 +3014,8 @@ func updateValidationSchemaOnStep(step PlanStepInterface, schema *ValidationSche
 	case *BranchPlanStep:
 		s.ValidationSchema = schema
 	case *MessageSequencePlanStep:
+		s.ValidationSchema = schema
+	case *CrewPlanStep:
 		s.ValidationSchema = schema
 	}
 }
@@ -3373,6 +3406,43 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		return &updated
 
+	case *CrewPlanStep:
+		updated := *step
+		if partialUpdate.Title != "" {
+			updated.Title = partialUpdate.Title
+		}
+		if partialUpdate.Description != "" {
+			updated.Description = partialUpdate.Description
+		}
+		if partialUpdate.ContextDependencies != nil {
+			updated.ContextDependencies = partialUpdate.ContextDependencies
+		}
+		if partialUpdate.ContextOutput != "" {
+			updated.ContextOutput = FlexibleContextOutput(partialUpdate.ContextOutput)
+		}
+		if partialUpdate.CrewProfileID != "" {
+			updated.CrewProfileID = partialUpdate.CrewProfileID
+		}
+		if partialUpdate.CrewProjectID != "" {
+			updated.CrewProjectID = partialUpdate.CrewProjectID
+		}
+		if partialUpdate.CrewTriggerID != "" {
+			updated.TriggerID = partialUpdate.CrewTriggerID
+		}
+		if partialUpdate.CrewInstruction != "" {
+			updated.Instruction = partialUpdate.CrewInstruction
+		}
+		if partialUpdate.CrewTimeoutSeconds != 0 {
+			updated.TimeoutSeconds = partialUpdate.CrewTimeoutSeconds
+		}
+		if partialUpdate.NextStepID != "" {
+			updated.NextStepID = partialUpdate.NextStepID
+		}
+		if partialUpdate.ValidationSchema != nil {
+			updated.ValidationSchema = partialUpdate.ValidationSchema
+		}
+		return &updated
+
 	default:
 		// Unknown type - return original
 		return existingStep
@@ -3656,6 +3726,71 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 			}
 		}
 	}
+	if partialUpdate.CrewProfileID != "" {
+		changedFields = append(changedFields, "crew_profile_id")
+		oldValue := ""
+		if crewStep, ok := existingStep.(*CrewPlanStep); ok {
+			oldValue = crewStep.CrewProfileID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "crew_profile_id",
+			OldValue: oldValue,
+			NewValue: partialUpdate.CrewProfileID,
+		})
+	}
+	if partialUpdate.CrewProjectID != "" {
+		changedFields = append(changedFields, "crew_project_id")
+		oldValue := ""
+		if crewStep, ok := existingStep.(*CrewPlanStep); ok {
+			oldValue = crewStep.CrewProjectID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "crew_project_id",
+			OldValue: oldValue,
+			NewValue: partialUpdate.CrewProjectID,
+		})
+	}
+	if partialUpdate.CrewTriggerID != "" {
+		changedFields = append(changedFields, "trigger_id")
+		oldValue := ""
+		if crewStep, ok := existingStep.(*CrewPlanStep); ok {
+			oldValue = crewStep.TriggerID
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "trigger_id",
+			OldValue: oldValue,
+			NewValue: partialUpdate.CrewTriggerID,
+		})
+	}
+	if partialUpdate.CrewInstruction != "" {
+		changedFields = append(changedFields, "instruction")
+		oldValue := ""
+		if crewStep, ok := existingStep.(*CrewPlanStep); ok {
+			oldValue = crewStep.Instruction
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "instruction",
+			OldValue: oldValue,
+			NewValue: partialUpdate.CrewInstruction,
+		})
+	}
+	if partialUpdate.CrewTimeoutSeconds != 0 {
+		changedFields = append(changedFields, "timeout_seconds")
+		oldValue := 0
+		if crewStep, ok := existingStep.(*CrewPlanStep); ok {
+			oldValue = crewStep.TimeoutSeconds
+		}
+		*fieldChanges = append(*fieldChanges, PlanFieldChange{
+			StepID:   partialUpdate.ExistingStepID,
+			Field:    "timeout_seconds",
+			OldValue: oldValue,
+			NewValue: partialUpdate.CrewTimeoutSeconds,
+		})
+	}
 	if partialUpdate.NextStepID != "" {
 		changedFields = append(changedFields, "next_step_id")
 		oldNextStepID := ""
@@ -3667,6 +3802,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		case *HumanInputPlanStep:
 			oldNextStepID = step.NextStepID
 		case *MessageSequencePlanStep:
+			oldNextStepID = step.NextStepID
+		case *CrewPlanStep:
 			oldNextStepID = step.NextStepID
 		}
 		*fieldChanges = append(*fieldChanges, PlanFieldChange{
@@ -5669,6 +5806,11 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 		if strings.TrimSpace(s.Title) == "" {
 			s.Title = title
 		}
+	case *CrewPlanStep:
+		s.ID = id
+		if strings.TrimSpace(s.Title) == "" {
+			s.Title = title
+		}
 	default:
 		return fmt.Errorf("unsupported sub_agent_step type %T for identity normalization", step)
 	}
@@ -5771,6 +5913,12 @@ func createSingleStepAdder(workspacePath string, logger loggerv2.Logger, readFil
 		case "branch":
 			if branchStep, ok := typedStep.(*BranchPlanStep); ok {
 				if err := validateBranchStepFieldsTyped(branchStep); err != nil {
+					return "", fmt.Errorf("validation failed: %w", err)
+				}
+			}
+		case "crew":
+			if crewStep, ok := typedStep.(*CrewPlanStep); ok {
+				if err := validateCrewStepFieldsTyped(crewStep); err != nil {
 					return "", fmt.Errorf("validation failed: %w", err)
 				}
 			}
@@ -6326,6 +6474,36 @@ func registerNativePlanModificationTools(
 		"workflow",
 	); err != nil {
 		return fmt.Errorf("failed to register update_branch_step tool: %w", err)
+	}
+
+	crewSchema := getAddCrewStepSchema()
+	crewParams, err := parseSchemaForToolParameters(crewSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse crew step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"add_crew_step",
+		"Add a crew step to the plan. Use this when the work belongs to a persistent Crew project -- a maintained reviewer, operator, or specialist with its own memory, skills, and files -- instead of a one-off workflow agent. The step invokes one trigger of that Crew and waits for its final response, which is saved as the step's context output for downstream steps. The trigger owns its saved base instruction and conversation destination; the step supplies the workflow-specific instruction and runtime input. Provide: id, title, crew_profile_id (initially \"work\"), crew_project_id (stable project ID, never a name or path), trigger_id, instruction (rendered with variables at run time), context_dependencies (workflow outputs sent as trigger input), optional context_output (defaults to response.md), optional timeout_seconds (defaults to 1800), optional next_step_id, insert_after_step_id. The plan.json file is updated immediately when this tool is called.",
+		crewParams,
+		createAddCrewStepExecutor(workspacePath, logger, readFile, writeFile, moveFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register add_crew_step tool: %w", err)
+	}
+
+	crewUpdateSchema := getUpdateCrewStepSchema()
+	crewUpdateParams, err := parseSchemaForToolParameters(crewUpdateSchema)
+	if err != nil {
+		return fmt.Errorf("failed to parse update crew step schema: %w", err)
+	}
+	if err := mcpAgent.RegisterCustomTool(
+		"update_crew_step",
+		"Update a crew step in the plan. Provide existing_step_id (required) and only include fields you want to change: title, description, crew_profile_id, crew_project_id, trigger_id, instruction, context_dependencies, context_output, timeout_seconds, next_step_id. The plan.json file is updated immediately when this tool is called. After related edits, follow builder-reference/references/plan-change-impact.md: do one combined compatibility check of affected dependencies in the current agent before the targeted test. A full drift audit is reserved for Pulse or an explicit user request.",
+		crewUpdateParams,
+		createUpdateCrewStepExecutor(workspacePath, logger, readFile, writeFile),
+		"workflow",
+	); err != nil {
+		return fmt.Errorf("failed to register update_crew_step tool: %w", err)
 	}
 
 	convertRoutingBranchSchema := getConvertRoutingBranchStepTypeSchema()

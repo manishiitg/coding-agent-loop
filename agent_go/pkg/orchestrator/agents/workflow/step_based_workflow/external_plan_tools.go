@@ -755,6 +755,9 @@ func externalPlanToolRegistry() []externalPlanTool {
 		add("update_orchestrator_step", "Update an existing orchestrator step.", getUpdateOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createUpdateOrchestratorStepExecutor(r.workspacePath, l, r.readFile, r.writeFile)
 		})
+		add("update_crew_step", "Update an existing crew step.", getUpdateCrewStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
+			return createUpdateCrewStepExecutor(r.workspacePath, l, r.readFile, r.writeFile)
+		})
 		add("add_scripted_step", "Add a scripted step to an existing plan.", getAddRegularStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddRegularStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
@@ -772,6 +775,9 @@ func externalPlanToolRegistry() []externalPlanTool {
 		})
 		add("add_orchestrator_step", "Add an orchestrator step.", getAddOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddOrchestratorStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
+		})
+		add("add_crew_step", "Add a crew step.", getAddCrewStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
+			return createAddCrewStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
 		add("delete_plan_steps", "Delete steps, rejecting deletion when remaining steps reference them.", getDeletePlanStepsSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createDeletePlanStepsExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)

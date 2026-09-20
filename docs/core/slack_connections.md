@@ -66,8 +66,10 @@ BotConversationManager (connection rides ThreadID / BotIncomingMessage)
 | Select an app on a workflow (`slack_connection_id`) | Anyone who can edit the manifest; unknown IDs fail validation |
 | Delete a connection | Blocked while it is the default or still selected by any workflow |
 
-Bot-route principals can never manage connections. All API responses carry
-masked tokens only.
+Bot-route principals can never manage connections. WhatsApp turns are not
+bot-route principals: they run as the paired owner (`bot_owner` — the bot is
+linked as the owner's number, so there is no channel grant to hold) and pass
+these gates as the owner would. All API responses carry masked tokens only.
 
 ## Key files
 

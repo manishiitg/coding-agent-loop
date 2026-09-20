@@ -42,6 +42,16 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 		return
 	}
 	platform, _ := reqMap["bot_platform"].(string)
+	if strings.TrimSpace(platform) == "whatsapp" {
+		// WhatsApp turns run as the paired owner on the owner's own data:
+		// the bot is linked as the owner's number, and the sender was
+		// authenticated at message ingress (pairing ownership, link codes,
+		// per-slug workflow access). There is no channel grant to revalidate,
+		// so these turns carry their own principal instead of bot_route — the
+		// tool boundary admits them without Slack's channel revalidation.
+		claims.Provider = "bot_owner"
+		return
+	}
 	grant, _ := reqMap["bot_route_grant"].(string)
 	grant = services.NormalizeBotRouteGrant(grant, "")
 	if strings.TrimSpace(platform) != "slack" || stringFromRequestMap(reqMap, "bot_route_grant") == "" {

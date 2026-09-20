@@ -12,6 +12,38 @@ import (
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
 
+func TestApplyBotRouteClaimsStampsTheTurnPrincipal(t *testing.T) {
+	// WhatsApp turns run as the paired owner: no channel grant exists, so
+	// they carry their own principal rather than bot_route (which would
+	// demand Slack channel bindings at revalidation time).
+	owner := &UserClaims{UserID: "owner-1", Username: "owner"}
+	applyBotRouteClaims(owner, map[string]interface{}{"bot_platform": "whatsapp"})
+	if owner.Provider != "bot_owner" || owner.UserID != "owner-1" {
+		t.Fatalf("whatsapp claims = %+v, want the paired owner stamped bot_owner", owner)
+	}
+
+	// Slack keeps the grant principal, and only when a grant is present.
+	slack := &UserClaims{UserID: "bot"}
+	applyBotRouteClaims(slack, map[string]interface{}{"bot_platform": "slack", "bot_route_grant": "run", "preset_query_id": "wf"})
+	if slack.Provider != "bot_route" || slack.BotRouteGrant != "run" || slack.BotRouteWorkflowID != "wf" {
+		t.Fatalf("slack claims = %+v, want the bot_route grant principal", slack)
+	}
+	ungranted := &UserClaims{UserID: "bot"}
+	applyBotRouteClaims(ungranted, map[string]interface{}{"bot_platform": "slack"})
+	if ungranted.Provider != "" {
+		t.Fatalf("ungranted slack claims = %+v, want untouched", ungranted)
+	}
+
+	// Anything else (and nil inputs) passes through untouched.
+	plain := &UserClaims{UserID: "owner-1"}
+	applyBotRouteClaims(plain, map[string]interface{}{})
+	if plain.Provider != "" {
+		t.Fatalf("non-bot claims = %+v, want untouched", plain)
+	}
+	applyBotRouteClaims(nil, map[string]interface{}{"bot_platform": "whatsapp"})
+	applyBotRouteClaims(&UserClaims{}, nil)
+}
+
 func TestFinalResponseForExecutionUsesTheExactTurn(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	api := &StreamingAPI{eventStore: store}

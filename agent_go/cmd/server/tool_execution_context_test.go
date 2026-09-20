@@ -105,3 +105,28 @@ func TestToolExecutionContextRetainsBotIdentityAndRevalidatesRoute(t *testing.T)
 		t.Fatal("revoked route was ignored")
 	}
 }
+
+func TestToolExecutionContextAdmitsTheWhatsAppOwnerPrincipal(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
+		"wa-product": {SessionID: "wa-product", BotPlatform: "whatsapp", TriggeredBy: "bot:whatsapp"},
+	}}
+	req := QueryRequest{BotPlatform: "whatsapp", TriggeredBy: "bot:whatsapp"}
+	incoming := executor.WithSessionID(context.Background(), "wa-product")
+
+	// The paired owner's own turn executes tools in its bot-marked session.
+	owner := api.bindToolExecutionContext(
+		context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner", Provider: "bot_owner"}),
+		"wa-product", req, false)
+	if _, err := owner(incoming, "read_image"); err != nil {
+		t.Fatalf("bot_owner tools rejected: %v", err)
+	}
+
+	// Anything else bound on a bot-marked session is still an origin change.
+	plain := api.bindToolExecutionContext(
+		context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner", Provider: "local"}),
+		"wa-product", req, false)
+	if _, err := plain(incoming, "read_image"); err == nil {
+		t.Fatal("non-bot principal executed tools in a bot-marked session")
+	}
+}

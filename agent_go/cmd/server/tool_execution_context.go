@@ -45,7 +45,12 @@ func (api *StreamingAPI) bindToolExecutionContext(requestCtx context.Context, se
 				return nil, fmt.Errorf("%s session ownership changed; start a new turn", tool)
 			}
 		}
-		if bound.Provider != "bot_route" {
+		// bot_route (Slack channel grants, revalidated below) and bot_owner
+		// (WhatsApp turns as the paired owner, authenticated at message
+		// ingress) are the two principals a bot-marked session may execute
+		// under. Anything else bound here means the session changed origin
+		// underneath its tools.
+		if bound.Provider != "bot_route" && bound.Provider != "bot_owner" {
 			if _, bot := api.botExecutionForSession(session); bot {
 				return nil, fmt.Errorf("%s session origin changed; start a new turn", tool)
 			}

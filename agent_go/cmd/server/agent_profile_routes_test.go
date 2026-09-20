@@ -366,3 +366,87 @@ func TestValidateAgentProfileCannotClaimBuiltInAuthority(t *testing.T) {
 		t.Fatalf("validation did not enforce user ownership: %+v", response)
 	}
 }
+
+func accountSwitchTestSetup(t *testing.T, key string) (*StreamingAPI, *http.Request, agentprofiles.Profile, ProductConversationRecord) {
+	t.Helper()
+	server, _ := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
+	t.Setenv("MULTI_USER_MODE", "true")
+	profile := singletonConversationProfile()
+	profile.Runtime.ProviderOptions = []agentprofiles.ProviderOption{
+		{ID: "muse-cli", Label: "Muse", Provider: "muse-cli", ModelID: "muse-spark-1.3-contributor", Default: true},
+		{ID: "codex-cli", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-astra"},
+	}
+	registry := agentprofiles.NewRegistry()
+	if err := registry.RegisterProfile(profile); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{agentProfiles: registry}
+	req := profileRouteRequest("POST", "/", nil, "alice")
+	conversation, err := api.resolveAgentProfileConversation(req, profile, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return api, req, profile, conversation
+}
+
+// A provider switch with no private account on either side rebinds and
+// restarts the CLI instead of failing: a stale engine pick (or a project
+// default that drifted from the last-bound runtime) must not lock the user
+// out of their own chat.
+func TestProductTurnAllowsGlobalProviderSwitch(t *testing.T) {
+	api, req, profile, conversation := accountSwitchTestSetup(t, "main")
+	if _, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "hi", Engine: "codex-cli"}, conversation); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	// Production resolves the binding fresh on every turn.
+	conversation, err := api.resolveAgentProfileConversation(req, profile, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	query, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "follow-up", Engine: "muse-cli"}, conversation)
+	if err != nil {
+		t.Fatalf("global provider switch should rebind, got: %v", err)
+	}
+	if query.Provider != "muse-cli" {
+		t.Fatalf("rebound provider = %q", query.Provider)
+	}
+	rebound, err := api.resolveAgentProfileConversation(req, profile, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rebound.Provider != "muse-cli" {
+		t.Fatalf("registry still bound to %q", rebound.Provider)
+	}
+}
+
+// A real account change still needs a new conversation: moving onto a
+// private connection, or between two private connections, must stay
+// explicit. (Omitting a connection inherits the bound one, so it cannot
+// silently drop back to shared use.)
+func TestProductTurnStillRejectsPrivateAccountChange(t *testing.T) {
+	api, req, profile, conversation := accountSwitchTestSetup(t, "main")
+	if _, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "hi", Engine: "muse-cli"}, conversation); err != nil {
+		t.Fatalf("first turn: %v", err)
+	}
+	conversation, err := api.resolveAgentProfileConversation(req, profile, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "hi", Engine: "muse-cli", ConnectionID: "account-B"}, conversation); err == nil || !strings.Contains(err.Error(), "account change requires a new conversation") {
+		t.Fatalf("shared-to-private switch should be refused, got: %v", err)
+	}
+
+	api, req, profile, conversation = accountSwitchTestSetup(t, "main")
+	if _, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "hi", Engine: "muse-cli", ConnectionID: "account-A"}, conversation); err != nil {
+		t.Fatalf("private first turn: %v", err)
+	}
+	conversation, err = api.resolveAgentProfileConversation(req, profile, "main")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := prepareProductConversationTurn(req.Context(), "alice", profile, AgentProfileChatRequest{Message: "hi", Engine: "muse-cli", ConnectionID: "account-B"}, conversation); err == nil || !strings.Contains(err.Error(), "account change requires a new conversation") {
+		t.Fatalf("private-to-private switch should be refused, got: %v", err)
+	}
+}

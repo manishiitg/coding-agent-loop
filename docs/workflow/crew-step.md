@@ -892,11 +892,55 @@ user-scoped binding can be resolved. The orchestrator's local read path
 still validates shape and existence only; a mid-run hand-edit of the
 manifest to another owner's path is not re-authorized there.
 
-## Open question: runtime Crew creation
+## Builder-created Crews
 
-Should a workflow be able to create a new Crew at run time when required,
-then talk to it through a trigger — instead of only using Crews that already
-exist? Undecided; recorded here with the current analysis.
+**Recommended next feature; not implemented yet.** Workflow Builder should be
+able to create a Crew while the user is building a workflow. This removes the
+current multi-screen setup in which the user must create a Crew separately,
+return to the workflow, attach it, create a trigger, and select several IDs.
+
+The simple user flow is:
+
+1. Builder recognizes that a step would benefit from a dedicated specialist
+   and asks, for example, "Create a Release Reviewer Crew with GitHub access?"
+2. The user approves the Crew and the requested connections.
+3. Builder creates a useful starter Crew, connects it to the workflow, and adds
+   the configured Crew step.
+4. The user can immediately test the Crew manually or run the workflow, then
+   improve the Crew's instructions, skills, memory, and integrations over time.
+
+This makes a Crew a more capable, user-testable specialist than an ordinary
+message sequence or execution-only subagent. It has a dedicated workspace,
+memory, skills, integrations, and conversation that the user can open and
+refine independently of the workflow.
+
+### Creation contract
+
+One Builder action should create the usable integration, including:
+
+- the Crew name, purpose, starter instructions, and selected skills;
+- the MCP connections the Crew uses by default;
+- references to the authorized secrets required by those connections;
+- one enabled platform-internal trigger restricted to the creating workflow;
+- a read-only Crew attachment on the workflow; and
+- a Crew step already configured with the new Crew, trigger, and attachment.
+
+Secrets are passed only as references to existing authorized secret or
+connection records. Raw secret values must not be written into the workflow
+plan, Crew files, tool response, or Builder conversation. Builder should show
+the requested integrations in one approval step and ask the user to connect
+only anything that is missing.
+
+The default trigger uses an `isolated` Crew conversation so automated workflow
+runs do not clutter the main Crew chat. It is internal, accepts the step
+instruction and workflow inputs, and is automatically selected by the new Crew
+step. The creation result returns the Crew ID, trigger ID, attachment alias, and
+step configuration so Builder can finish without asking the user to copy IDs.
+
+Creation should initially happen only while building the workflow and after the
+user approves it. Automatically creating permanent Crews during workflow
+execution is deferred; retries, loops, and parallel groups could otherwise fill
+the user's Crew list with resources they did not explicitly choose to keep.
 
 ### Current state
 
@@ -906,42 +950,6 @@ read-only, and selects or creates a trigger; run time only invokes that
 trigger (one shot in, final response out). Multi-turn "talk" is possible only
 as consecutive steps against the same persistent trigger conversation.
 
-### Case for
-
-- **Fresh slate.** Both conversation destinations retain history forever, so
-  there is currently no way to get an unbiased Crew context. Some tasks
-  (a second review, no anchoring on old runs) need one.
-- **Fan-out isolation.** N parallel items each needing their own file
-  workspace plus memory cannot share one Crew: isolated triggers isolate
-  the conversation but not files or memory.
-- **Dynamic specialization.** Pre-creating every Crew a workflow might need
-  (per customer, per PR, per incident) does not scale; some specialists are
-  only known at run time.
-
-### Case against
-
-- **Stewardship debt.** A Crew is defined as a persistent, human-cultivated
-  specialist. Workflows minting persistent Crews into the user's list leaves
-  unmaintained crews rotting in the sidebar, each a cost and confusion
-  source. If nobody curates it, it is a subagent with extra steps, not a
-  specialist.
-- **Concept dilution.** Runtime-spawned Crews blur the Crew/subagent line
-  the rest of this document draws deliberately.
-- **New risk surface.** Creation plus binding plus attachment plus invocation
-  in one runtime motion needs its own auth, quotas, teardown, and cost
-  attribution — on top of the static path that just took two review rounds
-  to harden. A loop spawning Crews per iteration could explode cost.
-- **Overlap.** Orchestrator subagent steps already serve one-shot work with
-  no persistence needs.
-
-### Options if pursued
-
-1. **Ephemeral task crews (recommended direction).** A step type that spawns
-   a Crew, auto-binds trigger plus attachment, runs the task, then archives
-   or destroys it: an orchestrator step with a Crew-grade workspace. Full
-   isolation, no sidebar debt, bounded cost.
-2. **Run-scoped trigger conversations.** A third destination: a fresh
-   conversation per execution, auto-discarded. Much cheaper; solves
-   fresh-slate but not file/memory isolation.
-3. **Do nothing.** Wait for a concrete use case that options 1–2 and
-   existing subagent steps cannot serve.
+If a later use case requires fresh runtime instances or parallel Crew fan-out,
+add that as a separate lifecycle feature after Builder-created Crews are proven
+useful. It should not complicate the first user-facing creation flow.

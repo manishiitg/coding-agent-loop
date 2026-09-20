@@ -48,7 +48,8 @@ describe('CLI & MCP setup panel', () => {
       const generate = Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Generate connection'))!
       await act(async () => generate.click())
       expect(authApi.createAccessToken).toHaveBeenCalledWith({ name: 'Connect tab', expires_in_days: 30, scopes: ['workflows:read', 'files:read'], all_workflows: true, workflow_ids: [] })
-      expect(host.textContent).toContain(`printf '%s' 'aw_pat_test' | agentworks login --server "https://agentworks.example.com" --token-stdin`)
+      expect(host.textContent).toContain(`curl -fsSL "https://agentworks.example.com/api/downloads/cli/install-agentworks.sh" | sh -s -- --server "https://agentworks.example.com" --token 'aw_pat_test'`)
+      expect(host.textContent).not.toContain('agentworks login')
       expect(host.textContent).toContain(`--env AGENTWORKS_TOKEN='aw_pat_test' agentworks -- agentworks mcp serve`)
       expect(host.textContent).toContain('agentworks skills install --dir ~/.claude/skills')
       expect(host.textContent).not.toContain('workflows list')
@@ -72,7 +73,7 @@ describe('CLI & MCP setup panel', () => {
     vi.mocked(authApi.listAccessTokens).mockResolvedValue({ tokens: [{ id: 'tok-9', name: 'Connect tab', revoked_at: null, expires_at: '2099-01-01T00:00:00Z' } as never] })
     const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
     try {
-      expect(host.textContent).toContain(`printf '%s' 'aw_pat_old' | agentworks login`)
+      expect(host.textContent).toContain(`install-agentworks.sh" | sh -s -- --server "https://agentworks.example.com" --token 'aw_pat_old'`)
       expect(authApi.createAccessToken).not.toHaveBeenCalled()
       expect(host.querySelector('button')?.textContent).not.toContain('Generate connection')
     } finally {

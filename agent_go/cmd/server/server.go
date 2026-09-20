@@ -2151,6 +2151,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	CLISecurityRoutes(apiRouter, api.cliSecurityStore)
 	apiRouter.HandleFunc("/cdp-check", api.handleCdpCheck).Methods("GET")
 	apiRouter.HandleFunc("/downloads/chrome-cdp-macOS.zip", api.handleChromeCdpDownload).Methods("GET")
+	apiRouter.HandleFunc("/downloads/cli/{file}", api.handleCliDownload).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/defaults", api.handleGetLLMDefaults).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/discovery", api.handleDiscoverLLMSetup).Methods("GET")
 	apiRouter.HandleFunc("/llm-config/models/metadata", api.handleGetModelMetadata).Methods("GET")

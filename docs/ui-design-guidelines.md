@@ -120,11 +120,12 @@ installs.
   visit until it is revoked or expires; each visit verifies the token
   id against the server token list and falls back to Generate when it
   is gone. Generating also revokes orphaned same-name tokens.
-- Ready-to-paste commands, one per consumer: the CLI login one-liner,
-  the MCP bridge registration, and the skill install. Each ships with
-  the token prefilled in a copyable command row (mono `code` block +
-  ghost icon copy button with a Copied acknowledgement). No usage
-  examples beyond the setup commands.
+- Ready-to-paste commands, one per consumer: the CLI installer curl
+  (installs the server-matched binary and logs in), the MCP bridge
+  registration, and the skill install. Each ships with the token
+  prefilled in a copyable command row (mono `code` block + ghost icon
+  copy button with a Copied acknowledgement). No usage examples
+  beyond the setup commands.
 - A plain-words explainer up front states the read-only scope, the 30-day
   expiry, and that the token can be revoked here anytime. Rotate and
   Revoke are the card's right-side actions (`ghost`/`outline` `sm`,

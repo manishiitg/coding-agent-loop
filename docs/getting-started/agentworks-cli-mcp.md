@@ -7,6 +7,19 @@ edits, or runs. File writes, plan mutations, and Builder execution are not
 exposed; the dispatch paths stay in the server for a future write-enabled API
 version.
 
+## Install the CLI
+
+Open Setup → Integrations → Connect on your server (server installs only)
+and paste the one command: it downloads the CLI build matching that server,
+verifies its checksum, installs it to `~/.local/bin`, and logs in with the
+generated read-only token. macOS and Linux on arm64/amd64 are supported.
+The same token is reused on every visit until it is revoked or expires.
+
+The binaries and installer are served by the server itself at
+`/api/downloads/cli/` (public, like the existing launcher downloads), so
+the CLI always matches the API it talks to. Developers can still build from
+source as below.
+
 ## Build and server setup
 
 Requires the repository's Go toolchain (Go 1.26) and its normal local module

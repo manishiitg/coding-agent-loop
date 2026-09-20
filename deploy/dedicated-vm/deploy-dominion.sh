@@ -151,6 +151,35 @@ echo "==> Building mcpbridge"
 echo "==> Building dominion-gateway (generic cookie-auth gateway, shared source with Video Studio)"
 "$GO_BIN" build -o "$RELEASE_DIR/bin/dominion-gateway" "$REPO/deploy/aws-ec2/server/auth-gateway.go"
 
+echo "==> Building AgentWorks CLI matrix for /api/downloads/cli (static builds)"
+mkdir -p "$RELEASE_DIR/downloads"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  os="${target%-*}"
+  arch="${target#*-}"
+  name="agentworks-$os-$arch"
+  (cd "$REPO/agent_go" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 "$GO_BIN" build -o "$RELEASE_DIR/downloads/$name" ./cmd/agentworks)
+  chmod +x "$RELEASE_DIR/downloads/$name"
+  (cd "$RELEASE_DIR/downloads" && sha256sum "$name" > "$name.sha256")
+done
+cp "$REPO/scripts/install-agentworks-cli.sh" "$RELEASE_DIR/downloads/install-agentworks.sh"
+
+echo "==> Verifying staged CLI downloads (format per OS + checksums)"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  os="${target%-*}"
+  name="agentworks-$target"
+  filetype="$(file -b "$RELEASE_DIR/downloads/$name")"
+  case "$os" in
+    darwin) want="Mach-O" ;;
+    linux) want="ELF" ;;
+  esac
+  if [[ "$filetype" != *"$want"* ]]; then
+    echo "FATAL: downloads/$name is not a valid $want binary (got: $filetype)" >&2
+    exit 1
+  fi
+  (cd "$RELEASE_DIR/downloads" && sha256sum -c "$name.sha256") || { echo "FATAL: downloads/$name.sha256 does not verify" >&2; exit 1; }
+done
+bash -n "$RELEASE_DIR/downloads/install-agentworks.sh" || { echo "FATAL: staged install-agentworks.sh has a syntax error" >&2; exit 1; }
+
 echo "==> Verifying every binary is a real, runnable executable (not just 'go build exit 0')"
 for bin in dominion-agent dominion-workspace video-studio-landlock-runner mcpbridge dominion-gateway; do
   path="$RELEASE_DIR/bin/$bin"

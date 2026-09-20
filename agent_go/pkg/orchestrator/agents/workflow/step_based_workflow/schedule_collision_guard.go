@@ -26,7 +26,7 @@ func ScheduleGuardedTool(name string) bool {
 		"update_crew_step",
 		"delete_todo_task_route", "delete_orchestrator_route", "update_step_config", "update_validation_schema",
 		"migrate_message_sequence_code_items",
-		"migrate_orchestrator_step_type", "migrate_run_scoped_routes", "migrate_declared_execution_mode", "strip_declared_execution_mode",
+		"migrate_orchestrator_step_type", "migrate_declared_execution_mode", "strip_declared_execution_mode",
 		"update_workflow_config", "set_workflow_llm_config", "update_variable", "add_group", "update_group", "delete_group":
 		return true
 	}

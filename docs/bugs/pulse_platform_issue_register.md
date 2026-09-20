@@ -23,7 +23,7 @@ and live acceptance plus deployment evidence are recorded.
 
 ## Concurrent webhook route isolation — PLAT-331
 
-[PLAT-331](pulse_platform/step-execution/plat-331.md) records the proven RTS PR Reviewer race where #87's eligible run branched correctly, then its review step reread a shared `db/assets/route_selection.json` overwritten by #82's closed delivery. Routing and branch steps now persist their resolved decision in their own iteration execution folder, plan mutations reject that specific shared-mirror pattern when a prior run-scoped producer exists, and contract v1.0.42 migrates all workflows through the trusted `migrate_run_scoped_routes` tool. Intentional shared route inputs remain supported. Release `e63b6c7-20260918161036` is deployed and RTS PR Reviewer is migrated to v1.0.42; overlapping-delivery live acceptance remains pending.
+[PLAT-331](pulse_platform/step-execution/plat-331.md) records the proven RTS PR Reviewer race where #87's eligible run branched correctly, then its review step reread a shared `db/assets/route_selection.json` overwritten by #82's closed delivery. Routing and branch steps now persist their resolved decision in their own iteration execution folder, plan mutations reject that specific shared-mirror pattern when a prior run-scoped producer exists, and the only unsafe workflow found by the production census was repaired. The remaining v1.0.42 scheduled cleanup turn is retired; the runtime and mutation guards remain. Intentional shared route inputs remain supported. Release `e63b6c7-20260918161036` is deployed and RTS PR Reviewer is migrated to v1.0.42; overlapping-delivery live acceptance remains pending.
 
 ## Workflow suggestions and permission refresh — PLAT-330 / PLAT-262
 

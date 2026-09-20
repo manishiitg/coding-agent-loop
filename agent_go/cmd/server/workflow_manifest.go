@@ -33,6 +33,9 @@ const WorkflowContractCurrentVersion = workflowContractEvalRetirementVersion
 const workflowContractExplicitSchedulePulseVersion = schedulepolicy.ExplicitPulseContractVersion
 
 const workflowContractRouteSummariesVersion = "1.0.40"
+
+// Historical marker only: the scheduled 1.0.42 cleanup turn is retired, but
+// workflows that already stamped it must remain on the known-version ladder.
 const workflowContractRunScopedRoutesVersion = "1.0.42"
 const workflowContractEvalRetirementVersion = "1.0.43"
 

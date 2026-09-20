@@ -416,7 +416,7 @@ func TestSlackConfigureToolOwnerBranch(t *testing.T) {
 	}
 	alice := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("alice"))
 
-	out, err := configure.exec(alice, map[string]interface{}{"enabled": false, "bot_token": "xoxb-alpha-tool", "app_token": "xapp-alpha-tool"})
+	out, err := configure.exec(alice, map[string]interface{}{"enabled": false, "bot_token": "xoxb-alpha-tool", "app_token": "xapp-alpha-tool", "app_name": "Alpha Bot"})
 	if err != nil {
 		t.Fatalf("owner configure failed: %v", err)
 	}
@@ -428,6 +428,11 @@ func TestSlackConfigureToolOwnerBranch(t *testing.T) {
 	if err != nil || !found || manifest.Capabilities.SlackConnectionID == "" {
 		t.Fatalf("workflow did not adopt its connection: %+v", manifest)
 	}
+	svc := services.GetSlackService()
+	conn, ok := svc.GetConnection(ack["connection_id"].(string))
+	if !ok || conn.DisplayName != "Alpha Bot" {
+		t.Fatalf("app_name not saved on create: %+v", conn)
+	}
 
 	// A second call updates the same connection instead of minting another.
 	out2, err := configure.exec(alice, map[string]interface{}{"enabled": false})
@@ -437,6 +442,19 @@ func TestSlackConfigureToolOwnerBranch(t *testing.T) {
 	var ack2 map[string]interface{}
 	if err := json.Unmarshal([]byte(out2), &ack2); err != nil || ack2["connection_id"] != ack["connection_id"] {
 		t.Fatalf("reconfigure minted a second connection: %q", out2)
+	}
+	conn, ok = svc.GetConnection(ack["connection_id"].(string))
+	if !ok || conn.DisplayName != "Alpha Bot" {
+		t.Fatalf("omitted app_name did not preserve the name: %+v", conn)
+	}
+
+	// An explicit app_name renames the existing connection.
+	if _, err := configure.exec(alice, map[string]interface{}{"enabled": false, "app_name": "Alpha Renamed"}); err != nil {
+		t.Fatalf("owner rename failed: %v", err)
+	}
+	conn, ok = svc.GetConnection(ack["connection_id"].(string))
+	if !ok || conn.DisplayName != "Alpha Renamed" {
+		t.Fatalf("app_name did not rename on update: %+v", conn)
 	}
 
 	// A non-owner is refused.

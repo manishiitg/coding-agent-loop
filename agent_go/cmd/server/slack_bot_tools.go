@@ -88,7 +88,7 @@ func parseSlackToolTokens(args map[string]interface{}) (botToken, appToken strin
 // configureWorkflowSlackConnection implements the non-admin branch of
 // configure_slack_bot: a workflow owner creates or updates the connection
 // scoped to their workflow, and the workflow selects it.
-func (api *StreamingAPI) configureWorkflowSlackConnection(ctx context.Context, workspace, profile string, enabled bool, botToken, appToken string) (string, error) {
+func (api *StreamingAPI) configureWorkflowSlackConnection(ctx context.Context, workspace, profile string, enabled bool, botToken, appToken, appName string) (string, error) {
 	if profile != "" {
 		return "", fmt.Errorf("profile projects use the platform default Slack connection; ask an admin to configure it")
 	}
@@ -115,7 +115,10 @@ func (api *StreamingAPI) configureWorkflowSlackConnection(ctx context.Context, w
 		}
 	}
 	if connID == "" {
-		displayName := strings.TrimSpace(manifest.Label)
+		displayName := strings.TrimSpace(appName)
+		if displayName == "" {
+			displayName = strings.TrimSpace(manifest.Label)
+		}
 		if displayName == "" {
 			displayName = "Workflow Slack"
 		}
@@ -139,6 +142,7 @@ func (api *StreamingAPI) configureWorkflowSlackConnection(ctx context.Context, w
 			return "", fmt.Errorf("the workflow uses a platform-managed Slack connection; ask an admin to change it")
 		}
 		if _, err := svc.UpdateSlackConnection(ctx, connID, services.SlackConnectionInput{
+			DisplayName:   appName,
 			BotToken:      botToken,
 			AppToken:      appToken,
 			Enabled:       enabled,
@@ -332,10 +336,11 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 
 	// Reuse the UI handler so credential encryption, operator authorization,
 	// route preservation, session revocation and connector activation stay shared.
-	if err := register("configure_slack_bot", "Save Slack bot credentials and enable/disable the bot. Admins configure the shared default connection; a workflow owner configures this workflow's own connection (created on first use) and selects it on the workflow. Interactive users only. Omit either token to keep it unchanged. Tokens are encrypted and never returned. Channel routes are preserved. Use test_slack_bot_connection afterward.", map[string]interface{}{
+	if err := register("configure_slack_bot", "Save Slack bot credentials and enable/disable the bot. Admins configure the shared default connection; a workflow owner configures this workflow's own connection (created on first use) and selects it on the workflow. Interactive users only. Omit either token to keep it unchanged. app_name sets the workflow app's display name (App name in Setup > Bots); omit to keep it unchanged. Tokens are encrypted and never returned. Channel routes are preserved. Use test_slack_bot_connection afterward.", map[string]interface{}{
 		"enabled":   map[string]interface{}{"type": "boolean"},
 		"bot_token": map[string]interface{}{"type": "string", "description": "New Bot User OAuth Token (xoxb-); omit to preserve"},
 		"app_token": map[string]interface{}{"type": "string", "description": "New App-Level Token (xapp-); omit to preserve"},
+		"app_name":  map[string]interface{}{"type": "string", "description": "Display name for this workflow's Slack app; omit to keep unchanged"},
 	}, []string{"enabled"}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		claims := GetUserFromContext(ctx)
 		operatorRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/api/slack/config", nil)
@@ -350,8 +355,19 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 		if err != nil {
 			return "", err
 		}
+		appName := ""
+		if raw, present := args["app_name"]; present {
+			name, ok := raw.(string)
+			if !ok {
+				return "", fmt.Errorf("app_name must be a string")
+			}
+			appName = strings.TrimSpace(name)
+		}
 		if !currentUserIsAdmin(operatorRequest) {
-			return api.configureWorkflowSlackConnection(ctx, workspace, profile, enabled, botToken, appToken)
+			return api.configureWorkflowSlackConnection(ctx, workspace, profile, enabled, botToken, appToken, appName)
+		}
+		if appName != "" {
+			return "", fmt.Errorf("app_name applies to workflow connections; the shared default keeps its name")
 		}
 		svc, err := ensureSlackService()
 		if err != nil {

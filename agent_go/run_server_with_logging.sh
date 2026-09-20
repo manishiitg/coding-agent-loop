@@ -54,6 +54,8 @@ POSITIONAL_ARGS=()
 print_usage() {
     printf '%s\n' 'Usage: ./run_server_with_logging.sh [options]'
     printf '%s\n' ''
+    printf '%s\n' 'Default (no composition flags): agent + workspace + frontend.'
+    printf '%s\n' ''
     printf '%s\n' 'Options:'
     printf '%s\n' '  --with-workspace              Start the local workspace service.'
     printf '%s\n' '  --with-frontend               Start the frontend and Electron app.'
@@ -119,6 +121,15 @@ for arg in "$@"; do
             ;;
     esac
 done
+
+# Default composition: unless the caller picked a stack shape explicitly
+# (--with-workspace / --with-frontend / --only-frontend / --test-connections),
+# run the whole local stack (agent + workspace + frontend). Bare modifiers
+# (--background, --without-electron, ...) keep the default.
+if [ "$WITH_WORKSPACE" != true ] && [ "$WITH_FRONTEND" != true ] && [ "$ONLY_FRONTEND" != true ] && [ "$TEST_CONNECTIONS" != true ]; then
+    WITH_WORKSPACE=true
+    WITH_FRONTEND=true
+fi
 
 # Only connection-test mode accepts a positional MCP configuration path. Treat
 # anything else as an error: a typo such as --with-frontendclear must not be

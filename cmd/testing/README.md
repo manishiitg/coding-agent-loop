@@ -12,7 +12,7 @@ Start the app first:
 
 ```bash
 cd agent_go
-./run_server_with_logging.sh --with-workspace --with-frontend
+./run_server_with_logging.sh
 ```
 
 Run a message queue:

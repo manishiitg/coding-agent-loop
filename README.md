@@ -263,12 +263,13 @@ go mod download
 
 ### 3. Run Everything Locally
 
-Start the backend, workspace API, frontend, and Electron with one command from `agent_go/`:
+Start the backend, workspace API, frontend, and Electron with one command from the repo root — no flags needed:
 
 ```bash
-cd agent_go
-./run_server_with_logging.sh --with-workspace --with-frontend
+./run_agentworks
 ```
+
+This is the default: agent + workspace + frontend + Electron. It forwards to `agent_go/run_server_with_logging.sh`, so all of its flags work too — e.g. `./run_agentworks --with-workspace` (no frontend) or `--only-frontend` (no backend). See `./run_agentworks --help` for all options.
 
 Default local ports:
 

@@ -8,6 +8,7 @@ import { SecretSelectionSection } from '../secrets/SecretSelectionSection'
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'
 import WorkflowBotsPanel from './WorkflowBotsPanel'
 import WorkflowEmailPanel from './WorkflowEmailPanel'
+import { CliMcpSetupPanel } from '../integrations/CliMcpSetupPanel'
 import ConnectorsBrowser from '../connectors/ConnectorsBrowser'
 import { agentApi, workflowManifestApi } from '../../services/api'
 import type { WorkflowCapabilities } from '../../services/api-types'
@@ -43,6 +44,7 @@ const MCP_TABS: Array<{ value: McpTab; label: string }> = [
   { value: 'slack', label: 'Slack' },
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'gmail', label: 'Gmail' },
+  { value: 'cli', label: 'Connect' },
 ]
 
 type IdentityTab = IdentityTabId
@@ -115,6 +117,12 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const [refreshingServers, setRefreshingServers] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [tab, setTab] = usePersistentTab<McpTab>('agentworks.tab.workflow-mcp', 'apps', MCP_TABS.map(option => option.value))
+  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
+  // The Connect tab points at this installation's hosted API origin, so it
+  // only exists on multi-user servers — never on local installs. A persisted
+  // 'cli' tab on local falls back to the first visible tab.
+  const mcpTabs = useMemo(() => MCP_TABS.filter(option => option.value !== 'cli' || isMultiUserMode), [isMultiUserMode])
+  const activeMcpTab = mcpTabs.some(option => option.value === tab) ? tab : mcpTabs[0].value
   const [identityTab, setIdentityTab] = usePersistentTab<IdentityTab>('agentworks.tab.workflow-identity', 'general', IDENTITY_TABS.map(option => option.value))
   // "Available to select for this workflow" means connected -- you can't
   // meaningfully pick tools from a server nobody has authenticated yet. A
@@ -184,15 +192,15 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   // content loads on mount.
   const [tabNonce, setTabNonce] = useState(0)
   const handleMcpRefresh = useCallback(() => {
-    if (tab === 'apps') {
+    if (activeMcpTab === 'apps') {
       void handleRefreshServers()
       return
     }
     setTabNonce(nonce => nonce + 1)
-  }, [tab, handleRefreshServers])
-  const mcpRefreshLabel = tab === 'apps'
+  }, [activeMcpTab, handleRefreshServers])
+  const mcpRefreshLabel = activeMcpTab === 'apps'
     ? 'Refresh connected integrations'
-    : `Refresh ${MCP_TABS.find(option => option.value === tab)?.label ?? 'view'}`
+    : `Refresh ${mcpTabs.find(option => option.value === activeMcpTab)?.label ?? 'view'}`
 
   // Every Identity tab loads on mount, so Refresh always remounts.
   const [identityTabNonce, setIdentityTabNonce] = useState(0)
@@ -302,18 +310,18 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
           actions={(
             <WorkspaceViewActions
               workspacePath={workspacePath}
-              message={section === 'mcp' ? getIntegrationTabAskAIMessage(tab) : section === 'identity' ? getIdentityTabAskAIMessage(identityTab) : getWorkspaceAskAIMessage(section)}
+              message={section === 'mcp' ? getIntegrationTabAskAIMessage(activeMcpTab) : section === 'identity' ? getIdentityTabAskAIMessage(identityTab) : getWorkspaceAskAIMessage(section)}
               onRefresh={section === 'mcp'
                 ? handleMcpRefresh
                 : section === 'identity'
                   ? handleIdentityRefresh
                   : () => useWorkflowStore.getState().refreshWorkspaceView()}
-              refreshing={section === 'mcp' && tab === 'apps' && refreshingServers}
+              refreshing={section === 'mcp' && activeMcpTab === 'apps' && refreshingServers}
               refreshLabel={section === 'mcp' ? mcpRefreshLabel : section === 'identity' ? identityRefreshLabel : `Refresh ${copy.title}`}
             />
           )}
           tabs={section === 'mcp'
-            ? { value: tab, onChange: (value: string) => setTab(value as McpTab), options: MCP_TABS, ariaLabel: 'Integrations' }
+            ? { value: activeMcpTab, onChange: (value: string) => setTab(value as McpTab), options: mcpTabs, ariaLabel: 'Integrations' }
             : section === 'identity'
               ? { value: identityTab, onChange: (value: string) => setIdentityTab(value as IdentityTab), options: IDENTITY_TABS, ariaLabel: 'Identity' }
               : undefined}
@@ -333,7 +341,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
             )}
             {section === 'mcp' && (
               <div>
-                {(tab === 'apps' || tab === 'skills') && (
+                {(activeMcpTab === 'apps' || activeMcpTab === 'skills') && (
                   <>
                 <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
                   <div className="min-w-0 flex-1 basis-48">
@@ -357,8 +365,8 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                 </div>
                   </>
                 )}
-                <div key={tab === 'apps' ? 'apps' : `${tab}:${tabNonce}`}>
-                {tab === 'apps' && (
+                <div key={activeMcpTab === 'apps' ? 'apps' : `${activeMcpTab}:${tabNonce}`}>
+                {activeMcpTab === 'apps' && (
                   <>
                     {selectedAvailableServers.length > 0 && (
                       <div className="mt-3 border-t border-border pt-3">
@@ -444,7 +452,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                     </div>
                   </>
                 )}
-                {tab === 'skills' && (
+                {activeMcpTab === 'skills' && (
                   <div className="mt-3 border-t border-border pt-3">
                     <div className="relative mb-3 shrink-0">
                       <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
@@ -495,19 +503,24 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                     />
                   </div>
                 )}
-                {tab === 'slack' && (
+                {activeMcpTab === 'slack' && (
                   <div className="mt-3">
                     <WorkflowBotsPanel workspacePath={workspacePath} fixedChannel="slack" />
                   </div>
                 )}
-                {tab === 'whatsapp' && (
+                {activeMcpTab === 'whatsapp' && (
                   <div className="mt-3 border-t border-border pt-3">
                     <WorkflowBotsPanel workspacePath={workspacePath} fixedChannel="whatsapp" />
                   </div>
                 )}
-                {tab === 'gmail' && (
+                {activeMcpTab === 'gmail' && (
                   <div className="mt-3">
                     <WorkflowEmailPanel workspacePath={workspacePath} />
+                  </div>
+                )}
+                {activeMcpTab === 'cli' && (
+                  <div className="mt-3">
+                    <CliMcpSetupPanel />
                   </div>
                 )}
                 </div>

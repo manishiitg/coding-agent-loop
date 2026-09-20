@@ -1,20 +1,25 @@
 import { useEffect, useState, type ReactNode } from 'react'
-import { Share2, ShieldCheck, Users } from 'lucide-react'
+import { ShieldCheck } from 'lucide-react'
 import WorkflowSharePopup from './WorkflowSharePopup'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
 import { useAuthStore } from '../../stores/useAuthStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
-import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { hasWorkflowOwnerAccess } from '../../utils/workflowPermissions'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewActions } from './WorkspaceViewActions'
+import { usePersistentTab } from '../../hooks/usePersistentTab'
+import { getAccessTabAskAIMessage, type AccessTabId } from './workspaceAskAI'
 import { normalizeWorkspacePath } from '../../utils/workspacePathUtils'
-
-type AccessTab = 'workflow' | 'users'
 
 interface WorkflowAccessViewProps {
   workspacePath: string | null
   headerAction?: ReactNode
 }
+
+const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
+  { value: 'workflow', label: 'This workflow' },
+  { value: 'users', label: 'Users' },
+]
 
 /**
  * Access, as a right-side workspace view like Notify, Pulse and Backup --
@@ -22,10 +27,7 @@ interface WorkflowAccessViewProps {
  *
  *  - "This workflow": who may see or edit the open workflow (owners and
  *    read-only readers).
- *  - "Users": the deployment's accounts, roles and passwords (admins only).
- *
- * Both bodies are the existing components rendered `embedded`; this is only
- * the pane shell, header and tabs.
+ *  - "Users": the deployment's accounts and roles (admins only).
  */
 export default function WorkflowAccessView({ workspacePath, headerAction }: WorkflowAccessViewProps) {
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
@@ -39,48 +41,53 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
   const workflowTab = isMultiUser && !!workspacePath && (canShareWorkflow || myAccess === 'read')
   const workflowReadOnly = !canShareWorkflow
   const usersTab = canManageUsers
-  const firstTab: AccessTab = workflowTab ? 'workflow' : 'users'
-  const [tab, setTab] = useState<AccessTab>(firstTab)
+  const visibleTabs = ACCESS_TABS.filter(option => (option.value === 'workflow' && workflowTab) || (option.value === 'users' && usersTab))
+  const [tab, setTab] = usePersistentTab<AccessTabId>('agentworks.tab.access', 'workflow', ACCESS_TABS.map(option => option.value))
+  const activeTab = visibleTabs.some(option => option.value === tab) ? tab : visibleTabs[0]?.value
   useEffect(() => {
-    setTab(current => ((current === 'workflow' && workflowTab) || (current === 'users' && usersTab)) ? current : firstTab)
-  }, [firstTab, workflowTab, usersTab])
+    if (activeTab && activeTab !== tab) setTab(activeTab)
+  }, [activeTab, tab, setTab])
+  // Every tab loads on mount, so Refresh always remounts.
+  const [tabNonce, setTabNonce] = useState(0)
 
-  const closePane = () => useWorkflowStore.getState().setShowWorkspacePane(false)
   const scopeName = workspacePath?.split('/').filter(Boolean).pop() || 'Workflow'
-  const tabClass = (active: boolean) =>
-    `inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs transition-colors ${active ? 'bg-background text-foreground shadow-sm border border-border' : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'}`
 
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
       <WorkspaceViewHeader
         icon={ShieldCheck}
         title="Access"
-        subtitle={tab === 'workflow'
-          ? `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`
-          : 'Accounts, roles and passwords for this deployment.'}
+        subtitle={activeTab === 'users'
+          ? 'Accounts and roles for this deployment.'
+          : `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`}
         actions={<>
-          {workflowTab && usersTab && (
-            <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Access sections">
-              <button type="button" role="tab" aria-selected={tab === 'workflow'} className={tabClass(tab === 'workflow')} onClick={() => setTab('workflow')}>
-                <Share2 className="h-3.5 w-3.5" /> This workflow
-              </button>
-              <button type="button" role="tab" aria-selected={tab === 'users'} className={tabClass(tab === 'users')} onClick={() => setTab('users')}>
-                <Users className="h-3.5 w-3.5" /> Users
-              </button>
-            </div>
-          )}
           {headerAction}
+          {activeTab && (
+            <WorkspaceViewActions
+              workspacePath={workspacePath}
+              message={getAccessTabAskAIMessage(activeTab)}
+              onRefresh={() => setTabNonce(nonce => nonce + 1)}
+              refreshLabel={`Refresh ${visibleTabs.find(option => option.value === activeTab)?.label ?? 'view'}`}
+            />
+          )}
         </>}
+        tabs={visibleTabs.length > 1
+          ? { value: activeTab ?? 'workflow', onChange: (value: string) => setTab(value as AccessTabId), options: visibleTabs, ariaLabel: 'Access sections' }
+          : undefined}
       />
 
       <div className="flex-1 overflow-y-auto">
-        {!workflowTab && !usersTab ? (
+        {!activeTab ? (
           <p className="px-5 py-6 text-sm text-muted-foreground">You can't manage access for this workflow.</p>
-        ) : tab === 'workflow' && workflowTab && workspacePath ? (
-          <WorkflowSharePopup embedded isOpen onClose={closePane} workspacePath={workspacePath} readOnly={workflowReadOnly} />
-        ) : usersTab ? (
-          <UsersAdminPanel embedded isOpen onClose={closePane} />
-        ) : null}
+        ) : (
+          <div key={`${activeTab}:${tabNonce}`} className="p-4">
+            {activeTab === 'workflow' && workspacePath ? (
+              <WorkflowSharePopup workspacePath={workspacePath} readOnly={workflowReadOnly} />
+            ) : activeTab === 'users' ? (
+              <UsersAdminPanel />
+            ) : null}
+          </div>
+        )}
       </div>
     </div>
   )

@@ -416,20 +416,12 @@ func providerRuntimeAvailable(provider string) *bool {
 }
 
 func providerRuntime(provider string) string {
-	normalized := normalizeManagedProvider(provider)
-	switch normalized {
-	case string(llm.ProviderClaudeCode):
-		return "claude"
-	case string(llm.ProviderCodexCLI):
-		return "codex"
-	case string(llm.ProviderCursorCLI):
-		return "cursor-agent"
-	case string(llm.ProviderPiCLI):
-		return "pi"
-	case string(llm.ProviderMuseCLI):
-		return "muse"
+	contract, ok := llm.GetCodingAgentProviderContract(
+		llm.Provider(normalizeManagedProvider(provider)), "")
+	if !ok {
+		return ""
 	}
-	return ""
+	return contract.RuntimeBinary
 }
 
 func providerAuthConfigured(provider string, keys *llm.ProviderAPIKeys) (bool, string) {

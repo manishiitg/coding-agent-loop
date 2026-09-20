@@ -35,6 +35,9 @@ type providerManifestEntry struct {
 	RuntimeCommand        string                            `json:"runtime_command,omitempty"`
 	RuntimeAvailable      *bool                             `json:"runtime_available,omitempty"`
 	InstallCommand        string                            `json:"install_command,omitempty"`
+	InstalledVersion      string                            `json:"installed_version,omitempty"`
+	MinSupportedVersion   string                            `json:"min_supported_version,omitempty"`
+	UpdateStatus          string                            `json:"update_status,omitempty"`
 	AuthConfigured        bool                              `json:"auth_configured"`
 	AuthSource            string                            `json:"auth_source,omitempty"`
 	Usable                bool                              `json:"usable"`
@@ -106,7 +109,6 @@ type providerStaticInfo struct {
 	description     string
 	integrationKind string
 	authDescription string
-	installCommand  string
 	requiresAPIKey  bool
 	apiKeyEnv       string
 	apiKeyURL       string
@@ -118,7 +120,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed codex CLI. Authentication via codex login or CODEX_API_KEY.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
-		installCommand:  "npm install -g @openai/codex@latest",
 		requiresAPIKey:  false,
 	},
 	"cursor-cli": {
@@ -126,7 +127,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses cursor-agent through tmux. Supports 100+ models via Cursor subscription.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (API key optional)",
-		installCommand:  "curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://cursor.com/install | bash",
 		requiresAPIKey:  false,
 	},
 	"pi-cli": {
@@ -134,7 +134,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses Pi CLI through tmux marker transport for Pi model IDs across Gemini, Z.AI, Kimi, MiniMax, DeepSeek, and custom Pi providers.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (Pi provider API key)",
-		installCommand:  "npm install -g @earendil-works/pi-coding-agent@latest",
 		requiresAPIKey:  false,
 		apiKeyEnv:       "Provider-specific: GEMINI_API_KEY, ZAI_API_KEY, KIMI_API_KEY, MINIMAX_API_KEY, DEEPSEEK_API_KEY, etc.",
 		apiKeyURL:       "https://pi.dev/docs/latest/providers",
@@ -144,7 +143,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed muse CLI (Meta). Authentication via muse login or META_API_KEY.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (Meta login or API key)",
-		installCommand:  "curl --proto '=https' --proto-redir '=https' --tlsv1.2 https://dev.meta.ai/install.sh | bash",
 		requiresAPIKey:  false,
 		apiKeyEnv:       "META_API_KEY",
 	},
@@ -153,7 +151,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		description:     "Uses the locally installed claude CLI. Handles its own authentication, model selection, and tool execution.",
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (no API key)",
-		installCommand:  "npm install -g @anthropic-ai/claude-code@latest",
 		requiresAPIKey:  false,
 	},
 	"openai": {
@@ -232,6 +229,66 @@ func providerCodingAgentManifestInfo(provider, modelID string) *providerCodingAg
 		SupportsNativeResume:    contract.SupportsNativeResume,
 		HandlesTmuxSessionLoss:  contract.HandlesTmuxSessionLoss,
 	}
+}
+
+// providerInstallCommand returns the SDK contract's allowlisted install
+// command for coding providers, or "" for API providers.
+func providerInstallCommand(provider string) string {
+	contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(provider), "")
+	if !ok {
+		return ""
+	}
+	return contract.InstallCommand
+}
+
+// codingCLIVersion describes one probed CLI for the manifest.
+type codingCLIVersion struct {
+	installed string
+	floor     string
+	status    string // supported|unsupported|unknown
+}
+
+// probeCodingCLIVersions probes installed versions for coding providers in
+// parallel. "unknown" means the probe failed (missing binary, timeout);
+// the page shows RuntimeAvailable=false alongside it.
+func probeCodingCLIVersions(ctx context.Context, providers []string) map[string]codingCLIVersion {
+	out := make(map[string]codingCLIVersion, len(providers))
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for _, provider := range providers {
+		contract, ok := llm.GetCodingAgentProviderContract(llm.Provider(provider), "")
+		if !ok {
+			continue
+		}
+		wg.Add(1)
+		go func(provider, floor string) {
+			defer wg.Done()
+			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			defer cancel()
+			version, err := llm.CodingAgentCLIVersion(probeCtx, llm.Provider(provider))
+			result := codingCLIVersion{floor: floor, status: "unknown"}
+			if err == nil {
+				result.installed = version
+				result.status = cliUpdateStatus(version, floor)
+			}
+			mu.Lock()
+			out[provider] = result
+			mu.Unlock()
+		}(provider, contract.MinCLIVersion)
+	}
+	wg.Wait()
+	return out
+}
+
+// cliUpdateStatus maps an installed version against the certified floor.
+func cliUpdateStatus(installed, floor string) string {
+	if strings.TrimSpace(installed) == "" {
+		return "unknown"
+	}
+	if llm.CompareCodingAgentCLIVersions(installed, floor) < 0 {
+		return "unsupported"
+	}
+	return "supported"
 }
 
 func providerWorkflowTierDefaults(provider string) *llm.CodingAgentDefaultTierModels {
@@ -340,6 +397,8 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		supportedSet[p] = true
 	}
 
+	cliVersions := probeCodingCLIVersions(ctx, providerOrder)
+
 	entries := make([]providerManifestEntry, 0, len(providerOrder))
 	for _, provider := range providerOrder {
 		if !supportedSet[provider] {
@@ -391,7 +450,10 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			AuthDescription:       info.authDescription,
 			RuntimeCommand:        runtimeCommand,
 			RuntimeAvailable:      runtimeOK,
-			InstallCommand:        info.installCommand,
+			InstallCommand:        providerInstallCommand(provider),
+			InstalledVersion:      cliVersions[provider].installed,
+			MinSupportedVersion:   cliVersions[provider].floor,
+			UpdateStatus:          cliVersions[provider].status,
 			AuthConfigured:        authConfigured,
 			AuthSource:            authSource,
 			Usable:                usable,

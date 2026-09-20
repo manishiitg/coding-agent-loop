@@ -172,6 +172,7 @@ successful live runs supply evidence.
 | P0 adapter base | Real fresh launch; runtime system/skill/MCP context; exact cwd; trust/auth handling; MCP reachability and native-tool restrictions; slow-tool false-idle protection; completion and clean final extraction; tmux multi-turn; live/busy input; cancellation; parallel isolation; reply formatting fidelity. |
 | P0 capability-dependent | Structured streaming when claimed; independent structured multi-turn when persistent native resume is claimed; stalled-turn diagnosis when claimed; durable ACK when claimed. Restart/no-history-replay must be resolved under R2. |
 | P0 application | Real MCP-backed workflow completion and next-step advancement; retained chat through the agent layer; exactly-once delivery/routing; stable turn identity and one canonical completion; persisted final response/history. Adapter-only proof is insufficient. |
+| P0 lifecycle | CLI install detection, version floor, certified-version currency, and token-usage reporting, per the lifecycle contracts below. |
 | P1 hardening | Lifecycle/retention, cancel-then-reuse, external session loss/recovery, stale drafts, shared-directory config isolation, startup visibility, model/auth/environment variants, status/usage, and provider upgrades, as applicable. Map each requirement to a concrete executable test. |
 | Capability publication | Unsupported behavior is explicit. Optional capability claims need their corresponding proof before advertisement; accepted restrictions must remain visible. Muse's named best-effort tool exception must not become the default for new CLIs. |
 
@@ -546,6 +547,99 @@ regression test applies, then verified with the owning repo's gates.
   case-insensitive matching.
 - Verified: the review's foreign-native-ID reproduction now rejects; full
   `mcpagent/agent` and `mcpagent/llm` suites green; `go vet` clean.
+
+## Lifecycle P0 contracts — 2026-09-20 (install, usage, update)
+
+The providers page is where installation and usage are managed, so the P0
+contract now covers the CLI lifecycle, not just turns. A new CLI inherits
+all three proofs by declaring four contract fields; each proof fails loudly
+until the CLI is wired.
+
+### Declarations (SDK contract, deterministic)
+
+`SDK/coding_agent_contract.go` requires every active tmux provider to
+declare `RuntimeBinary` (PATH detection), `InstallCommand` (the allowlisted
+installer shown on the providers page), `VersionProbeArgs` (usually
+`["--version"]`), and `MinCLIVersion` (oldest certified version, in the
+CLI's own `--version` form). `TestCodingAgentRuntimeInstallContractIsWellFormed`
+enforces all four; there is no second hardcoded provider/binary/install list.
+
+`SDK/coding_agent_cli_version.go` implements the shared mechanics:
+`CodingAgentCLIVersion` probes the installed version through the contract
+(a missing binary fails with the install command),
+`CompareCodingAgentCLIVersions` orders semver, prefixed, and calver forms by
+numeric components, and `CheckCodingAgentCLIVersion` enforces the floor with
+an explicit update message. The dependency-neutral probe core lives in
+`SDK/llmtypes/cli_probe.go` because adapter packages cannot import the SDK
+root (import cycle); `TestRuntimeAvailabilityLiveTestsProbeContractBinaries`
+pins each adapter live test to its contract binary so the one literal
+duplication cannot rot.
+
+Deliberate scope choice: the floor is enforced by P0 proofs, the release
+preflight, and the providers page — not by blocking launches. Hosts may call
+`CheckCodingAgentCLIVersion` before launch, but the contract itself surfaces
+unsupported versions instead of breaking running setups.
+
+### Proof 1 — `runtime_availability` (base P0, credential-free)
+
+Every active provider proves its contract binary resolves on PATH and
+answers the version probe (`Test<Provider>RuntimeAvailabilityLive`,
+flag-gated so plain unit runs stay hermetic). The providers page and the P0
+runner derive install/upgrade status from this same probe.
+
+### Proof 2 — `token_usage` (P0 where `SurfacesTokenUsage`)
+
+Every usage-claiming provider proves a real turn reports input/output counts
+through `GenerationInfo`, the surface the cost ledger reads
+(`Test<Provider>TokenUsageLive`). `estimated` sources (Cursor tmux) must
+additionally set `token_usage_estimated` so cost reports flag the counts as
+approximate. This closes the declaration-without-evidence gap the usage flags
+had since introduction.
+
+### Proof 3 — certified-version currency (runner preflight, no new cert ID)
+
+`scripts/p0-certified-cli-versions.json` is the checked-in claim of which CLI
+versions P0 has certified. The runner fails in preflight — before spending
+live capacity — when a selected provider's installed CLI differs, is
+missing, or is uncertified. `--update-certified-versions` records the
+installed versions for the selected providers (merging, never dropping other
+entries; `MISSING` is refused) and then runs P0 against that claim, so a
+green run plus a committed file is the recertification. The comparison lives
+in `SDK/cmd/coding-agent-p0-tests/versions.go` with unit tests, not in bash.
+`TestCertifiedCLIVersionsMeetFloors` (builder) requires every entry to cover
+the release matrix and sit at or above the SDK floor.
+
+The existing live P0 matrix is the upgrade detector: transcript formats,
+flags, and auth flows that a new CLI version breaks are caught by re-running
+it. The contract's job is to force that re-run and record the version it
+passed on.
+
+### Builder and frontend derivation
+
+- `providerRuntime` reads the SDK `RuntimeBinary`; the manifest's
+  `runtime_command`, `install_command`, `installed_version`,
+  `min_supported_version`, and `update_status` (`supported`/`unsupported`/
+  `unknown`) derive from the SDK contract plus a parallel live probe. The
+  static install-command map is deleted. `TestProviderRuntimeDerivesFromSDKContracts`
+  pins the derivation in both directions.
+- The providers page shows the installed version in both the setup and
+  connected views, warns below the floor, and falls back to
+  `DEFAULT_CODING_PROVIDER_GUIDE` for a CLI with no tailored guidance, so a
+  sixth provider renders instead of crashing.
+- Terminal `/usage`-style inspection notes (`PROVIDER_INSPECTION`,
+  `PROVIDER_USAGE_COMMAND`) stay presentation assets with existing graceful
+  degradation, per this review's proposed rule.
+
+### Live evidence (2026-09-20)
+
+| Proof | Claude | Codex | Cursor | Muse | Pi |
+| --- | --- | --- | --- | --- | --- |
+| `runtime_availability` | PASS | PASS | PASS | PASS | loud fail (no `pi` binary here) |
+| `token_usage` | PASS | PASS | blocked (quota, resets 9/21) | PASS | blocked (no CLI here) |
+
+Pending cases are registered required P0 proofs: the runner and
+`TestCodingAgentCertificationReferencesExistingTests` enforce them wherever
+the CLI and credentials exist.
 
 ### R5 — resolved: shared helper binds Muse owner cleanup
 

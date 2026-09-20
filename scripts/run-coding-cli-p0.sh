@@ -18,6 +18,9 @@ P0 mode: every selected provider uses its real CLI and the MCP agent bridge.
 
 Options:
   --providers LIST       Comma-separated providers (default: all active CLIs)
+  --update-certified-versions
+                         Record installed CLI versions as the new certified
+                         claim, then run P0 against that claim
   --server-url URL       Live AgentWorks server (default: http://localhost:18743)
   --workspace-api URL    Live workspace API (default: http://127.0.0.1:18744)
   --workspace-docs PATH  Absolute workspace-docs path
@@ -52,6 +55,10 @@ while [[ $# -gt 0 ]]; do
     --mcpagent-dir)
       MCPAGENT_DIR="$(cd "${2:?--mcpagent-dir requires a value}" && pwd)"
       shift 2
+      ;;
+    --update-certified-versions)
+      UPDATE_CERTIFIED_VERSIONS=1
+      shift
       ;;
     -h|--help)
       usage
@@ -111,6 +118,18 @@ full_providers="$(p0_full_providers)"
 if [[ "$(printf '%s' "$PROVIDERS" | tr ',' '\n' | sort | paste -sd, -)" != "$(printf '%s' "$full_providers" | tr ',' '\n' | sort | paste -sd, -)" ]]; then
   echo "Partial P0 provider selection: $PROVIDERS (full release set: $full_providers)"
 fi
+
+# A CLI update invalidates prior evidence: fail before spending live capacity
+# unless every selected provider's installed CLI matches the certified claim.
+# P0_CERTIFIED_VERSIONS_FILE override exists for testing the preflight.
+CERTIFIED_VERSIONS_FILE="${P0_CERTIFIED_VERSIONS_FILE:-$ROOT_DIR/scripts/p0-certified-cli-versions.json}"
+if [[ "${UPDATE_CERTIFIED_VERSIONS:-0}" == "1" ]]; then
+  go -C "$MULTI_LLM_DIR" run ./cmd/coding-agent-p0-tests \
+    -write-cli-versions "$CERTIFIED_VERSIONS_FILE" -providers "$PROVIDERS"
+  echo "Recorded installed CLI versions in $CERTIFIED_VERSIONS_FILE; commit it with this run's result."
+fi
+go -C "$MULTI_LLM_DIR" run ./cmd/coding-agent-p0-tests \
+  -check-cli-versions "$CERTIFIED_VERSIONS_FILE" -providers "$PROVIDERS"
 
 for endpoint in "$SERVER_URL" "$WORKSPACE_API_URL"; do
   if ! curl -sS --max-time 3 -o /dev/null "$endpoint"; then

@@ -1,10 +1,14 @@
 package server
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
+
+	llm "github.com/manishiitg/multi-llm-provider-go"
 )
 
 func TestCodingProviderManifestDefinesAdminInstallCommands(t *testing.T) {
@@ -16,9 +20,77 @@ func TestCodingProviderManifestDefinesAdminInstallCommands(t *testing.T) {
 		"muse-cli":    "https://dev.meta.ai/install.sh",
 	}
 	for provider, fragment := range want {
-		command := providerStaticInfoMap[provider].installCommand
+		command := providerInstallCommand(provider)
 		if !strings.Contains(command, fragment) {
 			t.Fatalf("%s install command = %q, want fragment %q", provider, command, fragment)
+		}
+	}
+	if got := providerInstallCommand("openai"); got != "" {
+		t.Fatalf("openai install command = %q, want empty for API providers", got)
+	}
+}
+
+func TestProviderRuntimeDerivesFromSDKContracts(t *testing.T) {
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if contract.Transport != llm.CodingAgentTransportTmux || contract.Deprecated {
+			continue
+		}
+		if got := providerRuntime(string(contract.Provider)); got != contract.RuntimeBinary {
+			t.Errorf("providerRuntime(%s) = %q, want SDK RuntimeBinary %q",
+				contract.Provider, got, contract.RuntimeBinary)
+		}
+		if providerInstallCommand(string(contract.Provider)) != contract.InstallCommand {
+			t.Errorf("providerInstallCommand(%s) diverges from the SDK contract", contract.Provider)
+		}
+	}
+	if got := providerRuntime("openai"); got != "" {
+		t.Errorf("providerRuntime(openai) = %q, want empty for API providers", got)
+	}
+}
+
+func TestCliUpdateStatusMapsFloor(t *testing.T) {
+	if got := cliUpdateStatus("2.1.278", "2.1.278"); got != "supported" {
+		t.Errorf("equal versions = %q, want supported", got)
+	}
+	if got := cliUpdateStatus("2.1.300", "2.1.278"); got != "supported" {
+		t.Errorf("newer version = %q, want supported", got)
+	}
+	if got := cliUpdateStatus("2.1.0", "2.1.278"); got != "unsupported" {
+		t.Errorf("older version = %q, want unsupported", got)
+	}
+	if got := cliUpdateStatus("", "2.1.278"); got != "unknown" {
+		t.Errorf("empty version = %q, want unknown", got)
+	}
+}
+
+func TestCertifiedCLIVersionsMeetFloors(t *testing.T) {
+	raw, err := os.ReadFile("../../../scripts/p0-certified-cli-versions.json")
+	if err != nil {
+		t.Fatalf("read certified versions: %v", err)
+	}
+	var claimed struct {
+		Versions map[string]string `json:"versions"`
+	}
+	if err := json.Unmarshal(raw, &claimed); err != nil {
+		t.Fatalf("parse certified versions: %v", err)
+	}
+	for _, contract := range llm.CodingAgentProviderContracts() {
+		if contract.Transport != llm.CodingAgentTransportTmux || contract.Deprecated {
+			continue
+		}
+		certified, ok := claimed.Versions[string(contract.Provider)]
+		if !ok || strings.TrimSpace(certified) == "" {
+			t.Errorf("%s has no certified version recorded", contract.Provider)
+			continue
+		}
+		if llm.CompareCodingAgentCLIVersions(certified, contract.MinCLIVersion) < 0 {
+			t.Errorf("%s certified %s is below the SDK floor %s",
+				contract.Provider, certified, contract.MinCLIVersion)
+		}
+	}
+	for provider := range claimed.Versions {
+		if _, ok := llm.GetCodingAgentProviderContract(llm.Provider(provider), ""); !ok {
+			t.Errorf("certified versions names unknown provider %s", provider)
 		}
 	}
 }

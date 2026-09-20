@@ -20,7 +20,7 @@ import {
   llmConfigService,
   type ProviderManifestEntry,
 } from '../../services/llm-config-api'
-import { CODING_PROVIDER_GUIDES } from './codingProviderGuides'
+import { CODING_PROVIDER_GUIDES, DEFAULT_CODING_PROVIDER_GUIDE } from './codingProviderGuides'
 import GuidedProviderTerminal from './GuidedProviderTerminal'
 import { useAuthStore } from '../../stores/useAuthStore'
 import type { ProviderSetupAction, ProviderSetupSession } from '../../services/llm-config-api'
@@ -109,6 +109,22 @@ const providerUsageNote = (providerId: string): string => {
   if (providerId === 'cursor-cli') return 'Cursor does not expose subscription quota through a safe CLI status command. AgentWorks still reports any limit response returned during a run.'
   if (providerId === 'pi-cli') return 'Pi connects several model providers. Usage and billing remain separate for each connected provider; the live model inventory is shown below.'
   return 'AgentWorks reports provider usage and limits when the provider exposes them.'
+}
+
+function CliVersionStatus({ provider }: { provider: ProviderManifestEntry }) {
+  if (!provider.installed_version && provider.update_status !== 'unsupported') return null
+  return (
+    <>
+      {provider.installed_version && (
+        <p className="mt-1 text-sm text-gray-600 dark:text-gray-300">CLI version {provider.installed_version}</p>
+      )}
+      {provider.update_status === 'unsupported' && (
+        <p className="mt-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200">
+          This CLI is below the minimum supported version{provider.min_supported_version ? ` ${provider.min_supported_version}` : ''}. Update the CLI on the backend server and re-run P0 certification.
+        </p>
+      )}
+    </>
+  )
 }
 
 function StatusBadge({ provider }: { provider: ProviderManifestEntry }) {
@@ -235,7 +251,7 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
   }, [providerOrder, providers])
 
   const selectedProvider = orderedProviders.find(provider => provider.id === selectedId) ?? orderedProviders[0]
-  const guide = selectedProvider ? CODING_PROVIDER_GUIDES[selectedProvider.id] : undefined
+  const guide = selectedProvider ? (CODING_PROVIDER_GUIDES[selectedProvider.id] ?? DEFAULT_CODING_PROVIDER_GUIDE) : undefined
 
   const startGuidedSetup = async (action: ProviderSetupAction, replaceRunning = false) => {
     if (!selectedProvider || !GUIDED_SETUP_PROVIDERS.has(selectedProvider.id)) return
@@ -431,6 +447,7 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                                 : 'AgentWorks detected a working provider login.'}
                               {' '}The CLI is installed and ready for workflows.
                             </p>
+                            <CliVersionStatus provider={selectedProvider} />
                           </div>
                         </div>
                       </section>
@@ -523,9 +540,12 @@ export default function CodingProvidersPanel({ isOpen, onClose, embedded = false
                   <div>
                   <SetupStep number={1} title="CLI availability" complete={selectedProvider.runtime_available === true}>
                     {selectedProvider.runtime_available === true ? (
-                      <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-300">
-                        <CheckCircle2 className="h-4 w-4" /> Installed and maintained by AgentWorks
-                      </p>
+                      <div>
+                        <p className="flex items-center gap-1.5 text-sm text-emerald-700 dark:text-emerald-300">
+                          <CheckCircle2 className="h-4 w-4" /> Installed and maintained by AgentWorks
+                        </p>
+                        <CliVersionStatus provider={selectedProvider} />
+                      </div>
                     ) : (
                       <div className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-800 dark:border-red-500/30 dark:bg-red-500/10 dark:text-red-200">
                         <p>This CLI is missing from the AgentWorks installation. A platform administrator must repair or update the deployment.</p>

@@ -50,6 +50,9 @@ export interface ProviderManifestEntry {
   runtime_command?: string
   runtime_available?: boolean
   install_command?: string
+  installed_version?: string
+  min_supported_version?: string
+  update_status?: 'supported' | 'unsupported' | 'unknown'
   auth_configured: boolean
   auth_source?: string
   usable: boolean

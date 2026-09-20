@@ -4,7 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../../services/llm-config-api', () => ({
-  llmConfigService: { getProviderManifest: vi.fn(), getProviderModels: vi.fn(), startProviderSetup: vi.fn(), cancelProviderSetup: vi.fn() },
+  llmConfigService: { getProviderManifest: vi.fn(), getProviderModels: vi.fn(), startProviderSetup: vi.fn(), cancelProviderSetup: vi.fn(), getProviderConnections: vi.fn() },
 }))
 vi.mock('../../stores/useAuthStore', () => ({
   useAuthStore: (selector: (state: { isMultiUserMode: boolean; user: null }) => unknown) => selector({ isMultiUserMode: false, user: null }),
@@ -21,6 +21,7 @@ import { CODING_PROVIDER_GUIDES } from './codingProviderGuides'
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
 
 beforeEach(() => {
+  vi.mocked(llmConfigService.getProviderConnections).mockResolvedValue([])
   vi.mocked(llmConfigService.getProviderModels).mockImplementation(async providerId => ({
     provider: providerId,
     model_selection_mode: 'fixed_tier',
@@ -306,6 +307,80 @@ describe('CodingProvidersPanel', () => {
       expect(dialog.textContent).toContain('AgentWorks will not silently replace it')
       expect(dialog.textContent).toContain('Manage provider logins')
       expect(llmConfigService.getProviderModels).toHaveBeenCalledWith('pi-cli', false, true)
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('shows the installed CLI version and warns when it is below the supported floor', async () => {
+    vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
+      providers: [
+        provider({ installed_version: '0.155.1', min_supported_version: '0.155.1', update_status: 'supported' }),
+        provider({
+          id: 'claude-code',
+          display_name: 'Claude Code',
+          runtime_command: 'claude',
+          installed_version: '2.1.0',
+          min_supported_version: '2.1.278',
+          update_status: 'unsupported',
+        }),
+      ],
+      provider_order: ['codex-cli', 'claude-code'],
+      integration_kinds: {},
+    })
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<CodingProvidersPanel isOpen onClose={vi.fn()} />))
+      await act(async () => Promise.resolve())
+
+      const dialog = document.querySelector('[role="dialog"]')!
+      expect(dialog.textContent).toContain('CLI version 0.155.1')
+      expect(dialog.textContent).not.toContain('below the minimum supported')
+
+      await act(async () => Array.from(dialog.querySelectorAll('button')).find(button => button.textContent?.includes('Claude Code'))!.click())
+      expect(dialog.textContent).toContain('CLI version 2.1.0')
+      expect(dialog.textContent).toContain('below the minimum supported version 2.1.278')
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('renders a provider without a guide entry instead of crashing', async () => {
+    vi.mocked(llmConfigService.getProviderManifest).mockResolvedValue({
+      providers: [
+        provider({
+          id: 'future-cli',
+          display_name: 'Future CLI',
+          runtime_command: 'future',
+          installed_version: '9.9.9',
+          min_supported_version: '9.0.0',
+          update_status: 'supported',
+          auth_configured: false,
+          auth_source: undefined,
+          usable: false,
+        }),
+      ],
+      provider_order: ['future-cli'],
+      integration_kinds: {},
+    })
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<CodingProvidersPanel isOpen onClose={vi.fn()} />))
+      await act(async () => Promise.resolve())
+
+      const dialog = document.querySelector('[role="dialog"]')!
+      expect(dialog.textContent).toContain('Future CLI')
+      expect(dialog.textContent).toContain('CLI version 9.9.9')
+      expect(dialog.textContent).toContain('Authenticate')
+      expect(dialog.textContent).toContain('Complete authentication for this provider in the guided terminal')
     } finally {
       await act(async () => root.unmount())
       host.remove()

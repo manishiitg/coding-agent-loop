@@ -19,3 +19,10 @@ export const CODING_PROVIDER_GUIDES: Record<string, CodingProviderGuide> = {
     authenticateNote: 'Complete the guided Muse sign-in. No SSH or direct server access is required. META_API_KEY is also supported for managed environments.',
   },
 }
+
+// DEFAULT_CODING_PROVIDER_GUIDE keeps the providers page renderable for a
+// newly onboarded CLI that has no tailored guidance yet. Kept outside
+// CODING_PROVIDER_GUIDES so the exact-keys test still pins the tailored set.
+export const DEFAULT_CODING_PROVIDER_GUIDE: CodingProviderGuide = {
+  authenticateNote: 'Complete authentication for this provider in the guided terminal. No SSH or direct server access is required.',
+}

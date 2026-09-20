@@ -116,6 +116,65 @@ func TestReadNewClaudeTranscriptMessagesFiltersBySinceAndKeepsOnlyRealChatText(t
 	}
 }
 
+func TestReadNewClaudeTranscriptMessagesKeepsQueuedHumanTurnInTranscriptOrder(t *testing.T) {
+	dir := t.TempDir()
+	transcriptPath := filepath.Join(dir, "session.jsonl")
+
+	writeTranscriptFixture(t, transcriptPath, []string{
+		`{"type":"assistant","timestamp":"2026-09-20T21:05:15.228Z","message":{"role":"assistant","content":[{"type":"text","text":"Checking the remaining tabs now."}]}}`,
+		`{"type":"queue-operation","timestamp":"2026-09-20T21:05:26.603Z","operation":"enqueue","content":"<pasted_content id=\"bc83\">\nsi sheet111 tab used for anything?\n</pasted_content id=\"bc83\">"}`,
+		`{"type":"assistant","timestamp":"2026-09-20T21:05:34.320Z","message":{"role":"assistant","content":[{"type":"text","text":"I found another static sibling tab."}]}}`,
+		// Claude writes the durable queued command only after the in-flight tool
+		// result, at the point where it becomes the next human turn.
+		`{"type":"attachment","timestamp":"2026-09-20T21:05:26.602Z","attachment":{"type":"queued_command","prompt":"<pasted_content id=\"bc83\">\nsi sheet111 tab used for anything?\n</pasted_content id=\"bc83\">","source_uuid":"85501f51-df07-4ee5-958c-9cb472e999d5","commandMode":"prompt","origin":{"kind":"human"},"humanTurn":true}}`,
+		`{"type":"assistant","timestamp":"2026-09-20T21:06:01.000Z","message":{"role":"assistant","content":[{"type":"text","text":"No — Sheet11 is not referenced anywhere else."}]}}`,
+	})
+
+	messages, maxTimestamp, err := readNewClaudeTranscriptMessages(transcriptPath, time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	want := []builderConversationMessage{
+		{Role: "ai", Parts: []builderConversationPart{{Text: "Checking the remaining tabs now."}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "I found another static sibling tab."}}},
+		{Role: "human", Parts: []builderConversationPart{{Text: "si sheet111 tab used for anything?"}}},
+		{Role: "ai", Parts: []builderConversationPart{{Text: "No — Sheet11 is not referenced anywhere else."}}},
+	}
+	if !builderConversationHistoriesEqual(messages, want) {
+		t.Fatalf("queued human turn was not preserved at its transcript boundary:\n got: %+v\nwant: %+v", messages, want)
+	}
+	// The real failure already had all assistant updates on disk. Recovery must
+	// still insert the missing human boundary between them, not treat the native
+	// transcript as an all-or-nothing replacement.
+	persistedWithoutQueuedTurn := []builderConversationMessage{want[0], want[1], want[3]}
+	merged := mergeBuilderConversationHistory(persistedWithoutQueuedTurn, messages)
+	if !builderConversationHistoriesEqual(merged, want) {
+		t.Fatalf("merge did not repair the missing queued human boundary:\n got: %+v\nwant: %+v", merged, want)
+	}
+	wantMax, _ := time.Parse(time.RFC3339Nano, "2026-09-20T21:06:01.000Z")
+	if !maxTimestamp.Equal(wantMax) {
+		t.Fatalf("unexpected max timestamp: got %v want %v", maxTimestamp, wantMax)
+	}
+}
+
+func TestReadNewClaudeTranscriptMessagesIgnoresNonHumanAttachments(t *testing.T) {
+	dir := t.TempDir()
+	transcriptPath := filepath.Join(dir, "session.jsonl")
+	writeTranscriptFixture(t, transcriptPath, []string{
+		`{"type":"attachment","timestamp":"2026-09-20T21:05:10.493Z","attachment":{"type":"total_tokens_reminder","text":"<total_tokens>14972482 tokens left</total_tokens>"}}`,
+		`{"type":"attachment","timestamp":"2026-09-20T21:05:26.602Z","attachment":{"type":"queued_command","prompt":"automated prompt","origin":{"kind":"system"},"humanTurn":false}}`,
+	})
+
+	messages, _, err := readNewClaudeTranscriptMessages(transcriptPath, time.Time{})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(messages) != 0 {
+		t.Fatalf("expected non-human attachments to stay hidden, got %+v", messages)
+	}
+}
+
 func TestReadNewClaudeTranscriptMessagesReturnsNothingWhenNoEntriesAreNewer(t *testing.T) {
 	dir := t.TempDir()
 	transcriptPath := filepath.Join(dir, "session.jsonl")

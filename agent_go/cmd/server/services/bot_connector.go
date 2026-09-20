@@ -847,6 +847,38 @@ func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage,
 	return m.resolveChannelWorkflow(msg.Platform, msg.ChannelID)
 }
 
+// routeChangeKeepsSession reports whether granting this route must leave the
+// existing session untouched: on thread-less platforms a changed route is a
+// hard conversation boundary, and handleExistingSession detects it by
+// comparing the incoming route against the session's stored key. Overwriting
+// the stored key here would put the new route on both sides of that
+// comparison, miss the switch, and reuse the previous workflow's conversation
+// (history, files, resume state) for an unrelated workflow. msg must already
+// carry the granted route so the comparison matches what
+// handleExistingSession will see.
+func (m *BotConversationManager) routeChangeKeepsSession(msg BotIncomingMessage, active *activeBotSession) bool {
+	if active == nil {
+		return false
+	}
+	connector := m.GetConnector(msg.Platform)
+	if connector == nil || connector.Capabilities().Threads {
+		// Threaded platforms have no route-change boundary, and an unknown
+		// platform keeps the established refresh behavior.
+		return false
+	}
+	active.mu.Lock()
+	prev := active.RouteKey
+	sessionID := active.SessionID
+	active.mu.Unlock()
+	incoming := botMessageRouteKey(msg)
+	if incoming == prev {
+		return false
+	}
+	log.Printf("[BOT_MANAGER] Thread-less route changed for session %s (%q → %q) — leaving the session untouched so a fresh conversation starts",
+		sessionID, prev, incoming)
+	return true
+}
+
 func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Context, msg *BotIncomingMessage, threadID ThreadID, active *activeBotSession) bool {
 	if msg == nil {
 		return true
@@ -882,7 +914,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
 		}
-		if active != nil {
+		if active != nil && !m.routeChangeKeepsSession(*msg, active) {
 			active.mu.Lock()
 			active.UserID = workspaceUserID
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
@@ -936,7 +968,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = route
 		}
-		if active != nil {
+		if active != nil && !m.routeChangeKeepsSession(*msg, active) {
 			active.mu.Lock()
 			active.UserID = strings.TrimSpace(msg.WorkspaceUserID)
 			active.PresetQueryID = strings.TrimSpace(route.WorkflowID)
@@ -1404,20 +1436,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// For plain thread replies, only inject if it's a single-user thread (the bot's original requester).
 		// In multi-user threads, require @mention to avoid accidental triggers.
 		if !msg.IsMention {
-			if m.isMultiUserThread(active, msg) {
-				log.Printf("[BOT_MANAGER] Ignoring non-mention thread reply from %s in multi-user session %s", msg.UserID, active.SessionID)
-				// Reaction-only acknowledgement so the user can see the bot
-				// noticed the message but is intentionally staying out of the
-				// thread (no @mention in a multi-user channel). Without this
-				// the message just falls into a silent void and looks like a
-				// bug. Best-effort: log and move on if the platform doesn't
-				// support reactions or the call fails.
-				if connector := m.GetConnector(active.Platform); connector != nil && connector.Capabilities().Reactions && msg.ChannelID != "" && msg.MessageTS != "" {
-					thread := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ConnectionID: msg.ConnectionID}
-					if err := botConnectorAddReaction(context.Background(), connector, thread, msg.MessageTS, "zipper_mouth_face"); err != nil {
-						log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
-					}
-				}
+			if m.ignoreMultiUserNonMention(active, msg) {
 				return
 			}
 			log.Printf("[BOT_MANAGER] Accepting non-mention reply from %s (single-user thread) in session %s", msg.UserID, active.SessionID)
@@ -1433,6 +1452,15 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			log.Printf("[BOT_MANAGER] Cannot send follow-up: followUpSession=%v sessionID=%s", m.followUpSession != nil, sid)
 		}
 	case chathistory.BotSessionStatusCompleted, chathistory.BotSessionStatusFailed:
+		// An outstanding blocking prompt still gets its answer: like the
+		// running branch, blocking responses bypass the mention guard below.
+		if awaiting {
+			m.handleBlockingResponse(active, msg)
+			return
+		}
+		if m.ignoreMultiUserNonMention(active, msg) {
+			return
+		}
 		threadID := active.ThreadID
 		if msg.PresetWorkflow == nil {
 			msg.PresetWorkflow = botRouteFromActive(active)
@@ -3574,6 +3602,32 @@ func (m *BotConversationManager) isMultiUserThread(active *activeBotSession, msg
 		}
 	}
 	return len(users) > 1
+}
+
+// ignoreMultiUserNonMention stays out of multi-user threads unless the bot
+// was addressed: plain replies there are usually colleagues talking to each
+// other, not to the bot. It reports whether the message was ignored.
+// Single-user threads and thread-less platforms never ignore. Callers that
+// may hold an outstanding blocking prompt must route awaiting messages to
+// handleBlockingResponse first so an answer is never mistaken for chatter.
+func (m *BotConversationManager) ignoreMultiUserNonMention(active *activeBotSession, msg BotIncomingMessage) bool {
+	if active == nil || msg.IsMention || !m.isMultiUserThread(active, msg) {
+		return false
+	}
+	log.Printf("[BOT_MANAGER] Ignoring non-mention thread reply from %s in multi-user session %s", msg.UserID, active.SessionID)
+	// Reaction-only acknowledgement so the user can see the bot
+	// noticed the message but is intentionally staying out of the
+	// thread (no @mention in a multi-user channel). Without this
+	// the message just falls into a silent void and looks like a
+	// bug. Best-effort: log and move on if the platform doesn't
+	// support reactions or the call fails.
+	if connector := m.GetConnector(active.Platform); connector != nil && connector.Capabilities().Reactions && msg.ChannelID != "" && msg.MessageTS != "" {
+		thread := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ConnectionID: msg.ConnectionID}
+		if err := botConnectorAddReaction(context.Background(), connector, thread, msg.MessageTS, "zipper_mouth_face"); err != nil {
+			log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
+		}
+	}
+	return true
 }
 
 // Helper functions (prefixed with bot to avoid collisions)

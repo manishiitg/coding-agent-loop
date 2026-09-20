@@ -432,6 +432,235 @@ func TestThreadedCompletedSessionReusesDurableConversation(t *testing.T) {
 	}
 }
 
+type historyTestConnector struct {
+	*testBotConnector
+	history []ThreadMessage
+}
+
+func (c *historyTestConnector) GetThreadHistory(context.Context, ThreadID) ([]ThreadMessage, error) {
+	return c.history, nil
+}
+
+func TestCompletedMultiUserThreadNonMentionStaysOut(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+			{UserID: "U-bob", Text: "thanks Alice"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:  "slack",
+		ChannelID: "C123",
+		ThreadTS:  "1710000000.000100",
+		UserID:    "U-bob",
+		Text:      "thanks Alice, I'll take it from here",
+		IsMention: false,
+	}, true)
+
+	select {
+	case got := <-started:
+		t.Fatalf("non-mention reply in multi-user thread started session %q; want the bot to stay out", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestCompletedMultiUserThreadMentionRestarts(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+			{UserID: "U-bob", Text: "thanks Alice"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:  "slack",
+		ChannelID: "C123",
+		ThreadTS:  "1710000000.000100",
+		UserID:    "U-bob",
+		Text:      "rerun that with last quarter",
+		IsMention: true,
+	}, true)
+
+	select {
+	case got := <-started:
+		if got != "old-session-1" {
+			t.Fatalf("mentioned restart changed durable identity: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected mentioned reply to restart the conversation")
+	}
+}
+
+func TestCompletedSingleUserThreadNonMentionRestarts(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:  "slack",
+		ChannelID: "C123",
+		ThreadTS:  "1710000000.000100",
+		UserID:    "U-alice",
+		Text:      "now break it down by region",
+		IsMention: false,
+	}, true)
+
+	select {
+	case got := <-started:
+		if got != "old-session-1" {
+			t.Fatalf("single-user restart changed durable identity: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected single-user non-mention reply to restart the conversation")
+	}
+}
+
+func TestCompletedAwaitingFeedbackBypassesMentionGuard(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+			{UserID: "U-bob", Text: "thanks Alice"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	submitted := make(chan struct {
+		id       string
+		response string
+	}, 1)
+	GetNotificationManager().SetFeedbackResponseFunc(func(uniqueID, response string) error {
+		submitted <- struct {
+			id       string
+			response string
+		}{id: uniqueID, response: response}
+		return nil
+	})
+	t.Cleanup(func() {
+		GetNotificationManager().SetFeedbackResponseFunc(nil)
+	})
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:         "old-session-1",
+		UserID:            "user-1",
+		Status:            chathistory.BotSessionStatusCompleted,
+		Platform:          "slack",
+		ThreadID:          threadID,
+		LastActivity:      time.Now(),
+		builderDone:       true,
+		awaitingUserInput: true,
+		blockingEventType: "blocking_human_feedback",
+		blockingRequestID: "req-1",
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:  "slack",
+		ChannelID: "C123",
+		ThreadTS:  "1710000000.000100",
+		UserID:    "U-bob",
+		Text:      "approve",
+		IsMention: false,
+	}, true)
+
+	select {
+	case got := <-submitted:
+		if got.id != "req-1" || got.response != "approve" {
+			t.Fatalf("submitted = %#v, want req-1/approve", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected blocking feedback response to be submitted, not ignored or restarted")
+	}
+
+	select {
+	case got := <-started:
+		t.Fatalf("blocking answer started session %q; want feedback submission only", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+
+	active.mu.Lock()
+	awaiting := active.awaitingUserInput
+	requestID := active.blockingRequestID
+	active.mu.Unlock()
+	if awaiting || requestID != "" {
+		t.Fatalf("blocking state not cleared: awaiting=%v requestID=%q", awaiting, requestID)
+	}
+}
+
 func TestThreadlessCompletedSameRouteReusesSessionID(t *testing.T) {
 	manager := NewBotConversationManager(nil, "", "")
 	connector := &testBotConnector{}
@@ -601,6 +830,119 @@ func TestThreadlessCompletedRouteChangeStartsFreshWithoutRestoreSessionID(t *tes
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected threadless route-change session to start")
+	}
+}
+
+func TestThreadlessRouteSwitchViaIncomingMessageStartsFresh(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{}
+	manager.RegisterConnector(connector)
+	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, _ string, _ ChannelRoute) (string, bool, error) {
+		return userID, true, nil
+	})
+
+	type startedSession struct {
+		req       map[string]interface{}
+		sessionID string
+	}
+	started := make(chan startedSession, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- startedSession{req: req, sessionID: sessionID}
+		return nil
+	})
+
+	oldRoute := &ChannelRoute{WorkflowID: "wf-old", WorkspacePath: "Workflow/old", WorkshopMode: "run"}
+	newRoute := &ChannelRoute{WorkflowID: "wf-new", WorkspacePath: "Workflow/new", WorkshopMode: "builder"}
+	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
+	manager.mu.Lock()
+	manager.sessions[threadID.Key()] = &activeBotSession{
+		SessionID:     "old-session-1",
+		UserID:        "user-1",
+		Status:        chathistory.BotSessionStatusCompleted,
+		Platform:      "whatsapp",
+		ThreadID:      threadID,
+		PresetQueryID: "wf-old",
+		WorkspacePath: "Workflow/old",
+		RouteKey:      botRouteKey(oldRoute),
+		LastActivity:  time.Now(),
+		builderDone:   true,
+	}
+	manager.mu.Unlock()
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone-user",
+		WorkspaceUserID: "user-1",
+		ChannelID:       "dm",
+		Text:            "start switched workflow",
+		PresetWorkflow:  newRoute,
+		IsMention:       true,
+	})
+
+	select {
+	case got := <-started:
+		if got.sessionID == "old-session-1" {
+			t.Fatal("route switch reused the previous workflow's session ID; want a fresh conversation")
+		}
+		if _, ok := got.req["restored_conversation_session_id"]; ok {
+			t.Fatalf("route switch should not restore the previous route, got req %#v", got.req)
+		}
+		if got.req["preset_query_id"] != "wf-new" {
+			t.Fatalf("preset_query_id = %#v, want wf-new", got.req["preset_query_id"])
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected threadless route-switch session to start")
+	}
+}
+
+func TestThreadlessSameRouteViaIncomingMessageReusesSession(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &testBotConnector{}
+	manager.RegisterConnector(connector)
+	manager.SetWorkflowAccessFunc(func(_ context.Context, userID, _ string, _ ChannelRoute) (string, bool, error) {
+		return userID, true, nil
+	})
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	route := &ChannelRoute{WorkflowID: "wf-old", WorkspacePath: "Workflow/old", WorkshopMode: "run"}
+	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
+	manager.mu.Lock()
+	manager.sessions[threadID.Key()] = &activeBotSession{
+		SessionID:     "old-session-1",
+		UserID:        "user-1",
+		Status:        chathistory.BotSessionStatusCompleted,
+		Platform:      "whatsapp",
+		ThreadID:      threadID,
+		PresetQueryID: "wf-old",
+		WorkspacePath: "Workflow/old",
+		RouteKey:      botRouteKey(route),
+		LastActivity:  time.Now(),
+		builderDone:   true,
+	}
+	manager.mu.Unlock()
+
+	manager.HandleIncomingMessage(BotIncomingMessage{
+		Platform:        "whatsapp",
+		UserID:          "phone-user",
+		WorkspaceUserID: "user-1",
+		ChannelID:       "dm",
+		Text:            "continue this",
+		PresetWorkflow:  route,
+		IsMention:       true,
+	})
+
+	select {
+	case got := <-started:
+		if got != "old-session-1" {
+			t.Fatalf("same-route session ID = %q, want old-session-1", got)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("expected threadless same-route session to start")
 	}
 }
 

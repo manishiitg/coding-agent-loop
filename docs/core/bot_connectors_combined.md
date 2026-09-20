@@ -310,7 +310,7 @@ Slack/WhatsApp delivery. This consolidation changes documentation only.
 Reviewed the connector implementation on `main` at `ca3cf76cb`, focusing on
 authorization, conversation lifecycle, and Slack event handling. The shared
 architecture is reasonable, but the following reproduced bugs prevent sign-off.
-All three findings remain open; this document does not implement their fixes.
+The P1 and the mention-guard P2 are fixed (see notes below).
 Source line references below refer to the reviewed revision.
 
 ### P1: WhatsApp workflow switches reuse the previous conversation
@@ -333,6 +333,17 @@ Fix: compare the previous and incoming routes before mutating active session
 state. Start a fresh conversation when the target changes. Add a regression
 through `HandleIncomingMessage` with authorization enabled: the existing
 route-switch test calls `handleExistingSession` directly and misses this ordering.
+
+Fixed: `authorizeWorkflowRouteForMessage` now leaves the active session
+untouched when the granted route differs from the session's stored route key
+on a thread-less platform (`routeChangeKeepsSession`), so
+`handleExistingSession` sees the switch and starts a fresh conversation. The
+access check, `msg.PresetWorkflow`, and `msg.WorkspaceUserID` updates are
+unchanged, so the fresh session still starts under the incoming route.
+Regression coverage: `TestThreadlessRouteSwitchViaIncomingMessageStartsFresh`
+(switch starts fresh, no restored session, `preset_query_id` targets the new
+workflow) and `TestThreadlessSameRouteViaIncomingMessageReusesSession`
+(same-route replies still continue the conversation).
 
 ### P2: Resetting a running session recreates its cleared binding
 
@@ -369,6 +380,17 @@ The start-session callback fires even though the bot was not addressed.
 Fix: apply the multi-user mention policy before restarting completed or failed
 threaded sessions, while retaining the intended blocking-feedback behavior.
 Cover both running and completed states in regression tests.
+
+Fixed: the running branch's ignore-with-reaction policy is now a shared
+`ignoreMultiUserNonMention` helper, and the completed/failed branch applies
+it before restarting. An outstanding blocking prompt still gets its answer:
+like the running branch, awaiting messages route to `handleBlockingResponse`
+first and bypass the guard. Thread-less platforms are unaffected (the helper
+never ignores where threads don't exist). Regression coverage:
+`TestCompletedMultiUserThreadNonMentionStaysOut` (the reported bug),
+`TestCompletedMultiUserThreadMentionRestarts`,
+`TestCompletedSingleUserThreadNonMentionRestarts`, and
+`TestCompletedAwaitingFeedbackBypassesMentionGuard`.
 
 ### Code-review validation
 

@@ -1,6 +1,11 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 const activateTab = vi.hoisted(() => vi.fn(() => true))
 vi.mock('./activateTab', () => ({ activateTab }))
+const openCanonicalActivitySession = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('./workflowSessionRestore', async importOriginal => {
+  const actual = await importOriginal<typeof import('./workflowSessionRestore')>()
+  return { ...actual, openCanonicalActivitySession }
+})
 import type { ActiveSessionInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
@@ -48,6 +53,7 @@ afterEach(() => {
   })
   useChatStore.setState({ chatTabs: {}, activeTabId: null })
   activateTab.mockClear()
+  openCanonicalActivitySession.mockClear()
 })
 
 describe('global AgentWorks and Crew navigation', () => {
@@ -72,14 +78,29 @@ describe('global AgentWorks and Crew navigation', () => {
     expect(activateTab).toHaveBeenCalledWith(workTab.tabId)
   })
 
-  it('opens a tabless Crew schedule in the project schedules view', async () => {
+  it('opens a Crew schedule run in a read-only run tab, not the Work schedules view', async () => {
+    const trigger = session({
+      session_id: 'schedule-cron--a2e1a916_1789915434926975000',
+      agent_mode: 'workflow_phase',
+      workspace_path: '_users/default/Chats/Work/projects/news-monitor-a2e1a916',
+      triggered_by: 'cron',
+    })
+    await openGlobalActivitySession(trigger, { source: 'global-activity-monitor' })
+
+    expect(openCanonicalActivitySession).toHaveBeenCalledWith(trigger, { source: 'global-activity-monitor' })
+    expect(useProductSurfaceStore.getState().productSurface).toBe('agentworks')
+    expect(useProductSurfaceStore.getState().selectedWorkProjectId).toBeNull()
+    expect(useProductSurfaceStore.getState().pendingWorkView).toBeNull()
+  })
+
+  it('keeps routing interactive Crew sessions to the Work surface', async () => {
     await openGlobalActivitySession(session({
       session_id: 'work:project:project-4',
-      triggered_by: 'schedule',
     }))
 
     expect(useProductSurfaceStore.getState().productSurface).toBe('work')
     expect(useProductSurfaceStore.getState().selectedWorkProjectId).toBe('project-4')
-    expect(useProductSurfaceStore.getState().pendingWorkView).toBe('schedules')
+    expect(useProductSurfaceStore.getState().pendingWorkView).toBeNull()
+    expect(openCanonicalActivitySession).not.toHaveBeenCalled()
   })
 })

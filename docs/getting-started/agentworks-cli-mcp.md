@@ -17,8 +17,9 @@ The same token is reused on every visit until it is revoked or expires.
 
 The binaries and installer are served by the server itself at
 `/api/downloads/cli/` (public, like the existing launcher downloads), so
-the CLI always matches the API it talks to. Developers can still build from
-source as below.
+the CLI always matches the API it talks to. `agentworks version` prints the
+build; `agentworks update` (or `update --check`) self-updates from the
+connected server. Developers can still build from source as below.
 
 ## Build and server setup
 

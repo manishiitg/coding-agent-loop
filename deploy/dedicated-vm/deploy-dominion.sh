@@ -153,15 +153,17 @@ echo "==> Building dominion-gateway (generic cookie-auth gateway, shared source 
 
 echo "==> Building AgentWorks CLI matrix for /api/downloads/cli (static builds)"
 mkdir -p "$RELEASE_DIR/downloads"
+CLI_SHA="$(git -C "$REPO" rev-parse HEAD)"
 for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
   os="${target%-*}"
   arch="${target#*-}"
   name="agentworks-$os-$arch"
-  (cd "$REPO/agent_go" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 "$GO_BIN" build -o "$RELEASE_DIR/downloads/$name" ./cmd/agentworks)
+  (cd "$REPO/agent_go" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 "$GO_BIN" build -ldflags "-X main.cliVersion=$CLI_SHA" -o "$RELEASE_DIR/downloads/$name" ./cmd/agentworks)
   chmod +x "$RELEASE_DIR/downloads/$name"
   (cd "$RELEASE_DIR/downloads" && sha256sum "$name" > "$name.sha256")
 done
 cp "$REPO/scripts/install-agentworks-cli.sh" "$RELEASE_DIR/downloads/install-agentworks.sh"
+printf '{"version":"%s","release":"%s"}\n' "$CLI_SHA" "$RELEASE_ID" > "$RELEASE_DIR/downloads/version.json"
 
 echo "==> Verifying staged CLI downloads (format per OS + checksums)"
 for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
@@ -179,6 +181,7 @@ for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
   (cd "$RELEASE_DIR/downloads" && sha256sum -c "$name.sha256") || { echo "FATAL: downloads/$name.sha256 does not verify" >&2; exit 1; }
 done
 bash -n "$RELEASE_DIR/downloads/install-agentworks.sh" || { echo "FATAL: staged install-agentworks.sh has a syntax error" >&2; exit 1; }
+python3 -c "import json;d=json.load(open('$RELEASE_DIR/downloads/version.json'));assert len(d.get('version',''))==40,d" || { echo "FATAL: staged version.json is missing the commit sha" >&2; exit 1; }
 
 echo "==> Verifying every binary is a real, runnable executable (not just 'go build exit 0')"
 for bin in dominion-agent dominion-workspace video-studio-landlock-runner mcpbridge dominion-gateway; do

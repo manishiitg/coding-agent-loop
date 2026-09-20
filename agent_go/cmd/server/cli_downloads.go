@@ -23,6 +23,7 @@ var cliDownloadFiles = map[string]string{
 	"agentworks-linux-amd64.sha256":  "text/plain; charset=utf-8",
 	"agentworks-linux-arm64.sha256":  "text/plain; charset=utf-8",
 	"install-agentworks.sh":          "text/x-shellscript; charset=utf-8",
+	"version.json":                   "application/json",
 }
 
 // cliDownloadsDirOverride pins the downloads directory in tests. Empty means

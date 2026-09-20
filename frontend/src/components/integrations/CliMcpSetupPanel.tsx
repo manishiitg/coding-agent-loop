@@ -4,11 +4,11 @@ import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
 import { authApi, getApiBaseUrl } from '../../services/api'
 
-function CommandRow({ command, label }: { command: string; label: string }) {
+function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
   const copy = async () => {
     try {
-      await navigator.clipboard.writeText(command)
+      await navigator.clipboard.writeText(text)
       setCopied(true)
       window.setTimeout(() => setCopied(false), 1500)
     } catch {
@@ -16,13 +16,34 @@ function CommandRow({ command, label }: { command: string; label: string }) {
     }
   }
   return (
+    <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title={copied ? 'Copied' : `Copy: ${label}`} onClick={() => void copy()}>
+      {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+    </Button>
+  )
+}
+
+function CommandRow({ command, label }: { command: string; label: string }) {
+  return (
     <div className="flex items-center gap-2">
       <code className="min-w-0 flex-1 overflow-x-auto rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-foreground" aria-label={label}>
         {command}
       </code>
-      <Button variant="ghost" size="icon" className="h-7 w-7 shrink-0" title={copied ? 'Copied' : `Copy: ${label}`} onClick={() => void copy()}>
-        {copied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-      </Button>
+      <CopyButton text={command} label={label} />
+    </div>
+  )
+}
+
+function JsonBlock({ json, label, hint }: { json: string; label: string; hint: string }) {
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-foreground">{label}</span>
+        <CopyButton text={json} label={label} />
+      </div>
+      <pre className="overflow-x-auto rounded-md border border-border bg-muted/40 px-3 py-2 font-mono text-xs text-foreground" aria-label={label}>
+        {json}
+      </pre>
+      <p className="text-xs text-muted-foreground">{hint}</p>
     </div>
   )
 }
@@ -151,6 +172,7 @@ export function CliMcpSetupPanel() {
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const origin = server.replace(/\/+$/, '')
   const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
+  const mcpJson = connection ? JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_TOKEN: connection.token } } } }, null, 2) : ''
 
   return (
     <div className="space-y-4">
@@ -204,6 +226,7 @@ export function CliMcpSetupPanel() {
           <div className="space-y-2">
             <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
             <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
+            <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
           </div>
         )}
       </SettingsCard>

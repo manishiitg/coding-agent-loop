@@ -1258,6 +1258,31 @@ func registerHTMLReportTools(
 				warnings = append(warnings, "dark mode keys only off prefers-color-scheme (the OS), so it ignores the app's light/dark toggle; key off `:root.dark` / `[data-theme=\"dark\"]` or the injected hsl(var(--token)) palette instead")
 			}
 
+			// Tabs: view-switch buttons without tab semantics leave
+			// screen-reader and keyboard users with no selected-state
+			// announcement.
+			hasTabButtons := strings.Contains(lower, "<button") &&
+				(strings.Contains(content, "data-report-view") ||
+					strings.Contains(lower, "tabbtn") ||
+					strings.Contains(lower, "tab-button"))
+			hasTabRoles := strings.Contains(lower, "role=\"tab\"") ||
+				strings.Contains(lower, "role='tab'") ||
+				strings.Contains(lower, "aria-selected")
+			if hasTabButtons && !hasTabRoles {
+				warnings = append(warnings, "view-switch buttons have no tab semantics; add role=\"tablist\"/role=\"tab\", aria-selected toggling, and arrow-key support")
+			}
+
+			// Activity: a hand-rolled feed over the run summaries duplicates
+			// the platform widget. Custom merged timelines stay valid; this
+			// is a nudge, not a mandate.
+			queriesActivity := strings.Contains(content, "org_dashboard_notifications")
+			buildsRows := strings.Contains(content, "innerHTML") ||
+				strings.Contains(content, "insertAdjacentHTML") ||
+				strings.Contains(content, "createElement")
+			if queriesActivity && buildsRows && !strings.Contains(content, "renderActivity") {
+				warnings = append(warnings, "hand-rolled activity feed over org_dashboard_notifications; consider window.report.renderActivity(target) for the standard route-grouped section (custom merged timelines remain valid)")
+			}
+
 			// Live SQL: run each literal query through the database so a typo'd
 			// table or column fails here, not silently in the Report tab.
 			queries, dynamicQueries := reportHTMLLiteralQueries(content)

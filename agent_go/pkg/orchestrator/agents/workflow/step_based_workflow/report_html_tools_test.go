@@ -328,6 +328,38 @@ window.report.ready(async function(){
 	}
 }
 
+func TestValidateHTMLReportNudgesTabsAndActivityWidgets(t *testing.T) {
+	t.Parallel()
+	handRolled := `<!doctype html><html><head><title>Ops</title></head><body>` +
+		`<button class="tab-button" data-report-view="a">A</button><section id="a"></section><section id="feed"></section><script>
+window.report.ready(async function(){
+  var rows = await window.report.query('SELECT title FROM org_dashboard_notifications');
+  document.getElementById('feed').innerHTML = rows.map(function(r){ return '<p>'+r.title+'</p>'; }).join('');
+});
+</script></body></html>`
+	result := validateReport(t, handRolled, ReportHTMLValidationHooks{})
+	if !strings.Contains(result, `"valid": true`) {
+		t.Fatalf("nudges must not block validation: %s", result)
+	}
+	for _, want := range []string{`no tab semantics`, `hand-rolled activity feed`} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected nudge %q: %s", want, result)
+		}
+	}
+	composed := `<!doctype html><html><head><title>Ops</title></head><body>` +
+		`<div role="tablist"><button role="tab" aria-selected="true">A</button></div><section id="feed"></section><script>
+window.report.ready(async function(){
+  await window.report.renderActivity('#feed');
+});
+</script></body></html>`
+	result = validateReport(t, composed, ReportHTMLValidationHooks{})
+	for _, want := range []string{`no tab semantics`, `hand-rolled activity feed`} {
+		if strings.Contains(result, want) {
+			t.Fatalf("unexpected nudge %q: %s", want, result)
+		}
+	}
+}
+
 func TestValidateHTMLReportChecksCallbackReferences(t *testing.T) {
 	t.Parallel()
 	html := `<!doctype html><html><head><title>Callbacks</title></head><body><script>

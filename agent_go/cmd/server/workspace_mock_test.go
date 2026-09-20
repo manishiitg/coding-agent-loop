@@ -13,8 +13,9 @@ import (
 )
 
 type mockWorkspaceAPI struct {
-	mu    sync.Mutex
-	files map[string]string
+	mu      sync.Mutex
+	files   map[string]string
+	folders map[string]bool
 }
 
 func (m *mockWorkspaceAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -23,11 +24,38 @@ func (m *mockWorkspaceAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		m.handleListDocuments(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/documents/"):
 		m.handleDocument(w, r)
+	case r.URL.Path == "/api/folders" && r.Method == http.MethodPost:
+		m.handleCreateFolder(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/folders/") && r.Method == http.MethodDelete:
 		m.handleDeleteFolder(w, r)
 	default:
 		http.NotFound(w, r)
 	}
+}
+
+func (m *mockWorkspaceAPI) handleCreateFolder(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		FolderPath string `json:"folder_path"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	m.mu.Lock()
+	if m.folders == nil {
+		m.folders = map[string]bool{}
+	}
+	m.folders[strings.Trim(strings.TrimSpace(body.FolderPath), "/")] = true
+	m.mu.Unlock()
+	writeJSON(w, http.StatusCreated, map[string]interface{}{
+		"success": true,
+	})
+}
+
+func (m *mockWorkspaceAPI) hasFolder(path string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.folders[strings.Trim(strings.TrimSpace(path), "/")]
 }
 
 func (m *mockWorkspaceAPI) handleListDocuments(w http.ResponseWriter, r *http.Request) {

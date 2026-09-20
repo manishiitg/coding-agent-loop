@@ -218,7 +218,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 	}, "workflow_webhooks"); err != nil {
 		return err
 	}
-	return reg.RegisterCustomTool("create_crew", "Create a new Crew for the workflow being built, with trigger, read-only attachment, and step configuration in one call. Propose a Crew only when the responsibility is ongoing and stateful enough to deserve maturing: prefer a message sequence for fixed flows and an orchestrator step for one-shot agentic work. Before calling, list skills, servers, and secrets and propose only available ones; tell the user which integrations need connecting in the Crew UI. Call only after the user explicitly approves the proposal in chat. Pass a fresh UUID idempotency_key per proposal and reuse it verbatim on retry: the same key returns the existing crew instead of minting a duplicate. Secrets pass as names only; never send values. After success, immediately call add_step(type=crew) with the returned step configuration plus placement and reason; if that step id already exists, verify it matches and continue.", map[string]interface{}{
+	return reg.RegisterCustomTool("create_crew", "Create a new Crew for the workflow being built, with trigger, read-only attachment, and step configuration in one call. Propose a Crew only when the responsibility is ongoing and stateful enough to deserve maturing: prefer a message sequence for fixed flows and an orchestrator step for one-shot agentic work. Before calling, list skills, servers, and secrets and propose only available ones; tell the user which integrations need connecting in the Crew UI. Unknown skills, servers, secrets, or globals fail the call; configured-but-disconnected servers are selected and reported as pending. Call only after the user explicitly approves the proposal in chat. Pass a fresh UUID idempotency_key per proposal and reuse it verbatim on retry: the same key with an unchanged proposal returns the existing crew instead of minting a duplicate, while a changed proposal under a claimed key is rejected and needs a new key. Secrets pass as names only; never send values. After success, immediately call add_step(type=crew) with the returned step configuration plus placement and reason; if that step id already exists, verify it matches and continue.", map[string]interface{}{
 		"type": "object", "additionalProperties": false,
 		"required": []string{"title", "step_instruction", "idempotency_key"},
 		"properties": map[string]interface{}{
@@ -228,13 +228,13 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			"purpose":              map[string]interface{}{"type": "string", "description": "What the Crew owns, seeded into its starter brief."},
 			"instructions":         map[string]interface{}{"type": "string", "description": "Starter instructions seeded into the Crew brief."},
 			"skills":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Installed skill names to select. Unknown skills fail the call."},
-			"servers":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "MCP server names to select."},
-			"secrets":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Secret names to reference. Names only, never values."},
-			"global_secrets":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Global secret names to reference. Names only, never values."},
+			"servers":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "MCP server names to select. Unknown servers fail the call; disconnected ones are selected and reported as pending."},
+			"secrets":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Secret names to reference. Names only, never values. Must resolve to stored user secrets or globals; workflow-scoped secrets do not carry over."},
+			"global_secrets":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Global secret names to reference. Names only, never values. Unknown globals fail the call."},
 			"alias":                map[string]interface{}{"type": "string", "description": "Read-only attachment alias. Defaults to the slugified title."},
 			"trigger_name":         map[string]interface{}{"type": "string", "description": "Internal trigger name. Defaults to '<title> trigger'."},
 			"trigger_message":      map[string]interface{}{"type": "string", "description": "Trigger base instruction. Falls back to instructions, then purpose."},
-			"step_id":              map[string]interface{}{"type": "string", "description": "Suggested crew step id. Defaults to 'crew-<slug>'."},
+			"step_id":              map[string]interface{}{"type": "string", "description": "Suggested crew step id. Defaults to 'crew-<alias>'."},
 			"step_title":           map[string]interface{}{"type": "string", "description": "Crew step title. Defaults to the Crew title."},
 			"step_instruction":     map[string]interface{}{"type": "string", "description": "Workflow-specific instruction for the crew step."},
 			"context_dependencies": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Step context dependency file names."},
@@ -302,8 +302,16 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 		if created.Duplicate {
 			status = "Adopted existing"
 		}
-		return fmt.Sprintf("%s crew %q (id %s) with internal trigger %s, attached read-only as %q. Next: call add_step(type=crew) with step=%s plus insert_after_step_id and reason; if that step id already exists with the same crew and trigger, continue without re-adding.",
-			status, created.Title, created.CrewID, created.TriggerID, created.AttachmentAlias, string(stepJSON)), nil
+		pending := ""
+		if len(created.Pending) > 0 {
+			names := make([]string, 0, len(created.Pending))
+			for _, item := range created.Pending {
+				names = append(names, fmt.Sprintf("%s (%s: %s)", item.Name, item.Kind, item.Reason))
+			}
+			pending = " Pending connections the user must finish in the Crew UI: " + strings.Join(names, "; ") + "."
+		}
+		return fmt.Sprintf("%s crew %q (id %s) with internal trigger %s, attached read-only as %q.%s Next: call add_step(type=crew) with step=%s plus insert_after_step_id and reason; if that step id already exists with the same crew and trigger, continue without re-adding.",
+			status, created.Title, created.CrewID, created.TriggerID, created.AttachmentAlias, pending, string(stepJSON)), nil
 	}, "workflow_webhooks")
 }
 

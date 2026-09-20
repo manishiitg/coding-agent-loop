@@ -186,6 +186,9 @@ type ProductScheduleService struct {
 	// readFile / writeFile back the per-user state file; swapped in tests.
 	readFile  func(context.Context, string) (string, bool, error)
 	writeFile func(context.Context, string, string) error
+	// crewAvailability backs the CreateCrewProject availability checks; nil
+	// selects the live MCP/secret lookups, and tests swap individual probes.
+	crewAvailability *crewCreationAvailability
 
 	mu      sync.Mutex
 	running map[string]*productScheduleRun // key: userID + "\x1f" + job id

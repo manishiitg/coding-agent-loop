@@ -42,16 +42,17 @@ type CreateCrewRequest struct {
 	// Instructions, then Purpose, and is required after fallback.
 	TriggerName    string
 	TriggerMessage string
-	// StepID defaults to "crew-<slug>"; StepTitle defaults to the crew title;
-	// StepInstruction is required: the workflow-specific instruction is the
-	// Builder's core input for the step it adds next.
+	// StepID defaults to "crew-<selected alias>"; StepTitle defaults to the
+	// crew title; StepInstruction is required: the workflow-specific
+	// instruction is the Builder's core input for the step it adds next.
 	StepID              string
 	StepTitle           string
 	StepInstruction     string
 	ContextDependencies []string
 	// IdempotencyKey scopes one Builder proposal. Retrying with the same key
-	// and title returns the existing crew instead of minting a duplicate; a
-	// changed proposal must use a new key.
+	// and an unchanged proposal returns the existing crew instead of minting
+	// a duplicate; a changed proposal under a claimed key is a conflict and
+	// must use a new key.
 	IdempotencyKey string
 }
 
@@ -73,6 +74,8 @@ type CreatedCrewStepConfig struct {
 
 // CreatedCrew is the durable result of CreateCrewProject. Duplicate reports
 // an idempotent re-entry: the returned crew already existed under the key.
+// Pending names integrations that were selected but still need connecting
+// before the crew can use them.
 type CreatedCrew struct {
 	CrewID          string
 	Title           string
@@ -82,7 +85,16 @@ type CreatedCrew struct {
 	TriggerID       string
 	AttachmentAlias string
 	Step            CreatedCrewStepConfig
+	Pending         []PendingConnection
 	Duplicate       bool
+}
+
+// PendingConnection is one selected integration the Builder must ask the
+// user to connect: the reference is real, but the crew cannot use it yet.
+type PendingConnection struct {
+	Kind   string `json:"kind"`
+	Name   string `json:"name"`
+	Reason string `json:"reason"`
 }
 
 // crewCreationNamespace derives stable project IDs from idempotency keys so
@@ -152,19 +164,21 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 		return CreatedCrew{}, fmt.Errorf("invalid product projects root: %w", err)
 	}
 	runtimeRoot := agentProfileRuntimeWorkspace(userID, projectsRoot)
+	// Every reference is validated before anything is created: unknown
+	// names fail here, never as half-written crews.
 	skills, err := validateCrewCreationSkills(req.Skills)
 	if err != nil {
 		return CreatedCrew{}, err
 	}
-	servers, err := validateCrewCreationNames("server", req.Servers)
+	servers, pending, err := s.validateCrewCreationServers(req.Servers)
 	if err != nil {
 		return CreatedCrew{}, err
 	}
-	secrets, err := validateCrewCreationNames("secret", req.Secrets)
+	secrets, err := s.validateCrewCreationSecrets(ctx, userID, workflowPath, req.Secrets)
 	if err != nil {
 		return CreatedCrew{}, err
 	}
-	globalSecrets, err := validateCrewCreationNames("global secret", req.GlobalSecrets)
+	globalSecrets, err := s.validateCrewCreationGlobalSecrets(req.GlobalSecrets)
 	if err != nil {
 		return CreatedCrew{}, err
 	}
@@ -174,29 +188,44 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	}
 
 	slug := slugifyCrewTitle(title)
-	crewID := uuid.NewSHA1(crewCreationNamespace, []byte("crew-creation:"+key)).String()
-	suffix := crewCreationSuffix(key)
-	workspacePath := filepath.ToSlash(filepath.Join(runtimeRoot, slug+"-"+suffix))
-	created := CreatedCrew{}
-	if existing, ok, err := readCreatedCrew(ctx, workspacePath, crewID); err != nil {
+	receipt, adopted, err := s.claimCrewCreationReceipt(ctx, userID, workflowPath, profileID, key, crewCreationFingerprint(userID, workflowPath, profileID, req), title, slug, runtimeRoot, wiring)
+	if err != nil {
 		return CreatedCrew{}, err
-	} else if ok {
-		// Idempotent re-entry adopts the existing crew and continues
-		// through the phases below, so a retry after a partial failure
-		// still converges instead of stranding the crew half-built.
-		existing.Duplicate = true
-		created = existing
-	} else {
-		if projectExistsAtPath(ctx, workspacePath) {
-			// Path collision with an unrelated crew (same slug, same
-			// suffix): fall back to random identity rather than adopting it.
-			crewID = uuid.NewString()
-			workspacePath = filepath.ToSlash(filepath.Join(runtimeRoot, slug+"-"+uuid.NewString()[:8]))
-		}
-		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, crewID, workspacePath)
+	}
+	wiring.alias = receipt.Alias
+	wiring.stepID = receipt.StepID
+	created := CreatedCrew{Pending: pending}
+	if adopted {
+		existing, ok, err := readCreatedCrew(ctx, receipt.WorkspacePath, receipt.CrewID)
 		if err != nil {
 			return CreatedCrew{}, err
 		}
+		if ok {
+			// Idempotent re-entry adopts the existing crew and continues
+			// through the phases below, so a retry after a partial failure
+			// still converges instead of stranding the crew half-built.
+			existing.Duplicate = true
+			existing.Pending = pending
+			created = existing
+		} else if projectExistsAtPath(ctx, receipt.WorkspacePath) {
+			return CreatedCrew{}, fmt.Errorf("crew path %q is now owned by another project; use a new idempotency key", receipt.WorkspacePath)
+		} else {
+			// The receipt outlived its manifests (a crash between the
+			// receipt write and the manifest writes, or deleted
+			// manifests): rebuild under the frozen identity.
+			created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath)
+			if err != nil {
+				return CreatedCrew{}, err
+			}
+			created.Duplicate = true
+			created.Pending = pending
+		}
+	} else {
+		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath)
+		if err != nil {
+			return CreatedCrew{}, err
+		}
+		created.Pending = pending
 	}
 
 	if err := applyCrewCreationStarter(ctx, created.WorkspacePath, title, workflowPath, req.Purpose, req.Instructions); err != nil {
@@ -212,11 +241,17 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 }
 
 // crewCreationWiring is the validated wiring resolved from a creation request.
+// Alias is the requested value or the title-derived base; step ID is the
+// requested value or a provisional base that the receipt claim re-derives
+// from the selected alias. The claim resolves both to free values before
+// anything is created.
 type crewCreationWiring struct {
 	alias           string
+	autoAlias       bool
 	triggerName     string
 	triggerMessage  string
 	stepID          string
+	autoStepID      bool
 	stepTitle       string
 	stepInstruction string
 	contextDeps     []string
@@ -230,6 +265,7 @@ func validateCrewCreationWiring(req CreateCrewRequest, title string) (crewCreati
 		if err := workflowtypes.ValidateCrewAttachmentAlias(alias); err != nil {
 			alias += "-crew"
 		}
+		out.autoAlias = true
 	}
 	if err := workflowtypes.ValidateCrewAttachmentAlias(alias); err != nil {
 		return out, err
@@ -258,6 +294,7 @@ func validateCrewCreationWiring(req CreateCrewRequest, title string) (crewCreati
 	out.stepID = strings.TrimSpace(req.StepID)
 	if out.stepID == "" {
 		out.stepID = "crew-" + slugifyCrewTitle(title)
+		out.autoStepID = true
 	}
 	if len(out.stepID) > 120 {
 		return out, fmt.Errorf("step id must be at most 120 characters")
@@ -531,9 +568,8 @@ func validateCrewCreationSkills(names []string) ([]string, error) {
 
 // validateCrewCreationNames trims, dedupes, and shape-checks capability
 // references. Names are references only: non-empty, bounded, and free of
-// path separators and control characters. Server and secret availability is
-// a crew-UI concern surfaced through the pending-connections flow, not a
-// creation-time rejection.
+// path separators and control characters. Availability is checked separately
+// by the server/secret/skill validators before anything is created.
 func validateCrewCreationNames(kind string, names []string) ([]string, error) {
 	out := make([]string, 0, len(names))
 	seen := make(map[string]struct{}, len(names))
@@ -638,4 +674,375 @@ func writeCrewCreationManifest(ctx context.Context, path string, manifest map[st
 		return fmt.Errorf("write crew manifest %s: %w", path, err)
 	}
 	return nil
+}
+
+// crewCreationAvailability bundles the live lookups behind creation-time
+// availability checks. Each probe is overrideable so tests run hermetic.
+type crewCreationAvailability struct {
+	MCPServer     func(name string) (canonical string, connected bool, err error)
+	UserSecrets   func(ctx context.Context, userID string) (map[string]bool, error)
+	ScopedSecrets func(ctx context.Context, path, userID string) (map[string]bool, error)
+	GlobalSecrets func() map[string]bool
+}
+
+// validateCrewCreationServers shape-checks requested MCP servers, resolves
+// each against the platform catalog, and records the canonical name.
+// Unknown servers fail the call; configured-but-disconnected servers are
+// selected and reported as pending so the Builder can ask the user to
+// connect exactly those.
+func (s *ProductScheduleService) validateCrewCreationServers(names []string) ([]string, []PendingConnection, error) {
+	checked, err := validateCrewCreationNames("server", names)
+	if err != nil {
+		return nil, nil, err
+	}
+	servers := make([]string, 0, len(checked))
+	var pending []PendingConnection
+	for _, name := range checked {
+		canonical, connected, err := s.probeCrewCreationMCPServer(name)
+		if err != nil {
+			return nil, nil, err
+		}
+		servers = append(servers, canonical)
+		if !connected {
+			pending = append(pending, PendingConnection{Kind: "mcp_server", Name: canonical, Reason: "configured but not connected; connect it in the Crew UI before the crew can use its tools"})
+		}
+	}
+	return servers, pending, nil
+}
+
+func (s *ProductScheduleService) probeCrewCreationMCPServer(name string) (string, bool, error) {
+	if s != nil && s.crewAvailability != nil && s.crewAvailability.MCPServer != nil {
+		return s.crewAvailability.MCPServer(name)
+	}
+	if s == nil || s.api == nil {
+		return "", false, fmt.Errorf("MCP configuration is unavailable")
+	}
+	catalog, err := s.api.loadMergedConfig()
+	if err != nil {
+		return "", false, fmt.Errorf("load MCP configuration: %w", err)
+	}
+	canonical, config, err := resolveMCPServerName(catalog, name)
+	if err != nil {
+		return "", false, err
+	}
+	return canonical, s.api.isPlatformMCPServerConnected(catalog, canonical, config), nil
+}
+
+// validateCrewCreationSecrets shape-checks requested project secrets and
+// verifies each resolves in a scope the new crew actually reads: the user's
+// own store or the global store. A fresh crew has no scoped secrets of its
+// own yet, and the creating workflow's scoped secrets do not carry over, so
+// a name found only there fails with a targeted hint instead of recording
+// a reference that would resolve empty at runtime.
+func (s *ProductScheduleService) validateCrewCreationSecrets(ctx context.Context, userID, workflowPath string, names []string) ([]string, error) {
+	checked, err := validateCrewCreationNames("secret", names)
+	if err != nil {
+		return nil, err
+	}
+	if len(checked) == 0 {
+		return nil, nil
+	}
+	userSecrets, err := s.probeCrewCreationUserSecrets(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+	globals := s.probeCrewCreationGlobalSecrets()
+	var creatingScope map[string]bool
+	for _, name := range checked {
+		if userSecrets[name] || globals[name] {
+			continue
+		}
+		if creatingScope == nil {
+			creatingScope, err = s.probeCrewCreationScopedSecrets(ctx, workflowPath, userID)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if creatingScope[name] {
+			return nil, fmt.Errorf("crew secret %q exists in workflow %q, but workflow secrets do not carry over to a new crew; store the value in your user secrets (or add it in the Crew UI after creation) or drop it", name, workflowPath)
+		}
+		return nil, fmt.Errorf("crew secret %q has no stored value for this user; store it with set_user_secret first or drop it", name)
+	}
+	return checked, nil
+}
+
+func (s *ProductScheduleService) probeCrewCreationUserSecrets(ctx context.Context, userID string) (map[string]bool, error) {
+	if s != nil && s.crewAvailability != nil && s.crewAvailability.UserSecrets != nil {
+		return s.crewAvailability.UserSecrets(ctx, userID)
+	}
+	if s == nil || s.api == nil || s.api.chatStore == nil {
+		return nil, fmt.Errorf("user secret store is unavailable")
+	}
+	stored, err := s.api.chatStore.ListUserSecrets(ctx, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list user secrets: %w", err)
+	}
+	out := make(map[string]bool, len(stored))
+	for _, secret := range stored {
+		out[secret.Name] = true
+	}
+	return out, nil
+}
+
+func (s *ProductScheduleService) probeCrewCreationScopedSecrets(ctx context.Context, path, userID string) (map[string]bool, error) {
+	if s != nil && s.crewAvailability != nil && s.crewAvailability.ScopedSecrets != nil {
+		return s.crewAvailability.ScopedSecrets(ctx, path, userID)
+	}
+	if s == nil || s.api == nil {
+		return nil, fmt.Errorf("workflow secret store is unavailable")
+	}
+	stored, err := s.api.ensureSharedWorkflowSecrets(ctx, path, userID)
+	if err != nil {
+		return nil, fmt.Errorf("list workflow secrets: %w", err)
+	}
+	out := make(map[string]bool, len(stored))
+	for _, secret := range stored {
+		out[secret.Name] = true
+	}
+	return out, nil
+}
+
+// validateCrewCreationGlobalSecrets shape-checks requested global secrets
+// and verifies each names an existing global record.
+func (s *ProductScheduleService) validateCrewCreationGlobalSecrets(names []string) ([]string, error) {
+	checked, err := validateCrewCreationNames("global secret", names)
+	if err != nil {
+		return nil, err
+	}
+	if len(checked) == 0 {
+		return nil, nil
+	}
+	globals := s.probeCrewCreationGlobalSecrets()
+	for _, name := range checked {
+		if !globals[name] {
+			return nil, fmt.Errorf("global secret %q does not exist; use list_secrets to discover available globals or drop it", name)
+		}
+	}
+	return checked, nil
+}
+
+func (s *ProductScheduleService) probeCrewCreationGlobalSecrets() map[string]bool {
+	if s != nil && s.crewAvailability != nil && s.crewAvailability.GlobalSecrets != nil {
+		return s.crewAvailability.GlobalSecrets()
+	}
+	out := map[string]bool{}
+	for _, secret := range getGlobalSecrets() {
+		out[secret.Name] = true
+	}
+	return out
+}
+
+// crewCreationReceipt freezes one proposal's identity the first time its key
+// is claimed: crew ID, workspace path, attachment alias, and step ID. A
+// retry under the same key adopts the receipt instead of re-deriving
+// anything from mutable proposal fields, so a changed title cannot mint a
+// second directory and the occupied-path fallback persists across retries.
+// A changed payload under a claimed key is a conflict, never a new crew.
+type crewCreationReceipt struct {
+	Key           string `json:"key"`
+	UserID        string `json:"user_id"`
+	WorkflowPath  string `json:"workflow_path"`
+	ProfileID     string `json:"profile_id"`
+	PayloadHash   string `json:"payload_hash"`
+	Title         string `json:"title"`
+	CrewID        string `json:"crew_id"`
+	WorkspacePath string `json:"workspace_path"`
+	Alias         string `json:"alias"`
+	StepID        string `json:"step_id"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func crewCreationReceiptPath(userID, key string) string {
+	return filepath.ToSlash(filepath.Join(chatHistoryRoot(userID), "crew-creation", submissionDigest("crew-creation:"+key)+".json"))
+}
+
+// crewCreationFingerprint hashes the proposal verbatim: any changed field is
+// a different proposal and must use a new key.
+func crewCreationFingerprint(userID, workflowPath, profileID string, req CreateCrewRequest) string {
+	trimmed := func(value string) string { return strings.TrimSpace(value) }
+	lists := func(values []string) []string {
+		out := make([]string, 0, len(values))
+		for _, value := range values {
+			out = append(out, strings.TrimSpace(value))
+		}
+		return out
+	}
+	payload := struct {
+		UserID, WorkflowPath, ProfileID                 string
+		Title, Description, Icon, Purpose, Instructions string
+		Skills, Servers, Secrets, GlobalSecrets         []string
+		Alias, TriggerName, TriggerMessage              string
+		StepID, StepTitle, StepInstruction              string
+		ContextDependencies                             []string
+	}{
+		UserID: userID, WorkflowPath: workflowPath, ProfileID: profileID,
+		Title: trimmed(req.Title), Description: trimmed(req.Description), Icon: trimmed(req.Icon),
+		Purpose: trimmed(req.Purpose), Instructions: trimmed(req.Instructions),
+		Skills: lists(req.Skills), Servers: lists(req.Servers), Secrets: lists(req.Secrets), GlobalSecrets: lists(req.GlobalSecrets),
+		Alias: trimmed(req.Alias), TriggerName: trimmed(req.TriggerName), TriggerMessage: trimmed(req.TriggerMessage),
+		StepID: trimmed(req.StepID), StepTitle: trimmed(req.StepTitle), StepInstruction: trimmed(req.StepInstruction),
+		ContextDependencies: lists(req.ContextDependencies),
+	}
+	encoded, _ := json.Marshal(payload)
+	sum := sha256.Sum256(encoded)
+	return hex.EncodeToString(sum[:])
+}
+
+// claimCrewCreationReceipt adopts the frozen identity for a claimed key or
+// claims the key by freezing a fresh one. Identity selection (alias and
+// step availability, occupied-path fallback) happens under the receipt lock
+// before any crew resource exists.
+func (s *ProductScheduleService) claimCrewCreationReceipt(ctx context.Context, userID, workflowPath, profileID, key, fingerprint, title, slug, runtimeRoot string, wiring crewCreationWiring) (*crewCreationReceipt, bool, error) {
+	path := crewCreationReceiptPath(userID, key)
+	lock := productConversationRegistryMutex(path)
+	lock.Lock()
+	defer lock.Unlock()
+	raw, found, err := readFileFromWorkspace(ctx, path)
+	if err != nil {
+		return nil, false, fmt.Errorf("read crew creation receipt: %w", err)
+	}
+	if found {
+		var receipt crewCreationReceipt
+		if err := json.Unmarshal([]byte(raw), &receipt); err != nil {
+			return nil, false, fmt.Errorf("unreadable crew creation receipt; use a new idempotency key")
+		}
+		if receipt.Key != key || receipt.UserID != userID || receipt.WorkflowPath != workflowPath || receipt.ProfileID != profileID {
+			return nil, false, fmt.Errorf("idempotency key is already in use by another crew proposal; use a new key")
+		}
+		if receipt.PayloadHash != fingerprint {
+			return nil, false, fmt.Errorf("idempotency key %q already created crew %q (%s); a changed proposal must use a new key", key, receipt.Title, receipt.CrewID)
+		}
+		return &receipt, true, nil
+	}
+	crewID := uuid.NewSHA1(crewCreationNamespace, []byte("crew-creation:"+key)).String()
+	workspacePath := filepath.ToSlash(filepath.Join(runtimeRoot, slug+"-"+crewCreationSuffix(key)))
+	if projectExistsAtPath(ctx, workspacePath) {
+		// Path collision with an unrelated crew: fall back to random
+		// identity. The receipt freezes the fallback, so re-entry adopts
+		// the same crew instead of minting another.
+		crewID = uuid.NewString()
+		workspacePath = filepath.ToSlash(filepath.Join(runtimeRoot, slug+"-"+uuid.NewString()[:8]))
+		for attempts := 0; projectExistsAtPath(ctx, workspacePath) && attempts < 5; attempts++ {
+			workspacePath = filepath.ToSlash(filepath.Join(runtimeRoot, slug+"-"+uuid.NewString()[:8]))
+		}
+		if projectExistsAtPath(ctx, workspacePath) {
+			return nil, false, fmt.Errorf("crew workspace path is unavailable; use a new idempotency key")
+		}
+	}
+	alias, err := selectCrewCreationAlias(ctx, workflowPath, wiring)
+	if err != nil {
+		return nil, false, err
+	}
+	stepWiring := wiring
+	if wiring.autoStepID {
+		// Pair the default step with the selected alias, not the title:
+		// the Builder adds steps after creation, so the plan cannot yet
+		// show the first crew's step when the second crew is created.
+		// Pairing keeps duplicate titles usable (slug-2 with crew-slug-2)
+		// even against an empty plan.
+		stepWiring.stepID = "crew-" + alias
+	}
+	stepID, err := selectCrewCreationStepID(ctx, workflowPath, stepWiring)
+	if err != nil {
+		return nil, false, err
+	}
+	receipt := &crewCreationReceipt{
+		Key: key, UserID: userID, WorkflowPath: workflowPath, ProfileID: profileID,
+		PayloadHash: fingerprint, Title: title, CrewID: crewID, WorkspacePath: workspacePath,
+		Alias: alias, StepID: stepID, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano),
+	}
+	encoded, err := json.MarshalIndent(receipt, "", "  ")
+	if err != nil {
+		return nil, false, err
+	}
+	if err := writeRawFileToWorkspace(ctx, path, string(encoded)+"\n"); err != nil {
+		return nil, false, fmt.Errorf("write crew creation receipt: %w", err)
+	}
+	return receipt, false, nil
+}
+
+// selectCrewCreationAlias resolves the attachment alias before any resource
+// exists. An explicit alias must be free; a default alias takes the first
+// free deterministic suffix (slug, slug-2, ...) so duplicate titles never
+// fail after their project and trigger are already written.
+func selectCrewCreationAlias(ctx context.Context, workflowPath string, wiring crewCreationWiring) (string, error) {
+	manifest, exists, err := ReadWorkflowManifest(ctx, workflowPath)
+	if err != nil || !exists || manifest == nil {
+		return "", fmt.Errorf("creating workflow is unavailable or access denied")
+	}
+	taken := make(map[string]bool, len(manifest.CrewAttachments))
+	for _, attachment := range manifest.CrewAttachments {
+		taken[attachment.Alias] = true
+	}
+	if !wiring.autoAlias {
+		if taken[wiring.alias] {
+			return "", fmt.Errorf("attachment alias %q is already used on this workflow; choose another alias", wiring.alias)
+		}
+		return wiring.alias, nil
+	}
+	for attempt := 0; attempt <= 100; attempt++ {
+		candidate := wiring.alias
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s-%d", wiring.alias, attempt+1)
+		}
+		if err := workflowtypes.ValidateCrewAttachmentAlias(candidate); err != nil {
+			return "", err
+		}
+		if !taken[candidate] {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no free attachment alias for %q; pass an explicit alias", wiring.alias)
+}
+
+// selectCrewCreationStepID resolves the step ID against the workflow plan
+// before any resource exists, with the same explicit-or-suffixed rule as
+// aliases. The plan read is best-effort: a workflow still being built may
+// have no plan yet, and add_step enforces uniqueness when the step lands.
+func selectCrewCreationStepID(ctx context.Context, workflowPath string, wiring crewCreationWiring) (string, error) {
+	taken := crewCreationPlanStepIDs(ctx, workflowPath)
+	if !wiring.autoStepID {
+		if taken[wiring.stepID] {
+			return "", fmt.Errorf("step id %q is already used in this workflow; choose another step id", wiring.stepID)
+		}
+		return wiring.stepID, nil
+	}
+	for attempt := 0; attempt <= 100; attempt++ {
+		candidate := wiring.stepID
+		if attempt > 0 {
+			candidate = fmt.Sprintf("%s-%d", wiring.stepID, attempt+1)
+		}
+		if len(candidate) > 120 {
+			return "", fmt.Errorf("step id must be at most 120 characters")
+		}
+		if !taken[candidate] {
+			return candidate, nil
+		}
+	}
+	return "", fmt.Errorf("no free step id for %q; pass an explicit step id", wiring.stepID)
+}
+
+// crewCreationPlanStepIDs collects the step IDs declared in the workflow
+// plan. Any read problem yields an empty set: plan enforcement stays with
+// add_step.
+func crewCreationPlanStepIDs(ctx context.Context, workflowPath string) map[string]bool {
+	taken := map[string]bool{}
+	raw, found, err := readFileFromWorkspace(ctx, filepath.ToSlash(filepath.Join(workflowPath, "planning/plan.json")))
+	if err != nil || !found {
+		return taken
+	}
+	var plan struct {
+		Steps []struct {
+			ID string `json:"id"`
+		} `json:"steps"`
+	}
+	if json.Unmarshal([]byte(raw), &plan) != nil {
+		return taken
+	}
+	for _, step := range plan.Steps {
+		if id := strings.TrimSpace(step.ID); id != "" {
+			taken[id] = true
+		}
+	}
+	return taken
 }

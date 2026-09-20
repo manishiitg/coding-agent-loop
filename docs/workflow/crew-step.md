@@ -1011,9 +1011,11 @@ migration of existing Crews, frontend creation dialog.
   step). Only server coordination gives atomicity and idempotency.
 - Conversational approval plus idempotency key: Builder proposes in chat,
   calls the tool after the user's approving reply with a client-generated key.
-- Idempotency via deterministic path check: the key derives a stable
-  project-path suffix; re-entry returns the existing record. Duplicate display
-  names stay allowed.
+- Idempotency via durable receipt: the key claims a receipt freezing crew
+  ID, path, alias, and step ID (supersedes the earlier deterministic-path
+  sketch, which could not survive a changed title); re-entry returns the
+  existing record, a changed payload is a conflict. Duplicate display names
+  stay allowed.
 - Secrets as validated references only: the schema accepts names, the service
   verifies existence and authorization, and no value-bearing fields exist.
 - Selections land through the existing `updateProductSelected*` writers.
@@ -1122,3 +1124,22 @@ Recommended acceptance is intentionally small and user-focused: the server
 tests run; unavailable MCPs and secrets are reported clearly; the same retry
 key cannot mint another Crew; and two Crews with the same display name both
 finish with usable aliases and step IDs.
+
+## Builder-created Crew review fixes — 2026-09-20
+
+All four findings above are fixed; the acceptance checklist now holds:
+
+- The folder-create mock and `hasFolder` helper ship with the change, so the
+  committed `cmd/server` Crew tests compile and run.
+- MCP servers resolve against the platform catalog (unknown names fail;
+  configured-but-disconnected servers are selected and returned as pending),
+  project secrets must resolve to stored user secrets or globals (workflow-
+  scoped names fail with a carry-over hint), and unknown globals fail. All
+  availability checks run before any crew resource exists.
+- The idempotency key claims a durable receipt freezing crew ID, path, alias,
+  and step ID. A changed proposal under a claimed key is a conflict (new key
+  required); the occupied-path fallback persists in the receipt, so re-entry
+  adopts the same crew.
+- Attachment alias and step ID are resolved to free deterministic values
+  (`slug-2`, `crew-slug-2`) before anything is created, with the default step
+  paired to the selected alias; explicit collisions fail before writing.

@@ -27,6 +27,11 @@ interface ToolSelectionSectionProps {
   manageOwnScroll?: boolean;
   /** Keep the selection visible while preventing read-only mutations. */
   disabled?: boolean;
+  /** Hide per-tool expansion (tool counts, mode picker, tool list) so the
+   * section works as a server-level checklist. For hosts whose runtime only
+   * consumes server selection — per-tool picks would have no effect there,
+   * so the UI must not offer them. */
+  hideToolDetails?: boolean;
 }
 
 export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
@@ -41,6 +46,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   query = '',
   manageOwnScroll = true,
   disabled = false,
+  hideToolDetails = false,
 }) => {
   // Generate instance ID from stepId or use a default
   const instanceId = useMemo(() => stepId || `preset-${Date.now()}`, [stepId]);
@@ -343,7 +349,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
             connectionStatus === 'loading' ? 'Connecting...' :
             'Unknown / not started';
 
-          const isExpandedCard = isExpanded && isServerSelected;
+          const isExpandedCard = !hideToolDetails && isExpanded && isServerSelected;
 
           return (
             <div
@@ -374,14 +380,14 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
                   className="text-sm font-medium text-gray-900 dark:text-gray-100 cursor-pointer flex-1 select-none flex items-center gap-1.5 min-w-0"
                   onClick={(e) => {
                     // Only expand if server is selected and not already expanded
-                    if (isServerSelected && !isExpanded) {
+                    if (!hideToolDetails && isServerSelected && !isExpanded) {
                       e.stopPropagation();
                       expandServer(serverName);
                     }
                   }}
                 >
                   <span className="truncate">{serverName}</span>
-                  {isServerSelected && isServerToolsArray && serverTools.length > 0 && (
+                  {!hideToolDetails && isServerSelected && isServerToolsArray && serverTools.length > 0 && (
                     <span className="ml-1 text-xs text-gray-500 dark:text-gray-400 shrink-0">
                       ({toolMode === 'all' ? 'all tools' : `${selectedTools.filter(t => t.startsWith(`${serverName}:`) && !t.endsWith(':*')).length}/${serverTools.length} tools`})
                     </span>
@@ -391,7 +397,7 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
               </div>
 
               {/* Tool Mode Selection and Tool List (when expanded) */}
-              {isExpanded && isServerSelected && (
+              {!hideToolDetails && isExpanded && isServerSelected && (
                 <div className="pl-10 pr-3 pb-3 space-y-3">
                   {/* Tool Mode Selection */}
                   <div className="flex items-center space-x-4">

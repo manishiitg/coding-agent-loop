@@ -1,8 +1,9 @@
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { usePersistentTab } from '../../hooks/usePersistentTab'
-import { Server } from 'lucide-react'
-import ServerSelectionDropdown from '../../components/ServerSelectionDropdown'
+import { Search, Server } from 'lucide-react'
 import ConnectorsBrowser from '../../components/connectors/ConnectorsBrowser'
+import { ToolSelectionSection } from '../../components/ToolSelectionSection'
+import { isSelectedServer } from '../../utils/mcpServerAlias'
 import SkillsManagerPanel from '../../components/skills/SkillsManagerPanel'
 import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
 import WorkflowEmailPanel from '../../components/workflow/WorkflowEmailPanel'
@@ -43,11 +44,19 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
 }) {
   const selectedServers = useChatStore(state => state.chatTabs[tabId]?.config.selectedServers || [])
   const toolList = useMCPStore(state => state.toolList)
-  const availableServers = [...new Set(toolList
-    .filter(tool => tool.connection === 'connected' && tool.server)
-    .map(tool => tool.server as string))]
-    .sort((a, b) => a.localeCompare(b))
+  // Mirror the workflow tab: connected servers plus already-selected ones
+  // (a selected-but-since-disconnected server stays visible/manageable
+  // instead of silently vanishing from the project's config).
+  const availableServers = useMemo(() => {
+    const connected = toolList
+      .filter(tool => tool.connection === 'connected' && tool.server)
+      .map(tool => tool.server as string)
+    return [...new Set([...connected, ...selectedServers.filter(server => server !== 'NO_SERVERS')])]
+  }, [toolList, selectedServers])
   const actualSelected = selectedServers.filter(server => server !== 'NO_SERVERS')
+  const selectedAvailableServers = useMemo(() => availableServers.filter(serverName => isSelectedServer(actualSelected, serverName)), [availableServers, actualSelected])
+  const unselectedAvailableServers = useMemo(() => availableServers.filter(serverName => !isSelectedServer(actualSelected, serverName)), [availableServers, actualSelected])
+  const [searchQuery, setSearchQuery] = useState('')
 
   const setSelected = async (servers: string[]) => {
     const store = useChatStore.getState()
@@ -67,24 +76,75 @@ function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServ
 
   return (
     <div className="flex flex-col gap-3">
-      {/* Server picker — which integrations this view shows. Pickers live in
-      content below the header, never in the header row (see exec-logs rule). */}
-      <div className="flex shrink-0 items-center gap-2">
-        <ServerSelectionDropdown
-          availableServers={availableServers}
-          selectedServers={selectedServers}
-          onServerToggle={(server) => void setSelected(actualSelected.includes(server)
-            ? actualSelected.filter(item => item !== server)
-            : [...actualSelected, server])}
-          onSelectAll={() => void setSelected(availableServers)}
-          onClearAll={() => void setSelected([])}
-          agentMode="multi-agent"
-          openDirection="down"
-          align="left"
+      {selectedAvailableServers.length > 0 && (
+        <div>
+          <div className="mb-3 text-sm font-medium text-muted-foreground">
+            This project
+          </div>
+          <ToolSelectionSection
+            stepId="project-selected"
+            availableServers={selectedAvailableServers}
+            selectedServers={actualSelected}
+            selectedTools={[]}
+            onServerChange={(servers) => void setSelected(servers)}
+            onToolChange={() => {}}
+            query={searchQuery}
+            agentMode="multi-agent"
+            hideHeader
+            hideToolDetails
+            manageOwnScroll={false}
+          />
+        </div>
+      )}
+      {unselectedAvailableServers.length > 0 && (
+        <div className="mt-3 border-t border-border pt-3">
+          <div className="mb-1 text-sm font-medium text-muted-foreground">
+            Platform connected
+          </div>
+          <p className="mb-3 text-xs leading-5 text-muted-foreground">
+            Shared with everyone. Tick one to let this project use it.
+          </p>
+          <ToolSelectionSection
+            stepId="project-available"
+            availableServers={unselectedAvailableServers}
+            selectedServers={actualSelected}
+            selectedTools={[]}
+            onServerChange={(servers) => void setSelected(servers)}
+            onToolChange={() => {}}
+            query={searchQuery}
+            agentMode="multi-agent"
+            hideHeader
+            hideToolDetails
+            manageOwnScroll={false}
+          />
+        </div>
+      )}
+      <div className="relative mt-3 shrink-0">
+        <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+        <input
+          type="text"
+          value={searchQuery}
+          onChange={(e) => setSearchQuery(e.target.value)}
+          placeholder="Search apps"
+          aria-label="Search apps"
+          className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
         />
       </div>
-      <div>
-        <ConnectorsBrowser compact manageOwnScroll={false} workspacePath={workspacePath} workspaceLabel="project" assistantLabel="agent" onAskAI={(message) => void onAsk(message)} />
+      <div className="mt-3 border-t border-border pt-3">
+        <div className="mb-3 text-sm font-medium text-muted-foreground">
+          Connect a new app
+        </div>
+        <ConnectorsBrowser
+          compact
+          manageOwnScroll={false}
+          workspacePath={workspacePath}
+          workspaceLabel="project"
+          assistantLabel="agent"
+          onAskAI={(message) => void onAsk(message)}
+          query={searchQuery}
+          hideSearch
+          hideConnectedSection
+        />
       </div>
     </div>
   )

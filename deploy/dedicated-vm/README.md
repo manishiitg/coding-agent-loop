@@ -16,7 +16,7 @@ Production deployment of coding-agent-loop on a single Hetzner VM. Hybrid setup:
 | **SSH** | `ssh -i ~/.ssh/hetzner_mcp root@138.201.227.99` |
 | **SSH key** | `~/.ssh/hetzner_mcp` (ed25519) |
 
-If the domain changes, update [`quick-deploy.sh`](quick-deploy.sh) (`PUBLIC_URL`) and the server `Caddyfile` (see [Changing the domain](#changing-the-domain)).
+If the domain changes, update the server `Caddyfile` (see [Changing the domain](#changing-the-domain)).
 
 ## Architecture
 
@@ -53,28 +53,15 @@ If the domain changes, update [`quick-deploy.sh`](quick-deploy.sh) (`PUBLIC_URL`
 
 ## Deploy
 
-From your local machine, repo root:
-
-```bash
-./deploy.sh agents             # everything
-./deploy.sh agents agent       # just agent_go + mcpagent + multi-llm + workspace (Go)
-./deploy.sh agents frontend    # just frontend (builds locally, ships dist/)
-./deploy.sh agents workspace   # just restart workspace
-```
-
-Run these from the repository root. They delegate to this directory's
-`quick-deploy.sh`; direct invocation remains supported.
-
-What `quick-deploy.sh all` does:
-1. Rsyncs `agent_go/`, `workspace/`, `mcpagent/`, `multi-llm-provider-go/` to `/opt/mcp-agent/src/`
-2. Builds the frontend locally (`npm run build`) and rsyncs `dist/` → `src/frontend-dist/`
-3. Bumps bare-metal CLI tools: `agent-browser`, `@anthropic-ai/claude-code`, `@earendil-works/pi-coding-agent` (all `@latest`)
-4. Fixes `go.mod` replace directives in-place (paths differ on server)
-5. Rebuilds `mcpbridge` (`go install ./cmd/mcpbridge/`)
-6. `systemctl restart mcp-agent` and waits for `/api/health` → 200
-7. Rebuilds frontend Docker image and `docker compose up -d --force-recreate frontend`
-8. `systemctl restart mcp-workspace`
-9. Probes the public URL (will only succeed if your local DNS can resolve the domain)
+`quick-deploy.sh` (and its `./deploy.sh agents [target]` entry point) has
+been removed. There is currently no automated deploy script for this host —
+any update requires manually repeating the steps it used to perform: rsync
+`agent_go/`, `workspace/`, `mcpagent/`, `multi-llm-provider-go/` to
+`/opt/mcp-agent/src/`, fix `go.mod` replace directives for the server's
+paths, rebuild `mcpbridge` and the frontend, restart `mcp-agent`/
+`mcp-workspace`, and rebuild the frontend Docker image. See git history on
+this file (and the removed `quick-deploy.sh`) for the exact prior sequence
+if this host still needs updates.
 
 ## Status & logs
 
@@ -110,19 +97,18 @@ ssh ... 'systemctl start mcp-agent mcp-workspace; \
 
 ## Changing the domain
 
-1. Update `PUBLIC_URL` in [`quick-deploy.sh`](quick-deploy.sh).
-2. Edit `/opt/mcp-agent/Caddyfile` on the server: replace the site block label + admin email with the new domain. Template is [`Caddyfile.https`](Caddyfile.https).
-3. Restart caddy: `cd /opt/mcp-agent && docker compose up -d --force-recreate caddy`
-4. Caddy will request a fresh Let's Encrypt cert automatically (DNS must already point to `138.201.227.99`).
+1. Edit `/opt/mcp-agent/Caddyfile` on the server: replace the site block label + admin email with the new domain. Template is [`Caddyfile.https`](Caddyfile.https).
+2. Restart caddy: `cd /opt/mcp-agent && docker compose up -d --force-recreate caddy`
+3. Caddy will request a fresh Let's Encrypt cert automatically (DNS must already point to `138.201.227.99`).
 
 ## First-time server setup
 
-`setup-server.sh` provisions a fresh Ubuntu 24.04 VM — installs Go, Node, Docker, tmux, chromium, the CLIs (`claude`, `gemini`, `agent-browser`), creates `/data` dirs, drops the systemd units, and configures UFW + fail2ban. Run once; subsequent updates go through `quick-deploy.sh`.
+`setup-server.sh` provisions a fresh Ubuntu 24.04 VM — installs Go, Node, Docker, tmux, chromium, the CLIs (`claude`, `gemini`, `agent-browser`), creates `/data` dirs, drops the systemd units, and configures UFW + fail2ban. Run once; there is no automated update script for subsequent releases (see [Deploy](#deploy)).
 
 ## Known gotchas
 
 ### 1. `go.mod` replace directives
-Local `go.mod` uses `replace ../../mcpagent` (path differs on server). `quick-deploy.sh` rewrites them in-place after rsync. If you build manually on the server, run the `go mod edit -replace` block from [`quick-deploy.sh`](quick-deploy.sh#L158-L169) first.
+Local `go.mod` uses `replace ../../mcpagent` (path differs on server). The removed `quick-deploy.sh` used to rewrite them in-place after rsync — if you build manually on the server, run an equivalent `go mod edit -replace` first (see git history on this directory for the exact prior block).
 
 ### 2. Claude Code + `ANTHROPIC_API_KEY` conflict
 If `ANTHROPIC_API_KEY` is set, Claude Code uses it instead of its OAuth credentials. Validation in `llm_config_handlers.go` strips it from env before `claude --print`. Also: don't pass `--dangerously-skip-permissions` when running as root.
@@ -197,7 +183,7 @@ ufw allow from 172.16.0.0/12 to any port 8000
 Never set `PermitRootLogin prohibit-password` before SSH keys are confirmed working. Use `harden-ssh.sh` *after* you've logged in with the key. Ubuntu 24.04 uses `ssh.service`, not `sshd.service`.
 
 ### 6. `mcpbridge` must be built on the server
-Local binary is mac-arm; server is linux-amd64. `quick-deploy.sh` runs `go install ./cmd/mcpbridge/` on every agent deploy.
+Local binary is mac-arm; server is linux-amd64. Run `go install ./cmd/mcpbridge/` on the server on every agent deploy (the removed `quick-deploy.sh` used to do this automatically).
 
 ### 7. `TOOL_EXECUTION_TIMEOUT`
 Don't set this in `run-agent.sh` — a 15m cap was previously killing legitimate sub-agent runs. Sub-agents now use the default (no hard cap).
@@ -209,8 +195,7 @@ The unit must set `HOME=/root`, `GOPATH=/root/go`, `GOMODCACHE=/root/go/pkg/mod`
 
 | File | Purpose |
 |---|---|
-| `quick-deploy.sh` | The one you'll use 99% of the time |
-| `deploy.sh` | Original full-build deploy (slower; uses Docker for everything) |
+| `deploy.sh` | Original full-build deploy (slower; uses Docker for everything) — the only deploy script left in this directory since `quick-deploy.sh` was removed |
 | `setup-server.sh` | First-time VM provisioning |
 | `harden-ssh.sh` | Disable password SSH after keys are confirmed |
 | `run-agent.sh` | What `mcp-agent.service` executes |

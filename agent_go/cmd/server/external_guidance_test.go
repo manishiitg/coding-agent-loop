@@ -216,7 +216,7 @@ func TestExternalWorkflowKnowledgeRequiresFilesRead(t *testing.T) {
 	externalTestBody(t, w, 200)
 }
 
-func TestExternalReadOnlyPreparationMentionsGuidance(t *testing.T) {
+func TestExternalPreparationMentionsGuidanceAndRuns(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	body := externalTestBody(t, f.call(t, "owner", "get_agent_context", map[string]any{}), 200)
 	prep, _ := body["preparation"].([]any)
@@ -224,7 +224,7 @@ func TestExternalReadOnlyPreparationMentionsGuidance(t *testing.T) {
 	for _, item := range prep {
 		joined += item.(string) + "\n"
 	}
-	if !strings.Contains(joined, "read-only") || !strings.Contains(joined, "list_guidance_topics") {
-		t.Fatalf("preparation does not describe read-only guidance flow: %v", prep)
+	if !strings.Contains(joined, "reads and runs") || !strings.Contains(joined, "list_guidance_topics") || !strings.Contains(joined, "run_status") {
+		t.Fatalf("preparation does not describe guidance and run flow: %v", prep)
 	}
 }

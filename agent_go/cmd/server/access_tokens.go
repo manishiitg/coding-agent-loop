@@ -218,6 +218,14 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 	if tool.plan {
 		return t.Allows("plan:write")
 	}
+	// Execution implies workflow visibility: a token that may run must be
+	// able to discover workflows, read plans, and poll run evidence.
+	// File content stays behind files:read; the run session reads files
+	// itself, server-side.
+	reads := t.Allows("workflows:read") || t.Allows("runs:execute")
+	if tool.executes {
+		return t.Allows("runs:execute")
+	}
 	switch tool.Name {
 	case "list_files", "read_file", "search_files", "get_file_link":
 		return t.Allows("files:read")
@@ -225,12 +233,12 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return t.Allows("files:write")
 	case "get_agent_context", "list_guidance_topics", "get_guidance_topic":
 		// Canonical server-owned guidance carries no workflow content.
-		return t.Allows("workflows:read")
+		return reads
 	case "list_workflow_knowledge", "read_workflow_knowledge":
 		// Workflow-authored learnings, notes, and skills are workflow content.
 		return t.Allows("files:read")
 	default:
-		return t.Allows("workflows:read")
+		return reads
 	}
 }
 

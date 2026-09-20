@@ -119,15 +119,35 @@ class Probe:
         self.token=json.loads(self.config.read_text())['token']
         assert self.config.stat().st_mode&0o077==0
         self.record('App-generated PAT login and private CLI credentials')
-        # Write scopes are not issued in read-only v1.
+        # Authoring scopes are not issued; runs:execute is a separate grant.
         http(self.server+'/api/auth/access-tokens',{'name':'Writer','scopes':['workflows:read','plan:write'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=400)
-        self.record('write permission issue rejected')
+        self.record('authoring permission issue rejected')
         workflows=self.command('workflows','list');assert len(workflows['workflows'])==1
         self.wid=workflows['workflows'][0]['manifest']['id']
         tools=self.command('tools','list');names={t['name'] for t in tools['tools']}
         assert {'get_plan','read_file','get_agent_context'}<=names
         assert not ({'update_message_sequence_step','write_file','patch_file','builder_chat'}&names)
-        self.record('workflow discovery and read-only tool schemas',workflow_id=self.wid,tool_count=len(tools['tools']))
+        assert not ({'execute_step','run_full_workflow','trigger_schedule'}&names)
+        runner=http(self.server+'/api/auth/access-tokens',{'name':'Runner','scopes':['workflows:read','files:read','runs:execute'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        run_tools=http(self.server+'/api/external/v1/tools',token=runner['token'])
+        run_names={t['name'] for t in run_tools['tools']}
+        assert {'execute_step','run_full_workflow','run_status','trigger_schedule','list_schedules'}<=run_names
+        self.record('workflow discovery; run tools listed only for the runs:execute grant',workflow_id=self.wid,tool_count=len(tools['tools']),run_tool_count=len(run_tools['tools']))
+        # The run surface answers without model calls: unknown sessions and
+        # schedules 404, live readers return empty, and a read-only token is
+        # denied execution before dispatch.
+        call=lambda name,args,token,expected:(http(self.server+'/api/external/v1/call',{'name':name,'arguments':args},token,expected=expected))
+        denied=call('execute_step',{'workflow_id':self.wid,'step_id':'nope'},issued['token'],403)
+        assert denied['error']['code']=='insufficient_scope'
+        missing=call('run_status',{'workflow_id':self.wid,'session_id':'no-such-session'},runner['token'],404)
+        assert missing['error']['code']=='session_not_found'
+        assert isinstance(call('list_schedules',{'workflow_id':self.wid},runner['token'],200)['schedules'],list)
+        assert call('list_executions',{'workflow_id':self.wid},runner['token'],200)['executions']==[]
+        unknown=call('get_schedule_runs',{'workflow_id':self.wid,'schedule_id':'nope'},runner['token'],404)
+        assert unknown['error']['code']=='schedule_not_found'
+        absent=call('trigger_schedule',{'workflow_id':self.wid,'schedule_id':'nope'},runner['token'],404)
+        assert absent['error']['code']=='schedule_not_found'
+        self.record('run scope gate, status/schedule/execution reads, and unknown-schedule trigger denial')
         args={'workflow_id':self.wid,'path':'docs/readme.md'}
         initial=self.call('read_file',args);assert 'smoke marker' in initial['content']
         found=self.call('search_files',{'workflow_id':self.wid,'path':'docs','query':'marker'});assert found['entries']
@@ -206,7 +226,7 @@ class Probe:
         context=mcp_call('get_agent_context',{'workflow_id':self.wid});assert context['role']=='owner'
         self.record('real stdio MCP handshake/discovery/plan/context reads')
         assert not list((self.fixture/'planning/changelog').glob('*.json'))
-        self.record('read-only probe left no changelog entries')
+        self.record('probe left no changelog entries')
         req=urllib.request.Request(self.server+'/api/auth/access-tokens/'+self.pat_id,method='DELETE',headers={'Authorization':'Bearer '+self.app_token})
         with urllib.request.urlopen(req,timeout=10) as response: assert response.status==204
         denial=self.command('tools','list',expected=3);assert denial['error']['code']=='invalid_token'

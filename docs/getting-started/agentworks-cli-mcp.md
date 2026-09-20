@@ -1,18 +1,19 @@
 # AgentWorks CLI and MCP
 
 Use a hosted AgentWorks server from Claude Code, another MCP client, or scripts.
-The CLI and MCP bridge use the same authenticated API. v1 is read-only, like
-the Slack and WhatsApp run-mode channels: every tool reads; nothing creates,
-edits, or runs. File writes, plan mutations, and Builder execution are not
-exposed; the dispatch paths stay in the server for a future write-enabled API
-version.
+The CLI and MCP bridge use the same authenticated API. Tokens read and run,
+like the Slack and WhatsApp run-mode channels: tools read, and run-mode tools
+execute in pinned Run-mode sessions. Nothing creates, edits, or authors. File
+writes, plan mutations, and Builder execution are not exposed; the dispatch
+paths stay in the server for a future write-enabled API version.
 
 ## Install the CLI
 
 Open Setup → Integrations → Connect on your server (server installs only)
 and paste the one command: it downloads the CLI build matching that server,
 verifies its checksum, installs it to `~/.local/bin`, and logs in with the
-generated read-only token. macOS and Linux on arm64/amd64 are supported.
+generated token, which reads and runs. macOS and Linux on arm64/amd64 are
+supported.
 The same token is reused on every visit until it is revoked or expires.
 
 The binaries and installer are served by the server itself at
@@ -182,9 +183,40 @@ agentworks runs get --workflow WORKFLOW_ID --run-folder iteration-0/group-name
 agentworks runs logs --workflow WORKFLOW_ID --run-folder iteration-0/group-name
 ```
 
-Run tools browse saved run/log artifacts; retrieve selected paths with
-`files read`. They do not start runs. Direct run start/stop, schedule management,
-and workflow creation/deletion are outside this release.
+Saved run/log artifacts are browsed with `runs list|get|logs`; retrieve
+selected paths with `files read`. Workflow creation/deletion stays outside
+this surface.
+
+## Running steps, workflows, and schedules
+
+Every run-mode chat tool from `product.yaml` is callable here under the
+`runs:execute` scope — the run list is the single source of truth, so a tool
+added to run mode appears in `tools list` and `mcp serve` with no client
+change. Each call starts a new pinned Run-mode session (or continues
+`--session`), and its reply carries `session_id`; poll `runs status` for
+completion. Structured arguments travel via `--set key=JSON`.
+
+```sh
+agentworks runs start-step --workflow WORKFLOW_ID --step-id fetch-invoices --set 'script_parameters={"limit":10}'
+agentworks runs start-workflow --workflow WORKFLOW_ID --group group-1
+agentworks runs status --workflow WORKFLOW_ID --session SESSION_ID
+agentworks runs executions --workflow WORKFLOW_ID
+agentworks runs message --workflow WORKFLOW_ID --session SESSION_ID --execution-id EXEC_ID --message "slow down"
+agentworks runs stop --workflow WORKFLOW_ID --session SESSION_ID --execution-id EXEC_ID
+agentworks runs stop-all --workflow WORKFLOW_ID --session SESSION_ID
+agentworks schedules list --workflow WORKFLOW_ID
+agentworks schedules runs --workflow WORKFLOW_ID --schedule-id daily
+agentworks schedules trigger --workflow WORKFLOW_ID --schedule-id daily
+```
+
+`runs:execute` implies workflow visibility (`list_workflows`, `get_plan`,
+run evidence, status), never file content, which stays behind `files:read`.
+A read-only token sees neither the run tools in `tools list` nor their MCP
+entries, and calling one returns `insufficient_scope`. Sessions are owned by
+the token that started them: revoking the token cancels its runs, and one
+token can never status, message, or stop another token's session. New tools
+added to run mode later work immediately through `tools call`; typed
+subcommands cover the core operations above.
 
 ## Asset links and downloads
 
@@ -231,17 +263,18 @@ hosted address.
 
 ## Workflow Builder chat
 
-Not exposed in read-only v1. Builder chat runs the existing builder runtime,
-which can execute work, so it stays out of the catalog alongside file writes
-and plan mutations. The server keeps its session binding, ownership checks,
-and revocation-driven cancellation for a future write-enabled API version.
+Not exposed. Builder chat runs the existing builder runtime with authoring
+tools, so it stays out of the catalog alongside file writes and plan
+mutations; external execution runs in pinned Run-mode sessions instead. The
+server keeps its session binding, ownership checks, and revocation-driven
+cancellation for a future write-enabled API version.
 
 ## External agent guidance
 
 The local implementation now gives MCP clients short initialization
 instructions and exposes five guidance and knowledge operations. Builder chat
-is not exposed in v1, so the external agent relies on these operations plus
-the read tools; runtime steps separately receive their explicitly enabled step
+is not exposed, so the external agent relies on these operations plus the
+read tools; runtime steps separately receive their explicitly enabled step
 skills.
 
 The external surface is intended to add the decision context that bare tool
@@ -269,7 +302,8 @@ Two constraints define the intended boundary:
 The five implemented operations are:
 
 - `get_agent_context`: role, token capabilities, available tools, and guidance
-  version, plus the read-only preparation checklist. This is a global tool;
+  version, plus the preparation checklist (with a run section when the token
+  allows `runs:execute`). This is a global tool;
   pass `workflow_id` to include the caller's role on a workflow. CLI:
   `agentworks guidance context [--workflow ID]`.
 - `list_guidance_topics` / `get_guidance_topic`: server-owned guidance for
@@ -289,8 +323,9 @@ The five implemented operations are:
   an empty list. CLI: `agentworks knowledge list|read --workflow ID
   [--path PATH]`.
 
-MCP initialization delivers short instructions that tell the client the
-connection is read-only, to call `get_agent_context` first, and to load
+MCP initialization delivers short instructions that tell the client whether
+the bridge reads only or also runs (chosen from the scope-filtered catalog),
+to call `get_agent_context` first, and to load
 relevant topics. The companion
 skill source lives at
 `agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md`, embedded in the
@@ -302,8 +337,9 @@ without a manual bump. `get_agent_context` with `workflow_id` also returns
 `effective_tools`, filtered by the caller's role on top of token scopes.
 
 Canonical guidance tools require `workflows:read`; knowledge tools require
-`files:read`. There are no mutations in v1, so there is no follow-up contract:
-the agent answers from what it reads and says so when a task needs a change.
+`files:read`. Nothing authors, so the follow-up contract is small: the agent
+answers from what it reads (and what its runs report) and says so when a task
+needs a change.
 
 ### Local implementation review (2026-09-20, second pass)
 
@@ -380,19 +416,25 @@ test build.
 - `agent_go/cmd/server/external_tools.go`: authenticated discovery, permissions,
   schema validation, workflow resolution, and operation dispatch.
 - `step_based_workflow/external_plan_tools.go`: native plan schemas, kept for
-  a future write-enabled API; unexposed in v1.
+  a future write-enabled API; unexposed.
 - `external_builder.go`: existing query, event, human-input, and cancellation
-  adapters; unexposed in v1.
+  adapters; unexposed.
+- `external_run.go`: run-mode tool proxy (pinned Run-mode sessions),
+  `run_status` poller, and JSON-direct execution, schedule, and trigger reads.
 - `workspace/handlers/workflow_files.go`: workflow-confined file access.
 
 The exposed tool set has one source of truth:
-`agent_go/internal/agentworksproduct/product.yaml`, `chat.run.external_tools`.
-The server exposes exactly those tools, in that order; Go defines the
-implementations (schemas, dispatch) while the yaml admits them. A yaml name
-without an implementation — or an implementation missing from the yaml —
-fails server startup, and the CLI subcommand mappings are test-pinned to the
-same list. Changing the surface means editing the yaml and the golden test
-together, deliberately.
+`agent_go/internal/agentworksproduct/product.yaml`, `chat.run`. The server
+exposes `external_tools` first, in yaml order, then every `tools` name without
+a native implementation, proxied to a pinned Run-mode session in yaml order;
+names with a native implementation (`get_file_link`, `list_executions`,
+`list_schedules`, `get_schedule_runs`, `trigger_schedule`) keep it. Go defines
+the implementations (schemas, dispatch) while the yaml admits them. A yaml
+name without an implementation — or an implementation missing from both
+lists — fails server startup, and the CLI subcommand mappings are test-pinned
+to the union. Changing the surface means editing the yaml and the golden test
+together, deliberately; adding a tool to run mode exposes it externally with
+no further change.
 
 Public tool endpoints are `GET /api/external/v1/tools` and
 `POST /api/external/v1/call`. The CLI uses a PAT in the Bearer header; app sessions
@@ -412,7 +454,8 @@ AGENTS.md-style prompt files and the .claude, .agents, .codex, .cursor,
 .gemini, and .pi tool directories, including the skills beneath them. Skills
 stay readable through the knowledge tools, which serve the skill catalog;
 learnings and ordinary documents are readable in their workflow's workspace.
-Nothing is writable through v1.
+Nothing is writable: run tools execute; they never author plans, files, or
+configuration.
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`. CLI exit
 codes are 3 for authentication/permission failure, 4 for conflicts, and 1 for

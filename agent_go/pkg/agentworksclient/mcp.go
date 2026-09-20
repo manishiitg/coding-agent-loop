@@ -17,8 +17,15 @@ type ToolCaller interface {
 // MCPInstructions are delivered to every MCP client in the initialize
 // response. Skill loading is host-dependent and not guaranteed, so these
 // instructions — not an installable skill file — are the reliable channel
-// telling the agent how to obtain AgentWorks guidance.
-const MCPInstructions = `You are connected to an AgentWorks server with a read-only connection: every tool reads; nothing creates, edits, or runs. ` +
+// telling the agent how to obtain AgentWorks guidance. The bridge serves
+// the run variant when the scope-filtered catalog carries run tools.
+const MCPInstructions = `You are connected to an AgentWorks server: tools read, and run-mode tools execute in pinned Run-mode sessions; nothing creates, edits, or authors. ` +
+	`Discover workflow IDs with list_workflows first; IDs are never filesystem paths. ` +
+	`Call get_agent_context for token capabilities and the guidance version, and load only the guidance topics relevant to the task via list_guidance_topics/get_guidance_topic. ` +
+	`To run: call a run-mode tool such as execute_step (its reply carries session_id), then poll run_status for completion. ` +
+	`Answer from what you read; if the task needs a change, say so instead of attempting one.`
+
+const MCPReadOnlyInstructions = `You are connected to an AgentWorks server with a read-only connection: every tool reads; nothing creates, edits, or runs. ` +
 	`Discover workflow IDs with list_workflows first; IDs are never filesystem paths. ` +
 	`Call get_agent_context for token capabilities and the guidance version, and load only the guidance topics relevant to the task via list_guidance_topics/get_guidance_topic. ` +
 	`Answer from what you read; if the task needs a change, say so instead of attempting one.`
@@ -31,7 +38,16 @@ func NewMCPServer(ctx context.Context, client ToolCaller) (*server.MCPServer, er
 	if err != nil {
 		return nil, err
 	}
-	s := server.NewMCPServer("AgentWorks", "1.0.0", server.WithToolCapabilities(false), server.WithInstructions(MCPInstructions))
+	instructions := MCPReadOnlyInstructions
+	for _, definition := range definitions {
+		// The server omits run tools from catalogs whose token lacks
+		// runs:execute, so execute_step's presence proves this bridge runs.
+		if definition.Name == "execute_step" {
+			instructions = MCPInstructions
+			break
+		}
+	}
+	s := server.NewMCPServer("AgentWorks", "1.0.0", server.WithToolCapabilities(false), server.WithInstructions(instructions))
 	for _, definition := range definitions {
 		name := definition.Name
 		s.AddTool(mcp.NewToolWithRawSchema(name, definition.Description, definition.InputSchema), func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {

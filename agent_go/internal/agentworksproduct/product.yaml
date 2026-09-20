@@ -216,6 +216,7 @@ chat:
       - list_ui_capabilities
       - manage_custom_commands
       - manage_global_secret
+      - manage_internet_share
       - manage_user_access
       - manage_workflow_webhook
       - mark_changelog_artifact_reviewed
@@ -290,11 +291,15 @@ chat:
       - stop_step
       - test_slack_bot_connection
       - trigger_schedule
-    # External API admission: the single source of truth for the v1 CLI/MCP
-    # catalog. The server exposes exactly these tools, in this order; a name
-    # without an implemented external tool fails server startup, as does an
-    # implemented tool missing from this list. v1 is read-only: admitting a
-    # mutating tool here is a deliberate API change, not a drive-by edit.
+    # External-native tools: scoped readers plus run operations with no chat
+    # equivalent, each with a server implementation. The run-mode `tools`
+    # list above is the single source of truth for the run surface and is
+    # additionally exposed in full (see RunTools): names with a native
+    # implementation keep it, the rest are proxied to a pinned Run-mode
+    # session. A name here without an implemented external tool fails server
+    # startup, as does an implemented tool missing from both lists. Admitting
+    # an authoring mutation here is a deliberate API change, not a drive-by
+    # edit: tokens read and run, never author.
     external_tools:
       - list_workflows
       - get_workflow
@@ -311,6 +316,7 @@ chat:
       - list_runs
       - get_run
       - get_logs
+      - run_status
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

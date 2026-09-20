@@ -47,7 +47,7 @@ describe('CLI & MCP setup panel', () => {
       expect(authApi.createAccessToken).not.toHaveBeenCalled()
       const generate = Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Generate connection'))!
       await act(async () => generate.click())
-      expect(authApi.createAccessToken).toHaveBeenCalledWith({ name: 'Connect tab', expires_in_days: 30, scopes: ['workflows:read', 'files:read'], all_workflows: true, workflow_ids: [] })
+      expect(authApi.createAccessToken).toHaveBeenCalledWith({ name: 'Connect tab', expires_in_days: 30, scopes: ['workflows:read', 'files:read', 'runs:execute'], all_workflows: true, workflow_ids: [] })
       expect(host.textContent).toContain(`curl -fsSL "https://agentworks.example.com/api/downloads/cli/install-agentworks.sh" | sh -s -- --server "https://agentworks.example.com" --token 'aw_pat_test'`)
       expect(host.textContent).not.toContain('agentworks login')
       expect(host.textContent).toContain(`--env AGENTWORKS_TOKEN='aw_pat_test' agentworks -- agentworks mcp serve`)

@@ -80,6 +80,63 @@ func TestCLIPlanAndFileArguments(t *testing.T) {
 	}
 }
 
+func TestCLIRunAndScheduleArguments(t *testing.T) {
+	for _, tc := range []struct {
+		args   []string
+		tool   string
+		fields map[string]any
+	}{
+		{[]string{"runs", "start-step", "--workflow", "wf-1", "--step-id", "fetch", "--group", "g1", "--tier", "high"}, "execute_step", map[string]any{"workflow_id": "wf-1", "step_id": "fetch", "group_name": "g1", "tier": "high"}},
+		{[]string{"runs", "start-step", "--workflow", "wf-1", "--step-id", "fetch", "--set", `script_parameters={"limit":10}`}, "execute_step", map[string]any{"workflow_id": "wf-1", "step_id": "fetch", "script_parameters": map[string]any{"limit": float64(10)}}},
+		{[]string{"runs", "start-workflow", "--workflow", "wf-1", "--group", "g1"}, "run_full_workflow", map[string]any{"workflow_id": "wf-1", "group_name": "g1"}},
+		{[]string{"runs", "status", "--workflow", "wf-1", "--session", "s1"}, "run_status", map[string]any{"workflow_id": "wf-1", "session_id": "s1"}},
+		{[]string{"runs", "message", "--workflow", "wf-1", "--session", "s1", "--execution-id", "e1", "--message", "slow down"}, "send_step_message", map[string]any{"workflow_id": "wf-1", "session_id": "s1", "execution_id": "e1", "message": "slow down"}},
+		{[]string{"runs", "stop", "--workflow", "wf-1", "--session", "s1", "--execution-id", "e1"}, "stop_step", map[string]any{"workflow_id": "wf-1", "session_id": "s1", "execution_id": "e1"}},
+		{[]string{"runs", "stop-all", "--workflow", "wf-1", "--session", "s1"}, "stop_all_executions", map[string]any{"workflow_id": "wf-1", "session_id": "s1"}},
+		{[]string{"runs", "executions", "--workflow", "wf-1"}, "list_executions", map[string]any{"workflow_id": "wf-1"}},
+		{[]string{"schedules", "list", "--workflow", "wf-1"}, "list_schedules", map[string]any{"workflow_id": "wf-1"}},
+		{[]string{"schedules", "runs", "--workflow", "wf-1", "--schedule-id", "daily"}, "get_schedule_runs", map[string]any{"workflow_id": "wf-1", "schedule_id": "daily"}},
+		{[]string{"schedules", "trigger", "--workflow", "wf-1", "--schedule-id", "daily"}, "trigger_schedule", map[string]any{"workflow_id": "wf-1", "schedule_id": "daily"}},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			var called bool
+			s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				called = true
+				var body struct {
+					Name      string
+					Arguments map[string]any
+				}
+				if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+					t.Error(err)
+				}
+				if body.Name != tc.tool {
+					t.Errorf("name=%s", body.Name)
+				}
+				for k, v := range tc.fields {
+					actual, _ := json.Marshal(body.Arguments[k])
+					expected, _ := json.Marshal(v)
+					if string(actual) != string(expected) {
+						t.Errorf("%s: got %s want %s", k, actual, expected)
+					}
+				}
+				_, _ = w.Write([]byte(`{"ok":true}`))
+			}))
+			defer s.Close()
+			var stdout, stderr bytes.Buffer
+			args := append([]string{"--config", filepath.Join(t.TempDir(), "config.json"), "--server", s.URL, "--json"}, tc.args...)
+			code := run(context.Background(), args, strings.NewReader(""), &stdout, &stderr, func(key string) string {
+				if key == "AGENTWORKS_TOKEN" {
+					return "jwt"
+				}
+				return ""
+			})
+			if code != 0 || !called || stdout.String() != "{\"ok\":true}\n" || stderr.Len() != 0 {
+				t.Fatalf("code=%d called=%v out=%s err=%s", code, called, &stdout, &stderr)
+			}
+		})
+	}
+}
+
 func TestCLIWriteCommandsRejected(t *testing.T) {
 	for _, args := range [][]string{
 		{"plan", "update-scripted-step", "--workflow", "wf-1"},
@@ -449,6 +506,9 @@ func TestBarePlanAndCallShowUsage(t *testing.T) {
 func TestCLIOperationsStayAdmitted(t *testing.T) {
 	admitted := map[string]bool{}
 	for _, name := range agentworksproduct.RunExternalTools() {
+		admitted[name] = true
+	}
+	for _, name := range agentworksproduct.RunTools() {
 		admitted[name] = true
 	}
 	mapped := map[string]string{}

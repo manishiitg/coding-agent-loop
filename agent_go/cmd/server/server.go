@@ -729,6 +729,12 @@ type QueryRequest struct {
 	// Code execution mode: When enabled, only virtual tools are added to LLM
 	// MCP tools are accessed through generated scripts using the on-demand HTTP API specification.
 	UseCodeExecutionMode bool `json:"use_code_execution_mode,omitempty"`
+	// PinRunMode treats this turn as a read-only turn even when the caller
+	// has workflow write access, so the session runs with the Run-mode
+	// prompt and tool surface. It can only remove privilege, never grant
+	// it: authoring stays impossible. Set server-side by the external run
+	// tools, which are execution-only by contract.
+	PinRunMode bool `json:"pin_run_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
 	// Context summarization configuration
@@ -2718,6 +2724,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to listen on %s:%d: %v", config.Host, config.Port, err)
 	}
 	actualPort := listener.Addr().(*net.TCPAddr).Port
+	SetShareTunnelServerPort(actualPort)
 
 	// Dynamically serve runtime-config.js so the frontend learns the real ports.
 	// In packaged/desktop mode ports are dynamic (--port 0), so the static file's
@@ -2813,6 +2820,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	stopNativeTranscriptRecovery()
 	api.cancelActiveWorkForShutdown()
 	fmt.Printf("✅ Active agent work canceled (%s)\n", time.Since(cancelStart).Round(time.Millisecond))
+
+	// An internet share tunnel must not outlive the server it exposes.
+	StopShareTunnel()
 
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")
@@ -3519,7 +3529,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, accessErr.Error(), http.StatusForbidden)
 		return
 	}
-	currentUserIsReadOnly = access == WorkflowAccessRead
+	currentUserIsReadOnly = readOnlyForRequest(access, req)
 	normalizeWorkflowConversationMode(&req, currentUserIsReadOnly)
 
 	var resolvedProfileSkills []*llmtypes.Skill

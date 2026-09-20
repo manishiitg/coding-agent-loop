@@ -28,17 +28,19 @@ type options struct {
 }
 
 // cliOperationGroups maps CLI subcommands to external tools. Every tool named
-// here must stay admitted by product.yaml's run-mode external_tools (see
-// TestCLIOperationsStayAdmitted); `plan get` maps to get_plan the same way,
-// while `tools call` and `mcp serve` resolve against the live server catalog
-// instead.
+// here must stay admitted by product.yaml's run mode — external_tools or
+// the proxied run.tools (see TestCLIOperationsStayAdmitted); `plan get` maps
+// to get_plan the same way, while `tools call` and `mcp serve` resolve
+// against the live server catalog instead. Structured run arguments
+// (script_parameters, human_inputs, route_selections) travel via --set.
 var cliOperationGroups = []struct {
 	name, description string
 	operations        []struct{ command, tool string }
 }{
 	{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
 	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
-	{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
+	{"runs", "Start, steer, stop, and inspect runs", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}, {"start-step", "execute_step"}, {"start-workflow", "run_full_workflow"}, {"status", "run_status"}, {"message", "send_step_message"}, {"stop", "stop_step"}, {"stop-all", "stop_all_executions"}, {"executions", "list_executions"}}},
+	{"schedules", "List, inspect, and trigger schedules", []struct{ command, tool string }{{"list", "list_schedules"}, {"runs", "get_schedule_runs"}, {"trigger", "trigger_schedule"}}},
 	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
 	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
 }
@@ -145,7 +147,7 @@ func newCommand(o *options) *cobra.Command {
 	plan := &cobra.Command{
 		Use: "plan get", Args: cobra.MaximumNArgs(1),
 		Short: "Read a workflow plan and configuration",
-		Long:  "Read with 'plan get'. v1 is read-only: plan mutations are not exposed.",
+		Long:  "Read with 'plan get'. Plan mutations are not exposed: tokens read and run, never author.",
 	}
 	addOperationFlags(plan, "get_plan")
 	plan.RunE = func(cmd *cobra.Command, args []string) error {
@@ -319,7 +321,7 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool == "get_guidance_topic" {
 		f.String("topic", "", "Guidance topic from guidance topics")
 	}
-	if tool == "list_workflows" || tool == "list_files" || tool == "search_files" || tool == "list_runs" || tool == "get_run" || tool == "get_logs" {
+	if tool == "list_workflows" || tool == "list_files" || tool == "search_files" || tool == "list_runs" || tool == "get_run" || tool == "get_logs" || tool == "run_status" || tool == "get_schedule_runs" {
 		f.Int("limit", 0, "Maximum results")
 		f.Int("offset", 0, "Result offset")
 	}
@@ -331,6 +333,30 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	}
 	if tool == "get_run" || tool == "get_logs" {
 		f.String("run-folder", "", "Run folder from list_runs")
+	}
+	if tool == "execute_step" {
+		f.String("step-id", "", "Plan step ID or positional reference (e.g. '1')")
+		f.String("group", "", "Variable group name")
+		f.String("human-input", "", "Run-specific instructions or human_input response")
+		f.String("tier", "", "LLM tier override: high, medium, or low")
+	}
+	if tool == "run_full_workflow" {
+		f.String("group", "", "Variable group name to execute")
+	}
+	if tool == "run_status" || tool == "send_step_message" || tool == "stop_step" || tool == "stop_all_executions" {
+		f.String("session", "", "Run session ID from a previous run call")
+	}
+	if tool == "run_status" {
+		f.Int("since-index", -1, "Event index to poll from (-1 for the latest page)")
+	}
+	if tool == "send_step_message" || tool == "stop_step" {
+		f.String("execution-id", "", "Execution ID from list_executions or run_status")
+	}
+	if tool == "send_step_message" {
+		f.String("message", "", "Live correction for the running execution")
+	}
+	if tool == "get_schedule_runs" || tool == "trigger_schedule" {
+		f.String("schedule-id", "", "Schedule ID from schedules list")
 	}
 }
 
@@ -374,7 +400,7 @@ func operationArguments(cmd *cobra.Command, stdin io.Reader) (map[string]any, er
 			return nil, errors.New("--input must contain exactly one JSON object")
 		}
 	}
-	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic"} {
+	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic", "step-id": "step_id", "execution-id": "execution_id", "schedule-id": "schedule_id", "group": "group_name", "human-input": "human_input", "tier": "tier"} {
 		if cmd.Flags().Changed(flagName) {
 			value, _ := cmd.Flags().GetString(flagName)
 			arguments[field] = value

@@ -49,12 +49,12 @@ type externalGuidanceTopic struct {
 // rather than the external typed plan tools) are excluded, and topics that
 // mix internal and external tools carry an ExternalNote with the mapping.
 var externalGuidanceTopics = []externalGuidanceTopic{
-	{Name: "plan-change-impact", Description: "Plan-change impact analysis: trace and reconcile the blast radius across downstream steps, measurement, reports, db, learnings, and KB. Load before treating a plan change as done.", ExternalNote: "External mapping: read_skill, get_goal_metrics, mark_changelog_artifact_reviewed, and review-artifact-drift are not in your catalog. Do the combined compatibility check yourself with search_files/read_file and report dispositions in your reply. read_skill pointers to builder-reference files outside this topic list (measurement-plan, reporting-policy, stores) have no external equivalent; use builder_chat when you need them. Never edit changelog files directly."},
-	{Name: "plan-design", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns. Load when designing a new plan or restructuring one.", ExternalNote: "External mapping: read_skill, execute_step, and run_full_workflow are not in your catalog. You cannot start runs externally; design the plan with direct plan tools or builder_chat and leave execution to runs."},
+	{Name: "plan-change-impact", Description: "Plan-change impact analysis: trace and reconcile the blast radius across downstream steps, measurement, reports, db, learnings, and KB. Load before treating a plan change as done.", ExternalNote: "External mapping: read_skill, get_goal_metrics, mark_changelog_artifact_reviewed, and review-artifact-drift are not in your catalog. Do the combined compatibility check yourself with search_files/read_file and report dispositions in your reply. read_skill pointers to builder-reference files outside this topic list (measurement-plan, reporting-policy, stores) have no external equivalent; describe the needed change in your reply instead of attempting it. Never edit changelog files directly."},
+	{Name: "plan-design", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns. Load when designing a new plan or restructuring one.", ExternalNote: "External mapping: read_skill is not in your catalog; the readable reference surface is list_guidance_topics/get_guidance_topic. execute_step and run_full_workflow ARE in your catalog when the token allows runs:execute: validate a design by running it and polling run_status. Tokens never author plans — describe design changes in your reply instead of attempting them."},
 	{Name: "planning-steps", Description: "Workshop plan composition: take-action-by-default discipline, step-type selection, validation_schema requirements, forward-only context flow. Load before adding or editing plan steps.", ExternalNote: "External mapping: read_skill is not in your catalog; the readable reference surface is list_guidance_topics/get_guidance_topic."},
 	{Name: "step-description", Description: "How to write an optimized step description and validation_schema: earn every word, let the schema name the output shape. Load before writing or editing any step description.", ExternalNote: "External mapping: get_step_prompts is not in your catalog; verify saved-run prompts through get_run/get_logs and file reads instead."},
-	{Name: "step-config", Description: "Per-step config reference: store-access modes, locks, execution mode, model selection, validation_schema, skills, clearing fields. Load before tuning a step.", ExternalNote: "External mapping: update_step_config IS in your catalog (requires plan:write). read_skill, query_workflow_db, mutate_workflow_db, and other config tools named here are not; use builder_chat when you need them."},
-	{Name: "skill-management", Description: "Skill lifecycle and attachment model: workflow-selected skills are discovery context only, per-step enabled_skills is the runtime attachment, learnings/_global/SKILL.md is shared know-how. Load before reasoning about skills.", ExternalNote: "External mapping: list_skills, search_skills, install_skill, import_skill, update_workflow_config, and uninstall_skill are not in your catalog. Use list_workflow_knowledge to inspect wiring and builder_chat for installs or changes."},
+	{Name: "step-config", Description: "Per-step config reference: store-access modes, locks, execution mode, model selection, validation_schema, skills, clearing fields. Load before tuning a step.", ExternalNote: "External mapping: update_step_config is not in your catalog; tokens never author. read_skill, query_workflow_db, mutate_workflow_db, and other config tools named here are not either; describe the needed change in your reply instead of attempting it."},
+	{Name: "skill-management", Description: "Skill lifecycle and attachment model: workflow-selected skills are discovery context only, per-step enabled_skills is the runtime attachment, learnings/_global/SKILL.md is shared know-how. Load before reasoning about skills.", ExternalNote: "External mapping: list_skills, search_skills, install_skill, import_skill, update_workflow_config, and uninstall_skill are not in your catalog. Use list_workflow_knowledge to inspect wiring; installs and changes are not exposed, so say so instead of attempting them."},
 	{Name: "file-layout", Description: "Workspace file layout reference and path discipline."},
 	{Name: "secure-share-links", Description: "Share existing workflow files and folders with authenticated links: path rules and the difference between access-controlled sharing and public publishing.", ExternalNote: "External mapping: get_file_link IS in your catalog; get_report_link is not. Use files download for local copies."},
 }
@@ -134,6 +134,7 @@ func (api *StreamingAPI) externalAgentContext(w http.ResponseWriter, r *http.Req
 				// available_tools reflects token scopes only; effective_tools
 				// additionally reflects the caller's role on this workflow, so
 				// readers are not shown mutations the dispatch guard would deny.
+				// Run tools stay: readers may run, which is what Run mode is for.
 				if role != WorkflowAccessOwner && role != WorkflowAccessWrite {
 					effective := make([]string, 0, len(available))
 					for _, name := range available {
@@ -156,16 +157,21 @@ func (api *StreamingAPI) externalAgentContext(w http.ResponseWriter, r *http.Req
 	externalJSON(w, out)
 }
 
-// externalPreparation returns the checklist for this read-only connection.
-// v1 exposes no mutations: the agent reads workflows, files, plans, runs,
-// guidance, and knowledge, and answers from what it finds.
+// externalPreparation returns the checklist for this connection. The agent
+// reads workflows, files, plans, runs, guidance, and knowledge, and answers
+// from what it finds; tokens never author. A token with runs:execute may
+// additionally operate the run-mode tools in pinned Run-mode sessions.
 func externalPreparation(claims *UserClaims) []string {
 	steps := []string{
-		"This connection is read-only: every tool reads; nothing creates, edits, or runs.",
+		"This connection reads and runs: tools read, and run-mode tools execute in pinned Run-mode sessions. Nothing creates, edits, or authors.",
 		"Call list_workflows to discover workflow IDs; IDs are never filesystem paths.",
 		"Load only the guidance topics relevant to the task; topic list via list_guidance_topics.",
 		"Use get_file_link for preview/download URLs; links identify a file and never grant permission.",
 		"Use files download (not read_file) for a local copy; downloads refuse to overwrite existing files.",
+	}
+	canRun := claims == nil || claims.AccessToken == nil || claims.AccessToken.Allows("runs:execute")
+	if canRun {
+		steps = append(steps, "To run: call a run-mode tool such as execute_step (its reply carries session_id), then poll run_status for completion. Read run evidence with list_runs, get_run, and get_logs.")
 	}
 	if claims != nil && claims.AccessToken != nil && !claims.AccessToken.FullBuilderAccess() {
 		steps = append(steps, "This token is restricted: unavailable tools are omitted from the tools list.")

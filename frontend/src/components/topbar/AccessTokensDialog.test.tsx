@@ -42,16 +42,27 @@ describe('Access token account dialog', () => {
       expect(modal.textContent).toContain('Revoked')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
-  it('issues read-only tokens with no permission choices', async () => {
+  it('issues read-only tokens unless running is granted', async () => {
     vi.mocked(authApi.listAccessTokens).mockResolvedValue({ tokens: [] })
     vi.mocked(agentApi.listWorkflowManifests).mockResolvedValue({ success: true, total: 0, workflows: [] })
+    vi.mocked(authApi.createAccessToken).mockResolvedValue({ token: 'aw_pat_x', access_token: { id: 'x', name: 'Runner', scopes: ['workflows:read', 'files:read', 'runs:execute'], all_workflows: true, workflow_ids: [], created_at: new Date().toISOString(), expires_at: '2099-01-01T00:00:00Z', last_used_at: null, revoked_at: null } as never })
     const host = document.createElement('div');document.body.append(host);const root = createRoot(host)
     try {
       await act(async () => root.render(<AccessTokensDialog onClose={vi.fn()} />))
       const modal = document.querySelector('[role="dialog"]')!
-      expect(modal.textContent).toContain('Read-only: workflows, plans, run logs, documents and skills.')
-      expect(modal.querySelectorAll('input[type="checkbox"]').length).toBe(0)
+      expect(modal.textContent).toContain('Reads workflows, plans, run logs, documents and skills.')
       expect(modal.textContent).not.toContain('Builder chat')
+      const boxes = modal.querySelectorAll('input[type="checkbox"]')
+      expect(boxes.length).toBe(1)
+      expect((boxes[0] as HTMLInputElement).checked).toBe(false)
+      const name = modal.querySelector('input:not([type="checkbox"])') as HTMLInputElement
+      await act(async () => {
+        Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value')!.set!.call(name, 'Runner')
+        name.dispatchEvent(new Event('input', { bubbles: true }))
+      })
+      await act(async () => (boxes[0] as HTMLInputElement).click())
+      await act(async () => modal.querySelector('form')!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true })))
+      expect(authApi.createAccessToken).toHaveBeenCalledWith({ name: 'Runner', scopes: ['workflows:read', 'files:read', 'runs:execute'], all_workflows: true, workflow_ids: [], expires_in_days: 30 })
     } finally { await act(async () => root.unmount());host.remove() }
   })
 })

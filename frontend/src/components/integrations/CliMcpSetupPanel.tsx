@@ -73,11 +73,12 @@ function loadStored(server: string): Connection | null {
 
 /**
  * Shared Setup → Integrations tab for Crew projects and Builder automations.
- * Provisions its own read-only token and shows ready-to-paste commands — no
- * separate token dialog. The token secret is kept in this browser and reused
- * on every visit until it is revoked or expires; the server only ever confirms
- * the token id is still valid. The token reads every workflow the user can
- * access and expires after 30 days; revoke it here when done.
+ * Provisions its own read-and-run token and shows ready-to-paste commands —
+ * no separate token dialog. The token secret is kept in this browser and
+ * reused on every visit until it is revoked or expires; the server only ever
+ * confirms the token id is still valid. The token reads and runs every
+ * workflow the user can access and expires after 30 days; revoke it here
+ * when done.
  */
 export function CliMcpSetupPanel() {
   const [connection, setConnection] = useState<Connection | null>(null)
@@ -140,7 +141,7 @@ export function CliMcpSetupPanel() {
       const result = await authApi.createAccessToken({
         name: CONNECT_TOKEN_NAME,
         expires_in_days: 30,
-        scopes: ['workflows:read', 'files:read'],
+        scopes: ['workflows:read', 'files:read', 'runs:execute'],
         all_workflows: true,
         workflow_ids: [],
       })
@@ -178,16 +179,16 @@ export function CliMcpSetupPanel() {
     <div className="space-y-4">
       <p className="text-sm text-muted-foreground">
         Connect this installation to your terminal or an AI assistant. Generate a connection below and paste the
-        commands — the assistant can list workflows and read files, plans, and run logs, but cannot change anything.
-        The token expires after 30 days, and you can revoke it here anytime.
+        commands — the assistant can list workflows, read files, plans, and run logs, and run steps, workflows, and
+        schedules, but cannot change plans or files. The token expires after 30 days, and you can revoke it here anytime.
       </p>
       <SettingsCard
         icon={<Terminal className="h-4 w-4 text-primary" />}
         title="Command line"
         description={
           connection
-            ? 'Ready to paste. Installs the CLI and logs it in with this read-only token.'
-            : 'Generate a read-only token for this installation. The command installs the CLI and logs it in.'
+            ? 'Ready to paste. Installs the CLI and logs it in with this token (reads and runs; never authors).'
+            : 'Generate a token for this installation. The command installs the CLI and logs it in.'
         }
         actions={
           connection ? (

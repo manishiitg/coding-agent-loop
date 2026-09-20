@@ -153,8 +153,22 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 		}
 		body := externalTestBody(t, w, 200)
 		definitions, ok := body["tools"].([]any)
-		if !ok || len(definitions) != 15 {
-			t.Fatalf("unexpected catalog size %d: %s", len(definitions), w.Body.String())
+		want := map[string]bool{}
+		for _, name := range agentworksproduct.RunExternalTools() {
+			want[name] = true
+		}
+		for _, name := range agentworksproduct.RunTools() {
+			want[name] = true
+		}
+		if !ok || len(definitions) != len(want) {
+			t.Fatalf("unexpected catalog size %d, want %d", len(definitions), len(want))
+		}
+		native := map[string]bool{}
+		for _, name := range agentworksproduct.RunExternalTools() {
+			native[name] = true
+		}
+		for _, name := range []string{"list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule"} {
+			native[name] = true
 		}
 		names := map[string]bool{}
 		for _, raw := range definitions {
@@ -165,23 +179,31 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 			}
 			names[name] = true
 			schema := tool["inputSchema"].(map[string]any)
-			if schema["additionalProperties"] != false {
-				t.Fatalf("unknown fields permitted by %s", name)
+			// Native tools take exactly their schema; proxies pass every
+			// other argument through to the run-mode tool call verbatim.
+			if open := schema["additionalProperties"] != false; open == native[name] {
+				t.Fatalf("wrong additionalProperties for %s (native=%v)", name, native[name])
 			}
 			if _, leaked := tool["validator"]; leaked {
 				t.Fatal("private implementation field leaked")
 			}
 		}
-		for _, name := range agentworksproduct.RunExternalTools() {
+		for name := range want {
 			if !names[name] {
 				t.Fatalf("missing tool %s", name)
 			}
 		}
-		// v1 is read-only: mutations and Builder execution stay out of the
-		// catalog alongside the internal workshop tools.
-		for _, name := range []string{"run_full_workflow", "execute_step", "migrate_declared_execution_mode", "write_file", "patch_file", "update_scripted_step", "update_step_config", "builder_chat", "builder_status", "builder_reply_input", "builder_cancel"} {
+		// Tokens never author: file writes, plan mutations, and Builder
+		// execution stay out of the catalog alongside internal tools.
+		for _, name := range []string{"migrate_declared_execution_mode", "write_file", "patch_file", "update_scripted_step", "update_step_config", "builder_chat", "builder_status", "builder_reply_input", "builder_cancel"} {
 			if names[name] {
 				t.Fatalf("write tool exposed: %s", name)
+			}
+		}
+		// The run surface proxies run-mode tools, including execution.
+		for _, name := range []string{"run_full_workflow", "execute_step", "run_status", "trigger_schedule"} {
+			if !names[name] {
+				t.Fatalf("run tool missing: %s", name)
 			}
 		}
 	}
@@ -193,26 +215,69 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 		t.Fatal(err)
 	}
 	admitted := agentworksproduct.RunExternalTools()
-	if len(catalog) != len(admitted) {
-		t.Fatalf("catalog has %d tools, product.yaml admits %d", len(catalog), len(admitted))
+	run := agentworksproduct.RunTools()
+	wantCatalog := append([]string(nil), admitted...)
+	for _, name := range run {
+		seen := false
+		for _, prior := range wantCatalog {
+			if prior == name {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			wantCatalog = append(wantCatalog, name)
+		}
+	}
+	if len(catalog) != len(wantCatalog) {
+		t.Fatalf("catalog has %d tools, product.yaml admits %d", len(catalog), len(wantCatalog))
 	}
 	for i, tool := range catalog {
-		if tool.Name != admitted[i] {
-			t.Fatalf("catalog[%d] = %s, product.yaml admits %s", i, tool.Name, admitted[i])
+		if tool.Name != wantCatalog[i] {
+			t.Fatalf("catalog[%d] = %s, product.yaml admits %s", i, tool.Name, wantCatalog[i])
 		}
 		if tool.mutates {
-			t.Fatalf("admitted tool %s mutates: v1 is read-only", tool.Name)
+			t.Fatalf("admitted tool %s mutates: tokens never author", tool.Name)
 		}
 	}
-	// Golden pin: changing the exposed surface means editing product.yaml and
-	// this list together, deliberately.
-	want := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs"}
-	if len(admitted) != len(want) {
-		t.Fatalf("admitted %d tools, want %d", len(admitted), len(want))
+	// Only the run surface executes: the proxied run.tools names plus the
+	// native trigger. Everything else is a scoped read.
+	byName := map[string]externalTool{}
+	for _, tool := range catalog {
+		byName[tool.Name] = tool
 	}
-	for i, name := range want {
+	for _, name := range run {
+		if name == "get_file_link" || name == "list_executions" || name == "list_schedules" || name == "get_schedule_runs" {
+			if byName[name].executes {
+				t.Fatalf("native read %s is marked executes", name)
+			}
+			continue
+		}
+		if !byName[name].executes {
+			t.Fatalf("run tool %s is not marked executes", name)
+		}
+	}
+	if byName["run_status"].executes {
+		t.Fatal("run_status is marked executes")
+	}
+	// Golden pin: changing the exposed surface means editing product.yaml and
+	// these lists together, deliberately.
+	wantExternal := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs", "run_status"}
+	if len(admitted) != len(wantExternal) {
+		t.Fatalf("admitted %d tools, want %d", len(admitted), len(wantExternal))
+	}
+	for i, name := range wantExternal {
 		if admitted[i] != name {
 			t.Fatalf("admitted[%d] = %s, want %s", i, admitted[i], name)
+		}
+	}
+	wantRun := []string{"agent_browser", "execute_step", "get_contract_upgrades", "get_cost_summary", "get_file_link", "get_llm_config", "get_report_link", "get_schedule_runs", "get_slack_bot_settings", "slack", "get_step_prompts", "submit_workflow_suggestion", "get_ui_state", "get_workflow_command_guidance", "get_workflow_config", "list_executions", "list_schedules", "list_secrets", "list_skills", "list_ui_capabilities", "perform_ui_action", "query_step", "request_workflow_folder_access", "run_full_workflow", "run_in_background", "search_skills", "send_step_message", "stop_all_executions", "stop_step", "test_slack_bot_connection", "trigger_schedule"}
+	if len(run) != len(wantRun) {
+		t.Fatalf("run.tools has %d tools, want %d", len(run), len(wantRun))
+	}
+	for i, name := range wantRun {
+		if run[i] != name {
+			t.Fatalf("run.tools[%d] = %s, want %s", i, run[i], name)
 		}
 	}
 }

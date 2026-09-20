@@ -46,14 +46,27 @@ func validateChatDefinitions(fsys fs.FS, m ProductManifest) error {
 }
 
 // RunExternalTools returns the external CLI/MCP tool admission list declared
-// by the run chat mode. This is the single source of truth for the external
-// API surface: the server exposes exactly these tools.
+// by the run chat mode. These are the external-native tools: scoped readers
+// plus JSON-direct run operations, each with a server implementation.
 func RunExternalTools() []string {
 	def, ok := mustAgentWorksManifest().Chat["run"]
 	if !ok {
 		panic(fmt.Errorf("unknown AgentWorks chat mode %q", "run"))
 	}
 	return append([]string(nil), def.ExternalTools...)
+}
+
+// RunTools returns the run-mode chat tool list. This is the single source of
+// truth for the run surface: the server proxies every name here to a pinned
+// Run-mode session, so a tool added to run mode is automatically callable
+// externally under the runs:execute scope. Names with an external-native
+// implementation keep that implementation (see external_tools.go).
+func RunTools() []string {
+	def, ok := mustAgentWorksManifest().Chat["run"]
+	if !ok {
+		panic(fmt.Errorf("unknown AgentWorks chat mode %q", "run"))
+	}
+	return append([]string(nil), def.Tools...)
 }
 
 // ChatPromptTemplate returns trusted template source; callers inject runtime

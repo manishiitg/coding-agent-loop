@@ -28,6 +28,7 @@ type externalTool struct {
 	Description string         `json:"description"`
 	InputSchema map[string]any `json:"inputSchema"`
 	mutates     bool
+	executes    bool
 	plan        bool
 	validator   *jsonschema.Schema
 }
@@ -79,13 +80,14 @@ func externalTools() ([]externalTool, error) {
 		}
 		add("get_file_link", "Get an existing file or folder’s authenticated browser preview URL. Files also include an authenticated download URL, size and content type. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file or folder path.")}, "path")
 		add("read_file", "Read a workflow file up to 2 MiB. Binary content is base64.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
-		// v1 is read-only, like the Slack and WhatsApp run-mode channels:
+		// Tokens read and run, like the Slack and WhatsApp run-mode channels:
 		// file writes, plan mutations, and Builder execution are not exposed.
 		// The dispatch paths stay for a future write-enabled API version.
 		// Catalog membership is admitted by product.yaml (chat.run
-		// external_tools); these definitions are implementations only.
+		// external_tools plus the run.tools proxy surface); these definitions
+		// are implementations only.
 		add("get_plan", "Read the plan and configuration.", false, true, nil)
-		add("get_agent_context", "Describe this read-only connection for an external agent: token capabilities, available tools, and guidance version. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
+		add("get_agent_context", "Describe this connection for an external agent: token capabilities, available tools, and guidance version. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
 		add("list_guidance_topics", "List the server-owned external guidance topics and their descriptions.", false, false, nil)
 		add("get_guidance_topic", "Read one external guidance topic rendered from the canonical builder reference. Load only topics relevant to the task.", false, false, map[string]any{"topic": externalString("Topic name from list_guidance_topics.")}, "topic")
 		add("list_workflow_knowledge", "List a workflow's learnings, knowledgebase notes, workspace skills, and skill wiring (workflow-selected skills plus per-step enabled_skills).", false, true, nil)
@@ -96,10 +98,38 @@ func externalTools() ([]externalTool, error) {
 			p["run_folder"] = externalString("Run directory relative to runs/, e.g. iteration-0/group-name.")
 			add(name, "Inspect a saved run's files or log files; use read_file to retrieve selected content.", false, true, p, "run_folder")
 		}
-		// Membership comes from product.yaml's run-mode external_tools — the
-		// single source of truth for this surface. Go defines implementations
-		// (schemas, dispatch); yaml admits them. Both mismatch directions fail
-		// here so drift between the two can never ship silently.
+		// JSON-direct run operations. The four run.tools names keep these
+		// native implementations instead of the generic proxy below;
+		// run_status has no chat equivalent and is admitted by external_tools.
+		addRun := func(name, description string, executes bool, props map[string]any, required ...string) {
+			if props == nil {
+				props = map[string]any{}
+			}
+			props["workflow_id"] = externalString("Workflow ID returned by list_workflows. Never a filesystem path.")
+			required = append(required, "workflow_id")
+			req := make([]any, len(required))
+			for i, r := range required {
+				req[i] = r
+			}
+			defined = append(defined, externalTool{Name: name, Description: description, executes: executes, InputSchema: map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false}})
+		}
+		p = page()
+		p["session_id"] = externalString("Run session ID returned by a previous run call.")
+		p["since_index"] = externalInteger(-1, 1000000000)
+		addRun("run_status", "Poll a run session started externally: session status, event page, pending inputs, and its active executions.", false, p, "session_id")
+		addRun("list_executions", "List the workflow's active executions: execution and session IDs, step, status, and run folder.", false, nil)
+		addRun("list_schedules", "List the workflow's schedules: IDs, type, cron or calendar shape, timezone, enabled state, and groups.", false, nil)
+		p = page()
+		p["schedule_id"] = externalString("Schedule ID from list_schedules.")
+		addRun("get_schedule_runs", "List a schedule's run history: status, duration, run folder, and errors.", false, p, "schedule_id")
+		addRun("trigger_schedule", "Trigger a schedule to run immediately, outside its normal timing. Requires the runs:execute scope.", true, map[string]any{"schedule_id": externalString("Schedule ID from list_schedules.")}, "schedule_id")
+		// Membership comes from product.yaml's run mode: external_tools
+		// first, in yaml order, then every run.tools name (the single
+		// source of truth for the run surface) that has no native
+		// implementation above, proxied to a pinned Run-mode session in
+		// yaml order. Go defines implementations (schemas, dispatch);
+		// yaml admits them. Both mismatch directions fail here so drift
+		// between the two can never ship silently.
 		byName := make(map[string]externalTool, len(defined))
 		for _, tool := range defined {
 			byName[tool.Name] = tool
@@ -115,9 +145,23 @@ func externalTools() ([]externalTool, error) {
 			seen[name] = true
 			externalCatalog = append(externalCatalog, tool)
 		}
+		runNames := agentworksproduct.RunTools()
+		runSet := make(map[string]bool, len(runNames))
+		for _, name := range runNames {
+			runSet[name] = true
+			if seen[name] {
+				continue
+			}
+			seen[name] = true
+			if native, ok := byName[name]; ok {
+				externalCatalog = append(externalCatalog, native)
+				continue
+			}
+			externalCatalog = append(externalCatalog, externalRunProxyTool(name))
+		}
 		for _, tool := range defined {
-			if !seen[tool.Name] {
-				externalCatalogErr = fmt.Errorf("external tool %q is implemented but not admitted by product.yaml", tool.Name)
+			if !seen[tool.Name] && !runSet[tool.Name] {
+				externalCatalogErr = fmt.Errorf("external tool %q is implemented but admitted by neither product.yaml list", tool.Name)
 				return
 			}
 		}
@@ -295,6 +339,18 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	}
 	if tool.Name == "get_workflow" {
 		externalJSON(w, selected)
+		return
+	}
+	// Run operations dispatch before the workflow lock: proxy turns forward
+	// to the asynchronous query runtime (which must never run under this
+	// lock), and the status and schedule readers need no lock.
+	switch tool.Name {
+	case "run_status", "list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule":
+		api.externalRunCall(w, r, tool.Name, args, *selected)
+		return
+	}
+	if tool.executes {
+		api.externalRunProxy(w, r, tool.Name, args, *selected)
 		return
 	}
 	lock := externalWorkflowLock(selected.WorkspacePath)

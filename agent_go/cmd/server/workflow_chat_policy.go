@@ -16,6 +16,16 @@ type workflowChatPolicy struct {
 	Capabilities map[string]bool
 }
 
+// readOnlyForRequest decides whether a turn runs with read-only treatment.
+// A read-only workflow identity is always read-only; PinRunMode additionally
+// lets a caller voluntarily take read-only treatment for one turn. The pin
+// is downgrade-only — it keeps the Run-mode tool surface while withholding
+// authoring, and grants nothing — so external execution-only callers use it
+// to run without authoring, whatever their workflow access.
+func readOnlyForRequest(access WorkflowAccessLevel, req QueryRequest) bool {
+	return access == WorkflowAccessRead || req.PinRunMode
+}
+
 // Resolve origin from server-maintained session provenance as well as the
 // request. A missing field on a resumed turn must never promote a schedule/child.
 func resolveWorkflowChatPolicy(mode, session string, req QueryRequest, active *ActiveSessionInfo, readOnly bool) workflowChatPolicy {

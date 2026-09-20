@@ -23,7 +23,7 @@ import (
 const Prefix = "aw_pat_"
 
 var ErrInvalid = errors.New("access token is invalid, expired, or revoked")
-var Scopes = []string{"workflows:read", "files:read", "files:write", "plan:write", "builder:chat"}
+var Scopes = []string{"workflows:read", "files:read", "runs:execute", "files:write", "plan:write", "builder:chat"}
 
 type Token struct {
 	ID           string     `json:"id"`
@@ -71,11 +71,12 @@ func Validate(t Token, now time.Time) error {
 		if !slices.Contains(Scopes, s) || seen[s] {
 			return errors.New("invalid or duplicate permission")
 		}
-		// v1 is read-only, like the Slack and WhatsApp run-mode channels:
-		// write permissions are not issued. Existing stored tokens are
-		// unaffected; the external catalog exposes no mutations for them.
+		// Tokens read and run, like the Slack and WhatsApp run-mode
+		// channels: authoring permissions are not issued. Existing stored
+		// tokens are unaffected; the external catalog exposes no authoring
+		// mutations for them.
 		if s == "files:write" || s == "plan:write" || s == "builder:chat" {
-			return errors.New("v1 tokens are read-only: files:write, plan:write, and builder:chat are not issued")
+			return errors.New("tokens cannot author: files:write, plan:write, and builder:chat are not issued")
 		}
 		seen[s] = true
 	}

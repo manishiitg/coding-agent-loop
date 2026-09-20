@@ -62,6 +62,56 @@ func TestFinalResponseForExecutionUsesTheExactTurn(t *testing.T) {
 	}
 }
 
+func TestFinalResponseForExecutionFallsBackToGenerationEnd(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	api := &StreamingAPI{eventStore: store}
+	generated := pkgevents.NewLLMGenerationEndEvent(1, "the summary", 0, time.Second, pkgevents.UsageMetrics{})
+	store.AddEvent("crew-session", internalevents.Event{
+		ID: "turn-9", Type: "llm_generation_end", SessionID: "crew-session", ExecutionID: "turn-9",
+		Data: &pkgevents.AgentEvent{Type: pkgevents.EventType("llm_generation_end"), Data: generated},
+	})
+	if got := api.finalResponseForExecution("crew-session", "turn-9"); got != "the summary" {
+		t.Fatalf("final response = %q, want generation content", got)
+	}
+	if got := api.finalResponseForExecution("crew-session", "other-turn"); got != "" {
+		t.Fatalf("final response = %q, want empty for another execution", got)
+	}
+}
+
+func TestFinalResponseForExecutionPrefersUnifiedCompletion(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	api := &StreamingAPI{eventStore: store}
+	generated := pkgevents.NewLLMGenerationEndEvent(1, "older summary", 0, time.Second, pkgevents.UsageMetrics{})
+	store.AddEvent("s", internalevents.Event{
+		ID: "turn-1", Type: "llm_generation_end", SessionID: "s", ExecutionID: "turn-1",
+		Data: &pkgevents.AgentEvent{Type: pkgevents.EventType("llm_generation_end"), Data: generated},
+	})
+	completion := pkgevents.NewUnifiedCompletionEvent("coding_agent", "retained", "", "exact answer", "completed", time.Second, 1)
+	store.AddEvent("s", internalevents.Event{
+		ID: "turn-1", Type: "unified_completion", SessionID: "s", ExecutionID: "turn-1",
+		Data: &pkgevents.AgentEvent{Type: pkgevents.EventType("unified_completion"), Data: completion},
+	})
+	if got := api.finalResponseForExecution("s", "turn-1"); got != "exact answer" {
+		t.Fatalf("final response = %q, want unified completion", got)
+	}
+}
+
+func TestEndEventTextReadsGenericEndPayload(t *testing.T) {
+	// Persisted/reloaded payloads lose their Go type and arrive as a map.
+	if got := endEventText(map[string]interface{}{"content": "reloaded summary"}); got != "reloaded summary" {
+		t.Fatalf("generic content = %q", got)
+	}
+	if got := endEventText(map[string]interface{}{"final_result": "reloaded answer"}); got != "reloaded answer" {
+		t.Fatalf("generic final_result = %q", got)
+	}
+	if got := endEventText(map[string]interface{}{"final_result": "exact", "content": "other"}); got != "exact" {
+		t.Fatalf("generic precedence = %q, want final_result", got)
+	}
+	if got := endEventText(map[string]interface{}{"turns": 1}); got != "" {
+		t.Fatalf("textless generic = %q, want empty", got)
+	}
+}
+
 func TestInternalBotRequestContextUsesThePairedAccountsLiveRole(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[

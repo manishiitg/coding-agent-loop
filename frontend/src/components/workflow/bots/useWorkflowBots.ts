@@ -204,6 +204,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } catch { /* ignore */ }
   }, [])
 
+  const [projectSlackSelectionId, setProjectSlackSelectionId] = useState<string>('')
   const loadSlack = useCallback(async () => {
     try {
       setSlackLoading(true)
@@ -211,12 +212,20 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       const data = await agentApi.getSlackFeedbackConfig()
       setSlackConfig(data)
       setSlackOriginal(data)
+      if (target && workspacePath) {
+        try {
+          const selection = await agentApi.getProjectSlackSelection(target.profileId, workspacePath)
+          setProjectSlackSelectionId(selection.slack_connection_id || '')
+        } catch (err) {
+          setProjectSlackSelectionId('')
+        }
+      }
     } catch (err) {
       setSlackError(err instanceof Error ? err.message : 'Failed to load Slack configuration')
     } finally {
       setSlackLoading(false)
     }
-  }, [])
+  }, [target, workspacePath])
 
   const loadWaStatus = useCallback(async () => {
     try {
@@ -491,11 +500,12 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const slackSelection = useMemo(
     () => resolveWorkflowSlackConnection(
       slackOriginal.connections,
-      target ? null : workspacePath,
-      target ? undefined : workflow?.manifest.capabilities.slack_connection_id,
+      workspacePath,
+      target ? projectSlackSelectionId : workflow?.manifest.capabilities.slack_connection_id,
       slackOriginal.default_connection_id,
+      target ? target.profileId : null,
     ),
-    [slackOriginal.connections, slackOriginal.default_connection_id, target, workspacePath, workflow?.manifest.capabilities.slack_connection_id],
+    [slackOriginal.connections, slackOriginal.default_connection_id, target, workspacePath, projectSlackSelectionId, workflow?.manifest.capabilities.slack_connection_id],
   )
   const slackOwnConnId = slackSelection.own?.id || null
   useEffect(() => {
@@ -882,9 +892,10 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } finally { setSlackTesting(false) }
   }
 
-  // ── This workflow's Slack app: actions ──────────────────────────────────
+  // ── This workflow/project's Slack app: actions ──────────────────────────
   const saveWorkflowSlackConnection = async (): Promise<string | null> => {
-    if (!workspacePath || target) return null
+    if (!workspacePath) return null
+    const scopeNoun = target ? 'Project' : 'Workflow'
     try {
       setSlackConnSaving(true)
       setSlackError(null)
@@ -900,47 +911,58 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         })
       } else {
         conn = await agentApi.createSlackConnection({
-          display_name: slackConnName.trim() || (workflow?.manifest.label || 'Workflow Slack'),
+          display_name: slackConnName.trim() || (target?.label || workflow?.manifest.label || 'Workflow Slack'),
           bot_token: slackConnBot,
           app_token: slackConnApp,
           enabled: slackConnEnabled,
           workspace_path: workspacePath,
+          ...(target ? { profile_id: target.profileId } : {}),
         })
       }
-      // A fresh app becomes this workflow's selection unless the workflow
-      // already selects a live connection.
-      const capabilities = workflow?.manifest.capabilities
-      if (capabilities && (capabilities.slack_connection_id || '') !== conn.id && !slackSelection.effective) {
-        await updateWorkflow(workspacePath, {
-          capabilities: { ...capabilities, slack_connection_id: conn.id },
-        })
+      // A fresh app becomes this workflow/project's selection unless a live
+      // connection is already selected.
+      if (target) {
+        if (projectSlackSelectionId !== conn.id && !slackSelection.effective) {
+          await agentApi.setProjectSlackSelection(target.profileId, workspacePath, conn.id)
+        }
+      } else {
+        const capabilities = workflow?.manifest.capabilities
+        if (capabilities && (capabilities.slack_connection_id || '') !== conn.id && !slackSelection.effective) {
+          await updateWorkflow(workspacePath, {
+            capabilities: { ...capabilities, slack_connection_id: conn.id },
+          })
+        }
       }
       setSlackConnTestResult(null)
-      setSlackSuccess('Workflow Slack app saved.')
+      setSlackSuccess(`${scopeNoun} Slack app saved.`)
       await loadSlack()
       setSlackConnSyncKey(key => key + 1)
       setTimeout(() => setSlackSuccess(null), 3000)
       return conn.id
     } catch (err) {
-      setSlackError(err instanceof Error ? err.message : 'Failed to save the workflow Slack app')
+      setSlackError(err instanceof Error ? err.message : `Failed to save the ${scopeNoun.toLowerCase()} Slack app`)
       return null
     } finally { setSlackConnSaving(false) }
   }
 
   const selectWorkflowSlackConnection = async (connectionId: string | null) => {
-    if (!workspacePath || target) return false
-    const capabilities = workflow?.manifest.capabilities
-    if (!capabilities) return false
+    if (!workspacePath) return false
     try {
       setSlackConnSaving(true)
       setSlackError(null)
-      await updateWorkflow(workspacePath, {
-        capabilities: { ...capabilities, slack_connection_id: connectionId || '' },
-      })
+      if (target) {
+        await agentApi.setProjectSlackSelection(target.profileId, workspacePath, connectionId || '')
+      } else {
+        const capabilities = workflow?.manifest.capabilities
+        if (!capabilities) return false
+        await updateWorkflow(workspacePath, {
+          capabilities: { ...capabilities, slack_connection_id: connectionId || '' },
+        })
+      }
       await loadSlack()
       return true
     } catch (err) {
-      setSlackError(err instanceof Error ? err.message : 'Failed to switch the workflow Slack app')
+      setSlackError(err instanceof Error ? err.message : `Failed to switch the ${target ? 'project' : 'workflow'} Slack app`)
       return false
     } finally { setSlackConnSaving(false) }
   }
@@ -964,7 +986,8 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 
   const removeWorkflowSlackConnection = async () => {
     const conn = slackSelection.own
-    if (!conn || !workspacePath || target) return false
+    if (!conn || !workspacePath) return false
+    const scopeNoun = target ? 'project' : 'workflow'
     if (!slackConnConfirmDelete) {
       setSlackConnConfirmDelete(true)
       window.setTimeout(() => setSlackConnConfirmDelete(false), 5000)
@@ -973,23 +996,28 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     try {
       setSlackConnSaving(true)
       setSlackError(null)
-      const capabilities = workflow?.manifest.capabilities
-      // A selected app cannot be deleted; move the workflow back to the
-      // platform default first.
-      if (capabilities && (capabilities.slack_connection_id || '') === conn.id) {
-        await updateWorkflow(workspacePath, {
-          capabilities: { ...capabilities, slack_connection_id: '' },
-        })
+      // A selected app cannot be deleted; move back to the platform default first.
+      if (target) {
+        if (projectSlackSelectionId === conn.id) {
+          await agentApi.setProjectSlackSelection(target.profileId, workspacePath, '')
+        }
+      } else {
+        const capabilities = workflow?.manifest.capabilities
+        if (capabilities && (capabilities.slack_connection_id || '') === conn.id) {
+          await updateWorkflow(workspacePath, {
+            capabilities: { ...capabilities, slack_connection_id: '' },
+          })
+        }
       }
       await agentApi.deleteSlackConnection(conn.id)
       setSlackConnConfirmDelete(false)
-      setSlackSuccess('Workflow Slack app removed; the workflow now uses the platform default.')
+      setSlackSuccess(`${target ? 'Project' : 'Workflow'} Slack app removed; the ${scopeNoun} now uses the platform default.`)
       await loadSlack()
       setSlackConnSyncKey(key => key + 1)
       setTimeout(() => setSlackSuccess(null), 3000)
       return true
     } catch (err) {
-      setSlackError(err instanceof Error ? err.message : 'Failed to remove the workflow Slack app')
+      setSlackError(err instanceof Error ? err.message : `Failed to remove the ${scopeNoun} Slack app`)
       return false
     } finally { setSlackConnSaving(false) }
   }

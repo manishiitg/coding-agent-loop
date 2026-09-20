@@ -44,7 +44,7 @@ describe('transcript live-input delivery ticks', () => {
       latency_ms: 1225,
     })])
     const tick = host.querySelector('[data-testid="delivery-tick"]')
-    expect(tick?.textContent).toBe('✓✓')
+    expect(tick?.querySelector('svg.lucide-check-check')).not.toBeNull()
     expect(tick?.getAttribute('data-state')).toBe('confirmed')
   })
 
@@ -56,7 +56,7 @@ describe('transcript live-input delivery ticks', () => {
       message_id: 'steer-message-1',
       confirmation: 'fast',
     })])
-    expect(host.querySelector('[data-testid="delivery-tick"]')?.textContent).toBe('✓')
+    expect(host.querySelector('[data-testid="delivery-tick"] svg.lucide-check')).not.toBeNull()
   })
 
   it('renders no tick on a plain query row', async () => {

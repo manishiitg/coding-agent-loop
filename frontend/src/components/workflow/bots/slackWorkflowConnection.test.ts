@@ -39,4 +39,19 @@ describe('Workflow Slack connection resolution', () => {
     expect(resolved.own).toBeNull()
     expect(resolved.effective).toBeNull()
   })
+
+  it('matches a project connection only with its profile', () => {
+    const projectPath = '_users/alice/Chats/Work/projects/alpha'
+    const projectConns = [
+      entry({ id: 'slack_001', display_name: 'Platform', is_default: true }),
+      entry({ id: 'slack_ppp', display_name: 'Crew', workspace_path: projectPath, profile_id: 'work' }),
+    ]
+    const resolved = resolveWorkflowSlackConnection(projectConns, projectPath, undefined, 'slack_001', 'work')
+    expect(resolved.own?.id).toBe('slack_ppp')
+    expect(resolved.effective?.id).toBe('slack_001')
+    const otherProfile = resolveWorkflowSlackConnection(projectConns, projectPath, undefined, 'slack_001', 'video-studio')
+    expect(otherProfile.own).toBeNull()
+    const workflowView = resolveWorkflowSlackConnection(projectConns, projectPath, undefined, 'slack_001')
+    expect(workflowView.own).toBeNull()
+  })
 })

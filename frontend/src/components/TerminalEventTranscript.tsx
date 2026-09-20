@@ -1,7 +1,7 @@
 import React, { memo, createContext, useContext, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Virtuoso, type VirtuosoHandle } from 'react-virtuoso'
 import { prependedIndex, transcriptReadingState, useTranscriptScroll, type TranscriptReadingState } from './useTranscriptScroll'
-import { CheckCircle2, ChevronDown, ChevronRight, CircleDashed, XCircle } from 'lucide-react'
+import { Bot, CheckCircle2, ChevronDown, ChevronRight, CircleDashed, XCircle } from 'lucide-react'
 import { EventDispatcher } from './events/EventDispatcher'
 import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
 import { normalizeProductChatFailure } from '../platform/chat/productChatFailure'
@@ -284,10 +284,14 @@ const AssistantTurnHeader: React.FC<{ event: PollingEvent; timestamp: string; la
     ? formatDurationCompact(fields.duration)
     : ''
   const metadata = [duration, timestamp].filter(Boolean).join(' · ')
+  // The turn is identified by its mark, not an all-caps word: the default
+  // agent gets the Bot glyph alone, while a product override (e.g. Quill's
+  // logo + name) keeps its explicit label beside its mark.
+  const mark = icon ?? <Bot className="h-4 w-4" aria-hidden="true" />
   return (
-    <div data-testid="terminal-clear-assistant-header" className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
-      {icon && <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center [&>img]:h-4 [&>img]:w-4 [&>svg]:h-4 [&>svg]:w-4" aria-hidden="true">{icon}</span>}
-      <span>{label}</span>
+    <div data-testid="terminal-clear-assistant-header" aria-label={label} className="mb-2 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.12em] text-muted-foreground">
+      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center text-muted-foreground [&>img]:h-4 [&>img]:w-4 [&>svg]:h-4 [&>svg]:w-4" aria-hidden="true">{mark}</span>
+      {label !== 'Agent' && <span>{label}</span>}
       {metadata && <>
         <span className="h-1 w-1 rounded-full bg-muted-foreground/60" />
         <span className="normal-case font-medium tracking-normal text-muted-foreground">{metadata}</span>
@@ -317,9 +321,9 @@ function useDisclosure(key: string, initial = false) {
 // messages: tool batches, thoughts, replies, presentation and activity rows.
 type TurnSlot = { agent: boolean; first: boolean; last: boolean; header?: PollingEvent; showTime: boolean }
 
-// A time label only where time passed: the first message, and any message
-// more than this long after the previous labelled one. Back-to-back turns
-// carry no clock.
+// Agent turns share one clock: the first turn, and any turn more than this
+// long after the previous labelled one. User rows always carry their own
+// time next to the delivery receipt.
 const TIME_LABEL_GAP_MS = 5 * 60 * 1000
 
 function itemTime(item: TranscriptRenderItem | undefined): number {
@@ -348,7 +352,10 @@ function buildTurnSlots(data: TranscriptRenderItem[]): TurnSlot[] {
   data.forEach((item, index) => {
     if (item.kind === 'live' || isUserItem(item)) {
       inTurn = false
-      slots.push({ agent: false, first: false, last: false, showTime: item.kind !== 'live' && decideTime(item) })
+      // User rows always show their time; still advance the label clock so
+      // agent-turn grouping behaves exactly as before.
+      if (item.kind !== 'live') decideTime(item)
+      slots.push({ agent: false, first: false, last: false, showTime: item.kind !== 'live' })
       return
     }
     const first = !inTurn
@@ -731,7 +738,7 @@ interface TerminalEventTranscriptProps {
   productRows?: { kinds: string[]; render: (interaction: ProductInteraction, event: PollingEvent) => React.ReactNode }
   /** What the agent is called in turn headers ("Agent" by default; a product passes its own name, e.g. "Quill"). */
   assistantLabel?: string
-  /** A small mark drawn before the label in turn headers (a product's logo); none by default. */
+  /** A small mark identifying the turn (a product's logo); the default agent Bot glyph when unset. */
   assistantIcon?: React.ReactNode
 }
 

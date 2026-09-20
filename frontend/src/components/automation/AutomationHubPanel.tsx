@@ -8,6 +8,7 @@ import { ScheduleStatusPills, type ScheduleStatusSnapshot } from '../scheduler/s
 import { AskAIButton } from '../workflow/AskAIButton'
 import { getWorkspaceAskAIMessage } from '../workflow/workspaceAskAI'
 import { WorkspaceViewHeader } from '../workflow/WorkspaceViewHeader'
+import { WorkspaceViewActions } from '../workflow/WorkspaceViewActions'
 import { WorkspaceViewIconButton } from '../workflow/WorkspaceViewIconButton'
 
 const WorkflowScheduleRunsPanel = lazy(() => import('../scheduler/WorkflowScheduleRunsPanel'))
@@ -100,6 +101,23 @@ export function AutomationHubPanel({
   }, [availableSections, workspaceViewTarget])
 
   const askMessage = askAIMessages?.[section] ?? (isWorkflow ? WORKFLOW_SECTION_MESSAGES[section] : undefined)
+  // Per-tab refresh, computed from the section so the header renders the
+  // standard pair (Ask AI left, refresh right). The bots tab has no
+  // refreshable list, so it keeps Ask AI alone.
+  const refreshAction = section === 'schedules'
+    ? { label: 'Refresh schedules', run: () => setSchedulesRefreshToken(token => token + 1), spinning: schedulesStatus?.isLoading }
+    : section === 'triggers'
+      ? { label: 'Refresh triggers', run: () => setTriggersRefreshToken(token => token + 1), spinning: false }
+      : section === 'chats'
+        ? { label: 'Refresh chats', run: () => setChatsRefreshToken(token => token + 1), spinning: false }
+        : undefined
+  const askAction = askMessage ? <AskAIButton workspacePath={workspacePath} message={askMessage} onAsk={onAskAI} iconOnly /> : undefined
+  const refreshButton = refreshAction ? <WorkspaceViewIconButton label={refreshAction.label} onClick={refreshAction.run} spinning={refreshAction.spinning} /> : undefined
+  const headerActions = askMessage && refreshAction ? (
+    <WorkspaceViewActions workspacePath={workspacePath} message={askMessage} onAsk={onAskAI} onRefresh={refreshAction.run} refreshLabel={refreshAction.label} refreshing={refreshAction.spinning ?? false} />
+  ) : (askAction || refreshButton) ? (
+    <>{askAction}{refreshButton}</>
+  ) : undefined
 
   return (
     <div
@@ -110,12 +128,7 @@ export function AutomationHubPanel({
         icon={Zap}
         title="Automation"
         subtitle="Chat history and the channels that can start work."
-        actions={askMessage ? <AskAIButton workspacePath={workspacePath} message={askMessage} onAsk={onAskAI} iconOnly /> : undefined}
-        tabActions={{
-          schedules: <WorkspaceViewIconButton label="Refresh schedules" onClick={() => setSchedulesRefreshToken(token => token + 1)} spinning={schedulesStatus?.isLoading} />,
-          triggers: <WorkspaceViewIconButton label="Refresh triggers" onClick={() => setTriggersRefreshToken(token => token + 1)} />,
-          chats: <WorkspaceViewIconButton label="Refresh chats" onClick={() => setChatsRefreshToken(token => token + 1)} />,
-        }}
+        actions={headerActions}
         context={
           section === 'schedules' && schedulesStatus ? <ScheduleStatusPills status={schedulesStatus} />
           : section === 'triggers' && triggersCounts ? (

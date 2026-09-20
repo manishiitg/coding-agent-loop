@@ -4,6 +4,7 @@ import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, Users } from 'lucide-re
 import type { CrewStepNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import { isCrewStep } from '../../../utils/stepConfigMatching'
+import { useCrewAttachmentAlias, useCrewTrigger } from '../canvas/useCrewStepLookups'
 
 interface CrewNodeProps {
   data: CrewStepNodeData
@@ -43,6 +44,11 @@ export const CrewNode = memo(({ data, selected }: CrewNodeProps) => {
   const triggerId = crew?.trigger_id || (typeof data.trigger_id === 'string' ? data.trigger_id : '')
   const rawOutput = crew?.context_output
   const outputFile = Array.isArray(rawOutput) ? rawOutput[0] : rawOutput || 'response.md'
+  const profileId = crew?.crew_profile_id || (typeof data.crew_profile_id === 'string' ? data.crew_profile_id : '') || 'work'
+  const trigger = useCrewTrigger(profileId, projectId, triggerId)
+  const crewAlias = useCrewAttachmentAlias(typeof data.workspacePath === 'string' ? data.workspacePath : null, projectId)
+  const crewLabel = crewAlias ?? projectId
+  const triggerLabel = trigger?.name ?? triggerId
   const statusIcon = statusIcons[status]
 
   return (
@@ -102,11 +108,11 @@ export const CrewNode = memo(({ data, selected }: CrewNodeProps) => {
         <dl className="space-y-1 text-xs">
           <div className="flex items-baseline gap-2 min-w-0">
             <dt className="shrink-0 text-muted-foreground">Crew</dt>
-            <dd className="truncate font-mono text-foreground/90" title={projectId}>{projectId || '—'}</dd>
+            <dd className="truncate font-mono text-foreground/90" title={projectId}>{crewLabel || '—'}</dd>
           </div>
           <div className="flex items-baseline gap-2 min-w-0">
             <dt className="shrink-0 text-muted-foreground">Trigger</dt>
-            <dd className="truncate font-mono text-foreground/90" title={triggerId}>{triggerId || '—'}</dd>
+            <dd className="truncate font-mono text-foreground/90" title={triggerId}>{triggerLabel || '—'}</dd>
           </div>
           <div className="flex items-baseline gap-2 min-w-0">
             <dt className="shrink-0 text-muted-foreground">Output</dt>

@@ -57,6 +57,7 @@ import type { VariablesManifest } from '../../../services/api-types'
 import { buildGroupFolderPath } from '../../../utils/workflowUtils'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { planStepTypeLabel, scriptedStepFilePath } from './scriptedStepPresentation'
+import { readSavedViewport, viewportStorageKey, writeSavedViewport } from './viewportPersistence'
 
 // Duration to show highlights before clearing (in ms)
 const HIGHLIGHT_DURATION = 4000
@@ -1117,9 +1118,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // Generate localStorage key for viewport state (workspace-specific)
   const getViewportStorageKey = React.useCallback(() => {
-    return workspacePath
-      ? `workflow-viewport-${workspacePath}`
-      : 'workflow-viewport-default'
+    return viewportStorageKey(workspacePath)
   }, [workspacePath])
 
   // PERF: Debounced viewport change handler — saves to localStorage at most once per 500ms
@@ -1129,13 +1128,26 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (hasInitializedView.current) {
       if (viewportSaveTimerRef.current) clearTimeout(viewportSaveTimerRef.current)
       viewportSaveTimerRef.current = setTimeout(() => {
-        try {
-          const storageKey = getViewportStorageKey()
-          localStorage.setItem(storageKey, JSON.stringify(viewportStateRef.current))
-        } catch { /* ignore */ }
+        if (viewportStateRef.current) {
+          writeSavedViewport(getViewportStorageKey(), viewportStateRef.current)
+        }
       }, 500)
     }
   }, [getViewportStorageKey])
+
+  // Flush a pending debounced viewport save on unmount so a refresh right
+  // after panning still keeps the last position.
+  const flushViewportSaveRef = React.useRef(() => {})
+  flushViewportSaveRef.current = () => {
+    if (viewportSaveTimerRef.current) {
+      clearTimeout(viewportSaveTimerRef.current)
+      viewportSaveTimerRef.current = null
+    }
+    if (hasInitializedView.current && viewportStateRef.current) {
+      writeSavedViewport(getViewportStorageKey(), viewportStateRef.current)
+    }
+  }
+  React.useEffect(() => () => flushViewportSaveRef.current(), [])
 
   // Get workflow layout file path
   const getLayoutFilePath = React.useCallback(() => {
@@ -2394,6 +2406,18 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     if (!hasInitializedView.current && !triggers.loading && nodes.length > 0) {
       const fitTimer = window.setTimeout(() => {
         window.requestAnimationFrame(() => {
+          // Restore the saved pan/zoom for this workspace instead of
+          // re-fitting: a refresh should keep the user where they were.
+          // Tablet and embedded views keep their own framing.
+          if (previewDevice !== 'tablet' && !embeddedPlanOnly) {
+            const saved = readSavedViewport(getViewportStorageKey(), FLOW_FIT_MIN_ZOOM, 2)
+            if (saved) {
+              setViewport(saved, { duration: 0 })
+              viewportStateRef.current = saved
+              hasInitializedView.current = true
+              return
+            }
+          }
           if (previewDevice === 'tablet') {
             if (triggers.jobs.length) {
               focusTriggers()
@@ -2428,7 +2452,7 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
       return () => window.clearTimeout(fitTimer)
     }
-  }, [embeddedPlanOnly, nodes, fitView, getViewport, previewDevice, setViewport, toolbarOnly, triggers.loading, triggers.jobs.length, focusTriggers])
+  }, [embeddedPlanOnly, nodes, fitView, getViewport, getViewportStorageKey, previewDevice, setViewport, toolbarOnly, triggers.loading, triggers.jobs.length, focusTriggers])
 
   // Track previous stepStatusMap to detect actual changes
   const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())

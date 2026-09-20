@@ -1192,7 +1192,10 @@ Completion-capture follow-up: the crew ran 4m14s and wrote its alert
 file, but the run recorded success with a null final response, so the
 workflow step crashed saving the empty file. Turn completion already
 funnels through one reader (finalResponseForExecution, serving
-schedules, triggers, and bots), but it only accepted unified_completion
-while the waiter accepts several terminal types. It now falls back to
-the newest llm_generation_end content for the execution — the same
-fallback scheduledTurnProducedResponse uses.
+schedules, triggers, and bots). Live event-store dump showed the real
+defect: the reader matched only the query execution ID, but main-agent
+turns scope their events to main:<session> — the unified_completion
+with the full summary sat in the store unmatched. The reader now
+matches both scopes, newest first, and falls back to the newest
+llm_generation_end content — the same fallback
+scheduledTurnProducedResponse uses.

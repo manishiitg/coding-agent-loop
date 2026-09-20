@@ -78,6 +78,20 @@ func TestFinalResponseForExecutionFallsBackToGenerationEnd(t *testing.T) {
 	}
 }
 
+func TestFinalResponseForExecutionMatchesMainAgentScope(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	api := &StreamingAPI{eventStore: store}
+	// Main-agent turns are scoped main:<session>, not the query ID.
+	generated := pkgevents.NewLLMGenerationEndEvent(1, "scoped summary", 0, time.Second, pkgevents.UsageMetrics{})
+	store.AddEvent("s", internalevents.Event{
+		ID: "e1", Type: "llm_generation_end", SessionID: "s", ExecutionID: "main:s",
+		Data: &pkgevents.AgentEvent{Type: pkgevents.EventType("llm_generation_end"), Data: generated},
+	})
+	if got := api.finalResponseForExecution("s", "query-1"); got != "scoped summary" {
+		t.Fatalf("final response = %q, want main-scope generation content", got)
+	}
+}
+
 func TestFinalResponseForExecutionPrefersUnifiedCompletion(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	api := &StreamingAPI{eventStore: store}

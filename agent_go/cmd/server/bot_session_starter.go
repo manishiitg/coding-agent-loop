@@ -297,10 +297,16 @@ func (api *StreamingAPI) finalResponseForExecution(sessionID, executionID string
 		return ""
 	}
 	fallback := ""
+	// Main-agent turns are scoped to the session ("main:<session>"),
+	// not the query execution ID: match both, newest first.
+	wantMain := "main:" + strings.TrimSpace(sessionID)
+	wantQuery := strings.TrimSpace(executionID)
 	all := api.eventStore.GetAllEventsRaw(sessionID)
 	for i := len(all) - 1; i >= 0; i-- {
 		event := all[i]
-		if strings.TrimSpace(event.ExecutionID) != strings.TrimSpace(executionID) || event.Data == nil {
+		execID := strings.TrimSpace(event.ExecutionID)
+		matched := execID == wantMain || (wantQuery != "" && execID == wantQuery)
+		if !matched || event.Data == nil {
 			continue
 		}
 		switch event.Type {

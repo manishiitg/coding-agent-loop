@@ -133,13 +133,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
   const askAI = (view: InspectorViewId) => (
     <AskAIButton workspacePath={workspacePath} message={getWorkspaceAskAIMessage(view)} iconOnly />
   )
-  const refreshAndAskAI = (view: InspectorViewId) => (
-    <WorkspaceViewActions
-      workspacePath={workspacePath}
-      message={getWorkspaceAskAIMessage(view)}
-      onRefresh={() => useWorkflowStore.getState().refreshWorkspaceView()}
-    />
-  )
 
   // One explicit branch per inspector view. The `default` is a compile-time
   // exhaustiveness check: a view added to the registry without a branch here
@@ -222,7 +215,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
       case 'notify':
         return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAI('notify')} />
       case 'access':
-        return <WorkflowAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('access')} />
+        return <WorkflowAccessView workspacePath={workspacePath} />
       case 'identity':
       case 'playbooks':
       case 'mcp':

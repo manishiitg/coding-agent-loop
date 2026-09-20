@@ -113,25 +113,34 @@ class Probe:
     def test_cli(self):
         app=http(self.server+'/api/auth/login',{'username':'external-owner','password':self.password})
         self.app_token=app['token']
-        issued=http(self.server+'/api/auth/access-tokens',{'name':'Local CLI and MCP','scopes':['workflows:read','files:read','files:write','plan:write','builder:chat'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        issued=http(self.server+'/api/auth/access-tokens',{'name':'Local CLI and MCP','scopes':['workflows:read','files:read'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
         self.pat_id=issued['access_token']['id']
         self.command('login','--token-stdin',input=issued['token']+'\n')
         self.token=json.loads(self.config.read_text())['token']
         assert self.config.stat().st_mode&0o077==0
         self.record('App-generated PAT login and private CLI credentials')
+        # Write scopes are not issued in read-only v1.
+        http(self.server+'/api/auth/access-tokens',{'name':'Writer','scopes':['workflows:read','plan:write'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=400)
+        self.record('write permission issue rejected')
         workflows=self.command('workflows','list');assert len(workflows['workflows'])==1
         self.wid=workflows['workflows'][0]['manifest']['id']
-        tools=self.command('tools','list');assert any(t['name']=='update_message_sequence_step' for t in tools['tools'])
-        self.record('workflow discovery and tool schemas',workflow_id=self.wid,tool_count=len(tools['tools']))
+        tools=self.command('tools','list');names={t['name'] for t in tools['tools']}
+        assert {'get_plan','read_file','get_agent_context'}<=names
+        assert not ({'update_message_sequence_step','write_file','patch_file','builder_chat'}&names)
+        self.record('workflow discovery and read-only tool schemas',workflow_id=self.wid,tool_count=len(tools['tools']))
         args={'workflow_id':self.wid,'path':'docs/readme.md'}
         initial=self.call('read_file',args);assert 'smoke marker' in initial['content']
-        self.call('write_file',{**args,'content':'AgentWorks CLI UPDATED marker.\n','expected_revision':initial['revision']})
-        self.call('write_file',{**args,'content':'stale','expected_revision':initial['revision']},expected=4)
-        found=self.call('search_files',{'workflow_id':self.wid,'path':'docs','query':'UPDATED'});assert found['entries']
-        current=self.call('read_file',args)
-        self.call('patch_file',{**args,'expected_revision':current['revision'],'diff':'--- a/readme.md\n+++ b/readme.md\n@@ -1 +1 @@\n-AgentWorks CLI UPDATED marker.\n+AgentWorks CLI PATCHED marker.\n'})
-        assert 'PATCHED' in self.call('read_file',args)['content']
-        self.record('file read/write/patch/search and stale-write rejection')
+        found=self.call('search_files',{'workflow_id':self.wid,'path':'docs','query':'marker'});assert found['entries']
+        plan_content=self.call('read_file',{'workflow_id':self.wid,'path':'planning/plan.json'});assert plan_content['content']
+        self.record('file read/search over docs and plan files')
+        # Every mutation path is an unknown tool, even for an admin.
+        for name,call_args in [('write_file',{**args,'content':'x','expected_revision':'missing'}),
+            ('patch_file',{**args,'expected_revision':'x','diff':'invalid'}),
+            ('update_message_sequence_step',{'workflow_id':self.wid,'expected_revision':'x','existing_step_id':'y','title':'no','reason':'no'}),
+            ('builder_chat',{'workflow_id':self.wid,'message':'no'})]:
+            denial=self.call(name,call_args,expected=1)
+            assert denial['error']['code']=='unknown_tool',denial
+        self.record('file writes, plan mutations, and Builder chat unexposed')
         link=self.command('files','link','--workflow',self.wid,'--path','db/assets/local smoke.wav')
         assert link['size']>2<<20 and '/file?path=' in link['preview_url'] and 'token=' not in link['preview_url']
         downloaded=self.root/'downloaded.wav'
@@ -146,26 +155,23 @@ class Probe:
         plan=self.call('get_plan',{'workflow_id':self.wid})
         step=next(s for s in plan['plan']['steps'] if s['type']=='message_sequence')
         self.original_title=step['title'];self.step_id=step['id']
-        result=self.call('update_message_sequence_step',{'workflow_id':self.wid,'expected_revision':plan['revision'],'existing_step_id':self.step_id,'title':self.original_title+' [CLI smoke]','reason':'Verify external CLI on isolated testing workflow.'})
-        assert result['revision']!=plan['revision']
-        self.call('update_message_sequence_step',{'workflow_id':self.wid,'expected_revision':plan['revision'],'existing_step_id':self.step_id,'title':'stale','reason':'Confirm stale plan rejection.'},expected=4)
-        self.record('native plan tool updates real testing step and rejects stale plan',step_id=self.step_id)
-        # Generic file writes must not reach protected plans, even for an admin.
-        for name,fields in [('write_file',{'content':'{}'}),('patch_file',{'diff':'invalid'})]:
-            denial=self.call(name,{'workflow_id':self.wid,'path':'planning/plan.json','expected_revision':'missing',**fields},expected=3)
-            assert denial['error']['code']=='protected_path'
-        self.record('generic plan write and patch blocked')
+        context=self.call('get_agent_context',{'workflow_id':self.wid});assert context['role']=='owner'
+        topics=self.call('list_guidance_topics',{});assert topics['topics']
+        knowledge=self.call('list_workflow_knowledge',{'workflow_id':self.wid});assert 'learnings' in knowledge
+        self.record('plan, agent context, guidance topics, and workflow knowledge reads')
         runs=self.call('list_runs',{'workflow_id':self.wid});assert runs['entries']
         logs=self.call('get_logs',{'workflow_id':self.wid,'run_folder':'iteration-smoke/smoke'});assert logs['entries']
         self.record('run and log artifact inspection')
-        # Create a genuine read-only account through the existing admin API.
+        # A genuine read-only account reads through a narrow token; a token
+        # without files:read is denied file content with insufficient_scope.
         reader_pw=secrets.token_urlsafe(20)
         http(self.server+'/api/admin/users',{'username':'external-reader','password':reader_pw,'can_create':False,'can_edit':False,'products':['agentworks']},self.app_token,expected=201)
         reader=http(self.server+'/api/auth/login',{'username':'external-reader','password':reader_pw})
-        denied=http(self.server+'/api/external/v1/call',{'name':'update_message_sequence_step','arguments':{'workflow_id':self.wid,'expected_revision':result['revision'],'existing_step_id':self.step_id,'title':'no','reason':'Permission check.'}},reader['token'],expected=403)
-        assert denied['error']['code']=='forbidden'
+        narrow=http(self.server+'/api/auth/access-tokens',{'name':'Narrow','scopes':['workflows:read'],'all_workflows':True,'expires_in_days':7},reader['token'],expected=201)
+        denied=http(self.server+'/api/external/v1/call',{'name':'read_file','arguments':{'workflow_id':self.wid,'path':'docs/readme.md'}},narrow['token'],expected=403)
+        assert denied['error']['code']=='insufficient_scope'
         http(self.server+'/api/external/v1/tools',expected=401)
-        self.record('real reader credentials denied edits; unauthenticated discovery denied')
+        self.record('narrow token denied file reads; unauthenticated discovery denied')
     def test_mcp(self):
         errlog=(self.root/'logs/mcp-stderr.log').open('w');self.logs.append(errlog)
         proc=subprocess.Popen([str(self.cli),'--config',str(self.config),'mcp','serve'],env=self.env,cwd=self.root/'runtime',stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errlog,text=True,bufsize=1,start_new_session=True)
@@ -196,14 +202,11 @@ class Probe:
         asset=mcp_call('get_file_link',{'workflow_id':self.wid,'path':'db/assets/local smoke.wav'})
         assert asset['size']>2<<20 and '/file?path=' in asset['preview_url'] and 'token=' not in asset['preview_url']
         self.record('MCP asset link returns the browser preview and large-file metadata')
-        current=mcp_call('get_plan',{'workflow_id':self.wid})
-        mcp_call('update_message_sequence_step',{'workflow_id':self.wid,'expected_revision':current['revision'],'existing_step_id':self.step_id,'title':self.original_title,'reason':'Restore isolated testing step title through MCP after CLI smoke test.'})
-        restored=self.call('get_plan',{'workflow_id':self.wid});assert next(s for s in restored['plan']['steps'] if s['id']==self.step_id)['title']==self.original_title
-        self.record('real stdio MCP handshake/discovery/plan mutation, verified by CLI')
-        changelogs=list((self.fixture/'planning/changelog').glob('*.json'));assert changelogs
-        text='\n'.join(p.read_text() for p in changelogs)
-        assert 'Verify external CLI' in text and 'Restore isolated testing' in text
-        self.record('both CLI and MCP changes recorded in native changelog')
+        current=mcp_call('get_plan',{'workflow_id':self.wid});assert current['revision']
+        context=mcp_call('get_agent_context',{'workflow_id':self.wid});assert context['role']=='owner'
+        self.record('real stdio MCP handshake/discovery/plan/context reads')
+        assert not list((self.fixture/'planning/changelog').glob('*.json'))
+        self.record('read-only probe left no changelog entries')
         req=urllib.request.Request(self.server+'/api/auth/access-tokens/'+self.pat_id,method='DELETE',headers={'Authorization':'Bearer '+self.app_token})
         with urllib.request.urlopen(req,timeout=10) as response: assert response.status==204
         denial=self.command('tools','list',expected=3);assert denial['error']['code']=='invalid_token'

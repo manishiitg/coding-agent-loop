@@ -183,3 +183,70 @@ func TestWorkflowFilesConcurrentCASHasOneWinner(t *testing.T) {
 		t.Fatalf("CAS statuses %d %d", a, b)
 	}
 }
+
+func TestWorkflowFilesHidesAgentAndSkillPaths(t *testing.T) {
+	root, call := workflowFilesHarness(t)
+	for _, p := range []string{".claude/skills/demo/SKILL.md", ".agents/skills/demo/SKILL.md", "AGENTS.md", "docs/notes.md"} {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte("x\n"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	status, r, body := call(wf.Request{Operation: "list", Path: "", Depth: 8, Limit: 200})
+	if status != 200 {
+		t.Fatalf("list: %d %s", status, body)
+	}
+	for _, e := range r.Entries {
+		if strings.Contains(e.Path, ".claude") || strings.Contains(e.Path, ".agents") || strings.HasSuffix(e.Path, "AGENTS.md") {
+			t.Fatalf("agent path listed: %s", e.Path)
+		}
+	}
+	found := false
+	for _, e := range r.Entries {
+		if e.Path == "docs/notes.md" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("ordinary file missing from listing")
+	}
+	status, _, body = call(wf.Request{Operation: "search", Path: "", Query: "x", Depth: 8, Limit: 200})
+	if status != 200 {
+		t.Fatalf("search: %d %s", status, body)
+	}
+	for _, e := range r.Entries {
+		if strings.Contains(e.Path, ".claude") || strings.Contains(e.Path, ".agents") {
+			t.Fatalf("agent path in search: %s", e.Path)
+		}
+	}
+	for _, p := range []string{".claude/skills/demo/SKILL.md", "AGENTS.md"} {
+		if status, _, body := call(wf.Request{Operation: "read", Path: p}); status != 403 {
+			t.Fatalf("read %s: got %d, want 403 (%s)", p, status, body)
+		}
+	}
+	if status, _, body := call(wf.Request{Operation: "read", Path: "docs/notes.md"}); status != 200 {
+		t.Fatalf("read ordinary file: %d %s", status, body)
+	}
+}
+
+func TestWorkflowFilesMissingPathIsClean404(t *testing.T) {
+	_, call := workflowFilesHarness(t)
+	for _, req := range []wf.Request{
+		{Operation: "list", Path: "totally/bogus/path"},
+		{Operation: "search", Path: "totally/bogus", Query: "x"},
+	} {
+		status, _, body := call(req)
+		if status != 404 {
+			t.Fatalf("%s: got %d, want 404 (%s)", req.Operation, status, body)
+		}
+		if strings.Contains(body, "statat") {
+			t.Fatalf("%s leaked raw error: %s", req.Operation, body)
+		}
+		if !strings.Contains(body, "path does not exist") {
+			t.Fatalf("%s body wrong: %s", req.Operation, body)
+		}
+	}
+}

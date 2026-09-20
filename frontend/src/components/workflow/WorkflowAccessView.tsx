@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState } from 'react'
 import { ShieldCheck } from 'lucide-react'
 import WorkflowSharePopup from './WorkflowSharePopup'
 import UsersAdminPanel from '../admin/UsersAdminPanel'
@@ -13,7 +13,6 @@ import { normalizeWorkspacePath } from '../../utils/workspacePathUtils'
 
 interface WorkflowAccessViewProps {
   workspacePath: string | null
-  headerAction?: ReactNode
 }
 
 const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
@@ -29,7 +28,7 @@ const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
  *    read-only readers).
  *  - "Users": the deployment's accounts and roles (admins only).
  */
-export default function WorkflowAccessView({ workspacePath, headerAction }: WorkflowAccessViewProps) {
+export default function WorkflowAccessView({ workspacePath }: WorkflowAccessViewProps) {
   const isMultiUser = useAuthStore(state => state.isMultiUserMode)
   const isAdmin = useAuthStore(state => state.user?.is_admin === true)
   const canManageUsers = useAuthStore(state => state.isMultiUserMode && (state.user?.is_admin === true || hasWorkflowOwnerAccess(state.user, state.isMultiUserMode)))
@@ -60,17 +59,16 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
         subtitle={activeTab === 'users'
           ? 'Accounts and roles for this deployment.'
           : `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`}
-        actions={<>
-          {headerAction}
-          {activeTab && (
+        actions={
+          activeTab ? (
             <WorkspaceViewActions
               workspacePath={workspacePath}
               message={getAccessTabAskAIMessage(activeTab)}
               onRefresh={() => setTabNonce(nonce => nonce + 1)}
               refreshLabel={`Refresh ${visibleTabs.find(option => option.value === activeTab)?.label ?? 'view'}`}
             />
-          )}
-        </>}
+          ) : undefined
+        }
         tabs={visibleTabs.length > 1
           ? { value: activeTab ?? 'workflow', onChange: (value: string) => setTab(value as AccessTabId), options: visibleTabs, ariaLabel: 'Access sections' }
           : undefined}

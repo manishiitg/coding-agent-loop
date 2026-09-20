@@ -69,9 +69,18 @@ func CleanRelative(p string) (string, error) {
 
 // Private paths never appear in the public file API. Builder transcripts have
 // stricter ownership than the shared workflow and use the chat API instead.
+// Coding-agent infrastructure (prompt files, tool directories, and the skills
+// beneath them) is managed through the skills and chat surfaces, not as
+// ordinary workflow files; the list mirrors managedCodingAgentProjectionWritePaths.
 func Private(p string) bool {
 	for _, part := range strings.Split(strings.ToLower(p), "/") {
 		if part == ".git" || part == "builder" || part == "secrets" || part == "keys" || part == ".ssh" || part == ".agentworks" || strings.HasPrefix(part, ".agentworks-") || strings.HasPrefix(part, ".env") {
+			return true
+		}
+		if part == ".agents" || part == ".claude" || part == ".codex" || part == ".cursor" || part == ".gemini" || part == ".pi" {
+			return true
+		}
+		if part == "agents.md" || part == "agent.md" || part == "claude.md" || part == "gemini.md" {
 			return true
 		}
 	}

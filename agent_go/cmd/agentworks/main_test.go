@@ -428,6 +428,24 @@ func TestUpdateCommand(t *testing.T) {
 	})
 }
 
+func TestBarePlanAndCallShowUsage(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want string
+	}{
+		{[]string{"plan"}, "plan get"},
+		{[]string{"tools", "call"}, "call NAME"},
+	} {
+		var out bytes.Buffer
+		if code := run(context.Background(), tc.args, strings.NewReader(""), &out, io.Discard, func(string) string { return "" }); code != 0 {
+			t.Fatalf("%v exited %d", tc.args, code)
+		}
+		if !strings.Contains(out.String(), "Usage:") || !strings.Contains(out.String(), tc.want) {
+			t.Fatalf("%v printed no usage: %s", tc.args, out.String())
+		}
+	}
+}
+
 func TestCLIOperationsStayAdmitted(t *testing.T) {
 	admitted := map[string]bool{}
 	for _, name := range agentworksproduct.RunExternalTools() {

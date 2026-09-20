@@ -145,5 +145,7 @@ describe('settings form kit adoption', () => {
     expect(shell).toContain('getAccessTabAskAIMessage')
     expect(shell).not.toContain('tabClass')
     expect(shell).not.toContain('role="tablist"')
+    // The shell owns the single Ask AI + refresh pair; the host passes none.
+    expect(shell).not.toContain('headerAction')
   })
 })

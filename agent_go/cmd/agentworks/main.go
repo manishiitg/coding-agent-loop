@@ -99,9 +99,14 @@ func newCommand(o *options) *cobra.Command {
 		}
 		return o.output(map[string]any{"tools": tools})
 	}})
-	call := &cobra.Command{Use: "call NAME", Args: cobra.ExactArgs(1), Short: "Call any server tool; --input accepts a JSON object file or stdin"}
+	call := &cobra.Command{Use: "call NAME", Args: cobra.MaximumNArgs(1), Short: "Call any server tool; --input accepts a JSON object file or stdin"}
 	addOperationFlags(call, "")
-	call.RunE = func(cmd *cobra.Command, args []string) error { return o.call(cmd, args[0]) }
+	call.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
+		return o.call(cmd, args[0])
+	}
 	toolsCmd.AddCommand(call)
 	root.AddCommand(toolsCmd)
 	for _, group := range cliOperationGroups {
@@ -138,12 +143,15 @@ func newCommand(o *options) *cobra.Command {
 		root.AddCommand(groupCmd)
 	}
 	plan := &cobra.Command{
-		Use: "plan get", Args: cobra.ExactArgs(1),
+		Use: "plan get", Args: cobra.MaximumNArgs(1),
 		Short: "Read a workflow plan and configuration",
 		Long:  "Read with 'plan get'. v1 is read-only: plan mutations are not exposed.",
 	}
 	addOperationFlags(plan, "get_plan")
 	plan.RunE = func(cmd *cobra.Command, args []string) error {
+		if len(args) == 0 {
+			return cmd.Help()
+		}
 		if args[0] != "get" {
 			return fmt.Errorf("unknown plan operation %q: v1 supports only 'plan get'", args[0])
 		}

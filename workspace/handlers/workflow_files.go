@@ -243,6 +243,15 @@ func listScopedFiles(c *gin.Context, root *os.Root, p string, req wf.Request) (w
 	if req.Operation == "search" && req.Query == "" {
 		return wf.Result{}, fileError(400, "query is required")
 	}
+	// Stat the walk root first: fs.WalkDir over os.Root surfaces the raw
+	// "statat <path>: no such file or directory" PathError, which must never
+	// reach API users verbatim.
+	if _, err := root.Lstat(p); err != nil {
+		if errors.Is(err, fs.ErrNotExist) {
+			return wf.Result{}, fileError(404, "path does not exist: %s", p)
+		}
+		return wf.Result{}, err
+	}
 	all := make([]wf.Entry, 0)
 	visited := 0
 	var scannedBytes int64

@@ -407,8 +407,12 @@ is literal and case-insensitive, with bounded depth, entry counts, and scanned
 bytes. Pagination uses `next_offset` only when another result was found;
 `truncated` can also mean the depth/scan budget was reached. Narrow the directory
 or increase depth in that case. Symlinks, private credential directories, and
-builder transcripts are excluded. Skills, learnings, and ordinary documents are
-readable in their workflow's workspace; nothing is writable through v1.
+builder transcripts are excluded, as is coding-agent infrastructure:
+AGENTS.md-style prompt files and the .claude, .agents, .codex, .cursor,
+.gemini, and .pi tool directories, including the skills beneath them. Skills
+stay readable through the knowledge tools, which serve the skill catalog;
+learnings and ordinary documents are readable in their workflow's workspace.
+Nothing is writable through v1.
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`. CLI exit
 codes are 3 for authentication/permission failure, 4 for conflicts, and 1 for

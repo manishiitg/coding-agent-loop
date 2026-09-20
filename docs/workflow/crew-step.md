@@ -1050,3 +1050,75 @@ pending list).
 plus idempotent re-entry; rollback is deregistering the tool — created crews
 are ordinary crews). Over-eager proposals (guidance ladder). Secret-name
 confusion (fail closed).
+
+## Builder-created Crew implementation review — 2026-09-20
+
+Reviewed AgentWorks commit `85514dc15`. Status: **changes required before the
+Builder-created Crew flow is ready for users**. The product direction is good:
+one approval should create the specialist, internal trigger, read-only link,
+and ready-to-add workflow step without making the user copy IDs. The happy-path
+production package builds, but the current implementation does not yet satisfy
+that simple flow reliably.
+
+### P1: the committed Crew tests cannot run
+
+`crew_creation_test.go` calls `mock.hasFolder`, but `mockWorkspaceAPI` has no
+such method, so `go test ./cmd/server` fails to compile. Supplying that helper
+exposes a second test-fixture gap: `workspace_mock_test.go` does not implement
+`POST /api/folders`, so every successful creation case fails while creating the
+Crew's `code/` folder. Fix both mock behaviors before treating the creation,
+wiring, or idempotency tests as evidence.
+
+### P1: MCP and secret selections are recorded without availability checks
+
+`CreateCrewProject` validates installed skills, but MCP server, project secret,
+and global secret inputs receive shape validation only. Unknown, disconnected,
+or unauthorized names are therefore written into the Crew manifest. This
+conflicts with the creation contract above, which requires references to
+existing authorized records and a pending list for missing connections.
+
+This is also a scope problem for ordinary secrets: a workflow-scoped secret in
+the creating workflow does not automatically exist in the new Crew workspace.
+The creation result may look complete while the Crew receives an empty value at
+runtime. Validate each MCP and secret reference in its real scope before
+writing selections. Return missing or disconnected integrations explicitly so
+the Builder can ask the user to connect only those items. Do not pass secret
+values through Builder chat.
+
+### P1: changing the title on a retry breaks idempotency
+
+The Crew ID is derived only from `idempotency_key`, while the workspace path is
+derived from both the title and that key. Reusing a key with a changed title can
+therefore create a second directory carrying the same Crew ID. Attachment
+wiring then fails and leaves the second project stranded. Resolve an
+idempotency key to one stored creation receipt or one path independent of
+mutable proposal fields; reject a changed payload or return the original Crew.
+
+The occupied-path fallback has the same principle problem because it chooses a
+new random ID and path on every retry. Persist that decision so re-entry adopts
+the same Crew.
+
+### P2: duplicate Crew titles collide after partial creation
+
+Duplicate display names are allowed, but the default attachment alias and step
+ID are direct title slugs. Creating a second Crew with the same title writes its
+project and internal trigger, then fails because the first Crew already owns
+the alias; its default step ID would collide as well. Select available,
+deterministic suffixes such as `release-reviewer-2` and
+`crew-release-reviewer-2` before creating any resources, and return those exact
+values to the Builder.
+
+### Verification performed
+
+- `go build ./cmd/server` passed.
+- `gofmt -d` and `git diff --check` passed for the reviewed change.
+- Crew-related `pkg/workflowtypes`, `pkg/orchestrator`, and
+  `pkg/orchestrator/agents/workflow/step_based_workflow` tests passed.
+- The new `cmd/server` Crew tests failed as described above, first at compile
+  time and then at the missing folder-create mock after temporarily supplying
+  the absent helper.
+
+Recommended acceptance is intentionally small and user-focused: the server
+tests run; unavailable MCPs and secrets are reported clearly; the same retry
+key cannot mint another Crew; and two Crews with the same display name both
+finish with usable aliases and step IDs.

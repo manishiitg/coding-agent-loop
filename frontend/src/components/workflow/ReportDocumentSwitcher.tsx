@@ -12,7 +12,7 @@ export function ReportDocumentSwitcher({ workspacePath, active, onOpen }: {
   active: boolean
   onOpen: () => void
 }) {
-  const { documents, defaultPath } = useReportDocuments(workspacePath)
+  const { documents, defaultPath, refresh } = useReportDocuments(workspacePath)
   const selectedPath = useSelectedReportDocument(workspacePath)
   const [openMenu, setOpenMenu] = useState(false)
   const [copiedPath, setCopiedPath] = useState('')
@@ -50,7 +50,14 @@ export function ReportDocumentSwitcher({ workspacePath, active, onOpen }: {
 
   const toggle = () => {
     open()
-    if (documents.length > 1) setOpenMenu(value => !value)
+    if (openMenu) {
+      setOpenMenu(false)
+      return
+    }
+    // The agent can add reports at any time; re-read the catalog whenever the
+    // menu is opened so a new document is never missing from a stale list.
+    refresh()
+    if (documents.length > 1) setOpenMenu(true)
   }
 
   const copyShareLink = async (path: string) => {

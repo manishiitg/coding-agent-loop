@@ -1,6 +1,7 @@
 # Crew workflow step
 
-**Status:** Implemented, review findings addressed
+**Status:** Implemented; changes required after follow-up code review.
+Three reproduced findings remain open; see the follow-up review below.
 
 ## Summary
 
@@ -699,8 +700,10 @@ It is not ready to deploy until the blocking findings below are resolved.
 
 ### Resolution — 2026-09-20
 
-All blocking findings are addressed; every required regression now has a
-test named below.
+The original findings received the changes and regression tests listed below.
+The follow-up review found that attachment validation and delivery isolation
+still have uncovered cases, plus an additional failure-reporting bug; this
+resolution section does not constitute current sign-off.
 
 - **P0 — resolved.** The `main` compile breakage was fixed separately and
   the server package builds again.
@@ -742,3 +745,121 @@ Known residual: a crew that is unshared mid-run while its workspace
 directory still exists on disk remains filesystem-readable to ordinary
 downstream steps until the run ends; crew steps themselves re-check access
 before every invocation, and the next run's preflight fails fast.
+
+## Follow-up code review — 2026-09-20
+
+Reviewed against `mcp-agent-builder-go` `f6ee03b72`, including the earlier
+Crew review fixes in `45f9e72d0`.
+
+The implementation is connected end-to-end: `CrewPlanStep` is parsed and
+validated, the controller renders instructions and inputs, a server-owned
+runner invokes the shared internal trigger dispatcher and polls its run, and
+the controller saves the final response, operational metadata, and token
+usage. Reusing the trigger dispatcher and atomic completion record is sound.
+However, the three reproduced findings below prevent sign-off. They remain
+open; this documentation update does not fix production code. Line references
+refer to the reviewed revision.
+
+### P1: attachment validation can grant another owner's Crew directory
+
+Sources:
+
+- [crew_step_runner.go](../../agent_go/cmd/server/crew_step_runner.go), lines
+  245–252: attachment preflight.
+- [crew_attachments.go](../../agent_go/pkg/workflowtypes/crew_attachments.go),
+  lines 77–91: stored binding validation.
+- [crew_builder_tools.go](../../agent_go/cmd/server/crew_builder_tools.go):
+  `crewAttachmentReadRoots` and `liveCrewAttachmentBindings`.
+
+Binding validation checks that the stored path contains a `projects` segment
+and ends with the declared project ID. Preflight separately resolves and
+authorizes that project, but discards its resolved workspace binding instead
+of comparing it with the stored root. A path belonging to another owner can
+therefore pass validation when its final project-name segment matches.
+
+Reproduction: start with an accessible `rts` Crew belonging to `owner`, then
+change only the saved attachment root from
+`_users/owner/Chats/Work/projects/rts` to
+`_users/other/Chats/Work/projects/rts`. Preflight succeeds and
+`crewAttachmentReadRoots` returns the other owner's path as a read grant.
+`TestReviewCrewPreflightRejectsWrongOwnerRoot` reproduced both failures.
+This violates the intended separation between a stored attachment path and
+actual authorization to read that workspace.
+
+Required fix: derive the granted root from the freshly authorized project
+binding, or require exact canonical equality with that binding before granting
+or resolving the stored path. Apply this at grant creation and refresh/read
+boundaries. Retain a regression covering two owners with the same project-name
+suffix; checking only a different suffix or a non-project path is insufficient.
+
+### P1: variable groups share the same Crew delivery identity
+
+Sources:
+
+- [crew_step_runner.go](../../agent_go/cmd/server/crew_step_runner.go), line 74
+  and `crewStepDeliveryBase`.
+- [controller_crew.go](../../agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_crew.go):
+  request construction passes both execution identity and group.
+- [context_aware_bridge.go](../../agent_go/pkg/orchestrator/context_aware_bridge.go):
+  `ExecutionID` remains fixed while `SetBatchContext` changes groups.
+
+The delivery key contains workflow ID, immutable execution ID, and step ID,
+but omits `Group`. Multiple variable groups within one execution consequently
+share a delivery identity for the same Crew step. Once the first group
+completes, a later group adopts its response instead of invoking the Crew with
+its own rendered instruction and inputs.
+
+Reproduction: seed a successful production-group delivery, then invoke the same
+step and execution with `Group=staging`, a different run folder, and a different
+instruction. The runner returns the production delivery ID and response.
+`TestReviewCrewGroupsDoNotShareDelivery` reproduced the failure. The earlier
+cross-execution regression varies execution IDs and does not cover this case.
+
+Required fix: include the variable group in the stable delivery identity while
+preserving idempotency for retries of the same group and step attempt. Add a
+test in which two groups share one execution ID and must receive independent
+Crew deliveries and responses.
+
+### P2: conversation setup errors leave accepted deliveries queued
+
+Source: [product_schedules.go](../../agent_go/cmd/server/product_schedules.go),
+`executeAutomationRun`, lines 988–993; acceptance occurs in
+[product_webhooks.go](../../agent_go/cmd/server/product_webhooks.go),
+`deliverProductTrigger`.
+
+The dispatcher persists a queued run before starting the detached worker.
+If the worker cannot resolve its conversation binding or open the conversation
+registry, it returns before writing a terminal result. Its defer releases the
+conversation reservation, but the accepted run remains `queued` with no worker.
+The workflow therefore waits until timeout instead of receiving the actual
+failure, and redelivery adopts the same stranded record.
+
+Reproduction: pre-claim a queued run, force a conversation-policy setup error,
+run `executeAutomationRun`, and read the stored status after it returns the
+error. The record remains `queued`. `TestReviewCrewSetupFailureBecomesTerminal`
+reproduced this early-exit behavior. Other failures at the same boundary, such
+as failed conversation-store access, take the same return path.
+
+Required fix: persist a terminal error against the original claimed run on
+every setup failure, even before a conversation/session ID is available. Add
+coverage proving that setup errors become pollable terminal failures and that
+retry recovery does not adopt a permanently queued record.
+
+### Follow-up validation
+
+- Focused server tests covering Crew runners, preflight, Builder tools,
+  attachments, internal dispatch, and atomic run results passed.
+- Crew-focused tests passed in `pkg/workflowtypes`, `pkg/orchestrator`, and
+  `pkg/orchestrator/agents/workflow/step_based_workflow`.
+- Eight frontend tests passed across `CrewNode.test.tsx` and execution-log
+  `helpers.test.tsx`.
+- Three temporary regression tests failed on the intended invariants,
+  confirming the findings above. They were removed after reproduction and are
+  not committed regression coverage.
+- No production code was changed. Live Crew execution, the full repository
+  suites, and TypeScript compilation were not exercised in this follow-up.
+
+Current disposition: **changes required**. Fix these findings and retain their
+regression coverage before sign-off. The previously documented mid-run access
+revocation limitation also remains open; the existing passing tests do not
+establish that every attachment access is dynamically authorized.

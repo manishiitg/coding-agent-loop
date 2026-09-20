@@ -100,6 +100,7 @@ this is the complete map.
 - [Slack Connections (Per-Workflow Slack Apps)](core/slack_connections.md)
 - [Streaming LLM Output](core/streaming_llm_output.md)
 - [Terminal lifecycle](core/terminal_lifecycle.md)
+- [WhatsApp Connector](core/whatsapp.md)
 
 ### Design
 

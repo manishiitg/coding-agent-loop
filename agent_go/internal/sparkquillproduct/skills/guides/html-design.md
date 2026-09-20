@@ -35,6 +35,13 @@ mistake, not a harmless leftover.
 ## Rules
 
 - Inline the CSS below in a `<style>` tag; adjust only where a skill asks.
+- **The file must contain ONLY the page's own HTML and CSS.** Never paste
+  instructions, guide text, or markdown into it — no ``` fences, no GOOD:/BAD:
+  notes, no backticked tool names, no sentences about what to do. Prose left
+  inside `<style>` silently invalidates the stylesheet: the `:root` theme
+  variables drop out and every meter fill and chip renders invisible. Before
+  finishing, check the file starts with `<!doctype html>` and contains no
+  ``` fences and no lines starting with `- ` or `#` that aren't real content.
 - Warm, calm, encouraging, readable by a child. Rounded cards, generous spacing, one
   clear title with the child's name and date. Only ever real data — never an invented
   score.
@@ -61,6 +68,13 @@ mistake, not a harmless leftover.
   You wrote these ids, so you know them — reference them later without re-reading the
   file. A turn that's clearly ABOUT one section or figure and doesn't pass focus is a
   missed opportunity, the same way naming a question by number without focus is.
+- **Section tabs are same-page `<a href="#id">` links, and every href MUST match
+  an id that exists on the page** (the s1/s2/... scheme above). Check each one:
+  a tab pointing at a missing id goes nowhere. Never link to another FILE —
+  every page is standalone; a link to a sibling file resolves nowhere in the
+  viewer and blanks the page.
+  - GOOD: `<nav><a href="#s1">Right now</a><a href="#subjects">Subjects</a></nav>` with matching `id="s1"`, `id="subjects"` sections
+  - BAD: `<a href="subjects.html">Subjects</a>`
 - **Wrap every question in `<div class="q" id="q1">`**, the id's number matching the
   question's own. This is load-bearing beyond ordinary addressability: `open_file`
   with NO `focus` lands the page at the first `.q` that has no answer recorded inside

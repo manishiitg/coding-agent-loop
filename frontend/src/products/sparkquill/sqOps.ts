@@ -51,6 +51,60 @@ export interface SqTimerConfig {
   seconds: number
 }
 
+/**
+ * Fallback theme for a generated page whose own `:root` variables are
+ * missing or broken (seen live: guide prose pasted inside `<style>`
+ * invalidated the whole `:root` rule, so every `var(--good)` fill went
+ * transparent and the meters turned invisible). Injected FIRST so a page's
+ * own valid variables always win; only fills the gap when they don't parse.
+ */
+export const SQ_FALLBACK_VARS = ':root{--bg:#fbf7ef;--ink:#16223a;--muted:#5b6b86;--sun:#f6b93b;--sun-soft:#fdeecb;--card:#ffffff;--line:#ece3d2;--good:#2f9e6f;--focus:#e08a3c}'
+
+/**
+ * Host-owned link bridge for a generated page shown in a sandboxed srcDoc
+ * viewer. Two things the page cannot do safely on its own:
+ *
+ * - In-page tabs (`<a href="#s1">`): a srcDoc frame has no document URL of
+ *   its own, so the click's default navigation unbinds srcDoc and blanks the
+ *   page (Safari always; Chrome on re-render). Intercepted and scrolled to
+ *   directly instead — no navigation, the page always survives.
+ * - External links: these would navigate the frame AWAY from the report, and
+ *   the sandbox blocks `target="_blank"` popups. Routed to the parent via an
+ *   `open` op so they open in a real tab.
+ */
+export function withViewerLinkBridge(html: string): string {
+  const style = `<style>${SQ_FALLBACK_VARS}</style>`
+  const withVars = /<head[^>]*>/i.test(html)
+    ? html.replace(/<head[^>]*>/i, (m) => m + style)
+    : style + html
+  return withVars + `
+<script>(function(){
+  document.addEventListener('click', function (e) {
+    var el = e.target;
+    var a = el && el.closest ? el.closest('a[href]') : null;
+    if (!a) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) return;
+    var href = a.getAttribute('href') || '';
+    if (href.charAt(0) === '#') {
+      // Same-page tab: scroll, never navigate — even a dead target must not
+      // navigate, or the srcDoc page blanks itself.
+      e.preventDefault();
+      if (href.length > 1) {
+        var t = document.getElementById(href.slice(1));
+        if (t) t.scrollIntoView();
+      } else {
+        window.scrollTo(0, 0);
+      }
+      return;
+    }
+    if (/^https?:\\/\\//i.test(href)) {
+      e.preventDefault();
+      parent.postMessage({ __sq: 1, op: 'open', url: href }, '*');
+    }
+  });
+})();</script>`
+}
+
 /** A page's timer-config post back to valid timers; drops junk entries. */
 export function sanitizeSqTimerConfigs(raw: unknown): SqTimerConfig[] {
   if (!Array.isArray(raw)) return []

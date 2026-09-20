@@ -69,7 +69,7 @@ import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
 import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend'
-import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs } from './sqOps'
+import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs, withViewerLinkBridge } from './sqOps'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { isSingleProductDeployment } from '../productSurfaceConfig'
@@ -545,7 +545,7 @@ function SceneFrame({ html, activityDir }: { html: string; activityDir: string }
   const clipped = rawHeight > SCENE_MAX_HEIGHT
   return (
     <div className="fl-scene-card">
-      <iframe ref={ref} className="fl-scene-frame" title="Scene" sandbox="allow-scripts" style={{ height: Math.min(rawHeight, SCENE_MAX_HEIGHT) }} srcDoc={withSceneResizeScript(withDiagramLib(resolved))} />
+      <iframe ref={ref} className="fl-scene-frame" title="Scene" sandbox="allow-scripts" style={{ height: Math.min(rawHeight, SCENE_MAX_HEIGHT) }} srcDoc={withSceneResizeScript(withViewerLinkBridge(withDiagramLib(resolved)))} />
       {clipped && <div className="fl-scene-more" aria-hidden="true">scroll for more ↓</div>}
     </div>
   )
@@ -1400,7 +1400,7 @@ export default function LearningApp() {
   // per genuine content/focus/path/zoom change, not once per render.
   const childViewerSrcDoc = useMemo(
     () => withViewerPositionScript(
-      withDiagramLib(childViewerContent?.content ?? ''),
+      withViewerLinkBridge(withDiagramLib(childViewerContent?.content ?? '')),
       childViewerFocus,
       childViewerScrollRef.current[childViewerPath ?? ''] ?? 0,
       childZoom,
@@ -1948,7 +1948,7 @@ export default function LearningApp() {
     const onMsg = (e: MessageEvent) => {
       const m = e.data
       if (!m || typeof m !== 'object' || (m as { __sq?: unknown }).__sq !== 1) return
-      const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string; qid?: unknown; value?: unknown; timers?: unknown; message?: unknown }
+      const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string; qid?: unknown; value?: unknown; timers?: unknown; message?: unknown; url?: unknown }
       if (msg.op === 'save' && typeof msg.key === 'string') {
         api.saveState(msg.key, msg.data).catch(() => {})
       } else if (msg.op === 'load' && typeof msg.key === 'string') {
@@ -1984,6 +1984,11 @@ export default function LearningApp() {
         clearSqTimer(`${activityOf(childViewerPathRef.current)}::${sanitizeSqId(msg.qid)}`)
       } else if (msg.op === 'sq-error' && typeof msg.message === 'string') {
         console.error('[sq page]', msg.message.slice(0, 500))
+      } else if (msg.op === 'open' && typeof msg.url === 'string' && /^https?:\/\//i.test(msg.url)) {
+        // From the viewer link bridge: an external link the page wanted to
+        // follow. Opened in a real tab — navigating the srcDoc frame itself
+        // would replace the report with the linked site.
+        window.open(msg.url, '_blank', 'noopener')
       }
     }
     window.addEventListener('message', onMsg)
@@ -2648,7 +2653,7 @@ export default function LearningApp() {
                   ) : pinnedHtml === '' ? (
                     <p className="fl-note">This page is missing from the workspace. Unpin it, or ask Quill to make it again.</p>
                   ) : (
-                    <iframe className="fl-map-frame" title={pinnedPath} sandbox="allow-scripts" srcDoc={withDiagramLib(pinnedHtml)} />
+                    <iframe className="fl-map-frame" title={pinnedPath} sandbox="allow-scripts" srcDoc={withViewerLinkBridge(withDiagramLib(pinnedHtml))} />
                   )}
                 </>
               )}
@@ -2660,7 +2665,7 @@ export default function LearningApp() {
                   ) : progressHtml === '' || progressHtml.includes('living report grows as') ? (
                     <p className="fl-note">The progress report hasn't been built yet — ask Quill to "update the progress report" once there's some real activity to show.</p>
                   ) : (
-                    <iframe className="fl-map-frame" title="Progress report" sandbox="allow-scripts" srcDoc={withDiagramLib(progressHtml)} />
+                    <iframe className="fl-map-frame" title="Progress report" sandbox="allow-scripts" srcDoc={withViewerLinkBridge(withDiagramLib(progressHtml))} />
                   )}
                 </>
               )}
@@ -2755,7 +2760,7 @@ export default function LearningApp() {
                   ) : !viewerContent.isText ? (
                     <NonPreviewableFile path={viewerPath} meta={viewerMeta} />
                   ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
-                    <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={withDiagramLib(viewerContent.content)} />
+                    <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={withViewerLinkBridge(withDiagramLib(viewerContent.content))} />
                   ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
                     <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
                   ) : (viewerPath.endsWith('.json') || viewerPath.endsWith('.jsonl')) ? (

@@ -317,9 +317,9 @@ const upgradeScriptedTypeStaysRegular = `WORKFLOW CONTRACT UPGRADE: A DECLARED-S
 
 Do only this migration. Read planning/step_config.json and planning/plan.json. Find every step whose step_config declares declared_execution_mode="scripted" but whose plan.json type is "message_sequence" instead of "regular" -- that combination is invalid (PLAT-280): the real scripted executor only runs true regular-type steps and reliably injects $DB_PATH/STEP_OUTPUT_DIR there, which the message_sequence runtime does not guarantee even when its config claims to be scripted. This caused a live production step to silently lose database access.
 
-For each matching step, call update_scripted_step(existing_step_id=<its id>, reason="PLAT-280 migration: message_sequence type with declared scripted mode is not a valid combination"). It atomically converts the step's plan type to regular in place -- same id, step_config.json history preserved -- and drops its message_sequence items, since a scripted step's real work is the checked-in learnings/{step-id}/main.py, not plan-authored items. Do not hand-edit plan.json or step_config.json. Do not run the workflow.
+For each matching step, call change_step_type(step_id=<its id>, target_type="scripted", reason="PLAT-280 migration: message_sequence type with declared scripted mode is not a valid combination"). It atomically converts the step's plan type to regular in place -- same id, step_config.json history preserved -- and drops its message_sequence items, since a scripted step's real work is the checked-in learnings/{step-id}/main.py, not plan-authored items. Do not hand-edit plan.json or step_config.json. Do not run the workflow.
 
-If no step matches, this is a no-op. If update_scripted_step reports an error for any matching step, do not stamp -- leave the mismatch as-is and report what blocked it. Otherwise call set_workflow_contract_version(version="1.0.37") and stop.`
+If no step matches, this is a no-op. If change_step_type reports an error for any matching step, do not stamp -- leave the mismatch as-is and report what blocked it. Otherwise call set_workflow_contract_version(version="1.0.37") and stop.`
 
 const upgradeDeclaredExecutionModeRetired = `WORKFLOW CONTRACT UPGRADE: EVERY STEP'S PLAN TYPE STATES ITS EXECUTION MODEL EXPLICITLY (PLAT-287, HALF 1).
 

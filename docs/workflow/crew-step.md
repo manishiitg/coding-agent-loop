@@ -1187,3 +1187,12 @@ ID stays for human-feedback correlation and as the no-manifest
 fallback. Side benefit: the delivery idempotency key is now stable
 across sessions, so retried runs adopt the live crew run instead of
 invoking twice.
+
+Completion-capture follow-up: the crew ran 4m14s and wrote its alert
+file, but the run recorded success with a null final response, so the
+workflow step crashed saving the empty file. Turn completion already
+funnels through one reader (finalResponseForExecution, serving
+schedules, triggers, and bots), but it only accepted unified_completion
+while the waiter accepts several terminal types. It now falls back to
+the newest llm_generation_end content for the execution — the same
+fallback scheduledTurnProducedResponse uses.

@@ -3,9 +3,9 @@
  *
  * There are two live-delivery mechanisms and they are not interchangeable:
  *
- * - `live-query` — POST /api/query with preferLiveInput. Single-entry routing
- *   for retained coding CLIs and interactive workflow chats: the backend sends
- *   to the provider's native live-input transport and owns turn-boundary races.
+ * - `live-query` — POST /api/query. Single-entry routing for retained
+ *   coding CLIs and interactive workflow chats: the backend sends to the
+ *   provider's native live-input transport and owns turn-boundary races.
  * - `steer` — agentApi.sendLiveInput, injecting into an in-flight API-provider
  *   turn. This is what the steer button on a queued chip does. Deliberately not
  *   used for coding CLIs, which route through /api/query instead.

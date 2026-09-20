@@ -2,7 +2,7 @@ import type { ActiveSessionInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
 import { activateTab } from './activateTab'
-import { openCanonicalActivitySession } from './workflowSessionRestore'
+import { isScheduledWorkflowSession, openCanonicalActivitySession } from './workflowSessionRestore'
 
 const normalizedPath = (value?: string | null): string => (value || '')
   .trim()
@@ -52,6 +52,15 @@ export async function openGlobalActivitySession(
   session: ActiveSessionInfo,
   options: { title?: string; source?: string } = {},
 ): Promise<void> {
+  // Trigger runs always open their read-only run tab — even when the run
+  // belongs to a crew project. The Work surface shows the crew's interactive
+  // chat, never a trigger transcript; routing a schedule pill there lands the
+  // user on their own chat instead of the run they clicked.
+  if (isScheduledWorkflowSession(session)) {
+    useProductSurfaceStore.getState().setProductSurface('agentworks')
+    await openCanonicalActivitySession(session, options)
+    return
+  }
   const chatStore = useChatStore.getState()
   const tab = Object.values(chatStore.chatTabs).find(candidate => candidate.sessionId === session.session_id)
   if (tab?.metadata?.agentProfileId === 'work' || isWorkProductSession(session)) {

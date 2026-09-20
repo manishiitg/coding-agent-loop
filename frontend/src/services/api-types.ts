@@ -196,10 +196,11 @@ export interface CustomTierModel {
 
 export interface AgentQueryResponse {
   query_id: string
-  // 'started' | 'workflow_started' | 'live_input_delivered' | error states.
+  // 'started' | 'workflow_started' | 'live_input_delivered' | 'accepted' | error states.
   // 'live_input_delivered' means the backend steered this message into an
-  // already-running coding-agent turn instead of starting a new one (single-entry
-  // routing for tmux-transport CLIs).
+  // already-running coding-agent turn instead of starting a new one; 'accepted'
+  // means it queued the message for the turn's next boundary (single-entry
+  // routing: the backend owns live-vs-queue-vs-new-turn).
   status: string
   kind?: 'fix_bundle' | 'strategy_experiment' | string
   guardrails?: string[]
@@ -209,7 +210,7 @@ export interface AgentQueryResponse {
   message?: string
   sse_endpoint?: string
   session_id?: string
-  // Populated only when status === 'live_input_delivered'.
+  // Populated when status === 'live_input_delivered' or 'accepted'.
   delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
   provider?: string
 }

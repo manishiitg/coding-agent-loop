@@ -59,7 +59,7 @@ export function shouldRouteChatInputToLiveTransport({
 }
 
 // A rapid Enter/double-click can invoke ChatInput twice before the first
-// /live-input response clears the draft. Share the complete submission promise
+// response clears the draft. Share the complete submission promise
 // for that exact session + message so the HTTP mutation, optimistic event, and
 // fallback decision all execute once. A later intentional repeat is allowed
 // after the first submission settles.
@@ -72,41 +72,6 @@ export function createLiveInputSubmissionCoordinator(): LiveInputSubmissionCoord
 }
 
 export const liveInputSubmissionCoordinator = createLiveInputSubmissionCoordinator()
-
-// A server restart can leave the browser with a session that was active in the
-// previous process. The live-input authorization check runs before durable
-// acceptance, so this exact response proves that nothing was delivered and it
-// is safe to retry the same submission through the normal turn endpoint.
-export function isDefinitelyMissingLiveSession(error: unknown): boolean {
-  const response = (error as { response?: { status?: number; data?: unknown } } | null)?.response
-  if (response?.status !== 404 || typeof response.data !== 'string') return false
-  return response.data.trim().toLowerCase() === 'session not found'
-}
-
-export interface RetainedLiveInputDecision {
-  requested: boolean
-  fullTurnStreaming: boolean
-  turnIsStreaming: boolean
-  hasSession: boolean
-  sessionKnownToServer: boolean
-  hasOneShotContext: boolean
-}
-
-// Product surfaces still use native tmux live input to steer a turn that is
-// currently running. Once that turn is idle, however, the next user message
-// starts a normal server-owned turn so the shared AgentWorks pipeline can emit
-// structured progress and a definitive completion event.
-export function shouldUseRetainedLiveInput({
-  requested,
-  fullTurnStreaming,
-  turnIsStreaming,
-  hasSession,
-  sessionKnownToServer,
-  hasOneShotContext,
-}: RetainedLiveInputDecision): boolean {
-  if (!requested || !hasSession || !sessionKnownToServer || hasOneShotContext) return false
-  return !fullTurnStreaming || turnIsStreaming
-}
 
 // Reattach the event stream at the start of every accepted retained message.
 // A retained tmux process can outlive the EventSource that observed its prior

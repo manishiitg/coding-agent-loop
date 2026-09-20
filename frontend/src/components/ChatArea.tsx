@@ -12,9 +12,7 @@ import { configureChatQueueController } from '../utils/chatQueueController'
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import {
   liveInputSubmissionCoordinator,
-  isDefinitelyMissingLiveSession,
   shouldRefreshSessionEventStream,
-  shouldUseRetainedLiveInput,
 } from '../utils/liveInputSubmission'
 import { eventBelongsToSession, sessionOwnsGlobalChatIndicators } from '../utils/sessionEventWorkingSet'
 import { useShallow } from 'zustand/react/shallow'
@@ -2837,123 +2835,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
     }
 
-    const hasOneShotContext = Boolean(
-      currentTab.config?.restoredConversationPath?.trim() ||
-      currentTab.config?.fileContext?.length ||
-      currentTab.config?.workflowContext?.length ||
-      executionOptions ||
-      currentTab.metadata?.agentProfileRuntimeDirty
-    )
-    const useRetainedLiveInput = shouldUseRetainedLiveInput({
-      requested: options?.preferLiveInput === true,
-      fullTurnStreaming,
-      turnIsStreaming: freshActiveTab?.isStreaming === true,
-      hasSession: Boolean(tabSessionId),
-      // A browser UUID or persisted busy flag is not an active server session.
-      // Cold/new sessions must use the normal request with workspace and resume
-      // context before they can accept retained input.
-      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === tabSessionId),
-      hasOneShotContext,
-    })
-    // A retained CLI delivery can take a few seconds to acknowledge while the
-    // provider wakes its pane. Put the user's message in the conversation
-    // before awaiting that acknowledgement so the composer is immediately
-    // ready for the next message. Keep its event ID so a later full-turn
-    // fallback reuses this row instead of echoing it a second time.
-    let optimisticLiveInputEventID = ''
-    if (useRetainedLiveInput) {
-      let retryAsNormalTurn = false
-      const existingEvents = chatStore.getTabEvents(tabSessionId)
-      const latestTimestampMs = existingEvents.reduce((latest, event) => {
-        const ts = getEventTimestampMs(event)
-        return ts === null ? latest : Math.max(latest, ts)
-      }, 0)
-      const optimisticTimestampMs = Math.max(Date.now(), latestTimestampMs + 1)
-      const optimisticUserMessage = withLiveInputReceipt(createUserMessageEvent(
-        trimmedQuery,
-        undefined,
-        new Date(optimisticTimestampMs).toISOString(),
-        tabSessionId,
-      ), 'sending')
-      optimisticLiveInputEventID = optimisticUserMessage.id
-      // This is a human-visible action rather than a high-volume SSE event;
-      // bypass the store's micro-batch so it appears in the current frame.
-      chatStore._addTabEventsImmediate(tabSessionId, [optimisticUserMessage])
-      chatStore.setAutoScroll(true)
-      setTimeout(() => { scrollToBottom('smooth') }, 50)
-
-      try {
-        if (!stillOwnsSubmission()) return false
-        const response = await agentApi.sendLiveInput(tabSessionId, trimmedQuery, { identity, submissionId: receipt.id, continuation: true, queuedDelivery: options?.queuedDelivery })
-        if (!isChatIdentityCurrent(identity)) return false
-        if (!stillOwnsSubmission()) return response.success === true
-        if (response.delivery_status === 'sent_to_cli' || response.delivery_status === 'next_turn_started' || response.delivery_status === 'queued_for_injection') {
-          acceptReceipt()
-          useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
-            [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === optimisticLiveInputEventID
-              ? withLiveInputReceipt(event, response.delivery_status!, response.provider, response.message_id)
-              : event),
-          } }))
-          chatStore.setAutoScroll(true)
-          chatStore.setIsCompleted(false)
-          chatStore.setIsStreaming(true)
-          chatStore.setHasActiveChat(true)
-          chatStore.setTabCompleted(currentTab.tabId, false)
-          chatStore.setTabStreaming(currentTab.tabId, true)
-          setTimeout(() => { scrollToBottom('smooth') }, 50)
-          if (shouldRefreshSessionEventStream(
-            fullTurnStreaming,
-            Boolean(useChatStore.getState().sseConnections[tabSessionId]),
-          )) {
-            connectSSE(
-              tabSessionId,
-              (msg: SSEEventMessage) => handleSSEMessage(msg, tabSessionId),
-              (msg: SSEStatusMessage) => handleSSEStatus(msg, tabSessionId),
-              () => handleSSEFallback(tabSessionId),
-            )
-          }
-          startForegroundEventCatchUp(tabSessionId)
-          return true
-        }
-      } catch (error) {
-        if (!isChatIdentityCurrent(identity)) return false
-        if (isConfirmedUndeliveredSubmission(error)) acceptReceipt()
-        if (isDefinitelyMissingLiveSession(error)) {
-          // The process that owned this retained session has gone away (most
-          // commonly during a deployment). Authorization rejects this before
-          // the durable submission journal or provider sees the message, so a
-          // normal turn retry with the same receipt cannot duplicate delivery.
-          useChatStore.setState(state => ({
-            activeSessionsCache: state.activeSessionsCache.filter(session => session.session_id !== tabSessionId),
-            activeSessionsCacheTimestamp: null,
-            tabEvents: {
-              ...state.tabEvents,
-              [tabSessionId]: (state.tabEvents[tabSessionId] || []).filter(event => event.id !== optimisticLiveInputEventID),
-            },
-          }))
-          optimisticLiveInputEventID = ''
-          resetStreamingState(currentTab.tabId)
-          retryAsNormalTurn = true
-        } else {
-          // Never resend an ambiguous delivery via a second endpoint. The server
-          // owns cold-session fallback and durable idempotent receipt recovery.
-          chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
-          resetStreamingState(currentTab.tabId)
-          return false
-        }
-      }
-      if (retryAsNormalTurn) {
-        logger.info('ChatArea', `Retained session ${tabSessionId} disappeared; retrying submission as a normal turn`)
-      } else {
-        // A transport success without an acceptance receipt is still ambiguous.
-        // Retain the submission ID and never send it again through /query here.
-        chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId,
-          new Error('Delivery was not confirmed. Retry with the retained submission to check its status.'))])
-        resetStreamingState(currentTab.tabId)
-        return false
-      }
-    }
-
+    // Single-entry routing: every chat message goes through /api/query and the
+    // backend decides whether to steer it into the running turn, queue it for
+    // the next boundary, or start a new turn. The frontend never chooses a
+    // live-input endpoint.
     const pendingRestoredConversationPath = currentTab.config?.restoredConversationPath?.trim() || ''
     const hasLocalSessionEvents = currentTab.config.conversationAcknowledged === true || chatStore.getTabEvents(tabSessionId).some(event =>
       ['conversation_resumed', 'unified_completion', 'agent_end', 'streaming_chunk'].includes(event.type ?? ''))
@@ -3074,18 +2959,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       return ts === null ? latest : Math.max(latest, ts)
     }, 0)
     const optimisticTimestampMs = Math.max(Date.now(), latestExistingTimestampMs + 1)
-    const alreadyHasLiveInputRow = Boolean(optimisticLiveInputEventID) && existingSessionEvents.some(
-      event => event.id === optimisticLiveInputEventID,
+    const optimisticUserMessage = createUserMessageEvent(
+      displayQueryWithContext,
+      nextEventIndex,
+      new Date(optimisticTimestampMs).toISOString(),
+      tabSessionId,
     )
-    if (!alreadyHasLiveInputRow) {
-      const optimisticUserMessage = createUserMessageEvent(
-        displayQueryWithContext,
-        nextEventIndex,
-        new Date(optimisticTimestampMs).toISOString(),
-        tabSessionId,
-      )
-      chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
-    }
+    const optimisticUserEventID = optimisticUserMessage.id
+    chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
 
     // Consume only this request's context after acceptance. Failed sends keep
     // files/resume bindings; files added during delivery remain attached.
@@ -3332,18 +3213,27 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           })
         startForegroundEventCatchUp(responseSessionId)
         return true
-      } else if (response.status === 'live_input_delivered') {
-        // Single-entry routing (tmux-transport CLI): the backend steered this
-        // message into the already-running coding-agent turn instead of starting a
-        // new one. Keep the turn streaming — the optimistic user bubble already shows
-        // the message (the backend-recorded echo is deduped by exact content), and
-        // the running turn's SSE carries the agent output until its completion event
-        // clears the spinner. Do NOT resetStreamingState here (that would stop the
-        // spinner mid-turn).
+      } else if (response.status === 'live_input_delivered' || response.status === 'accepted') {
+        // Single-entry routing: the backend took this message into the
+        // already-running turn instead of starting a new one — steered into a
+        // live CLI ('live_input_delivered') or queued for the next boundary
+        // ('accepted'). Keep the turn streaming — the optimistic user bubble
+        // already shows the message (the backend-recorded echo is deduped by
+        // exact content), and the running turn's SSE carries the agent output
+        // until its completion event clears the spinner. Do NOT
+        // resetStreamingState here (that would stop the spinner mid-turn).
         const sid = response.session_id || tabSessionId
         consumeSubmittedWorkflowContext()
         consumeSubmittedFiles()
         acceptReceipt()
+        if (response.delivery_status) {
+          const receiptEventID = optimisticUserEventID
+          useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
+            [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === receiptEventID
+              ? withLiveInputReceipt(event, response.delivery_status!, response.provider)
+              : event),
+          } }))
+        }
         chatStore.setTabStreaming(currentTab.tabId, true)
         chatStore.setTabCompleted(currentTab.tabId, false)
         if (sid && shouldRefreshSessionEventStream(
@@ -3408,25 +3298,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     }
     const submit = () => chatSubmissionLane.enqueue(`${identity}:${laneKey}`, () =>
       isChatIdentityCurrent(identity) ? submitQueryImmediately(query, executionOptions, captured) : Promise.resolve(false))
-    const useRetainedLiveInput = shouldUseRetainedLiveInput({
-      requested: options?.preferLiveInput === true,
-      fullTurnStreaming,
-      turnIsStreaming: sourceTab?.isStreaming === true,
-      hasSession: Boolean(sourceTab?.sessionId),
-      sessionKnownToServer: useChatStore.getState().activeSessionsCache.some(session => session.session_id === sourceTab?.sessionId),
-      hasOneShotContext: Boolean(
-        sourceTab?.config?.restoredConversationPath?.trim() ||
-        sourceTab?.config?.fileContext?.length ||
-        sourceTab?.config?.workflowContext?.length ||
-        executionOptions ||
-        sourceTab?.metadata?.agentProfileRuntimeDirty
-      ),
-    })
-    if (useRetainedLiveInput) {
-      return liveInputSubmissionCoordinator(`${identity}:${laneKey}`, query, submit).finally(() => builder?.release())
-    }
-    return submit().finally(() => builder?.release())
-  }, [activeTab, selectedModeCategory, submitQueryImmediately, fullTurnStreaming])
+    // Every send funnels through one coordinator: a rapid Enter/double-click
+    // shares one HTTP mutation per session + message instead of dispatching
+    // the same text twice. The backend still owns live-vs-new-turn routing.
+    return liveInputSubmissionCoordinator(`${identity}:${laneKey}`, query, submit).finally(() => builder?.release())
+  }, [activeTab, selectedModeCategory, submitQueryImmediately])
 
   const retryLastProductMessage = useCallback(async () => {
     const lastUserMessage = [...displayEvents]

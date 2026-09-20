@@ -62,7 +62,7 @@ async function deliverQueueReceipt(tabId: string, receipt: QueueReceipt, send: S
     const deliveryAccepted = alreadyAccepted || !built.message.trim() || await send(built.message, {
       sourceTabId: tabId, sourceSessionId: sessionId, identity,
       submissionId: receipt.id, isAutoNotification: built.isAutoNotification,
-      preferLiveInput: receipt.preferLiveInput, queuedDelivery: true,
+      queuedDelivery: true,
     })
     // Remember server acceptance before checking whether this particular UI
     // projection still owns the tab. A second projection must not resend an
@@ -119,7 +119,7 @@ export async function sendQueuedChatMessage(tabId: string, index: number, messag
   if (saved && (saved.sessionId !== tab.sessionId || saved.queueIndex !== index || saved.messages[0] !== message)) return false
   const receipt: QueueReceipt = saved ?? {
     id: crypto.randomUUID(), sessionId: tab.sessionId, messages: [message],
-    queueIndex: index, queuePrefix: tab.config.queuedMessages.slice(0, index + 1), preferLiveInput: true,
+    queueIndex: index, queuePrefix: tab.config.queuedMessages.slice(0, index + 1),
   }
   return deliverQueueReceipt(tabId, receipt, send, messages => ({ message: messages[0], isAutoNotification: false }), false)
 }

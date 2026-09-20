@@ -266,4 +266,22 @@ describe('AutomationHubPanel Ask AI', () => {
       await unmount()
     }
   })
+
+  it('places Ask AI left of the per-tab refresh button', async () => {
+    const { host, unmount } = await mountHub({
+      entityType: 'workflow',
+      workflowScope: { workspacePath: 'Workflow/one' },
+      chatContent: <div>Chats</div>,
+    })
+    try {
+      const buttons = Array.from(host.querySelectorAll('header button'))
+      const askIndex = buttons.findIndex(button => button.getAttribute('data-testid') === 'ask-ai')
+      const refreshIndex = buttons.findIndex(button => (button.getAttribute('aria-label') || '').startsWith('Refresh'))
+      expect(askIndex).toBeGreaterThanOrEqual(0)
+      expect(refreshIndex).toBeGreaterThanOrEqual(0)
+      expect(askIndex).toBeLessThan(refreshIndex)
+    } finally {
+      await unmount()
+    }
+  })
 })

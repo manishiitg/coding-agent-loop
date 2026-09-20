@@ -296,23 +296,52 @@ func (api *StreamingAPI) finalResponseForExecution(sessionID, executionID string
 	if api == nil || api.eventStore == nil {
 		return ""
 	}
+	fallback := ""
 	all := api.eventStore.GetAllEventsRaw(sessionID)
 	for i := len(all) - 1; i >= 0; i-- {
 		event := all[i]
-		if event.Type != "unified_completion" || strings.TrimSpace(event.ExecutionID) != strings.TrimSpace(executionID) || event.Data == nil {
+		if strings.TrimSpace(event.ExecutionID) != strings.TrimSpace(executionID) || event.Data == nil {
 			continue
 		}
-		if completion, ok := event.Data.Data.(*events.UnifiedCompletionEvent); ok && completion != nil {
+		switch event.Type {
+		case "unified_completion":
+			if text := endEventText(event.Data.Data); text != "" {
+				return text
+			}
+		case "llm_generation_end":
+			// Turns may end without a unified completion (the waiter
+			// accepts several terminal types); the newest generation
+			// of a completed turn is its final assistant text.
+			if fallback == "" {
+				fallback = endEventText(event.Data.Data)
+			}
+		}
+	}
+	return fallback
+}
+
+// endEventText extracts the final assistant text from a turn-end event
+// payload, typed or generic. It mirrors scheduledTurnProducedResponse:
+// a unified completion carries FinalResult, a generation end its Content.
+func endEventText(data interface{}) string {
+	switch completion := data.(type) {
+	case *events.UnifiedCompletionEvent:
+		if completion != nil {
 			return strings.TrimSpace(completion.FinalResult)
 		}
-		// Persisted/reloaded event data can be represented by a generic payload.
-		if raw, marshalErr := json.Marshal(event.Data.Data); marshalErr == nil {
-			var payload struct {
-				FinalResult string `json:"final_result"`
-			}
-			if json.Unmarshal(raw, &payload) == nil {
-				return strings.TrimSpace(payload.FinalResult)
-			}
+	case *events.LLMGenerationEndEvent:
+		if completion != nil {
+			return strings.TrimSpace(completion.Content)
+		}
+	}
+	// Persisted/reloaded event data can be represented by a generic payload.
+	if raw, marshalErr := json.Marshal(data); marshalErr == nil {
+		var payload struct {
+			FinalResult string `json:"final_result"`
+			Content     string `json:"content"`
+		}
+		if json.Unmarshal(raw, &payload) == nil {
+			return strings.TrimSpace(firstNonEmptyTrimmed(payload.FinalResult, payload.Content))
 		}
 	}
 	return ""

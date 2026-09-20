@@ -1,6 +1,5 @@
 export interface ChatSubmissionOptions {
   isAutoNotification?: boolean
-  preferLiveInput?: boolean
   sourceTabId?: string
   sourceSessionId?: string
   sourceComposerId?: string

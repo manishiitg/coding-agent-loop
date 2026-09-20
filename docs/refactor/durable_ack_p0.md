@@ -30,6 +30,44 @@ received but lags (milliseconds idle, unbounded while busy), and it
 cannot see unsubmitted drafts, modals, trust prompts, or compaction.
 Neither signal alone is sufficient.
 
+## Purpose and reliability outcome
+
+The purpose of this split is to make live-input delivery more reliable
+by reducing how much correctness depends on interpreting terminal
+screenshots. It does not make tmux itself inherently more reliable.
+It gives tmux a smaller, clearer responsibility and uses the provider's
+durable data for the facts that data can prove.
+
+Target ownership:
+
+* **Tmux transports interaction:** start and retain the CLI process,
+  serialize input, paste exact bytes, submit control keys, interrupt,
+  and expose the live terminal.
+* **Provider JSON/markers/transcript/DB prove acceptance:** the exact
+  send-specific durable record produces the double delivery tick and
+  is authoritative for whether the provider received the message.
+* **Pane inspection handles only pane-only safety states:** trust,
+  login, approval, blocking compaction, and an exact draft visibly
+  stuck in the editor.
+* **Structured provider data owns conversation state:** final answers,
+  restoration, resume identity, and auditable history should not be
+  reconstructed from hard-wrapped terminal text.
+
+This improves platform reliability in two concrete ways:
+
+1. Provider TUI wording, layout, animation, wrapping, or repaint timing
+   can no longer turn a successfully accepted message into a false
+   delivery failure.
+2. Shared tmux primitives for session ownership, input ordering, paste,
+   keys, and bounded recovery replace duplicated provider-specific
+   machinery, so one transport fix applies consistently to every CLI.
+
+The resulting rule is: tmux answers **"did we transport these bytes to
+this live process?"**; the provider's durable store answers **"did this
+exact send become part of the conversation?"** Pane parsing must not
+silently substitute for the second answer except for the explicitly
+documented safety blockers that have no durable representation.
+
 ## Probe evidence (2026-09-19, codex-cli 0.155.0, gpt-5.6-luna)
 
 Hands-on TUI probe in an isolated tmux server, adapter-exact

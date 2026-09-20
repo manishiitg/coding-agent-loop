@@ -22,26 +22,27 @@ const job = (overrides: Partial<ScheduledJob> & { id: string; name: string }): S
 
 function stubPanel(filteredJobs: ScheduledJob[]) {
   const noop = () => {}
+  const asyncNoop = async () => {}
   return {
     filteredJobs,
     presetMap: new Map(),
     showWorkflowIdentityInScheduleRows: false,
     isReadOnlyUser: false,
-    handleStopRun: noop,
-    handleTrigger: noop,
+    handleStopRun: asyncNoop,
+    handleTrigger: asyncNoop,
     triggering: null,
-    handleToggle: noop,
-    handleRunDestination: noop,
+    handleToggle: asyncNoop,
+    handleRunDestination: asyncNoop,
     openActionMenuJobId: null,
     setOpenActionMenuJobId: noop,
-    handleDelete: noop,
+    handleDelete: asyncNoop,
     expandedRunHistoryJobIds: new Set<string>(),
     runsByJob: {},
     runsLoadingJobIds: new Set<string>(),
     deletingRunSessionIds: new Set<string>(),
-    toggleRunHistory: noop,
-    openScheduledRun: noop,
-    deleteScheduledRunSession: noop,
+    toggleRunHistory: asyncNoop,
+    openScheduledRun: asyncNoop,
+    deleteScheduledRunSession: asyncNoop,
   }
 }
 

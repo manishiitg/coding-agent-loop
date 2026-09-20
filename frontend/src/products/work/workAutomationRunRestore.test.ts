@@ -34,7 +34,7 @@ const project = {
   identity: { name: 'News', icon: 'N' },
   selectedServers: [],
   selectedSkills: [],
-} as WorkSession
+} as unknown as WorkSession
 
 const runSession = (overrides: Partial<ActiveSessionInfo> = {}): ActiveSessionInfo => ({
   session_id: 'product-af49f7f6-151d-4f94-9578-acd2c155e1a0',

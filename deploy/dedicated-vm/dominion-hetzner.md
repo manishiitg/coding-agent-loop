@@ -566,14 +566,14 @@ undocumented elsewhere only.
       worked without any Cloudflare-side change. Optional, not blocking —
       the account owner's call, since it changes what protects this
       hostname.
-- [ ] **No automated release script.** Every release today is a manual,
-      human-run sequence (build 5 binaries + frontend locally, `rsync`, swap
-      the `current` symlink, restart 3 services) — see
-      [`../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md`](../ROOTLESS-LINUX-DEPLOYMENT-CHECKLIST.md)'s
-      "Not yet automated" section. A `deploy-dominion.sh` mirroring
-      `deploy-rootless.sh` would make every item on that checklist — plus
-      the release-relative `logs/` symlink from this doc — impossible to
-      silently skip on a future release.
+- [x] **No automated release script.** Fixed: `deploy/dedicated-vm/deploy-dominion.sh`
+      now builds all 5 binaries + frontend natively on the box, stages a
+      release, and (with `--activate`) flips `current` and restarts services
+      with a health check + automatic rollback — mirroring
+      `deploy-rootless.sh` as originally proposed here. Also wired into the
+      shared top-level `./deploy.sh dominion [--activate]` entry point, which
+      SSHes in and invokes the on-box copy at its fixed path
+      (`/srv/dominion/deploy-dominion.sh`).
 - [ ] **`deliver-briefing` step reported `delivered: False status: failed`**
       on the `tectonicusadaytrading` workflow's 2026-08-31 scheduled run
       (`runs/iteration-0/default/execution/deliver-briefing/delivery_receipt.json`).

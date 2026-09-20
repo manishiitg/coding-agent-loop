@@ -833,41 +833,25 @@ func TestExecuteAutomationRunSetupFailureBecomesTerminal(t *testing.T) {
 	}
 }
 
-func TestTriggerTurnMessageInlinesSmallPayloads(t *testing.T) {
-	small := []byte(`{"instruction":"check news"}`)
-	msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", small)
-	if !strings.Contains(msg, `"instruction":"check news"`) || !strings.Contains(msg, "```json") {
-		t.Fatalf("small payload not inlined: %q", msg)
-	}
-	if strings.Contains(msg, "triggers/deliveries/r.json") {
-		t.Fatalf("small payload keeps the file reference: %q", msg)
-	}
-
-	big := bytes.Repeat([]byte("x"), inlineTriggerPayloadBytes+1)
-	msg = triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", big)
+func TestTriggerTurnMessageReferencesDeliveryFile(t *testing.T) {
+	msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json")
 	if !strings.Contains(msg, "triggers/deliveries/r.json") {
-		t.Fatalf("large payload lost the file reference: %q", msg[:120])
+		t.Fatalf("trigger turn lost the delivery file reference: %q", msg)
 	}
 	if strings.Contains(msg, "```json") {
-		t.Fatal("large payload inlined despite the cap")
+		t.Fatal("trigger turn inlined its payload into crew chat")
 	}
-
-	exact := bytes.Repeat([]byte("y"), inlineTriggerPayloadBytes)
-	if msg := triggerTurnMessage("B", "S.", "p", exact); !strings.Contains(msg, "```json") {
-		t.Fatal("payload at the cap should still inline")
+	if !strings.Contains(msg, "Brief me") || !strings.Contains(msg, "Started by webhook.") {
+		t.Fatalf("trigger turn lost its message or source note: %q", msg)
 	}
 }
 
 func TestTriggerTurnMessageCarriesAutonomyNote(t *testing.T) {
-	small := []byte(`{"instruction":"check news"}`)
-	big := bytes.Repeat([]byte("x"), inlineTriggerPayloadBytes+1)
-	for name, body := range map[string][]byte{"inline": small, "file_reference": big} {
-		msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", body)
-		if !strings.Contains(msg, "Do not ask clarifying questions") {
-			t.Fatalf("%s trigger turn lost the autonomy note: %q", name, msg)
-		}
-		if !strings.Contains(msg, "not an interactive conversation") {
-			t.Fatalf("%s trigger turn lost the one-way framing: %q", name, msg)
-		}
+	msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json")
+	if !strings.Contains(msg, "Do not ask clarifying questions") {
+		t.Fatalf("trigger turn lost the autonomy note: %q", msg)
+	}
+	if !strings.Contains(msg, "not an interactive conversation") {
+		t.Fatalf("trigger turn lost the one-way framing: %q", msg)
 	}
 }

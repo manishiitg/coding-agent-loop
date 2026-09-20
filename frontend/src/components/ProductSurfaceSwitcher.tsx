@@ -25,11 +25,11 @@ const products: Array<{
   description: string
   icon: ProductMarkComponent
 }> = [
-  { id: 'agentworks', label: 'AgentWorks', description: 'Automation and workflows', icon: RunloopMark },
+  { id: 'agentworks', label: 'AgentWorks', description: 'Recurring work that runs itself — schedules, triggers, and jobs', icon: RunloopMark },
   { id: 'video-studio', label: 'Video Studio', description: 'Projects and video production', icon: VideoStudioMark },
   { id: 'dominion', label: 'Dominion', description: 'Paper-trading watchlist and portfolio', icon: DominionMark },
   { id: 'sparkquill', label: 'SparkQuill', description: 'Family learning with Quill', icon: SparkQuillMark },
-  { id: 'work', label: 'Crew', description: 'Persistent AI crew for projects and operations', icon: WorkMark },
+  { id: 'work', label: 'Crew', description: 'AI specialists that remember your work and get things done', icon: WorkMark },
 ]
 
 export function visibleProductSurfaceIDs(allowedProducts?: string[] | null): ProductSurface[] {

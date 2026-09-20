@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 func newCrewCreationTestEnv(t *testing.T) (*ProductScheduleService, *mockWorkspaceAPI, context.Context) {
@@ -718,6 +719,28 @@ func TestCreateCrewProjectAvailability(t *testing.T) {
 			t.Fatalf("unknown global err = %v, want does-not-exist", err)
 		}
 	})
+}
+
+func TestCreateCrewProjectSucceedsUnderBuilderFolderGuard(t *testing.T) {
+	svc, mock, ctx := newCrewCreationTestEnv(t)
+	// Mirror a Builder session: the agent's own writes are confined to
+	// the workflow folder, but server-side creation must still initialize
+	// the crew tree outside that sandbox.
+	ctx = context.WithValue(ctx, common.FolderGuardAllowedWriteFolderKey, []string{"Workflow/build"})
+	created, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
+		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Release Reviewer",
+		Purpose: "Own release quality", StepInstruction: "Review the release.",
+		IdempotencyKey: "proposal-1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !mock.hasFolder(created.WorkspacePath + "/code") {
+		t.Fatal("code/ folder was not created under the guard")
+	}
+	if _, ok := mock.files[created.WorkspacePath+"/product.json"]; !ok {
+		t.Fatal("product.json was not written under the guard")
+	}
 }
 
 func TestCreateCrewProjectResolves(t *testing.T) {

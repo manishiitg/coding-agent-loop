@@ -1143,3 +1143,16 @@ All four findings above are fixed; the acceptance checklist now holds:
 - Attachment alias and step ID are resolved to free deterministic values
   (`slug-2`, `crew-slug-2`) before anything is created, with the default step
   paired to the selected alias; explicit collisions fail before writing.
+
+## Builder session folder-guard fix — 2026-09-20
+
+First production run failed deterministically: `create_crew` wrote the crew
+manifests, then `code/` folder creation was denied with `ACCESS DENIED`
+because it went through the guarded workspace client, which enforces the
+Builder session's sandbox (`Workflow/<folder>` only). The fix uses the raw
+`createWorkspaceFolder` helper instead — the session guard confines the
+model's direct file access, not the server's own authorized tool writes, and
+every other creation write already used raw helpers. A regression test runs
+creation under a Builder-style guard. Retrying with the same idempotency key
+adopts the receipt and converges the half-written crew instead of duplicating
+it.

@@ -14,7 +14,6 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
 // CreateCrewRequest is the validated input for server-side Crew creation from
@@ -440,8 +439,12 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 	if err := writeCrewCreationManifest(ctx, manifestPath, manifest); err != nil {
 		return CreatedCrew{}, err
 	}
-	client := workspace.NewClient(getWorkspaceAPIURL(), workspace.WithUserID(userID))
-	if err := client.CreateFolder(ctx, filepath.ToSlash(filepath.Join(workspacePath, "code"))); err != nil {
+	// Raw folder create, not the guarded workspace client: this is a
+	// server-side privileged write outside the Builder session's sandbox
+	// (the session guard confines the model's direct file access, not the
+	// server's own authorized tool implementations). The guarded client
+	// denies the crew path with ACCESS DENIED in every Builder session.
+	if err := createWorkspaceFolder(ctx, filepath.ToSlash(filepath.Join(workspacePath, "code"))); err != nil {
 		return CreatedCrew{}, fmt.Errorf("initialize crew code folder: %w", err)
 	}
 	return CreatedCrew{CrewID: crewID, Title: title, WorkspacePath: workspacePath, ManifestPath: manifestPath, SessionID: sessionID}, nil

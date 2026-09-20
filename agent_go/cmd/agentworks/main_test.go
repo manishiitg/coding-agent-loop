@@ -3,12 +3,16 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -294,6 +298,134 @@ func TestCLILoginRejectsPasswordAndSessionJWT(t *testing.T) {
 			t.Fatal("legacy CLI login accepted")
 		}
 	}
+}
+
+func TestVersionCommand(t *testing.T) {
+	var out bytes.Buffer
+	if code := run(context.Background(), []string{"version"}, strings.NewReader(""), &out, io.Discard, func(string) string { return "" }); code != 0 {
+		t.Fatalf("version exited %d", code)
+	}
+	for _, want := range []string{`"version"`, `"os"`, `"arch"`, runtime.GOOS, runtime.GOARCH} {
+		if !strings.Contains(out.String(), want) {
+			t.Fatalf("version output missing %q: %s", want, out.String())
+		}
+	}
+}
+
+func TestUpdateCommand(t *testing.T) {
+	const newSHA = "0123456789abcdef0123456789abcdef01234567"
+	fakeBinary := "#!/bin/sh\necho '{\"version\": \"" + newSHA + "\"}'\n"
+	sum := sha256.Sum256([]byte(fakeBinary))
+	hexSum := hex.EncodeToString(sum[:])
+	asset := "agentworks-" + runtime.GOOS + "-" + runtime.GOARCH
+	mux := http.NewServeMux()
+	mux.HandleFunc("/api/downloads/cli/version.json", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, `{"version":%q,"release":"test-release"}`, newSHA)
+	})
+	mux.HandleFunc("/api/downloads/cli/"+asset, func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte(fakeBinary))
+	})
+	mux.HandleFunc("/api/downloads/cli/"+asset+".sha256", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "%s  %s\n", hexSum, asset)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	runUpdate := func(t *testing.T, target, version string, extra ...string) (int, string) {
+		t.Helper()
+		oldTarget, oldVersion := updateTargetOverride, cliVersion
+		updateTargetOverride, cliVersion = target, version
+		defer func() { updateTargetOverride, cliVersion = oldTarget, oldVersion }()
+		var out bytes.Buffer
+		args := append([]string{"--server", server.URL, "update"}, extra...)
+		code := run(context.Background(), args, strings.NewReader(""), &out, io.Discard, func(string) string { return "" })
+		return code, out.String()
+	}
+
+	t.Run("installs verified binary", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "agentworks")
+		if err := os.WriteFile(target, []byte("old-binary"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code, out := runUpdate(t, target, "old-version-sha")
+		if code != 0 {
+			t.Fatalf("update exited %d: %s", code, out)
+		}
+		got, err := os.ReadFile(target)
+		if err != nil || string(got) != fakeBinary {
+			t.Fatalf("target not replaced: %q %v", got, err)
+		}
+		if _, err := os.Stat(target + ".bak"); !os.IsNotExist(err) {
+			t.Fatal("backup left behind")
+		}
+		if !strings.Contains(out, newSHA) {
+			t.Fatalf("output missing new version: %s", out)
+		}
+	})
+
+	t.Run("up to date short-circuits", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "agentworks")
+		if err := os.WriteFile(target, []byte("current"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code, out := runUpdate(t, target, newSHA)
+		if code != 0 {
+			t.Fatalf("update exited %d: %s", code, out)
+		}
+		if got, _ := os.ReadFile(target); string(got) != "current" {
+			t.Fatal("up-to-date binary was touched")
+		}
+	})
+
+	t.Run("check only reports", func(t *testing.T) {
+		target := filepath.Join(t.TempDir(), "agentworks")
+		if err := os.WriteFile(target, []byte("current"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		code, out := runUpdate(t, target, "old-version-sha", "--check")
+		if code != 0 {
+			t.Fatalf("update --check exited %d: %s", code, out)
+		}
+		if !strings.Contains(out, `"update_available": true`) {
+			t.Fatalf("check output wrong: %s", out)
+		}
+		if got, _ := os.ReadFile(target); string(got) != "current" {
+			t.Fatal("--check touched the binary")
+		}
+	})
+
+	t.Run("checksum mismatch aborts", func(t *testing.T) {
+		badMux := http.NewServeMux()
+		badMux.HandleFunc("/api/downloads/cli/version.json", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, `{"version":%q,"release":"test-release"}`, newSHA)
+		})
+		badMux.HandleFunc("/api/downloads/cli/"+asset, func(w http.ResponseWriter, r *http.Request) {
+			w.Write([]byte("tampered-bytes"))
+		})
+		badMux.HandleFunc("/api/downloads/cli/"+asset+".sha256", func(w http.ResponseWriter, r *http.Request) {
+			fmt.Fprintf(w, "%s  %s\n", hexSum, asset)
+		})
+		bad := httptest.NewServer(badMux)
+		defer bad.Close()
+		target := filepath.Join(t.TempDir(), "agentworks")
+		if err := os.WriteFile(target, []byte("current"), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		oldTarget, oldVersion := updateTargetOverride, cliVersion
+		updateTargetOverride, cliVersion = target, "old-version-sha"
+		defer func() { updateTargetOverride, cliVersion = oldTarget, oldVersion }()
+		var out, stderr bytes.Buffer
+		code := run(context.Background(), []string{"--server", bad.URL, "update"}, strings.NewReader(""), &out, &stderr, func(string) string { return "" })
+		if code == 0 {
+			t.Fatal("tampered update accepted")
+		}
+		if got, _ := os.ReadFile(target); string(got) != "current" {
+			t.Fatal("target modified despite checksum failure")
+		}
+		if _, err := os.Stat(target + ".bak"); !os.IsNotExist(err) {
+			t.Fatal("backup left behind after failure")
+		}
+	})
 }
 
 func TestCLIOperationsStayAdmitted(t *testing.T) {

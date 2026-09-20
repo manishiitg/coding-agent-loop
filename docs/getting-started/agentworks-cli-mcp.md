@@ -218,6 +218,27 @@ token can never status, message, or stop another token's session. New tools
 added to run mode later work immediately through `tools call`; typed
 subcommands cover the core operations above.
 
+## Chatting with the workflow assistant
+
+`chat` asks the assistant anything — explanations, analysis, follow-ups — as
+a free-form turn on a pinned Run-mode session, the CLI/MCP equivalent of the
+Slack and WhatsApp bot channels. Pass `--session` to continue the
+conversation; sessions are shared with the run tools, so one conversation can
+ask, run, and ask about the run. Replies arrive through `runs status`; when
+it reports waiting human input, answer with `runs reply`.
+
+```sh
+agentworks chat ask --workflow WORKFLOW_ID --message "why did step 1 fail?"
+agentworks chat ask --workflow WORKFLOW_ID --session SESSION_ID --message "retry it with tier high"
+agentworks runs status --workflow WORKFLOW_ID --session SESSION_ID
+agentworks runs reply --workflow WORKFLOW_ID --session SESSION_ID --request-id REQUEST_ID --response "yes"
+```
+
+Chat turns run with the same `runs:execute` scope and the same ownership
+rules as run tools. The assistant can call run-mode tools to answer, so a
+chat turn may start work; watch `runs status` and `runs executions` to see
+what it started.
+
 ## Asset links and downloads
 
 Use the existing Share file viewer for a clickable output link:
@@ -420,7 +441,8 @@ test build.
 - `external_builder.go`: existing query, event, human-input, and cancellation
   adapters; unexposed.
 - `external_run.go`: run-mode tool proxy (pinned Run-mode sessions),
-  `run_status` poller, and JSON-direct execution, schedule, and trigger reads.
+  `run_status` poller, `chat` turns, human-input replies, and JSON-direct
+  execution, schedule, and trigger reads.
 - `workspace/handlers/workflow_files.go`: workflow-confined file access.
 
 The exposed tool set has one source of truth:

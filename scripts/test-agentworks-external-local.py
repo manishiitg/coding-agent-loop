@@ -139,8 +139,12 @@ class Probe:
         call=lambda name,args,token,expected:(http(self.server+'/api/external/v1/call',{'name':name,'arguments':args},token,expected=expected))
         denied=call('execute_step',{'workflow_id':self.wid,'step_id':'nope'},issued['token'],403)
         assert denied['error']['code']=='insufficient_scope'
+        gagged=call('chat',{'workflow_id':self.wid,'message':'hello'},issued['token'],403)
+        assert gagged['error']['code']=='insufficient_scope'
         missing=call('run_status',{'workflow_id':self.wid,'session_id':'no-such-session'},runner['token'],404)
         assert missing['error']['code']=='session_not_found'
+        unheard=call('run_reply_input',{'workflow_id':self.wid,'session_id':'no-such-session','request_id':'r','response':'yes'},runner['token'],404)
+        assert unheard['error']['code']=='session_not_found'
         assert isinstance(call('list_schedules',{'workflow_id':self.wid},runner['token'],200)['schedules'],list)
         assert call('list_executions',{'workflow_id':self.wid},runner['token'],200)['executions']==[]
         unknown=call('get_schedule_runs',{'workflow_id':self.wid,'schedule_id':'nope'},runner['token'],404)

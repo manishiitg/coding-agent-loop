@@ -26,7 +26,7 @@ func TestExternalRunScopeGate(t *testing.T) {
 	full := claims("workflows:read", "files:read", "runs:execute")
 
 	// Proxied run tools require runs:execute.
-	for _, name := range []string{"execute_step", "run_full_workflow", "send_step_message", "stop_step", "stop_all_executions", "query_step", "trigger_schedule"} {
+	for _, name := range []string{"execute_step", "run_full_workflow", "send_step_message", "stop_step", "stop_all_executions", "query_step", "trigger_schedule", "chat", "run_reply_input"} {
 		if externalTokenAllows(readOnly, byName[name]) {
 			t.Fatalf("read-only token allows %s", name)
 		}
@@ -60,6 +60,28 @@ func TestExternalRunProxyRejectsReadOnlyToken(t *testing.T) {
 	scoped := externalTestBody(t, w, 403)
 	if scoped["error"].(map[string]any)["code"] != "insufficient_scope" {
 		t.Fatalf("wrong error: %v", scoped)
+	}
+}
+
+func TestExternalChatRejectsReadOnlyTokenAndBlankMessage(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	w := httptest.NewRecorder()
+	data := `{"name":"chat","arguments":{"workflow_id":"invoices","message":"hello"}}`
+	f.api.handleExternalCall(w, adminRequest(http.MethodPost, "/api/external/call", data, patClaims("owner", []string{"workflows:read", "files:read"}), nil))
+	scoped := externalTestBody(t, w, 403)
+	if scoped["error"].(map[string]any)["code"] != "insufficient_scope" {
+		t.Fatalf("wrong error: %v", scoped)
+	}
+	// A whitespace message passes schema validation but is rejected before
+	// any turn starts.
+	externalTestBody(t, f.call(t, "owner", "chat", map[string]any{"workflow_id": "invoices", "message": "  "}), 400)
+}
+
+func TestExternalRunReplyInputRejectsUnknownSession(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	body := externalTestBody(t, f.call(t, "owner", "run_reply_input", map[string]any{"workflow_id": "invoices", "session_id": "no-such-session", "request_id": "r", "response": "yes"}), 404)
+	if body["error"].(map[string]any)["code"] != "session_not_found" {
+		t.Fatalf("wrong error: %v", body)
 	}
 }
 

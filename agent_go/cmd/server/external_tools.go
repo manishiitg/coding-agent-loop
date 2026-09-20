@@ -123,6 +123,8 @@ func externalTools() ([]externalTool, error) {
 		p["schedule_id"] = externalString("Schedule ID from list_schedules.")
 		addRun("get_schedule_runs", "List a schedule's run history: status, duration, run folder, and errors.", false, p, "schedule_id")
 		addRun("trigger_schedule", "Trigger a schedule to run immediately, outside its normal timing. Requires the runs:execute scope.", true, map[string]any{"schedule_id": externalString("Schedule ID from list_schedules.")}, "schedule_id")
+		addRun("chat", "Chat with the workflow assistant in a pinned Run-mode session: ask questions, request analysis, or direct runs conversationally. Starts a new session, or continues session_id for multi-turn conversation. Requires the runs:execute scope. Poll run_status for the reply.", true, map[string]any{"message": externalString("The question or instruction to send."), "session_id": map[string]any{"type": "string", "description": "Existing run session ID to continue. Omit to start a new conversation."}}, "message")
+		addRun("run_reply_input", "Answer a pending human-input request in a run session (see run_status pending_inputs). Requires the runs:execute scope.", true, map[string]any{"session_id": externalString("Run session ID from run_status."), "request_id": externalString("Pending input request ID from run_status."), "response": externalString("The answer to submit.")}, "session_id", "request_id", "response")
 		// Membership comes from product.yaml's run mode: external_tools
 		// first, in yaml order, then every run.tools name (the single
 		// source of truth for the run surface) that has no native
@@ -345,7 +347,7 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	// to the asynchronous query runtime (which must never run under this
 	// lock), and the status and schedule readers need no lock.
 	switch tool.Name {
-	case "run_status", "list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule":
+	case "run_status", "list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule", "chat", "run_reply_input":
 		api.externalRunCall(w, r, tool.Name, args, *selected)
 		return
 	}

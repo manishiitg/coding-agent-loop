@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -52,43 +53,52 @@ func externalRunProxyTool(name string) externalTool {
 	}
 }
 
-// externalRunProxy adapts one run-mode tool call to the existing chat
-// runtime: it synthesizes a pinned Run-mode session (or continues the
-// caller's own) and sends a single instruction turn invoking the tool. The
-// external router has already authorized workflow access; session ownership
-// and its workflow binding must additionally match, even for admins.
-func (api *StreamingAPI) externalRunProxy(w http.ResponseWriter, r *http.Request, name string, args map[string]any, workflow DiscoveredWorkflow) {
-	userID := strings.TrimSpace(GetUserIDFromContext(r.Context()))
-	if userID == "" {
+// externalRunSessionSetup resolves the session a run turn goes to: the
+// caller's own continued session, or a fresh ID minted here. The external
+// router has already authorized workflow access; session ownership and its
+// workflow binding must additionally match, even for admins.
+func (api *StreamingAPI) externalRunSessionSetup(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) (sessionID string, persisted bool, ok bool) {
+	if strings.TrimSpace(GetUserIDFromContext(r.Context())) == "" {
 		externalError(w, http.StatusUnauthorized, "unauthorized", "Authentication required")
-		return
+		return "", false, false
 	}
-	sessionID, err := externalBuilderString(args, "session_id")
+	var err error
+	sessionID, err = externalBuilderString(args, "session_id")
 	if err != nil || (sessionID != "" && sanitizeChatHistorySessionID(sessionID) != sessionID) {
 		externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
-		return
+		return "", false, false
 	}
 	claims := GetUserFromContext(r.Context())
 	if claims.AccessToken != nil && sessionID != "" && !strings.HasPrefix(sessionID, accessTokenSessionPrefix(claims)) {
 		externalError(w, http.StatusNotFound, "session_not_found", "This access token does not own that run session.")
-		return
+		return "", false, false
 	}
-	var persisted bool
 	if sessionID != "" {
 		if _, persisted, err = api.externalBuilderSession(r, workflow.WorkspacePath, sessionID); err != nil {
 			externalError(w, http.StatusNotFound, "session_not_found", "Run session not found")
-			return
+			return "", false, false
 		}
 	}
 	if workflow.Manifest == nil || workflow.Manifest.ID == "" {
 		externalError(w, http.StatusConflict, "workflow_unavailable", "Workflow manifest is unavailable")
-		return
+		return "", false, false
 	}
 	if sessionID == "" {
 		sessionID = uuid.NewString()
 		if claims.AccessToken != nil {
 			sessionID = accessTokenSessionPrefix(claims) + sessionID
 		}
+	}
+	return sessionID, persisted, true
+}
+
+// externalRunProxy adapts one run-mode tool call to the existing chat
+// runtime: it synthesizes a pinned Run-mode session (or continues the
+// caller's own) and sends a single instruction turn invoking the tool.
+func (api *StreamingAPI) externalRunProxy(w http.ResponseWriter, r *http.Request, name string, args map[string]any, workflow DiscoveredWorkflow) {
+	sessionID, persisted, ok := api.externalRunSessionSetup(w, r, args, workflow)
+	if !ok {
+		return
 	}
 	query := QueryRequest{
 		Query: externalRunInstruction(name, args), AgentMode: "workflow_phase", PhaseID: "workflow-builder",
@@ -99,6 +109,37 @@ func (api *StreamingAPI) externalRunProxy(w http.ResponseWriter, r *http.Request
 	if persisted {
 		query.RestoredConversationSessionID = sessionID
 	}
+	api.forwardRunTurn(w, r, query, sessionID, workflow)
+}
+
+// externalChat sends the caller's message verbatim as a turn on a pinned
+// Run-mode session: a free-form conversation instead of a tool invocation.
+// Sessions are shared with the run tools, so one conversation can ask,
+// run, and ask about the run.
+func (api *StreamingAPI) externalChat(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {
+	sessionID, persisted, ok := api.externalRunSessionSetup(w, r, args, workflow)
+	if !ok {
+		return
+	}
+	message, err := externalBuilderString(args, "message")
+	if err != nil || message == "" {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "message is required")
+		return
+	}
+	query := QueryRequest{
+		Query: message, AgentMode: "workflow_phase", PhaseID: "workflow-builder",
+		PresetQueryID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
+		PinRunMode: true, TriggeredBy: "external", SessionTitle: "External chat",
+		ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"},
+	}
+	if persisted {
+		query.RestoredConversationSessionID = sessionID
+	}
+	api.forwardRunTurn(w, r, query, sessionID, workflow)
+}
+
+func (api *StreamingAPI) forwardRunTurn(w http.ResponseWriter, r *http.Request, query QueryRequest, sessionID string, workflow DiscoveredWorkflow) {
+	claims := GetUserFromContext(r.Context())
 	body, marshalErr := json.Marshal(query)
 	if marshalErr != nil {
 		externalError(w, http.StatusInternalServerError, "encoding_failed", "Cannot encode run request")
@@ -159,6 +200,10 @@ func (api *StreamingAPI) externalRunCall(w http.ResponseWriter, r *http.Request,
 	switch name {
 	case "run_status":
 		api.externalRunStatus(w, r, args, workflow)
+	case "chat":
+		api.externalChat(w, r, args, workflow)
+	case "run_reply_input":
+		api.externalRunReplyInput(w, r, args, workflow)
 	case "list_executions":
 		executions := api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath)
 		if executions == nil {
@@ -245,6 +290,41 @@ func (api *StreamingAPI) externalRunStatus(w http.ResponseWriter, r *http.Reques
 		response["session_status"] = "inactive"
 	}
 	externalJSON(w, response)
+}
+
+// externalRunReplyInput answers a pending human-input request in the caller's
+// own run session, mirroring the builder reply path. Ownership and workflow
+// binding are validated before touching the feedback store.
+func (api *StreamingAPI) externalRunReplyInput(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {
+	sessionID, err := externalBuilderString(args, "session_id")
+	if err != nil || sessionID == "" || sanitizeChatHistorySessionID(sessionID) != sessionID {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
+		return
+	}
+	claims := GetUserFromContext(r.Context())
+	if claims.AccessToken != nil && !strings.HasPrefix(sessionID, accessTokenSessionPrefix(claims)) {
+		externalError(w, http.StatusNotFound, "session_not_found", "This access token does not own that run session.")
+		return
+	}
+	if _, _, err = api.externalBuilderSession(r, workflow.WorkspacePath, sessionID); err != nil {
+		externalError(w, http.StatusNotFound, "session_not_found", "Run session not found")
+		return
+	}
+	requestID, requestErr := externalBuilderString(args, "request_id")
+	response, responseErr := externalBuilderString(args, "response")
+	if requestErr != nil || responseErr != nil || requestID == "" || response == "" {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "request_id and response are required strings")
+		return
+	}
+	if err := virtualtools.GetHumanFeedbackStore().SubmitResponseForSession(sessionID, requestID, response, time.Now()); err != nil {
+		if errors.Is(err, virtualtools.ErrFeedbackInvalidChoice) {
+			externalError(w, http.StatusBadRequest, "invalid_input_choice", err.Error())
+			return
+		}
+		externalError(w, http.StatusConflict, "input_not_pending", "Input request is not pending for this run session")
+		return
+	}
+	externalJSON(w, map[string]string{"session_id": sessionID, "request_id": requestID, "status": "submitted"})
 }
 
 // externalScheduleSummary projects the schedule fields an external caller

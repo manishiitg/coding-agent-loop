@@ -39,8 +39,9 @@ var cliOperationGroups = []struct {
 }{
 	{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
 	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
-	{"runs", "Start, steer, stop, and inspect runs", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}, {"start-step", "execute_step"}, {"start-workflow", "run_full_workflow"}, {"status", "run_status"}, {"message", "send_step_message"}, {"stop", "stop_step"}, {"stop-all", "stop_all_executions"}, {"executions", "list_executions"}}},
+	{"runs", "Start, steer, stop, and inspect runs", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}, {"start-step", "execute_step"}, {"start-workflow", "run_full_workflow"}, {"status", "run_status"}, {"message", "send_step_message"}, {"stop", "stop_step"}, {"stop-all", "stop_all_executions"}, {"executions", "list_executions"}, {"reply", "run_reply_input"}}},
 	{"schedules", "List, inspect, and trigger schedules", []struct{ command, tool string }{{"list", "list_schedules"}, {"runs", "get_schedule_runs"}, {"trigger", "trigger_schedule"}}},
+	{"chat", "Chat with the workflow assistant", []struct{ command, tool string }{{"ask", "chat"}}},
 	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
 	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
 }
@@ -343,7 +344,7 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool == "run_full_workflow" {
 		f.String("group", "", "Variable group name to execute")
 	}
-	if tool == "run_status" || tool == "send_step_message" || tool == "stop_step" || tool == "stop_all_executions" {
+	if tool == "run_status" || tool == "send_step_message" || tool == "stop_step" || tool == "stop_all_executions" || tool == "chat" || tool == "run_reply_input" {
 		f.String("session", "", "Run session ID from a previous run call")
 	}
 	if tool == "run_status" {
@@ -354,6 +355,13 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	}
 	if tool == "send_step_message" {
 		f.String("message", "", "Live correction for the running execution")
+	}
+	if tool == "chat" {
+		f.String("message", "", "Question or instruction for the workflow assistant")
+	}
+	if tool == "run_reply_input" {
+		f.String("request-id", "", "Pending input request ID from runs status")
+		f.String("response", "", "Answer to submit")
 	}
 	if tool == "get_schedule_runs" || tool == "trigger_schedule" {
 		f.String("schedule-id", "", "Schedule ID from schedules list")

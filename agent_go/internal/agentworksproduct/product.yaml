@@ -317,6 +317,8 @@ chat:
       - get_run
       - get_logs
       - run_status
+      - chat
+      - run_reply_input
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

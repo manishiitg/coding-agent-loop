@@ -172,6 +172,7 @@ func externalPreparation(claims *UserClaims) []string {
 	canRun := claims == nil || claims.AccessToken == nil || claims.AccessToken.Allows("runs:execute")
 	if canRun {
 		steps = append(steps, "To run: call a run-mode tool such as execute_step (its reply carries session_id), then poll run_status for completion. Read run evidence with list_runs, get_run, and get_logs.")
+		steps = append(steps, "To chat: send questions with the chat tool and read replies with run_status; pass session_id to continue a conversation, and answer waiting human-input steps with run_reply_input.")
 	}
 	if claims != nil && claims.AccessToken != nil && !claims.AccessToken.FullBuilderAccess() {
 		steps = append(steps, "This token is restricted: unavailable tools are omitted from the tools list.")

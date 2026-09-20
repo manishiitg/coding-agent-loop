@@ -41,9 +41,10 @@ type reportPreviewSnapshot struct {
 		State        string   `json:"state"`
 		Errors       []string `json:"errors"`
 		Title        string   `json:"title"`
-		Tabs         []string `json:"tabs"`
-		LoadingTexts []string `json:"loadingTexts"`
-		Height       float64  `json:"height"`
+		Tabs          []string `json:"tabs"`
+		LoadingTexts  []string `json:"loadingTexts"`
+		MarkdownTexts []string `json:"markdownTexts"`
+		Height        float64  `json:"height"`
 	} `json:"report"`
 }
 
@@ -52,6 +53,23 @@ type reportPreviewScreenshot struct {
 	Width int    `json:"width"`
 	Path  string `json:"path"`
 	Error string `json:"error,omitempty"`
+}
+
+// reportPreviewScreenshotPaths returns the workspace-rooted destination for
+// the browser artifact transfer and the workflow-relative path reported back.
+// The destination must always carry the workspace prefix:
+// FinalizeBrowserArtifact joins relative paths to the docs root, not to the
+// session working directory, so an unprefixed path would resolve under a
+// root-level db/reports/preview outside every workflow-scoped write guard.
+func reportPreviewScreenshotPaths(workspacePath, documentPath, theme, width string) (destination, reported string) {
+	dir := reportPreviewScreenshotDir
+	if documentPath != "db/reports/index.html" {
+		slug := strings.TrimSuffix(strings.TrimPrefix(documentPath, "db/reports/"), ".html")
+		slug = strings.NewReplacer("/", "-", " ", "-").Replace(slug)
+		dir += "/" + slug
+	}
+	name := theme + "-" + width + ".png"
+	return workspacePath + "/" + dir + "/" + name, dir + "/" + name
 }
 
 // registerReportPreviewTool adds preview_report for a Workshop session.
@@ -214,19 +232,6 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 	// The report is closed to screenshots when there is nothing to show.
 	screenshots := []reportPreviewScreenshot{}
 	if snapshot.PreviewState == "ready" || snapshot.PreviewState == "error" {
-		// Screenshot destinations are relative to the browser session's working
-		// directory, which is the workflow folder when the builder session has a
-		// shell config (the normal case) and the workspace root otherwise.
-		prefix := ""
-		if common.GetSessionShellConfig(sessionID) == nil {
-			prefix = workspacePath + "/"
-		}
-		screenshotDir := reportPreviewScreenshotDir
-		if documentPath != "db/reports/index.html" {
-			slug := strings.TrimSuffix(strings.TrimPrefix(documentPath, "db/reports/"), ".html")
-			slug = strings.NewReplacer("/", "-", " ", "-").Replace(slug)
-			screenshotDir += "/" + slug
-		}
 		for _, theme := range themes {
 			if _, err := eval(fmt.Sprintf("window.__reportPreview.setTheme(%q)", theme)); err != nil {
 				log.Printf("[REPORT_PREVIEW] set theme %s: %v", theme, err)
@@ -237,9 +242,8 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 					log.Printf("[REPORT_PREVIEW] set width %d: %v", px, err)
 				}
 				time.Sleep(400 * time.Millisecond)
-				name := fmt.Sprintf("%s-%s.png", theme, width)
-				destination := prefix + screenshotDir + "/" + name
-				shot := reportPreviewScreenshot{Theme: theme, Width: px, Path: screenshotDir + "/" + name}
+				destination, reported := reportPreviewScreenshotPaths(workspacePath, documentPath, theme, width)
+				shot := reportPreviewScreenshot{Theme: theme, Width: px, Path: reported}
 				if _, err := run("screenshot", destination, "--full"); err != nil {
 					// Retry without the full-page flag in case this CLI build rejects it.
 					if _, retryErr := run("screenshot", destination); retryErr != nil {
@@ -263,6 +267,7 @@ func (api *StreamingAPI) runReportPreview(ctx context.Context, sessionID, userID
 		"fetch_errors":   nonNilStrings(snapshot.FetchErrors),
 		"tabs":           nonNilStrings(snapshot.Report.Tabs),
 		"loading_texts":  nonNilStrings(snapshot.Report.LoadingTexts),
+		"markdown_texts": nonNilStrings(snapshot.Report.MarkdownTexts),
 		"opened_files":   nonNilStrings(snapshot.OpenedFiles),
 		"height_px":      snapshot.Report.Height,
 		"screenshots":    screenshots,
@@ -316,6 +321,9 @@ func reportPreviewSummary(s reportPreviewSnapshot, shots []reportPreviewScreensh
 	}
 	if len(s.Report.LoadingTexts) > 0 {
 		parts = append(parts, fmt.Sprintf("%d 'Loading…' placeholder(s) never replaced", len(s.Report.LoadingTexts)))
+	}
+	if len(s.Report.MarkdownTexts) > 0 {
+		parts = append(parts, fmt.Sprintf("%d text node(s) look like unrendered markdown; pass agent-written markdown through window.report.renderMarkdown", len(s.Report.MarkdownTexts)))
 	}
 	if len(parts) == 0 {
 		return fmt.Sprintf("Rendered cleanly: %d tab label(s), %.0fpx tall, %d screenshot(s).", len(s.Report.Tabs), s.Report.Height, len(shots))

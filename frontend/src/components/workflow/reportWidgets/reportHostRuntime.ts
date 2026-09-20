@@ -578,6 +578,10 @@ export interface ReportHostState {
   /** Visible text still saying "Loading…" after the page settled: stale
    * placeholders a render never replaced. */
   loadingTexts: string[]
+  /** Visible text that looks like unrendered markdown (bold markers, ATX
+   * headings, link syntax): agent-written markdown escaped as plaintext
+   * instead of rendered. Excerpts, truncated. */
+  markdownTexts: string[]
   height: number
 }
 
@@ -586,7 +590,7 @@ export function readReportHostState(frame: HTMLIFrameElement | null): ReportHost
   const doc = frame?.contentDocument
   const win = frame ? reportWindow(frame) : null
   if (!doc?.documentElement) {
-    return { state: 'unloaded', errors: [], title: '', tabs: [], loadingTexts: [], height: 0 }
+    return { state: 'unloaded', errors: [], title: '', tabs: [], loadingTexts: [], markdownTexts: [], height: 0 }
   }
   const state = (doc.documentElement.getAttribute(REPORT_STATE_ATTR) as ReportHostLifecycle | null) ?? 'loading'
   const errors: string[] = Array.isArray(win?.__reportHostErrors) ? [...win.__reportHostErrors] : []
@@ -600,11 +604,40 @@ export function readReportHostState(frame: HTMLIFrameElement | null): ReportHost
     .filter((text) => /^(loading|loading…|loading\.\.\.|fetching)\b/i.test(text))
     .filter((text, index, all) => all.indexOf(text) === index)
     .slice(0, 12)
+  const markdownPatterns = [
+    /\*\*[^*\n]+\*\*/,
+    /__[^_\n]+__/,
+    /(^|\n)#{1,6}\s+\S/,
+    /\[[^\]\n]+\]\(https?:/,
+    /!\[[^\]\n]*\]\(/,
+    /(^|\n)```\S/,
+  ]
+  const excerpt = (text: string) => {
+    const flat = text.replace(/\s+/g, ' ').trim()
+    if (flat.length <= 120) return flat
+    let at = -1
+    // Flat-text variants: newlines are gone, so line anchors are dropped.
+    for (const pattern of [/\*\*[^*]+\*\*/, /__[^_]+__/, /#{1,6}\s+\S/, /\[[^\]]+\]\(https?:/, /!\[[^\]]*\]\(/, /```\S/]) {
+      const found = flat.search(pattern)
+      if (found >= 0 && (at < 0 || found < at)) at = found
+    }
+    if (at < 0) return flat.slice(0, 117) + '…'
+    const start = Math.max(0, at - 40)
+    const slice = flat.slice(start, start + 117)
+    return (start > 0 ? '…' : '') + slice + (start + 117 < flat.length ? '…' : '')
+  }
+  const markdownTexts = Array.from(doc.body?.querySelectorAll('*') ?? [])
+    .filter((el) => el.children.length === 0)
+    .map((el) => (el.textContent || '').trim())
+    .filter((text) => text && markdownPatterns.some((pattern) => pattern.test(text)))
+    .map(excerpt)
+    .filter((text, index, all) => all.indexOf(text) === index)
+    .slice(0, 12)
   let height = 0
   const scrollY = doc.defaultView?.scrollY ?? 0
   for (const child of Array.from(doc.body?.children ?? [])) {
     const bottom = child.getBoundingClientRect().bottom + scrollY
     if (bottom > height) height = bottom
   }
-  return { state, errors, title: doc.title || '', tabs, loadingTexts, height: Math.ceil(height) }
+  return { state, errors, title: doc.title || '', tabs, loadingTexts, markdownTexts, height: Math.ceil(height) }
 }

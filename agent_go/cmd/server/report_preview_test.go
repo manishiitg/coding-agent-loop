@@ -172,6 +172,24 @@ func TestReportPreviewWidthsDefaultTabletFirstAndPreserveLegacyBoth(t *testing.T
 	}
 }
 
+func TestReportPreviewScreenshotPathsStayInsideTheWorkflow(t *testing.T) {
+	t.Parallel()
+	destination, reported := reportPreviewScreenshotPaths("Workflow/sales", "db/reports/index.html", "dark", "desktop")
+	if destination != "Workflow/sales/db/reports/preview/dark-desktop.png" {
+		t.Fatalf("destination = %q", destination)
+	}
+	if reported != "db/reports/preview/dark-desktop.png" {
+		t.Fatalf("reported = %q", reported)
+	}
+	destination, reported = reportPreviewScreenshotPaths("Workflow/sales", "db/reports/finance/q1.html", "light", "tablet")
+	if destination != "Workflow/sales/db/reports/preview/finance-q1/light-tablet.png" {
+		t.Fatalf("document destination = %q", destination)
+	}
+	if reported != "db/reports/preview/finance-q1/light-tablet.png" {
+		t.Fatalf("document reported = %q", reported)
+	}
+}
+
 func TestReportPreviewScriptHandlerServesTheBuiltBundle(t *testing.T) {
 	// Production serves browser assets from current/frontend, not cwd/static.
 	// STATIC_DIR is the shared contract used by the SPA and preview handler.
@@ -253,5 +271,15 @@ func TestReportPreviewSummaryNeverCallsUnknownStateClean(t *testing.T) {
 	got := reportPreviewSummary(snapshot, nil, "db/reports/index.html")
 	if strings.Contains(got, "Rendered cleanly") || !strings.Contains(got, "not verified") {
 		t.Fatalf("unknown state summary = %q", got)
+	}
+}
+
+func TestReportPreviewSummaryFlagsUnrenderedMarkdown(t *testing.T) {
+	t.Parallel()
+	snapshot := reportPreviewSnapshot{PreviewState: "ready"}
+	snapshot.Report.MarkdownTexts = []string{"Placed **3** bids today"}
+	got := reportPreviewSummary(snapshot, nil, "db/reports/index.html")
+	if strings.Contains(got, "Rendered cleanly") || !strings.Contains(got, "unrendered markdown") {
+		t.Fatalf("markdown summary = %q", got)
 	}
 }

@@ -83,15 +83,6 @@ const isLikelyBackendUnavailableError = (err: unknown) => {
     || message.includes('failed to fetch')
 }
 
-type LiveMessageDeliveryStatus = 'sending' | 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started' | 'queued_locally' | 'failed'
-
-interface LiveMessageDelivery {
-  status: LiveMessageDeliveryStatus
-  message: string
-  provider?: string
-  detail?: string
-}
-
 const formatLiveInputProviderLabel = (provider?: string | null, modelId?: string | null) => {
   const normalized = (provider || '').trim().toLowerCase()
   switch (normalized) {
@@ -112,12 +103,6 @@ const formatLiveInputProviderLabel = (provider?: string | null, modelId?: string
     default:
       return provider ? provider.replace(/[-_]/g, ' ') : 'live agent'
   }
-}
-
-const liveDeliveryPreview = (message: string) => {
-  const normalized = message.replace(/\s+/g, ' ').trim()
-  if (normalized.length <= 90) return normalized
-  return `${normalized.slice(0, 87)}...`
 }
 
 import InlineSelectionPopup from './InlineSelectionPopup'
@@ -1126,26 +1111,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // State for steer message loading
   const [steeringIndex, setSteeringIndex] = useState<number | null>(null)
-  const [liveMessageDelivery, setLiveMessageDelivery] = useState<LiveMessageDelivery | null>(null)
-  const liveMessageDeliveryTimerRef = useRef<number | null>(null)
-
-  const scheduleLiveMessageDeliveryClear = useCallback(() => {
-    if (liveMessageDeliveryTimerRef.current !== null) {
-      window.clearTimeout(liveMessageDeliveryTimerRef.current)
-    }
-    liveMessageDeliveryTimerRef.current = window.setTimeout(() => {
-      setLiveMessageDelivery(null)
-      liveMessageDeliveryTimerRef.current = null
-    }, 6000)
-  }, [])
-
-  useEffect(() => {
-    return () => {
-      if (liveMessageDeliveryTimerRef.current !== null) {
-        window.clearTimeout(liveMessageDeliveryTimerRef.current)
-      }
-    }
-  }, [])
 
   const removeQueuedMessageAtIndex = useCallback((index: number) => {
     if (!activeTabId) return
@@ -1181,25 +1146,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(activeTabId)?.sessionId === tabSessionId
     setSteeringIndex(index)
     try {
-      let delivery: Awaited<ReturnType<typeof agentApi.sendLiveInput>> | undefined
-      const accepted = await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => {
+      await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => {
         const response = await agentApi.sendLiveInput(options.sourceSessionId!, message, {
           identity: options.identity, submissionId: options.submissionId, continuation: true,
         })
-        delivery = response
         return response.delivery_status === 'sent_to_cli' || response.delivery_status === 'queued_for_injection' || response.delivery_status === 'next_turn_started'
       })
-      if (!owns() || (accepted && !delivery)) return
-      setLiveMessageDelivery({
-        status: accepted ? delivery?.delivery_status || 'sent_to_cli' : 'failed', message: msg,
-        provider: delivery?.provider || effectiveProviderForSteer || undefined,
-        detail: accepted ? undefined : 'Delivery was not confirmed. The message remains queued for retry.',
-      })
-      scheduleLiveMessageDeliveryClear()
     } finally {
       if (owns()) setSteeringIndex(null)
     }
-  }, [activeTabId, canShowSteer, effectiveProviderForSteer, scheduleLiveMessageDeliveryClear, tabSessionId])
+  }, [activeTabId, canShowSteer, tabSessionId])
 
   const handleProductSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
     if (!showProductSteerAction || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
@@ -2150,7 +2106,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       // semantics, and any turn-boundary fallback. Do not duplicate that policy
       // in the command UI.
       if (routeLiveInputToCLI) {
-        onSubmit(trimmed, { preferLiveInput: true })
+        onSubmit(trimmed)
         return
       }
       if (isStreaming) {
@@ -2320,11 +2276,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           inputText,
           pastedAttachments: chatPastedAttachments,
         }
-        setLiveMessageDelivery({
-          status: 'sending',
-          message: query,
-          provider: effectiveProviderForSteer || undefined,
-        })
         // Live-input acknowledgement can lag while the retained CLI wakes up.
         // The conversation adds an optimistic user row immediately, so release
         // the composer now instead of leaving the submitted text looking stuck.
@@ -2333,7 +2284,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         let accepted: boolean | void
         try {
           accepted = await onSubmit(query, {
-            preferLiveInput: true,
             sourceTabId: submittedTabId,
           })
         } catch (error) {
@@ -2348,21 +2298,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             latestInputTextRef.current = submittedDraft.inputText
             setLocalInputText(submittedDraft.inputText)
           }
-          setLiveMessageDelivery({
-            status: 'failed',
-            message: query,
-            provider: effectiveProviderForSteer || undefined,
-            detail: 'Delivery not confirmed; draft retained when unchanged',
-          })
-          scheduleLiveMessageDeliveryClear()
           return
         }
-        setLiveMessageDelivery({
-          status: 'sent_to_cli',
-          message: query,
-          provider: effectiveProviderForSteer || undefined,
-        })
-        scheduleLiveMessageDeliveryClear()
         return
       }
       const reason = getSubmitBlockReason()
@@ -2401,7 +2338,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       const reason = getSubmitBlockReason()
       if (reason) addToast(reason, 'info')
     }
-  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, effectiveProviderForSteer, onSubmit, scheduleLiveMessageDeliveryClear, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
+  }, [routeLiveInputToCLI, hasSubmitTarget, activeTabId, inputText, chatPastedAttachments, onSubmit, clearInputState, setTabConfig, getSubmitBlockReason, addToast, canSubmitImmediately, canSubmit, isStreaming, isUploadingFiles, queueStreamingMessage])
 
   // SparkQuill's voice auto-send: handleVoiceText already merged the
   // transcript into localInputText, but queryToSubmit (which also layers in
@@ -2971,40 +2908,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     return `Ask anything... (${baseHints})`
   }, [agentProfileWorkspace, isProductSurface, isStreaming, isViewOnly, isMultiAgentMode, isWorkflowPhaseChat, placeholderOverride, tabSessionId, canBootstrapMultiAgentTab, canBootstrapWorkflowPhaseTab])
 
-  const liveDeliveryProviderLabel = formatLiveInputProviderLabel(liveMessageDelivery?.provider || effectiveProviderForSteer, primaryLLM?.model)
-  const liveDeliveryText = liveMessageDelivery
-    ? liveMessageDelivery.status === 'sending'
-      ? isProductSurface ? 'Sending message…' : `Sending to ${liveDeliveryProviderLabel}...`
-      : liveMessageDelivery.status === 'sent_to_cli'
-        ? isProductSurface ? 'Message submitted' : `Submitted to ${liveDeliveryProviderLabel}`
-      : liveMessageDelivery.status === 'queued_for_injection'
-          ? isProductSurface ? 'Message queued' : 'Queued for next model turn'
-        : liveMessageDelivery.status === 'next_turn_started'
-            ? isProductSurface ? 'Working on your follow-up' : `Started next ${liveDeliveryProviderLabel} turn`
-          : liveMessageDelivery.status === 'queued_locally'
-              ? isProductSurface ? 'Message saved' : 'Saved to queue'
-              : isProductSurface ? 'Could not send the message' : 'Could not submit live input'
-    : ''
-  // The chat history already echoes an accepted message as its own bubble
-  // once delivery reaches 'sent_to_cli' or 'next_turn_started' (see
-  // ChatArea's submitQueryImmediately, which appends an optimistic user
-  // message event for exactly those two statuses, on every surface, not
-  // just product chat). Live submissions now receive that same optimistic
-  // bubble before their acknowledgement arrives, so the sending indicator is
-  // status-only rather than a second copy of the message. Queued/local-save
-  // states never get a bubble, so they still need the banner as the only
-  // signal; failed submissions retain their message preview for retry context.
-  const showLiveDelivery = Boolean(liveMessageDelivery && (
-    liveMessageDelivery.status === 'sending' ||
-    liveMessageDelivery.status === 'failed' ||
-    (!isProductSurface && liveMessageDelivery.status !== 'sent_to_cli' && liveMessageDelivery.status !== 'next_turn_started')
-  ))
-  const liveDeliveryClass = liveMessageDelivery?.status === 'failed'
-    ? 'text-amber-600 dark:text-amber-300'
-    : liveMessageDelivery?.status === 'sending'
-      ? 'text-blue-600 dark:text-blue-300'
-      : 'text-emerald-600 dark:text-emerald-300'
-
   // Product chats use the roomier project layout; workflow mode keeps the
   // existing toolbar alignment.
   const inputPadX = isProductSurface ? 'px-3' : isMultiAgentMode ? 'px-3' : 'px-4'
@@ -3261,22 +3164,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             // focus hand-off look like a pulsing purple border on redraws.
             ? 'space-y-0.5 rounded-2xl border border-border bg-card px-1.5 py-0.5 shadow-sm transition-colors duration-150 focus-within:border-ring'
             : 'space-y-1 rounded-xl border border-slate-700/80 bg-[#101513] p-1.5 shadow-sm transition focus-within:border-slate-500'}>
-            {showLiveDelivery && liveMessageDelivery && (
-              <div className={`flex min-w-0 items-center gap-1.5 text-[11px] ${liveDeliveryClass}`}>
-                {liveMessageDelivery.status === 'sending' ? (
-                  <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
-                ) : (
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />
-                )}
-                <span className="shrink-0 font-medium">{liveDeliveryText}</span>
-                {!isProductSurface && liveMessageDelivery.status !== 'sending' && <span className="min-w-0 truncate opacity-75">
-                  {liveDeliveryPreview(liveMessageDelivery.message)}
-                </span>}
-                {!isProductSurface && liveMessageDelivery.detail && (
-                  <span className="shrink-0 opacity-75">({liveMessageDelivery.detail})</span>
-                )}
-              </div>
-            )}
             {/* Queued messages: a message sent while the agent is still working is
                 held here until the current turn ends, then sent as the next one.
                 The product surface used to collapse this to a bare "N messages

@@ -32,6 +32,77 @@ func TestValidateCrewAttachmentAlias(t *testing.T) {
 	}
 }
 
+func TestValidateCrewAttachmentBinding(t *testing.T) {
+	// Binding validation is filesystem-free: a well-shaped attachment
+	// passes even when its crew directory does not exist here. Server
+	// paths pair it with a live crew access check instead.
+	valid := CrewAttachment{Alias: "rts", CrewProfileID: "work", CrewProjectID: "rts", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts"}
+	if err := ValidateCrewAttachmentBinding(valid); err != nil {
+		t.Fatalf("valid binding rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*CrewAttachment){
+		"retargeted crew": func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/other/Chats/Work/projects/evil" },
+		"arbitrary path":  func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/owner/secrets" },
+		"missing project": func(a *CrewAttachment) { a.CrewProjectID = "" },
+		"bad alias":       func(a *CrewAttachment) { a.Alias = "Bad Alias!" },
+	} {
+		bad := valid
+		mutate(&bad)
+		if err := ValidateCrewAttachmentBinding(bad); err == nil {
+			t.Fatalf("%s: expected rejection", name)
+		}
+	}
+}
+
+func TestValidateCrewAttachmentRoot(t *testing.T) {
+	root := t.TempDir()
+	crewDir := filepath.Join(root, "_users", "owner", "Chats", "Work", "projects", "rts")
+	if err := os.MkdirAll(crewDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	valid := CrewAttachment{Alias: "rts", CrewProfileID: "work", CrewProjectID: "rts", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts"}
+	if err := ValidateCrewAttachmentRoot(valid, root); err != nil {
+		t.Fatalf("valid attachment rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*CrewAttachment){
+		"retargeted crew": func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/other/Chats/Work/projects/evil" },
+		"arbitrary path":  func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/owner/secrets" },
+		"missing project": func(a *CrewAttachment) { a.CrewProjectID = "" },
+		"bad alias":       func(a *CrewAttachment) { a.Alias = "Bad Alias!" },
+		"deleted crew dir": func(a *CrewAttachment) {
+			a.CrewWorkspacePath = "_users/owner/Chats/Work/projects/gone"
+			a.CrewProjectID = "gone"
+		},
+	} {
+		bad := valid
+		mutate(&bad)
+		if err := ValidateCrewAttachmentRoot(bad, root); err == nil {
+			t.Fatalf("%s: expected rejection", name)
+		}
+	}
+}
+
+func TestCrewAttachmentEnvKeys(t *testing.T) {
+	env := CrewAttachmentEnvKeys([]CrewAttachment{
+		{Alias: "rts", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts"},
+		{Alias: "rts-again", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts2"},
+		{Alias: "rts_again", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts3"},
+	})
+	if env["WORKFLOW_CREW_RTS"] != "_users/owner/Chats/Work/projects/rts" {
+		t.Fatalf("env = %v", env)
+	}
+	if len(env) != 3 {
+		t.Fatalf("env = %v, want 3 disambiguated keys", env)
+	}
+	seen := map[string]bool{}
+	for key := range env {
+		if !strings.HasPrefix(key, "WORKFLOW_CREW_") || seen[key] {
+			t.Fatalf("env = %v, want unique WORKFLOW_CREW_* keys", env)
+		}
+		seen[key] = true
+	}
+}
+
 func TestResolveCrewAttachmentPath(t *testing.T) {
 	attachments := []CrewAttachment{
 		{ID: "a1", Alias: "rts-reviewer", CrewProfileID: "work", CrewProjectID: "rts", CrewWorkspacePath: "_users/owner/Chats/Work/projects/rts"},

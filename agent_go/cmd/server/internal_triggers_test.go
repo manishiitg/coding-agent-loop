@@ -1,9 +1,11 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
@@ -716,5 +718,57 @@ func TestReadInternalWorkflowTriggerRun(t *testing.T) {
 	}
 	if _, err := svc.readInternalWorkflowTriggerRun(ctx, "Workflow/test", manifest, "trig-1", "run-1", triggerCaller{Type: "crew", ID: "intruder", ProfileID: "work"}); !errors.Is(err, ErrInternalCallerMismatch) {
 		t.Fatalf("wrong caller err = %v, want ErrInternalCallerMismatch", err)
+	}
+}
+
+func TestSaveProductWebhookRejectsInaccessibleCallerWorkflow(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_create":true}]}`)
+	svc, files := newInternalTriggerTestCrew(t)
+	crewPath := "_users/owner/Chats/Work/projects/rts/product.json"
+	files[crewPath] = `{"schema_version":1,"product":"crewx","id":"rts","title":"RTS","session_id":"sess-1","triggers":[]}`
+	own := NewWorkflowManifest("Own pipeline")
+	own.CreatedBy = "owner"
+	own.Access = &WorkflowAccess{Owners: []string{"owner"}}
+	ownRaw, _ := json.Marshal(own)
+	foreign := NewWorkflowManifest("Foreign pipeline")
+	foreign.ID = "wf-foreign"
+	foreign.CreatedBy = "stranger"
+	foreign.Access = &WorkflowAccess{Owners: []string{"stranger"}}
+	foreignRaw, _ := json.Marshal(foreign)
+	mock := &mockWorkspaceAPI{files: map[string]string{
+		manifestPath("Workflow/own"):     string(ownRaw),
+		manifestPath("Workflow/foreign"): string(foreignRaw),
+		crewPath:                         files[crewPath],
+	}}
+	ws := httptest.NewServer(mock)
+	t.Cleanup(ws.Close)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+
+	post := func(callerID string) *httptest.ResponseRecorder {
+		body, _ := json.Marshal(map[string]interface{}{
+			"profile_id": "crewx", "project_id": "rts",
+			"name": "Bound", "message": "hi", "enabled": true,
+			"kind":   triggerKindInternal,
+			"caller": map[string]interface{}{"type": "workflow", "id": callerID},
+		})
+		req := httptest.NewRequest(http.MethodPost, "/api/product-webhooks", bytes.NewReader(body))
+		req = req.WithContext(context.WithValue(req.Context(), UserContextKey, &UserClaims{UserID: "owner"}))
+		rec := httptest.NewRecorder()
+		svc.saveProductWebhook(rec, req)
+		return rec
+	}
+	if rec := post("wf-foreign"); rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "access denied") {
+		t.Fatalf("foreign caller: code=%d body=%q, want access denial", rec.Code, rec.Body.String())
+	}
+	var saved productProjectManifest
+	if err := json.Unmarshal([]byte(files[crewPath]), &saved); err != nil {
+		t.Fatal(err)
+	}
+	if len(saved.Triggers) != 0 {
+		t.Fatalf("denied binding persisted %d triggers", len(saved.Triggers))
+	}
+	if rec := post(own.ID); rec.Code != http.StatusCreated {
+		t.Fatalf("own caller: code=%d body=%q, want 201", rec.Code, rec.Body.String())
 	}
 }

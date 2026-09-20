@@ -160,3 +160,54 @@ func TestScheduleRunPreservesOccurrenceIdentity(t *testing.T) {
 		t.Fatalf("persisted run = %+v, want cron occurrence at %s", runs, scheduledFor)
 	}
 }
+
+func TestClaimScheduleRunDedupesByID(t *testing.T) {
+	_, _ = newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	ws := "Chats/test-user/project-claim"
+	run := &ScheduleRunEntry{ID: "run-1", ScheduleID: "sched-1", TriggerSource: "webhook", Status: "queued", StartedAt: time.Now().UTC()}
+	if _, claimed, err := ClaimScheduleRun(ctx, ws, run); err != nil || !claimed {
+		t.Fatalf("first claim = claimed=%v err=%v", claimed, err)
+	}
+	existing, claimed, err := ClaimScheduleRun(ctx, ws, &ScheduleRunEntry{ID: "run-1", ScheduleID: "sched-1", Status: "queued", StartedAt: time.Now().UTC()})
+	if err != nil || claimed {
+		t.Fatalf("second claim = claimed=%v err=%v", claimed, err)
+	}
+	if existing == nil || existing.ID != "run-1" || existing.Status != "queued" {
+		t.Fatalf("existing = %+v", existing)
+	}
+	runs, err := ReadScheduleRuns(ctx, ws)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1 (redelivery must not fork history)", len(runs))
+	}
+}
+
+func TestClaimScheduleRunRejectsEmptyID(t *testing.T) {
+	_, _ = newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	if _, _, err := ClaimScheduleRun(ctx, "Chats/test-user/project-claim", &ScheduleRunEntry{}); err == nil {
+		t.Fatal("expected an error for an empty run id")
+	}
+	if _, _, err := ClaimScheduleRun(ctx, "Chats/test-user/project-claim", nil); err == nil {
+		t.Fatal("expected an error for a nil run")
+	}
+}
+
+func TestFindScheduleRun(t *testing.T) {
+	_, _ = newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	ws := "Chats/test-user/project-find"
+	if _, claimed, err := ClaimScheduleRun(ctx, ws, &ScheduleRunEntry{ID: "run-9", ScheduleID: "sched-1", Status: "running", StartedAt: time.Now().UTC()}); err != nil || !claimed {
+		t.Fatalf("claim = claimed=%v err=%v", claimed, err)
+	}
+	found, err := FindScheduleRun(ctx, ws, "run-9")
+	if err != nil || found.ID != "run-9" || found.Status != "running" {
+		t.Fatalf("found = %+v err=%v", found, err)
+	}
+	if _, err := FindScheduleRun(ctx, ws, "missing"); err == nil {
+		t.Fatal("expected an error for an unknown run id")
+	}
+}

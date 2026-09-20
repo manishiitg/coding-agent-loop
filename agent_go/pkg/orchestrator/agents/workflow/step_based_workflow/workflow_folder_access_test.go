@@ -155,3 +155,96 @@ func TestRefreshWorkflowFolderAccessSessionRestoresGrantAfterBaseGuardReset(t *t
 		t.Fatalf("restored session did not receive folder alias env: %#v", cfg.Env)
 	}
 }
+
+func TestRefreshWorkflowFolderAccessSessionReconcilesCrewGrants(t *testing.T) {
+	docsRoot := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)
+	workspacePath := "Workflow/crew-refresh"
+	workflowDir := filepath.Join(docsRoot, filepath.FromSlash(workspacePath))
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	crewRoot := "_users/owner/Chats/Work/projects/rts"
+	if err := os.MkdirAll(filepath.Join(docsRoot, filepath.FromSlash(crewRoot)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifestPath := filepath.Join(workflowDir, "workflow.json")
+	attached := `{"id":"wf-1","crew_attachments":[{"id":"a1","alias":"rts","crew_profile_id":"work","crew_project_id":"rts","crew_workspace_path":"` + crewRoot + `"}]}`
+	if err := os.WriteFile(manifestPath, []byte(attached), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionID := "crew-refresh-reconciles"
+	t.Cleanup(func() { common.ClearSessionShellConfig(sessionID) })
+	common.SetSessionWorkingDir(sessionID, workspacePath)
+
+	RefreshWorkflowFolderAccessSession(sessionID, workspacePath)
+	cfg := common.GetSessionShellConfig(sessionID)
+	if cfg == nil || !containsString(cfg.ReadPaths, crewRoot) || !containsString(cfg.BlockedWritePaths, crewRoot) {
+		t.Fatalf("live crew root not granted readable: %#v", cfg)
+	}
+	if cfg.Env["WORKFLOW_CREW_RTS"] != crewRoot {
+		t.Fatalf("live crew alias env missing: %#v", cfg.Env)
+	}
+
+	// Detach in the manifest: the next refresh must revoke the grant.
+	if err := os.WriteFile(manifestPath, []byte(`{"id":"wf-1"}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	RefreshWorkflowFolderAccessSession(sessionID, workspacePath)
+	cfg = common.GetSessionShellConfig(sessionID)
+	if cfg == nil {
+		t.Fatal("session config missing after refresh")
+	}
+	for _, paths := range [][]string{cfg.ReadPaths, cfg.BlockedWritePaths} {
+		if containsString(paths, crewRoot) {
+			t.Fatalf("detached crew root still granted: %#v", cfg)
+		}
+	}
+	for key := range cfg.Env {
+		if strings.HasPrefix(key, "WORKFLOW_CREW_") {
+			t.Fatalf("detached crew env key survived: %#v", cfg.Env)
+		}
+	}
+}
+
+func TestLiveCrewAttachmentGrantsSkipInvalidAttachments(t *testing.T) {
+	docsRoot := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", docsRoot)
+	workspacePath := "Workflow/crew-grants"
+	workflowDir := filepath.Join(docsRoot, filepath.FromSlash(workspacePath))
+	if err := os.MkdirAll(workflowDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Only the rts crew workspace exists: the gone crew is deleted and
+	// the evil alias is retargeted at an arbitrary path.
+	if err := os.MkdirAll(filepath.Join(docsRoot, "_users", "owner", "Chats", "Work", "projects", "rts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"id":"wf-1","crew_attachments":[` +
+		`{"id":"a1","alias":"rts","crew_profile_id":"work","crew_project_id":"rts","crew_workspace_path":"_users/owner/Chats/Work/projects/rts"},` +
+		`{"id":"a2","alias":"gone","crew_profile_id":"work","crew_project_id":"gone","crew_workspace_path":"_users/owner/Chats/Work/projects/gone"},` +
+		`{"id":"a3","alias":"evil","crew_profile_id":"work","crew_project_id":"rts","crew_workspace_path":"_users/owner/secrets"}` +
+		`]}`
+	if err := os.WriteFile(filepath.Join(workflowDir, "workflow.json"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	live := liveCrewAttachmentGrants(workspacePath)
+	if len(live) != 1 || live[0].Alias != "rts" {
+		t.Fatalf("live grants = %+v, want only the rts attachment", live)
+	}
+	read, _, readOnly, env := appendWorkflowFolderAccess(workspacePath, nil, nil)
+	crewRoot := "_users/owner/Chats/Work/projects/rts"
+	if !containsString(read, crewRoot) || !containsString(readOnly, crewRoot) {
+		t.Fatalf("crew root missing from guard paths: read=%v readOnly=%v", read, readOnly)
+	}
+	if env["WORKFLOW_CREW_RTS"] != crewRoot {
+		t.Fatalf("crew alias env = %v", env)
+	}
+	for _, paths := range [][]string{read, readOnly} {
+		for _, path := range paths {
+			if strings.Contains(path, "gone") || strings.Contains(path, "secrets") {
+				t.Fatalf("invalid attachment granted: %v", paths)
+			}
+		}
+	}
+}

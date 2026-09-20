@@ -1078,14 +1078,13 @@ func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, ca
 		errMsg = runErr.Error()
 	}
 	duration := time.Since(startedAt).Milliseconds()
-	_ = UpdateScheduleRun(context.Background(), runsWorkspace, entry.ID, status, errMsg, &duration, "", sessionID)
-	if finalResponse != "" {
-		_ = UpdateScheduleRunFinalResponse(context.Background(), runsWorkspace, entry.ID, finalResponse)
-	}
-	if !tokenUsage.Empty() {
-		if uerr := UpdateScheduleRunTokenUsage(context.Background(), runsWorkspace, entry.ID, tokenUsage); uerr != nil {
-			scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record token usage: %v", job.ID(), uerr)
-		}
+	// One atomic write: status, response, and usage land together so a
+	// poller never observes terminal success with an empty response.
+	if uerr := UpdateScheduleRunResult(context.Background(), runsWorkspace, entry.ID, ScheduleRunCompletion{
+		Status: status, Error: errMsg, DurationMs: &duration,
+		SessionID: sessionID, FinalResponse: finalResponse, Usage: tokenUsage,
+	}); uerr != nil {
+		scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record run result: %v", job.ID(), uerr)
 	}
 	_ = s.updateStateByKey(context.Background(), job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.LastStatus = status

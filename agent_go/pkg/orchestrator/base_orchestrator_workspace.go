@@ -43,7 +43,9 @@ func (bo *BaseOrchestrator) resolveWorkspacePath(filePath string) string {
 // resolveCrewAttachmentPath maps an "<alias>/..." path to its attached Crew
 // workspace, or reports no match. Only workflow workspaces consult the
 // manifest, and reserved top-level names skip the lookup entirely so
-// ordinary paths pay nothing.
+// ordinary paths pay nothing. The matched attachment is re-validated on
+// every read against the live manifest: a detached alias, a retargeted
+// workspace path, or a deleted crew fails closed instead of resolving.
 func (bo *BaseOrchestrator) resolveCrewAttachmentPath(workspacePath, filePath string) (string, bool) {
 	if !strings.HasPrefix(filepath.ToSlash(strings.TrimSpace(workspacePath)), "Workflow/") {
 		return "", false
@@ -60,6 +62,16 @@ func (bo *BaseOrchestrator) resolveCrewAttachmentPath(workspacePath, filePath st
 		attachments, found := workflowtypes.ReadCrewAttachments(root, workspacePath)
 		if !found {
 			continue
+		}
+		for _, attachment := range attachments {
+			if attachment.Alias != segment {
+				continue
+			}
+			if err := workflowtypes.ValidateCrewAttachmentRoot(attachment, root); err != nil {
+				bo.GetLogger().Warn(fmt.Sprintf("⚠️ crew attachment %q failed validation: %v", segment, err))
+				return "", false
+			}
+			break
 		}
 		return workflowtypes.ResolveCrewAttachmentPath(attachments, trimmed)
 	}

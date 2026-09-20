@@ -8,6 +8,7 @@ import (
 	"time"
 
 	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // crewStepPollInterval is the cadence at which a crew step polls its Crew
@@ -48,10 +49,16 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 	if err := r.crews.checkInternalCrewAccess(ctx, r.userID, req.ProfileID, req.ProjectID, req.TriggerID, caller); err != nil {
 		return stepworkflow.CrewStepResult{}, fmt.Errorf("crew step %q cannot invoke its trigger: %w", req.StepID, err)
 	}
+	runScope := strings.TrimSpace(req.ExecutionID)
+	if runScope == "" {
+		// Bridgeless callers (tests, ad-hoc runs) have no execution
+		// identity; the run folder preserves idempotency within one run.
+		runScope = req.WorkflowRunFolder
+	}
 	payload, err := json.Marshal(map[string]interface{}{
 		"source":           "workflow",
 		"workflow_id":      req.WorkflowID,
-		"workflow_run_id":  req.WorkflowRunFolder,
+		"workflow_run_id":  runScope,
 		"workflow_step_id": req.StepID,
 		"group":            req.Group,
 		"instruction":      req.Instruction,
@@ -61,8 +68,10 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 		return stepworkflow.CrewStepResult{}, fmt.Errorf("crew step %q cannot encode its trigger payload: %w", req.StepID, err)
 	}
 	// The delivery ID is stable per step attempt, so a retried run adopts
-	// the live delivery instead of invoking the trigger twice.
-	base := "crew-step:" + req.WorkflowID + ":" + req.WorkflowRunFolder + ":" + req.StepID
+	// the live delivery instead of invoking the trigger twice. It keys on
+	// the immutable execution identity: run folders are reused between
+	// executions and would let a later execution adopt a stale success.
+	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.StepID)
 	runID := ""
 	for attempt := 0; ; attempt++ {
 		deliveryID := base
@@ -74,7 +83,7 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 		}
 		result, err := r.crews.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
 			UserID: r.userID, ProfileID: req.ProfileID, ProjectID: req.ProjectID, TriggerID: req.TriggerID,
-			Caller: caller, WorkflowRunID: req.WorkflowRunFolder, WorkflowStepID: req.StepID,
+			Caller: caller, WorkflowRunID: runScope, WorkflowStepID: req.StepID,
 			DeliveryID: deliveryID, Payload: payload,
 		})
 		if err != nil {
@@ -171,6 +180,12 @@ func crewStepResultFromStatus(status productWebhookRunStatus) stepworkflow.CrewS
 	}
 }
 
+// crewStepDeliveryBase builds the idempotency key for one step attempt.
+// runScope is the immutable execution identity (see RunCrewStep).
+func crewStepDeliveryBase(workflowID, runScope, stepID string) string {
+	return "crew-step:" + workflowID + ":" + runScope + ":" + stepID
+}
+
 // appendCrewPollTransition records a newly observed Crew run status. Only
 // changes extend the timeline, so a long steady poll adds no noise.
 func appendCrewPollTransition(timeline []stepworkflow.CrewPollTransition, status string) []stepworkflow.CrewPollTransition {
@@ -199,9 +214,12 @@ func (s *ProductScheduleService) checkInternalCrewAccess(ctx context.Context, us
 	return nil
 }
 
-// preflightCrewSteps verifies Crew access for every crew step in a plan
-// before the run starts. Plans without crew steps skip the manifest read
-// and cost nothing beyond the plan read the run performs anyway.
+// preflightCrewSteps verifies Crew access before the run starts: every crew
+// attachment must still bind a crew the runner may access, and every crew
+// step must still invoke its bound trigger. Attachment checks run even when
+// the plan holds no crew step — ordinary downstream steps can read through
+// the alias, so a revoked crew must fail the run before any step executes.
+// Plans without crew steps or attachments cost one manifest read.
 func preflightCrewSteps(ctx context.Context, crews *ProductScheduleService, userID, workspacePath string) error {
 	if crews == nil {
 		return nil
@@ -217,12 +235,24 @@ func preflightCrewSteps(ctx context.Context, crews *ProductScheduleService, user
 			break
 		}
 	}
-	if !seenCrew {
-		return nil
-	}
 	manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
 	if err != nil || !exists || manifest == nil {
+		if !seenCrew {
+			return nil
+		}
 		return fmt.Errorf("cannot verify crew access: workflow manifest is unavailable")
+	}
+	for _, attachment := range manifest.CrewAttachments {
+		if err := workflowtypes.ValidateCrewAttachmentBinding(attachment); err != nil {
+			return fmt.Errorf("crew attachment %q cannot run: %v; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, err)
+		}
+		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
+		if _, _, _, err := crews.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID)); err != nil {
+			return fmt.Errorf("crew attachment %q cannot run: crew project %q is unavailable or access was revoked: %w", attachment.Alias, strings.TrimSpace(attachment.CrewProjectID), err)
+		}
+	}
+	if !seenCrew {
+		return nil
 	}
 	for _, step := range plan.Steps {
 		crew, ok := step.(*stepworkflow.CrewPlanStep)

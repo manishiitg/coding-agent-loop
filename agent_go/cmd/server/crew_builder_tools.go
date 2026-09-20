@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
@@ -202,6 +203,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			if err != nil {
 				return "", fmt.Errorf("Crew project is unavailable or access denied")
 			}
+			previousRoots := crewAttachmentStoredRoots(manifest.CrewAttachments)
 			manifest.CrewAttachments = append(manifest.CrewAttachments, workflowtypes.CrewAttachment{
 				ID: uuid.NewString(), Alias: alias, CrewProfileID: profileID, CrewProjectID: projectID,
 				CrewWorkspacePath: filepath.ToSlash(binding.WorkspacePath), CreatedAt: time.Now().UTC().Format(time.RFC3339),
@@ -209,6 +211,8 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			if err := writeWorkflowManifest(ctx, workspace, manifest); err != nil {
 				return "", err
 			}
+			live := liveCrewAttachmentBindings(manifest.CrewAttachments)
+			common.ReconcileSessionCrewAttachments(workspace, previousRoots, crewAttachmentStoredRoots(live), workflowtypes.CrewAttachmentEnvKeys(live))
 			return fmt.Sprintf("Crew project %q attached as %q (read-only). Downstream steps read crew files as %s/<path>.", projectID, alias, alias), nil
 		case "detach":
 			alias := strings.TrimSpace(fmt.Sprint(args["alias"]))
@@ -224,10 +228,13 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			if !found {
 				return "", fmt.Errorf("alias %q is not attached", alias)
 			}
+			previousRoots := crewAttachmentStoredRoots(manifest.CrewAttachments)
 			manifest.CrewAttachments = kept
 			if err := writeWorkflowManifest(ctx, workspace, manifest); err != nil {
 				return "", err
 			}
+			live := liveCrewAttachmentBindings(manifest.CrewAttachments)
+			common.ReconcileSessionCrewAttachments(workspace, previousRoots, crewAttachmentStoredRoots(live), workflowtypes.CrewAttachmentEnvKeys(live))
 			return fmt.Sprintf("Alias %q detached. Reads through it stop resolving immediately.", alias), nil
 		default:
 			return "", fmt.Errorf("Unknown crew attachment action")
@@ -266,16 +273,39 @@ func authorizeTriggerCallerWorkflow(ctx context.Context, userID string, caller *
 	return nil
 }
 
-// crewAttachmentReadRoots returns the crew workspace roots attached to a
-// workflow, for session read grants. Missing manifests or attachments
-// yield no roots.
+// crewAttachmentReadRoots returns the validated crew workspace roots attached
+// to a workflow, for session read grants. Missing manifests or attachments
+// yield no roots, and attachments whose stored binding no longer validates
+// (a hand-edited manifest retargeting the alias) are never granted. Live
+// crew access is enforced separately by the run preflight before any step
+// executes.
 func crewAttachmentReadRoots(ctx context.Context, workspace string) []string {
 	manifest, exists, err := ReadWorkflowManifest(ctx, workspace)
 	if err != nil || !exists || manifest == nil {
 		return nil
 	}
-	roots := make([]string, 0, len(manifest.CrewAttachments))
-	for _, attachment := range manifest.CrewAttachments {
+	return crewAttachmentStoredRoots(liveCrewAttachmentBindings(manifest.CrewAttachments))
+}
+
+// liveCrewAttachmentBindings drops attachments whose stored binding no
+// longer validates, so grants and session env only ever carry live roots.
+func liveCrewAttachmentBindings(attachments []workflowtypes.CrewAttachment) []workflowtypes.CrewAttachment {
+	live := make([]workflowtypes.CrewAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		if err := workflowtypes.ValidateCrewAttachmentBinding(attachment); err != nil {
+			continue
+		}
+		live = append(live, attachment)
+	}
+	return live
+}
+
+// crewAttachmentStoredRoots lists the stored workspace roots of the given
+// attachments. Previous-root snapshots use this on the unfiltered list so
+// revocation also catches roots that no longer validate.
+func crewAttachmentStoredRoots(attachments []workflowtypes.CrewAttachment) []string {
+	roots := make([]string, 0, len(attachments))
+	for _, attachment := range attachments {
 		if root := strings.TrimSpace(attachment.CrewWorkspacePath); root != "" {
 			roots = append(roots, root)
 		}

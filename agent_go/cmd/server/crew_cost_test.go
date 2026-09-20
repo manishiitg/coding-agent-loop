@@ -2,14 +2,30 @@ package server
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costledger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
+
+type countingScheduleRunsAPI struct {
+	*mockWorkspaceAPI
+	puts *int32
+}
+
+func (c *countingScheduleRunsAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if r.Method == http.MethodPut && strings.Contains(r.URL.EscapedPath(), "schedule-runs.json") {
+		atomic.AddInt32(c.puts, 1)
+	}
+	c.mockWorkspaceAPI.ServeHTTP(w, r)
+}
 
 func TestCrewRunTokenUsageFromSummary(t *testing.T) {
 	ledger, err := costledger.NewSQLiteLedger(filepath.Join(t.TempDir(), "costs.sqlite"))
@@ -89,6 +105,105 @@ func TestUpdateScheduleRunTokenUsage(t *testing.T) {
 	}
 	if err := UpdateScheduleRunTokenUsage(ctx, "Crew/rts", "missing", usage); err == nil {
 		t.Fatal("missing run must fail")
+	}
+}
+
+func TestUpdateScheduleRunResultSingleWrite(t *testing.T) {
+	var puts int32
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(&countingScheduleRunsAPI{mockWorkspaceAPI: mock, puts: &puts})
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	ctx := context.Background()
+	if err := AppendScheduleRun(ctx, "Crew/rts", &ScheduleRunEntry{ID: "run-1", ScheduleID: "sched-1", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	atomic.StoreInt32(&puts, 0)
+	duration := int64(1200)
+	usage := &workflowtypes.CrewRunTokenUsage{}
+	usage.AddModel("model-a", "prov", 10, 5, 0, 0, 0, 0.1, 1)
+	if err := UpdateScheduleRunResult(ctx, "Crew/rts", "run-1", ScheduleRunCompletion{
+		Status: "success", DurationMs: &duration, SessionID: "sess-1",
+		FinalResponse: "done", Usage: usage,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := atomic.LoadInt32(&puts); got != 1 {
+		t.Fatalf("completion took %d schedule-runs.json writes, want 1", got)
+	}
+	entry, err := FindScheduleRun(ctx, "Crew/rts", "run-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Status != "success" || entry.FinalResponse != "done" || entry.SessionID != "sess-1" {
+		t.Fatalf("entry = %+v, want complete result", entry)
+	}
+	if entry.Usage == nil || entry.Usage.PromptTokens != 10 || entry.CompletedAt == nil {
+		t.Fatalf("entry usage/completion = %+v", entry)
+	}
+	if err := UpdateScheduleRunResult(ctx, "Crew/rts", "missing", ScheduleRunCompletion{Status: "success"}); err == nil {
+		t.Fatal("missing run must fail")
+	}
+}
+
+func TestUpdateScheduleRunResultAtomicity(t *testing.T) {
+	mock := &mockWorkspaceAPI{files: map[string]string{}}
+	ws := httptest.NewServer(mock)
+	defer ws.Close()
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	ctx := context.Background()
+	if err := AppendScheduleRun(ctx, "Crew/rts", &ScheduleRunEntry{ID: "run-1", ScheduleID: "sched-1", Status: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	usageA := &workflowtypes.CrewRunTokenUsage{}
+	usageA.AddModel("model-a", "prov", 10, 0, 0, 0, 0, 0, 1)
+	usageB := &workflowtypes.CrewRunTokenUsage{}
+	usageB.AddModel("model-a", "prov", 20, 0, 0, 0, 0, 0, 1)
+	duration := int64(10)
+	stateA := ScheduleRunCompletion{Status: "success", DurationMs: &duration, FinalResponse: "resp-a", Usage: usageA}
+	stateB := ScheduleRunCompletion{Status: "success", DurationMs: &duration, FinalResponse: "resp-b", Usage: usageB}
+	var torn int32
+	stop := make(chan struct{})
+	var readers sync.WaitGroup
+	for r := 0; r < 4; r++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-stop:
+					return
+				default:
+				}
+				entry, err := FindScheduleRun(ctx, "Crew/rts", "run-1")
+				if err != nil {
+					continue
+				}
+				if entry.Status == "running" {
+					continue
+				}
+				matchA := entry.FinalResponse == "resp-a" && entry.Usage != nil && entry.Usage.PromptTokens == 10
+				matchB := entry.FinalResponse == "resp-b" && entry.Usage != nil && entry.Usage.PromptTokens == 20
+				if entry.Status != "success" || !(matchA || matchB) {
+					atomic.StoreInt32(&torn, 1)
+					return
+				}
+			}
+		}()
+	}
+	for i := 0; i < 100; i++ {
+		state := stateA
+		if i%2 == 1 {
+			state = stateB
+		}
+		if err := UpdateScheduleRunResult(ctx, "Crew/rts", "run-1", state); err != nil {
+			t.Fatal(err)
+		}
+	}
+	close(stop)
+	readers.Wait()
+	if atomic.LoadInt32(&torn) != 0 {
+		t.Fatal("poller observed terminal success without its matching response and usage")
 	}
 }
 

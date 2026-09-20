@@ -78,6 +78,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeCrewStep(
 	result, err := opts.CrewRunner.RunCrewStep(runCtx, CrewStepRequest{
 		WorkflowID:        hcpo.getWorkflowID(),
 		WorkflowRunFolder: hcpo.selectedRunFolder,
+		ExecutionID:       hcpo.bridgeExecutionID(),
 		StepID:            crewStep.GetID(),
 		Group:             hcpo.currentGroupName,
 		ProfileID:         crewStep.CrewProfileID,

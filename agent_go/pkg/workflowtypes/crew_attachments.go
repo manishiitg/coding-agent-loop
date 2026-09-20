@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -60,6 +62,72 @@ type crewAttachmentAliasError struct{ msg string }
 func errCrewAttachmentAlias(msg string) error { return crewAttachmentAliasError{msg} }
 
 func (e crewAttachmentAliasError) Error() string { return "invalid crew attachment alias: " + e.msg }
+
+// ValidateCrewAttachmentBinding verifies one attachment's stored binding
+// without touching the filesystem: the alias must be valid and the stored
+// path must be shaped like the named crew project's workspace (last segment
+// equals the project ID under a projects directory, so a hand-edited
+// manifest cannot retarget the alias at another crew or an arbitrary path).
+// Server paths use this where the workspace API — not the local disk — is
+// the source of truth, pairing it with a live crew access check.
+func ValidateCrewAttachmentBinding(attachment CrewAttachment) error {
+	if err := ValidateCrewAttachmentAlias(attachment.Alias); err != nil {
+		return err
+	}
+	projectID := strings.TrimSpace(attachment.CrewProjectID)
+	root := strings.Trim(strings.TrimSpace(attachment.CrewWorkspacePath), "/")
+	if projectID == "" || root == "" {
+		return errCrewAttachmentAlias("attachment must name a crew project and workspace path")
+	}
+	segments := strings.Split(filepath.ToSlash(root), "/")
+	if len(segments) < 2 || segments[len(segments)-1] != projectID {
+		return errCrewAttachmentAlias("attachment workspace path does not match its crew project")
+	}
+	for _, segment := range segments[:len(segments)-1] {
+		if segment == "projects" {
+			return nil
+		}
+	}
+	return errCrewAttachmentAlias("attachment workspace path does not match its crew project")
+}
+
+// ValidateCrewAttachmentRoot verifies one attachment before its root is
+// granted or resolved: the binding must validate and the root must still
+// exist under the docs root (a deleted crew fails closed). Callers re-run
+// this on every read and every grant; attachments are only as trustworthy
+// as their last validation.
+func ValidateCrewAttachmentRoot(attachment CrewAttachment, docsRoot string) error {
+	if err := ValidateCrewAttachmentBinding(attachment); err != nil {
+		return err
+	}
+	root := strings.Trim(strings.TrimSpace(attachment.CrewWorkspacePath), "/")
+	info, err := os.Stat(filepath.Join(docsRoot, filepath.FromSlash(root)))
+	if err != nil || !info.IsDir() {
+		return errCrewAttachmentAlias("attached crew workspace is unavailable")
+	}
+	return nil
+}
+
+// CrewAttachmentEnvKeys maps validated attachments to WORKFLOW_CREW_*
+// session env keys tracking their granted roots. Keys derive from the
+// alias (uppercased, dashes to underscores) with numeric disambiguation,
+// sorted by alias so the mapping is deterministic.
+func CrewAttachmentEnvKeys(attachments []CrewAttachment) map[string]string {
+	ordered := append([]CrewAttachment(nil), attachments...)
+	sort.Slice(ordered, func(i, j int) bool { return ordered[i].Alias < ordered[j].Alias })
+	env := make(map[string]string, len(ordered))
+	used := make(map[string]bool, len(ordered))
+	for _, attachment := range ordered {
+		base := "WORKFLOW_CREW_" + strings.ToUpper(strings.ReplaceAll(strings.TrimSpace(attachment.Alias), "-", "_"))
+		key := base
+		for n := 2; used[key]; n++ {
+			key = base + "_" + strconv.Itoa(n)
+		}
+		used[key] = true
+		env[key] = strings.Trim(strings.TrimSpace(attachment.CrewWorkspacePath), "/")
+	}
+	return env
+}
 
 // ReadCrewAttachments loads the crew attachments declared in a workflow's
 // manifest from the local docs root. It reports found=false when no

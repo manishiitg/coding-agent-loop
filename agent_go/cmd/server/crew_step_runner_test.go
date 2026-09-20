@@ -19,7 +19,7 @@ const crewRunnerTriggers = `[
 
 func testCrewStepRequest() stepworkflow.CrewStepRequest {
 	return stepworkflow.CrewStepRequest{
-		WorkflowID: "wf-1", WorkflowRunFolder: "iteration-0", StepID: "crew-1",
+		WorkflowID: "wf-1", WorkflowRunFolder: "iteration-0", ExecutionID: "exec-1", StepID: "crew-1",
 		Group: "production", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
 		Instruction: "Review it", Inputs: map[string]interface{}{"pr": map[string]interface{}{"n": float64(87)}},
 		TimeoutSeconds: 30,
@@ -27,7 +27,11 @@ func testCrewStepRequest() stepworkflow.CrewStepRequest {
 }
 
 func crewRunnerDeliveryBase(req stepworkflow.CrewStepRequest) string {
-	return "crew-step:" + req.WorkflowID + ":" + req.WorkflowRunFolder + ":" + req.StepID
+	scope := strings.TrimSpace(req.ExecutionID)
+	if scope == "" {
+		scope = req.WorkflowRunFolder
+	}
+	return crewStepDeliveryBase(req.WorkflowID, scope, req.StepID)
 }
 
 func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {
@@ -70,6 +74,101 @@ func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {
 	svc.mu.Unlock()
 	if depth != 1 {
 		t.Fatalf("queued depth = %d, want 1 (no second dispatch)", depth)
+	}
+}
+
+func TestRunCrewStepIsolatesExecutionsSharingRunFolder(t *testing.T) {
+	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
+	convKey := "owner\x1fconversation:crewx:rts"
+	svc.conversations = map[string]bool{convKey: true}
+	ctx := context.Background()
+	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
+
+	// Execution A completes the step. Execution B runs the same step in
+	// the same run folder: it must dispatch its own delivery (which never
+	// finishes here, so the step times out) instead of adopting A's
+	// success. With folder-keyed identity this test fails: B adopts A's
+	// run and returns verdict-A with no error.
+	reqA := testCrewStepRequest()
+	reqA.ExecutionID = "exec-A"
+	runA := webhookDeliveryRunID("rts", "trig-1", crewRunnerDeliveryBase(reqA))
+	if _, err := svc.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
+		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
+		Caller:     triggerCaller{Type: "workflow", ID: "wf-1"},
+		DeliveryID: crewRunnerDeliveryBase(reqA), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	duration := int64(100)
+	if err := UpdateScheduleRunResult(ctx, runsWorkspace, runA, ScheduleRunCompletion{
+		Status: "success", DurationMs: &duration, FinalResponse: "verdict-A",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reqB := testCrewStepRequest()
+	reqB.ExecutionID = "exec-B"
+	reqB.TimeoutSeconds = 1
+	runner := newCrewStepRunner(svc, "owner")
+	runner.pollInterval = 5 * time.Millisecond
+	// The runner takes its deadline from ctx (the executor applies the
+	// step's timeout_seconds); bound the wait so the test cannot poll
+	// a delivery that never finishes here.
+	deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	result, err := runner.RunCrewStep(deadline, reqB)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("execution B err = %v result = %+v, want a timeout on its own delivery", err, result)
+	}
+	if result.CrewRunID == runA || result.FinalResponse == "verdict-A" {
+		t.Fatalf("execution B adopted execution A's run: %+v", result)
+	}
+	runs, err := ReadScheduleRuns(ctx, runsWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2 (one delivery per execution)", len(runs))
+	}
+}
+
+func TestRunCrewStepRetryAdoptsSameExecutionDelivery(t *testing.T) {
+	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
+	convKey := "owner\x1fconversation:crewx:rts"
+	svc.conversations = map[string]bool{convKey: true}
+	ctx := context.Background()
+	req := testCrewStepRequest()
+	runID := webhookDeliveryRunID("rts", "trig-1", crewRunnerDeliveryBase(req))
+	if _, err := svc.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
+		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
+		Caller:     triggerCaller{Type: "workflow", ID: "wf-1"},
+		DeliveryID: crewRunnerDeliveryBase(req), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
+	duration := int64(100)
+	if err := UpdateScheduleRunResult(ctx, runsWorkspace, runID, ScheduleRunCompletion{
+		Status: "success", DurationMs: &duration, FinalResponse: "the verdict",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runner := newCrewStepRunner(svc, "owner")
+	runner.pollInterval = 5 * time.Millisecond
+	for i := 0; i < 2; i++ {
+		result, err := runner.RunCrewStep(ctx, req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.CrewRunID != runID || result.FinalResponse != "the verdict" {
+			t.Fatalf("retry %d: result = %+v, want adopted run %s", i, result, runID)
+		}
+	}
+	runs, err := ReadScheduleRuns(ctx, runsWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1 (retries must not start another delivery)", len(runs))
 	}
 }
 
@@ -278,6 +377,47 @@ func TestPreflightCrewSteps(t *testing.T) {
 	if err := preflightCrewSteps(ctx, nil, "owner", "Workflow/wf1"); err != nil {
 		t.Fatalf("nil service rejected: %v", err)
 	}
+}
+
+func TestPreflightCrewAttachmentsWithoutCrewSteps(t *testing.T) {
+	ctx := context.Background()
+	plain := `{"objective":"t","steps":[{"type":"regular","id":"a","title":"A"}]}`
+	// A healthy attachment on a crew-free plan passes: downstream steps
+	// may read through the alias.
+	if err := preflightCrewSteps(ctx, testPreflightWorkspace(t, plain, testPreflightManifestAttached), "owner", "Workflow/wf1"); err != nil {
+		t.Fatalf("healthy attachment rejected: %v", err)
+	}
+	// A revoked crew fails the run before any step executes, even with
+	// no crew step in the plan: ordinary steps could read the alias.
+	revoked := testPreflightWorkspaceWithoutCrew(t, plain, testPreflightManifestAttached)
+	if err := preflightCrewSteps(ctx, revoked, "owner", "Workflow/wf1"); err == nil || !strings.Contains(err.Error(), `"rts"`) {
+		t.Fatalf("revoked attachment err = %v, want failure naming the alias", err)
+	}
+	// A retargeted binding fails even though the crew itself exists.
+	retargeted := `{"id":"wf-1","label":"WF1","crew_attachments":[{"id":"att-1","alias":"rts","crew_profile_id":"crewx","crew_project_id":"rts","crew_workspace_path":"_users/owner/secrets"}]}`
+	if err := preflightCrewSteps(ctx, testPreflightWorkspace(t, plain, retargeted), "owner", "Workflow/wf1"); err == nil || !strings.Contains(err.Error(), `"rts"`) {
+		t.Fatalf("retargeted attachment err = %v, want failure naming the alias", err)
+	}
+}
+
+// testPreflightWorkspaceWithoutCrew mirrors testPreflightWorkspace but seeds
+// no crew project: the attachment's crew is gone (deleted or unshared).
+func testPreflightWorkspaceWithoutCrew(t *testing.T, plan string, manifestJSON string) *ProductScheduleService {
+	t.Helper()
+	svc, _ := newInternalTriggerTestCrew(t)
+	svc.api = &StreamingAPI{}
+	mockFiles := map[string]string{}
+	if plan != "" {
+		mockFiles["Workflow/wf1/planning/plan.json"] = plan
+	}
+	if manifestJSON != "" {
+		mockFiles["Workflow/wf1/workflow.json"] = manifestJSON
+	}
+	mock := &mockWorkspaceAPI{files: mockFiles}
+	ws := httptest.NewServer(mock)
+	t.Cleanup(ws.Close)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+	return svc
 }
 
 func TestAppendCrewPollTransition(t *testing.T) {

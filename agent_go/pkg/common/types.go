@@ -293,10 +293,77 @@ func ReconcileSessionWorkflowFolderAccess(workflowPath string, previousRoots, re
 	}
 }
 
+// ReconcileSessionCrewAttachments updates crew-attachment capabilities in
+// every still-open session for one workflow when attachments change. Only
+// roots from the previous crew snapshot are replaced; folder grants and
+// normal workspace paths are untouched. Detaching an attachment revokes
+// its root from live sessions immediately instead of waiting for the next
+// run. Crew roots are read-only: they enter ReadPaths and BlockedWritePaths,
+// never WritePaths.
+func ReconcileSessionCrewAttachments(workflowPath string, previousRoots, readOnlyRoots []string, env map[string]string) {
+	workflowPath = strings.Trim(strings.TrimSpace(workflowPath), "/")
+	if workflowPath == "" {
+		return
+	}
+	previous := make(map[string]struct{}, len(previousRoots))
+	for _, path := range previousRoots {
+		previous[filepath.Clean(strings.TrimSpace(path))] = struct{}{}
+	}
+	removePrevious := func(paths []string) []string {
+		kept := paths[:0]
+		for _, path := range paths {
+			if _, remove := previous[filepath.Clean(strings.TrimSpace(path))]; !remove {
+				kept = append(kept, path)
+			}
+		}
+		return kept
+	}
+	appendUnique := func(paths []string, additions []string) []string {
+		seen := make(map[string]struct{}, len(paths)+len(additions))
+		result := make([]string, 0, len(paths)+len(additions))
+		for _, path := range append(paths, additions...) {
+			clean := filepath.Clean(strings.TrimSpace(path))
+			if clean == "." || clean == "" {
+				continue
+			}
+			if _, exists := seen[clean]; exists {
+				continue
+			}
+			seen[clean] = struct{}{}
+			result = append(result, clean)
+		}
+		return result
+	}
+
+	sessionShellConfigsMu.Lock()
+	defer sessionShellConfigsMu.Unlock()
+	for sessionID, existing := range sessionShellConfigs {
+		if existing == nil || !sessionBelongsToWorkflow(existing, workflowPath) {
+			continue
+		}
+		cfg := cloneSessionShellConfig(existing)
+		cfg.ReadPaths = appendUnique(removePrevious(cfg.ReadPaths), readOnlyRoots)
+		cfg.BlockedWritePaths = appendUnique(removePrevious(cfg.BlockedWritePaths), readOnlyRoots)
+		if cfg.Env == nil {
+			cfg.Env = make(map[string]string)
+		}
+		for key := range cfg.Env {
+			if strings.HasPrefix(key, "WORKFLOW_CREW_") {
+				delete(cfg.Env, key)
+			}
+		}
+		for key, value := range env {
+			cfg.Env[key] = value
+		}
+		sessionShellConfigs[sessionID] = cfg
+	}
+}
+
 // ApplySessionWorkflowFolderAccess refreshes one live session from the current
 // workflow manifest. Previous attached roots are derived from the session's
-// WORKFLOW_FOLDER_* environment, so this also handles approval after the agent
-// process was already created.
+// WORKFLOW_FOLDER_*, WORKFLOW_KB_*, and WORKFLOW_CREW_* environment, so this
+// also handles approval after the agent process was already created, and so
+// detached crew attachments lose their session grant on refresh.
 func ApplySessionWorkflowFolderAccess(sessionID, workflowPath string, readRoots, writeRoots, readOnlyRoots []string, env map[string]string) {
 	if strings.TrimSpace(sessionID) == "" || strings.TrimSpace(workflowPath) == "" {
 		return
@@ -741,7 +808,7 @@ func GetSessionShellConfig(sessionID string) *SessionShellConfig {
 }
 
 func workflowCapabilityEnv(key string) bool {
-	return strings.HasPrefix(key, "WORKFLOW_FOLDER_") || strings.HasPrefix(key, "WORKFLOW_KB_")
+	return strings.HasPrefix(key, "WORKFLOW_FOLDER_") || strings.HasPrefix(key, "WORKFLOW_KB_") || strings.HasPrefix(key, "WORKFLOW_CREW_")
 }
 
 // ResolveBrowserSessionID ignores agent-chosen names within an ownership boundary.

@@ -1,6 +1,6 @@
 # Crew workflow step
 
-**Status:** Implemented, review changes required before deployment
+**Status:** Implemented, review findings addressed
 
 ## Summary
 
@@ -163,7 +163,7 @@ The delivery payload should include at least:
 {
   "source": "workflow_step",
   "workflow_id": "release-pipeline",
-  "workflow_run_id": "iteration-0",
+  "workflow_run_id": "9f3c2e1a-7b4d-4c8e-a1f2-3d5b7c9e1a4f",
   "workflow_step_id": "review-with-rts",
   "group": "production",
   "instruction": "Rendered workflow-specific instruction",
@@ -177,6 +177,9 @@ The delivery payload should include at least:
 ```
 
 `group` is the calling workflow's variable group, for correlation only.
+`workflow_run_id` is the calling execution's immutable execution identity, not
+its run folder: run folders are reused between executions, so only the
+execution identity keeps one execution from adopting another's Crew delivery.
 Payload data cannot override Crew permissions, tools, trigger ownership,
 conversation destination, or folder guards.
 
@@ -693,3 +696,49 @@ It is not ready to deploy until the blocking findings below are resolved.
 - TypeScript compilation passed.
 - The server test package could not build because of the P0 dependency/API
   mismatch above.
+
+### Resolution — 2026-09-20
+
+All blocking findings are addressed; every required regression now has a
+test named below.
+
+- **P0 — resolved.** The `main` compile breakage was fixed separately and
+  the server package builds again.
+- **P1 idempotency — resolved.** The delivery identity keys on the
+  workflow's immutable execution ID (`ExecutionID`, falling back to the run
+  folder only for bridgeless callers), stable across retries of one step
+  attempt and unique across executions. Tests:
+  `TestRunCrewStepIsolatesExecutionsSharingRunFolder` (two executions in
+  `iteration-0` get separate deliveries) and
+  `TestRunCrewStepRetryAdoptsSameExecutionDelivery` (a retry adopts the
+  original delivery).
+- **P1 atomic write — resolved.** Run completion persists through one
+  `UpdateScheduleRunResult` read-modify-write holding the run-file lock, so
+  terminal status, final response, usage, and completion time land together.
+  Tests: `TestUpdateScheduleRunResultSingleWrite` (one store write) and
+  `TestUpdateScheduleRunResultAtomicity` (concurrent pollers never observe
+  a torn terminal record).
+- **P1 stale attachment — resolved.** Attachment reads are validated
+  dynamically at every boundary: the run preflight checks every attachment
+  (binding shape plus live crew access) even when the plan holds no crew
+  step; session grants carry only validated roots; detach/attach reconcile
+  live sessions immediately; session refresh re-derives crew grants from
+  the live manifest; and the orchestrator re-validates the matched
+  attachment on every read. Tests: `TestPreflightCrewAttachmentsWithoutCrewSteps`,
+  `TestDetachCrewAttachmentRevokesLiveSessionGrant`,
+  `TestCrewAttachmentReadRootsSkipInvalidBindings`,
+  `TestLiveCrewAttachmentGrantsSkipInvalidAttachments`,
+  `TestRefreshWorkflowFolderAccessSessionReconcilesCrewGrants`,
+  `TestCrewAttachmentReadFailsClosedAfterDetach`,
+  `TestCrewAttachmentReadFailsClosedOnRetargetOrDelete`, and
+  `TestValidateCrewAttachmentBinding`.
+- **P2 REST auth — resolved.** The shared trigger-save boundary requires
+  the requesting user to have read access to the named caller workflow, so
+  the Builder tool and the REST endpoint enforce the same rule. Tests:
+  `TestManageCrewTriggerRejectsInaccessibleCallerWorkflow` and
+  `TestSaveProductWebhookRejectsInaccessibleCallerWorkflow`.
+
+Known residual: a crew that is unshared mid-run while its workspace
+directory still exists on disk remains filesystem-readable to ordinary
+downstream steps until the run ends; crew steps themselves re-check access
+before every invocation, and the next run's preflight fails fast.

@@ -90,14 +90,19 @@ func validateCrewStepFieldsTyped(step *CrewPlanStep) error {
 type CrewStepRequest struct {
 	WorkflowID        string
 	WorkflowRunFolder string
-	StepID            string
-	Group             string
-	ProfileID         string
-	ProjectID         string
-	TriggerID         string
-	Instruction       string
-	Inputs            map[string]interface{}
-	TimeoutSeconds    int
+	// ExecutionID is the workflow run's immutable execution identity. It
+	// keys the Crew delivery identity: stable across retries of one step
+	// attempt, unique across executions. Run folders are reused between
+	// executions and must never key deliveries.
+	ExecutionID    string
+	StepID         string
+	Group          string
+	ProfileID      string
+	ProjectID      string
+	TriggerID      string
+	Instruction    string
+	Inputs         map[string]interface{}
+	TimeoutSeconds int
 }
 
 // CrewStepResult is the outcome of a crew step invocation. FinalResponse is

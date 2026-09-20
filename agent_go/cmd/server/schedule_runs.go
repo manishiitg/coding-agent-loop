@@ -220,6 +220,57 @@ func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, 
 	return fmt.Errorf("schedule run %q not found in %s", runID, path)
 }
 
+// ScheduleRunCompletion carries everything recorded when an automation run
+// finishes: terminal status, error, duration, session, final response, and
+// token usage.
+type ScheduleRunCompletion struct {
+	Status        string
+	Error         string
+	DurationMs    *int64
+	SessionID     string
+	FinalResponse string
+	Usage         *workflowtypes.CrewRunTokenUsage
+}
+
+// UpdateScheduleRunResult records one run's completion in a single
+// read-modify-write cycle. Status, final response, and usage must land
+// together: separate writes let a poller observe terminal success with an
+// empty response and no cost data. Empty response and usage leave any
+// previously stored values untouched.
+func UpdateScheduleRunResult(ctx context.Context, workspacePath, runID string, completion ScheduleRunCompletion) error {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		if runs[i].ID == runID {
+			runs[i].Status = completion.Status
+			runs[i].Error = completion.Error
+			runs[i].DurationMs = completion.DurationMs
+			if completion.SessionID != "" {
+				runs[i].SessionID = completion.SessionID
+			}
+			if completion.FinalResponse != "" {
+				runs[i].FinalResponse = completion.FinalResponse
+			}
+			if completion.Usage != nil && !completion.Usage.Empty() {
+				runs[i].Usage = completion.Usage
+			}
+			if isTerminalScheduleRunStatus(completion.Status) {
+				now := time.Now().UTC()
+				runs[i].CompletedAt = &now
+			}
+			return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
+		}
+	}
+	return fmt.Errorf("schedule run %q not found in %s", runID, path)
+}
+
 // UpdateScheduleRunTokenUsage durably associates one execution's token spend
 // with its history entry. It overwrites any previous value; callers
 // accumulate multi-turn runs before writing.

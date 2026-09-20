@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestProductWebhookTriggerValidationAndDTO(t *testing.T) {
@@ -42,8 +43,43 @@ func TestProductWebhookUsesItsOwnAuthenticationBoundary(t *testing.T) {
 	if !shouldSkipAuth("/api/hooks/product/4c98bba9-b433-4bf8-b1de-68eebd143a6c") {
 		t.Fatal("product webhook delivery must reach its own secret verifier without a user JWT")
 	}
+	if !shouldSkipAuth("/api/hooks/product/4c98bba9-b433-4bf8-b1de-68eebd143a6c/runs/run-1") {
+		t.Fatal("product webhook run polling must reach its own secret verifier without a user JWT")
+	}
 	if shouldSkipAuth("/api/product-webhooks") {
 		t.Fatal("product webhook configuration must still require user authentication")
+	}
+}
+
+func TestProductWebhookStatusPath(t *testing.T) {
+	if got := productWebhookStatusPath("trigger-1", "run-1"); got != "/api/hooks/product/trigger-1/runs/run-1" {
+		t.Fatalf("status path = %q", got)
+	}
+}
+
+func TestProductWebhookRunStatusDTO(t *testing.T) {
+	completed := time.Now().UTC()
+	for _, tt := range []struct {
+		status   string
+		terminal bool
+	}{
+		{"queued", false},
+		{"running", false},
+		{"success", true},
+		{"error", true},
+		{"stopped", true},
+	} {
+		entry := &ScheduleRunEntry{ID: "run-1", Status: tt.status, FinalResponse: "done", Error: "boom", SessionID: "sess-1", StartedAt: completed, CompletedAt: &completed}
+		got := productWebhookRunStatusDTO(entry)
+		if got.RunID != "run-1" || got.Status != tt.status || got.Terminal != tt.terminal {
+			t.Fatalf("status=%q dto = %+v", tt.status, got)
+		}
+		if got.FinalResponse != "done" || got.Error != "boom" || got.SessionID != "sess-1" {
+			t.Fatalf("status=%q dto dropped fields: %+v", tt.status, got)
+		}
+		if !got.StartedAt.Equal(completed) || got.CompletedAt == nil || !got.CompletedAt.Equal(completed) {
+			t.Fatalf("status=%q dto dropped timestamps: %+v", tt.status, got)
+		}
 	}
 }
 

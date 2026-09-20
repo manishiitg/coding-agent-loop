@@ -119,6 +119,26 @@ func workflowFolderAccessRequests(workspacePath string) []workflowtypes.Workflow
 	return append([]workflowtypes.WorkflowFolderAccessRequest(nil), manifest.FolderAccessRequests...)
 }
 
+// liveCrewAttachmentGrants returns the workflow's crew attachments that pass
+// validation against the live manifest right now. Detached aliases vanish
+// with the manifest read; retargeted paths and deleted crews fail closed
+// here, so neither the folder guard nor the session env ever grants them.
+func liveCrewAttachmentGrants(workspacePath string) []workflowtypes.CrewAttachment {
+	docsRoot := GetPromptDocsRoot()
+	attachments, found := workflowtypes.ReadCrewAttachments(docsRoot, workspacePath)
+	if !found {
+		return nil
+	}
+	live := make([]workflowtypes.CrewAttachment, 0, len(attachments))
+	for _, attachment := range attachments {
+		if err := workflowtypes.ValidateCrewAttachmentRoot(attachment, docsRoot); err != nil {
+			continue
+		}
+		live = append(live, attachment)
+	}
+	return live
+}
+
 func appendWorkflowFolderAccess(workspacePath string, readPaths, writePaths []string, kbRead ...bool) ([]string, []string, []string, map[string]string) {
 	env := map[string]string{}
 	readOnlyPaths := []string{}
@@ -127,6 +147,15 @@ func appendWorkflowFolderAccess(workspacePath string, readPaths, writePaths []st
 	writePaths = append(writePaths, grantWrite...)
 	readOnlyPaths = append(readOnlyPaths, grantReadOnly...)
 	for key, path := range grantEnv {
+		env[key] = path
+	}
+	live := liveCrewAttachmentGrants(workspacePath)
+	for _, attachment := range live {
+		root := strings.Trim(strings.TrimSpace(attachment.CrewWorkspacePath), "/")
+		readPaths = append(readPaths, root)
+		readOnlyPaths = append(readOnlyPaths, root)
+	}
+	for key, path := range workflowtypes.CrewAttachmentEnvKeys(live) {
 		env[key] = path
 	}
 	enabled := len(kbRead) == 0 || kbRead[0]
@@ -167,6 +196,14 @@ func configureWorkflowFolderAccessSession(sessionID, workspacePath string, readO
 		if strings.HasPrefix(key, "WORKFLOW_KB_") && key != "WORKFLOW_KB_ACCESS" {
 			readRoots = append(readRoots, path)
 			readOnlyPaths = append(readOnlyPaths, path)
+		}
+		// Crew roots are read-only: they re-enter ReadPaths here while
+		// readOnlyPaths (already carrying them from the guard builder)
+		// keeps them in BlockedWritePaths. Without this, a refresh
+		// would strip live crew roots from ReadPaths while revoking
+		// detached ones, breaking shell reads through the alias.
+		if strings.HasPrefix(key, "WORKFLOW_CREW_") {
+			readRoots = append(readRoots, path)
 		}
 	}
 	common.ApplySessionWorkflowFolderAccess(sessionID, workspacePath, readRoots, writeRoots, readOnlyPaths, env)

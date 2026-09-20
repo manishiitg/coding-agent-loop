@@ -333,8 +333,17 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 		if err := validateTriggerCaller(trigger.Caller, triggerCallerWorkflow); err != nil {
 			return productWebhookResponse{}, false, err
 		}
-		if _, _, err := findWorkflowManifestByID(ctx, trigger.Caller.ID); err != nil {
+		callerPath, _, err := findWorkflowManifestByID(ctx, trigger.Caller.ID)
+		if err != nil {
 			return productWebhookResponse{}, false, fmt.Errorf("caller workflow not found")
+		}
+		// The binding names a workflow the requester must be able to see.
+		// Existence alone is not enough: without read access the caller
+		// could probe workflow IDs or squat bindings on foreign workflows.
+		// Enforced here so the Builder tool, the REST endpoint, and every
+		// future writer share one boundary.
+		if _, err := authorizeWorkflowContextPaths(ctx, []string{callerPath}); err != nil {
+			return productWebhookResponse{}, false, fmt.Errorf("caller workflow is unavailable or access denied")
 		}
 		trigger.Webhook = nil
 	} else {

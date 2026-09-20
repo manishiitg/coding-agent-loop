@@ -1,3 +1,7 @@
+## Dashboard composition widgets — PLAT-335
+
+[PLAT-335](pulse_platform/frontend-chat/plat-335.md) proposes six optional `window.report` composition widgets (`renderTabs`, `renderKpis`, `renderTable`, `renderActivity`, `renderActions`, `renderCollapsible`, shared card CSS) so dashboards become ~100–200-line composition files instead of 500–3800-line hand-rolled single HTML. Grounded in a 9-dashboard survey (8 local + the 3827-line Confida server dashboard) showing zero usage of the shipped goal/cost widgets, universal hand-rolled tabs/KPIs/cards/tables/activity, and Confida's 13 hand-wired action buttons motivating `renderActions`. The guidance rewrite subsumes removing the stale `renderEvaluations`/`getEvaluations` promises left over from the PLAT-333 eval removal. Proposal only; not implemented.
+
 ## Busy multiline tmux input false durable 409 — PLAT-334
 
 [PLAT-334](pulse_platform/coding-agent-bridge/plat-334.md) records the Claude

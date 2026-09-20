@@ -427,3 +427,87 @@ it now asserts the fast tick (the `sending` case still asserts
 timestamp-only). 3 new tests in
 `TerminalEventTranscript.deliveryTick.test.tsx` (failed
 pre-fix); focused suites 50/50 green, `tsc -b` + eslint clean.
+
+## Implementation review (2026-09-20)
+
+Reviewed against:
+
+* `mcp-agent-builder-go` `251786794`
+* `mcpagent` `cb3f8c6`
+* `multi-llm-provider-go` `7bd2bc7`
+
+The provider/server/frontend integration and the focused durable-ack
+tests are present, but the implementation is not ready to treat as
+fully closed. Two correctness gaps remain.
+
+### P1: repeated identical input can reuse an older receipt
+
+All five adapters retain pending receipts for ten minutes and look one
+up using only `(session, trimmed message text)`. The lookup deliberately
+does not consume the receipt and always returns the earliest match. For
+example, `peekCodexDurableReceipt` returns the first matching entry from
+`session.pendingDurable`; Cursor, Pi, Muse, and Claude use the same
+pattern.
+
+This does not disambiguate repeated input. If a user sends `yes`, its
+durable row lands, and the user sends `yes` again within the receipt TTL,
+the second watcher selects the first send's offset/baseline. The first
+row can therefore confirm the second send immediately, producing a
+false `confirmed` outcome and a false double tick before the second
+input is durable.
+
+Required fix:
+
+* Bind the durable wait to a send-specific receipt/token and pass that
+  identity through the send/watcher boundary; or atomically consume the
+  matching receipt FIFO when `Await*InputDurable` starts.
+* Keep the receipt available to the phase-2 arbiter on its mutually
+  exclusive failure path.
+* Add a regression test for every provider that stashes/sends identical
+  text twice and proves the second wait cannot be satisfied by the first
+  durable row/ref/sequence.
+
+### P2: same-window live confirmation is discarded
+
+The normal live ingestion path in `ChatArea.processEventsResponse`
+extracts `live_input_confirmed` events and applies them to the existing
+store before processing and appending the other events in that response.
+If a polling/reconnect window contains both a `user_message` and its
+confirmation, and the row is not already in the store, the update
+matches nothing. The confirmation is then filtered from the timeline
+and cannot be replayed, so the row remains at the fast-ack state.
+
+`appendRestoredLiveTail` already implements the correct ordering: split
+the window, append timeline events immediately, transfer live-input
+identity, and then apply confirmations to the merged rows. The normal
+live path should use the same ordering/helper rather than maintaining a
+second ingestion algorithm.
+
+Required fix:
+
+* Merge or append the response's timeline rows before applying its
+  confirmations.
+* Preserve optimistic-row identity transfer before applying the
+  confirmation.
+* Add a `processEventsResponse` regression test with a matching
+  `user_message` and `live_input_confirmed` in one response and assert
+  that no receipt enters the timeline and the message reaches the
+  terminal confirmation state.
+
+### Review validation
+
+Focused checks passed:
+
+* Durable-ack tests for Codex, Cursor, Pi, Muse, and Claude.
+* Server durable watcher routing tests.
+* Frontend receipt, restore, message-tick, and transcript-tick suites:
+  36 tests passed.
+
+The broader repository suites were not green independently of these
+focused checks: tmux sandbox/provider process tests and the mcpbridge
+readiness test timed out or failed in the local environment. Those
+failures do not exercise the two review findings above.
+
+Review disposition: **changes required**. Do not mark the durable-ack
+feature fully closed until both correctness gaps and their regression
+tests are addressed.

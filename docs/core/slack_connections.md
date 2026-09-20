@@ -71,6 +71,26 @@ bot-route principals: they run as the paired owner (`bot_owner` — the bot is
 linked as the owner's number, so there is no channel grant to hold) and pass
 these gates as the owner would. All API responses carry masked tokens only.
 
+## Bot principals (`bot_route` vs `bot_owner`)
+
+- `bot_route` is stamped on Slack turns only, and only when the request
+  carries a channel grant (`applyBotRouteClaims` in
+  `agent_go/cmd/server/bot_session_starter.go`). It is a synthetic route
+  identity: the Slack sender gets no authority beyond the grant, and
+  `revalidateExecutionPrincipal` re-checks the live route config on every
+  tool call (connector enabled, route present, explicit grant, destination
+  unchanged, sender email allowed). Execution is pinned to `run` access.
+- `bot_owner` is stamped on WhatsApp turns. The sender was authenticated at
+  message ingress (pairing ownership, link codes, per-slug workflow access),
+  so the turn executes as the paired owner on the owner's data with nothing
+  further to revalidate — the same standing as the owner's own app turns.
+- The shared tool boundary (`bindToolExecutionContext` in
+  `agent_go/cmd/server/tool_execution_context.go`) admits exactly these two
+  principals on bot-marked sessions. Anything else bound there is rejected
+  as `session origin changed`: before `bot_owner` existed, the guard
+  admitted only `bot_route`, which silently broke every tool call in every
+  WhatsApp turn.
+
 ## Key files
 
 | Area | File |

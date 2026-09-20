@@ -56,6 +56,45 @@ or another project view intended to organize or manage information visually.
 - Treat files outside `db/reports/` as project evidence. Do not move or rewrite
   unrelated project content solely to fit a Dashboard layout.
 
+## Composition widgets (optional)
+
+Prefer these over hand-rolled tables and activity feeds. Both are optional
+helpers, not mandates: a fully custom section remains valid, and mixed
+Dashboards (custom hero plus a widget table) are fine. The widgets inherit
+the Dashboard's theme and include responsive styling, loading/empty states,
+and touch-safe controls. Use empty `div`/`section` containers; each renderer
+replaces its own contents on refresh, returns its data, and rejects on load
+failure. The app and `preview_report` share the runtime. Keep every call
+inside `window.report.ready` so refresh and errors work correctly.
+
+```html
+<section id="leads"></section>
+<section id="activity"></section>
+<script>
+window.report.ready(async function () {
+  await Promise.all([
+    window.report.renderTable('#leads', {
+      query: 'SELECT name, status, value FROM leads ORDER BY value DESC',
+      searchable: true,
+      sortable: true
+    }),
+    window.report.renderActivity('#activity')
+  ]);
+});
+</script>
+```
+
+- `renderTable(target, { query, searchable, sortable })` runs read-only SQL
+  and renders a themed, responsive table with an empty state. Columns come
+  from the returned rows; numeric columns align right. `searchable` adds a
+  filter box matching every cell; `sortable` makes headers toggle
+  ascending/descending sort. `query` is required.
+- `renderActivity(target, { limit })` renders the activity section from the
+  run and Pulse summaries in `org_dashboard_notifications`, route-grouped
+  via `route_summaries_json` and markdown-rendered, with the execution-log
+  fallback built in. `limit` is an integer 1–100 (default 30). Missing
+  history tables render a setup message, not an error.
+
 ## Verification
 
 - Re-read changed files, run `validate_report_html` for every changed Dashboard

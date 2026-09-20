@@ -328,34 +328,24 @@ Adding this section is optional and does not replace the Dashboard's own navigat
 or layout. Offer it when a user wants goal tracking in their dashboard. Validate
 and preview the Dashboard using the normal Dashboard tools after adding it.
 
-### Evaluations and costs: matching Dashboard helpers
+### Costs: matching Dashboard helper
 
-Use the existing stored evaluations and canonical cost ledger without creating
-Dashboard-owned copies. Both helpers work in the app and `preview_report`:
+Use the canonical cost ledger without creating Dashboard-owned copies. The
+helper works in the app and `preview_report`:
 
 ```html
-<section id="evaluations"></section>
 <section id="costs"></section>
 <script>
 window.report.ready(async function () {
-  await Promise.all([
-    window.report.renderEvaluations('#evaluations'),
-    window.report.renderCosts('#costs', { days: 30 })
-  ]);
+  await window.report.renderCosts('#costs', { days: 30 });
 });
 </script>
 ```
 
-The widgets include their own responsive styling and expandable details. No chart
-library or design work is required. Add them only when useful to the user's Dashboard.
+The widget includes its own responsive styling and expandable details. No chart
+library or design work is required. Add it only when useful to the user's Dashboard.
 
-For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
-- Evaluations returns `{ results, criteria, run_count, result_limit, possibly_truncated }`.
-  Each criterion has `id`, `title`, `historical`, `latest`, and `history`. Results
-  include captured/skipped flags, raw scores, reasoning, evidence, and run/date.
-  The current reader supplies up to 200 rows; this is recent history, not an
-  all-time run count. Uncaptured and skipped scores are not zeros or failures.
-  Keep criteria separate; do not invent a blended score or a pass threshold.
+For custom layouts, call `getCosts({ days: 30 })`:
 - Costs returns `{ summary, history, window_total_usd, state }`. `summary.total` and `summary.by_scope` are **all-time** recorded amounts.
   `summary.by_model`, `summary.by_date`, and `window_total_usd` cover only the requested UTC date window.
   `summary` is null and `state` is `unavailable` if the ledger is unavailable.
@@ -366,3 +356,42 @@ For custom layouts, call `getEvaluations()` and `getCosts({ days: 30 })`:
 
 Continue using `window.report.ready` for loading and refresh. Returned promises
 reject on read failures, which the host exposes in the Dashboard's error surface.
+
+### Composition widgets: tables and activity (optional)
+
+Prefer these over hand-rolled tables and activity feeds. Both are optional
+helpers, not mandates: a fully custom section remains valid, and mixed
+Dashboards (custom hero plus a widget table) are fine. The widgets inherit
+the Dashboard's theme and include responsive styling, loading/empty states,
+and touch-safe controls. Use empty `div`/`section` containers; each renderer
+replaces its own contents on refresh, returns its data, and rejects on load
+failure. The app and `preview_report` share the runtime.
+
+```html
+<section id="leads"></section>
+<section id="activity"></section>
+<script>
+window.report.ready(async function () {
+  await Promise.all([
+    window.report.renderTable('#leads', {
+      query: 'SELECT name, status, value FROM leads ORDER BY value DESC',
+      searchable: true,
+      sortable: true
+    }),
+    window.report.renderActivity('#activity')
+  ]);
+});
+</script>
+```
+
+- `renderTable(target, { query, searchable, sortable })` runs read-only SQL
+  and renders a themed, responsive table with an empty state. Columns come
+  from the returned rows; numeric columns align right. `searchable` adds a
+  filter box matching every cell; `sortable` makes headers toggle
+  ascending/descending sort. `query` is required.
+- `renderActivity(target, { limit })` renders the policy-required activity
+  section from the run and Pulse summaries already in
+  `org_dashboard_notifications`, route-grouped via `route_summaries_json`
+  and markdown-rendered, with the execution-log fallback built in. Zero
+  config: `limit` (1–100, default 30) is the only option. Missing history
+  tables render a "no activity yet" setup message, not an error.

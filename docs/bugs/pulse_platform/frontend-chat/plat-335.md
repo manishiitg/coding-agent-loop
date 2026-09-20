@@ -5,8 +5,32 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Unassigned (proposal) |
-| Ticket state | `proposal; not implemented` |
+| Ticket state | `pilot implemented and browser-verified` |
 | Last synchronized | `2026-09-20` |
+
+### Agreed constraints (2026-09-20 review)
+
+- **No nested iframes, ever.** One sandboxed iframe per dashboard (siblings
+  only when several reports share a screen). Widgets are bridge methods on
+  the existing `window.report` object, not documents — the proposal adds
+  zero frames. Verified: current dashboards contain zero `<iframe`.
+- **Widgets are optional, never mandated.** Full-custom dashboards remain
+  valid; the validator and guidance must accept both styles. Widgets are a
+  vocabulary expansion, not a template mandate.
+- **Theming contract:** widgets inherit the dashboard theme via the host's
+  CSS variables (`hsl(var(--…))` app tokens, `color-mix`/`currentColor`
+  patterns per the existing goal/costs widgets) and impose no look of
+  their own. No fixed palette, no imposed typeface.
+- **Scope split:** pilot is `renderTable` + `renderActivity` only.
+  `renderActions` is a separate follow-up (it encodes the PLAT-293
+  save-then-send contract plus receipts/dedup — too much for the pilot).
+  `renderCollapsible` is a CSS-only candidate (`<details>` + theme), not
+  necessarily a JS API. `renderTabs`/`renderKpis` later.
+- **Survey correction:** 12 local dashboards, 204–2201 lines
+  (salesoutreach largest at 2201, not 1952). Action APIs ARE already used
+  locally (`jobsearch`: `sendChatMessage`+`updateField`; `hetznerssh`,
+  `websiteaeo`, `salesoutreach`: `updateField(s)`), which strengthens the
+  `renderActions` follow-up case.
 
 ## 2026-09-20 — Proposal: grow the `render*` family so dashboards compose instead of hand-rolling
 
@@ -115,10 +139,25 @@ Confida evidence.
   the eval widget too and needs the same cleanup (outside `guidance/`).
 - No `views.json`, multi-document, or `window.report` data-API changes.
 
-### Verification (not started)
+### Verification (pilot, 2026-09-20)
 
-Focused widget unit tests; host-runtime install/replay tests;
-validator accept/reject tests for new/retired method names;
-`preview_report` render of a composed dashboard; guidance-render suite.
-No test/build/deploy evidence yet — this is a design proposal from a chat
-discussion, not a landed change.
+- `frontend/src/components/workflow/reportWidgets/reportComposition.test.ts`:
+  7 tests (table render/empty state, query validation, refresh race,
+  search/sort, activity route-grouping, log fallback, limit validation,
+  pre-injection replay through the real `installReportHost`). Green.
+- Full `reportWidgets/` vitest suite: 61/61 green (no regressions).
+- `tsc -b` clean; `eslint` on changed widget files clean.
+- Go validator: new `TestValidateHTMLReportCompositionWidgets`
+  (`renderTable`/`renderActivity` accepted, removed eval methods rejected);
+  full `step_based_workflow` package green.
+- Guidance-render suite (`agent_go/cmd/server/guidance`): green after the
+  template edits.
+- Browser `preview_report` render: PASS. `TestReportPreviewRealE2E` against
+  a scratch composed dashboard (`renderTable` + `renderActivity` over a
+  scratch sqlite db) rendered `ready` in headless Chromium with zero
+  script/page errors; screenshot confirms the filterable/sortable table
+  (3 rows, numeric right-aligned) and the route-grouped activity card with
+  markdown summary. Requires the rebuilt `report-preview.js` bundle
+  (`npm run build:report-preview`) and a native workspace server
+  (`NATIVE_WORKSPACE=true`, else shell-outs get the Docker PATH and
+  `agent-browser` is not found).

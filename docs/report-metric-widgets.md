@@ -10,18 +10,15 @@ and desktop widths.
 | Data function | Optional widget | Source |
 | --- | --- | --- |
 | `getGoalMetrics()` | `renderGoalProgress('#goals')` | Managed goal definitions and observations |
-| `getEvaluations()` | `renderEvaluations('#evals')` | Stored evaluations, joined to the current evaluation plan |
 | `getCosts({ days: 30 })` | `renderCosts('#costs', { days: 30 })` | Same canonical ledger summary as the Costs view |
 
 ```html
 <section id="goals"></section>
-<section id="evals"></section>
 <section id="costs"></section>
 <script>
 window.report.ready(async () => {
   await Promise.all([
     window.report.renderGoalProgress('#goals'),
-    window.report.renderEvaluations('#evals'),
     window.report.renderCosts('#costs', { days: 30 })
   ]);
 });
@@ -32,15 +29,38 @@ Use empty `div`/`section` containers. Each renderer replaces its own contents on
 refresh, returns its data, and rejects on load failure. The app and `preview_report`
 share the runtime. No additional collector or duplicate reporting tables are needed.
 
-## Evaluation data
+## Composition widgets
 
-`getEvaluations()` returns `results`, grouped `criteria`, `run_count`, `result_limit`
-(200), and `possibly_truncated`. A criterion contains `id`, `title`, `historical`,
-`latest`, and `history`. Each result preserves run, date, raw score/max score,
-captured/skipped flags, reasoning and evidence. The widget shows the latest score
-per criterion with expandable history and groups historical criteria separately.
-There is no invented aggregate score or pass/fail threshold. Missing and skipped
-scores remain explicit. Run counts describe the returned recent history only.
+Optional helpers for the two most repeated dashboard patterns. Prefer them
+over hand-rolled markup; a fully custom section remains valid.
+
+```html
+<section id="leads"></section>
+<section id="activity"></section>
+<script>
+window.report.ready(async () => {
+  await Promise.all([
+    window.report.renderTable('#leads', {
+      query: 'SELECT name, status, value FROM leads ORDER BY value DESC',
+      searchable: true,
+      sortable: true
+    }),
+    window.report.renderActivity('#activity')
+  ]);
+});
+</script>
+```
+
+- `renderTable(target, { query, searchable, sortable })` runs read-only SQL
+  and renders a themed, responsive table with an empty state. Columns come
+  from the returned rows; numeric columns align right. `searchable` adds a
+  filter box matching every cell; `sortable` makes headers toggle
+  ascending/descending sort. `query` is required.
+- `renderActivity(target, { limit })` renders the policy-required activity
+  section from the run and Pulse summaries in `org_dashboard_notifications`,
+  route-grouped via `route_summaries_json` and markdown-rendered, with the
+  execution-log fallback built in. `limit` is an integer 1–100 (default 30).
+  Missing history tables render a setup message, not an error.
 
 ## Cost data
 

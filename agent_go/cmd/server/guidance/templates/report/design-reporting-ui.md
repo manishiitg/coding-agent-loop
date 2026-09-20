@@ -24,11 +24,15 @@ keep long names responsive so they do not crowd the tablet or mobile layout.
 When revising an existing Dashboard, do not silently remove useful identity
 that is already shown.
 
-For goal tracking, evaluations, or costs, use the shared Dashboard helpers before
-writing custom queries or charts:
+For goal tracking or costs, use the shared Dashboard helpers before writing
+custom queries or charts:
 - `window.report.getGoalMetrics()` / `renderGoalProgress('#goals')`
-- `window.report.getEvaluations()` / `renderEvaluations('#evals')`
 - `window.report.getCosts({ days: 30 })` / `renderCosts('#costs', { days: 30 })`
+
+For data tables and the activity section, prefer the optional composition
+widgets over hand-rolled markup (a fully custom section remains valid):
+- `window.report.renderTable('#leads', { query: 'SELECT …', searchable: true, sortable: true })`
+- `window.report.renderActivity('#activity')`
 
 When displaying outcome goals, preserve the Primary goals and Secondary goals
 grouping in soul/soul.md. These priorities are independent of primary/supporting
@@ -40,10 +44,9 @@ history without custom design work. Add only the sections useful to the reader;
 use the data functions when a custom layout is requested. Call them inside
 `window.report.ready(async () => { ... })` and await their promises. The loaded
 `reporting-policy.md` reference contains complete examples and data semantics.
-Use configured goals/observations for outcome progress, individual evaluations
-for quality evidence, and the ledger for costs. Do not invent targets, blend
-criterion scores, or add a collector/table just to populate a widget. Keep
-missing and skipped results explicit. Cost total/activity are all-time;
+Use configured goals/observations for outcome progress and the ledger for
+costs. Do not invent targets or add a collector/table just to populate a
+widget. Keep missing results explicit. Cost total/activity are all-time;
 model/daily breakdowns and window_total_usd cover the selected UTC window.
 
 Every Dashboard must include one section, as its own top-level tab — not a
@@ -62,15 +65,19 @@ content becomes a second tab rather than the whole page staying tab-less.
 `notify_user(notification_kind="run_summary")` already writes a structured
 row (title, status, message, fields, timestamp) into
 `org_dashboard_notifications` in the same `db/db.sqlite`, for every run.
-Query `notification_kind = 'run_summary'` ordered by `created_at desc` for
-this tab — that is the default, and it needs no new step, table, or
-column. Its `message` is agent-written markdown: pass it through
-`window.report.renderMarkdown` so headings, bullets and inline code read
-properly instead of showing raw `###` and backticks. Show "no runs recorded yet" when the table has no rows rather
-than treating it as an error. Only design something custom — a bespoke
+The default implementation is one call —
+`window.report.renderActivity('#activity')` — which renders those summaries
+route-grouped and markdown-rendered with the execution-log fallback built
+in, and shows a "no runs recorded yet" setup message when the table has no
+rows rather than treating it as an error. It needs no new step, table, or
+column. Only design something custom — hand-rolled queries against
+`notification_kind = 'run_summary'` ordered by `created_at desc`, a bespoke
 table, richer per-run detail — when the parent has explicitly asked for a
 different or more detailed activity view than the run summaries give
 them; never add a step or table whose only purpose is feeding this tab.
+Hand-rolled activity must pass agent-written markdown through
+`window.report.renderMarkdown` so headings, bullets and inline code read
+properly instead of showing raw `###` and backticks.
 
 For route-specific activity, use the existing row's `route_summaries_json`
 array. Each entry has `routing_step_id`, `route_id`, `label`, `title`, `status`,

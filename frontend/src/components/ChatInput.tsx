@@ -2217,7 +2217,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       return true
     }
 
-    if (cmd.source === 'builtin' && cmd.command === 'pulse-review' && !commandArgs && activeTabId) {
+    if ((cmd.source === 'builtin' || cmd.source === 'product') && cmd.command === 'pulse-review' && !commandArgs && activeTabId) {
       setShowCommandDialog(false)
       setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: '' })
       return true
@@ -2486,7 +2486,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       addToast('This command is unavailable for your current mode or workflow access.', 'info')
       return
     }
-    if (cmd?.source === 'builtin' && cmd.command === 'pulse-review') {
+    if ((cmd?.source === 'builtin' || cmd?.source === 'product') && cmd.command === 'pulse-review') {
       setPulseReviewPicker({ tabId: activeTabId, workspacePath: commandWorkflowPath, initialContext: beforeSlash })
       return
     }

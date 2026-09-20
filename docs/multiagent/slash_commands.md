@@ -1,21 +1,25 @@
 # Slash Commands System
 
-Slash commands are quick actions triggered by typing `/` in the chat input. The system supports built-in commands for multi-agent chat, workflow guidance, and user-defined prompt shortcut commands stored as workspace files.
+Slash commands are quick actions triggered by typing `/` in the chat input. Commands come from three sources, merged by the registry (`frontend/src/commands/registry.ts`):
+
+- **Product commands** (`source: 'product'`): declared in a product's `product.yaml` under `commands:`, with the prompt inline or in a `commands/*.md` file. This is where builder slash commands live (`agent_go/internal/agentworksproduct/product.yaml`). The owning surface registers them on mount via `setProductCommands()` and clears them on unmount.
+- **Built-in commands** (`source: 'builtin'`): hardcoded in `frontend/src/commands/builtin-commands.tsx`. Only `/pulse` remains — it is an async frontend API call no static prompt can express.
+- **User commands** (`source: 'user'`): custom prompt shortcuts stored in `workspace-docs/commands/custom/`.
 
 ## Overview
 
 - **Trigger**: Type `/` in the chat input to open the command picker dialog.
-- **Built-in Commands**: Commands covering workflow guidance, skill import/building, MCP management, model settings, workflow extraction, chat resume, and memory enrichment.
-- **User Commands**: Custom prompt shortcuts stored in `workspace-docs/commands/custom/`.
-- **Registry**: A unified command registry (`frontend/src/commands/`) so adding a command is a single-file change.
+- **Registry**: A unified command registry (`frontend/src/commands/`) merging product, built-in, and user commands.
 
 ## Command Registry Architecture
 
-All commands — built-in and user-defined — share a single `CommandDefinition` interface:
+All commands share a single `CommandDefinition` interface:
 
 ```typescript
 interface CommandDefinition {
   command: string           // Slash command name (e.g. "design-plan")
+  aliases?: string[]        // Compatibility names resolving to this command, without menu entries
+  searchTerms?: string[]    // Searchable context for a command whose choices live in a picker
   description: string       // Shown in the picker dialog
   icon: ReactNode           // Lucide icon
   modes?: ModeCategory[]    // If set, only visible in these modes (empty = all)
@@ -23,7 +27,8 @@ interface CommandDefinition {
   requiredWorkshopMode?: WorkshopMode | WorkshopMode[]
   validate?: (ctx: CommandContext) => string | null
   hidden?: boolean          // Executable but not shown in picker (e.g. "compact")
-  source: 'builtin' | 'user'
+  menuHidden?: boolean      // Retained shortcut: executable under access checks, without a menu row
+  source: 'builtin' | 'user' | 'product'
   execute: (ctx: CommandContext) => void
 }
 ```
@@ -49,7 +54,7 @@ interface CommandContext {
   getWorkspaceStore: () => any
   getWorkflowStore: () => any
   workflowMode?: 'plan' | 'eval' | 'output'
-  workshopMode?: 'builder' | 'optimizer' | 'run' | 'reporting'
+  workshopMode?: 'workshop' | 'run'
   workflowPhaseId?: string
 }
 ```
@@ -68,66 +73,57 @@ setUserCommands(cmds: CommandDefinition[]): void
 
 // Fetch user commands from API and register them
 loadAndRegisterUserCommands(): Promise<void>
+
+// Register the active product's manifest-owned commands (called by the
+// owning surface on mount; cleared with an empty list on unmount)
+setProductCommands(cmds: CommandDefinition[]): void
 ```
 
-## Built-in Commands: Multi-Agent Chat
+## Product Commands: Workflow Chat
 
-| Command | Description | Modes | Hidden |
-|---------|-------------|-------|--------|
-| `/build-skill` | Build a new skill using the skill-creator | Multi-Agent | No |
-| `/add-skill` | Import a skill from GitHub | Multi-Agent | No |
-| `/mcp` | View MCP server details and tools | Multi-Agent | No |
-| `/mcp-add` | Add or edit MCP server configuration | Multi-Agent | No |
-| `/models` | Open LLM model configuration | Multi-Agent | No |
-| `/workflow-builder` | Build a workflow from existing plans | Multi-Agent | No |
-| `/enrich-memory` | Distil recent chats into memory, consolidate, and delete chats older than 7 days | Multi-Agent | No |
+Builder slash commands are declared in `agent_go/internal/agentworksproduct/product.yaml` under `commands:`, with prompts in `commands/*.md` next to it. The workflow surface fetches them from the agentworks agent profile and registers them via `setProductCommands()`; the adapter (`frontend/src/commands/agentworksProductCommands.tsx`) owns the shared workflow-mode semantics (workflow mode, plan phase, workshop gate) and the `{{context}}` substitution. Kind-backed commands submit a message asking the agent to call `get_workflow_command_guidance` with the matching `kind`, and the backend returns the canonical guided-flow text from `agent_go/cmd/server/guidance/templates/`.
 
-## Built-in Commands: Workflow Chat
+| Command | Aliases | Backend Kind |
+|---------|---------|--------------|
+| `/design-plan` | | `design-plan` |
+| `/review-artifact-drift` | | `review-artifact-drift` |
+| `/design-dashboard` | `/design-reporting-ui` | `design-reporting-ui` |
+| `/setup-goals` | `/define-success` | `setup-goals` |
+| `/strategy-auditor` | `/goal-advisor` | `strategy-auditor` |
+| `/pulse-review` (+ 7 hidden `pulse-review-*` focus shortcuts) | | `engineering-review` |
+| `/pulse-fixer` | | `pulse-fixer` |
+| `/review-code` | | `design-plan` (architecture focus) |
+| `/pulse-merge` | | prompt only (typed Pulse tools) |
+| `/backup` | | prompt only |
+| `/publish` | | prompt only |
+| `/notify` | | prompt only |
+| `/pulse` (hardcoded builtin, not yaml) | | scheduler API call |
 
-Workflow slash commands are wrappers around the backend `get_workflow_command_guidance` tool. The frontend submits a message asking the agent to call that tool with the matching `kind`, and the backend returns the canonical guided-flow text from `agent_go/cmd/server/guidance/templates/`.
-
-| Command | Description | Workshop Modes | Backend Kind |
-|---------|-------------|----------------|--------------|
-| `/resume` | Attach a previous chat conversation as context | Builder, Optimizer, Run | N/A |
-| `/design-plan` | Comprehensively review plan structure, dependent artifacts, and better design options | Workshop, Run | `design-plan` |
-| `/ready-to-optimize` | Check if workflow is ready to move to optimizer mode | Builder | `ready-to-optimize` |
-| `/ops-review` | Agentically review cost, timing, tool/runtime reliability, model routing, setup, and plan-design hygiene | Workshop | `ops-review` |
-| `/engineering-review` | Run the combined Engineering and LLM/Ops review-and-fix sequence | Workshop | `engineering-review` |
-| `/review-artifact-drift` | Check whether artifacts drifted from recent plan changes | Builder, Optimizer | `review-artifact-drift` |
-| `/review-code` | Review saved scripts (`main.py`) against step descriptions to detect drift | Optimizer | `review-code` |
-| `/improve-knowledge` | Improve knowledge notes with targeted cleanup or cross-step consolidation | Builder, Optimizer | `improve-knowledge` |
-| `/improve-learnings` | Improve global learnings with targeted cleanup or current-plan consolidation | Builder, Optimizer | `improve-learnings` |
-| `/improve-data` | Improve durable data contracts, schemas, and report compatibility | Builder, Optimizer | `improve-data` |
-| `/improve-report` | Validate `reports/report_plan.json` and suggest layout/color improvements | Builder, Optimizer, Reporting | `improve-report` |
-| `/define-success` | Confirm Goal and success criteria in `soul/soul.md`; record the operating-model assessment in Pulse Reflection history | Workshop | `define-success` |
-| `/auto-improve` | Set up recurring workflow run + frequent lightweight optimizer improvement | Optimizer | `auto-improve` |
+There is no `/ops-review`, `/improve-report`, `/improve-knowledge`, `/improve-learnings`, or `/improve-database` command. `ops-review` and `specialize-advisors` are `builder-reference` docs loaded by review turns that need them, not commands; the `improve-*` checklists were removed.
 
 The workflow command source of truth is split across:
 
-- Frontend registry: `frontend/src/commands/builtin-commands.tsx`
+- Product manifest: `agent_go/internal/agentworksproduct/product.yaml` + `commands/*.md`
+- Product adapter: `frontend/src/commands/agentworksProductCommands.tsx`
 - Backend guidance kind registry: `agent_go/cmd/server/guidance/guidance.go`
 - Backend guidance templates: `agent_go/cmd/server/guidance/templates/**/<kind>.md`
 
-When adding or removing a workflow guidance command, keep those three places in sync.
+When adding or removing a workflow guidance command, keep those places in sync. The manifest test (`agent_go/internal/agentworksproduct/commands_test.go`) locks the yaml contract.
 
-## Adding a New Built-in Command
+## Adding a New Product Command
 
-Add a single entry to `frontend/src/commands/builtin-commands.tsx`:
+Add an entry under `commands:` in the product's `product.yaml` and a prompt file next to it:
 
-```tsx
-{
-  command: 'my-command',
-  description: 'Does something useful',
-  icon: <Sparkles className="w-4 h-4" />,
-  modes: ['multi-agent'],  // optional: restrict to specific modes
-  source: 'builtin',
-  execute: (ctx) => {
-    ctx.onSubmit('Do the thing')
-  }
-}
+```yaml
+- name: my-command
+  description: Does something useful
+  icon: terminal
+  aliases: [my-alias]       # optional
+  menu_hidden: true         # optional: executable without a menu row
+  file: commands/my-command.md
 ```
 
-For non-guidance commands, this is usually the only required frontend change. For workflow guidance commands, also add the backend guidance kind in `agent_go/cmd/server/guidance/guidance.go` and the markdown template under `agent_go/cmd/server/guidance/templates/`.
+`{{context}}` in the prompt is replaced with whatever the user typed before the slash. For workflow guidance commands, also add the backend guidance kind in `agent_go/cmd/server/guidance/guidance.go` and the markdown template under `agent_go/cmd/server/guidance/templates/`. Only commands no static prompt can express (today: `/pulse`, an async API call) belong in `frontend/src/commands/builtin-commands.tsx`.
 
 ## User-Defined Commands
 
@@ -252,11 +248,14 @@ The commands package reuses `skills.WorkspaceAPIClient` for all file operations 
 
 ```
 frontend/src/commands/
-├── types.ts              # CommandDefinition, CommandContext interfaces
-├── builtin-commands.tsx   # Built-in commands with execute functions
-├── registry.ts           # getCommands(), findCommand(), setUserCommands()
-├── user-commands.ts      # Load user commands from API, icon mapping
-└── index.ts              # Re-exports
+├── types.ts                     # CommandDefinition, CommandContext interfaces
+├── builtin-commands.tsx          # Hardcoded builtins (/pulse only)
+├── agentworksProductData.ts      # Fetch agentworks product.yaml commands
+├── agentworksProductCommands.tsx # Adapter: yaml entries to definitions
+├── pulse-review-focus.ts         # Review focus options shared by picker and adapter
+├── registry.ts                   # getCommands(), findCommand(), setUserCommands(), setProductCommands()
+├── user-commands.ts              # Load user commands from API, icon mapping
+└── index.ts                      # Re-exports
 
 frontend/src/components/
 ├── CommandSelectionDialog.tsx          # Slash-command picker

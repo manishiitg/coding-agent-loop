@@ -142,7 +142,7 @@ coverage record or report.
    evidence packs as needed. This is a distinct second turn in the same
    conversation, not a `stores_health` module or separate receipt.
 3. **Operations lens** — only when the selected technical focus needs it. Load
-   `read_skill(skills=[{"name":"workflow-commands","path":"references/ops-review.md"}])`
+   `read_skill(skills=[{"name":"builder-reference","path":"references/ops-review.md"}])`
    and select only the diagnostic checks relevant to the current question.
    They are conditional guides, not a mandatory whole-workflow checklist.
    Expand for evidence of a wider material problem, not to complete categories.
@@ -339,10 +339,11 @@ and consolidates the same root cause before returning. Strategic Review remains
 a separate ordered sequence with retained context and optional SQLite review notes.
 Load docs with
 `read_skill(skills=[{"name":"builder-reference","path":"references/<name>.md"}])`:
-`pulse-bug-review`; `review-artifact-drift`; matching `improve-*` health guide;
-`llm-selection` plus cost/timing evidence; and `strategy-auditor` plus
-goal/constraint/outcome, cross-run DB/run, and experiment evidence for Strategic
-Review. Its first phase investigates independently and may explore alternatives
+`pulse-bug-review`; `llm-selection` plus cost/timing evidence; and
+`strategy-auditor` plus goal/constraint/outcome, cross-run DB/run, and
+experiment evidence for Strategic Review. For a plan-changelog-to-artifact
+drift audit, call `get_workflow_command_guidance(kind="review-artifact-drift")`
+instead — that procedure lives in the workflow-commands bundle, not here. Its first phase investigates independently and may explore alternatives
 immediately; a later opportunity phase deepens ideas rather than granting permission.
 Missing scores or failed run status limit specific claims, not strategic thinking.
 Assess trustworthy outputs and plan logic; distinguish hypotheses from demonstrated
@@ -353,8 +354,8 @@ strategic results that omit the goal-level assessment; an honest uncertain asses
 is valid and does not require inventing a proposal.
 Read-only child reviewers never edit, publish, notify, ask the user, write HTML, or mark state. The coordinating review sequence retains only the typed persistence and repair authority explicitly assigned to its current phase above; a read-only checklist does not inherit that authority.
 
-The **Stores Health** turn loads `improve-learnings`, `improve-knowledge`, and
-`improve-database` when selected by Gate evidence. It is an Engineering Review
+The **Stores Health** turn reviews learnings, knowledgebase, and database health
+from their evidence packs when selected by Gate evidence. It is an Engineering Review
 turn, not a separate module. Its learning review covers the complete skill package, not
 only the root index or a sample of references, and audits every effective
 read-write `learning_objective`. References are part of the skill: only
@@ -472,10 +473,11 @@ dispositions. For a `report_human_inputs` row with source `pulse` and id prefix
 `update_workflow_config(advisor_specialization_approval_input_id="<id>")` so the
 tool resolves and activates the exact approved pair; never copy or rewrite the
 texts yourself. On `reject`, preserve the current specialization and consume the
-decision with that outcome. On `revise`, call
-`get_workflow_command_guidance(kind="specialize-advisors", focus="<the owner's revision note>")`,
-create the replacement proposal it specifies, then consume the old decision only
-after the replacement exists. These decisions are configuration work, not Pulse
+decision with that outcome. On `revise`, load and apply
+`read_skill(skills=[{"name":"builder-reference","path":"references/specialize-advisors.md"}])`
+with the owner's revision note as the shaping context, create the replacement
+proposal it specifies, then consume the old decision only after the
+replacement exists. These decisions are configuration work, not Pulse
 findings, and must not be converted into duplicate issues.
 
 `awaiting_user` remains in the decision queue and requires a still-pending

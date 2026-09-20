@@ -373,7 +373,7 @@ func TestPulseReviewFixerDocsAreNamedAndLoadable(t *testing.T) {
 	if !strings.Contains(prompt, "references/pulse-fixer-practices.md") {
 		t.Fatal("pulse-review-fixer does not require the canonical Fixer practices reference")
 	}
-	if !strings.Contains(prompt, `"name":"workflow-commands","path":"references/ops-review.md"`) {
+	if !strings.Contains(prompt, `"name":"builder-reference","path":"references/ops-review.md"`) {
 		t.Fatal("pulse-review-fixer does not load the canonical Operations checklist from its actual bundle")
 	}
 
@@ -437,7 +437,7 @@ func TestEngineeringReviewUsesTheCanonicalReviewOnlySequence(t *testing.T) {
 	prompt := string(raw)
 	for _, want := range []string{
 		"continuing Workflow Builder conversation",
-		`"name":"workflow-commands","path":"references/ops-review.md"`,
+		`"name":"builder-reference","path":"references/ops-review.md"`,
 		"standalone wrapper",
 		"pulse_run_id=\"current\"",
 		"manual=true",

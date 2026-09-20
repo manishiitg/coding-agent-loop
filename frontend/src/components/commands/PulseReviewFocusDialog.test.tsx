@@ -4,10 +4,15 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PulseReviewFocusDialog } from './PulseReviewFocusDialog'
 import CommandSelectionDialog from '../CommandSelectionDialog'
-import { findCommand } from '../../commands/registry'
+import { findCommand, setProductCommands } from '../../commands/registry'
+import { toAgentworksCommandDefinitions } from '../../commands/agentworksProductCommands'
 import type { CommandContext } from '../../commands/types'
 
 vi.mock('../../commands/user-commands', () => ({ loadAndRegisterUserCommands: vi.fn().mockResolvedValue(undefined) }))
+
+const PULSE_REVIEW_PROMPT = 'Run /pulse-review as a BACKGROUND task. '
+  + 'Call get_workflow_command_guidance(kind="engineering-review", focus="{{context}}"). '
+  + 'completion_mode="present_result".'
 
 describe('Pulse review focus picker', () => {
   let host: HTMLDivElement
@@ -17,10 +22,15 @@ describe('Pulse review focus picker', () => {
     host = document.createElement('div')
     document.body.append(host)
     root = createRoot(host)
+    setProductCommands(toAgentworksCommandDefinitions([
+      { name: 'pulse-review', description: 'Review', icon: 'check-circle', aliases: [], menuHidden: false, prompt: PULSE_REVIEW_PROMPT },
+      { name: 'pulse-review-database', description: 'DB', icon: 'check-circle', aliases: [], menuHidden: true, prompt: PULSE_REVIEW_PROMPT },
+    ]))
   })
   afterEach(async () => {
     await act(async () => root.unmount())
     host.remove()
+    setProductCommands([])
   })
 
   const form = () => document.querySelector<HTMLFormElement>('[role="dialog"]')!
@@ -57,8 +67,8 @@ describe('Pulse review focus picker', () => {
     const prompt = onSubmit.mock.calls[0][0] as string
     expect(prompt).toContain('validation_contract_health')
     expect(prompt).toContain('check the report step')
-    expect(prompt).toContain('iteration-8/default')
-    expect(prompt).toContain('message_sequence=')
+    expect(prompt).toContain('kind="engineering-review"')
+    expect(prompt).toContain('completion_mode="present_result"')
   })
 
   it('cancels without submitting and keeps keyboard focus inside the dialog', async () => {

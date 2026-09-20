@@ -33,7 +33,7 @@ import (
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/kb/*.md templates/learning/*.md templates/db/*.md templates/system/*.md
+//go:embed templates/builder/*.md templates/review/*.md templates/improve/*.md templates/report/*.md templates/system/*.md
 var templatesFS embed.FS
 
 // kindMeta captures everything we know about a guided flow at registration
@@ -76,17 +76,7 @@ var allKinds = map[string]kindMeta{
 
 	// Reviews — recommend, don't apply; persist their typed result through Pulse.
 	"review-artifact-drift": {Group: "review", Description: "Manual Plan Drift: check affected compatibility and prompt quality, apply bounded safe repairs through the scheduled candidate/receipt contract, and persist remaining dependency findings", Modes: []string{"workshop"}},
-	"ops-review":            {Group: "review", Description: "Focused read-only Technical Review: diagnose concrete correctness, reliability, validation, store, report, measurement, scheduler, or safety failures", Modes: []string{"workshop"}},
 	"strategy-auditor":      {Group: "review", Description: "Open-ended Workflow Strategy Advisor: assess outcome metrics, propose measurement improvements, challenge assumptions, explore better approaches, and create human decision proposals without changing the workflow", Modes: []string{"workshop"}},
-
-	// Knowledgebase maintenance — applies targeted or cross-step KB cleanup
-	"improve-knowledge": {Group: "kb", Description: "Read-only knowledgebase/notes health review with targeted or cross-step fixer recommendations", Modes: []string{"workshop"}},
-
-	// Learning maintenance — read-only targeted/cross-step review of learnings/_global
-	"improve-learnings": {Group: "learning", Description: "Read-only learnings/_global health review with targeted or current-plan fixer recommendations", Modes: []string{"workshop"}},
-
-	// DB maintenance — read-only guarded schema/contract review of db/db.sqlite
-	"improve-database": {Group: "db", Description: "Read-only db/db.sqlite contract, schema, integrity, and report-compatibility review", Modes: []string{"workshop"}},
 
 	// Improvements — evidence-driven reliability and strategy flows
 	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up primary and secondary outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
@@ -94,9 +84,7 @@ var allKinds = map[string]kindMeta{
 	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
 	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
 	"goal-advisor":        {Group: "review", AliasOf: "strategy-auditor", Description: "Compatibility alias for strategy-auditor; use strategy-auditor for strategic reviews and opportunity proposals", Modes: []string{"workshop"}},
-	"specialize-advisors": {Group: "improve", Description: "Propose owner-approved workflow-specific lenses for Strategy Auditor and Goal Advisor without changing their canonical roles", Modes: []string{"workshop"}},
 	"design-reporting-ui": {Group: "report", Description: "Design one or more workflow-owned db/reports/*.html views with shared toolbar discovery: live goal/measurement/cost helpers, optional prebuilt metric widgets and daisyUI, report-owned approval buttons, and direct requests via window.report.sendChatMessage.", Modes: []string{"workshop"}},
-	"improve-report":      {Group: "report", Description: "Read-only report dashboard accuracy, goal/measurement/cost semantics, shared metric widgets, live-data, layout, and responsive-design review", Modes: []string{"workshop"}},
 }
 
 // referenceKinds is the registry of system reference docs — content that
@@ -138,6 +126,8 @@ var referenceKinds = map[string]kindMeta{
 	"technical-review":      {Group: "system", Description: "Technical Review asks whether the current approved design executes correctly; it performs exception-driven QA and bounded workflow/scheduler repair while structural optimization stays with Architecture.", Modes: []string{"workshop"}},
 	"architecture-review":   {Group: "system", Description: "Architecture Review asks whether the approved approach has a materially better technical structure; use compact repeated evidence and targeted logs to propose measurable prompt, orchestration, schedule dependency, queue and runtime topology, store, report, model/tier or efficiency changes without editing implementation.", Modes: []string{"workshop"}},
 	"strategy-auditor":      {Group: "system", Description: "Strategic Review asks whether the workflow is achieving its goal and what should improve next; use trustworthy outcomes, feedback and measurements to propose experiments or direction changes without editing implementation.", Modes: []string{"workshop"}},
+	"ops-review":            {Group: "system", Description: "Operations lens: conditional Technical Review diagnostics for outcome, reliability, efficiency, or structural evidence.", Modes: []string{"workshop"}},
+	"specialize-advisors":   {Group: "system", Description: "Owner-approved workflow-specific advisor lenses; loaded by the advisor-specialization revise path.", Modes: []string{"workshop"}},
 	"fix-verification":      {Group: "system", Description: "Proportional immediate checks for bounded repairs. Record what actually passed; changed_unverified still closes an applied fix when stronger runtime proof is unavailable. Reopen only on reproduction, with no future-run verification queue. Load before applying fixes.", Modes: []string{"workshop"}},
 	"message-sequence":      {Group: "system", Description: "Message sequences: one shared conversation, SQL foreach, validation/repair turns, and saved-script batches with typed parameters, bounded parallelism, completion tracking, and Stop. Script calls use authored parameter values; no dynamic parameter binding, agentic children, or child LLM repair. Load before authoring items, scripted_steps/parameters, or reusable specialist sequences.", Modes: []string{"workshop"}},
 	"routing":               {Group: "system", Description: "Routing step design: when to use routing vs todo_task/message_sequence/human_input, deterministic route_selection.json contract, route_selections for builder-selected fixed branches, route structure (route_id/condition/next_step_id/default_route_id), anti-patterns. Routing is now the \"route\" (major sub-workflow fork) concept; for a small in-flow decision use a branch step instead.", Modes: []string{"workshop"}},
@@ -324,40 +314,6 @@ func kindEnumWithDescriptionsFrom(registry map[string]kindMeta) string {
 	return b.String()
 }
 
-// standaloneReviewLensKinds are guidance kinds whose template text is a
-// read-only Engineering Review lens ("do not record findings yourself, the
-// parent agent records after all reviewers return"). That contract assumes
-// the kind was loaded INSIDE ops-review's Technical Review turn, alongside
-// sibling lenses, with a parent turn recording their combined findings —
-// ops-review reaches these templates only through materialize.go's
-// read_skill bundle (see renderKind's other call site), never through this
-// tool. So any call that reaches this handler for one of these kinds is
-// always a genuine standalone/top-level invocation (a slash command or
-// matched chat intent) with no parent turn — without this notice the
-// reviewer would generate findings exactly as instructed, then discard them
-// when the turn ends, contradicting the kind's own "never a standalone
-// reviewer result" contract.
-var standaloneReviewLensKinds = map[string]bool{
-	"improve-report":    true,
-	"improve-knowledge": true,
-	"improve-database":  true,
-	"improve-learnings": true,
-}
-
-const standaloneReviewLensRecordingNotice = `
-
-STANDALONE MODE. This checklist is normally loaded as one lens inside a larger Engineering Review turn (ops-review), which records every lens's findings once they all return. You were called directly — there is no such parent turn. Record canonical issues only when evidence supports them, then finish with one concise record_pulse_result(module="technical_review", result="done", reason=..., evidence=[...]). Do not create separate focus, recommendation, verification, impact, or disposition records. Do this even though the checklist text above told you not to record — that instruction assumes a parent turn that does not exist here.`
-
-// appendStandaloneReviewLensNotice appends standaloneReviewLensRecordingNotice
-// to text when kind is one of standaloneReviewLensKinds, otherwise returns
-// text unchanged.
-func appendStandaloneReviewLensNotice(kind, text string) string {
-	if !standaloneReviewLensKinds[kind] {
-		return text
-	}
-	return text + standaloneReviewLensRecordingNotice
-}
-
 // RegisterGuidanceTool exposes get_workflow_command_guidance to the agent.
 // The tool returns the rendered prompt for any kind in allKinds. Mode is
 // validated against the kind's allow-list — calling a kind from the wrong
@@ -370,7 +326,7 @@ type DefinitionToolRegistrar interface {
 func RegisterGuidanceTool(agent DefinitionToolRegistrar, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /design-plan or /improve-report — for most commands the slash name IS the kind, but a focused Pulse " +
+		"like /design-plan or /pulse-review — for most commands the slash name IS the kind, but a focused Pulse " +
 		"review alias (e.g. /pulse-review-validation-contract, /pulse-review-execution-health) maps to a DIFFERENT " +
 		"kind and a specific focus; when the dispatch message explicitly states kind=... and focus=... (as these " +
 		"aliases do), use those exact literal values — never derive kind from the alias text itself. Pass the " +
@@ -432,7 +388,6 @@ func RegisterGuidanceTool(agent DefinitionToolRegistrar, currentMode string, log
 		if err != nil {
 			return fmt.Sprintf("error rendering guidance for %q: %v", kind, err), nil
 		}
-		text = appendStandaloneReviewLensNotice(kind, text)
 		// Wrap the rendered guidance in a JSON envelope so the agent sees a
 		// stable shape; the actual prose is the `guidance` field.
 		envelope, _ := json.MarshalIndent(map[string]interface{}{
@@ -502,7 +457,7 @@ func buildSystemToolsSkillWithMCP(mode string, mcpManagement bool) *llmtypes.Ski
 	if !mcpManagement {
 		referenceExamples = strings.ReplaceAll(referenceExamples, "`integration-discovery` before connecting a new third-party service/MCP server, ", "")
 	}
-	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, improve-report, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
+	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, pulse-review, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
 	if strings.EqualFold(strings.TrimSpace(mode), "run") {
 		referenceExamples = "`runtime-context` before answering from workflow state, `running-steps` before execution, or `human-in-the-loop` when work needs a user decision"
 		proceduralGuidance = ""

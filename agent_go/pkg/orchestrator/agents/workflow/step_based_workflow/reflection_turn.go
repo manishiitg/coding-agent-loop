@@ -271,7 +271,7 @@ func buildReflectionKBSection(in StepReflectionTurnInput) string {
 	// stores.md told steps that notes "compact themselves when they exceed 20KB
 	// or 30 sections". No such mechanism exists anywhere in the platform: the
 	// post-step KB agent that once could compact is retired for this path, and
-	// /improve-knowledge is a workshop-mode skill nobody triggers per-cycle. A
+	// no workshop-mode KB skill triggers per-cycle. A
 	// step told compaction is automatic has a positive reason to keep appending.
 	b.WriteString("**Nothing compacts these files for you.** No automatic pass condenses old sections, and no separate agent cleans up behind this turn — ")
 	b.WriteString("if a file you touch has accumulated near-duplicate sections across runs, fold them into one current entry now, as part of this turn, even when your own addition is small. ")

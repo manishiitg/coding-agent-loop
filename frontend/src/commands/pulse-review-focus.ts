@@ -8,7 +8,7 @@ export interface PulseReviewFocus {
 }
 
 const technicalFocus = (key: string) => `Manual Pulse review focus: ${key}. Prioritize this focus and preserve the normal lightweight safety scan.`
-const storeFocus = (lens: string) => `Manual Pulse review focus: store_integrity. Prioritize the ${lens === 'knowledge' ? 'knowledgebase' : lens} lens and load the canonical improve-${lens} checklist inside Technical Review.`
+const storeFocus = (lens: string) => `Manual Pulse review focus: store_integrity. Prioritize the ${lens === 'knowledge' ? 'knowledgebase' : lens} lens and review its evidence pack inside Technical Review.`
 
 // One source for the picker, typed arguments, and retained command shortcuts.
 // Keep the review rubrics here so a simpler menu does not weaken an investigation.

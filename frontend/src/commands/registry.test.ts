@@ -1,10 +1,50 @@
-import { describe, expect, it, vi } from 'vitest'
-import { findCommand, findCommandAnyMode, getCommands, setUserCommands } from './registry'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { findCommand, findCommandAnyMode, getCommands, setProductCommands, setUserCommands } from './registry'
+import { toAgentworksCommandDefinitions, type AgentworksProductCommand } from './agentworksProductCommands'
 import type { CommandContext, CommandDefinition } from './types'
 import { pulseReviewFocuses } from './pulse-review-focus'
 
 const { runPulseMock } = vi.hoisted(() => ({ runPulseMock: vi.fn() }))
 vi.mock('../api/scheduler', () => ({ schedulerApi: { runPulse: runPulseMock } }))
+
+// Structural fixtures mirroring agentworksproduct/product.yaml: the adapter
+// mechanics (gates, aliases, focus resolution, substitution) are what's under
+// test here. The real prompt content is locked by the backend manifest test.
+const PULSE_REVIEW_PROMPT = 'Run /pulse-review as a BACKGROUND task so this chat stays responsive. '
+  + 'Call get_workflow_command_guidance(kind="engineering-review", focus="{{context}}") and follow the returned instructions verbatim. '
+  + 'This is the read-only opening of one retained Review+Fix task. Persist the completed technical_review receipt before ending this turn. '
+  + 'completion_mode="present_result". Do NOT perform the bounded Review+Fix yourself this turn. '
+  + 'Do not call tools, reload state, or independently revalidate after that notification.'
+
+function productCommand(name: string, prompt: string, extra?: Partial<AgentworksProductCommand>): AgentworksProductCommand {
+  return { name, description: `${name} description`, icon: 'terminal', aliases: [], menuHidden: false, prompt, ...extra }
+}
+
+function agentworksFixture(): AgentworksProductCommand[] {
+  return [
+    productCommand('design-plan', 'Call get_workflow_command_guidance(kind="design-plan", focus="{{context}}") and follow the returned instructions verbatim.'),
+    productCommand('review-artifact-drift', 'Run the /review-artifact-drift review as a BACKGROUND task. Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes with their lifecycle outcomes. Focus: {{context}}.'),
+    productCommand('design-dashboard', 'Call get_workflow_command_guidance(kind="design-reporting-ui", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['design-reporting-ui'] }),
+    productCommand('setup-goals', 'Call get_workflow_command_guidance(kind="setup-goals", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['define-success'] }),
+    productCommand('pulse-merge', 'Consolidate the durable Pulse backlog. Load get_pulse_state(view="backlog", detail="compact") exactly once first. Request detail="full" only for the bounded issue_ids whose identity is uncertain. Call merge_pulse_issues for proven duplicates. do not edit workflow artifacts. Focus: {{context}}.'),
+    productCommand('strategy-auditor', 'Run the /strategy-auditor review as a BACKGROUND task via run_in_background. Call get_workflow_command_guidance(kind="strategy-auditor", focus="{{context}}"). Then present Needs your decision proposals.', { aliases: ['goal-advisor'] }),
+    productCommand('pulse-review', PULSE_REVIEW_PROMPT),
+    productCommand('pulse-fixer', 'Run the /pulse-fixer fix pass as a BACKGROUND task. Call get_workflow_command_guidance(kind="pulse-fixer", focus="{{context}}"). completion_mode="present_result".'),
+    productCommand('review-code', 'Call get_workflow_command_guidance(kind="design-plan", focus="Architecture focus: inspect saved scripts. Load references/code-authoring.md then references/scripted.md one at a time. Resolve canonical code paths from workflow.json.code_layout_version. do not apply changes in this review. {{context}}").'),
+    productCommand('backup', '{{context}} Help me set up or run backup for this workflow.'),
+    productCommand('publish', '{{context}} Help me set up or run publish for this workflow.'),
+    productCommand('notify', '{{context}} Help me set up or review notifications for this workflow.'),
+    ...pulseReviewFocuses.map(focus => productCommand(focus.legacyCommand, PULSE_REVIEW_PROMPT, { menuHidden: true })),
+  ]
+}
+
+beforeEach(() => {
+  setProductCommands(toAgentworksCommandDefinitions(agentworksFixture()))
+})
+
+afterEach(() => {
+  setProductCommands([])
+})
 
 describe('Pulse slash commands', () => {
   it('uses one setup flow for new and existing goal setup names', () => {
@@ -101,8 +141,7 @@ describe('Pulse slash commands', () => {
         pulseReviewFocus: selectedFocus,
         onSubmit: (message: string) => { result = message },
         workshopMode: 'workshop',
-        getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
-      } as CommandContext)
+      } as unknown as CommandContext)
       return result
     }
     for (const focus of pulseReviewFocuses) {
@@ -110,13 +149,8 @@ describe('Pulse slash commands', () => {
       const picked = submit('pulse-review', context, focus.id)
       expect(picked).toBe(submit('pulse-review', context))
       expect(picked).toBe(submit(focus.legacyCommand, context))
-      expect(picked).toContain('iteration-9/default')
-      const sequenceJSON = picked.match(/, message_sequence=(\[.*?\]), completion_mode=/)?.[1]
-      const [fix] = JSON.parse(sequenceJSON!)
-      const serializedFocus = fix.message.match(/focus=("(?:\\.|[^"\\])*")/)?.[1]
-      const dispatchedFocus = JSON.parse(serializedFocus!)
-      expect(dispatchedFocus).toContain(focus.instructions)
-      expect(dispatchedFocus).toContain(context)
+      expect(picked).toContain(focus.instructions)
+      expect(picked).toContain(context)
     }
     expect(submit('pulse-review', 'database concerns, but investigate freely', 'auto')).not.toContain('improve-database')
     expect(submit('pulse-review', 'investigate a custom concern')).toContain('investigate a custom concern')
@@ -166,8 +200,7 @@ describe('Pulse slash commands', () => {
       beforeSlash: '',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
     expect(submitted).toContain('references/code-authoring.md')
     expect(submitted).toContain('references/scripted.md')
@@ -181,7 +214,7 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'focus on repeated database tool symptoms',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-    } as CommandContext)
+    } as unknown as CommandContext)
 
     expect(submitted).toContain('get_pulse_state(view="backlog", detail="compact")')
     expect(submitted).toContain('detail="full" only for the bounded issue_ids')
@@ -197,26 +230,15 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'prioritize failed evaluation writes',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
-    expect(submitted).toContain('kind=\\"engineering-review\\"')
+    expect(submitted).toContain('kind="engineering-review"')
     expect(submitted).toContain('Run /pulse-review as a BACKGROUND task')
     expect(submitted).toContain('BACKGROUND task')
     expect(submitted).toContain('completion_mode="present_result"')
-		expect(submitted).not.toContain('required_pulse_review_modules')
-		expect(submitted).toContain('Do not call tools, reload state, or independently revalidate')
-    expect(submitted).toContain('iteration-9/default')
+    expect(submitted).not.toContain('required_pulse_review_modules')
+    expect(submitted).toContain('Do not call tools, reload state, or independently revalidate')
     expect(submitted).toContain('prioritize failed evaluation writes')
-    const sequenceJSON = submitted.match(/, message_sequence=(\[.*?\]), completion_mode=/)?.[1]
-    expect(sequenceJSON).toBeDefined()
-    const sequence = JSON.parse(sequenceJSON!)
-    expect(sequence).toHaveLength(1)
-    expect(sequence[0].id).toBe('fix')
-    expect(sequence[0].message).toContain('kind="pulse-fixer"')
-    expect(sequence[0].message).toContain('if review failed or is incomplete')
-    expect(sequence[0].message).toContain('run_folder="iteration-9/default"')
-    expect(sequence[0].message).toContain('prioritize failed evaluation writes')
   })
 
   it('routes Pulse Fixer to a separate background agent after review', () => {
@@ -227,13 +249,11 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'repair the highest-impact canonical issue',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
-    expect(submitted).toContain('kind=\\"pulse-fixer\\"')
+    expect(submitted).toContain('kind="pulse-fixer"')
     expect(submitted).toContain('BACKGROUND task')
-		expect(submitted).toContain('completion_mode="present_result"')
-    expect(submitted).toContain('iteration-9/default')
+    expect(submitted).toContain('completion_mode="present_result"')
   })
 
   it('routes a manual technical focus through retained Technical Review and Fix', () => {
@@ -244,12 +264,11 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'check the newest retry spike',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-9/default' }),
-    } as CommandContext)
-    expect(submitted).toContain('kind=\\"engineering-review\\"')
+    } as unknown as CommandContext)
+    expect(submitted).toContain('kind="engineering-review"')
     expect(submitted).toContain('Manual Pulse review focus: execution_health')
     expect(submitted).not.toContain('required_pulse_review_modules')
-		expect(submitted).toContain('bounded Review+Fix')
+    expect(submitted).toContain('bounded Review+Fix')
   })
 
   it('routes store review aliases through store_integrity review and bounded repair', () => {
@@ -260,17 +279,15 @@ describe('Pulse slash commands', () => {
         beforeSlash: 'repair confirmed ownership drift',
         onSubmit: (message: string) => { submitted = message },
         workshopMode: 'workshop',
-        getWorkflowStore: () => ({ selectedRunFolder: 'iteration-4/default' }),
-      } as CommandContext)
+      } as unknown as CommandContext)
 
-      expect(submitted).toContain('kind=\\"engineering-review\\"')
+      expect(submitted).toContain('kind="engineering-review"')
       expect(submitted).toContain('Manual Pulse review focus: store_integrity')
-		expect(submitted).toContain('bounded Review+Fix')
-      expect(submitted).toContain('iteration-4/default')
+      expect(submitted).toContain('bounded Review+Fix')
     }
   })
 
-  it('runs Strategy Auditor as a background guided review anchored to the selected run', () => {
+  it('runs Strategy Auditor as a background guided review', () => {
     const command = findCommand('strategy-auditor', 'workflow')
     let submitted = ''
 
@@ -278,13 +295,11 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'focus on repeated targets',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-7/group-a' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
     expect(submitted).toContain('Run the /strategy-auditor review as a BACKGROUND task')
-    expect(submitted).toContain('kind=\\"strategy-auditor\\"')
+    expect(submitted).toContain('kind="strategy-auditor"')
     expect(submitted).not.toContain('required_pulse_review_modules')
-    expect(submitted).toContain('iteration-7/group-a')
     expect(submitted).toContain('focus on repeated targets')
     expect(submitted).toContain('Needs your decision proposals')
     expect(submitted).not.toContain('message_sequence=')
@@ -307,12 +322,10 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'challenge feed concentration',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-7/group-a' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
     expect(submitted).toContain('get_workflow_command_guidance')
     expect(submitted).toContain('Run the /strategy-auditor review as a BACKGROUND task')
-    expect(submitted).toContain('iteration-7/group-a')
     expect(submitted).not.toContain('goal-advisor')
     expect(submitted).toContain('challenge feed concentration')
     expect(submitted).toContain('BACKGROUND task')
@@ -367,8 +380,7 @@ describe('Pulse slash commands', () => {
       beforeSlash: 'check the report exporter',
       onSubmit: (message: string) => { submitted = message },
       workshopMode: 'workshop',
-      getWorkflowStore: () => ({ selectedRunFolder: 'iteration-2/dev' }),
-    } as CommandContext)
+    } as unknown as CommandContext)
 
     expect(submitted).toContain('kind="design-plan"')
     expect(submitted).not.toContain('kind="review-code"')

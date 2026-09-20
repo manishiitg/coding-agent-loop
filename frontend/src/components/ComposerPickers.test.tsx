@@ -4,7 +4,8 @@ import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import CommandSelectionDialog from './CommandSelectionDialog'
 import FileSelectionDialog from './FileSelectionDialog'
-import { setUserCommands } from '../commands/registry'
+import { setProductCommands, setUserCommands } from '../commands/registry'
+import { toAgentworksCommandDefinitions } from '../commands/agentworksProductCommands'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 
 vi.mock('../stores/useWorkspaceStore', async () => {
@@ -39,9 +40,12 @@ beforeEach(() => {
   inputRef.current = input; input.focus()
   root = createRoot(host)
   useWorkspaceStore.setState({ files: [{ filepath: 'Workflow', type: 'folder', children: [{ filepath: 'Workflow/report.md', type: 'file' }] }, { filepath: 'plan.json', type: 'file' }] })
+  setProductCommands(toAgentworksCommandDefinitions([
+    { name: 'pulse-review', description: 'Review', icon: 'check-circle', aliases: [], menuHidden: false, prompt: 'Review {{context}}.' },
+  ]))
 })
 afterEach(async () => {
-  await act(async () => { root.unmount(); setUserCommands([]) })
+  await act(async () => { root.unmount(); setUserCommands([]); setProductCommands([]) })
   host.remove(); input.remove()
 })
 

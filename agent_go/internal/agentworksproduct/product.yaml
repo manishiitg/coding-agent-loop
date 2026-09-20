@@ -20,6 +20,101 @@ profile:
   # today uses on purpose, is the wrong shape for AgentWorks specifically.
   scope: global
   built_in: true
+  # Slash commands the builder ships with itself. Each prompt lives in its
+  # own file under commands/; `{{context}}` is replaced with whatever the
+  # user typed before the slash (for pulse-review, the resolved review focus
+  # plus that text). /pulse stays a hardcoded builtin: it is an async
+  # frontend API call no static prompt can express.
+  commands:
+    - name: design-plan
+      description: Comprehensively review the plan, dependent artifacts, and better design options
+      icon: git-branch
+      file: commands/design-plan.md
+    - name: review-artifact-drift
+      description: Check plan compatibility and prompt quality; apply bounded safe drift repairs
+      icon: refresh-cw
+      file: commands/review-artifact-drift.md
+    - name: design-dashboard
+      description: 'Design the dashboard from scratch: one live-data HTML dashboard at db/reports/index.html'
+      icon: check-circle
+      aliases: [design-reporting-ui]
+      file: commands/design-dashboard.md
+    - name: setup-goals
+      description: Set up outcome goals, primary and supporting metrics, and progress tracking
+      icon: target
+      aliases: [define-success]
+      file: commands/setup-goals.md
+    - name: pulse-merge
+      description: Semantically consolidate the Pulse issue backlog without changing workflow artifacts
+      icon: layers
+      file: commands/pulse-merge.md
+    - name: strategy-auditor
+      description: Assess reports and outputs, challenge the approach, and propose useful changes for your decision
+      icon: target
+      aliases: [goal-advisor]
+      file: commands/strategy-auditor.md
+    - name: pulse-review
+      description: Choose a review focus or let the reviewer decide, then apply bounded safe fixes
+      icon: check-circle
+      file: commands/pulse-review.md
+    - name: pulse-fixer
+      description: Independently repair one coherent objective from reviewed Pulse issues
+      icon: refresh-cw
+      file: commands/pulse-fixer.md
+    - name: review-code
+      description: Review saved code and JSON parameters; propose code/ migration with focused tests
+      icon: file-text
+      file: commands/review-code.md
+    - name: backup
+      description: Set up, run, or restore this automation's backup
+      icon: cloud
+      file: commands/backup.md
+    - name: publish
+      description: Set up or publish this automation's report to a public URL
+      icon: globe
+      file: commands/publish.md
+    - name: notify
+      description: Set up, review, or test agentic notifications
+      icon: bell-ring
+      file: commands/notify.md
+    # Retained pulse-review focus shortcuts: executable under access checks,
+    # without menu rows. All share the pulse-review prompt; the client
+    # resolves each name to its fixed focus before submitting.
+    - name: pulse-review-execution-health
+      description: 'Pulse review: execution health'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-validation-contract
+      description: 'Pulse review: validation contracts'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-report-quality
+      description: 'Pulse review: dashboard quality'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-evaluation-quality
+      description: 'Pulse review: measurement quality'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-database
+      description: 'Pulse review: database integrity'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-knowledge
+      description: 'Pulse review: knowledgebase'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
+    - name: pulse-review-learnings
+      description: 'Pulse review: learnings'
+      icon: check-circle
+      menu_hidden: true
+      file: commands/pulse-review.md
 
 branding:
   icon: ""

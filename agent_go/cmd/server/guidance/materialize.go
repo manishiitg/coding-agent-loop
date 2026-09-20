@@ -82,7 +82,7 @@ func referenceSkillSpecForMode(mode string) referenceSkillSpec {
 // MaterializeGuidanceSkill bundles every mode-allowed entry in allKinds into
 // ONE skill named "workflow-commands". Same Anthropic pattern: SKILL.md is
 // the TOC, references/<kind>.md is the procedural flow for each slash
-// command (design-plan, improve-report, define-success, strategy-auditor, ...).
+// command (design-plan, pulse-review, define-success, strategy-auditor, ...).
 //
 // Procedural flows benefit from Focus/Iteration context when invoked via
 // get_workflow_command_guidance — the materialized version is the no-context
@@ -94,7 +94,7 @@ func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 		Registry:         allKinds,
 		Name:             "workflow-commands",
 		DescriptionIntro: "Workflow workshop slash-command flows — canonical procedural guidance for each command below.",
-		Intro:            "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/design-plan`, `/improve-report`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
+		Intro:            "This skill bundles the workshop's canonical slash-command procedures. Match it when the user invokes one of these commands (e.g. `/design-plan`, `/pulse-review`) or describes the same intent in plain chat. Read the single matching file under `references/` — the prose there is your instructions for the turn, follow it verbatim.",
 		Render:           renderKind,
 	})
 }
@@ -286,7 +286,10 @@ func buildMegaSkill(spec buildMegaSkillSpec) *llmtypes.Skill {
 	// Generate the compact discovery list from the same references as the
 	// detailed TOC so new topics remain discoverable without duplicating the
 	// entire reference catalog into every agent's initial context.
-	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ", ") + "."
+	// Topics join without spaces: with 60+ topics the separators alone cost a
+	// tenth of the skill format's 1024-character description budget, and every
+	// new topic must stay discoverable without stealing that budget.
+	description := spec.DescriptionIntro + " Topics: " + strings.Join(topics, ",") + "."
 
 	return &llmtypes.Skill{
 		Name:            spec.Name,

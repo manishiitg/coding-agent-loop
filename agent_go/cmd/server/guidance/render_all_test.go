@@ -39,7 +39,7 @@ func readPulseDesignSpec(t *testing.T) string {
 }
 
 func TestSpecializeAdvisorsRequiresApprovalAndBoundedActivation(t *testing.T) {
-	rendered, err := renderFromRegistry("specialize-advisors", tmplData{Focus: "social acquisition"}, allKinds)
+	rendered, err := renderFromRegistry("specialize-advisors", tmplData{Focus: "social acquisition"}, referenceKinds)
 	if err != nil {
 		t.Fatalf("render specialize-advisors: %v", err)
 	}
@@ -223,7 +223,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 		"engineering-review": {
 			"TECHNICAL REVIEW PHASE",
 			"continuing Workflow Builder conversation",
-			`"name":"workflow-commands","path":"references/ops-review.md"`,
+			`"name":"builder-reference","path":"references/ops-review.md"`,
 			"Standalone Operations Review",
 			"manual=true",
 			"note_only=true",
@@ -244,7 +244,11 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 	}
 
 	for kind, wants := range tests {
-		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		registry := allKinds
+		if kind == "ops-review" {
+			registry = referenceKinds
+		}
+		rendered, err := renderFromRegistry(kind, tmplData{}, registry)
 		if err != nil {
 			t.Fatalf("render %s: %v", kind, err)
 		}
@@ -269,7 +273,7 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 }
 
 func TestStandaloneOpsReviewRunsDirectlyAndRequiresTerminalModuleResult(t *testing.T) {
-	raw, err := os.ReadFile("templates/review/ops-review.md")
+	raw, err := os.ReadFile("templates/system/ops-review.md")
 	if err != nil {
 		t.Fatalf("read ops-review template: %v", err)
 	}
@@ -425,24 +429,9 @@ func TestPulseGuidanceTracesStateChangesToRuntimeConsumers(t *testing.T) {
 		}
 	}
 
-	dbReview, err := renderFromRegistry("improve-database", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render improve-database: %v", err)
-	}
-	for _, want := range []string{
-		"control-state ownership map",
-		"`db_ownership_manifest`",
-		"content-bearing TEXT/JSON column",
-		"one semantic item, one authoritative owner",
-		"source-of-truth collisions",
-		"writer -> canonical record -> runtime reader -> decision/output",
-		"runtime decision consumed the canonical value",
-	} {
-		if !strings.Contains(dbReview, want) {
-			t.Fatalf("database review missing control-path contract %q", want)
-		}
-	}
-
+	// The improve-database control-path block that used to sit here was
+	// removed with the improve-* checklists: Stores Health now reviews store
+	// health from evidence packs instead of loading per-store checklists.
 	artifactReview, err := renderFromRegistry("review-artifact-drift", tmplData{}, allKinds)
 	if err != nil {
 		t.Fatalf("render review-artifact-drift: %v", err)
@@ -919,7 +908,11 @@ func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
 	// markup, dropped along with the rest of the retired doc; confirmed absent
 	// from every template on disk, not specific to these two kinds.
 	for _, kind := range []string{"ops-review", "strategy-auditor"} {
-		review, renderErr := renderFromRegistry(kind, tmplData{}, allKinds)
+		registry := allKinds
+		if kind == "ops-review" {
+			registry = referenceKinds
+		}
+		review, renderErr := renderFromRegistry(kind, tmplData{}, registry)
 		if renderErr != nil {
 			t.Fatalf("render %s: %v", kind, renderErr)
 		}
@@ -936,80 +929,12 @@ func TestPulseRunsEveryDueReviewerAndWritesAttributedResults(t *testing.T) {
 // (`grep -rc "data-pulse-section\|data-module=" cmd/server/guidance/templates`
 // returns nothing). Removed 2026-08-17.
 
-// The five improve-* docs below were consolidated into shared "ENGINEERING
-// REVIEW — <lens> LENS" headers, dispatched through the "normal Engineering/Ops
-// background executor" rather than each carrying its own standalone
-// "READ-ONLY <X> HEALTH REVIEW" title and call_generic_agent dispatch.
-// review-artifact-drift's own dispatch was separately renamed
-// call_generic_agent -> run_in_background by aad50dfb0 "stabilize pulse
-// orchestration and scheduled sessions". Confirmed by rendering each
-// template, not by grepping stale expectations.
-func TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff(t *testing.T) {
-	cases := map[string][]string{
-		"improve-learnings": {
-			"ENGINEERING REVIEW — STORES HEALTH / LEARNINGS LENS",
-			"generic read-only reviewer",
-			"background executor",
-			"Pulse Fixer",
-			"recommended_fix",
-			// Structure review is skipped unless the output contract forces it:
-			// consecutive real reviews returned detailed content findings while
-			// SKILL.md grew to 272 lines, never once mentioning its shape.
-			"`index_shape`",
-			"do not estimate",
-			"`purity_manifest`",
-			"`learning_objective_audit`",
-			"`ownership_candidates`",
-			"one semantic item, one authoritative owner",
-			"`references/` is progressive",
-			"Moving non-skill content into `references/` is laundering",
-			"Do not sample references",
-		},
-		"improve-knowledge": {
-			"ENGINEERING REVIEW — STORES HEALTH / KNOWLEDGEBASE LENS",
-			"generic read-only reviewer",
-			"background executor",
-			"Pulse Fixer",
-			"recommended_fix",
-			// Same reason as improve-learnings: a topic note reached ~100 KB of
-			// near-duplicate sections before anyone looked at its shape.
-			"`note_shape`",
-			"do not estimate",
-			"`kb_purity_manifest`",
-			"`ownership_candidates`",
-			"one semantic item, one authoritative owner",
-			"No content-bearing note file may be omitted",
-		},
-		"improve-database": {
-			"ENGINEERING REVIEW — STORES HEALTH / DATABASE LENS",
-			"generic read-only reviewer",
-			"background executor",
-			"Pulse Fixer",
-			"verification commands",
-			"`db_ownership_manifest`",
-			"`ownership_candidates`",
-			"content-bearing TEXT/JSON column",
-			"one semantic item, one authoritative owner",
-		},
-		"improve-report": {
-			"ENGINEERING REVIEW — DASHBOARD LENS",
-			"do not edit or ask from the reviewer",
-			"Pulse Fixer",
-			"recommended_fix",
-		},
-	}
-	for kind, wants := range cases {
-		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
-		if err != nil {
-			t.Fatalf("render %s: %v", kind, err)
-		}
-		for _, want := range wants {
-			if !strings.Contains(rendered, want) {
-				t.Fatalf("%s missing read-only reviewer contract %q", kind, want)
-			}
-		}
-	}
-}
+// TestMaintenanceImproveGuidanceIsReadOnlyForPulseFixerHandoff asserted the
+// read-only reviewer contracts of the four improve-* checklists
+// (improve-learnings, improve-knowledge, improve-database, improve-report).
+// Those checklists were deleted: they had no slash command and their only
+// loader pointed at the wrong bundle. Stores Health now reviews store health
+// from evidence packs. Removed with the templates.
 
 // TestReviewArtifactDriftSharesPlanDriftReviewMechanismAndStaysReadOnlyElsewhere
 // covers PLAT-258's slash/scheduled parity gap: /review-artifact-drift used to
@@ -1082,18 +1007,20 @@ func TestPlanDriftReviewClosesDependencyReceiptsInSamePass(t *testing.T) {
 // while keeping the rest of the packet contract; they get their own want-list.
 func TestPulseSpecialistsReturnStructuredPacketsAndParentOwnsHTML(t *testing.T) {
 	commonWants := []string{"recommended_fix", "verification", "user_judgment_required"}
+	// The four improve-* entries that used to sit here were removed with
+	// those checklists (no slash command; only loader pointed nowhere).
 	kinds := map[string][]string{
 		"design-plan":           append([]string{"finding_id", "target_key"}, commonWants...),
 		"ops-review":            {"no invented identifier", "canonical issue roots", "Do not create a separate recommendation"},
 		"strategy-auditor":      {"no invented identifier", "canonical issues", "Do not create separate focus"},
 		"review-artifact-drift": {"no invented identifier", "Do not create separate recommendation"},
-		"improve-learnings":     append([]string{"finding_id", "target_key"}, commonWants...),
-		"improve-knowledge":     append([]string{"finding_id", "target_key"}, commonWants...),
-		"improve-database":      append([]string{"finding_id", "target_key"}, commonWants...),
-		"improve-report":        append([]string{"finding_id", "target_key"}, commonWants...),
 	}
 	for kind, wants := range kinds {
-		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		registry := allKinds
+		if kind == "ops-review" {
+			registry = referenceKinds
+		}
+		rendered, err := renderFromRegistry(kind, tmplData{}, registry)
 		if err != nil {
 			t.Fatalf("render %s: %v", kind, err)
 		}
@@ -1111,7 +1038,11 @@ func TestStandalonePulseReviewCommandsUsePersistedReviewerPipeline(t *testing.T)
 		"strategy-auditor":      "strategic_review",
 		"review-artifact-drift": "technical_review",
 	} {
-		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
+		registry := allKinds
+		if kind == "ops-review" {
+			registry = referenceKinds
+		}
+		rendered, err := renderFromRegistry(kind, tmplData{}, registry)
 		if err != nil {
 			t.Fatalf("render %s: %v", kind, err)
 		}
@@ -1152,10 +1083,6 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 		"design-plan",
 		"review-artifact-drift",
 		"strategy-auditor",
-		"improve-report",
-		"improve-knowledge",
-		"improve-learnings",
-		"improve-database",
 	} {
 		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
 		if err != nil {
@@ -1185,21 +1112,8 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 	if _, exists := allKinds["review-plan"]; exists {
 		t.Fatal("review-plan must remain merged into design-plan")
 	}
-	for _, kind := range []string{
-		"improve-report",
-		"improve-knowledge",
-		"improve-learnings",
-		"improve-database",
-	} {
-		rendered, err := renderFromRegistry(kind, tmplData{}, allKinds)
-		if err != nil {
-			t.Fatalf("render %s: %v", kind, err)
-		}
-		if !strings.Contains(rendered, "parent") || !strings.Contains(rendered, "provided") {
-			t.Fatalf("%s must tell the parent to provide assumption-audit to the generic reviewer", kind)
-		}
-	}
-
+	// The improve-* parent-provision loop that used to sit here was removed
+	// with those checklists.
 	audit, err := renderFromRegistry("assumption-audit", tmplData{}, referenceKinds)
 	if err != nil {
 		t.Fatalf("render assumption-audit: %v", err)
@@ -1233,22 +1147,10 @@ func TestImprovementAndPlanGuidanceIncludesAssumptionAudit(t *testing.T) {
 // (2026-08-08); all 6 of its phrases confirmed absent by rendering the
 // current template. The improve-report handoff it hands off to is unchanged
 // except one phrase, also removed by the same commit.
-func TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff(t *testing.T) {
-	report, err := renderFromRegistry("improve-report", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render improve-report: %v", err)
-	}
-	for _, want := range []string{
-		"GOAL ADVISOR MEASUREMENT HANDOFF",
-		"An unapproved metric proposal is not Dashboard data",
-		"window.report.query",
-		"not measured yet",
-	} {
-		if !strings.Contains(report, want) {
-			t.Fatalf("improve-report measurement handoff missing %q", want)
-		}
-	}
-}
+// TestGoalAdvisorMetricsFlowUsesPlanAndReportHandoff asserted the measurement
+// handoff inside improve-report (GOAL ADVISOR MEASUREMENT HANDOFF). That
+// checklist was deleted: it had no slash command and no live loader.
+// Removed with the template.
 
 func TestPlanReviewAndGoalAdvisorPreferCoherentAgenticSteps(t *testing.T) {
 	checks := map[string][]string{
@@ -1492,33 +1394,8 @@ func TestPulseStoreFreshnessTriggerAndReviewerPass(t *testing.T) {
 		}
 	}
 
-	learn, err := renderFromRegistry("improve-learnings", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render improve-learnings: %v", err)
-	}
-	for _, want := range []string{
-		"FRESHNESS PASS (confirmation recency)",
-		"Confirmation recency, not calendar age",
-		"code-owned freshness ledger",
-	} {
-		if !strings.Contains(learn, want) {
-			t.Fatalf("improve-learnings missing freshness pass %q", want)
-		}
-	}
-
-	kb, err := renderFromRegistry("improve-knowledge", tmplData{}, allKinds)
-	if err != nil {
-		t.Fatalf("render improve-knowledge: %v", err)
-	}
-	for _, want := range []string{
-		"FRESHNESS PASS (confirmation recency)",
-		"Confirmation recency, not calendar age",
-		"code-owned freshness ledger",
-	} {
-		if !strings.Contains(kb, want) {
-			t.Fatalf("improve-knowledge missing freshness pass %q", want)
-		}
-	}
+	// The improve-learnings / improve-knowledge freshness-pass blocks that
+	// used to sit here were removed with those checklists.
 }
 
 // TestNoTemplateNamesARemovedPulseTool is the invariant that failed the last
@@ -1558,6 +1435,57 @@ func TestNoTemplateNamesARemovedPulseTool(t *testing.T) {
 			if strings.Contains(string(body), name) {
 				t.Errorf("%s still instructs agents to call removed Pulse tool %q; "+
 					"the surface is get_pulse_state(view=...), record_pulse_worklist, record_pulse_result, and canonical issue writes",
+					path, name)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk embedded templates: %v", err)
+	}
+	if visited == 0 {
+		t.Fatal("no templates were walked; the embed pattern or path changed")
+	}
+}
+
+// The improve-* checklists had no slash command and no live loader, and
+// ops-review / specialize-advisors are reference docs, not commands — but
+// prose kept presenting all of them as invokable `/commands`, so agents were
+// instructed to invoke things no menu offers. This walks every embedded
+// template and fails any slash spelling or tool-call form of a name that is
+// not a command. Plain `references/<name>.md` load paths are legitimate and
+// intentionally not matched.
+func TestNoTemplateInvokesARemovedCommand(t *testing.T) {
+	removed := []string{
+		"`/improve-report`",
+		"`/improve-knowledge`",
+		"`/improve-learnings`",
+		"`/improve-database`",
+		"`/ops-review`",
+		"`/specialize-advisors`",
+		`kind="improve-report"`,
+		`kind="improve-knowledge"`,
+		`kind="improve-learnings"`,
+		`kind="improve-database"`,
+		`kind="ops-review"`,
+		`kind="specialize-advisors"`,
+	}
+	visited := 0
+	err := fs.WalkDir(templatesFS, "templates", func(path string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() || !strings.HasSuffix(path, ".md") {
+			return nil
+		}
+		body, readErr := templatesFS.ReadFile(path)
+		if readErr != nil {
+			return readErr
+		}
+		visited++
+		for _, name := range removed {
+			if strings.Contains(string(body), name) {
+				t.Errorf("%s still invokes removed command %q; it has no menu entry and no tool kind",
 					path, name)
 			}
 		}

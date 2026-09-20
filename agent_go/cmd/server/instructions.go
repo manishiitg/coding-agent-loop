@@ -293,7 +293,7 @@ If an evaluation or strategy review finds a missing or vague objective in ` + "`
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/improve-report`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/pulse-review`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the measurement step"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
@@ -301,21 +301,18 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Builder-mode audits:
     - design-plan            → design review: is the plan following best practices (step types, stores, validation, flow)
+    - design-reporting-ui    → dashboard authoring flow, submitted by /design-dashboard
 
   Reviews (recommend, don't apply; record typed Pulse findings):
-    - review-plan            → comprehensive plan audit (structure + per-step descriptions + todo_task orchestrators)
-    - review-code            → saved main.py vs step descriptions (drift + browser + dynamism)
     - review-artifact-drift  → plan-changelog-to-artifact drift audit
-    - ops-review             → focused technical investigation using relevant outcome, reliability, efficiency, or structural evidence
     - strategy-auditor       → open-ended read-only workflow strategy advice and human decision proposals; no workflow edits
+    - goal-advisor           → compatibility alias for strategy-auditor; use the same strategic review flow
 
   Improvements:
-    - define-success           → one-time framework bootstrap
-    - pulse                    → run one complete Pulse now against retained evidence; no workflow run or schedule change
-    - engineering-review       → read-only Technical Review phase; manual pulse-review aliases supply an ordered Fix message after the completed review receipt
+    - setup-goals              → goal and metric setup, submitted by /setup-goals
+    - define-success           → compatibility alias for setup-goals; use the same setup flow
+    - engineering-review       → read-only Technical Review phase; /pulse-review supplies an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
-    - goal-advisor             → compatibility alias for strategy-auditor; use the same strategic review flow
-    - improve-report           → report accuracy/live-data/layout improvements
 
 **Optional parameters:**
   - ` + "`focus`" + `       : strongly recommended; the conversation-derived instruction/context for this command. Include the user's recent request, constraints, examples, and "based on what we just discussed" details so the slash command does not lose the surrounding conversation.

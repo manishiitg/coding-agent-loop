@@ -70,7 +70,7 @@ Only saved scripted code has a lock. Learning writes are controlled directly by 
 - **Require grounding in the description** — instruct the step to derive values only from real tool output / fetched data and to cite where each value came from, never to infer or fill them in.
 Trust output you can trace back to real evidence, not a self-reported success.
 
-**KB writes are step-based**: A step writes KB notes only when `knowledgebase_access` is `write` or `read-write` and it has a non-empty `knowledgebase_contribution`. When a contributor no longer produces durable new facts, change that step to `knowledgebase_access="read"`. Do not freeze unrelated KB writers workflow-wide. Use the `/improve-knowledge` checklist with a generic read-only reviewer and let the parent fixer apply bounded intentional curation.
+**KB writes are step-based**: A step writes KB notes only when `knowledgebase_access` is `write` or `read-write` and it has a non-empty `knowledgebase_contribution`. When a contributor no longer produces durable new facts, change that step to `knowledgebase_access="read"`. Do not freeze unrelated KB writers workflow-wide. Review KB health with a generic read-only reviewer over the knowledgebase evidence pack and let the parent fixer apply bounded intentional curation.
 
 ### 3. Managing Learnings
 Learnings are stored as SKILL.md files in the workspace at 'learnings/_global/SKILL.md'. Each learning file MUST use YAML frontmatter format:
@@ -264,9 +264,9 @@ A step's execution mode is its plan type — `regular` is scripted, `message_seq
 
 **When one step's KB contribution stops changing, make that step read-only**:
 - After several successful runs where a step produces only trivial/no-op KB edits, set that step's `knowledgebase_access="read"` and clear its `knowledgebase_contribution`. Other legitimate KB writers keep working.
-- If that step later needs to capture new domain facts, restore `read-write` together with a specific contribution contract, or run the read-only `/improve-knowledge` checklist and let the parent fixer apply bounded curation.
+- If that step later needs to capture new domain facts, restore `read-write` together with a specific contribution contract, or run a read-only KB health review and let the parent fixer apply bounded curation.
 
-**Use `/improve-knowledge` to review intentional KB cleanup/curation; the parent fixer writes**:
+**Review intentional KB cleanup/curation with a read-only pass; the parent fixer writes**:
 - `mode="targeted"`: use this when you already know the cleanup operation. Examples: *"merge notes/architecture.md and notes/topology.md"*, *"drop sections in notes/recommendation-history.md that mention iteration-0/abandoned"*, *"rename topic company-acme to company-acme-corp and rewrite cross-references"*, *"compact notes/architecture.md to under 10KB"*, *"fix notes/_index.json"*.
 - `mode="cross_step"`: use this after several contributing steps have run and the work needs a holistic view. The agent receives every step's `knowledgebase_contribution` plus step output folders from the selected run. Examples: *"reconcile company/organization naming drift across step contributions"*, *"write pattern notes for repeated shapes across per-account steps"*, *"surface contested employee-count values where two steps disagree"*.
 - Boundary: if you can describe the instruction as one concrete file/topic transformation, use `targeted`. If the justification depends on comparing multiple steps, runs, or topic files, use `cross_step`.

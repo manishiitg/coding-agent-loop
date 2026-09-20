@@ -8,7 +8,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 )
 
-//go:embed product.yaml prompts/*.md
+//go:embed product.yaml prompts/*.md commands/*.md
 var productConfigFiles embed.FS
 
 // ProductManifest is the shared product.yaml shape (pkg/agentprofiles).

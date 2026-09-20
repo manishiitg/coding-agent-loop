@@ -318,9 +318,13 @@ type PresentationActivityBinding struct {
 // keep the text in their own files and fill this in at load time, so a long
 // prompt does not have to live inline in the product manifest.
 type CommandBinding struct {
-	Name        string `json:"name" yaml:"name"`
-	Description string `json:"description" yaml:"description"`
-	Icon        string `json:"icon,omitempty" yaml:"icon,omitempty"`
+	Name        string   `json:"name" yaml:"name"`
+	Description string   `json:"description" yaml:"description"`
+	Icon        string   `json:"icon,omitempty" yaml:"icon,omitempty"`
+	// Aliases resolve to this command without adding menu entries.
+	Aliases []string `json:"aliases,omitempty" yaml:"aliases,omitempty"`
+	// MenuHidden keeps a retained shortcut executable without a menu row.
+	MenuHidden bool `json:"menu_hidden,omitempty" yaml:"menu_hidden,omitempty"`
 	// File is the product-relative path holding the prompt. It is resolved by
 	// the product at load time and never sent to a client.
 	File   string `json:"-" yaml:"file,omitempty"`

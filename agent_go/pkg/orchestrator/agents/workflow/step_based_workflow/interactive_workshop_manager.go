@@ -3669,7 +3669,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 
 	const registerRetiredCostTimingReviewers = false
 	if registerRetiredCostTimingReviewers {
-		// Tool 7f3: review_workflow_timing — retired in favor of /ops-review
+		// Tool 7f3: review_workflow_timing — retired in favor of /pulse-review
 		if err := mcpAgent.RegisterCustomTool(
 			"review_workflow_timing",
 			"Start a background agent that reviews workflow runtime and step timing from actual run evidence, identifies the main latency bottlenecks, and recommends how to make the workflow faster without compromising the objective or success criteria. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",
@@ -3808,7 +3808,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			logger.Warn(fmt.Sprintf("⚠️ Failed to register review_workflow_timing tool: %v", err))
 		}
 
-		// Tool 7f4: review_workflow_costs — retired in favor of /ops-review
+		// Tool 7f4: review_workflow_costs — retired in favor of /pulse-review
 		if err := mcpAgent.RegisterCustomTool(
 			"review_workflow_costs",
 			"Start a background agent that reviews workflow token/cost data from actual run evidence, identifies the biggest cost drivers, and recommends how to reduce cost without compromising the objective or success criteria. Read-only. Returns execution_id immediately — you will be automatically notified when it completes.",

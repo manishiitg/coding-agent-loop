@@ -1,33 +1,31 @@
 ---
 name: agentworks
-description: Work with AgentWorks workflows through the CLI or MCP bridge (list workflows, read/edit files and plans, share assets, Builder chat). Load when the task touches an AgentWorks workflow or when agentworks tools are available.
+description: Read AgentWorks workflows through the CLI or MCP bridge (list workflows, read files, plans, runs, guidance, and knowledge). Load when the task touches an AgentWorks workflow or when agentworks tools are available.
 ---
 
 # AgentWorks
 
 This skill is an entry pointer, not a manual. All substantive guidance lives on the server and is fetched per task — nothing here can go stale.
 
+This connection is read-only, like the Slack and WhatsApp run-mode channels: every tool reads; nothing creates, edits, or runs.
+
 ## Connect
 
 ```sh
-agentworks login --server https://your-server --token-stdin
-claude mcp add --transport stdio agentworks -- agentworks mcp serve
+printf '%s' '<token>' | agentworks login --server https://your-server --token-stdin
+claude mcp add --transport stdio --env AGENTWORKS_TOKEN='<token>' agentworks -- agentworks mcp serve
 ```
 
-Tokens are scoped (`workflows:read`, `files:read`, `files:write`, `plan:write`, `builder:chat`). Unavailable tools are omitted from the catalog; a restricted token cannot gain access by other means.
+Tokens are read-only (`workflows:read`, `files:read`) and limited to workflows the account can access. Unavailable tools are omitted from the catalog.
 
-## Mandatory first step
+## First step
 
-Call `get_agent_context` before plan changes (pass `action: plan_change` for edits, `file_edit`, `share_asset`, or `builder_chat` otherwise). It returns token capabilities, available tools, the guidance version, and the preparation checklist. Discover workflow IDs with `list_workflows` first — IDs are never filesystem paths.
+Call `get_agent_context` for token capabilities, available tools, and the guidance version. Discover workflow IDs with `list_workflows` first — IDs are never filesystem paths.
 
 ## Guidance per task
 
-List topics with `list_guidance_topics` and load only relevant ones via `get_guidance_topic`. Always load `plan-change-impact` before treating a plan change as done. Inspect workflow knowledge with `list_workflow_knowledge` / `read_workflow_knowledge` (learnings, knowledgebase notes, workspace skills, skill wiring).
+List topics with `list_guidance_topics` and load only relevant ones via `get_guidance_topic`. Inspect workflow knowledge with `list_workflow_knowledge` / `read_workflow_knowledge` (learnings, knowledgebase notes, workspace skills, skill wiring). Use `get_file_link` for preview/download URLs and `files download` for local copies.
 
-## Edit discipline
+## Answer from reading
 
-Pass `expected_revision` from `get_plan` / `read_file`; re-read on `revision_conflict`, never blind-retry. Every mutation needs a `reason`. Every plan mutation returns `required_followups` — complete them before the change is done. `workflow_busy` means a run or builder turn is active: wait or coordinate via the builder session.
-
-## When not to use direct tools
-
-For planning work that depends on AgentWorks conventions, prefer `builder_chat` (start without `session_id`, poll `builder_status`, answer blocked inputs with `builder_reply_input`). Direct plan tools are structurally safe but carry no decision process.
+If the task needs a change, say so instead of attempting one — mutations are not exposed in v1.

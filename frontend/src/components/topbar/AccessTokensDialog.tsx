@@ -3,12 +3,12 @@ import { Copy, Terminal, X } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
 import { agentApi, authApi, getApiBaseUrl, type PersonalAccessToken } from '../../services/api'
 
+// v1 is read-only: every token reads workflows, plans, run logs, documents
+// and skills. Nothing creates, edits, or runs.
+const readScopes = ['workflows:read', 'files:read']
 const permissions = [
   ['workflows:read', 'Read workflows, plans and run logs'],
   ['files:read', 'Read and search documents and skills'],
-  ['files:write', 'Create and edit documents and skills'],
-  ['plan:write', 'Edit plans through validated tools'],
-  ['builder:chat', 'Use Workflow Builder chat'],
 ] as const
 const errorMessage = (error: unknown) => {
   const e = error as { response?: { data?: { error?: { message?: string } | string } }; message?: string }
@@ -27,7 +27,6 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
   const [days, setDays] = useState(30)
   const [allWorkflows, setAllWorkflows] = useState(true)
   const [workflowIDs, setWorkflowIDs] = useState<string[]>([])
-  const [scopes, setScopes] = useState<string[]>(['workflows:read', 'files:read'])
   const [created, setCreated] = useState('')
   const [copied, setCopied] = useState(false)
   const dialog = useRef<HTMLDivElement>(null)
@@ -58,18 +57,11 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
     return () => { mounted.current = false; previous?.focus(); document.removeEventListener('keydown', keydown) }
   }, [])
 
-  const changeScope = (scope: string, checked: boolean) => {
-    if (scope === 'builder:chat' && checked) {
-      setScopes(permissions.map(([key]) => key)); setAllWorkflows(true); setWorkflowIDs([])
-    } else {
-      setScopes(current => checked ? [...current, scope] : current.filter(s => s !== scope && s !== 'builder:chat'))
-    }
-  }
   const create = async () => {
     if (busyRef.current) return
     busyRef.current = true; setBusy(true); setError('')
     try {
-      const result = await authApi.createAccessToken({ name: name.trim(), expires_in_days: days, scopes, all_workflows: allWorkflows, workflow_ids: allWorkflows ? [] : workflowIDs })
+      const result = await authApi.createAccessToken({ name: name.trim(), expires_in_days: days, scopes: readScopes, all_workflows: allWorkflows, workflow_ids: allWorkflows ? [] : workflowIDs })
       if (mounted.current) { setCreated(result.token); setCopied(false); setTokens(current => [result.access_token, ...current]) }
     } catch (e) { if (mounted.current) setError(errorMessage(e)) }
     finally { busyRef.current = false; if (mounted.current) setBusy(false) }
@@ -110,24 +102,21 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
             <p className="text-sm">Run this command, paste the token, then press Enter and Ctrl-D to finish standard input on macOS/Linux.</p>
             <pre className="p-3 bg-muted rounded-md text-xs whitespace-pre-wrap break-all">{command}</pre>
             <p className="text-sm text-muted-foreground">For MCP, use <code>agentworks mcp serve</code> after login. Access ends at expiry or when you revoke this token.</p>
-            <button className={buttonClass} onClick={() => { setCreated(''); setName(''); setScopes(['workflows:read', 'files:read']); setAllWorkflows(true); setWorkflowIDs([]) }}>Done</button>
+            <button className={buttonClass} onClick={() => { setCreated(''); setName(''); setAllWorkflows(true); setWorkflowIDs([]) }}>Done</button>
           </section> : <form className="space-y-4" onSubmit={e => { e.preventDefault(); void create() }}>
             <h3 className="font-medium">Generate a token</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-sm">Name<input required maxLength={80} value={name} onChange={e => setName(e.target.value)} placeholder="Claude Code on my laptop" className={inputClass} /></label>
               <label className="text-sm">Expires in<select value={days} onChange={e => setDays(Number(e.target.value))} className={inputClass}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label>
             </div>
-            <fieldset className="space-y-2"><legend className="text-sm font-medium mb-2">Permissions</legend>
-              {permissions.map(([key, label]) => <label key={key} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={scopes.includes(key)} onChange={e => changeScope(key, e.target.checked)} />{label}</label>)}
-              <p className="text-xs text-muted-foreground">Builder chat requires all permissions and all accessible workflows. It can run tools and shell commands with your existing account access.</p>
-            </fieldset>
-            <label className="block text-sm">Workflow access<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => { const all = e.target.value === 'all'; setAllWorkflows(all); if (!all) setScopes(s => s.filter(v => v !== 'builder:chat')) }}><option value="all">All workflows I can access, including future workflows</option><option value="selected">Selected workflows</option></select></label>
+            <p className="text-sm text-muted-foreground">Read-only: workflows, plans, run logs, documents and skills. Nothing is created, edited, or run.</p>
+            <label className="block text-sm">Workflow access<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => setAllWorkflows(e.target.value === 'all')}><option value="all">All workflows I can access, including future workflows</option><option value="selected">Selected workflows</option></select></label>
             {!allWorkflows && <fieldset className="space-y-2 border border-border rounded-md p-3 max-h-40 overflow-auto"><legend className="text-sm">Select workflows</legend>
               {workflows.map(w => <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={workflowIDs.includes(w.id)} onChange={e => setWorkflowIDs(ids => e.target.checked ? [...ids, w.id] : ids.filter(id => id !== w.id))} />{w.label}</label>)}
               {!workflows.length && <p className="text-sm text-muted-foreground">No accessible workflows.</p>}
             </fieldset>}
             <p className="text-xs text-muted-foreground">A token can never grant more access than your account has.</p>
-            <button type="submit" disabled={loading || busy || !name.trim() || !scopes.length || (!allWorkflows && !workflowIDs.length)} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50">{busy ? 'Saving…' : 'Generate token'}</button>
+            <button type="submit" disabled={loading || busy || !name.trim() || (!allWorkflows && !workflowIDs.length)} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50">{busy ? 'Saving…' : 'Generate token'}</button>
           </form>}
           <section className="border-t border-border pt-4 space-y-3" aria-label="Existing access tokens"><h3 className="font-medium">Your tokens</h3>
             {loading ? <p role="status" className="text-sm text-muted-foreground">Loading tokens…</p> : !tokens.length ? <p className="text-sm text-muted-foreground">No tokens yet.</p> : tokens.map(t => {

@@ -29,10 +29,14 @@ type ChatCapabilityPolicy struct {
 // ChatModeDefinition selects prompt files and built-in skill bundles, and declares
 // the default workflow-phase tool surface for integration checks. Capability
 // admission remains separate: selecting documentation never grants tools.
+// ExternalTools is different: it is the admission list for the external
+// CLI/MCP API surface of this mode. The server exposes exactly these tools,
+// so unlike Tools this list is load-bearing at runtime, not a check-list.
 type ChatModeDefinition struct {
-	Prompt ChatPromptSource `yaml:"prompt"`
-	Skills []string         `yaml:"skills"`
-	Tools  []string         `yaml:"tools,omitempty"`
+	Prompt        ChatPromptSource `yaml:"prompt"`
+	Skills        []string         `yaml:"skills"`
+	Tools         []string         `yaml:"tools,omitempty"`
+	ExternalTools []string         `yaml:"external_tools,omitempty"`
 }
 
 type ChatPromptSource struct {
@@ -136,6 +140,16 @@ func LoadProductManifest(fsys fs.FS, path string) (ProductManifest, error) {
 		}
 		if _, err := LoadChatPrompt(fsys, def.Prompt); err != nil {
 			return manifest, fmt.Errorf("chat %s: %w", mode, err)
+		}
+		seenExternal := map[string]bool{}
+		for _, name := range def.ExternalTools {
+			if strings.TrimSpace(name) == "" {
+				return manifest, fmt.Errorf("chat %s: external_tools must not contain empty names", mode)
+			}
+			if seenExternal[name] {
+				return manifest, fmt.Errorf("chat %s: duplicate external_tools entry %q", mode, name)
+			}
+			seenExternal[name] = true
 		}
 	}
 	return manifest, nil

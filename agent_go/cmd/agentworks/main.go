@@ -27,6 +27,22 @@ type options struct {
 	getenv                func(string) string
 }
 
+// cliOperationGroups maps CLI subcommands to external tools. Every tool named
+// here must stay admitted by product.yaml's run-mode external_tools (see
+// TestCLIOperationsStayAdmitted); `plan get` maps to get_plan the same way,
+// while `tools call` and `mcp serve` resolve against the live server catalog
+// instead.
+var cliOperationGroups = []struct {
+	name, description string
+	operations        []struct{ command, tool string }
+}{
+	{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
+	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
+	{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
+	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
+	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -88,18 +104,7 @@ func newCommand(o *options) *cobra.Command {
 	call.RunE = func(cmd *cobra.Command, args []string) error { return o.call(cmd, args[0]) }
 	toolsCmd.AddCommand(call)
 	root.AddCommand(toolsCmd)
-	groups := []struct {
-		name, description string
-		operations        []struct{ command, tool string }
-	}{
-		{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
-		{"files", "Read and edit ordinary workspace files; plan files require plan tools", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}, {"write", "write_file"}, {"patch", "patch_file"}}},
-		{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
-		{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
-		{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
-		{"builder", "Send messages to existing Workflow Builder and follow its session", []struct{ command, tool string }{{"chat", "builder_chat"}, {"status", "builder_status"}, {"reply", "builder_reply_input"}, {"cancel", "builder_cancel"}}},
-	}
-	for _, group := range groups {
+	for _, group := range cliOperationGroups {
 		groupCmd := &cobra.Command{Use: group.name, Short: group.description}
 		for _, op := range group.operations {
 			toolName := op.tool
@@ -133,17 +138,16 @@ func newCommand(o *options) *cobra.Command {
 		root.AddCommand(groupCmd)
 	}
 	plan := &cobra.Command{
-		Use: "plan OPERATION", Args: cobra.ExactArgs(1),
-		Short: "Get a plan or invoke its native tools (e.g. update-scripted-step)",
-		Long:  "Read with 'plan get'. For mutations, use the native tool name with hyphens or underscores.\nDiscover available names and fields with 'tools list'. Pass native fields via --input.\nRead the revision with 'plan get', then supply --expected-revision to every mutation.\nExample: agentworks plan update-scripted-step --workflow ID --expected-revision REV --input change.json",
+		Use: "plan get", Args: cobra.ExactArgs(1),
+		Short: "Read a workflow plan and configuration",
+		Long:  "Read with 'plan get'. v1 is read-only: plan mutations are not exposed.",
 	}
-	addOperationFlags(plan, "plan")
+	addOperationFlags(plan, "get_plan")
 	plan.RunE = func(cmd *cobra.Command, args []string) error {
-		name := strings.ReplaceAll(args[0], "-", "_")
-		if name == "get" {
-			name = "get_plan"
+		if args[0] != "get" {
+			return fmt.Errorf("unknown plan operation %q: v1 supports only 'plan get'", args[0])
 		}
-		return o.call(cmd, name)
+		return o.call(cmd, "get_plan")
 	}
 	root.AddCommand(plan)
 	mcpCmd := &cobra.Command{Use: "mcp", Short: "Expose this hosted connection as MCP"}
@@ -297,15 +301,12 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool != "list_workflows" && tool != "list_guidance_topics" && tool != "get_guidance_topic" {
 		f.String("workflow", "", "Workflow ID (workflow_id)")
 	}
-	if tool == "" || tool == "plan" || tool == "write_file" || tool == "patch_file" {
-		f.String("expected-revision", "", "Revision from read_file/get_plan; use missing to create a file")
+	if tool == "" {
+		f.String("expected-revision", "", "Revision from read_file/get_plan (reserved for a future write-enabled API)")
 	}
 	f.StringArray("set", nil, "Set a native argument as key=JSON; repeatable (quote string JSON values)")
 	if strings.Contains(tool, "file") || tool == "read_workflow_knowledge" {
 		f.String("path", "", "Workspace-relative file or directory path")
-	}
-	if tool == "get_agent_context" {
-		f.String("action", "", "Intended action: plan_change, file_edit, share_asset, builder_chat")
 	}
 	if tool == "get_guidance_topic" {
 		f.String("topic", "", "Guidance topic from guidance topics")
@@ -320,35 +321,8 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool == "search_files" || tool == "list_workflows" {
 		f.String("query", "", "Search query")
 	}
-	if tool == "write_file" {
-		f.String("content-file", "", "Read new file content from a local file or - for stdin")
-	}
-	if tool == "patch_file" {
-		f.String("diff-file", "", "Read unified diff from a local file or - for stdin")
-	}
 	if tool == "get_run" || tool == "get_logs" {
 		f.String("run-folder", "", "Run folder from list_runs")
-	}
-	if strings.HasPrefix(tool, "builder_") {
-		f.String("session", "", "Builder session ID (session_id)")
-		if tool == "builder_chat" {
-			f.String("message", "", "Message to Workflow Builder")
-			f.String("provider", "", "Builder model provider")
-			f.String("model", "", "Builder model ID")
-		}
-		if tool == "builder_reply_input" {
-			f.String("request-id", "", "Pending input unique_id returned by builder status")
-			f.String("response", "", "Response to the pending builder input request")
-		}
-		if tool == "builder_status" {
-			f.Int("since-index", -1, "Return events after this index")
-			f.Int("limit", 0, "Maximum events (1..200)")
-		}
-	}
-	if tool == "plan" {
-		f.String("step", "", "Existing step ID (existing_step_id)")
-		f.String("title", "", "New step title")
-		f.String("reason", "", "Reason for the plan mutation")
 	}
 }
 

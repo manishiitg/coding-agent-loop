@@ -42,21 +42,16 @@ describe('Access token account dialog', () => {
       expect(modal.textContent).toContain('Revoked')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
-  it('makes full Builder access explicit and removes it when workflows are restricted', async () => {
+  it('issues read-only tokens with no permission choices', async () => {
     vi.mocked(authApi.listAccessTokens).mockResolvedValue({ tokens: [] })
     vi.mocked(agentApi.listWorkflowManifests).mockResolvedValue({ success: true, total: 0, workflows: [] })
     const host = document.createElement('div');document.body.append(host);const root = createRoot(host)
     try {
       await act(async () => root.render(<AccessTokensDialog onClose={vi.fn()} />))
       const modal = document.querySelector('[role="dialog"]')!
-      const boxes = Array.from(modal.querySelectorAll<HTMLInputElement>('input[type="checkbox"]'))
-      expect(boxes.map(b => b.checked)).toEqual([true, true, false, false, false])
-      await act(async () => boxes[4].click())
-      expect(boxes.every(b => b.checked)).toBe(true)
-      const workflowSelect = modal.querySelectorAll('select')[1]
-      await act(async () => { workflowSelect.value = 'selected'; workflowSelect.dispatchEvent(new Event('change', { bubbles: true })) })
-      expect(boxes[4].checked).toBe(false)
-      expect((modal.querySelector('button[type="submit"]') as HTMLButtonElement).disabled).toBe(true)
+      expect(modal.textContent).toContain('Read-only: workflows, plans, run logs, documents and skills.')
+      expect(modal.querySelectorAll('input[type="checkbox"]').length).toBe(0)
+      expect(modal.textContent).not.toContain('Builder chat')
     } finally { await act(async () => root.unmount());host.remove() }
   })
 })

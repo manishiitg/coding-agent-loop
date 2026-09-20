@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	planops "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	wf "github.com/manishiitg/coding-agent-loop/workspace/workflowfiles"
@@ -43,6 +44,7 @@ func externalInteger(minimum, maximum int) map[string]any {
 }
 func externalTools() ([]externalTool, error) {
 	externalCatalogOnce.Do(func() {
+		var defined []externalTool
 		add := func(name, description string, write, scoped bool, props map[string]any, required ...string) {
 			if props == nil {
 				props = map[string]any{}
@@ -55,7 +57,7 @@ func externalTools() ([]externalTool, error) {
 			for i, r := range required {
 				req[i] = r
 			}
-			externalCatalog = append(externalCatalog, externalTool{Name: name, Description: description, mutates: write, InputSchema: map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false}})
+			defined = append(defined, externalTool{Name: name, Description: description, mutates: write, InputSchema: map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false}})
 		}
 		page := func() map[string]any {
 			return map[string]any{"limit": externalInteger(1, 200), "offset": externalInteger(0, 10000)}
@@ -76,18 +78,14 @@ func externalTools() ([]externalTool, error) {
 			add(name, "Browse or search workflow files. Private paths and symbolic links are excluded. Results are bounded and paginated.", false, true, p, required...)
 		}
 		add("get_file_link", "Get an existing file or folder’s authenticated browser preview URL. Files also include an authenticated download URL, size and content type. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file or folder path.")}, "path")
-		add("read_file", "Read a workflow file up to 2 MiB, with a revision. Binary content is base64. Missing files return revision 'missing'.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
-		for _, name := range []string{"write_file", "patch_file"} {
-			p = map[string]any{"path": externalString("Workflow-relative file path."), "expected_revision": externalString("Revision returned by read_file; use 'missing' to create.")}
-			field := "content"
-			if name == "patch_file" {
-				field = "diff"
-			}
-			p[field] = map[string]any{"type": "string", "description": "UTF-8 content, or a unified diff for patch_file.", "maxLength": wf.MaxFileBytes}
-			add(name, "Edit an ordinary workflow file with revision checking. Plan/config, run state, ownership and private files are protected; use typed tools for plan changes.", true, true, p, "path", "expected_revision", field)
-		}
-		add("get_plan", "Read the plan and configuration with a combined revision required by typed plan mutations.", false, true, nil)
-		add("get_agent_context", "Describe this connection for an external agent: token capabilities, available tools, guidance version, and required preparation for an action. Call before plan changes. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"action": map[string]any{"type": "string", "description": "Intended action: plan_change, file_edit, share_asset, builder_chat.", "enum": []any{"plan_change", "file_edit", "share_asset", "builder_chat"}}, "workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
+		add("read_file", "Read a workflow file up to 2 MiB. Binary content is base64.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
+		// v1 is read-only, like the Slack and WhatsApp run-mode channels:
+		// file writes, plan mutations, and Builder execution are not exposed.
+		// The dispatch paths stay for a future write-enabled API version.
+		// Catalog membership is admitted by product.yaml (chat.run
+		// external_tools); these definitions are implementations only.
+		add("get_plan", "Read the plan and configuration.", false, true, nil)
+		add("get_agent_context", "Describe this read-only connection for an external agent: token capabilities, available tools, and guidance version. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
 		add("list_guidance_topics", "List the server-owned external guidance topics and their descriptions.", false, false, nil)
 		add("get_guidance_topic", "Read one external guidance topic rendered from the canonical builder reference. Load only topics relevant to the task.", false, false, map[string]any{"topic": externalString("Topic name from list_guidance_topics.")}, "topic")
 		add("list_workflow_knowledge", "List a workflow's learnings, knowledgebase notes, workspace skills, and skill wiring (workflow-selected skills plus per-step enabled_skills).", false, true, nil)
@@ -98,27 +96,30 @@ func externalTools() ([]externalTool, error) {
 			p["run_folder"] = externalString("Run directory relative to runs/, e.g. iteration-0/group-name.")
 			add(name, "Inspect a saved run's files or log files; use read_file to retrieve selected content.", false, true, p, "run_folder")
 		}
-		add("builder_chat", "Send a message to the existing Workflow Builder runtime. Returns a session ID; poll builder_status. Starts an LLM turn with normal builder capabilities, which may include execution. Omit session_id to resume your latest conversation.", false, true, map[string]any{"message": externalString("Message for Workflow Builder."), "session_id": externalString("Your existing builder session ID."), "provider": externalString("Optional provider override."), "model_id": externalString("Optional model override.")}, "message")
-		add("builder_status", "Read bounded builder progress/events and requests for input. Return the cursor as since_index on the next call.", false, true, map[string]any{"session_id": externalString("Your builder session ID."), "since_index": externalInteger(-1, 2147483647), "limit": externalInteger(1, 200)}, "session_id")
-		add("builder_reply_input", "Answer a pending human-input request in your builder session. Use request_id from builder_status pending_inputs; a chat message does not answer a blocked tool request.", false, true, map[string]any{"session_id": externalString("Your builder session ID."), "request_id": externalString("Pending input unique_id from builder_status."), "response": externalString("Response to the pending input request.")}, "session_id", "request_id", "response")
-		add("builder_cancel", "Cancel your active builder turn using existing session cancellation.", false, true, map[string]any{"session_id": externalString("Your builder session ID.")}, "session_id")
-		for _, definition := range planops.ExternalPlanToolDefinitions() {
-			var schema map[string]any
-			if err := json.Unmarshal(definition.InputSchema, &schema); err != nil {
-				externalCatalogErr = err
+		// Membership comes from product.yaml's run-mode external_tools — the
+		// single source of truth for this surface. Go defines implementations
+		// (schemas, dispatch); yaml admits them. Both mismatch directions fail
+		// here so drift between the two can never ship silently.
+		byName := make(map[string]externalTool, len(defined))
+		for _, tool := range defined {
+			byName[tool.Name] = tool
+		}
+		admitted := agentworksproduct.RunExternalTools()
+		seen := make(map[string]bool, len(admitted))
+		for _, name := range admitted {
+			tool, ok := byName[name]
+			if !ok {
+				externalCatalogErr = fmt.Errorf("product.yaml admits unknown external tool %q", name)
 				return
 			}
-			props, _ := schema["properties"].(map[string]any)
-			if props == nil {
-				props = map[string]any{}
-				schema["properties"] = props
+			seen[name] = true
+			externalCatalog = append(externalCatalog, tool)
+		}
+		for _, tool := range defined {
+			if !seen[tool.Name] {
+				externalCatalogErr = fmt.Errorf("external tool %q is implemented but not admitted by product.yaml", tool.Name)
+				return
 			}
-			props["workflow_id"] = externalString("Workflow ID from list_workflows.")
-			props["expected_revision"] = externalString("Combined revision returned by get_plan. A stale revision is rejected.")
-			required, _ := schema["required"].([]any)
-			schema["required"] = append(required, "workflow_id", "expected_revision")
-			schema["additionalProperties"] = false
-			externalCatalog = append(externalCatalog, externalTool{Name: definition.Name, Description: definition.Description, InputSchema: schema, mutates: true, plan: true})
 		}
 		for i := range externalCatalog {
 			tool := &externalCatalog[i]

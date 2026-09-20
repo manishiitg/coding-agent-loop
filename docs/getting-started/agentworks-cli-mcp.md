@@ -1,10 +1,11 @@
 # AgentWorks CLI and MCP
 
 Use a hosted AgentWorks server from Claude Code, another MCP client, or scripts.
-The CLI and MCP bridge use the same authenticated API. Plan edits invoke the
-existing native tools; they do not launch an internal LLM or rewrite plan files
-from the client. Workflow Builder chat is also available when a task needs the
-builder to reason and act.
+The CLI and MCP bridge use the same authenticated API. v1 is read-only, like
+the Slack and WhatsApp run-mode channels: every tool reads; nothing creates,
+edits, or runs. File writes, plan mutations, and Builder execution are not
+exposed; the dispatch paths stay in the server for a future write-enabled API
+version.
 
 ## Build and server setup
 
@@ -42,13 +43,14 @@ services on loopback ports with fresh test credentials. It does not use the
 running development services or their workspace.
 
 The probe exercises app-generated PAT login, workflow/tool discovery, document
-read/write/patch/search, native plan edits, revision conflicts, read-only user
-permissions, and protected plan paths. It also creates a WAV asset larger than
-2 MiB, gets its share link, downloads it through the CLI, and verifies an
-authenticated byte-range request through the browser file endpoint. It then connects the actual stdio MCP
-bridge, restores the edited step title through MCP, and checks the native
-changelog, then revokes the token and checks that both the CLI and the existing
-MCP connection are denied. Run/log inspection uses explicitly synthetic artifacts.
+read/search, plan and guidance reads, and narrow-token permission checks. It
+also creates a WAV asset larger than 2 MiB, gets its share link, downloads it
+through the CLI, and verifies an authenticated byte-range request through the
+browser file endpoint. It then connects the actual stdio MCP bridge, verifies
+plan/context reads, and asserts the probe left no changelog entries. It revokes
+the token and checks that both the CLI and the existing MCP connection are
+denied, and asserts every mutation path answers `unknown_tool`. Run/log
+inspection uses explicitly synthetic artifacts.
 
 Each run prints the artifact directory and writes `receipt.json`, including
 source-file hashes and results. It stops its own services and verifies the
@@ -62,7 +64,7 @@ the procedure for live agent testing.
 In the app, open your account menu and choose **Access tokens**. This is
 available in both hosted and local installations. Single-user installs show a
 **Local account** menu after the local app session initializes; multi-user
-installs show it beside **Change password**. Give the token a name, choose its permissions and workflow
+installs show it beside **Change password**. Give the token a name, choose its workflow
 access, then select a 7-, 30-, or 90-day expiry. Copy the token when it is shown;
 the app cannot display its secret again. The connection command in the dialog
 uses the active installation's API URL, including the local desktop server's
@@ -78,28 +80,20 @@ pipe the token into this command. The CLI verifies access before saving it.
 Username/password flags and app-session JWTs are no longer accepted by CLI
 login. The app keeps its existing password and SSO sign-in flows.
 
-Tokens have five permissions: `workflows:read`, `files:read`, `files:write`,
-`plan:write`, and `builder:chat`. Read access is selected by default. Choose all
-currently/future accessible workflows or specific workflow IDs. Every call
-checks both the token restrictions and the user's current workflow access.
-Tokens cannot call account management, the general query endpoint, or the
-workspace proxy; only the external tool and asset-content endpoints accept them.
-
-**Builder chat requires all five permissions and all accessible workflows.**
-Its existing runtime can execute shell commands and use integrations, so this
-release does not offer a misleading restricted Builder token. Direct file and
-plan tools support narrower tokens. A full-access token still cannot exceed
-the user's normal account permissions.
+Tokens carry two read permissions: `workflows:read` and `files:read`.
+Write permissions (`files:write`, `plan:write`, `builder:chat`) are not issued
+in v1. Choose all currently/future accessible workflows or specific workflow
+IDs. Every call checks both the token restrictions and the user's current
+workflow access. Tokens cannot call account management, the general query
+endpoint, or the workspace proxy; only the external tool and asset-content
+endpoints accept them. A token still cannot exceed the user's normal account
+permissions.
 
 In the account menu, inspect each token's expiry and last-used time or revoke it.
 Every CLI/MCP HTTP request checks the persisted token record. Revocation rejects
-subsequent calls, including calls from an MCP bridge already running. A Builder
-session started by a token is bound to that token; it cannot inherit a browser
-conversation or another token's conversation. Running Builder sessions are
-rechecked every five seconds and canceled if the token expires, is revoked,
-or loses its account/workflow access. A local revocation also requests immediate
-cancellation of that server's token-owned sessions. Already completed external
-actions cannot be undone by cancellation.
+subsequent calls, including calls from an MCP bridge already running. A local
+revocation also requests immediate cancellation of that server's token-owned
+sessions.
 
 PATs do not silently refresh or extend their lifetime. Rotate by generating a
 replacement, logging in with it, restarting the MCP bridge to load it, and
@@ -129,12 +123,11 @@ public Streamable HTTP MCP endpoint yet.
 
 Example request:
 
-> Find the invoice workflow, read its process documents, and rename its fetch
-> step to "Fetch pending invoices". Record why the plan changed.
+> Find the invoice workflow, read its process documents, and summarize what its
+> fetch step does.
 
-The agent discovers the workflow ID, reads the plan revision, and calls
-`update_scripted_step` with the existing step ID, title, reason, and revision.
-It receives the saved revision or a validation/conflict error.
+The agent discovers the workflow ID, then reads the plan, files, and runs. If
+the task needs a change, it says so instead of attempting one.
 
 ## CLI examples
 
@@ -150,53 +143,24 @@ agentworks files read --workflow WORKFLOW_ID --path docs/process.md
 agentworks plan get --workflow WORKFLOW_ID
 ```
 
-Use the returned revision for an edit:
+Load guidance and knowledge for the task:
 
 ```sh
-agentworks plan update-scripted-step \
-  --workflow WORKFLOW_ID --step STEP_ID \
-  --title "Fetch pending invoices" \
-  --reason "Clarify that this step retrieves pending invoices." \
-  --expected-revision PLAN_REVISION
-
-agentworks files write --workflow WORKFLOW_ID \
-  --path docs/process.md --content-file ./process.md \
-  --expected-revision FILE_REVISION
-
-agentworks files patch --workflow WORKFLOW_ID \
-  --path docs/process.md --diff-file ./process.patch \
-  --expected-revision FILE_REVISION
+agentworks guidance context --workflow WORKFLOW_ID
+agentworks guidance topics
+agentworks guidance topic --topic plan-change-impact
+agentworks knowledge list --workflow WORKFLOW_ID
+agentworks knowledge read --workflow WORKFLOW_ID --path learnings/_global/SKILL.md
 ```
 
-`read_file` returns `exists:false, revision:"missing"` for a missing file. Use
-`--expected-revision missing` to create it. Re-read and review conflicts before
-retrying; clients never blindly retry a mutation. Do not use a plan revision for
-a file edit or a file revision for a plan edit.
-
-Native tools retain their original parameter names. For example,
-`update_step_config` uses `step_id`, whereas `update_scripted_step` uses
-`existing_step_id`. Use JSON for complex arguments:
+`--input -` reads JSON arguments from stdin. `--set key=JSON` supplies
+additional native fields. `tools list` is authoritative for the current
+server's schemas:
 
 ```sh
 agentworks tools list
-agentworks tools call update_step_config --input ./step-config-change.json
+agentworks tools call get_guidance_topic --input ./topic.json
 ```
-
-Example input (the JSON file contains arguments only):
-
-```json
-{
-  "workflow_id": "WORKFLOW_ID",
-  "expected_revision": "PLAN_REVISION",
-  "step_id": "STEP_ID",
-  "reason": "Record the completed description review.",
-  "description_reviewed": true
-}
-```
-
-`--input -` reads JSON arguments from stdin. `--set key=JSON` supplies additional
-native fields. `agentworks plan TOOL-NAME` maps hyphens to the native tool's
-underscores. `tools list` is authoritative for the current server's schemas.
 
 ```sh
 agentworks runs list --workflow WORKFLOW_ID
@@ -220,9 +184,8 @@ agentworks files download --workflow WORKFLOW_ID --path db/assets/report.pdf \
 
 MCP exposes the same `get_file_link` tool with `workflow_id` and `path` arguments.
 It returns the file size, content type, `preview_url`, and `download_url` without
-loading the asset into model context. Successful file reads/writes/patches also
-include a `preview_url`. After Builder finishes creating an output, an external
-agent can call `get_file_link` and give the user its `preview_url`.
+loading the asset into model context. An external agent can call `get_file_link`
+and give the user its `preview_url` for any existing output.
 
 The preview opens `/file?path=…` in AgentWorks. Local installations initialize
 the local app session before fetching; hosted installations preserve the file
@@ -254,58 +217,24 @@ hosted address.
 
 ## Workflow Builder chat
 
-```sh
-agentworks builder chat --workflow WORKFLOW_ID \
-  --message "Review this plan and identify missing validation."
-agentworks builder status --workflow WORKFLOW_ID --session SESSION_ID --limit 50
-agentworks builder chat --workflow WORKFLOW_ID --session SESSION_ID \
-  --message "Update the validation for the fetch step."
-agentworks builder cancel --workflow WORKFLOW_ID --session SESSION_ID
-```
-
-Chat returns the existing runtime's session ID promptly. With a PAT, omitting
-`--session` creates a new conversation; supply the returned session ID to continue
-it. Tokens never automatically attach to an existing browser conversation. Poll `builder status`
-using `--since-index` with the previous `last_processed_index`. `has_more`
-indicates another page is available. `cursor_reset` indicates old events were
-pruned; restart from the returned retained cursor rather than assuming no work
-occurred. After a server restart, a durable conversation may report `inactive`
-when no runtime remains; this does not assert that its last turn completed.
-
-For a blocking human-input tool request, status exposes `pending_inputs`. Answer
-its `unique_id` through the reply operation:
-
-```sh
-agentworks builder reply --workflow WORKFLOW_ID --session SESSION_ID \
-  --request-id INPUT_ID --response "Use the current quarter."
-```
-
-A normal chat follow-up is not a substitute for answering a blocked input tool.
-Only the session owner may view, resume, reply to, or cancel its conversation,
-even if others can read its workflow. Generic file tools do not expose private
-builder transcripts.
-
-Builder chat runs the **existing builder and its configured tools**, with normal
-model usage and workflow permissions. Workflow readers retain the builder's
-existing read-only tool policy; conversation ownership is checked separately.
-The builder can execute work through its authorized tools.
-The direct API's absence of run commands does not make builder chat read-only.
-Direct file/plan mutations return `workflow_busy` while a run/builder turn is
-active; wait for it to finish or use the builder conversation to coordinate work.
+Not exposed in read-only v1. Builder chat runs the existing builder runtime,
+which can execute work, so it stays out of the catalog alongside file writes
+and plan mutations. The server keeps its session binding, ownership checks,
+and revocation-driven cancellation for a future write-enabled API version.
 
 ## External agent guidance
 
 The local implementation now gives MCP clients short initialization
 instructions and exposes five guidance and knowledge operations. Builder chat
-continues to run the existing Builder runtime, so it receives the complete
-Builder reference surface and workflow-selected skills; runtime steps
-separately receive their explicitly enabled step skills.
+is not exposed in v1, so the external agent relies on these operations plus
+the read tools; runtime steps separately receive their explicitly enabled step
+skills.
 
-The external surface is intended to add the planning discipline that bare tool
-schemas do not provide: impact review after an edit, which guidance applies,
-what other files and configuration need checking, and what should happen after
-an edit. AgentWorks builds the canonical `builder-reference`,
-`workflow-commands`, and `system-tools` bundles in
+The external surface is intended to add the decision context that bare tool
+schemas do not provide: which guidance applies, what other files and
+configuration are worth checking, and how to answer from reading. AgentWorks
+builds the canonical `builder-reference`, `workflow-commands`, and
+`system-tools` bundles in
 `agent_go/cmd/server/guidance/materialize.go`; the external implementation
 reuses those renderers rather than maintaining another complete body of
 guidance.
@@ -325,11 +254,10 @@ Two constraints define the intended boundary:
 
 The five implemented operations are:
 
-- `get_agent_context`: role, token capabilities, available tools, guidance
-  version, and required preparation for the requested action (`plan_change`,
-  `file_edit`, `share_asset`, `builder_chat`). This is a global tool; pass
-  `workflow_id` to include the caller's role on a workflow. CLI:
-  `agentworks guidance context [--action plan_change] [--workflow ID]`.
+- `get_agent_context`: role, token capabilities, available tools, and guidance
+  version, plus the read-only preparation checklist. This is a global tool;
+  pass `workflow_id` to include the caller's role on a workflow. CLI:
+  `agentworks guidance context [--workflow ID]`.
 - `list_guidance_topics` / `get_guidance_topic`: server-owned guidance for
   `plan-change-impact`, `plan-design`, `planning-steps`, `step-description`,
   `step-config`, `skill-management`, `file-layout`, and `secure-share-links`.
@@ -347,8 +275,9 @@ The five implemented operations are:
   an empty list. CLI: `agentworks knowledge list|read --workflow ID
   [--path PATH]`.
 
-MCP initialization delivers short instructions that tell the client to call
-`get_agent_context` before plan changes and load relevant topics. The companion
+MCP initialization delivers short instructions that tell the client the
+connection is read-only, to call `get_agent_context` first, and to load
+relevant topics. The companion
 skill source lives at
 `agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md`, embedded in the
 CLI; `agentworks skills install --dir <skill-dir> [--force]` writes it to
@@ -359,101 +288,76 @@ without a manual bump. `get_agent_context` with `workflow_id` also returns
 `effective_tools`, filtered by the caller's role on top of token scopes.
 
 Canonical guidance tools require `workflows:read`; knowledge tools require
-`files:read`. Every plan mutation response also returns
-`required_followups`. These are advisory reminders: unlike revision checks,
-the server does not currently track or enforce their completion.
+`files:read`. There are no mutations in v1, so there is no follow-up contract:
+the agent answers from what it reads and says so when a task needs a change.
 
-`builder_chat` remains the safest fallback for planning work that depends on
-AgentWorks conventions. Direct plan tools provide typed operations, validation,
-permissions, and revision checks.
+### Local implementation review (2026-09-20, second pass)
 
-### Local implementation review (2026-09-20)
+The implementation is committed and pushed as `ba5f282ae` on `main`, which
+matches `origin/main`. The working tree is clean apart from the unrelated
+untracked `tmp/` directory.
 
-The implementation is present locally and the focused server, CLI, and client
-tests pass. `git diff --check` also passes. The change is still uncommitted and
-has not been pushed. It should not be treated as merge-ready until the blocking
-findings below are resolved.
+The second review confirmed these completed fixes:
 
-Blocking findings:
+- Workspace skill discovery decodes the shared-assets `filepath` field and has
+  a non-empty discovery test.
+- Skill listing and reads are restricted to the workflow's selected and
+  step-enabled skills; unrelated global skill folders return `forbidden`.
+- The skill catalog reports a warning when it is unavailable instead of looking
+  empty.
+- The guidance version is derived from the allowlist, mapping notes, and
+  rendered canonical content.
+- `get_agent_context` returns role-filtered `effective_tools` in addition to
+  token-level availability.
+- Global topic commands do not expose the inapplicable `--workflow` flag.
+- `agentworks skills install --dir <skill-dir> [--force]` installs the embedded
+  AgentWorks skill and refuses to overwrite it unless requested.
+- `required_followups` are documented consistently as advisory receipts rather
+  than server-enforced completion state.
 
-1. **Workspace skill listing decodes the wrong JSON field.** The shared-assets
-   response serializes a skill path as `filepath`, while
-   `externalWorkspaceSkillFolders` expects `path`. Consequently,
-   `workspace_skills` is empty even when global skills exist. Reuse the shared
-   response type or decode `filepath`, and add a fixture that proves a real
-   workspace skill is listed and readable.
-2. **Canonical guidance is returned without sufficient external filtering.**
-   Several allowlisted documents still direct an external agent to use internal
-   operations such as `read_skill`, `get_goal_metrics`, typed Pulse tools, and
-   guidance topics that are not exposed externally. Build an external rendering
-   pass that rewrites internal references, maps available equivalents, and
-   rejects any rendered topic that contains an unsupported operation or topic.
-3. **A workflow-scoped token can read unrelated global skills.** After checking
-   access to one workflow, `read_workflow_knowledge` accepts an arbitrary folder
-   under the global `skills/` root. Restrict readable folders to the workflow's
-   selected skills and per-step `enabled_skills`, plus any explicitly public
-   system skills. If account-wide skill access is intentional, give it a
-   separate permission and document that boundary.
-4. **The static AgentWorks skill is not delivered to external clients.** Nothing
-   currently installs `skills/agentworks/SKILL.md` into a Claude Code, Codex, or
-   other client skill directory. Add an `agentworks skills install` flow or a
-   documented packaging/install step, with a test that verifies the installed
-   location and contents. MCP initialization instructions work independently of
-   this missing distribution step.
+Two functional blockers remain:
 
-Follow-up findings:
+1. **Per-step skills are parsed from the wrong file shape.** Production
+   `planning/step_config.json` uses
+   `{ "steps": [{ "id": "...", "agent_configs": { "enabled_skills": [...] } }] }`,
+   while `externalStepSkills` currently expects a top-level array with
+   `step_id` and `enabled_skills`. A skill enabled only on a step is therefore
+   absent from `step_skills`, omitted from `workspace_skills`, and rejected by
+   `read_workflow_knowledge`. Parse the canonical `StepConfigFile` structure and
+   make the external guidance test fixture use the production format.
+2. **External guidance still contains undisclosed internal instructions.** The
+   mapping test checks a fixed denylist rather than comparing rendered guidance
+   with the actual external catalog. Current served documents still mention
+   unsupported operations omitted from that denylist, including `add_step`,
+   `update_step`, `run_workflow`, `create_human_input_request`,
+   `update_validation_schema`, `query_workflow_costs`, and
+   `get_workflow_config`, as well as reference topics unavailable to external
+   clients. Render an external-specific form or validate every operation and
+   reference against the actual external catalog and topic allowlist.
 
-- `required_followups` are useful reminders but can be ignored. Either describe
-  them consistently as advisory or add server-side state and acknowledgement if
-  completion must be enforced.
-- The guidance version is a manually maintained constant. Compute it from the
-  rendered guidance, allowlist, mapping notes, or a build revision so cached
-  clients cannot retain stale content after canonical guidance changes.
-- `get_agent_context.available_tools` reflects token scopes but does not filter
-  mutations by the caller's role on a supplied workflow. Return separate token
-  capabilities and effective workflow tools, or filter the workflow-specific
-  list by role.
-- The CLI exposes `--workflow` for global guidance operations that do not accept
-  `workflow_id`. Hide the flag for those commands so users do not receive an
-  avoidable `invalid_arguments` response.
-- Knowledge discovery currently converts shared-assets failures into an empty
-  skill list. Return a warning or partial-error field so clients can distinguish
-  an empty workspace from an unavailable catalog.
+The external plan schemas need the same compatibility treatment. For example,
+the `update_step_config` description tells callers about `execute_step` and
+`run_full_workflow`, and its `enabled_skills` field recommends `list_skills` and
+`get_workflow_config`; none of those operations are in the external catalog.
+External schema descriptions should map these instructions to supported tools
+or remove them.
 
-Review acceptance requires focused tests for non-empty workspace-skill
-discovery, unrelated-skill denial, external guidance free of unsupported tool
-references, effective tool availability for reader roles, and static-skill
-installation. Existing tests already cover catalog registration, scope gating,
-topic retrieval, traversal rejection, mutation follow-up presence, and MCP
-initialization instructions.
+Current validation status:
 
-### Resolution (2026-09-20)
+- `go build ./cmd/server` passes.
+- The AgentWorks CLI and client tests pass, including skill installation and
+  MCP coverage.
+- `git diff --check` passes.
+- `go test ./cmd/server ...` cannot compile because the pre-existing Crew test
+  calls an undefined `mock.hasFolder`. This is unrelated to the external-agent
+  change, but it prevents the focused server tests from being rerun against the
+  current tree. The previously reported `registerWorkCrewProfile` error is no
+  longer present.
 
-All four blocking findings are fixed, with the acceptance tests listed above
-added (`external_guidance_test.go`, `TestSkillsInstallWritesBundledSkill`, the
-MCP instructions assertion):
-
-1. Skill listing decodes `filepath`, matching the shared-assets response; the
-   discovery test proves a real workspace skill is listed and readable.
-2. Mapping notes now disclose every internal-only operation named by served
-   content, enforced by a test that fails when content names an operation the
-   note does not disclose. Rewriting canonical content was deliberately avoided;
-   disclosure keeps the builder's copy authoritative.
-3. Skill reads and listings are restricted to the workflow's selected skills
-   plus per-step `enabled_skills`; unrelated folders return `forbidden`.
-4. `agentworks skills install --dir <skill-dir> [--force]` ships the embedded
-   skill, with install/overwrite tests.
-
-Follow-ups are also addressed: `required_followups` stay consistently advisory,
-the guidance version is computed from rendered content, `get_agent_context`
-returns role-filtered `effective_tools`, the `--workflow` flag is hidden on
-global topic commands, and an unavailable skill catalog returns `warnings`.
-
-Remaining merge blocker, unrelated to this change: the pulled HEAD's Crew
-feature broke the `cmd/server` test build (`crew_creation_test.go` calls an
-undefined `mock.hasFolder`; `crew_builder_tools_test.go` calls an undefined
-`registerWorkCrewProfile`). The focused external/token/CLI/client suites pass;
-the full package suite cannot link until the Crew tests are repaired.
+Review acceptance now requires fixing the canonical step-config parsing,
+eliminating unsupported instructions from returned guidance and external tool
+schemas, adding production-shaped step-skill coverage, and restoring the server
+test build.
 
 ## Architecture and limits
 
@@ -461,11 +365,20 @@ the full package suite cannot link until the Crew tests are repaired.
 - `agent_go/cmd/agentworks`: CLI argument handling.
 - `agent_go/cmd/server/external_tools.go`: authenticated discovery, permissions,
   schema validation, workflow resolution, and operation dispatch.
-- `step_based_workflow/external_plan_tools.go`: native plan schemas/executors and
-  extracted shared step-config implementation used by the internal builder too.
-- `external_builder.go`: existing query, event, human-input, and cancellation adapters.
-- `workspace/handlers/workflow_files.go`: workflow-confined file access and
-  revision-checked commit of staged plan changes.
+- `step_based_workflow/external_plan_tools.go`: native plan schemas, kept for
+  a future write-enabled API; unexposed in v1.
+- `external_builder.go`: existing query, event, human-input, and cancellation
+  adapters; unexposed in v1.
+- `workspace/handlers/workflow_files.go`: workflow-confined file access.
+
+The exposed tool set has one source of truth:
+`agent_go/internal/agentworksproduct/product.yaml`, `chat.run.external_tools`.
+The server exposes exactly those tools, in that order; Go defines the
+implementations (schemas, dispatch) while the yaml admits them. A yaml name
+without an implementation — or an implementation missing from the yaml —
+fails server startup, and the CLI subcommand mappings are test-pinned to the
+same list. Changing the surface means editing the yaml and the golden test
+together, deliberately.
 
 Public tool endpoints are `GET /api/external/v1/tools` and
 `POST /api/external/v1/call`. The CLI uses a PAT in the Bearer header; app sessions
@@ -480,23 +393,12 @@ is literal and case-insensitive, with bounded depth, entry counts, and scanned
 bytes. Pagination uses `next_offset` only when another result was found;
 `truncated` can also mean the depth/scan budget was reached. Narrow the directory
 or increase depth in that case. Symlinks, private credential directories, and
-builder transcripts are excluded. Plan/config, workflow ownership, and run-state
-files cannot be changed through generic file tools. Skills and ordinary documents
-can be edited in their workflow's workspace.
-
-Typed changes stage all file writes before committing and check revisions of
-all files read. API file writers serialize with the commit. This prevents stale
-external changes from overwriting an intervening API edit. Ordinary IO failures
-trigger rollback. The commit is not a crash-recovery database transaction across
-multiple files; direct host/shell writers are outside its lock. Keep using the
-existing guarded plan tools for plan changes. The older UI handlers remain in
-place; the new external interface invokes the native typed tool path.
+builder transcripts are excluded. Skills, learnings, and ordinary documents are
+readable in their workflow's workspace; nothing is writable through v1.
 
 Errors use `{ "error": { "code": "...", "message": "..." } }`. CLI exit
 codes are 3 for authentication/permission failure, 4 for conflicts, and 1 for
-other failures. Successful cancellation may return an empty object. Mutation
-logs record the user, workflow, tool, and revision without recording credentials
-or document contents; native plan changelogs retain the reason and field changes.
+other failures (including `unknown_tool` for removed mutation paths).
 
 ## Token persistence and deployment
 

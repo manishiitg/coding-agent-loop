@@ -1,9 +1,8 @@
-import { useState } from 'react'
-import { Check, Copy, Plug, Terminal } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Check, Copy, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
-import { getApiBaseUrl } from '../../services/api'
-import AccessTokensDialog from '../topbar/AccessTokensDialog'
+import { authApi, getApiBaseUrl } from '../../services/api'
 
 function CommandRow({ command, label }: { command: string; label: string }) {
   const [copied, setCopied] = useState(false)
@@ -28,45 +27,185 @@ function CommandRow({ command, label }: { command: string; label: string }) {
   )
 }
 
+interface Connection {
+  id: string
+  token: string
+}
+
+const CONNECT_TOKEN_NAME = 'Connect tab'
+
+function storageKey(server: string) {
+  return `agentworks.connectToken.${server}`
+}
+
+function loadStored(server: string): Connection | null {
+  try {
+    const raw = window.localStorage.getItem(storageKey(server))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<Connection>
+    if (typeof parsed.id !== 'string' || typeof parsed.token !== 'string' || !parsed.id || !parsed.token) return null
+    return { id: parsed.id, token: parsed.token }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Shared Setup → Integrations tab for Crew projects and Builder automations.
- * Points at the live installation's own API origin; all substantive guidance
- * is fetched by the agent from the server, so nothing here can go stale.
+ * Provisions its own read-only token and shows ready-to-paste commands — no
+ * separate token dialog. The token secret is kept in this browser and reused
+ * on every visit until it is revoked or expires; the server only ever confirms
+ * the token id is still valid. The token reads every workflow the user can
+ * access and expires after 30 days; revoke it here when done.
  */
 export function CliMcpSetupPanel() {
-  const [managingTokens, setManagingTokens] = useState(false)
+  const [connection, setConnection] = useState<Connection | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(true)
+  const [error, setError] = useState<string | null>(null)
   const server = getApiBaseUrl() || window.location.origin
-  const login = `agentworks login --server ${JSON.stringify(server)} --token-stdin`
+
+  useEffect(() => {
+    let cancelled = false
+    const rehydrate = async () => {
+      const stored = loadStored(server)
+      if (!stored) {
+        if (!cancelled) setChecking(false)
+        return
+      }
+      try {
+        const { tokens } = await authApi.listAccessTokens()
+        const found = tokens.find((t) => t.id === stored.id)
+        const alive = found && found.revoked_at === null && new Date(found.expires_at).getTime() > Date.now()
+        if (!cancelled) {
+          if (alive) {
+            setConnection(stored)
+          } else {
+            try { window.localStorage.removeItem(storageKey(server)) } catch { /* keep going */ }
+          }
+          setChecking(false)
+        }
+      } catch {
+        // Unverified (offline?): still show the stored secret — it is only
+        // displayed, never auto-used, and a dead token fails loudly in the
+        // CLI where the user can rotate it with New token.
+        if (!cancelled) {
+          setConnection(stored)
+          setChecking(false)
+        }
+      }
+    }
+    void rehydrate()
+    return () => { cancelled = true }
+  }, [server])
+
+  const generate = async () => {
+    setBusy(true)
+    setError(null)
+    try {
+      if (connection) {
+        try { await authApi.revokeAccessToken(connection.id) } catch { /* replaced below */ }
+      }
+      // Drop orphaned same-name tokens (e.g. this browser's secret was
+      // cleared) so Generate never piles up connections.
+      try {
+        const { tokens } = await authApi.listAccessTokens()
+        for (const token of tokens) {
+          if (token.name === CONNECT_TOKEN_NAME && token.id !== connection?.id) {
+            try { await authApi.revokeAccessToken(token.id) } catch { /* best effort */ }
+          }
+        }
+      } catch { /* creation below still applies */ }
+      const result = await authApi.createAccessToken({
+        name: CONNECT_TOKEN_NAME,
+        expires_in_days: 30,
+        scopes: ['workflows:read', 'files:read'],
+        all_workflows: true,
+        workflow_ids: [],
+      })
+      const next = { id: result.access_token.id, token: result.token }
+      try { window.localStorage.setItem(storageKey(server), JSON.stringify(next)) } catch { /* reuse just won't persist */ }
+      setConnection(next)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revoke = async () => {
+    if (!connection) return
+    setBusy(true)
+    setError(null)
+    try {
+      await authApi.revokeAccessToken(connection.id)
+      try { window.localStorage.removeItem(storageKey(server)) } catch { /* already gone */ }
+      setConnection(null)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
+  const login = connection ? `printf '%s' ${quoted(connection.token)} | agentworks login --server ${JSON.stringify(server)} --token-stdin` : ''
 
   return (
     <div className="space-y-4">
+      <p className="text-sm text-muted-foreground">
+        Connect this installation to your terminal or an AI assistant. Generate a connection below and paste the
+        commands — the assistant can list workflows and read files, plans, and run logs, but cannot change anything.
+        The token expires after 30 days, and you can revoke it here anytime.
+      </p>
       <SettingsCard
         icon={<Terminal className="h-4 w-4 text-primary" />}
         title="Command line"
-        description="Run AgentWorks from your terminal. List workflows, read and edit files, and change plans — every edit is revision-checked, so stale changes are rejected instead of overwriting."
+        description={
+          connection
+            ? 'Ready to paste. This read-only token opens every workflow you can access and expires after 30 days.'
+            : 'Generate a read-only token for this installation. It opens every workflow you can access and expires after 30 days.'
+        }
         actions={
-          <Button variant="outline" size="sm" onClick={() => setManagingTokens(true)}>
-            Open access tokens
-          </Button>
+          connection ? (
+            <div className="flex gap-2">
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void generate()}>New token</Button>
+              <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
+            </div>
+          ) : (
+            <Button size="sm" disabled={busy || checking} onClick={() => void generate()}>
+              <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Generating…' : 'Generate connection'}
+            </Button>
+          )
         }
       >
-        <div className="space-y-2">
-          <CommandRow label="Log in command" command={login} />
-          <CommandRow label="List workflows command" command="agentworks workflows list --json" />
-          <CommandRow label="Load guidance command" command="agentworks guidance context --action plan_change" />
-        </div>
+        {error && (
+          <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</div>
+        )}
+        {checking ? (
+          <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
+        ) : !connection ? (
+          <p className="text-sm text-muted-foreground">The command appears here with the token filled in. Nothing is created until you generate.</p>
+        ) : (
+          <div className="space-y-2">
+            <CommandRow label="Log in command" command={login} />
+          </div>
+        )}
       </SettingsCard>
       <SettingsCard
         icon={<Plug className="h-4 w-4 text-primary" />}
         title="AI assistants"
-        description="Let Claude Code, Codex, or another assistant work with your workflows through the same connection. The assistant loads instructions and guidance from this server on its own."
+        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. The assistant loads instructions and guidance from this server on its own."
       >
-        <div className="space-y-2">
-          <CommandRow label="Register MCP bridge command" command="claude mcp add --transport stdio agentworks -- agentworks mcp serve" />
-          <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
-        </div>
+        {!connection ? (
+          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
+        ) : (
+          <div className="space-y-2">
+            <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
+            <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
+          </div>
+        )}
       </SettingsCard>
-      {managingTokens && <AccessTokensDialog onClose={() => setManagingTokens(false)} />}
     </div>
   )
 }

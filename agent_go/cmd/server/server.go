@@ -1922,6 +1922,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 
+	// Fail fast when product.yaml's run-mode external_tools disagree with the
+	// implemented external catalog, instead of 500ing the first CLI/MCP call.
+	if _, err := externalTools(); err != nil {
+		log.Fatalf("Failed to build external CLI/MCP catalog: %v", err)
+	}
+
 	api := &StreamingAPI{
 		config:                             config,
 		cliSecurityStore:                   cliSecurityStore,

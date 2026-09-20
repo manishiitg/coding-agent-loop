@@ -112,7 +112,7 @@ func (api *StreamingAPI) externalAgentContext(w http.ResponseWriter, r *http.Req
 	out := map[string]any{
 		"guidance_version": externalGuidanceVersion,
 		"available_tools":  available,
-		"preparation":      externalPreparation(externalArg(args, "action"), claims),
+		"preparation":      externalPreparation(claims),
 	}
 	if token := claims.AccessToken; token != nil {
 		caps := map[string]any{"scopes": token.Scopes, "expires_at": token.ExpiresAt.UTC().Format("2006-01-02T15:04:05Z")}
@@ -156,51 +156,21 @@ func (api *StreamingAPI) externalAgentContext(w http.ResponseWriter, r *http.Req
 	externalJSON(w, out)
 }
 
-// externalPreparation returns the required preparation checklist for an
-// action. Unknown actions fall back to the general checklist.
-func externalPreparation(action string, claims *UserClaims) []string {
-	full := claims == nil || claims.AccessToken == nil || claims.AccessToken.FullBuilderAccess()
-	switch action {
-	case "plan_change":
-		steps := []string{
-			"Call get_plan for the workflow and use its revision as expected_revision; re-read on revision_conflict and never blind-retry.",
-			"Load topic plan-change-impact with get_guidance_topic before treating the change as done.",
-			"Trace the blast radius with search_files/read_file: downstream steps, validation schemas, report queries, db contracts, learnings, knowledgebase notes.",
-			"Every mutation needs a reason; it is recorded in the native changelog.",
-		}
-		if !full {
-			steps = append(steps, "Plan tools require plan:write and workflow write access; use builder_chat when this token lacks them.")
-		}
-		return steps
-	case "file_edit":
-		return []string{
-			"Call read_file first and use its revision as expected_revision (use 'missing' to create).",
-			"Plan, config, run-state, ownership, and private files are protected; use typed plan tools for plan changes.",
-		}
-	case "share_asset":
-		return []string{
-			"Use get_file_link for preview/download URLs; links identify a file and never grant permission.",
-			"Use files download (not read_file) for a local copy; downloads refuse to overwrite existing files.",
-		}
-	case "builder_chat":
-		if !full {
-			return []string{"Builder chat requires a full-access token (all five permissions, all workflows); direct tools or a narrower token cannot start it."}
-		}
-		return []string{
-			"Omit session_id to start a conversation; poll builder_status with since_index.",
-			"A chat follow-up never answers a blocked human-input tool; use builder_reply_input with the request_id.",
-		}
-	default:
-		steps := []string{
-			"Call list_workflows to discover workflow IDs; IDs are never filesystem paths.",
-			"Load only the guidance topics relevant to the task; topic list via list_guidance_topics.",
-			"For planning work that depends on AgentWorks conventions, prefer builder_chat; direct plan tools are structurally safe but carry no decision process.",
-		}
-		if !full {
-			steps = append(steps, "This token is restricted: unavailable tools are omitted from the tools list.")
-		}
-		return steps
+// externalPreparation returns the checklist for this read-only connection.
+// v1 exposes no mutations: the agent reads workflows, files, plans, runs,
+// guidance, and knowledge, and answers from what it finds.
+func externalPreparation(claims *UserClaims) []string {
+	steps := []string{
+		"This connection is read-only: every tool reads; nothing creates, edits, or runs.",
+		"Call list_workflows to discover workflow IDs; IDs are never filesystem paths.",
+		"Load only the guidance topics relevant to the task; topic list via list_guidance_topics.",
+		"Use get_file_link for preview/download URLs; links identify a file and never grant permission.",
+		"Use files download (not read_file) for a local copy; downloads refuse to overwrite existing files.",
 	}
+	if claims != nil && claims.AccessToken != nil && !claims.AccessToken.FullBuilderAccess() {
+		steps = append(steps, "This token is restricted: unavailable tools are omitted from the tools list.")
+	}
+	return steps
 }
 
 // externalGuidanceTopicList serves list_guidance_topics.

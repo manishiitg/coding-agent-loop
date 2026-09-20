@@ -105,6 +105,40 @@ Cards stack with `space-y-4`. Do not nest cards inside cards, and do not
 repeat the tab title as an in-content heading — the shared header already
 titles the view.
 
+## Connect tab
+
+Setup → Integrations carries a `Connect` tab (tab value `cli`) on Crew
+projects and Builder automations, both rendering one shared
+`CliMcpSetupPanel`
+(`frontend/src/components/integrations/CliMcpSetupPanel.tsx`). The tab
+points at the installation's hosted API origin, so it is server-only:
+gated on `isMultiUserMode` from `useAuthStore`, never shown on local
+installs.
+
+- The panel provisions its own read-only token — no separate token
+  dialog. The secret is kept in browser storage and reused on every
+  visit until it is revoked or expires; each visit verifies the token
+  id against the server token list and falls back to Generate when it
+  is gone. Generating also revokes orphaned same-name tokens.
+- Ready-to-paste commands, one per consumer: the CLI login one-liner,
+  the MCP bridge registration, and the skill install. Each ships with
+  the token prefilled in a copyable command row (mono `code` block +
+  ghost icon copy button with a Copied acknowledgement). No usage
+  examples beyond the setup commands.
+- A plain-words explainer up front states the read-only scope, the 30-day
+  expiry, and that the token can be revoked here anytime. Rotate and
+  Revoke are the card's right-side actions (`ghost`/`outline` `sm`,
+  Revoke in destructive text).
+
+## Access and users
+
+Users & access is a workspace view (`WorkflowAccessView` via
+`WorkspaceViewHost`), not a top-menu entry: it follows the shared
+header and cards rules like any other view, and is gated on
+multi-user mode with admin/owner checks for management actions.
+Personal access tokens are managed from the account menu
+(`AccountControl` → `AccessTokensDialog`), never the top bar.
+
 ## Forms
 
 Build every form from the kit (`frontend/src/components/ui/`):

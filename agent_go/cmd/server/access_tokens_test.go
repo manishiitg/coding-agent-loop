@@ -81,8 +81,10 @@ func TestAccessTokenHTTPManagementAndRestrictions(t *testing.T) {
 			t.Fatal("PAT escaped external API", path, w.Code)
 		}
 	}
+	// v1 exposes no mutations at all: a write call is an unknown tool,
+	// not a scope decision.
 	denied := request("POST", "/api/external/v1/call", `{"name":"write_file","arguments":{}}`, created.Token)
-	if denied.Code != 403 || !strings.Contains(denied.Body.String(), "insufficient_scope") {
+	if denied.Code != 404 || !strings.Contains(denied.Body.String(), "unknown_tool") {
 		t.Fatal(denied.Code, denied.Body)
 	}
 	query := httptest.NewRequest("GET", "/api/external/v1/tools?token="+created.Token, nil)
@@ -178,7 +180,7 @@ func TestAccessTokenWorkflowFilterAndAccountIntersection(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	// Give owner ordinary access to both workflows; the PAT narrows this to one.
 	f.write(t, "Workflow/secret/workflow.json", `{"id":"secret","label":"Private research","access":{"owners":["owner"]}}`)
-	claims := &UserClaims{UserID: "owner", Username: "owner", AccessToken: &accesstokens.Token{Scopes: []string{"workflows:read", "plan:write"}, WorkflowIDs: []string{"invoices"}}}
+	claims := &UserClaims{UserID: "owner", Username: "owner", AccessToken: &accesstokens.Token{Scopes: []string{"workflows:read"}, WorkflowIDs: []string{"invoices"}}}
 	call := func(name string, args map[string]any) *httptest.ResponseRecorder {
 		body, _ := json.Marshal(map[string]any{"name": name, "arguments": args})
 		w := httptest.NewRecorder()
@@ -195,9 +197,9 @@ func TestAccessTokenWorkflowFilterAndAccountIntersection(t *testing.T) {
 	}
 	claims.UserID = "reader"
 	claims.Username = "reader"
-	w = call("update_scripted_step", map[string]any{"workflow_id": "invoices", "expected_revision": "anything", "existing_step_id": "fetch-invoices", "title": "no", "reason": "must fail"})
+	w = call("read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md"})
 	if w.Code != 403 {
-		t.Fatal("token elevated read-only account", w.Code, w.Body)
+		t.Fatal("token scope not enforced", w.Code, w.Body)
 	}
 }
 
@@ -210,7 +212,7 @@ func TestAccessTokenRuntimeLeaseAndCancellation(t *testing.T) {
 	}
 	defer store.Close()
 	now := time.Now()
-	token, _, err := store.Issue(context.Background(), accesstokens.Token{Name: "Builder", UserID: "owner", Username: "owner", AllWorkflows: true, Scopes: accesstokens.Scopes, ExpiresAt: now.Add(time.Hour)}, now)
+	token, _, err := store.Issue(context.Background(), accesstokens.Token{Name: "Reader", UserID: "owner", Username: "owner", AllWorkflows: true, Scopes: []string{"workflows:read", "files:read"}, ExpiresAt: now.Add(time.Hour)}, now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -223,6 +223,12 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return t.Allows("files:read")
 	case "write_file", "patch_file":
 		return t.Allows("files:write")
+	case "get_agent_context", "list_guidance_topics", "get_guidance_topic":
+		// Canonical server-owned guidance carries no workflow content.
+		return t.Allows("workflows:read")
+	case "list_workflow_knowledge", "read_workflow_knowledge":
+		// Workflow-authored learnings, notes, and skills are workflow content.
+		return t.Allows("files:read")
 	default:
 		return t.Allows("workflows:read")
 	}

@@ -60,7 +60,19 @@ func TestAccessTokenHTTPManagementAndRestrictions(t *testing.T) {
 		t.Fatal("token disclosed in list")
 	}
 	catalog := request("GET", "/api/external/v1/tools", "", created.Token)
-	if catalog.Code != 200 || !strings.Contains(catalog.Body.String(), `"read_file"`) || strings.Contains(catalog.Body.String(), `"write_file"`) || strings.Contains(catalog.Body.String(), `"builder_chat"`) {
+	var catalogBody struct {
+		Tools []struct {
+			Name string `json:"name"`
+		} `json:"tools"`
+	}
+	if catalog.Code != 200 || json.Unmarshal(catalog.Body.Bytes(), &catalogBody) != nil {
+		t.Fatal(catalog.Code, catalog.Body)
+	}
+	visible := map[string]bool{}
+	for _, tool := range catalogBody.Tools {
+		visible[tool.Name] = true
+	}
+	if !visible["read_file"] || visible["write_file"] || visible["builder_chat"] {
 		t.Fatal(catalog.Code, catalog.Body)
 	}
 	for _, path := range []string{"/api/auth/access-tokens", "/api/auth/password", "/api/wp/api/documents", "/api/query"} {

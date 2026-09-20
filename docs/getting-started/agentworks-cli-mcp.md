@@ -293,6 +293,168 @@ The direct API's absence of run commands does not make builder chat read-only.
 Direct file/plan mutations return `workflow_busy` while a run/builder turn is
 active; wait for it to finish or use the builder conversation to coordinate work.
 
+## External agent guidance
+
+The local implementation now gives MCP clients short initialization
+instructions and exposes five guidance and knowledge operations. Builder chat
+continues to run the existing Builder runtime, so it receives the complete
+Builder reference surface and workflow-selected skills; runtime steps
+separately receive their explicitly enabled step skills.
+
+The external surface is intended to add the planning discipline that bare tool
+schemas do not provide: impact review after an edit, which guidance applies,
+what other files and configuration need checking, and what should happen after
+an edit. AgentWorks builds the canonical `builder-reference`,
+`workflow-commands`, and `system-tools` bundles in
+`agent_go/cmd/server/guidance/materialize.go`; the external implementation
+reuses those renderers rather than maintaining another complete body of
+guidance.
+
+Two constraints define the intended boundary:
+
+- Builder guidance cannot be exposed unchanged. Some documents instruct the
+  Builder to call internal tools the external catalog does not provide, so the
+  external surface needs a guidance profile filtered by actual tools and
+  permissions.
+- Permissions must be split per tool. Canonical server-owned guidance can use
+  `workflows:read`, but workflow-authored skills and learnings must require
+  `files:read`. Workflow `skills/` projection paths (`.pi/skills`,
+  `.agents/skills`, `.claude/skills`) are generated provider artifacts and must
+  not become a public API; `learnings/_global/` is a real workflow path but
+  requires file-read permission.
+
+The five implemented operations are:
+
+- `get_agent_context`: role, token capabilities, available tools, guidance
+  version, and required preparation for the requested action (`plan_change`,
+  `file_edit`, `share_asset`, `builder_chat`). This is a global tool; pass
+  `workflow_id` to include the caller's role on a workflow. CLI:
+  `agentworks guidance context [--action plan_change] [--workflow ID]`.
+- `list_guidance_topics` / `get_guidance_topic`: server-owned guidance for
+  `plan-change-impact`, `plan-design`, `planning-steps`, `step-description`,
+  `step-config`, `skill-management`, `file-layout`, and `secure-share-links`.
+  Each topic is rendered live from the canonical Builder reference, and every
+  internal-only operation named by served content is disclosed in that topic's
+  external mapping note (enforced by test). Topics documenting internal-only
+  tool names are excluded from the profile.
+- `list_workflow_knowledge` / `read_workflow_knowledge`: workflow learnings,
+  knowledgebase notes, workspace skill folders, and skill wiring
+  (workflow-selected skills plus per-step `enabled_skills`). Reads are confined
+  to `learnings/`, `knowledgebase/`, and `skills/<folder>/<file>` content, and
+  skill folders are further restricted to the workflow's selected and
+  step-enabled skills — a workflow ticket never grants the whole shared skill
+  catalog. An unavailable skill catalog returns a `warnings` entry rather than
+  an empty list. CLI: `agentworks knowledge list|read --workflow ID
+  [--path PATH]`.
+
+MCP initialization delivers short instructions that tell the client to call
+`get_agent_context` before plan changes and load relevant topics. The companion
+skill source lives at
+`agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md`, embedded in the
+CLI; `agentworks skills install --dir <skill-dir> [--force]` writes it to
+`<dir>/agentworks/` (default `.agents/skills`, refusing to clobber without
+`--force`). The guidance version is computed from the allowlist, mapping
+notes, and rendered content, so cached clients detect canonical changes
+without a manual bump. `get_agent_context` with `workflow_id` also returns
+`effective_tools`, filtered by the caller's role on top of token scopes.
+
+Canonical guidance tools require `workflows:read`; knowledge tools require
+`files:read`. Every plan mutation response also returns
+`required_followups`. These are advisory reminders: unlike revision checks,
+the server does not currently track or enforce their completion.
+
+`builder_chat` remains the safest fallback for planning work that depends on
+AgentWorks conventions. Direct plan tools provide typed operations, validation,
+permissions, and revision checks.
+
+### Local implementation review (2026-09-20)
+
+The implementation is present locally and the focused server, CLI, and client
+tests pass. `git diff --check` also passes. The change is still uncommitted and
+has not been pushed. It should not be treated as merge-ready until the blocking
+findings below are resolved.
+
+Blocking findings:
+
+1. **Workspace skill listing decodes the wrong JSON field.** The shared-assets
+   response serializes a skill path as `filepath`, while
+   `externalWorkspaceSkillFolders` expects `path`. Consequently,
+   `workspace_skills` is empty even when global skills exist. Reuse the shared
+   response type or decode `filepath`, and add a fixture that proves a real
+   workspace skill is listed and readable.
+2. **Canonical guidance is returned without sufficient external filtering.**
+   Several allowlisted documents still direct an external agent to use internal
+   operations such as `read_skill`, `get_goal_metrics`, typed Pulse tools, and
+   guidance topics that are not exposed externally. Build an external rendering
+   pass that rewrites internal references, maps available equivalents, and
+   rejects any rendered topic that contains an unsupported operation or topic.
+3. **A workflow-scoped token can read unrelated global skills.** After checking
+   access to one workflow, `read_workflow_knowledge` accepts an arbitrary folder
+   under the global `skills/` root. Restrict readable folders to the workflow's
+   selected skills and per-step `enabled_skills`, plus any explicitly public
+   system skills. If account-wide skill access is intentional, give it a
+   separate permission and document that boundary.
+4. **The static AgentWorks skill is not delivered to external clients.** Nothing
+   currently installs `skills/agentworks/SKILL.md` into a Claude Code, Codex, or
+   other client skill directory. Add an `agentworks skills install` flow or a
+   documented packaging/install step, with a test that verifies the installed
+   location and contents. MCP initialization instructions work independently of
+   this missing distribution step.
+
+Follow-up findings:
+
+- `required_followups` are useful reminders but can be ignored. Either describe
+  them consistently as advisory or add server-side state and acknowledgement if
+  completion must be enforced.
+- The guidance version is a manually maintained constant. Compute it from the
+  rendered guidance, allowlist, mapping notes, or a build revision so cached
+  clients cannot retain stale content after canonical guidance changes.
+- `get_agent_context.available_tools` reflects token scopes but does not filter
+  mutations by the caller's role on a supplied workflow. Return separate token
+  capabilities and effective workflow tools, or filter the workflow-specific
+  list by role.
+- The CLI exposes `--workflow` for global guidance operations that do not accept
+  `workflow_id`. Hide the flag for those commands so users do not receive an
+  avoidable `invalid_arguments` response.
+- Knowledge discovery currently converts shared-assets failures into an empty
+  skill list. Return a warning or partial-error field so clients can distinguish
+  an empty workspace from an unavailable catalog.
+
+Review acceptance requires focused tests for non-empty workspace-skill
+discovery, unrelated-skill denial, external guidance free of unsupported tool
+references, effective tool availability for reader roles, and static-skill
+installation. Existing tests already cover catalog registration, scope gating,
+topic retrieval, traversal rejection, mutation follow-up presence, and MCP
+initialization instructions.
+
+### Resolution (2026-09-20)
+
+All four blocking findings are fixed, with the acceptance tests listed above
+added (`external_guidance_test.go`, `TestSkillsInstallWritesBundledSkill`, the
+MCP instructions assertion):
+
+1. Skill listing decodes `filepath`, matching the shared-assets response; the
+   discovery test proves a real workspace skill is listed and readable.
+2. Mapping notes now disclose every internal-only operation named by served
+   content, enforced by a test that fails when content names an operation the
+   note does not disclose. Rewriting canonical content was deliberately avoided;
+   disclosure keeps the builder's copy authoritative.
+3. Skill reads and listings are restricted to the workflow's selected skills
+   plus per-step `enabled_skills`; unrelated folders return `forbidden`.
+4. `agentworks skills install --dir <skill-dir> [--force]` ships the embedded
+   skill, with install/overwrite tests.
+
+Follow-ups are also addressed: `required_followups` stay consistently advisory,
+the guidance version is computed from rendered content, `get_agent_context`
+returns role-filtered `effective_tools`, the `--workflow` flag is hidden on
+global topic commands, and an unavailable skill catalog returns `warnings`.
+
+Remaining merge blocker, unrelated to this change: the pulled HEAD's Crew
+feature broke the `cmd/server` test build (`crew_creation_test.go` calls an
+undefined `mock.hasFolder`; `crew_builder_tools_test.go` calls an undefined
+`registerWorkCrewProfile`). The focused external/token/CLI/client suites pass;
+the full package suite cannot link until the Crew tests are repaired.
+
 ## Architecture and limits
 
 - `agent_go/pkg/agentworksclient`: hosted HTTP client, credential config, and MCP bridge.

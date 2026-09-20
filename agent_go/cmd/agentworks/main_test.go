@@ -75,6 +75,28 @@ func TestCLIPlanAndFileArguments(t *testing.T) {
 	}
 }
 
+func TestSkillsInstallWritesBundledSkill(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "skills")
+	var stdout, stderr bytes.Buffer
+	code := run(context.Background(), []string{"skills", "install", "--dir", dir}, strings.NewReader(""), &stdout, &stderr, func(string) string { return "" })
+	if code != 0 {
+		t.Fatalf("code=%d err=%s", code, &stderr)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, "agentworks", "SKILL.md"))
+	if err != nil || !strings.Contains(string(data), "get_agent_context") {
+		t.Fatalf("installed skill missing guidance entrypoint: %v", err)
+	}
+	// A second install refuses to clobber; --force overwrites.
+	var second bytes.Buffer
+	if code := run(context.Background(), []string{"skills", "install", "--dir", dir}, strings.NewReader(""), &stdout, &second, func(string) string { return "" }); code == 0 {
+		t.Fatal("reinstall without --force succeeded")
+	}
+	stdout.Reset()
+	if code := run(context.Background(), []string{"skills", "install", "--dir", dir, "--force"}, strings.NewReader(""), &stdout, &stderr, func(string) string { return "" }); code != 0 {
+		t.Fatalf("force reinstall failed: %s", &stderr)
+	}
+}
+
 func TestInvalidInputDoesNotCallServer(t *testing.T) {
 	for _, raw := range []string{`null`, `[]`, `{} {}`, `{"x":`} {
 		var stdout, stderr bytes.Buffer
@@ -218,8 +240,12 @@ func TestMCPStdioRoundtrip(t *testing.T) {
 	request := mcp.InitializeRequest{}
 	request.Params.ProtocolVersion = mcp.LATEST_PROTOCOL_VERSION
 	request.Params.ClientInfo = mcp.Implementation{Name: "test", Version: "1"}
-	if _, err := client.Initialize(ctx, request); err != nil {
+	initialized, err := client.Initialize(ctx, request)
+	if err != nil {
 		t.Fatal(err)
+	}
+	if !strings.Contains(initialized.Instructions, "get_agent_context") {
+		t.Fatalf("initialize instructions missing guidance entrypoint: %q", initialized.Instructions)
 	}
 	listed, err := client.ListTools(ctx, mcp.ListToolsRequest{})
 	if err != nil || len(listed.Tools) != 1 || listed.Tools[0].Name != "get_plan" {

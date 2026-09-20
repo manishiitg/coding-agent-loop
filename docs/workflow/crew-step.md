@@ -1199,3 +1199,10 @@ with the full summary sat in the store unmatched. The reader now
 matches both scopes, newest first, and falls back to the newest
 llm_generation_end content — the same fallback
 scheduledTurnProducedResponse uses.
+
+Delivery-key follow-up: the idempotency key covered workflow/run/
+group/step only, so retesting a step after switching its trigger to
+crew_chat silently adopted the old isolated run (same-second
+"success", nothing in chat). The trigger ID and normalized
+destination now join the key: identical retries still adopt,
+retargets always fire.

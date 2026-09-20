@@ -857,3 +857,17 @@ func TestTriggerTurnMessageInlinesSmallPayloads(t *testing.T) {
 		t.Fatal("payload at the cap should still inline")
 	}
 }
+
+func TestTriggerTurnMessageCarriesAutonomyNote(t *testing.T) {
+	small := []byte(`{"instruction":"check news"}`)
+	big := bytes.Repeat([]byte("x"), inlineTriggerPayloadBytes+1)
+	for name, body := range map[string][]byte{"inline": small, "file_reference": big} {
+		msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", body)
+		if !strings.Contains(msg, "Do not ask clarifying questions") {
+			t.Fatalf("%s trigger turn lost the autonomy note: %q", name, msg)
+		}
+		if !strings.Contains(msg, "not an interactive conversation") {
+			t.Fatalf("%s trigger turn lost the one-way framing: %q", name, msg)
+		}
+	}
+}

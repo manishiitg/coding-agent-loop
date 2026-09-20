@@ -706,15 +706,20 @@ func buildWorkflowContextPrompt(paths []string, _ string) string {
 	var references []string
 	for _, wsPath := range paths {
 		wsPath = strings.TrimSpace(strings.TrimSuffix(wsPath, "/"))
-		if wsPath != "" {
-			references = append(references, fmt.Sprintf("- **%s:** `%s/`", path.Base(wsPath), wsPath))
+		if wsPath == "" {
+			continue
 		}
+		kind := "workflow"
+		if strings.HasPrefix(wsPath, "Chats/Work/projects/") {
+			kind = "Crew"
+		}
+		references = append(references, fmt.Sprintf("- **%s:** (%s) `%s/`", path.Base(wsPath), kind, wsPath))
 	}
 	if len(references) == 0 {
 		return ""
 	}
 	return "\n## Workflow Context (Read-Only)\n\n" +
-		"The following exact AgentWorks workflow or same-account Crew folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these projects. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory or the parent of an attached Crew: that parent is intentionally not granted, and failure to list that parent does not mean the attached child folder is inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `product.json`, `MEMORY.md`, `soul/soul.md`, `planning/plan.json`, `planning/step_config.json`, `code/`, `db/`, or `builder/conversation/` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot.\n\n" +
+		"The following exact AgentWorks workflow or same-account Crew folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these projects. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory or the parent of an attached Crew: that parent is intentionally not granted, and failure to list that parent does not mean the attached child folder is inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `product.json`, `MEMORY.md`, `soul/soul.md`, `planning/plan.json`, `planning/step_config.json`, `code/`, `db/`, or `builder/conversation/` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot. A `#Name` mention in the user's message refers to one of these attached references — match it by project name; it is never a Slack channel. Slack channels are always exact IDs like `C1234567890`, never `#name`, so do not offer Slack setup for a `#Name` that matches an attached reference.\n\n" +
 		strings.Join(references, "\n") + "\n"
 }
 

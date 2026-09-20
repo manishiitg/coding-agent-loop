@@ -39,7 +39,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			"crew_profile_id": map[string]interface{}{"type": "string", "description": "Crew product profile; defaults to work."},
 			"id":              map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"}, "rotate_secret": map[string]interface{}{"type": "boolean"},
-			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
+			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}, "description": "Where trigger runs execute. crew_chat (default) keeps the shared main Crew conversation; isolated starts a fresh chat on every run."},
 			"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
 			"caller":          triggerCallerToolSchema(triggerCallerWorkflow),
 		}}, func(ctx context.Context, args map[string]interface{}) (string, error) {

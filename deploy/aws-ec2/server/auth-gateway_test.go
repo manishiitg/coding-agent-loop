@@ -428,3 +428,70 @@ func TestProductWebhookBypassesGatewayButManagementStaysPrivate(t *testing.T) {
 		}
 	}
 }
+
+func TestAccessTokenReachesAppWithoutGatewaySession(t *testing.T) {
+	for _, disableGate := range []bool{false, true} {
+		var seenAuth, seenUser string
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			seenAuth, seenUser = r.Header.Get("Authorization"), r.Header.Get("X-User-ID")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer upstream.Close()
+		g := &gateway{secret: []byte("0123456789abcdef0123456789abcdef"), disablePasswordGate: disableGate}
+		g.agent = proxyFor(upstream.URL)
+		g.workspace = proxyFor(upstream.URL)
+
+		req := httptest.NewRequest(http.MethodGet, "/api/external/v1/tools", nil)
+		req.Header.Set("Authorization", "Bearer aw_pat_test-token")
+		req.Header.Set("X-User-ID", "spoofed")
+		rec := httptest.NewRecorder()
+		g.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("disableGate=%v: PAT request got %d, want proxied", disableGate, rec.Code)
+		}
+		if seenAuth != "Bearer aw_pat_test-token" {
+			t.Fatalf("disableGate=%v: upstream auth = %q", disableGate, seenAuth)
+		}
+		if seenUser != "" {
+			t.Fatalf("disableGate=%v: spoofed user id reached upstream: %q", disableGate, seenUser)
+		}
+
+		rec = httptest.NewRecorder()
+		g.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/external/v1/tools?token=aw_pat_query-token", nil))
+		if rec.Code != http.StatusOK || seenAuth != "Bearer aw_pat_query-token" {
+			t.Fatalf("disableGate=%v: ?token= PAT: code=%d auth=%q", disableGate, rec.Code, seenAuth)
+		}
+	}
+}
+
+func TestAccessTokenStaysOutOfWorkspaceRoutes(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer upstream.Close()
+	for _, disableGate := range []bool{false, true} {
+		g := &gateway{secret: []byte("0123456789abcdef0123456789abcdef"), disablePasswordGate: disableGate}
+		g.agent = proxyFor(upstream.URL)
+		g.workspace = proxyFor(upstream.URL)
+		req := httptest.NewRequest(http.MethodGet, "/api/wp/api/documents/x", nil)
+		req.Header.Set("Authorization", "Bearer aw_pat_test-token")
+		rec := httptest.NewRecorder()
+		g.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("disableGate=%v: PAT on workspace route got %d, want 401", disableGate, rec.Code)
+		}
+	}
+}
+
+func TestNonTokenBearerStillRejectedWithoutSession(t *testing.T) {
+	g := &gateway{secret: []byte("0123456789abcdef0123456789abcdef"), disablePasswordGate: true}
+	for _, bearer := range []string{"Bearer garbage", "Bearer aw_pat", "Bearer x.aw_pat_y.z"} {
+		req := httptest.NewRequest(http.MethodGet, "/api/external/v1/tools", nil)
+		req.Header.Set("Authorization", bearer)
+		rec := httptest.NewRecorder()
+		g.ServeHTTP(rec, req)
+		if rec.Code != http.StatusUnauthorized {
+			t.Fatalf("%s: got %d, want 401", bearer, rec.Code)
+		}
+	}
+}

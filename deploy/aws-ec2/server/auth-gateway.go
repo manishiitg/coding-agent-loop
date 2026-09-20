@@ -251,6 +251,17 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("token"))
 }
 
+// accessTokenPrefix marks an AgentWorks personal access token
+// (accesstokens.Prefix in the agent API). The gateway cannot verify one —
+// only the app holds the token store — so PAT-bearing requests pass through
+// for the app to authenticate, exactly like the webhook exception. The app
+// fail-closes on unknown, expired, or revoked tokens.
+const accessTokenPrefix = "aw_pat_"
+
+func isAccessTokenCredential(r *http.Request) bool {
+	return strings.HasPrefix(bearerToken(r), accessTokenPrefix)
+}
+
 // agentPublicPath mirrors the agent API's own unauthenticated routes
 // (auth_middleware.go shouldSkipAuth): what a browser needs before it has a
 // token. Everything else needs one when the password gate is off.
@@ -276,6 +287,16 @@ func agentPublicPath(path string) bool {
 // onto X-User-ID so the workspace API never trusts a client-chosen header.
 // Returns false after writing the 401.
 func (g *gateway) requireUserToken(w http.ResponseWriter, r *http.Request) bool {
+	// CLI/MCP clients authenticate with a PAT, not an app JWT. Pass them to
+	// the agent API — never the workspace API, which keys off X-User-ID —
+	// and let the app verify the token; strip any client-chosen user id.
+	if isAccessTokenCredential(r) && !strings.HasPrefix(r.URL.Path, "/api/wp") {
+		if r.Header.Get("Authorization") == "" {
+			r.Header.Set("Authorization", "Bearer "+bearerToken(r))
+		}
+		r.Header.Del("X-User-ID")
+		return true
+	}
 	token := bearerToken(r)
 	userID, ok := g.verifyAgentToken(token)
 	if !ok {
@@ -412,6 +433,13 @@ func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	expiresAt, authenticated := g.sessionExpiry(r)
 	if !authenticated {
 		if isGatewayAPIRoute(r.URL.Path) {
+			// PAT clients (CLI/MCP) carry no browser session; the app
+			// verifies the token itself. Workspace routes stay cookie-only.
+			if isAccessTokenCredential(r) && !strings.HasPrefix(r.URL.Path, "/api/wp") {
+				r.Header.Del("X-User-ID")
+				g.route(w, r)
+				return
+			}
 			loginURL := apiLoginURL(r)
 			w.Header().Set(authRequiredHeader, loginURL)
 			w.Header().Set("Content-Type", "application/json")

@@ -89,11 +89,16 @@ func TestSteerBackgroundAgentCompletionFallsBackForFailedLiveDelivery(t *testing
 		eventStore:       store,
 		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
 		runningAgentsMux: sync.RWMutex{},
-		// An active foreground turn cancel handle is the proof that makes the
-		// session steerable (canSteerSession).
+		// An active foreground turn cancel handle plus a registered CLI
+		// transport is the proof that makes the session steerable
+		// (canSteerSession). The hook simulates the registered transport;
+		// this test's subject is the delivery fallback below it.
 		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
 		agentCancelMux:   sync.RWMutex{},
 		bgAgentRegistry:  NewBackgroundAgentRegistry(),
+		internalSteerTransportReady: func(provider, sid string) bool {
+			return true
+		},
 	}
 
 	bg := &BackgroundAgent{

@@ -11,6 +11,11 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
+	claudecodeadapter "github.com/manishiitg/multi-llm-provider-go/pkg/adapters/claudecode"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/codexcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/cursorcli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/musecli"
+	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/picli"
 
 	"github.com/gorilla/mux"
 )
@@ -57,13 +62,65 @@ func (api *StreamingAPI) canSteerSession(sessionID string) bool {
 	// and stop/escape behavior tied to a turn that no longer exists. The active
 	// cancel handle is the server-owned foreground-turn proof.
 	if api.hasActiveTurnCancel(sessionID) {
-		return true
+		return api.liveSteerTransportReady(sessionID, runningAgent)
 	}
 	// A resumed/launch-only coding agent has no server-managed foreground turn,
 	// but its tmux pane can still be actively working. Allow steering when the
 	// pane currently looks busy — the busy-content heuristic stands in for the
 	// missing turn-cancel proof, so foreground control goes to a working agent
 	// rather than treating the turn as complete.
+	if api.terminalStore == nil || !api.terminalStore.SessionHasBusyMainCodingTmux(sessionID) {
+		return false
+	}
+	return api.liveSteerTransportReady(sessionID, runningAgent)
+}
+
+// liveSteerTransportReady verifies the provider's live-injection transport
+// is actually registered, not just that a turn is running. Every coding
+// CLI registers its interactive session asynchronously after turn start;
+// can_steer went true in the gap and the steer 409'd delivery_uncertain
+// (found live on muse: "no active Muse interactive session registered").
+// Providers without a registry stay ready by default. Cheap map lookups
+// only — delivery itself re-verifies pane liveness.
+func (api *StreamingAPI) liveSteerTransportReady(sessionID string, runningAgent *mcpagent.Agent) bool {
+	provider := strings.ToLower(strings.TrimSpace(string(mcpagent.ReadAgentRuntimeInfo(runningAgent).Provider)))
+	if api != nil && api.internalSteerTransportReady != nil {
+		return api.internalSteerTransportReady(provider, sessionID)
+	}
+	switch provider {
+	case "claude-code":
+		return claudecodeadapter.InteractiveSessionRegistered(sessionID)
+	case "cursor-cli":
+		return cursorcli.InteractiveSessionRegistered(sessionID)
+	case "codex-cli":
+		return codexcli.InteractiveSessionRegistered(sessionID)
+	case "pi-cli":
+		return picli.InteractiveSessionRegistered(sessionID)
+	case "muse-cli":
+		return musecli.InteractiveSessionRegistered(sessionID)
+	default:
+		return true
+	}
+}
+
+// foregroundTurnAlive is the transport-agnostic turn-liveness behind
+// canSteerSession: same checks minus transport registration. The idle
+// foreground-session completion probe uses this, not canSteerSession —
+// a live turn whose CLI is still registering must keep the session
+// running, while steer gating must wait for the transport.
+func (api *StreamingAPI) foregroundTurnAlive(sessionID string) bool {
+	api.runningAgentsMux.RLock()
+	runningAgent, exists := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+	if !exists || runningAgent == nil {
+		return false
+	}
+	if !mcpagent.AgentSupportsSteering(runningAgent) {
+		return false
+	}
+	if api.hasActiveTurnCancel(sessionID) {
+		return true
+	}
 	return api.terminalStore != nil && api.terminalStore.SessionHasBusyMainCodingTmux(sessionID)
 }
 
@@ -80,7 +137,7 @@ func (api *StreamingAPI) shouldCompleteIdleForegroundSession(sessionID, status s
 	if api.isSessionBusy(sessionID) {
 		return false
 	}
-	return !api.canSteerSession(sessionID)
+	return !api.foregroundTurnAlive(sessionID)
 }
 
 func (api *StreamingAPI) hasRunningTrackedExecutionForSession(sessionID string) bool {

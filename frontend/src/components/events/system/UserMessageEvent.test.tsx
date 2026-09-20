@@ -63,4 +63,75 @@ describe('UserMessageEventDisplay', () => {
     expect(html).toContain('terminal-execution-prompt')
     expect(html).toContain('Nested Word Task')
   })
+
+  it('shows a single tick after the fast ack and a double tick after durable confirmation', () => {
+    const fast = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'steer into the turn',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', delivery_status: 'sent_to_cli', provider: 'codex-cli', message_id: 'steer-1', confirmation: 'fast' },
+        }}
+      />,
+    )
+    expect(fast).toContain('data-testid="delivery-tick"')
+    expect(fast).toContain('data-state="fast"')
+    expect(fast).toContain('>✓<')
+
+    const confirmed = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'steer into the turn',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', delivery_status: 'sent_to_cli', provider: 'codex-cli', message_id: 'steer-1', confirmation: 'confirmed', latency_ms: 1200 },
+        }}
+      />,
+    )
+    expect(confirmed).toContain('data-state="confirmed"')
+    expect(confirmed).toContain('>✓✓<')
+    expect(confirmed).toContain('Confirmed in codex-cli CLI record in 1.2s')
+  })
+
+  it('shows queued and failed ticks without touching rows that were never live-delivered', () => {
+    const unflushed = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'steer into the turn',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', confirmation: 'accepted_but_unflushed', provider: 'codex-cli' },
+        }}
+      />,
+    )
+    expect(unflushed).toContain('data-state="unflushed"')
+    expect(unflushed).toContain('Held in codex-cli CLI queue')
+
+    const failed = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'steer into the turn',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', confirmation: 'failed' },
+        }}
+      />,
+    )
+    expect(failed).toContain('data-state="failed"')
+
+    const sending = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'steer into the turn',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', delivery_status: 'sending' },
+        }}
+      />,
+    )
+    expect(sending).not.toContain('delivery-tick')
+
+    const plain = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{ content: 'plain question', role: 'user', timestamp: new Date().toISOString() }}
+      />,
+    )
+    expect(plain).not.toContain('delivery-tick')
+  })
 })

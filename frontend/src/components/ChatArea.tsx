@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
 import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codingCliTranscriptReconciliation'
-import { withLiveInputReceipt } from '../utils/liveInputReceipt'
+import { applyLiveInputConfirmation, readLiveInputConfirmation, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
@@ -1715,7 +1715,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (response.events.length === 0) return
 
     // --- Event filtering & processing ---
-    const eventsBeforeFilter = response.events as PollingEvent[]
+    let eventsBeforeFilter = response.events as PollingEvent[]
+    // Durability receipts upgrade rows in place and never enter the
+    // timeline: a live_input_confirmed event carries no chat content,
+    // only the verdict for the user_message row it names. Handling it
+    // here (rather than in the SSE branch alone) also covers polling
+    // fallback, reconnect replay, and durable restore uniformly.
+    const confirmations = eventsBeforeFilter.map(readLiveInputConfirmation).filter((u): u is NonNullable<typeof u> => u !== null)
+    if (confirmations.length > 0) {
+      eventsBeforeFilter = eventsBeforeFilter.filter(e => e.type !== 'live_input_confirmed')
+      let upgraded = chatStore.getTabEvents(actualSessionId)
+      for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
+      chatStore.setTabEvents(actualSessionId, upgraded)
+    }
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false
     // Check if we already have frontend-created user messages for this session.
@@ -1730,6 +1742,30 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         .filter(Boolean)
     )
     const hasFrontendUserMessage = frontendUserMessageContents.size > 0
+    // A suppressed backend echo still carries the delivery identity the
+    // optimistic row needs: without the transfer, a query the backend
+    // steered live would keep a bubble no durability receipt can match.
+    // Stamping reuses the store snapshot read above; the loop below only
+    // appends, so a mid-pass setTabEvents cannot lose events.
+    const transferSuppressedEchoIdentity = (echo: PollingEvent, echoContent: string) => {
+      const echoOuter = echo.data as unknown as Record<string, unknown> | undefined
+      const echoInner = (echoOuter?.data ?? {}) as Record<string, unknown>
+      const echoMetadata = (echoInner.metadata ?? {}) as Record<string, unknown>
+      const messageId = echoMetadata.message_id
+      if (typeof messageId !== 'string' || !messageId) return
+      const deliveryStatus = typeof echoMetadata.delivery_status === 'string' ? echoMetadata.delivery_status : 'sent_to_cli'
+      const provider = typeof echoMetadata.provider === 'string' ? echoMetadata.provider : undefined
+      const current = chatStore.getTabEvents(actualSessionId)
+      let changed = false
+      const stamped = current.map(row => {
+        if (row.type !== 'user_message' || !row.id?.startsWith('user-message-')) return row
+        if (getDisplaySafeUserMessageContent(getUserMessageContent(row)) !== echoContent) return row
+        const next = stampLiveInputIdentity(row, messageId, deliveryStatus, provider)
+        if (next !== row) changed = true
+        return next
+      })
+      if (changed) chatStore.setTabEvents(actualSessionId, stamped)
+    }
 
     for (const event of eventsBeforeFilter) {
       const agentEvent = event.data as Record<string, unknown> | undefined
@@ -1750,6 +1786,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
           frontendUserMessageContents.has(msgContent)
         ) {
+          transferSuppressedEchoIdentity(event, msgContent)
           continue
         }
       }
@@ -1778,6 +1815,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           // This is a distinct backend user_message (for example a steer message
           // picked up mid-run), so keep it visible in the timeline.
         } else if (!msgContent.startsWith(AUTO_NOTIFICATION_PREFIX)) {
+          transferSuppressedEchoIdentity(event, msgContent)
           continue
         }
       }

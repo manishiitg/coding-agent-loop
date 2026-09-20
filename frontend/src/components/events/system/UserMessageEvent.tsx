@@ -10,6 +10,50 @@ interface UserMessageEventDisplayProps {
   hideContext?: boolean
 }
 
+type DeliveryTickState = 'fast' | 'confirmed' | 'unflushed' | 'failed' | null
+
+function deliveryTickState(metadata: Record<string, unknown> | undefined): DeliveryTickState {
+  if (!metadata) return null
+  const confirmation = metadata.confirmation
+  if (confirmation === 'confirmed') return 'confirmed'
+  if (confirmation === 'accepted_but_unflushed') return 'unflushed'
+  if (confirmation === 'failed') return 'failed'
+  if (confirmation === 'fast') return 'fast'
+  const status = metadata.delivery_status
+  if (status === 'sent_to_cli' || status === 'next_turn_started' || status === 'queued_for_injection') return 'fast'
+  return null
+}
+
+function deliveryTickTitle(metadata: Record<string, unknown> | undefined, state: Exclude<DeliveryTickState, null>): string {
+  const provider = typeof metadata?.provider === 'string' && metadata.provider ? ` ${metadata.provider}` : ''
+  const latencyMs = typeof metadata?.latency_ms === 'number' ? metadata.latency_ms : null
+  const latency = latencyMs === null ? '' : latencyMs >= 1000 ? ` in ${(latencyMs / 1000).toFixed(1)}s` : ` in ${Math.round(latencyMs)}ms`
+  switch (state) {
+    case 'confirmed': return `Confirmed in${provider} CLI record${latency}`
+    case 'unflushed': return `Held in${provider} CLI queue, awaiting record`
+    case 'failed': return `Delivery to${provider} CLI unconfirmed`
+    case 'fast': return `Sent to${provider} CLI`
+  }
+}
+
+const DeliveryTick: React.FC<{ metadata: Record<string, unknown> | undefined }> = ({ metadata }) => {
+  const state = deliveryTickState(metadata)
+  if (!state) return null
+  const glyph = state === 'confirmed' ? '✓✓' : state === 'unflushed' ? '✓…' : state === 'failed' ? '!' : '✓'
+  const tone = state === 'confirmed'
+    ? 'text-cyan-700 dark:text-cyan-300'
+    : state === 'unflushed'
+      ? 'text-amber-600 dark:text-amber-400'
+      : state === 'failed'
+        ? 'text-red-500 dark:text-red-400'
+        : 'text-slate-400 dark:text-slate-500'
+  return (
+    <span data-testid="delivery-tick" data-state={state} title={deliveryTickTitle(metadata, state)} className={`shrink-0 select-none text-[11px] leading-none ${tone}`} aria-label={deliveryTickTitle(metadata, state)}>
+      {glyph}
+    </span>
+  )
+}
+
 export const UserMessageEventDisplay: React.FC<UserMessageEventDisplayProps> = ({
   event,
   mode = 'detailed',
@@ -97,6 +141,7 @@ export const UserMessageEventDisplay: React.FC<UserMessageEventDisplayProps> = (
         <span className="max-w-full whitespace-pre-wrap break-words text-slate-700 dark:text-slate-200">
           {event.content || 'No message content'}
         </span>
+        <DeliveryTick metadata={event.metadata as Record<string, unknown> | undefined} />
       </div>
     )
   }
@@ -223,8 +268,9 @@ export const UserMessageEventDisplay: React.FC<UserMessageEventDisplayProps> = (
           )}
 
           {event.timestamp && (
-            <div className="text-xs text-slate-600 dark:text-slate-400 mt-1">
+            <div className="mt-1 flex items-center gap-1.5 text-xs text-slate-600 dark:text-slate-400">
               {new Date(event.timestamp).toLocaleString()}
+              <DeliveryTick metadata={event.metadata as Record<string, unknown> | undefined} />
             </div>
           )}
         </div>

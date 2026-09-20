@@ -368,7 +368,16 @@ type StreamingAPI struct {
 	internalRetainedTurnFinalResponseReader func(llmproviders.Provider, string, time.Time) string
 	// internalLiveInputPersistenceHandler lets routing tests verify that every
 	// provider-confirmed live delivery is also written to durable chat history.
-	internalLiveInputPersistenceHandler     func(userID, sessionID, message string)
+	internalLiveInputPersistenceHandler func(userID, sessionID, message string)
+	// internalDurableAckHandler lets routing tests observe the
+	// durability half of the two-stage delivery receipt without a real
+	// CLI. Production dispatch falls back to the provider's typed
+	// durable-ack await (live_input_durable.go).
+	internalDurableAckHandler func(context.Context, llmproviders.Provider, string, string) (llmtypes.DurableAck, error)
+	// internalSteerTransportReady lets gate tests observe steer
+	// readiness without a real CLI registry. Production dispatch
+	// checks the provider's interactive-session registration.
+	internalSteerTransportReady             func(provider, sessionID string) bool
 	internalChatSubmissionStore             *chatSubmissionStore
 	internalUncertainSubmissionRetryChecker func(context.Context, chatSubmissionRecord) bool
 
@@ -1330,6 +1339,10 @@ type QueryResponse struct {
 	// from the temporary cold-restart compatibility path.
 	DeliveryTransport string `json:"delivery_transport,omitempty"`
 	DeliverySource    string `json:"delivery_source,omitempty"`
+	// MessageID identifies the recorded user_message row so the chat UI
+	// can upgrade its optimistic bubble (and later its delivery tick)
+	// by backend identity instead of content matching.
+	MessageID string `json:"message_id,omitempty"`
 }
 
 // queryStatusLiveInputDelivered is the QueryResponse.Status returned when a
@@ -9340,6 +9353,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		Provider:          provider,
 		DeliveryTransport: "tmux",
 		DeliverySource:    queryDeliverySourceRunningAgent,
+		MessageID:         messageID,
 	})
 	return true
 }
@@ -9898,6 +9912,14 @@ func (api *StreamingAPI) recordLiveCodingAgentUserMessage(sessionID, message, pr
 		SessionID: sessionID,
 	}
 	api.eventStore.AddEvent(sessionID, event)
+	// Every accepted tmux live delivery funnels through here (running
+	// agent, durable mcpagent session, cold-retained compatibility, and
+	// background-agent steers), so the durability watch starts here too:
+	// one choke point no future path can miss. Providers without
+	// SupportsDurableAck are ignored inside the watch.
+	if deliveryStatus == string(mcpagent.UserMessageDeliveryStatusSentToCLI) {
+		api.watchLiveInputDurable(sessionID, provider, messageID, message)
+	}
 }
 
 // handleSubmitHumanFeedback handles human feedback submission

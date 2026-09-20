@@ -321,15 +321,20 @@ func TestRecordLiveCodingAgentUserMessageCapturesVisibleEvent(t *testing.T) {
 			}
 			assertLiveCodingUserMessageEvent(t, delivered, sessionID, string(tt.provider))
 
-			raw := store.GetAllEventsRaw(sessionID)
+			// Count only user_message rows: recording a sent_to_cli send
+			// also starts the durable watch, which asynchronously records
+			// its own live_input_confirmed event (covered in
+			// live_input_durable_test.go). That event may or may not be
+			// present yet; this test's subject is the user row.
+			raw := filterEventsByType(store.GetAllEventsRaw(sessionID), string(pkgevents.UserMessage))
 			if len(raw) != 1 {
-				t.Fatalf("raw event count = %d, want 1", len(raw))
+				t.Fatalf("raw user_message count = %d, want 1", len(raw))
 			}
 			assertLiveCodingUserMessageEvent(t, raw[0], sessionID, string(tt.provider))
 
 			poll := store.GetEvents(sessionID, internalevents.GetEventsOptions{SinceIndex: -1})
-			if len(poll.Events) != 1 {
-				t.Fatalf("poll event count = %d, want 1", len(poll.Events))
+			if got := filterEventsByType(poll.Events, string(pkgevents.UserMessage)); len(got) != 1 {
+				t.Fatalf("poll user_message count = %d, want 1", len(got))
 			}
 			assertLiveCodingUserMessageEvent(t, poll.Events[0], sessionID, string(tt.provider))
 		})
@@ -402,6 +407,12 @@ func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) 
 		internalQueryHandler: func(http.ResponseWriter, *http.Request) {
 			nextTurnCalls.Add(1)
 		},
+		internalDurableAckHandler: func(_ context.Context, provider llmproviders.Provider, owner, msg string) (llmtypes.DurableAck, error) {
+			if provider != llmproviders.ProviderCodexCLI || owner != sessionID || msg != message {
+				t.Errorf("durable watch request = (%s %s %q)", provider, owner, msg)
+			}
+			return llmtypes.DurableAck{Outcome: llmtypes.DurableAckConfirmed, Latency: 300 * time.Millisecond, ProofSource: "rollout-test.jsonl"}, nil
+		},
 	}
 
 	body := bytes.NewBufferString(`{"message":"` + message + `"}`)
@@ -435,8 +446,8 @@ func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) 
 	}
 
 	events := store.GetAllEventsRaw(sessionID)
-	if len(events) != 1 {
-		t.Fatalf("recorded events = %d, want exactly 1", len(events))
+	if len(events) < 1 {
+		t.Fatalf("recorded events = %d, want at least the user_message", len(events))
 	}
 	payload, ok := events[0].Data.Data.(*pkgevents.UserMessageEvent)
 	if !ok {
@@ -444,6 +455,30 @@ func TestHandleLiveInputMessageBusyCodingAgentDeliversExactlyOnce(t *testing.T) 
 	}
 	if payload.Content != message || payload.Metadata["message_id"] != response.MessageID || payload.Metadata["delivery_status"] != "sent_to_cli" {
 		t.Fatalf("recorded live-input payload = %#v", payload)
+	}
+
+	// The durability half of the receipt arrives async: the watcher
+	// confirms the same message_id without a second delivery.
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		events = store.GetAllEventsRaw(sessionID)
+		if len(events) == 2 {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("recorded events = %d, want user_message + live_input_confirmed", len(events))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	confirm, ok := events[1].Data.Data.(*pkgevents.LiveInputConfirmedEvent)
+	if !ok {
+		t.Fatalf("second event payload = %T, want *LiveInputConfirmedEvent", events[1].Data.Data)
+	}
+	if events[1].ID != response.MessageID+":confirmed" || confirm.MessageID != response.MessageID || confirm.Outcome != "confirmed" {
+		t.Fatalf("confirm payload = %#v", confirm)
+	}
+	if got := deliveryCalls.Load(); got != 1 {
+		t.Fatalf("delivery calls after confirm = %d, want exactly 1", got)
 	}
 }
 
@@ -549,6 +584,9 @@ func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testi
 				return mcpagent.UserMessageDeliveryResult{Provider: llm.ProviderCodexCLI, DeliveryStatus: mcpagent.UserMessageDeliveryStatusSentToCLI}, nil
 			},
 			internalQueryHandler: func(http.ResponseWriter, *http.Request) { nextTurnCalls.Add(1) },
+			internalDurableAckHandler: func(context.Context, llmproviders.Provider, string, string) (llmtypes.DurableAck, error) {
+				return llmtypes.DurableAck{Outcome: llmtypes.DurableAckConfirmed}, nil
+			},
 		}
 
 		body := bytes.NewBufferString(`{"message":"boundary follow-up"}`)
@@ -559,8 +597,20 @@ func TestHandleLiveInputMessageCompletionBoundaryChoosesExactlyOneRoute(t *testi
 		if rr.Code != http.StatusOK || deliveryCalls.Load() != 1 || nextTurnCalls.Load() != 0 {
 			t.Fatalf("status=%d delivery=%d next_turn=%d body=%s", rr.Code, deliveryCalls.Load(), nextTurnCalls.Load(), rr.Body.String())
 		}
-		if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-			t.Fatalf("recorded events = %d, want exactly 1 live-input event", got)
+		// Live delivery plus its async durability receipt; the receipt
+		// is not a route, so the boundary contract (live XOR next
+		// turn) still holds with delivery==1 and next_turn==0.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			if got := len(store.GetAllEventsRaw(sessionID)); got == 2 {
+				break
+			} else if time.Now().After(deadline) {
+				t.Fatalf("recorded events = %d, want user_message + live_input_confirmed", got)
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		if events := store.GetAllEventsRaw(sessionID); events[1].Type != string(pkgevents.LiveInputConfirmed) {
+			t.Fatalf("second event type = %q, want live_input_confirmed", events[1].Type)
 		}
 	})
 
@@ -685,6 +735,11 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 		runningAgentsMux: sync.RWMutex{},
 		agentCancelFuncs: map[string]context.CancelFunc{},
 		agentCancelMux:   sync.RWMutex{},
+		// This test's subject is the turn-cancel proof; simulate the
+		// registered transport the steer gate also requires.
+		internalSteerTransportReady: func(provider, sid string) bool {
+			return true
+		},
 	}
 
 	if api.canSteerSession(sessionID) {
@@ -696,6 +751,59 @@ func TestCanSteerSessionRequiresActiveForegroundTurn(t *testing.T) {
 	api.agentCancelMux.Unlock()
 	if !api.canSteerSession(sessionID) {
 		t.Fatal("canSteerSession = false with retained agent and active foreground cancel; want true")
+	}
+}
+
+// A live turn whose CLI is still registering its interactive session must
+// not advertise steerability: the steer would 409 delivery_uncertain.
+// Found live on muse (steer at t+4s, registration later).
+func TestCanSteerSessionWaitsForTransportRegistration(t *testing.T) {
+	sessionID := "transport-gap-session"
+	runningAgent := testCodingAgent(llm.ProviderMuseCLI, "muse-spark-1.3-contributor")
+	ready := false
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		internalSteerTransportReady: func(provider, sid string) bool {
+			if sid != sessionID {
+				t.Errorf("hook session = %q, want %q", sid, sessionID)
+			}
+			return ready
+		},
+	}
+
+	if api.canSteerSession(sessionID) {
+		t.Fatal("canSteerSession = true before the CLI transport registers; want false")
+	}
+	ready = true
+	if !api.canSteerSession(sessionID) {
+		t.Fatal("canSteerSession = false after the CLI transport registers; want true")
+	}
+}
+
+// Idle foreground-session completion keys on turn liveness, not transport
+// registration: a live turn whose CLI is still registering must keep the
+// session running.
+func TestIdleCompletionIgnoresTransportRegistrationGap(t *testing.T) {
+	sessionID := "idle-gap-session"
+	runningAgent := testCodingAgent(llm.ProviderMuseCLI, "muse-spark-1.3-contributor")
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		internalSteerTransportReady: func(provider, sid string) bool {
+			return false
+		},
+	}
+
+	if api.shouldCompleteIdleForegroundSession(sessionID, "running", false) {
+		t.Fatal("idle completion fired during a live turn with unregistered transport; want false")
+	}
+	if api.canSteerSession(sessionID) {
+		t.Fatal("canSteerSession = true with unregistered transport; want false")
 	}
 }
 
@@ -1039,8 +1147,12 @@ func TestHandleLiveInputMessageDeliversDirectlyToLiveMainTmuxWithoutAgent(t *tes
 	if runtime, _ := api.authoritativeRuntimeSnapshot(sessionID); runtime.Phase != runtimePhaseRunning {
 		t.Fatalf("runtime phase = %q (%s), want running", runtime.Phase, runtime.Reason)
 	}
-	if got := len(store.GetAllEventsRaw(sessionID)); got != 1 {
-		t.Fatalf("recorded event count = %d, want 1", got)
+	// Count only the user_message row: the sent_to_cli delivery also
+	// starts the durable watch, whose live_input_confirmed event may
+	// race this assertion (watch routing is covered in
+	// live_input_durable_test.go).
+	if got := filterEventsByType(store.GetAllEventsRaw(sessionID), string(pkgevents.UserMessage)); len(got) != 1 {
+		t.Fatalf("recorded user_message count = %d, want 1", len(got))
 	}
 
 	// A child terminal completion is part of the formatted transcript but must
@@ -1683,6 +1795,16 @@ func TestDelegationStartEventParentsToBackgroundAgent(t *testing.T) {
 	if event.Data.CorrelationID != delegationID {
 		t.Fatalf("correlation_id = %q, want %q", event.Data.CorrelationID, delegationID)
 	}
+}
+
+func filterEventsByType(events []internalevents.Event, eventType string) []internalevents.Event {
+	var out []internalevents.Event
+	for _, event := range events {
+		if event.Type == eventType {
+			out = append(out, event)
+		}
+	}
+	return out
 }
 
 func assertLiveCodingUserMessageEvent(t *testing.T, event internalevents.Event, sessionID, provider string) {

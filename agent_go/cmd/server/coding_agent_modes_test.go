@@ -839,6 +839,46 @@ func TestTryDeliverQueryAsLiveInputUnconfirmedSendDoesNotFallThrough(t *testing.
 	}
 }
 
+// A running turn on a query-only transport (API continuation, no pooled TUI)
+// queues the message for its next boundary instead of failing the send. The
+// running-agent path accepts it with the same shape as the retained-session
+// queue branch — never a 409 for a send no CLI ever saw.
+func TestTryDeliverQueryAsLiveInputAcceptsQueuedDelivery(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "busy-api-turn-session"
+	runningAgent := testCodingAgent(llm.ProviderMuseCLI, "muse-spark-1.3-contributor")
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			return mcpagent.UserMessageDeliveryResult{Provider: llm.ProviderMuseCLI, DeliveryStatus: mcpagent.UserMessageDeliveryStatusQueuedForInjection}, nil
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	if !api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "queue me into the API turn", "query_test_queued") {
+		t.Fatal("queued delivery must be handled, not fall through to a second dispatch")
+	}
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d body=%s, want 200", rr.Code, rr.Body.String())
+	}
+	var response map[string]interface{}
+	if err := json.NewDecoder(rr.Body).Decode(&response); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if response["status"] != "accepted" || response["delivery_status"] != "queued_for_injection" {
+		t.Fatalf("response = %v, want accepted/queued_for_injection", response)
+	}
+}
+
 // Single-entry routing: a retained coding-agent CLI should accept the next
 // message when there is no foreground-turn/busy proof but the live tmux pane is
 // still registered. The CLI owns how to handle the input in its tmux session.

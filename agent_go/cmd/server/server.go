@@ -9327,6 +9327,13 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 		return true
 	}
+	if delivery.DeliveryStatus == mcpagent.UserMessageDeliveryStatusQueuedForInjection {
+		// Same accepted shape as the retained-session queue branch above:
+		// the running turn owns this message at its next boundary.
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true, "status": "accepted", "session_id": sessionID, "delivery_status": string(delivery.DeliveryStatus), "provider": string(delivery.Provider)})
+		return true
+	}
 	if delivery.DeliveryStatus != mcpagent.UserMessageDeliveryStatusSentToCLI {
 		log.Printf("[QUERY→LIVE] Provider did not confirm CLI submission for session %s status=%s", sessionID, delivery.DeliveryStatus)
 		writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))

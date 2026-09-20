@@ -28,7 +28,7 @@ func resolveWebhookDeliveryOptions(s WorkflowSchedule, input *WorkflowWebhookDel
 			return err
 		}
 	}
-	if s.Webhook.InputMode != "envelope" {
+	if s.Webhook == nil || s.Webhook.InputMode != "envelope" {
 		return nil
 	}
 	var envelope struct {
@@ -118,7 +118,10 @@ func resolvedWebhookExecutionTarget(s WorkflowSchedule, input *WorkflowWebhookDe
 	for stepID, routeID := range input.RouteSelections {
 		routes[stepID] = routeID
 	}
-	stepID := s.Webhook.StepID
+	stepID := ""
+	if s.Webhook != nil {
+		stepID = s.Webhook.StepID
+	}
 	if input.StepID != "" {
 		stepID = input.StepID
 	}

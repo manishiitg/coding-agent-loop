@@ -21,7 +21,10 @@ Start with the operator journey, then use the subsystem references when you need
 - [Slack connections](core/slack_connections.md): per-workflow Slack apps, ownership, and the multi-listener runtime.
 - [Bot connectors architecture](core/bot_connectors_combined.md): shared lifecycle, routing, and code-review findings.
 - [Bot connector system](core/bot_connector_system.md): sessions, channels, and event flow.
-- [QA sign-off issues](https://github.com/manishiitg/coding-agent-loop/issues?q=is%3Aissue+QA): manual checklists live in issues, never in `docs/`.
+- [QA: Slack bot connectors](https://github.com/manishiitg/coding-agent-loop/issues/201): per-workflow apps, mention guard sign-off.
+- [QA: WhatsApp bot connector](https://github.com/manishiitg/coding-agent-loop/issues/202): route switching, account management sign-off.
+
+Manual checklists live in issues, never in `docs/` — browse all QA rounds [here](https://github.com/manishiitg/coding-agent-loop/issues?q=is%3Aissue+QA).
 
 This folder also mirrors to the [GitHub wiki](https://github.com/manishiitg/coding-agent-loop/wiki) on every push to `main` — edit here, never there.
 

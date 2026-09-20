@@ -1,0 +1,47 @@
+name: Sync docs to wiki
+
+# One-way mirror: docs/ is the sole editor. Anything changed directly in the
+# wiki tab is overwritten on the next push that touches docs/.
+# Requires a repo secret WIKI_PAT (classic PAT with `repo` scope):
+# the default GITHUB_TOKEN cannot write to the wiki repo.
+
+on:
+  push:
+    branches: [main]
+    paths: ['docs/**']
+  workflow_dispatch:
+
+concurrency:
+  group: wiki-sync
+  cancel-in-progress: true
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check WIKI_PAT secret
+        run: |
+          if [ -z "${{ secrets.WIKI_PAT }}" ]; then
+            echo "::error::Missing repo secret WIKI_PAT (classic PAT with repo scope). Create it at github.com/settings/tokens and add via: gh secret set WIKI_PAT"
+            exit 1
+          fi
+
+      - name: Mirror docs/ into the wiki repo
+        run: |
+          set -euo pipefail
+          git clone "https://x-access-token:${{ secrets.WIKI_PAT }}@github.com/${{ github.repository }}.wiki.git" wiki
+          rsync -a --delete --exclude='.git' docs/ wiki/
+          cp docs/README.md wiki/Home.md
+          printf '\n---\n_Auto-synced from `docs/` on main. Edit there, not here._\n' > wiki/_Footer.md
+          cd wiki
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Wiki already in sync."
+          else
+            git commit -m "Sync docs from main@${{ github.sha }}"
+            git push origin HEAD:master
+          fi

@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"path/filepath"
 	"strconv"
@@ -869,7 +870,16 @@ func prepareProductConversationTurn(ctx context.Context, userID string, profile 
 		return QueryRequest{}, err
 	}
 	if conversation.Provider != "" && canonicalProviderConnectionID(conversation.Provider, conversation.ConnectionID) != canonicalProviderConnectionID(query.Provider, query.ConnectionID) {
-		return QueryRequest{}, fmt.Errorf("account change requires a new conversation")
+		// Only a real account change needs a new conversation: moving onto a
+		// private connection, or between private connections, must stay
+		// explicit (billing + CLI identity). A provider switch with no
+		// private account on either side is safe to rebind — the restart
+		// below relaunches the CLI — so a stale engine pick must not lock
+		// the user out of their own chat.
+		if strings.TrimSpace(conversation.ConnectionID) != "" || strings.TrimSpace(query.ConnectionID) != "" {
+			log.Printf("[PRODUCT_CHAT] account change refused for conversation %q: bound %s/%s, requested %s/%s", conversation.ConversationKey, conversation.Provider, conversation.ConnectionID, query.Provider, query.ConnectionID)
+			return QueryRequest{}, fmt.Errorf("account change requires a new conversation")
+		}
 	}
 	target, found, err := resolveProductResumeTarget(userID, conversation)
 	if err != nil {

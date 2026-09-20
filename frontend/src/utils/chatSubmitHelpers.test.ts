@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
-import type { AgentQueryRequest } from '../services/api-types'
+import type { AgentQueryRequest, PollingEvent } from '../services/api-types'
 import type { ChatTab } from '../stores/useChatStore'
-import { applyAgentProfileBinding, buildAgentProfileChatRequest, remainingWorkflowContextAfterSubmission } from './chatSubmitHelpers'
+import { applyAgentProfileBinding, buildAgentProfileChatRequest, remainingWorkflowContextAfterSubmission, withoutOptimisticUserMessage } from './chatSubmitHelpers'
 
 describe('one-shot workflow references', () => {
   const hdfc = { presetId: 'hdfc', label: 'HDFC', workspacePath: 'Workflow/HDFC' }
@@ -79,4 +79,27 @@ describe('agent profile query binding', () => {
 
 it('carries a private account into product chat requests',()=>{
  expect(buildAgentProfileChatRequest({query:'hello',connection_id:'account-B'} as Parameters<typeof buildAgentProfileChatRequest>[0],'conversation','codex-cli','gpt-test')).toMatchObject({connection_id:'account-B',engine:'codex-cli'})
+})
+
+describe('withoutOptimisticUserMessage', () => {
+  const echo = (id: string, messageId?: string): PollingEvent => ({
+    id,
+    type: 'user_message',
+    data: { type: 'user_message', data: { content: 'can you test', ...(messageId ? { metadata: { message_id: messageId } } : {}) } },
+  } as unknown as PollingEvent)
+  const other = { id: 'evt-1', type: 'llm_generation_end' } as PollingEvent
+
+  it('drops the dead echo so a retry does not duplicate the bubble', () => {
+    expect(withoutOptimisticUserMessage([other, echo('user-message-1')], 'user-message-1')).toEqual([other])
+  })
+
+  it('keeps a server-confirmed echo whose twin was already suppressed', () => {
+    const events = [echo('user-message-1', 'msg-1')]
+    expect(withoutOptimisticUserMessage(events, 'user-message-1')).toBe(events)
+  })
+
+  it('leaves the timeline untouched when the echo is absent', () => {
+    const events = [other]
+    expect(withoutOptimisticUserMessage(events, 'user-message-9')).toBe(events)
+  })
 })

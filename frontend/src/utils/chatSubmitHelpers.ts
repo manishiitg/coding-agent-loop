@@ -355,6 +355,21 @@ export function createUserMessageEvent(
   }
 }
 
+// Drop a submit's optimistic bubble after the send failed. The dead echo is
+// a lie a retry would duplicate: the retry adds its own echo, and if the
+// failed attempt actually reached the server, the authoritative server-side
+// user_message renders instead — exactly one bubble either way. A stamped
+// echo is already server-confirmed (the live filter suppressed its twin and
+// transferred the delivery identity), so it stays.
+export function withoutOptimisticUserMessage(events: PollingEvent[], eventId: string): PollingEvent[] {
+  const target = events.find(event => event.id === eventId)
+  if (!target) return events
+  const inner = (target.data as unknown as Record<string, unknown> | undefined)?.data as Record<string, unknown> | undefined
+  const metadata = inner?.metadata as Record<string, unknown> | undefined
+  if (typeof metadata?.message_id === 'string' && metadata.message_id) return events
+  return events.filter(event => event.id !== eventId)
+}
+
 // Synthetic separator injected when a follow-up is sent on a restored session.
 // EventHierarchy uses this to collapse all events above it.
 export function createConversationResumedEvent(previousEventCount: number): PollingEvent {

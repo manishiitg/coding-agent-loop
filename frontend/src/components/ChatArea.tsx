@@ -47,6 +47,7 @@ import {
   buildAgentProfileChatRequest,
   resolveOrCreateTab,
   createUserMessageEvent,
+  withoutOptimisticUserMessage,
   validateExecutionGroups,
   isChatCompatiblePhase,
   remainingWorkflowContextAfterSubmission,
@@ -3252,6 +3253,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       } else {
         console.log('[WF_DEBUG] ERROR: Backend non-started response', { status: response.status, message: response.message, response })
         logger.error('ChatArea', 'Backend error:', response)
+        chatStore.patchTabEvents(tabSessionId, events => withoutOptimisticUserMessage(events, optimisticUserEventID))
         chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, response.message || `The server returned ${response.status || 'an error'}.`)])
         resetStreamingState(currentTab.tabId)
         return false
@@ -3264,6 +3266,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (isConfirmedUndeliveredSubmission(error)) acceptReceipt()
       console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
+      chatStore.patchTabEvents(tabSessionId, events => withoutOptimisticUserMessage(events, optimisticUserEventID))
       chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
       resetStreamingState(currentTab.tabId)
       return false

@@ -24,6 +24,8 @@ import { formatToolCallArguments, formatToolCallResult } from '../utils/toolCall
 import type { PollingEvent, TerminalSnapshot } from '../services/api-types'
 import { parseProductInteraction, type ProductInteraction } from '../../shared/session/interactions'
 import { ConversationContinuityNotice, isConversationContinuityNotice } from './ConversationContinuityNotice'
+import { DeliveryTick } from './events/system/DeliveryTick'
+import { deliveryTickState } from './events/system/deliveryTickState'
 
 // Message text sizes multiply --chat-scale (default 1), so a product can offer
 // a bigger reading size (SparkQuill's Child Mode "T" button sets it on the
@@ -206,25 +208,32 @@ const TranscriptEvent: React.FC<{
     return <ConversationContinuityNotice content={content} timestamp={timestamp} />
   }
 
-  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} compactBottom={compactUserBottom} />
+  const metadata = payload.metadata && typeof payload.metadata === 'object'
+    ? payload.metadata as Record<string, unknown>
+    : undefined
+  return <UserTranscriptMessage content={content || 'Message'} timestamp={timestamp} metadata={metadata} compactBottom={compactUserBottom} />
 }
 
 const USER_MESSAGE_PREVIEW_LIMIT = 480
 
-const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; compactBottom?: boolean }> = ({ content, timestamp, compactBottom = false }) => {
+const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; metadata?: Record<string, unknown>; compactBottom?: boolean }> = ({ content, timestamp, metadata, compactBottom = false }) => {
   const collapsible = shouldCollapseTranscriptUserMessage(content)
   const [expanded, setExpanded] = useState(false)
   const shown = collapsible && !expanded
     ? `${content.slice(0, USER_MESSAGE_PREVIEW_LIMIT).trimEnd()}…`
     : content
+  // The receipt row appears for a timestamped row or a row carrying a
+  // delivery verdict; plain untimestamped rows render exactly as before.
+  const showReceipt = Boolean(timestamp) || deliveryTickState(metadata) !== null
 
   if (!collapsible) {
     return (
       <div className={`ml-auto mt-2 max-w-[84%] text-right ${compactBottom ? 'mb-1' : 'mb-2'}`}>
         <div className="whitespace-pre-wrap break-words text-[length:calc(14px*var(--chat-scale,1))] leading-[calc(20px*var(--chat-scale,1))] text-foreground">{shown}</div>
-        {timestamp && (
+        {showReceipt && (
           <div className="mt-0.5 flex items-center justify-end gap-2 text-[10px] leading-4 text-muted-foreground">
             {timestamp && <span className="tabular-nums">{timestamp}</span>}
+            <DeliveryTick metadata={metadata} />
           </div>
         )}
       </div>
@@ -244,6 +253,7 @@ const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; comp
         </button>
         <div className="ml-auto flex items-center gap-2 text-[10px] leading-4 text-muted-foreground">
           {timestamp && <span className="tabular-nums">{timestamp}</span>}
+          <DeliveryTick metadata={metadata} />
         </div>
       </div>
     </article>

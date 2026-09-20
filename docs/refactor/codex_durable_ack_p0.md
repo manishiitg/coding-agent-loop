@@ -1,12 +1,14 @@
 # Durable submit acknowledgement: file-ack P0 + pane fast-confirm P1
 
-**Status: Codex + Pi + Muse implemented 2026-09-19 (all green
-including one live P0 run each). P1 demotion is OUT of scope by
-decision — pane fast-confirm stays where it is; only the
-durable-ack P0 rolls out per provider. Claude, Cursor planned
-after Muse. Live server↔chat e2e is parked: patches are staged
-under /tmp/durable-e2e (refresh before use — they predate Pi/Muse)
-for an isolated run once the other agent's work settles.**
+**Status: all five providers implemented 2026-09-19/20. P1
+demotion is OUT of scope by decision — pane fast-confirm stays
+where it is; only the durable-ack P0 rolls out per provider.
+Live P0 green for codex/pi/muse/Claude; live server↔chat e2e
+PASS for the same four (probe: /tmp/durable-e2e/probe.py).
+Cursor is implemented + unit-green, live P0/e2e blocked on login
+quota till 9/21/2026. 2026-09-20 fix: durability receipts are
+now consumed on every ingestion path including durable restore
+(see "Restore-path receipt consumption" below).**
 
 ## Problem
 
@@ -73,7 +75,7 @@ Phase 1 (pane, existing budgets, resubmit Enters only here):
 3. **No signal** (draft sitting, no transition, no queue) →
    fall through to phase 2.
 
-### Phase 2: observe-only file arbiter (up to 60s)
+### Phase 2: observe-only file arbiter (per-provider budget)
 
 Runs only when phase 1 does not report Submitted. Polls the
 provider file for the user row matching this send (offset
@@ -89,11 +91,16 @@ identical earlier message cannot confirm a new one):
 * Budget expires with no signal in either channel → real
   error with pane snapshot, as today.
 
-The 60s budget is named and env-tunable (same pattern as
-`CODING_SDK_TMUX_PROMPT_WAIT_SECONDS`-style settings); unit
-tests use injected probes, never sleeps. Worst-case caller
-block (~68s) lands only on the path that fails today in ~8s,
-and most of those become successes.
+The budget is named and env-tunable per provider (same pattern
+as `CODING_SDK_TMUX_PROMPT_WAIT_SECONDS`-style settings);
+unit tests use injected probes, never sleeps. Defaults:
+codex 180s (raised from 60 after a mid-turn steer landed at
+97s — the watch is secondary, so the generous budget only
+delays false negatives), cursor 180s (generous: busy path
+still unknown, revisit after live P0), pi/muse/Claude 60s;
+all clamped 5–300. Worst-case caller block lands only on the
+path that fails today in ~8s, and most of those become
+successes.
 
 ### Background audit (success path)
 
@@ -157,8 +164,10 @@ drops into observable drift without touching caller latency.
    1.2s — Muse records intake same-second even when busy).
    Server dispatch + watch test added; frontend untouched.
    Done.
-4. **Claude**: probe tmux-transcript terminal/user rows +
-   flush latency first; flagship blast radius. Not started.
+4. **Claude**: intake-row + queue-drain verdict over the
+   tmux transcript (see "Claude durable-ack P0" below). Live
+   P0 green (busy steer 8s, idle 300ms) + live e2e PASS
+   (fast ack 1.2s, durable 27.7s). Done.
 5. **Cursor**: full file-ack after all — the probe showed
    idle `store.db` commit in ~9.5s with a stable WAL-safe
    reader, so the "async commit" fear did not hold for the
@@ -173,7 +182,7 @@ SDK (`multi-llm-provider-go`):
 * [x] `pkg/adapters/codexcli`: pre-paste rollout offset
   snapshot per send (`codexcli_durable_ack.go`); phase-2
   user-row watcher, observe-only, `CODEX_DURABLE_ACK_SECONDS`
-  budget (default 60, clamped 5–300); `accepted-but-unflushed`
+  budget (default 180, clamped 5–300); `accepted-but-unflushed`
   outcome; message-text keyed queue check
   (`codexPaneShowsQueuedMessage`) because the positional
   matcher goes blind under the repainted ready footer.
@@ -206,18 +215,25 @@ Frontend (`mcp-agent-builder-go/frontend`):
 * [x] Tick render in `UserMessageEvent.tsx` (✓/✓✓/✓…/!)
   + tests.
 * [x] Upgrade handler at the top of `processEventsResponse`
-  (covers SSE, polling, reconnect replay, restore) +
-  suppressed-echo identity transfer so query-steered rows
-  can match their receipt.
+  (covers SSE, polling, reconnect replay) + suppressed-echo
+  identity transfer so query-steered rows can match their
+  receipt.
+* [x] 2026-09-20: receipt consumption on every remaining
+  ingestion path — `splitLiveInputConfirmations` /
+  `resolveLiveInputConfirmations` helpers wired into durable
+  restore (`sessionRestore.ts`, incl. live-tail identity
+  transfer onto content-only durable rows), workflow
+  hydration (`WorkflowLayout.tsx`), and older-page backfill
+  (`ChatArea.tsx`); receipts never enter any timeline. See
+  "Restore-path receipt consumption" below.
 
 ## Open questions
 
-* Decided: budget is `CODEX_DURABLE_ACK_SECONDS`, default
-  180 (raised from 60 after the live e2e saw a mid-turn
-  steer land at 97s — the watch is secondary, so the
-  generous budget only delays false negatives), clamped
-  5–300. Per-provider overrides still open (Cursor
-  post-hoc needs more).
+* Decided: budgets are per-provider, env-tunable, clamped
+  5–300: codex 180 (raised from 60 after the live e2e saw
+  a mid-turn steer land at 97s — the watch is secondary,
+  so the generous budget only delays false negatives),
+  cursor 180 (revisit after live P0), pi/muse/Claude 60.
 * Decided: `live_input_confirmed` reuses the event-store
   `PollingEvent` envelope — SSE, polling fallback, and
   reconnect replay all carry it with no new endpoint.
@@ -347,3 +363,67 @@ secondary + unknown busy path; revisit after live P0).
   `("cursor-cli", "auto")` entry) against a rebuilt
   isolated stack. Also confirm the queued-followups pane
   shape and tune the 180s default + 90s idle bound.
+
+## Restore-path receipt consumption (2026-09-20)
+
+Live symptom (desktop app, muse-cli): a steered message showed
+no tick, and the chat rendered `Unknown Event Type:
+live_input_confirmed` with the full receipt JSON. Backend proof
+was healthy (durable `confirmed` in 1.2s).
+
+Root cause: receipt consumption existed only in the live path
+(`processEventsResponse`). Every restore/hydration path
+appended the raw event window, so after any restore the receipt
+itself entered the timeline as an unknown row, and the rebuilt
+rows — synthesized from role/content-only durable carriers —
+lost the tick upgrade (no `message_id` to match).
+
+Fix (frontend, uncommitted — git frozen while a second agent
+works the tree):
+
+* `splitLiveInputConfirmations` /
+  `resolveLiveInputConfirmations` in `liveInputReceipt.ts`:
+  one choke point that filters receipts out of a window and
+  applies them to the rows they name.
+* Wired into durable restore (`sessionRestore.ts`: replace,
+  live-tail append, existing-tab refresh),
+  `transferLiveTailInputIdentity` copies `message_id` +
+  delivery facts from volatile live-tail user rows onto
+  same-content durable rows (plus any terminal verdict the
+  donor already carries), so ticks survive restores.
+* Same treatment for workflow hydration
+  (`WorkflowLayout.tsx`) and older-page backfill
+  (`ChatArea.tsx`), which shared the raw-append gap.
+
+Tests: 3 regression tests in `sessionRestore.test.ts` (real
+muse-cli wire shape; failed pre-fix, green post-fix) + a
+helper contract test in `liveInputReceipt.test.ts`. Focused
+suites 40/40 green, `tsc -b` + eslint clean. Full frontend
+suite: 10 failures in 5 unrelated files, all pre-existing
+(providers panel, webhooks feed, notifications, history-fetch
+args, workflow classification).
+
+## Transcript-view ticks (2026-09-20)
+
+Follow-up gap found live: the terminal transcript renders user
+rows itself (`UserTranscriptMessage` in
+`TerminalEventTranscript.tsx`) and never received the tick UI —
+`DeliveryTick` lived only in `UserMessageEvent.tsx`, which the
+transcript does not use for user rows. Log-verified on session
+`6de60b72…`: "ok" opened a muse-cli turn 09:55:43, "just
+testing" steered live 09:55:47 (HTTP 200 in 253ms), muse
+recorded `runtime.user_intent.accepted` — full chain healthy,
+nothing rendered.
+
+Fix: `DeliveryTick` + `deliveryTickState`/`deliveryTickTitle`
+extracted to shared modules (`DeliveryTick.tsx`,
+`deliveryTickState.ts`; `UserMessageEvent.tsx` re-imports,
+behavior unchanged), transcript user rows now take `metadata`
+and render the tick beside the timestamp in both plain and
+collapsible variants. Plain rows render byte-identical to
+before. Contract change, surfaced: the old transcript test
+asserted timestamp-only rows for accepted delivery statuses;
+it now asserts the fast tick (the `sending` case still asserts
+timestamp-only). 3 new tests in
+`TerminalEventTranscript.deliveryTick.test.tsx` (failed
+pre-fix); focused suites 50/50 green, `tsc -b` + eslint clean.

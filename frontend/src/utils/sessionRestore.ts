@@ -6,6 +6,7 @@ import { agentApi } from '../services/api'
 import type { ChatHistoryConversation, PollingEvent } from '../services/api-types'
 import type { ChatHistorySession } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
+import { applyLiveInputConfirmation, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withDeliveryConfirmation } from './liveInputReceipt'
 import axios from 'axios'
 
 const TAG = '[SessionRestore]'
@@ -158,7 +159,7 @@ async function doRestoreSession(
       if (conversation) {
         hydrateTabEventsFromConversation(sessionId, conversation, runtime.events)
       } else if (runtime.events.length > 0) {
-        chatStore.addTabEvents(sessionId, runtime.events)
+        appendRestoredLiveTail(sessionId, runtime.events)
       }
       if (runtime.last_processed_index !== undefined) {
         chatStore.setTabLastEventIndex(sessionId, runtime.last_processed_index)
@@ -318,6 +319,68 @@ function isAcceptedOptimisticLiveInput(event: PollingEvent): boolean {
     && ACCEPTED_LIVE_INPUT_STATUSES.has(String(metadata.delivery_status || ''))
 }
 
+// appendRestoredLiveTail appends a raw live-tail window the same way the live
+// path ingests it: durability receipts never enter the timeline and upgrade
+// the merged rows they name. A receipt-only window appends nothing. The
+// immediate append keeps row visibility synchronous so a receipt in this
+// same window can match a row it arrived with; without receipts the call
+// stays on the micro-batched path exactly as before.
+export function appendRestoredLiveTail(sessionId: string, incoming: ReadonlyArray<PollingEvent>) {
+  const chatStore = useChatStore.getState()
+  const { timelineEvents, confirmations } = splitLiveInputConfirmations(incoming)
+  if (confirmations.length === 0) {
+    if (timelineEvents.length > 0) chatStore.addTabEvents(sessionId, timelineEvents)
+    return
+  }
+  if (timelineEvents.length > 0) chatStore._addTabEventsImmediate(sessionId, timelineEvents)
+  let upgraded = transferLiveTailInputIdentity(chatStore.getTabEvents(sessionId), timelineEvents)
+  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
+  chatStore.setTabEvents(sessionId, upgraded)
+}
+
+// transferLiveTailInputIdentity copies live-input identity (message_id and
+// delivery facts) from volatile live-tail user rows onto restored rows with
+// the same content. Durable conversation carriers keep role/content only, so
+// without the transfer a restored row can never match the durability receipt
+// that names it and the tick is lost on every restore. Content matching
+// carries the same identical-resend ambiguity the live echo suppression
+// already accepts; a mismatch only costs a tick, never a row.
+function transferLiveTailInputIdentity(
+  restored: PollingEvent[],
+  liveTails: ReadonlyArray<PollingEvent>,
+): PollingEvent[] {
+  const donors = liveTails.filter(event =>
+    event.type === 'user_message' && String(eventMetadata(event).message_id || '').trim())
+  if (donors.length === 0) return restored
+  return restored.map(row => {
+    if (row.type !== 'user_message' || String(eventMetadata(row).message_id || '').trim()) return row
+    const content = String(eventPayload(row).content || '').trim()
+    if (!content) return row
+    const donor = donors.find(candidate => String(eventPayload(candidate).content || '').trim() === content)
+    if (!donor) return row
+    const metadata = eventMetadata(donor)
+    const messageId = String(metadata.message_id || '').trim()
+    const stamped = stampLiveInputIdentity(row, messageId,
+      typeof metadata.delivery_status === 'string' && metadata.delivery_status ? metadata.delivery_status : 'sent_to_cli',
+      typeof metadata.provider === 'string' ? metadata.provider : undefined)
+    // A donor that already carries a terminal verdict (a live-upgraded row
+    // surviving in the tab) transfers the verdict too, so the tick survives
+    // even when the receipt itself fell out of the re-fetched window.
+    const verdict = metadata.confirmation
+    if (verdict === 'confirmed' || verdict === 'accepted_but_unflushed' || verdict === 'failed') {
+      const latencyRaw = metadata.latency_ms
+      return withDeliveryConfirmation(stamped, {
+        messageId,
+        outcome: verdict,
+        proofSource: typeof metadata.proof_source === 'string' ? metadata.proof_source : undefined,
+        latencyMs: typeof latencyRaw === 'number' ? latencyRaw : undefined,
+        provider: typeof metadata.provider === 'string' ? metadata.provider : undefined,
+      })
+    }
+    return stamped
+  })
+}
+
 function durableLiveInputMessageIDs(conversation: ChatHistoryConversation): Set<string> {
   const ids = new Set<string>()
   for (const event of (conversation.ui_events as PollingEvent[] | undefined) || []) {
@@ -420,7 +483,12 @@ function hydrateTabEventsFromConversation(
     conversation,
   )
 
-  chatStore.setTabEvents(sessionId, events)
+  const withIdentity = transferLiveTailInputIdentity(events, [
+    ...currentEvents,
+    ...liveEvents,
+    ...((conversation.ui_events as PollingEvent[] | undefined) || []),
+  ])
+  chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(withIdentity))
   // Restored conversation rows are synthesized from durable history, while
   // tabEventIndices is a cursor into the backend's volatile raw event store.
   // Those sequences are unrelated. Using history.length here can put the
@@ -575,8 +643,8 @@ export async function hydrateTabEvents(
   if (response.events.length > 0) {
     // A missing durable-history response must not replace an already restored
     // transcript with the server's bounded live tail.
-    if (chatStore.getTabEvents(sessionId).length > 0) chatStore.addTabEvents(sessionId, response.events)
-    else chatStore.setTabEvents(sessionId, response.events)
+    if (chatStore.getTabEvents(sessionId).length > 0) appendRestoredLiveTail(sessionId, response.events)
+    else chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(response.events))
     // This is a live event window, not a paged durable conversation. A cursor
     // left over from an earlier resume must not offer unrelated history here.
     chatStore.setTabHistoryPagination(sessionId, null)

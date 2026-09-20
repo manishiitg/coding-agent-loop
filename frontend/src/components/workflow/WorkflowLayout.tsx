@@ -122,7 +122,8 @@ import {
 } from '../../services/api-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
-import { hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
+import { appendRestoredLiveTail, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
+import { resolveLiveInputConfirmations } from '../../utils/liveInputReceipt'
 import { isReadOnlyWorkflowRunTab, workflowTabsNeedingHydration, hydrateWorkflowTabsPrioritized } from '../../utils/workflowTabHydration'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
 // Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
@@ -540,7 +541,7 @@ async function restoreWorkflowStateFromEvents(
   activeTabOnly = false,
 ): Promise<void> {
   try {
-    const { addTabEvents, setTabEvents, setTabLastEventIndex, getTabLastEventIndex, getTabEvents } = useChatStore.getState()
+    const { setTabEvents, setTabLastEventIndex, getTabLastEventIndex, getTabEvents } = useChatStore.getState()
     const workflowStore = useWorkflowStore.getState()
 
     // Transcript hydration and canvas-state restoration are separate concerns.
@@ -581,9 +582,9 @@ async function restoreWorkflowStateFromEvents(
     const existingEvents = getTabEvents(sessionId)
     if (!allowChatHistoryFallback) {
       if (existingEvents.length === 0) {
-        setTabEvents(sessionId, events)
+        setTabEvents(sessionId, resolveLiveInputConfirmations(events))
       } else {
-        addTabEvents(sessionId, events)
+        appendRestoredLiveTail(sessionId, events)
       }
     }
     // CRITICAL: Use last_processed_index from backend (not events.length - 1)

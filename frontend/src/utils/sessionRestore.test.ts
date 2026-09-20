@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   chatTabs: {} as Record<string, { sessionId: string; metadata?: { isViewOnly?: boolean } }>,
   addTabEvents: vi.fn(),
+  _addTabEventsImmediate: vi.fn(),
   setTabEvents: vi.fn(),
   setTabLastEventIndex: vi.fn(),
   setTabHasMoreOlderEvents: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('../stores/useChatStore', () => ({
     getState: () => ({
       chatTabs: mocks.chatTabs,
       addTabEvents: mocks.addTabEvents,
+      _addTabEventsImmediate: mocks._addTabEventsImmediate,
       setTabEvents: mocks.setTabEvents,
       setTabLastEventIndex: mocks.setTabLastEventIndex,
       setTabHasMoreOlderEvents: mocks.setTabHasMoreOlderEvents,
@@ -744,5 +746,119 @@ describe('accepted live-input reconciliation', () => {
     const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string }>]
     expect(events.some(event => event.id === 'user-message-local-pr79')).toBe(false)
     expect(events.some(event => event.type === 'user_message')).toBe(true)
+  })
+})
+
+describe('hydrateTabEvents live-input durability receipts', () => {
+  const steerMessageId = 'steer-message-1789877212206170000'
+  const liveUserRow = () => ({
+    id: 'backend-steer-echo-1',
+    type: 'user_message',
+    timestamp: '2026-09-20T09:36:50.000+05:30',
+    data: { data: { content: 'ok dont run workflow', metadata: {
+      source: 'coding_agent_live_input',
+      delivery_status: 'sent_to_cli',
+      provider: 'muse-cli',
+      message_id: steerMessageId,
+      confirmation: 'fast',
+    } } },
+  })
+  // Wire shape captured from a real muse-cli durable confirm: the receipt
+  // carries no chat content, only the verdict for the row it names.
+  const confirmedWireEvent = () => ({
+    id: `${steerMessageId}:confirmed`,
+    type: 'live_input_confirmed',
+    timestamp: '2026-09-20T09:36:52.208807+05:30',
+    data: {
+      type: 'live_input_confirmed',
+      timestamp: '2026-09-20T09:36:52.208807+05:30',
+      event_index: 0,
+      data: {
+        timestamp: '2026-09-20T09:36:52.208801+05:30',
+        hierarchy_level: 0,
+        metadata: {
+          confirmation: 'confirmed',
+          latency_ms: 1225,
+          message_id: steerMessageId,
+          proof_source: '/tmp/session.jsonl',
+          provider: 'muse-cli',
+          source: 'coding_agent_live_input',
+        },
+        message_id: steerMessageId,
+        outcome: 'confirmed',
+        proof_source: '/tmp/session.jsonl',
+        latency_ms: 1225,
+        provider: 'muse-cli',
+      },
+      hierarchy_level: 0,
+      session_id: 'restore-receipts',
+      component: 'coding_agent_live_input',
+    },
+  })
+  const notFoundError = () => ({ isAxiosError: true, response: { status: 404 } })
+  const storedRows = () => mocks.setTabEvents.mock.calls.map(([, events]) => events).flat()
+
+  beforeEach(() => {
+    vi.resetAllMocks()
+    mocks.chatTabs = {}
+    mocks.getTabEvents.mockReturnValue([])
+    mocks.getChatHistoryResumeConversation.mockRejectedValue(notFoundError())
+  })
+
+  it('consumes live_input_confirmed on the empty-tab replace path', async () => {
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [liveUserRow(), confirmedWireEvent()],
+      last_processed_index: 1,
+      session_status: 'idle',
+    })
+
+    await hydrateTabEvents('restore-receipts', { fallbackToChatHistory: true })
+
+    expect(mocks.setTabEvents).toHaveBeenCalled()
+    const window = storedRows()
+    expect(window.some(event => event?.type === 'live_input_confirmed')).toBe(false)
+    const row = window.find(event => event?.type === 'user_message')
+    expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
+    expect(row?.data?.data?.metadata?.proof_source).toBe('/tmp/session.jsonl')
+  })
+
+  it('upgrades merged rows on the existing-tab append path', async () => {
+    mocks.getTabEvents.mockReturnValue([liveUserRow()])
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [confirmedWireEvent()],
+      last_processed_index: 1,
+      session_status: 'idle',
+    })
+
+    await hydrateTabEvents('restore-receipts', { fallbackToChatHistory: true })
+
+    const appended = [...mocks.addTabEvents.mock.calls, ...mocks._addTabEventsImmediate.mock.calls]
+      .map(([, events]) => events).flat()
+    expect(appended.some(event => event?.type === 'live_input_confirmed')).toBe(false)
+    const row = storedRows().find(event => event?.type === 'user_message')
+    expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
+  })
+
+  it('restores the tick onto durable rows via the live-tail identity', async () => {
+    // A durable carrier keeps role/content only; the live tail re-fetches
+    // the backend row with the delivery identity plus the receipt.
+    const durableRow = {
+      id: 'durable-user-1',
+      type: 'user_message',
+      timestamp: '2026-09-20T09:36:50.000+05:30',
+      data: { data: { content: 'ok dont run workflow' } },
+    }
+    mocks.getTabEvents.mockReturnValue([durableRow])
+    mocks.getRecentSessionEvents.mockResolvedValue({
+      events: [liveUserRow(), confirmedWireEvent()],
+      last_processed_index: 2,
+      session_status: 'idle',
+    })
+
+    await hydrateTabEvents('restore-receipts', { fallbackToChatHistory: true })
+
+    const row = storedRows().find(event => event?.id === 'durable-user-1')
+    expect(row?.data?.data?.metadata?.message_id).toBe(steerMessageId)
+    expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
   })
 })

@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
 import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codingCliTranscriptReconciliation'
-import { applyLiveInputConfirmation, readLiveInputConfirmation, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
+import { applyLiveInputConfirmation, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
@@ -941,7 +941,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       )
       // The page marker is useful only when initially hydrating an otherwise
       // empty transcript. Do not repeat it between real user/assistant pages.
-      const olderEvents = conversationToRestoredEvents(conversation)
+      const olderEvents = resolveLiveInputConfirmations(conversationToRestoredEvents(conversation))
         .filter((event) => event.type !== 'conversation_resumed')
       const pagination = conversation.history_pagination
       const chatStore = useChatStore.getState()

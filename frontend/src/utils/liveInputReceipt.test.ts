@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyLiveInputConfirmation, readLiveInputConfirmation, stampLiveInputIdentity, withLiveInputReceipt } from './liveInputReceipt'
+import { applyLiveInputConfirmation, readLiveInputConfirmation, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from './liveInputReceipt'
 
 describe('withLiveInputReceipt', () => {
   it('links the optimistic row to the server message identity', () => {
@@ -98,5 +98,17 @@ describe('delivery confirmation', () => {
     expect(readLiveInputConfirmation({ id: 'x', type: 'user_message', data: {} })).toBeNull()
     expect(readLiveInputConfirmation({ id: 'x', type: 'live_input_confirmed', data: { data: { outcome: 'confirmed' } } })).toBeNull()
     expect(readLiveInputConfirmation({ id: 'x', type: 'live_input_confirmed', data: { data: { message_id: 's', outcome: 'maybe' } } })).toBeNull()
+  })
+
+  it('splits receipts from timeline rows so restore paths consume them', () => {
+    const row = { id: 'user-message-1', type: 'user_message', data: { data: { content: 'steer', metadata: { source: 'coding_agent_live_input', message_id: 'steer-1', confirmation: 'fast' } } } }
+    const receipt = { id: 'steer-1:confirmed', type: 'live_input_confirmed', data: { data: { message_id: 'steer-1', outcome: 'confirmed', proof_source: '/tmp/r.jsonl', latency_ms: 300, provider: 'codex-cli' } } }
+    const { timelineEvents, confirmations } = splitLiveInputConfirmations([row, receipt])
+    expect(timelineEvents).toEqual([row])
+    expect(confirmations).toEqual([{ messageId: 'steer-1', outcome: 'confirmed', proofSource: '/tmp/r.jsonl', latencyMs: 300, provider: 'codex-cli' }])
+
+    const resolved = resolveLiveInputConfirmations([row, receipt])
+    expect(resolved).toHaveLength(1)
+    expect(resolved[0].data).toMatchObject({ data: { metadata: { confirmation: 'confirmed', proof_source: '/tmp/r.jsonl' } } })
   })
 })

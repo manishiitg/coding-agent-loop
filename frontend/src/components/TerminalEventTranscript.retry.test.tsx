@@ -61,11 +61,19 @@ describe('shared transcript failure retry', () => {
     expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')).toBeNull()
   })
 
-  it.each(['sending', 'sent_to_cli', 'queued_for_injection', 'next_turn_started'])('shows only the timestamp for delivery status %s', async (status) => {
+  it('shows only the timestamp while delivery is still sending', async () => {
+    const host = await mount([event('user', 'user_message', {
+      content: 'Check the browser', metadata: { delivery_status: 'sending' },
+    })])
+    expect(host.textContent).toBe(`Check the browser${new Date('2026-09-10T00:00:00Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`)
+    expect(host.querySelector('[data-testid="delivery-tick"]')).toBeNull()
+  })
+
+  it.each(['sent_to_cli', 'queued_for_injection', 'next_turn_started'])('shows the fast tick for delivery status %s', async (status) => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: status },
     })])
-    expect(host.textContent).toBe(`Check the browser${new Date('2026-09-10T00:00:00Z').toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`)
+    expect(host.querySelector('[data-testid="delivery-tick"]')?.textContent).toBe('✓')
   })
 
   it('retries the latest failed turn once while acknowledgement is pending', async () => {

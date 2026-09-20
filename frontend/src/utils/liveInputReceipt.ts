@@ -80,6 +80,38 @@ export function stampLiveInputIdentity(event: PollingEvent, messageId: string, d
   } } } as PollingEvent['data'] }
 }
 
+// splitLiveInputConfirmations partitions a raw event window into timeline
+// rows plus parsed durability verdicts. Every ingestion path (live
+// SSE/polling, durable restore, workflow hydration, older-page backfill)
+// must run its window through here: a live_input_confirmed event carries
+// no chat content and must never enter the timeline — it only upgrades
+// the user_message row it names.
+export function splitLiveInputConfirmations(events: ReadonlyArray<PollingEvent>): {
+  timelineEvents: PollingEvent[]
+  confirmations: LiveInputConfirmationUpdate[]
+} {
+  const timelineEvents: PollingEvent[] = []
+  const confirmations: LiveInputConfirmationUpdate[] = []
+  for (const event of events) {
+    const update = readLiveInputConfirmation(event)
+    if (update) confirmations.push(update)
+    else timelineEvents.push(event)
+  }
+  return { timelineEvents, confirmations }
+}
+
+// resolveLiveInputConfirmations consumes durability receipts inside one
+// closed event set: receipts are filtered out of the timeline and applied
+// to the rows they name. Use when the whole set lands at once (restore
+// replace, page backfill); append paths must apply against the merged
+// store instead (see appendRestoredLiveTail in sessionRestore).
+export function resolveLiveInputConfirmations(events: PollingEvent[]): PollingEvent[] {
+  const { timelineEvents, confirmations } = splitLiveInputConfirmations(events)
+  let upgraded = timelineEvents
+  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
+  return upgraded
+}
+
 // readLiveInputConfirmation parses a live_input_confirmed wire event.
 // It accepts both the top-level fields and the metadata mirror the
 // backend sets, since SSE and polling serialize the same envelope.

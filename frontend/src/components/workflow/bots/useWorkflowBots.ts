@@ -193,7 +193,6 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // malformed". Only this original authorize URL is safe to paste anywhere.
   const [gmailAuthUrl, setGmailAuthUrl] = useState<string | null>(null)
   const [gmailTestedTo, setGmailTestedTo] = useState<string | null>(null)
-  const [gmailOpen, setGmailOpen] = useState(section === 'email')
 
   // ── Loaders ───────────────────────────────────────────────────────────────
   // The bot manager still enforces allowed_emails on every incoming message
@@ -1172,7 +1171,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     // routes
     myRoutes, workflowRoutes, removeRoute, updateRoute, addSlackRoute, addWaRoute,
     // gmail
-    gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
+    gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailTestPassed, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
     // gmail senders (multi-account)

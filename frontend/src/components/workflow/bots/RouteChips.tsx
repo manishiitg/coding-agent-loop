@@ -15,6 +15,8 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
   const id = routeId(route)
   const expanded = expandedChip === id
   const saving = routeSaving === id
+  const foreign = route.current_target === false
+  const locked = readOnly || foreign
   const channelLabel = route.kind === 'slack' ? route.key : `@${route.key}`
   const Icon = route.kind === 'slack' ? MessageSquare : Phone
   const platformLabel = route.kind === 'slack' ? 'Slack' : 'WhatsApp'
@@ -40,10 +42,10 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
           <button
             type="button"
             onClick={() => void removeRoute(route)}
-            disabled={readOnly}
+            disabled={locked}
             className="shrink-0 rounded-md p-1 text-muted-foreground transition-colors hover:bg-red-500/10 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-50 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
             aria-label={`Stop answering on ${platformLabel} ${channelLabel}`}
-            title={readOnly ? READ_ONLY_TITLE : 'Remove from this workflow'}
+            title={readOnly ? READ_ONLY_TITLE : foreign ? 'This route answers for another workflow' : 'Remove from this workflow'}
           >
             <Trash2 className="h-3.5 w-3.5" />
           </button>
@@ -54,8 +56,8 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
           {route.kind === 'slack' && (
             <label className="w-full text-muted-foreground">
               Blocked email addresses
-              <input aria-label="Blocked email addresses" className="mt-1 w-full rounded border border-border bg-background px-2 py-1" value={blockedEmails} disabled={readOnly || saving} onChange={e => setBlockedEmails(e.target.value)} placeholder="person@example.com, another@example.com" />
-              <button type="button" className="mt-1 rounded border border-border px-2 py-1" disabled={readOnly || saving} onClick={() => void updateRoute(route, { blocked_emails: blockedEmails.split(',').map(email => email.trim()).filter(Boolean) })}>Save</button>
+              <input aria-label="Blocked email addresses" className="mt-1 w-full rounded border border-border bg-background px-2 py-1" value={blockedEmails} disabled={locked || saving} onChange={e => setBlockedEmails(e.target.value)} placeholder="person@example.com, another@example.com" />
+              <button type="button" className="mt-1 rounded border border-border px-2 py-1" disabled={locked || saving} onClick={() => void updateRoute(route, { blocked_emails: blockedEmails.split(',').map(email => email.trim()).filter(Boolean) })}>Save</button>
               <span className="mt-1 block">Everyone in the channel is allowed unless blocked.</span>
             </label>
           )}
@@ -64,7 +66,7 @@ export function RouteChip({ bots, route }: { bots: RouteChipBots; route: Workflo
               <input
                 type="checkbox"
                 checked={!!route.send_full_details}
-                disabled={readOnly || saving}
+                disabled={locked || saving}
                 onChange={e => void updateRoute(route, { send_full_details: e.target.checked })}
                 className="h-3.5 w-3.5"
               />

@@ -1,5 +1,5 @@
 import { AlertCircle, ArrowLeft, MessageSquare, Phone } from 'lucide-react'
-import { useState } from 'react'
+import { usePersistentTab } from '../../hooks/usePersistentTab'
 import { useWorkflowBots, type BotRouteTarget } from './bots/useWorkflowBots'
 import { SlackSetup } from './bots/SlackSetup'
 import { WhatsAppSetup } from './bots/WhatsAppSetup'
@@ -35,7 +35,7 @@ const CHANNEL_TABS: Array<{ value: BotChannel; label: string }> = [
 export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = 'workflow', onAsk, fixedChannel }: WorkflowBotsPanelProps) {
   const bots = useWorkflowBots(workspacePath, target, 'bots')
   const { setup, setSetup, workflowId, workflowRoutes, routeError, waRoutingError } = bots
-  const [internalChannel, setInternalChannel] = useState<BotChannel>('slack')
+  const [internalChannel, setInternalChannel] = usePersistentTab<BotChannel>('agentworks.tab.bots-channel', 'slack', ['slack', 'whatsapp'])
   const channel = fixedChannel ?? internalChannel
 
   const askSlackSetup = (
@@ -86,7 +86,7 @@ export default function WorkflowBotsPanel({ workspacePath, target, scopeNoun = '
           <h3 className="text-xs font-medium text-muted-foreground">{target ? `Routes for this ${scopeNoun}` : 'Workflow routes'}</h3>
           {routes.length > 0 ? (
             <div className="grid gap-2">
-              {routes.map(route => <RouteChip key={routeId(route)} bots={{ ...bots, readOnly: bots.readOnly || !route.current_target }} route={route} />)}
+              {routes.map(route => <RouteChip key={routeId(route)} bots={bots} route={route} />)}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">{workflowId ? 'No routes yet.' : `Select a ${scopeNoun} to manage routes.`}</p>

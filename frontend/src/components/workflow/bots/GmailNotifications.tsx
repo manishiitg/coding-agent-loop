@@ -1,10 +1,17 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, ChevronRight, Loader2, Mail, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Loader2, Mail, RotateCcw } from 'lucide-react'
 import { agentApi } from '../../../services/api'
 import type { GmailConnection, GoogleServiceGrant } from '../../../services/api-types'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
+import { Checkbox } from '../../ui/checkbox'
+import { FormSection } from '../../ui/FormSection'
+import { Input } from '../../ui/Input'
+import { Label } from '../../ui/label'
+import { Textarea } from '../../ui/Textarea'
+import { ToggleRow } from '../../ui/ToggleRow'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
+import { AskAIButton } from '../AskAIButton'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 import { GmailSetupGuide } from './GmailSetupGuide'
@@ -157,7 +164,7 @@ function gmailBackendLabel(backend: string | undefined): { name: string; install
 
 type GmailNotificationsBots = Pick<WorkflowBots,
   | 'readOnly'
-  | 'gmailOpen' | 'setGmailOpen' | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
+  | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
   | 'gmailLoading' | 'gmailChecking' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
   | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'loadGmail' | 'saveGmail' | 'testGmail'
   | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending' | 'gmailAuthUrl'
@@ -195,21 +202,28 @@ function SignInLinkBox({ url }: { url: string }) {
         <code className="flex-1 truncate rounded bg-background px-2 py-1 font-mono text-[11px] text-muted-foreground">
           {url}
         </code>
-        <button
+        <Button
+          variant="outline"
+          size="sm"
           onClick={handleCopy}
-          className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+          className="shrink-0"
         >
           {copyState === 'copied' ? 'Copied!' : copyState === 'failed' ? 'Copy failed' : 'Copy link'}
-        </button>
+        </Button>
       </div>
     </div>
   )
 }
 
-export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
+export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow', onAsk }: {
+  bots: GmailNotificationsBots
+  workspacePath: string | null
+  scopeNoun?: 'workflow' | 'project'
+  onAsk?: (message: string) => void | Promise<void>
+}) {
   const {
     readOnly,
-    gmailOpen, setGmailOpen, gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
+    gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
     gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
     gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
     gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
@@ -308,58 +322,32 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
   }
 
   return (
-    <div className="rounded-md border border-border">
-      <button
-        type="button"
-        onClick={() => setGmailOpen(open => !open)}
-        aria-expanded={gmailOpen}
-        className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-muted/50"
-      >
-        <ChevronRight className={`h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform ${gmailOpen ? 'rotate-90' : ''}`} />
-        <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-        Gmail notifications
-        <span className="font-normal text-muted-foreground">— shared by all projects and workflows</span>
-        <span className="flex-1" />
-        <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${gmailConfig.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
-          <span className={`h-1.5 w-1.5 rounded-full ${gmailConfig.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
-          {gmailConfig.enabled ? 'On' : 'Off'}
-        </span>
-      </button>
-      {gmailOpen && (
-        <div className="space-y-4 border-t border-border p-3">
-          {gmailLoading ? (
-            <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
-          ) : (
-            <>
-              <p className="text-xs text-muted-foreground">Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and product chat. Turn this off to stop all outbound email. Email replies do not resume an agent.</p>
-              {gmailError && <StatusBanner tone="error">{gmailError}</StatusBanner>}
-              {gmailSuccess && <StatusBanner tone="success">{gmailSuccess}</StatusBanner>}
-              <Card className="p-4">
-                <div className="flex items-center justify-between gap-3">
-                  <div>
-                    <h4 className="text-sm font-medium">Enable Gmail</h4>
-                    <p className="mt-0.5 text-xs text-muted-foreground">Available to notify_user across workflows and product chats.</p>
-                  </div>
-                  <label className={`relative inline-flex items-center ${!gmailConfig.enabled && !gmailCanEnable ? 'cursor-not-allowed' : 'cursor-pointer'}`}>
-                    <input type="checkbox" checked={gmailConfig.enabled} disabled={readOnly || (!gmailConfig.enabled && !gmailCanEnable)} onChange={event => setGmailConfig({ ...gmailConfig, enabled: event.target.checked })} className="peer sr-only" />
-                    <div className="h-6 w-11 rounded-full bg-gray-200 after:absolute after:left-[2px] after:top-[2px] after:h-5 after:w-5 after:rounded-full after:border after:border-gray-300 after:bg-white after:transition-all after:content-[''] peer-checked:bg-blue-600 peer-checked:after:translate-x-full peer-checked:after:border-white peer-disabled:opacity-40 dark:bg-gray-700" />
-                  </label>
-                </div>
-                {!gmailConfig.enabled && !gmailCanEnable && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Sign in a Gmail account below to enable; it switches on automatically once one is connected.</p>}
-              </Card>
-              <Card className="p-4">
-                <div className="flex items-center justify-between gap-2">
-                  <div>
-                    <h4 className="text-sm font-medium">Connection</h4>
-                    <p className="mt-0.5 text-xs text-muted-foreground">{gmailBackendLabel(gmailConfig.auth.backend).name} CLI on the server host.</p>
-                  </div>
-                  <div className="flex items-center gap-2 text-xs">
-                    {gmailChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className={`h-2 w-2 rounded-full ${gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope ? 'bg-green-500' : 'bg-amber-500'}`} />}
-                    <span>{!gmailConfig.auth.gws_installed ? `${gmailBackendLabel(gmailConfig.auth.backend).name} not installed` : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
-                    <button onClick={() => loadGmail(true)} disabled={gmailChecking} className="rounded p-1 text-muted-foreground hover:text-foreground" aria-label="Refresh Gmail connection"><RotateCcw className="h-3.5 w-3.5" /></button>
-                  </div>
-                </div>
-              </Card>
+    <div className="space-y-4">
+      {gmailLoading ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
+      ) : (
+        <>
+          <section className="overflow-hidden rounded-md border border-border bg-background">
+            <div className="px-3 py-2.5">
+              <div className="flex items-center gap-2">
+                <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
+                <span className="text-sm font-medium text-foreground">Gmail</span>
+                <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${gmailConfig.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
+                  <span className={`h-1.5 w-1.5 rounded-full ${gmailConfig.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
+                  {gmailConfig.enabled ? 'On' : 'Off'}
+                </span>
+                <span className="flex-1" />
+                <AskAIButton
+                  workspacePath={workspacePath}
+                  onAsk={onAsk}
+                  label={scopeNoun === 'project' ? 'Ask Crew to set up Gmail' : 'Ask Builder to set up Gmail'}
+                  message="Help me set up Gmail notifications: connect a sending account (Google Cloud OAuth client upload and Google sign-in), choose default recipients, and send a test email. Guide me through the settings UI without requesting secrets in chat."
+                />
+              </div>
+            </div>
+            <div className="space-y-2 px-3 pb-3">
+              <h3 className="text-xs font-medium text-muted-foreground">Sending accounts</h3>
+              <p className="text-xs leading-5 text-muted-foreground">Which mailbox notifications are sent from. Upload the Google Cloud client file for a mailbox and it signs in immediately — a second upload for the same mailbox never replaces an existing client by accident. A workflow may pick a specific account; otherwise the default is used.</p>
               {!(gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope) && gmailConnections.length === 0 && (
                 <Card className="border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-100">
                   <div className="flex gap-2"><AlertTriangle className="h-4 w-4 flex-shrink-0" /><div><strong>No account connected yet.</strong> Add a sending account below and sign in with Google. <code>{gmailBackendLabel(gmailConfig.auth.backend).install}</code> must be installed on the server host.</div></div>
@@ -368,15 +356,6 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
 
               <GmailSetupGuide />
 
-              <Card className="space-y-3 p-4">
-                <div>
-                  <h4 className="text-sm font-medium">Sending accounts</h4>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Which mailbox notifications are sent from. Upload the Google Cloud client file for a mailbox
-                    and it signs in immediately — a second upload for the same mailbox never replaces an existing
-                    client by accident. A workflow may pick a specific account; otherwise the default is used.
-                  </p>
-                </div>
                 {gmailOAuthClientError && <StatusBanner tone="error">{gmailOAuthClientError}</StatusBanner>}
                 {newClientParseError && <StatusBanner tone="error">{newClientParseError}</StatusBanner>}
 
@@ -449,54 +428,62 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                         )}
 
                         <div className="mt-2 flex flex-wrap gap-2">
-                          <button
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => connectGmailAccount(conn.id)}
                             disabled={readOnly || gmailAuthPending !== null}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
-                            className="rounded border border-primary px-2 py-1 text-xs text-primary hover:bg-primary/10 disabled:opacity-40"
+                            className="border-primary text-primary hover:bg-primary/10 hover:text-primary"
                           >
                             {gmailAuthPending === conn.id ? 'Waiting for Google…' : conn.ready ? 'Reconnect' : 'Sign in with Google'}
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => runGmailConnectionAction(conn.id, () => agentApi.setDefaultGmailConnection(conn.id))}
                             disabled={readOnly || conn.is_default || !conn.enabled || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                           >
                             Make default
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => runGmailConnectionAction(conn.id, () => agentApi.testGmailConnectionById(conn.id, gmailConfig.default_to || undefined))}
                             disabled={readOnly || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                           >
                             Send test
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => runGmailConnectionAction(conn.id, () => agentApi.updateGmailConnection(conn.id, { enabled: !conn.enabled }))}
                             disabled={readOnly || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                           >
                             {conn.enabled ? 'Disable' : 'Enable'}
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => editingGrantsConnId === conn.id ? setEditingGrantsConnId(null) : openEditGrants(conn)}
                             disabled={readOnly || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : 'Change what this connection is authorized for. Saving only updates the request — Google requires a fresh Reconnect afterward for it to take effect.'}
-                            className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                           >
                             {editingGrantsConnId === conn.id ? 'Cancel edit' : 'Edit access'}
-                          </button>
-                          <button
+                          </Button>
+                          <Button
+                            variant="outline"
+                            size="sm"
                             onClick={() => handleRemoveMailbox(conn)}
                             disabled={readOnly || gmailConnectionsBusy === conn.id}
                             title={readOnly ? READ_ONLY_TITLE : undefined}
-                            className="ml-auto rounded border border-border px-2 py-1 text-xs text-red-600 hover:bg-red-50 disabled:opacity-40 dark:text-red-400 dark:hover:bg-red-900/20"
+                            className="ml-auto text-red-600 hover:bg-red-50 hover:text-red-700 dark:text-red-400 dark:hover:bg-red-900/20 dark:hover:text-red-300"
                           >
                             Remove
-                          </button>
+                          </Button>
                         </div>
 
                         {editGrantsSavedConnId === conn.id && (
@@ -507,49 +494,51 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
 
                         {editingGrantsConnId === conn.id && (
                           <div className="mt-2 space-y-1.5 rounded-md border border-border bg-muted/20 p-2">
-                            <label className="flex items-start gap-2 text-xs text-muted-foreground">
-                              <input
-                                type="checkbox"
+                            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                              <Checkbox
+                                id={`edit-allow-read-${conn.id}`}
                                 checked={editAllowRead}
                                 disabled={readOnly}
-                                onChange={event => setEditAllowRead(event.target.checked)}
+                                onCheckedChange={value => setEditAllowRead(value === true)}
                                 className="mt-0.5"
                               />
-                              <span>Also allow <strong>reading</strong> this mailbox</span>
-                            </label>
+                              <label htmlFor={`edit-allow-read-${conn.id}`}>Also allow <strong>reading</strong> this mailbox</label>
+                            </div>
                             {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
                               <div className="space-y-1.5 border-t border-border pt-1.5">
                                 {Object.entries(serviceCatalog).map(([service, label]) => {
                                   const grant = editServices[service]
                                   return (
                                     <div key={service} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                                      <label className="flex items-center gap-2">
-                                        <input
-                                          type="checkbox"
+                                      <div className="flex items-center gap-2">
+                                        <Checkbox
+                                          id={`edit-service-${conn.id}-${service}`}
                                           checked={!!grant}
                                           disabled={readOnly}
-                                          onChange={event => setEditServices(prev => {
+                                          onCheckedChange={value => setEditServices(prev => {
                                             const next = { ...prev }
-                                            if (event.target.checked) next[service] = { write: false }
+                                            if (value === true) next[service] = { write: false }
                                             else delete next[service]
                                             return next
                                           })}
                                         />
-                                        {label}
-                                      </label>
+                                        <label htmlFor={`edit-service-${conn.id}-${service}`}>{label}</label>
+                                      </div>
                                       {grant && (
-                                        <label
+                                        <div
                                           className="flex items-center gap-1.5 pl-1 text-[11px]"
                                           title="Off (read-only) is the safer default. Turn on only if a workflow must create or edit, not just read. Changing this requires Reconnect below to take effect."
                                         >
-                                          <input
-                                            type="checkbox"
+                                          <Checkbox
+                                            id={`edit-service-${conn.id}-${service}-write`}
                                             checked={grant.write}
                                             disabled={readOnly}
-                                            onChange={event => setEditServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
+                                            onCheckedChange={value => setEditServices(prev => ({ ...prev, [service]: { write: value === true } }))}
                                           />
-                                          allow write access{grant.write ? '' : ' (off = read-only)'}
-                                        </label>
+                                          <label htmlFor={`edit-service-${conn.id}-${service}-write`}>
+                                            allow write access{grant.write ? '' : ' (off = read-only)'}
+                                          </label>
+                                        </div>
                                       )}
                                     </div>
                                   )
@@ -564,12 +553,13 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                               >
                                 {gmailConnectionsBusy === conn.id ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Saving…</> : 'Save request'}
                               </Button>
-                              <button
+                              <Button
+                                variant="outline"
+                                size="sm"
                                 onClick={() => setEditingGrantsConnId(null)}
-                                className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
                               >
                                 Cancel
-                              </button>
+                              </Button>
                             </div>
                           </div>
                         )}
@@ -583,48 +573,51 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                 )}
 
                 {gmailConnections.length > 0 && !showAddClientForm ? (
-                  <button
+                  <Button
+                    variant="outline"
+                    size="sm"
                     onClick={() => setShowAddClientForm(true)}
                     disabled={readOnly}
                     title={readOnly ? READ_ONLY_TITLE : undefined}
-                    className="rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-40"
                   >
                     + Add account
-                  </button>
+                  </Button>
                 ) : (
                   <div className="flex flex-wrap items-center gap-2 border-t border-border pt-3">
-                    <input
+                    <Input
                       type="email"
                       autoFocus={gmailConnections.length > 0}
                       value={gmailNewClientEmail}
                       onChange={event => setGmailNewClientEmail(event.target.value)}
                       disabled={readOnly}
                       placeholder="Mailbox to connect (e.g. you@example.com)"
-                      className="flex-1 rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                      className="flex-1"
+                      aria-label="Mailbox to connect"
                     />
-                    <input
+                    <Input
                       type="file"
                       accept="application/json"
                       disabled={readOnly}
                       onChange={event => setNewClientFile(event.target.files?.[0] || null)}
-                      className="flex-1 text-xs text-muted-foreground file:mr-2 file:rounded file:border file:border-border file:bg-muted/40 file:px-2 file:py-1 file:text-xs"
+                      className="flex-1"
+                      aria-label="Google Cloud client file"
                     />
-                    <label
+                    <div
                       className="flex basis-full items-start gap-2 text-xs text-muted-foreground"
                       title="Send-only is the default and is all notifications need. Read access lets a workflow search or read this mailbox too; it is fixed at sign-in, so changing it later means reconnecting."
                     >
-                      <input
-                        type="checkbox"
+                      <Checkbox
+                        id="new-client-allow-read"
                         checked={newClientAllowRead}
                         disabled={readOnly}
-                        onChange={event => setNewClientAllowRead(event.target.checked)}
+                        onCheckedChange={value => setNewClientAllowRead(value === true)}
                         className="mt-0.5"
                       />
-                      <span>
+                      <label htmlFor="new-client-allow-read">
                         Also allow <strong>reading</strong> this mailbox
                         <span className="block text-[11px] text-muted-foreground/80">Off by default: sending is all notifications need. Turn on only if a workflow must read or search mail.</span>
-                      </span>
-                    </label>
+                      </label>
+                    </div>
                     {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
                       <div className="basis-full space-y-1.5 border-t border-border pt-2">
                         <p className="text-xs text-muted-foreground">Also connect other Google Workspace services for this mailbox — a workflow can then use them directly. Read-only by default; fixed at sign-in like above.</p>
@@ -632,30 +625,32 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                           const grant = newClientServices[service]
                           return (
                             <div key={service} className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                              <label className="flex items-center gap-2">
-                                <input
-                                  type="checkbox"
+                              <div className="flex items-center gap-2">
+                                <Checkbox
+                                  id={`new-client-service-${service}`}
                                   checked={!!grant}
                                   disabled={readOnly}
-                                  onChange={event => setNewClientServices(prev => {
+                                  onCheckedChange={value => setNewClientServices(prev => {
                                     const next = { ...prev }
-                                    if (event.target.checked) next[service] = { write: false }
+                                    if (value === true) next[service] = { write: false }
                                     else delete next[service]
                                     return next
                                   })}
                                 />
-                                {label}
-                              </label>
+                                <label htmlFor={`new-client-service-${service}`}>{label}</label>
+                              </div>
                               {grant && (
-                                <label className="flex items-center gap-1.5 pl-1 text-[11px]" title="Off (read-only) is the safer default. Turn on only if a workflow must create or edit, not just read.">
-                                  <input
-                                    type="checkbox"
+                                <div className="flex items-center gap-1.5 pl-1 text-[11px]" title="Off (read-only) is the safer default. Turn on only if a workflow must create or edit, not just read.">
+                                  <Checkbox
+                                    id={`new-client-service-${service}-write`}
                                     checked={grant.write}
                                     disabled={readOnly}
-                                    onChange={event => setNewClientServices(prev => ({ ...prev, [service]: { write: event.target.checked } }))}
+                                    onCheckedChange={value => setNewClientServices(prev => ({ ...prev, [service]: { write: value === true } }))}
                                   />
-                                  allow write access{grant.write ? '' : ' (off = read-only)'}
-                                </label>
+                                  <label htmlFor={`new-client-service-${service}-write`}>
+                                    allow write access{grant.write ? '' : ' (off = read-only)'}
+                                  </label>
+                                </div>
                               )}
                             </div>
                           )
@@ -674,18 +669,46 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
                     </Button>
                   </div>
                 )}
-              </Card>
-              <Card className="space-y-3 p-4">
+            </div>
+          </section>
+          <section className="space-y-2">
+            <h3 className="text-xs font-medium text-muted-foreground">Settings</h3>
+            <p className="text-xs leading-5 text-muted-foreground">Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and product chat. Turn this off to stop all outbound email. Email replies do not resume an agent.</p>
+            {gmailError && <StatusBanner tone="error">{gmailError}</StatusBanner>}
+            {gmailSuccess && <StatusBanner tone="success">{gmailSuccess}</StatusBanner>}
+            <Card className="p-4">
+              <ToggleRow
+                label="Enable Gmail"
+                description="Available to notify_user across workflows and product chats."
+                checked={gmailConfig.enabled}
+                onCheckedChange={checked => setGmailConfig({ ...gmailConfig, enabled: checked })}
+                disabled={readOnly || (!gmailConfig.enabled && !gmailCanEnable)}
+                disabledTitle={readOnly ? READ_ONLY_TITLE : undefined}
+              />
+              {!gmailConfig.enabled && !gmailCanEnable && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Sign in a Gmail account above to enable; it switches on automatically once one is connected.</p>}
+            </Card>
+            <FormSection
+              title="Connection"
+              description={`${gmailBackendLabel(gmailConfig.auth.backend).name} CLI on the server host.`}
+              actions={(
+                <div className="flex items-center gap-2 text-xs">
+                  {gmailChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className={`h-2 w-2 rounded-full ${gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope ? 'bg-green-500' : 'bg-amber-500'}`} />}
+                  <span>{!gmailConfig.auth.gws_installed ? `${gmailBackendLabel(gmailConfig.auth.backend).name} not installed` : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
+                  <Button variant="ghost" size="icon" onClick={() => loadGmail(true)} disabled={gmailChecking} className="h-7 w-7" aria-label="Refresh Gmail connection"><RotateCcw className="h-3.5 w-3.5" /></Button>
+                </div>
+              )}
+            />
+            <Card className="space-y-3 p-4">
                 <div>
-                  <label className="mb-2 block text-sm font-medium">Default recipients</label>
+                  <Label className="mb-2 block">Default recipients</Label>
                   {/* Deliberately type="text": type="email" rejects a comma-separated
                       list, which is the whole point of this field. */}
-                  <input type="text" inputMode="email" value={gmailConfig.default_to || ''} onChange={event => setGmailConfig({ ...gmailConfig, default_to: event.target.value })} disabled={readOnly} placeholder="you@example.com, teammate@example.com" className="w-full rounded-md border border-border bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <Input type="text" inputMode="email" value={gmailConfig.default_to || ''} onChange={event => setGmailConfig({ ...gmailConfig, default_to: event.target.value })} disabled={readOnly} placeholder="you@example.com, teammate@example.com" aria-label="Default recipients" />
                   <p className="mt-1 text-xs text-muted-foreground">Where notifications are emailed when a workflow has no recipients of its own. Separate several addresses with commas.</p>
                 </div>
                 <div>
-                  <label className="mb-2 block text-sm font-medium">Disallowed recipients</label>
-                  <textarea value={gmailBlockedText} onChange={event => setGmailBlockedText(event.target.value)} disabled={readOnly} rows={3} placeholder="blocked@example.com, no-notify@example.com" className="w-full resize-y rounded-md border border-border bg-background px-3 py-2 font-mono text-sm focus:outline-none focus:ring-2 focus:ring-primary" />
+                  <Label className="mb-2 block">Disallowed recipients</Label>
+                  <Textarea value={gmailBlockedText} onChange={event => setGmailBlockedText(event.target.value)} disabled={readOnly} rows={3} placeholder="blocked@example.com, no-notify@example.com" className="font-mono" aria-label="Disallowed recipients" />
                   {gmailDefaultIsBlocked && <p className="mt-1 text-xs text-red-600 dark:text-red-400">{gmailBlockedDefaults.join(', ')} {gmailBlockedDefaults.length === 1 ? 'is' : 'are'} both a default recipient and disallowed.</p>}
                 </div>
               </Card>
@@ -694,10 +717,9 @@ export function GmailNotifications({ bots }: { bots: GmailNotificationsBots }) {
               <div className="flex justify-end">
                 <Button onClick={saveGmail} disabled={readOnly || !gmailHasChanges || gmailSaving || gmailLoading || gmailDefaultIsBlocked || (gmailConfig.enabled && !gmailCanEnable)} title={readOnly ? READ_ONLY_TITLE : undefined}>{gmailSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : 'Save'}</Button>
               </div>
-            </>
-          )}
-        </div>
-      )}
+            </section>
+          </>
+        )}
     </div>
   )
 }

@@ -1,10 +1,14 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Info, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
+import { Activity, ArrowLeft, BookMarked, CheckCircle2, ChevronDown, ChevronRight, CircleDot, FolderTree, Layers3, Loader2, PackageCheck, Search, Settings2, Wrench } from 'lucide-react'
 import { isNewerPlaybookVersion, PLAYBOOK_CATALOG, PLAYBOOK_CATEGORIES, type PlaybookCatalogItem } from './playbookCatalog'
 import { playbooksApi } from '../../api/playbooks'
 import type { InstalledPlaybook } from '../../services/api-types'
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow'
+import { usePersistentTab } from '../../hooks/usePersistentTab'
 import { AskAIButton } from '../workflow/AskAIButton'
+import { WorkspaceViewTabs } from '../workflow/WorkspaceViewTabs'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 
 type PlaybooksPanelProps = {
@@ -13,12 +17,8 @@ type PlaybooksPanelProps = {
 
 type Tab = 'installed' | 'catalog'
 
-const tabClass = (active: boolean) => `rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-  active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'
-}`
-
 export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
-  const [tab, setTab] = useState<Tab>('catalog')
+  const [tab, setTab] = usePersistentTab<Tab>('agentworks.tab.playbooks', 'catalog', ['installed', 'catalog'])
   const [query, setQuery] = useState('')
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(() => new Set(PLAYBOOK_CATEGORIES))
   const [selected, setSelected] = useState<PlaybookCatalogItem | null>(null)
@@ -99,9 +99,9 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
     const outputs = selected.outputs || []
     return (
       <div className="min-h-0 flex-1 overflow-y-auto">
-        <button type="button" onClick={() => setSelected(null)} className="mb-4 inline-flex items-center gap-1.5 text-xs font-medium text-muted-foreground hover:text-foreground">
+        <Button type="button" variant="link" size="sm" onClick={() => setSelected(null)} className="mb-4">
           <ArrowLeft className="h-3.5 w-3.5" /> Back to catalog
-        </button>
+        </Button>
         <div className="rounded-xl border border-border bg-card p-5">
           <div className="flex items-start gap-3">
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-primary"><BookMarked className="h-5 w-5" /></div>
@@ -202,12 +202,12 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                       </div>
                     )}
                     <p className="mt-1 text-xs leading-5 text-muted-foreground">Updating refreshes the installed guidance and marks its setup as draft. Builder should review the new instructions against the current workflow and revalidate affected routes. Workflow steps, goals, metrics, thresholds, schedules, tools, and customer preferences are not changed automatically.</p>
-                    <button type="button" disabled={!canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-amber-500/40 bg-background px-2.5 py-1.5 text-xs font-medium text-foreground disabled:cursor-not-allowed disabled:opacity-50">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Updating…' : 'Update playbook'}</button>
+                    <Button type="button" variant="outline" size="sm" disabled={!canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-2">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Updating…' : 'Update playbook'}</Button>
                   </div>
                 )}
               </>
             ) : (
-              <button type="button" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:cursor-not-allowed disabled:opacity-50">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : 'Use playbook'}</button>
+              <Button type="button" size="sm" disabled={!workspacePath || !canWrite || installing} title={!canWrite ? READ_ONLY_TITLE : undefined} onClick={() => void installSelected()} className="mt-3">{installing && <Loader2 className="h-3.5 w-3.5 animate-spin" />}{installing ? 'Installing…' : 'Use playbook'}</Button>
             )}
           </div>
         </div>
@@ -217,9 +217,16 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      <div className="flex shrink-0 items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Workflow playbooks">
-        <button type="button" role="tab" aria-selected={tab === 'installed'} className={tabClass(tab === 'installed')} onClick={() => setTab('installed')}>Installed <span className="ml-1 text-muted-foreground">{installed.length}</span></button>
-        <button type="button" role="tab" aria-selected={tab === 'catalog'} className={tabClass(tab === 'catalog')} onClick={() => setTab('catalog')}>Catalog <span className="ml-1 text-muted-foreground">{catalog.length}</span></button>
+      <div className="shrink-0 border-b border-border">
+        <WorkspaceViewTabs
+          value={tab}
+          onChange={(value: string) => setTab(value as Tab)}
+          options={[
+            { value: 'installed', label: 'Installed', count: installed.length },
+            { value: 'catalog', label: 'Catalog', count: catalog.length },
+          ]}
+          ariaLabel="Workflow playbooks"
+        />
       </div>
 
       {loading ? <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading playbooks…</div> : tab === 'installed' ? (
@@ -228,14 +235,14 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
           <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-muted text-muted-foreground"><BookMarked className="h-5 w-5" /></div>
           <h3 className="mt-3 text-sm font-semibold text-foreground">No playbooks installed</h3>
           <p className="mt-1 max-w-sm text-xs leading-5 text-muted-foreground">Choose a playbook from the catalog to guide this workflow’s plan, capabilities, and dashboard.</p>
-          <button type="button" onClick={() => setTab('catalog')} className="mt-4 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground">Browse catalog</button>
+          <Button type="button" size="sm" onClick={() => setTab('catalog')} className="mt-4">Browse catalog</Button>
         </div>)
       ) : (
         <>
           <div className="mt-3 shrink-0 space-y-3">
             <div className="relative">
               <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search playbooks" aria-label="Search playbooks" className="w-full rounded-lg border border-border bg-background py-2 pl-9 pr-3 text-sm outline-none focus:border-primary focus:ring-1 focus:ring-primary" />
+              <Input value={query} onChange={event => setQuery(event.target.value)} placeholder="Search playbooks" aria-label="Search playbooks" className="pl-9" />
             </div>
             <div className="rounded-lg border border-border bg-muted/20 px-3 py-2.5" aria-label="Playbook catalog hierarchy">
               <div className="flex items-center gap-2 text-xs font-medium text-muted-foreground"><FolderTree className="h-4 w-4" /> AgentWorks</div>
@@ -262,9 +269,12 @@ export default function PlaybooksPanel({ workspacePath }: PlaybooksPanelProps) {
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-2"><span className="truncate text-sm font-medium text-foreground">{playbook.title}</span><span className="shrink-0 text-[10px] text-muted-foreground">v{playbook.version}</span></div>
                                 <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{playbook.description}</p>
-                                <button type="button" aria-label={`What ${playbook.title} is about`} onClick={() => setSelected(playbook)} className="mt-2 inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs font-medium text-foreground hover:border-primary/50 hover:text-primary">
-                                  <Info className="h-3.5 w-3.5" /> What this is about
-                                </button>
+                                <div className="mt-2 flex flex-wrap items-center gap-2">
+                                  <AskAIButton workspacePath={workspacePath} label="Ask about this playbook" message={`Explain the ${JSON.stringify(playbook.title)} playbook (catalog id ${JSON.stringify(playbook.id)}, v${playbook.version}): what it sets up, what inputs it needs, and whether it fits this workflow. If I confirm I want it, walk me through installing it from its detail view and the setup that follows.`} />
+                                  <Button type="button" variant="ghost" size="sm" aria-label={`Open ${playbook.title} details`} onClick={() => setSelected(playbook)}>
+                                    Details <ChevronRight className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
                               </div>
                             </div>
                           ))}

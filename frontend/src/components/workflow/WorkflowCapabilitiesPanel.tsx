@@ -15,6 +15,7 @@ import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+import { usePersistentTab } from '../../hooks/usePersistentTab'
 import { isSelectedServer } from '../../utils/mcpServerAlias'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { useChatStore } from '../../stores/useChatStore'
@@ -113,8 +114,8 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const refreshTools = useMCPStore(state => state.refreshTools)
   const [refreshingServers, setRefreshingServers] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [tab, setTab] = useState<McpTab>('apps')
-  const [identityTab, setIdentityTab] = useState<IdentityTab>('general')
+  const [tab, setTab] = usePersistentTab<McpTab>('agentworks.tab.workflow-mcp', 'apps', MCP_TABS.map(option => option.value))
+  const [identityTab, setIdentityTab] = usePersistentTab<IdentityTab>('agentworks.tab.workflow-identity', 'general', IDENTITY_TABS.map(option => option.value))
   // "Available to select for this workflow" means connected -- you can't
   // meaningfully pick tools from a server nobody has authenticated yet. A
   // not-yet-connected server only belongs in the "Connect a new MCP server"
@@ -505,7 +506,7 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                   </div>
                 )}
                 {tab === 'gmail' && (
-                  <div className="mt-3 border-t border-border pt-3">
+                  <div className="mt-3">
                     <WorkflowEmailPanel workspacePath={workspacePath} />
                   </div>
                 )}

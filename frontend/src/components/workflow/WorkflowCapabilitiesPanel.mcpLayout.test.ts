@@ -109,7 +109,7 @@ describe('Workflow MCP panel layout', () => {
   it('separates apps, skills, slack, whatsapp, and gmail into tabs with apps first', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
 
-    expect(panel).toContain("useState<McpTab>('apps')")
+    expect(panel).toContain("usePersistentTab<McpTab>('agentworks.tab.workflow-mcp', 'apps'")
     expect(panel).toContain("{ value: 'apps', label: 'MCPs' }")
     expect(panel).toMatch(/MCP_TABS[^=]*=[\s\S]*?'apps'[\s\S]*?'skills'[\s\S]*?'slack'[\s\S]*?'whatsapp'[\s\S]*?'gmail'/)
     expect(panel).toContain('tabs={section ===')
@@ -123,7 +123,15 @@ describe('Workflow MCP panel layout', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
     const views = readFileSync('src/components/workflow/workspaceViews.ts', 'utf8')
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
+    const chips = readFileSync('src/components/workflow/bots/RouteChips.tsx', 'utf8')
+    const slack = readFileSync('src/components/workflow/bots/SlackSetup.tsx', 'utf8')
 
+    expect(chips).toContain('This route answers for another workflow')
+    expect(slack).toContain('Save platform settings')
+    const gmail = readFileSync('src/components/workflow/bots/GmailNotifications.tsx', 'utf8')
+    expect(gmail).toContain('Sending accounts')
+    expect(gmail).toContain('Ask Builder to set up Gmail')
+    expect(gmail).not.toContain('gmailOpen')
     expect(panel).toMatch(/section === 'mcp'[\s\S]*?<WorkflowBotsPanel/)
     expect(panel).toMatch(/section === 'mcp'[\s\S]*?<WorkflowEmailPanel/)
     expect(panel).not.toContain("section === 'bots'")

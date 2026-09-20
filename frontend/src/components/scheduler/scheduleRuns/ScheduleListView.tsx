@@ -60,6 +60,10 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
     deleteScheduledRunSession,
   } = panel
 
+  const missedCount = filteredJobs.filter(job => isMissedSchedule(job)).length
+  const runningCount = filteredJobs.filter(job => job.last_status === 'running').length
+  const scheduledCount = filteredJobs.length - missedCount - runningCount
+
   return (
     <div className="divide-y divide-gray-100 dark:divide-gray-700">
       {filteredJobs.map((job, index, jobsList) => {
@@ -83,27 +87,24 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
         return (
           <React.Fragment key={job.id}>
             {showRunningHeader && (
-              <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
-                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Running schedules</div>
-                <div className="text-xs text-muted-foreground">Schedules with an active execution right now</div>
+              <div className="px-5 py-2 bg-amber-500/5 border-b border-amber-500/10">
+                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Running schedules <span className="font-normal text-muted-foreground">· {runningCount}</span></div>
               </div>
             )}
 
             {showScheduledHeader && (
-              <div className="px-5 py-3 bg-muted/30 border-b border-border">
-                <div className="text-sm font-semibold text-foreground">Automation schedules</div>
-                <div className="text-xs text-muted-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
+              <div className="px-5 py-2 bg-muted/30 border-b border-border">
+                <div className="text-sm font-semibold text-foreground">Automation schedules <span className="font-normal text-muted-foreground">· {scheduledCount}</span></div>
               </div>
             )}
 
             {showMissedHeader && (
-              <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
-                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules</div>
-                <div className="text-xs text-muted-foreground">Schedules that were due, but never started at the scheduled time</div>
+              <div className="px-5 py-2 bg-amber-500/5 border-b border-amber-500/10">
+                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules <span className="font-normal text-muted-foreground">· {missedCount}</span></div>
               </div>
             )}
 
-            <div className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
+            <div className={`px-5 py-3 ${!job.enabled ? 'opacity-60' : ''}`}>
             {/* Row top */}
             <div className="relative flex items-start gap-3">
               {/* Status dot */}
@@ -155,6 +156,11 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                       Paused
                     </span>
                   )}
+                  {executionScope && (
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium" title={executionScope.title}>
+                      {executionScope.label}
+                    </span>
+                  )}
                 </div>
 
                 {/* Cron + groups */}
@@ -163,13 +169,8 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                     <Clock className="w-3 h-3" />
                     {cronDesc}
                   </span>
-                  {job.group_names && job.group_names.length > 0 && (
-                    <span>Groups: {job.group_names.join(', ')}</span>
-                  )}
-                  {executionScope && (
-                    <span className="px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium" title={executionScope.title}>
-                      {executionScope.label}
-                    </span>
+                  {job.group_names && job.group_names.length > 1 && (
+                    <span title={job.group_names.join(', ')}>Groups: {job.group_names.join(', ')}</span>
                   )}
                   {job.entity_type === 'product' && (
                     <label className="inline-flex items-center gap-1.5">
@@ -208,7 +209,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                 {job.schedule_type === 'webhook' && <WebhookEndpoint id={job.id} name={job.name} />}
 
                 {/* Run stats */}
-                <div className="mt-1.5 flex flex-wrap gap-x-4 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
                   <span className="flex items-center gap-1" title={formatExactDateTime(job.last_run_at)}>
                     {job.last_status === 'running' ? (
                       <Loader className="w-3 h-3 text-amber-500 animate-spin" />
@@ -233,7 +234,9 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                       ? job.last_run_at
                         ? `Running since ${formatLocalScheduleTime(job.last_run_at)} (${timeAgo(job.last_run_at)})`
                         : 'Running...'
-                      : `Last ran: ${formatLastRunLabel(job.last_run_at)}`}
+                      : job.last_run_at
+                      ? `Last ran: ${formatLastRunLabel(job.last_run_at)}`
+                      : 'Not run yet'}
                   </span>
                   <span>
                     {job.enabled
@@ -251,7 +254,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                   )}
                   <span>{job.run_count} run{job.run_count !== 1 ? 's' : ''}</span>
                   {job.last_duration_ms != null && job.last_status !== 'running' && (
-                    <span>Duration: {formatDuration(job.last_duration_ms)}</span>
+                    <span title="Last duration">{formatDuration(job.last_duration_ms)}</span>
                   )}
                 </div>
 

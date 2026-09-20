@@ -3,6 +3,11 @@
 This file defines the builder-layer contract for coding-agent integrations in
 `coding-agent-loop`.
 
+For the current integration file map, P0/P1 enforcement review, and checklist for
+adding a CLI, see [Coding CLI onboarding](coding_cli_onboarding_contract_review.md).
+That review also records transport-policy documentation drift; the refactor it
+proposes is not yet implemented.
+
 The low-level provider/tmux contract lives in:
 
 ```text

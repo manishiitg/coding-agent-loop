@@ -17,6 +17,7 @@ These docs describe platform subsystems that cut across workflow and multi-agent
 - `browser.md`
 - [Coding CLI updates](coding-cli-updates.md): daily checks, persisted status, and per-chat release selection.
 - `coding_agent_builder_e2e_contract.md`
+- [Coding CLI onboarding contract review](coding_cli_onboarding_contract_review.md): implementation map, P0/P1 enforcement findings, new-provider checklist, and proposed registration consolidation.
 - `coding_agent_continuation_architecture.md`
 - `electron_standalone_app_plan.md`
 - `env-api-key-defaults.md`

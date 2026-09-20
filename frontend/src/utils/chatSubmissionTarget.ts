@@ -27,8 +27,10 @@ export function acquireBuilderSubmission(key: string) {
 
 // Only an authoritative reconciled rejection proves that a retry can use a
 // fresh receipt. Network failures, conflicts and uncertainty retain identity.
+// turn_running is authoritative: the backend answered before the lane, so the
+// message was provably never sent or queued.
 export function isConfirmedUndeliveredSubmission(error: unknown): boolean {
   if (typeof error !== 'object' || error === null || !('response' in error)) return false
   const response = (error as { response?: { status?: number; data?: { error?: string } } }).response
-  return response?.status === 409 && response.data?.error === 'delivery_not_sent'
+  return response?.status === 409 && (response.data?.error === 'delivery_not_sent' || response.data?.error === 'turn_running')
 }

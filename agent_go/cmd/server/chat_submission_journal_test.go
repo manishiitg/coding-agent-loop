@@ -69,6 +69,76 @@ func TestChatSubmissionDurableAcceptanceAndReplay(t *testing.T) {
 	}
 }
 
+// turn_running proves the message was never sent or queued, so a same-key
+// retry dispatches instead of replaying the rejection forever. Any other
+// rejection keeps its replay semantics.
+func TestChatSubmissionRedispatchesAfterTurnRunningRejection(t *testing.T) {
+	files := map[string]string{}
+	store := &chatSubmissionStore{
+		read:  func(_ context.Context, p string) (string, bool, error) { v, ok := files[p]; return v, ok, nil },
+		write: func(_ context.Context, p, v string) error { files[p] = v; return nil },
+	}
+	request := func() *http.Request {
+		r := httptest.NewRequest("POST", "/api/query", nil)
+		r.Header.Set("Idempotency-Key", "lane-1")
+		return r
+	}
+	api := &StreamingAPI{internalChatSubmissionStore: store}
+
+	w, _, finish, ok := api.beginChatSubmission(httptest.NewRecorder(), request(), "session-a", "project-a", "hello")
+	if !ok {
+		t.Fatal("must durably accept before dispatch")
+	}
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "turn_running", "status": "turn_running"})
+	finish()
+
+	w2, _, finish2, ok := api.beginChatSubmission(httptest.NewRecorder(), request(), "session-a", "project-a", "hello")
+	if !ok {
+		t.Fatal("same-key retry after turn_running must dispatch again")
+	}
+	_ = json.NewEncoder(w2).Encode(map[string]string{"delivery_status": "sent_to_cli"})
+	finish2()
+
+	replay := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(replay, request(), "session-a", "project-a", "hello"); ok {
+		t.Fatal("retry after a confirmed dispatch must not dispatch again")
+	}
+	if !bytes.Contains(replay.Body.Bytes(), []byte("sent_to_cli")) {
+		t.Fatalf("confirmed outcome was not replayed: %s", replay.Body.String())
+	}
+}
+
+func TestChatSubmissionStillReplaysOtherRejections(t *testing.T) {
+	files := map[string]string{}
+	store := &chatSubmissionStore{
+		read:  func(_ context.Context, p string) (string, bool, error) { v, ok := files[p]; return v, ok, nil },
+		write: func(_ context.Context, p, v string) error { files[p] = v; return nil },
+	}
+	request := func() *http.Request {
+		r := httptest.NewRequest("POST", "/api/query", nil)
+		r.Header.Set("Idempotency-Key", "lane-2")
+		return r
+	}
+	api := &StreamingAPI{internalChatSubmissionStore: store}
+
+	w, _, finish, ok := api.beginChatSubmission(httptest.NewRecorder(), request(), "session-a", "project-a", "hello")
+	if !ok {
+		t.Fatal("must durably accept before dispatch")
+	}
+	w.WriteHeader(http.StatusConflict)
+	_ = json.NewEncoder(w).Encode(map[string]string{"error": "workflow_busy"})
+	finish()
+
+	replay := httptest.NewRecorder()
+	if _, _, _, ok := api.beginChatSubmission(replay, request(), "session-a", "project-a", "hello"); ok {
+		t.Fatal("retry after a non-turn_running rejection must not dispatch again")
+	}
+	if replay.Code != http.StatusConflict || !bytes.Contains(replay.Body.Bytes(), []byte("workflow_busy")) {
+		t.Fatalf("rejection was not replayed: %d %s", replay.Code, replay.Body.String())
+	}
+}
+
 func TestChatSubmissionRetriesUncertainReceiptOnlyAfterNotDeliveredProof(t *testing.T) {
 	store := newTestChatSubmissionStore()
 	request := func() *http.Request {

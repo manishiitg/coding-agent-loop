@@ -1397,7 +1397,7 @@ func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
 }
 
 type sessionInputLane struct {
-	mu   sync.Mutex
+	sem  chan struct{} // capacity 1: a waiter holds the token while its turn owns the lane
 	refs int
 }
 
@@ -1405,7 +1405,7 @@ type sessionInputLane struct {
 // queued for — this session's input lane.
 //
 // The lane is not a signal ABOUT occupancy; it IS occupancy. A turn occupies a
-// session exactly when it holds this mutex, because the mutex is what serializes
+// session exactly when it holds this lane token, because the token is what serializes
 // access to the one tmux pane, the conversation history, and runningAgents.
 //
 // PLAT-113: callers needing "is a turn running" previously read sessionBusy,
@@ -1429,30 +1429,77 @@ func (api *StreamingAPI) lockSessionInputLane(sessionID string) func() {
 	if api == nil || strings.TrimSpace(sessionID) == "" {
 		return func() {}
 	}
+	lane := api.sessionInputLaneFor(sessionID)
+	lane.sem <- struct{}{}
+	return api.releaseSessionInputLaneFunc(sessionID, lane)
+}
+
+// sessionInputLaneInteractiveWait bounds how long an interactive send waits
+// for a running turn to release the session lane before the backend answers
+// 409 turn_running (nothing was sent; the frontend retries). Synthetic and
+// scheduled turns keep the unbounded wait: they are served by internal
+// queue/retry machinery, not by an impatient user-facing POST.
+const sessionInputLaneInteractiveWait = 10 * time.Second
+
+// tryLockSessionInputLane acquires the session input lane, waiting at most
+// timeout. It reports false (holding nothing) when the lane stays busy; the
+// caller must answer without starting a turn.
+func (api *StreamingAPI) tryLockSessionInputLane(sessionID string, timeout time.Duration) (func(), bool) {
+	if api == nil || strings.TrimSpace(sessionID) == "" {
+		return func() {}, true
+	}
+	lane := api.sessionInputLaneFor(sessionID)
+	if timeout <= 0 {
+		select {
+		case lane.sem <- struct{}{}:
+			return api.releaseSessionInputLaneFunc(sessionID, lane), true
+		default:
+			api.dropSessionInputLaneRef(sessionID, lane)
+			return nil, false
+		}
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case lane.sem <- struct{}{}:
+		return api.releaseSessionInputLaneFunc(sessionID, lane), true
+	case <-timer.C:
+		api.dropSessionInputLaneRef(sessionID, lane)
+		return nil, false
+	}
+}
+
+func (api *StreamingAPI) sessionInputLaneFor(sessionID string) *sessionInputLane {
 	api.sessionInputLanesMu.Lock()
+	defer api.sessionInputLanesMu.Unlock()
 	if api.sessionInputLanes == nil {
 		api.sessionInputLanes = make(map[string]*sessionInputLane)
 	}
 	lane := api.sessionInputLanes[sessionID]
 	if lane == nil {
-		lane = &sessionInputLane{}
+		lane = &sessionInputLane{sem: make(chan struct{}, 1)}
 		api.sessionInputLanes[sessionID] = lane
 	}
 	lane.refs++
-	api.sessionInputLanesMu.Unlock()
+	return lane
+}
 
-	lane.mu.Lock()
+func (api *StreamingAPI) releaseSessionInputLaneFunc(sessionID string, lane *sessionInputLane) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
-			lane.mu.Unlock()
-			api.sessionInputLanesMu.Lock()
-			lane.refs--
-			if lane.refs == 0 && api.sessionInputLanes[sessionID] == lane {
-				delete(api.sessionInputLanes, sessionID)
-			}
-			api.sessionInputLanesMu.Unlock()
+			<-lane.sem
+			api.dropSessionInputLaneRef(sessionID, lane)
 		})
+	}
+}
+
+func (api *StreamingAPI) dropSessionInputLaneRef(sessionID string, lane *sessionInputLane) {
+	api.sessionInputLanesMu.Lock()
+	defer api.sessionInputLanesMu.Unlock()
+	lane.refs--
+	if lane.refs == 0 && api.sessionInputLanes[sessionID] == lane {
+		delete(api.sessionInputLanes, sessionID)
 	}
 }
 
@@ -3626,7 +3673,16 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// Automated schedule and webhook turns must preserve turn boundaries. They
 	// queue on the session input lane instead of steering a person's currently
 	// running Crew reply through retained CLI live input.
-	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) && !requestLLMConfigOverridesManifest(req) && retainedProfileCompatible
+	//
+	// Product chats are eligible for retained delivery like any other chat.
+	// LLMConfigSource=agent-profile only records that the profile owns the
+	// request's model binding (see requestLLMConfigOverridesManifest); it is
+	// not evidence that the retained CLI is stale. Definition staleness is
+	// decided by retainedProfileCompatible + prepareWorkflowRetainedDelivery,
+	// and a runtime rebind closes the retained CLI before this handler runs,
+	// so a stale target surfaces as "no live target" below and starts a
+	// normal new turn instead of hanging behind one.
+	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) && retainedProfileCompatible
 	retainedWorkflowCompatible, policyErr := api.prepareWorkflowRetainedDelivery(r.Context(), sessionID, req, retainedDeliveryEligible)
 	if policyErr != nil {
 		http.Error(w, policyErr.Error(), http.StatusForbidden)
@@ -3653,7 +3709,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				cancelFn()
 			}
 		}
-		releaseInputLane = api.lockSessionInputLane(sessionID)
+		if !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) {
+			// An interactive POST must never hang silently behind a running
+			// turn: wait briefly, then answer 409 turn_running so the UI can
+			// show "waiting" and retry. Nothing was sent or queued, so a
+			// retry (fresh Idempotency-Key) cannot duplicate.
+			var acquired bool
+			releaseInputLane, acquired = api.tryLockSessionInputLane(sessionID, sessionInputLaneInteractiveWait)
+			if !acquired {
+				logfWithContext(queryLogCtx, "[TURN_RUNNING] Rejected interactive send for session %s: input lane still held", sessionID)
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusConflict)
+				_ = json.NewEncoder(w).Encode(map[string]interface{}{
+					"error":      "turn_running",
+					"status":     "turn_running",
+					"message":    "The previous turn is still running. Nothing was sent; retry this message.",
+					"session_id": sessionID,
+				})
+				return
+			}
+		} else {
+			releaseInputLane = api.lockSessionInputLane(sessionID)
+		}
 		defer func() {
 			if releaseInputLane != nil {
 				releaseInputLane()
@@ -9233,6 +9310,22 @@ func agentSupportsLiveInputDelivery(agent *mcpagent.Agent) bool {
 	return isCodingAgent && contract.SupportsLiveInput
 }
 
+// liveInputErrorProvesNoTarget reports whether a live-input Send error proves
+// no CLI received the message: the retained target is gone (a pooled-session
+// miss after a restart closed it, or a closed turn session). The caller falls
+// through to a normal new turn instead of surfacing delivery_uncertain. Every
+// tmux adapter emits the "no active X session registered for owner session"
+// shape from its pooled-session lookup before touching tmux; note this is
+// wider than mcpagent's unexported isInteractiveSessionNotRegistered, which
+// misses claude-code's "tmux session" phrasing.
+func liveInputErrorProvesNoTarget(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "session registered for owner") ||
+		strings.Contains(err.Error(), "session is closed")
+}
+
 // tryDeliverQueryAsLiveInput is the single-entry retained-CLI path for
 // tmux-transport coding-agent input (see handleQuery). When the session still
 // has a retained coding-agent object that supports native live input, it sends
@@ -9256,6 +9349,10 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 			delivery, err := retainedSession.Send(sessionInputCtx, message)
 			sessionInputCancel()
 			if err != nil {
+				if liveInputErrorProvesNoTarget(err) {
+					log.Printf("[QUERY->LIVE] No live target for session %s; starting a new turn: %v", sessionID, err)
+					return false
+				}
 				log.Printf("[QUERY->LIVE] Delivery uncertain for session %s: %v", sessionID, err)
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
@@ -9328,6 +9425,10 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		Intent:    mcpagent.UserMessageDeliveryIntentLiveInput,
 	})
 	if err != nil {
+		if liveInputErrorProvesNoTarget(err) {
+			log.Printf("[QUERY→LIVE] No live target for session %s; starting a new turn: %v", sessionID, err)
+			return false
+		}
 		// Transport errors do not prove the CLI did not receive the input.
 		// Keep the accepted submission uncertain instead of dispatching twice.
 		log.Printf("[QUERY→LIVE] Delivery uncertain for session %s: %v", sessionID, err)

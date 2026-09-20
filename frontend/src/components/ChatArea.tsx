@@ -8,6 +8,7 @@ import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInpu
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
+import { isTurnRunningConflict } from '../services/turnRunningRetry'
 import { configureChatQueueController } from '../utils/chatQueueController'
 import { captureChatIdentity, isChatIdentityCurrent } from '../utils/chatIdentity'
 import {
@@ -3267,7 +3268,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       console.log('[WF_DEBUG] ERROR: Submit exception', { error })
       logger.error('ChatArea', 'Failed to submit query:', error)
       chatStore.patchTabEvents(tabSessionId, events => withoutOptimisticUserMessage(events, optimisticUserEventID))
-      chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, error)])
+      // turn_running exhaustion (the interceptor retried for minutes): the
+      // previous reply never finished, and the message provably never sent.
+      const turnStillRunning = isTurnRunningConflict(error)
+      chatStore.addTabEvents(tabSessionId, [createSubmissionErrorEvent(tabSessionId, turnStillRunning
+        ? 'The previous reply is still running, so this message was not sent. Send it again once the reply finishes.'
+        : error)])
       resetStreamingState(currentTab.tabId)
       return false
     }

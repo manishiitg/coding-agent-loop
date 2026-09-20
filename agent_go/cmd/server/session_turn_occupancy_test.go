@@ -4,6 +4,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 )
 
 // PLAT-113 step 2. executeSyntheticTurn must acquire the input lane BEFORE it
@@ -170,6 +171,75 @@ func TestSessionIsFreeOnceTheTurnReleasesTheLane(t *testing.T) {
 	release()
 	if api.sessionTurnInProgress(sessionID) {
 		t.Fatal("double release corrupted the lane refcount")
+	}
+}
+
+func TestTryLockSessionInputLaneAcquiresFreeLaneImmediately(t *testing.T) {
+	api := &StreamingAPI{}
+	release, acquired := api.tryLockSessionInputLane("lane-free", 5*time.Second)
+	if !acquired {
+		t.Fatal("free lane was not acquired")
+	}
+	if !api.sessionTurnInProgress("lane-free") {
+		t.Fatal("acquired lane must report occupancy")
+	}
+	release()
+	if api.sessionTurnInProgress("lane-free") {
+		t.Fatal("still occupied after release")
+	}
+}
+
+func TestTryLockSessionInputLaneTimesOutBehindHeldLane(t *testing.T) {
+	api := &StreamingAPI{}
+	const sessionID = "lane-held"
+	release := api.lockSessionInputLane(sessionID)
+	defer release()
+
+	start := time.Now()
+	_, acquired := api.tryLockSessionInputLane(sessionID, 100*time.Millisecond)
+	if acquired {
+		t.Fatal("acquired a held lane")
+	}
+	if elapsed := time.Since(start); elapsed < 100*time.Millisecond || elapsed > 5*time.Second {
+		t.Fatalf("bounded wait took %v, want ~100ms", elapsed)
+	}
+	// The timed-out waiter owns nothing: the holder still owns the lane, and
+	// releasing the holder alone must free the session.
+	if !api.sessionTurnInProgress(sessionID) {
+		t.Fatal("holder lost occupancy to a timed-out waiter")
+	}
+}
+
+func TestTryLockSessionInputLaneAcquiresAfterRelease(t *testing.T) {
+	api := &StreamingAPI{}
+	const sessionID = "lane-released"
+	release := api.lockSessionInputLane(sessionID)
+	done := make(chan bool, 1)
+	go func() {
+		rel, acquired := api.tryLockSessionInputLane(sessionID, 5*time.Second)
+		if acquired {
+			rel()
+		}
+		done <- acquired
+	}()
+	time.Sleep(100 * time.Millisecond)
+	release()
+	select {
+	case acquired := <-done:
+		if !acquired {
+			t.Fatal("bounded wait did not acquire after the holder released")
+		}
+	case <-time.After(6 * time.Second):
+		t.Fatal("bounded wait never acquired after release")
+	}
+	if api.sessionTurnInProgress(sessionID) {
+		t.Fatal("still occupied after all releases")
+	}
+	api.sessionInputLanesMu.Lock()
+	remaining := len(api.sessionInputLanes)
+	api.sessionInputLanesMu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("lane registry retained %d idle lane(s), want 0", remaining)
 	}
 }
 

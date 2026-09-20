@@ -181,6 +181,14 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 				log.Printf("[CHAT_SUBMISSION] Reconciled submission %s as not delivered after its retained tmux closed; retrying through a resumed turn", previous.ID)
 			}
 		}
+		if exists && previous.State == "rejected" && storedSubmissionWasTurnRunning(previous) {
+			// turn_running proves the message was never sent or queued, so a
+			// retry (same key, or the same queued-delivery identity) safely
+			// dispatches instead of replaying the rejection forever. All
+			// other rejections keep their replay semantics.
+			exists = false
+			log.Printf("[CHAT_SUBMISSION] Re-dispatching submission %s after turn_running rejection", previous.ID)
+		}
 		if !exists {
 			// Keep the path lock and replace the expired semantic receipt below.
 		} else {
@@ -324,6 +332,21 @@ func (api *StreamingAPI) awaitUncertainChatSubmission(ctx context.Context, store
 			return nil
 		}
 	}
+}
+
+// storedSubmissionWasTurnRunning reports whether a journaled rejection is the
+// input-lane turn_running backstop, which proves the message was never sent
+// or queued and is therefore safe to dispatch again.
+func storedSubmissionWasTurnRunning(record chatSubmissionRecord) bool {
+	if strings.TrimSpace(record.Response) == "" {
+		return false
+	}
+	var response map[string]interface{}
+	if json.Unmarshal([]byte(record.Response), &response) != nil {
+		return false
+	}
+	errorValue, _ := response["error"].(string)
+	return errorValue == "turn_running"
 }
 
 // replayChatSubmissionOutcome serves a previously stored submission outcome so

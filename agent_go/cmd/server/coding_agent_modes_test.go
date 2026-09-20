@@ -822,6 +822,12 @@ func TestTryDeliverQueryAsLiveInputUnconfirmedSendDoesNotFallThrough(t *testing.
 		runningAgentsMux: sync.RWMutex{},
 		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}}, // active foreground turn → busy
 		agentCancelMux:   sync.RWMutex{},
+		// A mid-send transport failure: the CLI may or may not have seen the
+		// message, so a second dispatch could double-send. Contrast with a
+		// pooled-session miss, which proves non-delivery and falls through.
+		internalUserMessageDeliveryHandler: func(_ context.Context, _ *mcpagent.Agent, _ mcpagent.UserMessageDeliveryRequest) (mcpagent.UserMessageDeliveryResult, error) {
+			return mcpagent.UserMessageDeliveryResult{}, errors.New("send-keys to tmux pane failed mid-write")
+		},
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
@@ -836,6 +842,59 @@ func TestTryDeliverQueryAsLiveInputUnconfirmedSendDoesNotFallThrough(t *testing.
 	}
 	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
 		t.Fatalf("recorded %d events, want 0 for an unconfirmed send", got)
+	}
+}
+
+func TestLiveInputErrorProvesNoTarget(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{"nil", nil, false},
+		{"muse pool miss", errors.New("failed to submit live input to muse-cli: no active Muse interactive session registered for owner session s"), true},
+		{"claude pool miss", errors.New("failed to submit live input to claude-code: no active Claude Code tmux session registered for owner session s"), true},
+		{"closed turn session", errors.New("session is closed"), true},
+		{"mid-send failure", errors.New("send-keys to tmux pane failed mid-write"), false},
+		{"timeout", errors.New("delivery_timed_out waiting for ack"), false},
+	}
+	for _, tc := range cases {
+		if got := liveInputErrorProvesNoTarget(tc.err); got != tc.want {
+			t.Errorf("%s: liveInputErrorProvesNoTarget = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+// A pooled-session miss proves the send never reached a CLI (the lookup runs
+// before any tmux I/O), so there is no first dispatch a new turn could
+// duplicate. The live-input path falls through and the message starts a
+// normal turn — e.g. after a runtime rebind closed the retained CLI.
+func TestTryDeliverQueryAsLiveInputPoolMissFallsThroughToNewTurn(t *testing.T) {
+	store := internalevents.NewEventStore(10)
+	defer store.Stop()
+
+	sessionID := "busy-coding-session-pool-miss"
+	runningAgent := testCodingAgent(llm.ProviderClaudeCode, "claude-sonnet-4-6")
+	api := &StreamingAPI{internalChatSubmissionStore: newTestChatSubmissionStore(),
+		eventStore:       store,
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: runningAgent},
+		runningAgentsMux: sync.RWMutex{},
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() {}},
+		agentCancelMux:   sync.RWMutex{},
+		// No test hook: the real delivery attempt pool-misses (no tmux
+		// session is registered in a unit test) exactly like a retained CLI
+		// that a restart already closed.
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rr := httptest.NewRecorder()
+
+	if api.tryDeliverQueryAsLiveInput(rr, req, sessionID, "steer me into the running turn", "query_test_pool_miss") {
+		t.Fatalf("pool-miss delivery must fall through to a new turn, got %d %s", rr.Code, rr.Body.String())
+	}
+	if got := len(store.GetAllEventsRaw(sessionID)); got != 0 {
+		t.Fatalf("recorded %d events, want 0 for a provably unsent message", got)
 	}
 }
 

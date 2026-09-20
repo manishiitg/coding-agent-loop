@@ -34,6 +34,7 @@ import { getActiveWorkspaceProfile, useWorkspaceConnectionStore } from '../store
 import { GATEWAY_LOGIN_HEADER, gatewayLoginTarget, redirectToGatewayLogin } from '../utils/gatewayAuth'
 import { apiTimingPathFor, recordApiTiming, sanitizeApiBody } from '../utils/apiTiming'
 import { retryUncertainChatSubmission } from './uncertainSubmissionRetry'
+import { retryTurnRunningSubmission } from './turnRunningRetry'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
@@ -639,6 +640,11 @@ api.interceptors.response.use(
       return await retryUncertainChatSubmission(api, error)
     } catch {
       // Not an uncertain-submission retry (or retries exhausted): fall through.
+    }
+    try {
+      return await retryTurnRunningSubmission(api, error)
+    } catch {
+      // Not a turn_running retry (or retries exhausted): fall through.
     }
     try {
       return await retryWithFreshRuntimeConfig(api, error, getApiBaseUrl)

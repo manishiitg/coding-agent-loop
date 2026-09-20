@@ -1,15 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { secretsApi } from '../api/secrets'
-import { secretsStateFromServer } from '../components/secrets/secretsManagerUtils'
-
-export interface StoredSecret {
-  id: string
-  name: string
-  encryptedValue: string
-  createdAt: number
-  updatedAt: number
-}
 
 export interface GlobalSecret {
   managed?: boolean
@@ -21,147 +12,25 @@ export interface WorkflowSecret {
   encrypted_value?: string
 }
 
-export interface StoredUserSecret {
-  name: string
-}
-
 interface SecretsState {
-  secrets: StoredSecret[]
   globalSecrets: GlobalSecret[]
-  storedUserSecrets: StoredUserSecret[]
   workflowSecretsByPath: Record<string, WorkflowSecret[]>
   // null = all global secrets selected (default), string[] = only these names selected
   selectedGlobalSecretNames: string[] | null
-  botEnabledNames: Set<string>
-  // Surfaced by the manager so a rejected save is visible; a credential that
-  // silently failed to save is worse than one that visibly did.
-  lastError: string | null
-  clearLastError: () => void
-  addSecret: (secret: Omit<StoredSecret, 'id' | 'createdAt' | 'updatedAt'>) => StoredSecret
-  updateSecret: (id: string, updates: Partial<Pick<StoredSecret, 'name' | 'encryptedValue'>>) => void
-  removeSecret: (id: string) => void
-  getSecret: (id: string) => StoredSecret | undefined
-  getSecretByName: (name: string) => StoredSecret | undefined
   fetchGlobalSecrets: () => Promise<void>
-  fetchStoredUserSecrets: () => Promise<void>
   fetchWorkflowSecrets: (workspacePath: string) => Promise<void>
   addWorkflowSecret: (workspacePath: string, name: string, encryptedValue: string) => Promise<void>
   removeWorkflowSecret: (workspacePath: string, name: string) => Promise<void>
   setSelectedGlobalSecretNames: (names: string[] | null) => void
-  fetchBotSecrets: () => Promise<void>
-  toggleBotAccess: (id: string) => Promise<void>
 }
 
 
 export const useSecretsStore = create<SecretsState>()(
   persist(
-    (set, get) => ({
-      secrets: [],
+    (set) => ({
       globalSecrets: [],
-      storedUserSecrets: [],
       workflowSecretsByPath: {},
       selectedGlobalSecretNames: null,
-      botEnabledNames: new Set<string>(),
-      lastError: null,
-
-      clearLastError: () => set({ lastError: null }),
-
-      addSecret: (secret) => {
-        const now = Date.now()
-        const newSecret: StoredSecret = {
-          id: crypto.randomUUID(),
-          name: secret.name,
-          encryptedValue: secret.encryptedValue,
-          createdAt: now,
-          updatedAt: now,
-        }
-        set((state) => ({
-          secrets: [...state.secrets, newSecret],
-          storedUserSecrets: state.storedUserSecrets.some((s) => s.name === secret.name)
-            ? state.storedUserSecrets
-            : [...state.storedUserSecrets, { name: secret.name }].sort((a, b) => a.name.localeCompare(b.name)),
-          botEnabledNames: new Set([...state.botEnabledNames, secret.name]),
-        }))
-        // The server is where this actually lives. A failed write used to be
-        // swallowed, leaving the secret listed in the UI while no agent ever
-        // received it -- the most confusing possible outcome for a credential.
-        // Roll the optimistic entry back and surface it instead.
-        secretsApi.storeSecret(secret.name, secret.encryptedValue).catch((error) => {
-          set((state) => ({
-            secrets: state.secrets.filter((s) => s.id !== newSecret.id),
-            storedUserSecrets: state.storedUserSecrets.filter((s) => s.name !== secret.name),
-          }))
-          set({ lastError: `Could not save "${secret.name}": ${error instanceof Error ? error.message : 'the server rejected it'}` })
-        })
-        return newSecret
-      },
-
-      updateSecret: (id, updates) => {
-        const oldSecret = get().secrets.find((s) => s.id === id)
-        const wasEnabled = oldSecret && get().botEnabledNames.has(oldSecret.name)
-
-        set((state) => ({
-          secrets: state.secrets.map((s) =>
-            s.id === id
-              ? { ...s, ...updates, updatedAt: Date.now() }
-              : s
-          ),
-          storedUserSecrets: updates.name && oldSecret
-            ? [
-                ...state.storedUserSecrets.filter((s) => s.name !== oldSecret.name && s.name !== updates.name),
-                { name: updates.name },
-              ].sort((a, b) => a.name.localeCompare(b.name))
-            : state.storedUserSecrets,
-        }))
-
-        if (wasEnabled && oldSecret) {
-          const updated = get().secrets.find((s) => s.id === id)
-          if (updated) {
-            // If name changed, delete old name from server first
-            if (updates.name && updates.name !== oldSecret.name) {
-              secretsApi.deleteStoredSecret(oldSecret.name).catch(() => {})
-              set((state) => {
-                const next = new Set(state.botEnabledNames)
-                next.delete(oldSecret.name)
-                next.add(updated.name)
-                return { botEnabledNames: next }
-              })
-            }
-            // Re-sync updated value to server
-            secretsApi.storeSecret(updated.name, updated.encryptedValue).catch(() => {})
-          }
-        }
-      },
-
-      removeSecret: (id) => {
-        const secret = get().secrets.find((s) => s.id === id)
-        const wasEnabled = secret && get().botEnabledNames.has(secret.name)
-
-        set((state) => ({
-          secrets: state.secrets.filter((s) => s.id !== id),
-          storedUserSecrets: secret
-            ? state.storedUserSecrets.filter((s) => s.name !== secret.name)
-            : state.storedUserSecrets,
-        }))
-
-        // Only delete from server if bot access was enabled
-        if (secret && wasEnabled) {
-          secretsApi.deleteStoredSecret(secret.name).catch(() => {})
-          set((state) => {
-            const next = new Set(state.botEnabledNames)
-            next.delete(secret.name)
-            return { botEnabledNames: next }
-          })
-        }
-      },
-
-      getSecret: (id) => {
-        return get().secrets.find((s) => s.id === id)
-      },
-
-      getSecretByName: (name) => {
-        return get().secrets.find((s) => s.name === name)
-      },
 
       fetchGlobalSecrets: async () => {
         try {
@@ -169,15 +38,6 @@ export const useSecretsStore = create<SecretsState>()(
           set({ globalSecrets: result })
         } catch {
           // Silently fail — global secrets are optional
-        }
-      },
-
-      fetchStoredUserSecrets: async () => {
-        try {
-          const result = await secretsApi.listStoredSecrets()
-          set({ ...secretsStateFromServer(result, get().secrets) })
-        } catch {
-          set({ storedUserSecrets: [] })
         }
       },
 
@@ -236,61 +96,11 @@ export const useSecretsStore = create<SecretsState>()(
         set({ selectedGlobalSecretNames: names })
       },
 
-      fetchBotSecrets: async () => {
-        try {
-          const result = await secretsApi.listStoredSecrets()
-          set({ ...secretsStateFromServer(result, get().secrets) })
-        } catch {
-          // Silently fail
-        }
-      },
-
-      toggleBotAccess: async (id) => {
-        const secret = get().secrets.find((s) => s.id === id)
-        if (!secret) return
-
-        const isEnabled = get().botEnabledNames.has(secret.name)
-
-        if (isEnabled) {
-          // Optimistically update UI
-          set((state) => {
-            const next = new Set(state.botEnabledNames)
-            next.delete(secret.name)
-            return { botEnabledNames: next }
-          })
-          try {
-            await secretsApi.deleteStoredSecret(secret.name)
-          } catch {
-            // Revert on failure
-            set((state) => ({
-              botEnabledNames: new Set([...state.botEnabledNames, secret.name]),
-            }))
-          }
-        } else {
-          // Optimistically update UI
-          set((state) => ({
-            botEnabledNames: new Set([...state.botEnabledNames, secret.name]),
-          }))
-          try {
-            await secretsApi.storeSecret(secret.name, secret.encryptedValue)
-          } catch {
-            // Revert on failure
-            set((state) => {
-              const next = new Set(state.botEnabledNames)
-              next.delete(secret.name)
-              return { botEnabledNames: next }
-            })
-          }
-        }
-      },
     }),
     {
       name: 'secrets-store',
-      // `secrets` is deliberately NOT persisted: the server holds every secret
-      // with its encrypted value and is refetched on load. Persisting them here
-      // created a second, browser-local source of truth that disagreed with the
-      // server in both directions -- secrets saved elsewhere were invisible, and
-      // secrets saved here appeared to vanish when site data was cleared.
+      // Only the global selection persists. Secret values live server-side and
+      // are refetched on load; names attach per workflow, crew, or chat.
       partialize: (state) => ({
         selectedGlobalSecretNames: state.selectedGlobalSecretNames,
       }),

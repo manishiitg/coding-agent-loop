@@ -62,7 +62,7 @@ func TestVideoStudioManifestDrivesProfileAndWorkflowCapabilities(t *testing.T) {
 	for _, name := range []string{
 		"show_video", "show_reference", "agent_browser",
 		"read_image", "search_web_llm",
-		"list_secrets", "set_workflow_secret", "set_user_secret",
+		"list_secrets", "set_workflow_secret",
 	} {
 		if !enabled[name] {
 			t.Fatalf("Video Studio needs %q: %+v", name, manifest.Profile.ToolPolicy)

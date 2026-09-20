@@ -41,6 +41,14 @@ bin/*
 !agent_go/pkg/chathistory/shared_secrets.go
 # Gmail OAuth client_secret.json resolution test: source only, no secret values.
 !agent_go/cmd/server/services/gmail_oauth_client_secret_test.go
+# Personal-to-box secrets migration command and its test: source only.
+!agent_go/cmd/server/product_secrets_migration.go
+!agent_go/cmd/server/product_secrets_migration_test.go
+# Removed-tool guidance guards: tests asserting prompts never name retired tools.
+!agent_go/internal/sparkquillproduct/secret_guidance_test.go
+!agent_go/internal/workproduct/secret_guidance_test.go
+!agent_go/internal/agentworksproduct/secret_guidance_test.go
+!agent_go/internal/videoproduct/secret_guidance_test.go
 # The *credential* rule above is meant for credential FILES, but it also
 # swallows source that merely has "Credential" in its name. These two are
 # ordinary UI source (a form field and a masking helper) holding no secret

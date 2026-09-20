@@ -667,11 +667,11 @@ type WorkshopConfig struct {
 	// LLMToolsFuncs provides callbacks for LLM management operations.
 	// Set by server.go which has access to provider keys and model metadata.
 	LLMToolsFuncs *LLMToolsCallbacks
-	// ListAvailableSecrets returns names of all available secrets (global + workflow/user-stored).
+	// ListAvailableSecrets returns names of all available secrets (global + workflow-stored).
 	// Used by get_workflow_config to show which secrets can be added.
 	ListAvailableSecrets func(ctx context.Context) ([]string, error)
 	// ResolveSecretValues returns plaintext values for the given secret names, merging
-	// workflow/user-stored secrets and global env secrets. Missing names are simply absent from
+	// workflow-stored secrets and global env secrets. Missing names are simply absent from
 	// the returned map - never an error. Used by update_workflow_config to refresh the
 	// workshop shell's SECRET_* env vars mid-session without a session restart.
 	ResolveSecretValues func(ctx context.Context, names []string) map[string]string
@@ -1055,8 +1055,8 @@ func (s *WorkshopChatSession) Close() {
 // in-memory state, workflow.json manifest, and live workshop shell env so the
 // freshly-stored secret is immediately usable as $SECRET_<NAME> in the SAME
 // session — no new chat or restart required. Intended to be invoked right after
-// set_workflow_secret / set_user_secret so storing a secret and making it
-// available is a single user action. The plaintext value is passed in directly
+// set_workflow_secret so storing a secret and making it available is a single
+// user action. The plaintext value is passed in directly
 // (the upsert handler already holds it), avoiding a DB round-trip. Mirrors
 // DetachSecretFromWorkflow.
 func (s *WorkshopChatSession) AttachSecretToWorkflow(ctx context.Context, name, value string) error {
@@ -1140,8 +1140,8 @@ func (s *WorkshopChatSession) AttachSecretToWorkflow(ctx context.Context, name, 
 // DetachSecretFromWorkflow removes a secret name from the workshop's in-memory
 // state, workflow.json manifest, and workshop shell env. Safe to call even if
 // the name was never attached — in that case it is a no-op. Intended to be
-// invoked by delete_user_secret so a single user action leaves no stale state
-// anywhere (store, manifest, or shell env).
+// invoked by delete_workflow_secret so a single user action leaves no stale
+// state anywhere (store, manifest, or shell env).
 func (s *WorkshopChatSession) DetachSecretFromWorkflow(ctx context.Context, name string) error {
 	if s == nil || s.controller == nil || name == "" {
 		return nil

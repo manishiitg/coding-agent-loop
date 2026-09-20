@@ -412,10 +412,7 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           workflowPath={workspacePath}
           workspaceNoun="project"
           workspaceSecretHeading="Project secrets"
-          workspaceBadgeLabel="Project"
-          workspaceSharingBadgeLabel="Project"
           showGlobalSecrets
-          showSharedSecrets={false}
           allowGlobalPromotion
         /></div>}
         {view === 'folders' && <WorkFoldersPanel workspacePath={workspacePath} workflowContextPaths={workflowContextPaths} onWorkflowContextPathsChange={onWorkflowContextPathsChange} />}

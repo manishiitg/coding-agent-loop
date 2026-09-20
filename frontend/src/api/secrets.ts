@@ -47,6 +47,10 @@ export const secretsApi = {
   deleteGlobalSecret: async (name: string): Promise<void> => {
     await api.delete('/api/secrets/global', { params: { name } });
   },
+  revealGlobalSecret: async (name: string): Promise<{ value: string }> => {
+    const response = await api.get('/api/secrets/global/reveal', { params: { name } });
+    return response.data;
+  },
   encrypt: async (value: string): Promise<{ encrypted: string }> => {
     const response = await api.post('/api/secrets/encrypt', { value });
     return response.data;
@@ -68,11 +72,6 @@ export const secretsApi = {
     return response.data;
   },
 
-  storeSecret: async (name: string, encryptedValue: string): Promise<{ success: boolean }> => {
-    const response = await api.put('/api/secrets/store', { name, encrypted_value: encryptedValue });
-    return response.data;
-  },
-
   storeWorkflowSecret: async (workspacePath: string, name: string, encryptedValue: string): Promise<{ success: boolean }> => {
     const response = await api.put('/api/secrets/workflow/store', {
       workspace_path: workspacePath,
@@ -82,23 +81,10 @@ export const secretsApi = {
     return response.data;
   },
 
-  deleteStoredSecret: async (name: string): Promise<{ success: boolean }> => {
-    const response = await api.delete(`/api/secrets/store/${encodeURIComponent(name)}`);
-    return response.data;
-  },
-
   deleteWorkflowSecret: async (workspacePath: string, name: string): Promise<{ success: boolean }> => {
     const response = await api.delete(`/api/secrets/workflow/store/${encodeURIComponent(name)}`, {
       params: { workspace_path: workspacePath },
     });
-    return response.data;
-  },
-
-  // Returns the caller's own secrets complete with their encrypted values, so
-  // the client never needs a parallel copy of them. Decryption still happens
-  // server-side through /api/secrets/decrypt.
-  listStoredSecrets: async (): Promise<{ id?: string; name: string; encrypted_value?: string }[]> => {
-    const response = await api.get('/api/secrets/stored');
     return response.data;
   },
 

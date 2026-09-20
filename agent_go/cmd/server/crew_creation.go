@@ -680,7 +680,6 @@ func writeCrewCreationManifest(ctx context.Context, path string, manifest map[st
 // availability checks. Each probe is overrideable so tests run hermetic.
 type crewCreationAvailability struct {
 	MCPServer     func(name string) (canonical string, connected bool, err error)
-	UserSecrets   func(ctx context.Context, userID string) (map[string]bool, error)
 	ScopedSecrets func(ctx context.Context, path, userID string) (map[string]bool, error)
 	GlobalSecrets func() map[string]bool
 }
@@ -729,11 +728,11 @@ func (s *ProductScheduleService) probeCrewCreationMCPServer(name string) (string
 }
 
 // validateCrewCreationSecrets shape-checks requested project secrets and
-// verifies each resolves in a scope the new crew actually reads: the user's
-// own store or the global store. A fresh crew has no scoped secrets of its
-// own yet, and the creating workflow's scoped secrets do not carry over, so
-// a name found only there fails with a targeted hint instead of recording
-// a reference that would resolve empty at runtime.
+// verifies each resolves in a scope the new crew actually reads: the global
+// store. A fresh crew has no scoped secrets of its own yet, and the creating
+// workflow's scoped secrets do not carry over, so a name found only there
+// fails with a targeted hint instead of recording a reference that would
+// resolve empty at runtime.
 func (s *ProductScheduleService) validateCrewCreationSecrets(ctx context.Context, userID, workflowPath string, names []string) ([]string, error) {
 	checked, err := validateCrewCreationNames("secret", names)
 	if err != nil {
@@ -742,14 +741,10 @@ func (s *ProductScheduleService) validateCrewCreationSecrets(ctx context.Context
 	if len(checked) == 0 {
 		return nil, nil
 	}
-	userSecrets, err := s.probeCrewCreationUserSecrets(ctx, userID)
-	if err != nil {
-		return nil, err
-	}
 	globals := s.probeCrewCreationGlobalSecrets()
 	var creatingScope map[string]bool
 	for _, name := range checked {
-		if userSecrets[name] || globals[name] {
+		if globals[name] {
 			continue
 		}
 		if creatingScope == nil {
@@ -759,29 +754,11 @@ func (s *ProductScheduleService) validateCrewCreationSecrets(ctx context.Context
 			}
 		}
 		if creatingScope[name] {
-			return nil, fmt.Errorf("crew secret %q exists in workflow %q, but workflow secrets do not carry over to a new crew; store the value in your user secrets (or add it in the Crew UI after creation) or drop it", name, workflowPath)
+			return nil, fmt.Errorf("crew secret %q exists in workflow %q, but workflow secrets do not carry over to a new crew; add it in the Crew UI after creation or drop it", name, workflowPath)
 		}
-		return nil, fmt.Errorf("crew secret %q has no stored value for this user; store it with set_user_secret first or drop it", name)
+		return nil, fmt.Errorf("crew secret %q has no stored value; use a global secret name or add it in the Crew UI after creation, or drop it", name)
 	}
 	return checked, nil
-}
-
-func (s *ProductScheduleService) probeCrewCreationUserSecrets(ctx context.Context, userID string) (map[string]bool, error) {
-	if s != nil && s.crewAvailability != nil && s.crewAvailability.UserSecrets != nil {
-		return s.crewAvailability.UserSecrets(ctx, userID)
-	}
-	if s == nil || s.api == nil || s.api.chatStore == nil {
-		return nil, fmt.Errorf("user secret store is unavailable")
-	}
-	stored, err := s.api.chatStore.ListUserSecrets(ctx, userID)
-	if err != nil {
-		return nil, fmt.Errorf("list user secrets: %w", err)
-	}
-	out := make(map[string]bool, len(stored))
-	for _, secret := range stored {
-		out[secret.Name] = true
-	}
-	return out, nil
 }
 
 func (s *ProductScheduleService) probeCrewCreationScopedSecrets(ctx context.Context, path, userID string) (map[string]bool, error) {

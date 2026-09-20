@@ -149,7 +149,9 @@ func (api *StreamingAPI) handleEncryptSecret(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	// Use userID as additional authenticated data for per-user isolation
+	// Use the caller id as additional authenticated data so only the same
+	// session can unwrap this transport ciphertext before the server
+	// re-binds it to a workflow box or managed global.
 	aad := []byte(userID)
 	ciphertext := aesGCM.Seal(nonce, nonce, []byte(req.Value), aad)
 
@@ -227,7 +229,8 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 
 	nonce, ciphertext := data[:nonceSize], data[nonceSize:]
 
-	// Use userID as AAD — prevents cross-user decryption
+	// Use the caller id as AAD — transport ciphertext only unwraps in the
+	// session that created it.
 	aad := []byte(userID)
 	plaintext, err := aesGCM.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
@@ -241,8 +244,10 @@ func (api *StreamingAPI) handleDecryptSecret(w http.ResponseWriter, r *http.Requ
 	})
 }
 
-// decryptSecretValue decrypts an AES-256-GCM encrypted base64 value using userID as AAD.
-// Extracted from handleDecryptSecret for reuse by the bot secrets loader.
+// decryptSecretValue unwraps transport ciphertext produced by
+// /api/secrets/encrypt in the caller's session (caller id is the AAD).
+// Callers re-bind the plaintext to a workflow box or managed global; the
+// ciphertext itself is never stored as a secret.
 func decryptSecretValue(encryptedBase64 string, userID string) (string, error) {
 	return decryptSecretValueWithAAD(encryptedBase64, []byte(userID))
 }
@@ -260,90 +265,11 @@ func secretWorkspacePathForRequest(r *http.Request, raw string) (string, error) 
 	return agentProfileRuntimeWorkspace(userID, clean), nil
 }
 
-// storeSecretRequest is the request body for storing a user secret server-side
+// storeSecretRequest is the request body for storing a workflow secret server-side
 type storeSecretRequest struct {
 	Name           string `json:"name"`
 	EncryptedValue string `json:"encrypted_value"`
 	WorkspacePath  string `json:"workspace_path,omitempty"`
-}
-
-// handleStoreUserSecret upserts a user secret in the database
-// PUT /api/secrets/store
-func (api *StreamingAPI) handleStoreUserSecret(w http.ResponseWriter, r *http.Request) {
-	var req storeSecretRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-	if req.Name == "" || req.EncryptedValue == "" {
-		http.Error(w, "name and encrypted_value are required", http.StatusBadRequest)
-		return
-	}
-
-	userID := GetUserIDFromContext(r.Context())
-
-	if err := api.chatStore.UpsertUserSecret(r.Context(), userID, req.Name, req.EncryptedValue); err != nil {
-		log.Printf("[SECRETS] Failed to store user secret: %v", err)
-		http.Error(w, "Failed to store secret", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
-
-// handleDeleteUserSecret deletes a user secret from the database
-// DELETE /api/secrets/store/{name}
-func (api *StreamingAPI) handleDeleteUserSecret(w http.ResponseWriter, r *http.Request) {
-	name := mux.Vars(r)["name"]
-	if name == "" {
-		http.Error(w, "Secret name is required", http.StatusBadRequest)
-		return
-	}
-
-	userID := GetUserIDFromContext(r.Context())
-
-	if err := api.chatStore.DeleteUserSecret(r.Context(), userID, name); err != nil {
-		log.Printf("[SECRETS] Failed to delete user secret: %v", err)
-		http.Error(w, "Failed to delete secret", http.StatusInternalServerError)
-		return
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]bool{"success": true})
-}
-
-// handleListStoredSecrets returns secret names stored server-side (no values exposed)
-// GET /api/secrets/stored
-func (api *StreamingAPI) handleListStoredSecrets(w http.ResponseWriter, r *http.Request) {
-	userID := GetUserIDFromContext(r.Context())
-
-	secrets, err := api.chatStore.ListUserSecrets(r.Context(), userID)
-	if err != nil {
-		log.Printf("[SECRETS] Failed to list stored secrets: %v", err)
-		http.Error(w, "Failed to list secrets", http.StatusInternalServerError)
-		return
-	}
-
-	// The encrypted value is returned so this endpoint is a complete read of
-	// the caller's own secrets. Withholding it bought no security -- the same
-	// authenticated session can already POST any blob to /api/secrets/decrypt --
-	// while forcing the client to keep its own parallel copy of every secret it
-	// wanted to display or edit. That copy was the real hazard: it lived in one
-	// browser, so a secret saved anywhere else was invisible, and a secret saved
-	// here survived only until site data was cleared.
-	type entry struct {
-		ID             string `json:"id,omitempty"`
-		Name           string `json:"name"`
-		EncryptedValue string `json:"encrypted_value,omitempty"`
-	}
-	result := make([]entry, len(secrets))
-	for i, s := range secrets {
-		result[i] = entry{ID: s.ID, Name: s.Name, EncryptedValue: s.EncryptedValue}
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
 }
 
 // handleStoreWorkflowSecret upserts a workflow secret in the shared,

@@ -36,11 +36,10 @@ import { resolveChatSurface, resolveWorkflowChatSurface } from './resolveChatSur
 import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
-import type { CustomPreset } from '../types/preset'
+
 import { appendTimelineAndApplyConfirmations, conversationToRestoredEvents, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
-import { secretsApi } from '../api/secrets'
-import { useSecretsStore } from '../stores'
+
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
 import {
   determineModeFlag,
@@ -3054,34 +3053,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       chatStore.setTabViewMode(currentTab.tabId, 'formatted')
     }
 
-    // Decrypt selected secrets for payload (passed separately, never in query text)
-      // Merge secrets from tab config (multi-agent) and workflow preset
-    let decryptedSecrets: Array<{ name: string; value: string }> | undefined
-    const tabSecretIds = currentTab?.config?.selectedSecrets || []
-    const presetSecretIds = (submitModeCategory === 'workflow' && freshWorkflowPreset)
-      ? ((freshWorkflowPreset as CustomPreset).selectedSecrets || [])
-      : []
-    const selectedSecretIds = [...new Set([...tabSecretIds, ...presetSecretIds])]
-    if (selectedSecretIds.length > 0) {
-      try {
-        const secretsStore = useSecretsStore.getState()
-        const secretsToInject = selectedSecretIds
-          .map(id => secretsStore.getSecret(id))
-          .filter((s): s is NonNullable<typeof s> => !!s)
-
-        if (secretsToInject.length > 0) {
-          decryptedSecrets = await Promise.all(
-            secretsToInject.map(async (s) => {
-              const { value } = await secretsApi.decrypt(s.encryptedValue)
-              return { name: s.name, value }
-            })
-          )
-        }
-      } catch (err) {
-        logger.error('ChatArea', 'Failed to decrypt secrets:', err)
-      }
-    }
-
+    // Secret values resolve server-side from the workflow box and globals.
+    // Personal browser secrets are gone: nothing decrypts client-side here.
     if (!stillOwnsSubmission()) return false
     if (submitModeCategory === 'workflow') {
       useAppStore.getState().setCurrentQuery(displayQueryWithContext)
@@ -3242,7 +3215,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         chatPresetId,
         filteredPresetTools,
         hasActivePreset: !!activePreset,
-        decryptedSecrets,
         selectedGlobalSecrets: activePreset?.selectedGlobalSecretNames ?? undefined,
         restoredConversationPath,
       }), currentTab)

@@ -199,12 +199,12 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 					skillsParsed := true
 
 					// Refresh secrets
-					refreshedUserSecrets := api.loadSelectedSecrets(context.Background(), userID, phaseWorkspacePath, caps.SelectedSecrets)
+					refreshedScopedSecrets := api.loadSelectedSecrets(context.Background(), userID, phaseWorkspacePath, caps.SelectedSecrets)
 					effectiveSecretSelection := syntheticReq.SelectedGlobalSecrets
 					if caps.SelectedGlobalSecretNames != nil {
 						effectiveSecretSelection = caps.SelectedGlobalSecretNames
 					}
-					allRefreshedSecrets := mergeGlobalSecrets(refreshedUserSecrets, effectiveSecretSelection)
+					allRefreshedSecrets := mergeGlobalSecrets(refreshedScopedSecrets, effectiveSecretSelection)
 					var secretEntries []orchestrator.SecretEntry
 					for _, s := range allRefreshedSecrets {
 						secretEntries = append(secretEntries, orchestrator.SecretEntry{Name: s.Name, Value: s.Value})
@@ -338,7 +338,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 			if err := api.registerSecretManagementTools(definitionAgent, userID, phaseWorkspacePath, "secret_tools", !policy.allows("secret_management"), afterUpsert, afterDelete); err != nil {
 				log.Printf("[WORKFLOW_PHASE] Warning: Failed to register secret tools in %s: %v", workflowPhaseID, err)
 			} else {
-				log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_workflow_secret, delete_workflow_secret, set_user_secret, delete_user_secret) with workflow auto-detach", workflowPhaseID)
+				log.Printf("[WORKFLOW_PHASE] Registered secret tools in %s (list_secrets, set_workflow_secret, delete_workflow_secret) with workflow auto-detach", workflowPhaseID)
 			}
 		}
 
@@ -472,7 +472,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	// The old allow list filtered the catalog the coding CLI caches at launch,
 	// so an omitted-but-registered tool was undiscoverable rather than
 	// rejected: the agent never learned it existed and shelled out instead.
-	// That silently cost set_user_secret and list_llm_capabilities. It also
+	// That silently cost set_workflow_secret and list_llm_capabilities. It also
 	// wrote through to the session-wide code-execution registry, which reaches
 	// execution agents and sub-agents that workshop mode was never meant to
 	// govern. See docs/design/agent_tool_surface_single_source.md.

@@ -165,11 +165,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           ? (existingPreset?.selectedGlobalSecretNames === undefined ? [] : existingPreset.selectedGlobalSecretNames)
           : selectedGlobalSecretNames
 
-        // Convert legacy local secret IDs to names for backend persistence.
-        // Workflow-scoped secrets are already represented by name.
+        // Selections are secret names; the server resolves them from the
+        // workflow box and globals.
         const secretNamesForBackend = selectedSecrets
-          ?.map(secretIdOrName => useSecretsStore.getState().getSecret(secretIdOrName)?.name || secretIdOrName)
-          .filter((n): n is string => !!n) || []
+          ?.filter((n): n is string => !!n) || []
 
         // Multi-agent chat has a single file-backed capability profile, parallel
         // to workflow.json capabilities rather than DB presets.
@@ -571,7 +570,6 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           }
           
           // Sync per-preset global secret selection to secrets store
-          // This ensures the SecretSelectionDropdown reflects the preset's setting
           if ('selectedGlobalSecretNames' in preset) {
             const presetGlobalSecrets = (preset as CustomPreset).selectedGlobalSecretNames
             useSecretsStore.getState().setSelectedGlobalSecretNames(presetGlobalSecrets ?? null)

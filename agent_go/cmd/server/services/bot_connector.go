@@ -439,16 +439,6 @@ type ProfileTurnFunc func(ctx context.Context, userID string, msg BotIncomingMes
 // so the follow-up agent is configured identically to the initial session.
 type SessionFollowUpFunc func(ctx context.Context, reqMap map[string]interface{}, sessionID string, userID string) error
 
-// DecryptedSecret represents a decrypted user secret ready for injection into agent prompts
-type DecryptedSecret struct {
-	Name  string
-	Value string
-}
-
-// UserSecretsLoaderFunc loads decrypted user secrets for a given user ID.
-// Used by bot sessions to retrieve server-side stored secrets.
-type UserSecretsLoaderFunc func(ctx context.Context, userID string) ([]DecryptedSecret, error)
-
 // BotRunningWorkflow is the minimal workflow-run view needed for bot status
 // replies. The server layer maps this from its execution tracker.
 type BotRunningWorkflow struct {
@@ -532,7 +522,6 @@ type BotConversationManager struct {
 	// Function references set by server layer (to avoid import cycles)
 	startSession     SessionStartFunc
 	followUpSession  SessionFollowUpFunc
-	loadUserSecrets  UserSecretsLoaderFunc
 	profileTurn      ProfileTurnFunc
 	workflowTurn     func(context.Context, string, ChannelRoute, ThreadID) (map[string]interface{}, error)
 	chatHistory      ChatHistoryReaderFunc
@@ -684,11 +673,6 @@ func (m *BotConversationManager) BotThreadStatus(threadID ThreadID) BotThreadSta
 		Status:     active.Status,
 		DetailMode: detailMode,
 	}
-}
-
-// SetUserSecretsLoader sets the function used to load decrypted user secrets for bot sessions
-func (m *BotConversationManager) SetUserSecretsLoader(fn UserSecretsLoaderFunc) {
-	m.loadUserSecrets = fn
 }
 
 // SetProfileTurnFunc sets the builder for turns in an account's default
@@ -2317,7 +2301,7 @@ func (m *BotConversationManager) HandleMessageSync(ctx context.Context, msg BotI
 		restoredConversationSessionID = sessionID
 	}
 
-	// Resolve workspace user ID for per-user secrets
+	// Resolve workspace user ID for scoped secret resolution and access checks
 	workspaceUserID := m.resolveWorkspaceUserID(msg)
 
 	newSessionID := newBotSessionID(msg.Platform)
@@ -3116,7 +3100,7 @@ func (m *BotConversationManager) resolveChannelWorkflow(platform, channelID stri
 }
 
 // buildQueryRequest constructs a request map for startSessionInternal.
-// userID is the workspace user ID used for loading per-user secrets.
+// userID is the workspace user ID used for scoped secret resolution and access checks.
 // channelID is used for Slack-style channel→workflow routing: pass the
 // incoming message's ChannelID for new sessions, or "" for follow-ups into
 // existing sessions (routing is ignored for follow-ups).
@@ -3291,21 +3275,6 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 			llmConfig["api_keys"] = apiKeys
 			req["llm_config"] = llmConfig
 			log.Printf("[BOT_MANAGER] Loaded %d provider API keys from workspace file", len(apiKeys))
-		}
-	}
-
-	// Load server-side user secrets and inject as decrypted_secrets
-	if m.loadUserSecrets != nil {
-		secrets, err := m.loadUserSecrets(context.Background(), userID)
-		if err != nil {
-			log.Printf("[BOT_MANAGER] Failed to load user secrets: %v", err)
-		} else if len(secrets) > 0 {
-			secretsList := make([]map[string]string, len(secrets))
-			for i, s := range secrets {
-				secretsList[i] = map[string]string{"name": s.Name, "value": s.Value}
-			}
-			req["decrypted_secrets"] = secretsList
-			log.Printf("[BOT_MANAGER] Loaded %d user secrets for bot session", len(secrets))
 		}
 	}
 

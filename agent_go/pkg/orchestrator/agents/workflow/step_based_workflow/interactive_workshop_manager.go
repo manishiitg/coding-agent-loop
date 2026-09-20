@@ -1410,9 +1410,10 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"query_workflow_db", "mutate_workflow_db", "apply_workflow_db_migration", "create_workflow_database_snapshot",
 		// PLAT-184. This workflow's own per-workspace cost ledger.
 		"query_workflow_costs",
-		// Secret management tools. Managed globals require server admin; workflow/user
-		// encrypted stores are writable when the corresponding tools are registered.
-		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "set_user_secret", "delete_user_secret", "manage_global_secret", "manage_user_access", "manage_workflow_webhook",
+		// Secret management tools. Managed globals require server admin; the
+		// workflow encrypted store is writable when the corresponding tools
+		// are registered.
+		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "manage_global_secret", "manage_user_access", "manage_workflow_webhook",
 		// Human tools are appended below from virtualtools.HumanToolNamesForWorkshopMode()
 		// (single source shared with registration, so the allow-list can't drift).
 		// Browser (if registered)
@@ -4879,7 +4880,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"add_secrets": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Secret names to attach to the workflow. Each name MUST already have a stored value — either a GLOBAL_SECRET_* env var, a workflow secret (store via set_workflow_secret), or a reusable user secret (store via set_user_secret) — otherwise the request is rejected. Attaching only wires the name: runtime injects $SECRET_<NAME> with the looked-up value. Use list_secrets to see what's available.",
+					"description": "Secret names to attach to the workflow. Each name MUST already have a stored value — either a GLOBAL_SECRET_* env var or a workflow secret (store via set_workflow_secret) — otherwise the request is rejected. Attaching only wires the name: runtime injects $SECRET_<NAME> with the looked-up value. Use list_secrets to see what's available.",
 				},
 				"remove_secrets": map[string]interface{}{
 					"type":        "array",
@@ -5237,10 +5238,10 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					if len(missing) > 0 {
 						return fmt.Sprintf(
 							"Error: cannot attach secret(s) with no stored value: %v.\n\n"+
-								"These names have no value in the workflow secret store, reusable user secret store, or matching GLOBAL_SECRET_* env var. "+
+								"These names have no value in the workflow secret store or matching GLOBAL_SECRET_* env var. "+
 								"Attaching them would set $SECRET_<NAME> to an empty string at runtime and silently break any step that reads them.\n\n"+
 								"Fix:\n"+
-								"  1. Store the value first: set_workflow_secret(name=\"%s\", value=\"<plaintext>\") for this workflow, or set_user_secret(...) for a reusable value.\n"+
+								"  1. Store the value first: set_workflow_secret(name=\"%s\", value=\"<plaintext>\") for this workflow.\n"+
 								"  2. Then re-run update_workflow_config(add_secrets=[...]).",
 							missing, missing[0],
 						), nil

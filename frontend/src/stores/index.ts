@@ -10,7 +10,6 @@ export { useRunningWorkflowsStore, useRunningWorkflows, useShowRunningDrawer, us
 export type { RunningWorkflow } from './useRunningWorkflowsStore'
 export { useCapabilitiesStore } from './useCapabilitiesStore'
 export { useSecretsStore } from './useSecretsStore'
-export type { StoredSecret } from './useSecretsStore'
 export { useWorkspaceConnectionStore } from './useWorkspaceConnectionStore'
 export type { WorkspaceProfile, WorkspaceConnectionType } from './useWorkspaceConnectionStore'
 

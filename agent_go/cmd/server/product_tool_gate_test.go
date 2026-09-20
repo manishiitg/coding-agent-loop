@@ -41,14 +41,14 @@ func TestProductToolGateObserveModeAdmitsEverything(t *testing.T) {
 	if gate.enforcing() {
 		t.Fatal("a profile without mode=allowlist must be in observe mode")
 	}
-	for _, name := range []string{"execute_shell_command", "set_user_secret", "anything_at_all"} {
+	for _, name := range []string{"execute_shell_command", "list_secrets", "anything_at_all"} {
 		if !gate.Admit(name) {
 			t.Fatalf("observe mode declined %q", name)
 		}
 	}
 
 	registered, filtered := gate.summary()
-	want := []string{"anything_at_all", "execute_shell_command", "set_user_secret"}
+	want := []string{"anything_at_all", "execute_shell_command", "list_secrets"}
 	if !reflect.DeepEqual(registered, want) {
 		t.Fatalf("registered = %v, want %v", registered, want)
 	}
@@ -216,9 +216,9 @@ func TestProductToolGateAppliesAcrossPools(t *testing.T) {
 	}))
 
 	cases := map[string]bool{
-		"list_secrets":          true,  // secret tools
-		"query_step":            true,  // workflow tools
-		"set_user_secret":       false, // secret pool, not enabled
+		"list_secrets":            true,  // secret tools
+		"query_step":              true,  // workflow tools
+		"delete_workflow_secret":  false, // secret pool, not enabled
 		"execute_step":          false, // workflow pool, not enabled
 		"list_llm_capabilities": false, // platform pool, not enabled
 	}
@@ -244,7 +244,7 @@ func TestProductToolGateIsDerivedIdenticallyForParentAndChild(t *testing.T) {
 	if parent.enforcing() != child.enforcing() {
 		t.Fatalf("parent enforcing=%v but child enforcing=%v", parent.enforcing(), child.enforcing())
 	}
-	for _, name := range []string{"video.show-video", "query_step", "image_gen", "set_user_secret"} {
+	for _, name := range []string{"video.show-video", "query_step", "image_gen", "delete_workflow_secret"} {
 		if parent.Admit(name) != child.Admit(name) {
 			t.Errorf("parent and child disagree on %q; a child could exceed its product's surface", name)
 		}

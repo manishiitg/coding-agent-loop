@@ -1,5 +1,5 @@
 import { agentApi, getApiBaseUrl, getAuthToken } from '../../services/api'
-import { createProductProject, loadProductProjects, parseProductProjectManifest } from '../../platform/chat/productProjects'
+import { createProductProject, loadProductProjects, parseProductProjectManifest, type ProductProject } from '../../platform/chat/productProjects'
 import { flattenFiles, responseContent, responseFiles, slugifyTitle } from '../../utils/plannerFiles'
 import { loadWorkspacePresentations, parseWorkspacePresentations, type WorkspacePresentation } from '../../platform/presentations/presentationData'
 
@@ -49,16 +49,7 @@ export async function loadVideoProductCommands(): Promise<VideoProductCommand[]>
   return parseProductCommands(await response.json() as AgentProfileResponse)
 }
 
-export type VideoProject = {
-  schemaVersion: 1
-  product: 'video-studio'
-  id: string
-  title: string
-  description: string
-  sessionId: string
-  workspacePath: string
-  createdAt: string
-  updatedAt: string
+export type VideoProject = ProductProject<'video-studio'> & {
   videos: number
 }
 

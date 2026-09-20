@@ -425,7 +425,8 @@ type StreamingAPI struct {
 	restoredConversationPersistTargets map[string]restoredChatHistoryPersistTarget
 	restoredConversationPersistMux     sync.RWMutex
 
-	// Operator-state store: bot connector configs + per-user encrypted secrets.
+	// Operator-state store: bot connector configs, chat history, and the
+	// encrypted secret boxes (workflow/project/product + managed globals).
 	chatStore chathistory.Store
 
 	// Global immutable cost event repository (SQLite in production).
@@ -1525,6 +1526,7 @@ func init() {
 
 	ServerCmd.AddCommand(rotateProviderKeysCmd)
 	ServerCmd.AddCommand(migrateSparkQuillCmd)
+	ServerCmd.AddCommand(migrateProductSecretsCmd)
 }
 
 func runServer(cmd *cobra.Command, args []string) {
@@ -2271,9 +2273,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/secrets/decrypt", api.handleDecryptSecret).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/global", api.handleGetGlobalSecrets).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/global", api.handleManageGlobalSecret).Methods("POST", "PUT", "DELETE")
-	apiRouter.HandleFunc("/secrets/store", api.handleStoreUserSecret).Methods("PUT", "OPTIONS")
-	apiRouter.HandleFunc("/secrets/store/{name}", api.handleDeleteUserSecret).Methods("DELETE", "OPTIONS")
-	apiRouter.HandleFunc("/secrets/stored", api.handleListStoredSecrets).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/secrets/global/reveal", api.handleRevealGlobalSecret).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/workflow/store", api.handleStoreWorkflowSecret).Methods("PUT", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/workflow/store/{name}", api.handleDeleteWorkflowSecret).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/secrets/workflow/stored", api.handleListStoredWorkflowSecrets).Methods("GET", "OPTIONS")
@@ -2476,22 +2476,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// automatically mirror its background session's agent messages into the
 	// parent's Slack thread — no per-tool hooks required.
 	virtualtools.SetSpawnListener(botManager)
-	botManager.SetUserSecretsLoader(func(ctx context.Context, userID string) ([]services.DecryptedSecret, error) {
-		stored, err := chatStore.ListUserSecrets(ctx, userID)
-		if err != nil {
-			return nil, err
-		}
-		var result []services.DecryptedSecret
-		for _, s := range stored {
-			plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
-			if err != nil {
-				log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
-				continue // skip broken secrets
-			}
-			result = append(result, services.DecryptedSecret{Name: s.Name, Value: plaintext})
-		}
-		return result, nil
-	})
+
 
 	// Wire bot session checker for human feedback (skip 2-min delay for bot sessions)
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
@@ -3039,9 +3024,9 @@ func latestAssistantTextFromHistory(history []llmtypes.MessageContent) string {
 	return ""
 }
 
-// User secrets take priority on name collision.
+// Scoped (workflow/project/product) secrets take priority on name collision.
 // If selectedGlobalNames is non-nil, only global secrets whose name is in the list are included.
-func mergeGlobalSecrets(userSecrets []struct {
+func mergeGlobalSecrets(scopedSecrets []struct {
 	Name  string `json:"name"`
 	Value string `json:"value"`
 }, selectedGlobalNames *[]string) []struct {
@@ -3050,7 +3035,7 @@ func mergeGlobalSecrets(userSecrets []struct {
 } {
 	globals := getGlobalSecrets()
 	if len(globals) == 0 {
-		return userSecrets
+		return scopedSecrets
 	}
 	// Build filter set from selected global names (nil = include all)
 	var allowedGlobals map[string]bool
@@ -3060,18 +3045,18 @@ func mergeGlobalSecrets(userSecrets []struct {
 			allowedGlobals[name] = true
 		}
 	}
-	// Build a set of user-supplied secret names for dedup
-	userNames := make(map[string]bool, len(userSecrets))
-	for _, s := range userSecrets {
-		userNames[s.Name] = true
+	// Build a set of scoped secret names for dedup
+	scopedNames := make(map[string]bool, len(scopedSecrets))
+	for _, s := range scopedSecrets {
+		scopedNames[s.Name] = true
 	}
-	// Prepend globals that don't collide with user secrets and are in the allowed set
+	// Prepend globals that don't collide with scoped secrets and are in the allowed set
 	var merged []struct {
 		Name  string `json:"name"`
 		Value string `json:"value"`
 	}
 	for _, g := range globals {
-		if userNames[g.Name] {
+		if scopedNames[g.Name] {
 			continue
 		}
 		if allowedGlobals != nil && !allowedGlobals[g.Name] {
@@ -3082,7 +3067,7 @@ func mergeGlobalSecrets(userSecrets []struct {
 			Value string `json:"value"`
 		}{Name: g.Name, Value: g.Value})
 	}
-	merged = append(merged, userSecrets...)
+	merged = append(merged, scopedSecrets...)
 	return merged
 }
 
@@ -3094,20 +3079,14 @@ func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workfl
 		return nil
 	}
 
-	stored, err := api.chatStore.ListUserSecrets(ctx, userID)
-	if err != nil {
-		log.Printf("[SECRETS] Failed to list stored user secrets for %s: %v", userID, err)
-		return nil
-	}
-
 	selectedSet := make(map[string]bool, len(selectedNames))
 	for _, name := range selectedNames {
 		selectedSet[name] = true
 	}
 
 	// Track which selected names were actually resolved so we can surface orphans.
-	// An orphan is a name attached to the workflow with no value in the workflow/user
-	// stores and no matching GLOBAL_SECRET_* env var — runtime would silently set
+	// An orphan is a name attached to the workflow with no value in the workflow
+	// store and no matching GLOBAL_SECRET_* env var — runtime would silently set
 	// $SECRET_<NAME> to empty, masking downstream failures.
 	resolved := make(map[string]bool, len(selectedNames))
 
@@ -3118,19 +3097,6 @@ func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workfl
 			resultOrder = append(resultOrder, name)
 		}
 		resultByName[name] = value
-	}
-
-	for _, s := range stored {
-		if !selectedSet[s.Name] {
-			continue
-		}
-		plaintext, err := decryptSecretValue(s.EncryptedValue, userID)
-		if err != nil {
-			log.Printf("[SECRETS] Failed to decrypt stored secret %q for user %s: %v", s.Name, userID, err)
-			continue
-		}
-		addResult(s.Name, plaintext)
-		resolved[s.Name] = true
 	}
 
 	if strings.TrimSpace(workflowPath) != "" {
@@ -3191,7 +3157,7 @@ func (api *StreamingAPI) loadSelectedSecrets(ctx context.Context, userID, workfl
 		}
 	}
 	if len(orphans) > 0 {
-		log.Printf("[SECRETS] ⚠️  Workflow attaches secret name(s) with no stored value for user %s workflow %s: %v — $SECRET_<NAME> will be EMPTY at runtime. Store a value with set_workflow_secret/set_user_secret or detach via update_workflow_config(remove_secrets=[...]).", userID, workflowPath, orphans)
+		log.Printf("[SECRETS] ⚠️  Workflow attaches secret name(s) with no stored value for user %s workflow %s: %v — $SECRET_<NAME> will be EMPTY at runtime. Store a value with set_workflow_secret or detach via update_workflow_config(remove_secrets=[...]).", userID, workflowPath, orphans)
 	}
 
 	return result
@@ -3996,7 +3962,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if req.SelectedGlobalSecrets == nil && manifest.Capabilities.SelectedGlobalSecretNames != nil {
 					req.SelectedGlobalSecrets = manifest.Capabilities.SelectedGlobalSecretNames
 				}
-				// Manifest is the source of truth for workflow-selected user secrets too.
+				// Manifest is the source of truth for workflow-selected secrets too.
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
 				// A bot session already carries its arrival connection, which
 				// wins over the manifest selection for that conversation.
@@ -4299,7 +4265,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				entries[i] = orchestrator.SecretEntry{Name: s.Name, Value: s.Value}
 			}
 			workflowOrchestrator.SetSecrets(entries)
-			log.Printf("[SECRETS] Applied %d secrets (%d global + %d user) to workflow orchestrator", len(entries), len(entries)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
+			log.Printf("[SECRETS] Applied %d secrets (%d global + %d scoped) to workflow orchestrator", len(entries), len(entries)-len(req.DecryptedSecrets), len(req.DecryptedSecrets))
 		}
 
 		// Replace workspace advanced executors with session-aware versions that include secrets.
@@ -5909,7 +5875,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					sendError(fmt.Sprintf("Failed to register multi-agent secret tools: %v", err), true)
 					return
 				}
-				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools with live session injection (list_secrets, set_user_secret, delete_user_secret; global names read-only)")
+				logfWithContext(queryLogCtx, "[SECRET TOOLS] Registered multi-agent secret tools with live session injection (list_secrets; global names read-only)")
 			}
 			if isAgentWorksChat {
 				if err := api.registerCustomCommandTools(llmAgent, currentUserID, ""); err != nil {
@@ -10194,13 +10160,13 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	if presetGlobalSecretNames != nil {
 		effectiveGlobalSecretSelection = presetGlobalSecretNames
 	}
-	userSecrets := req.DecryptedSecrets
+	scopedSecrets := req.DecryptedSecrets
 	if workspacePath != "" {
 		if manifest, found, err := ReadWorkflowManifest(context.Background(), workspacePath); err == nil && found {
-			userSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, workspacePath, manifest.Capabilities.SelectedSecrets)
+			scopedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, workspacePath, manifest.Capabilities.SelectedSecrets)
 		}
 	}
-	allSecrets := mergeGlobalSecrets(userSecrets, effectiveGlobalSecretSelection)
+	allSecrets := mergeGlobalSecrets(scopedSecrets, effectiveGlobalSecretSelection)
 	if len(allSecrets) > 0 {
 		entries := make([]orchestrator.SecretEntry, len(allSecrets))
 		for i, s := range allSecrets {
@@ -10289,13 +10255,6 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		for _, gs := range getGlobalSecrets() {
 			nameSet[gs.Name] = true
 		}
-		// User-stored secrets from DB
-		userSecrets, err := api.chatStore.ListUserSecrets(ctx, currentUserID)
-		if err == nil {
-			for _, us := range userSecrets {
-				nameSet[us.Name] = true
-			}
-		}
 		if workspacePath != "" {
 			workflowSecrets, err := api.chatStore.ListWorkflowSecrets(ctx, currentUserID, workspacePath)
 			if err == nil {
@@ -10320,7 +10279,7 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		for _, n := range names {
 			wanted[n] = true
 		}
-		// Globals first — they set the baseline. User secrets can override by same name.
+		// Globals first — they set the baseline. Workflow secrets can override by same name.
 		for _, gs := range getGlobalSecrets() {
 			if wanted[gs.Name] {
 				out[gs.Name] = gs.Value

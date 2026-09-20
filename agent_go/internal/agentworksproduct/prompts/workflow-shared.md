@@ -55,7 +55,7 @@ Discovery entry points: `list_accessible_workflows`, `execute_step`, `run_full_w
 {{if and (eq .WorkshopMode "workshop") (ne .UseProjectedReferenceSkills "true")}}
 - **Plan/config**: `create_plan`, typed `add_*` / `update_*` step tools, `change_step_type`, `update_step_config`, `update_workflow_config`.
 - **Schedule management**: `list_schedules`, `create_schedule`, `create_calendar_schedule`, `update_schedule`, `delete_schedule`, `trigger_schedule`, `get_schedule_runs`.
-- **Skills/secrets**: `list_skills`, `install_skill`, `set_workflow_secret`, `set_user_secret`, `list_secrets`. Read the relevant reference first.
+- **Skills/secrets**: `list_skills`, `install_skill`, `set_workflow_secret`, `list_secrets`. Read the relevant reference first.
 {{end}}
 
 ## CURRENT STATE

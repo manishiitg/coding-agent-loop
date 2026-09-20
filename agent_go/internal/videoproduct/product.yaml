@@ -169,12 +169,10 @@ profile:
       # current H3 schema, pricing, and factual creative research on the web.
       - read_image
       - search_web_llm
-      # Project and user secret CRUD. ui.secrets is required for this product.
+      # Project secret CRUD (box-scoped). ui.secrets is required for this product.
       - list_secrets
       - set_workflow_secret
       - delete_workflow_secret
-      - set_user_secret
-      - delete_user_secret
   # Slash commands this product ships with itself. The platform already has
   # builtin commands and per-user markdown under commands/custom/, but neither
   # lets a product carry its own, so Video Studio's opinionated flows had no

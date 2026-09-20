@@ -33,8 +33,7 @@ import { clampPanelWidth, loadStoredPanelWidth, saveStoredPanelWidth } from './p
 import { videoStamp } from './videoStamp'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import AccountControl from '../../components/topbar/AccountControl'
-import SecretsManagerModal from '../../components/secrets/SecretsManagerModal'
-import SecretSelectionDropdown from '../../components/secrets/SecretSelectionDropdown'
+import { VideoStudioSecretsModal } from './VideoStudioSecretsModal'
 import { WorkflowCanvas } from '../../components/workflow/canvas'
 import { PresentationRenderer, type PresentationRendererProps } from '../../platform/presentations/PresentationRenderer'
 import { registerPresentationRenderer } from '../../platform/presentations/presentationRegistry'
@@ -69,17 +68,9 @@ import {
 } from './videoStudioData'
 
 type WorkspacePanel = 'production' | 'files' | 'workflow'
-const EMPTY_SECRET_IDS: string[] = []
-function VideoStudioHeader({ children, projectTabId }: { children?: ReactNode; projectTabId?: string | null }) {
+function VideoStudioHeader({ children, project, projectTabId, onProjectChange }: { children?: ReactNode; project?: VideoProject | null; projectTabId?: string | null; onProjectChange?: (project: VideoProject) => void }) {
   const user = useAuthStore((state) => state.user)
-  const [showSecretsManager, setShowSecretsManager] = useState(false)
-  // Keep the fallback reference stable. Zustand uses Object.is for selector
-  // results, so allocating [] here causes useSyncExternalStore to re-render
-  // forever while a project tab is still being restored.
-  const selectedSecrets = useChatStore((state) => projectTabId ? state.chatTabs[projectTabId]?.config.selectedSecrets ?? EMPTY_SECRET_IDS : EMPTY_SECRET_IDS)
-  const updateSelectedSecrets = (next: string[]) => {
-    if (projectTabId) useChatStore.getState().setTabConfig(projectTabId, { selectedSecrets: next })
-  }
+  const [showProjectSecrets, setShowProjectSecrets] = useState(false)
   return (
     <header className="flex h-[62px] shrink-0 items-center justify-between border-b border-slate-200 bg-white px-4 dark:border-slate-800 dark:bg-slate-950">
       <div className="flex min-w-0 items-center gap-4">
@@ -88,34 +79,23 @@ function VideoStudioHeader({ children, projectTabId }: { children?: ReactNode; p
       </div>
       <div className="flex items-center gap-2">
         <AccountControl />
-        {projectTabId ? (
-          <>
-            <SecretSelectionDropdown
-              selectedSecrets={selectedSecrets}
-              onSecretToggle={(secretId) => updateSelectedSecrets(selectedSecrets.includes(secretId) ? selectedSecrets.filter((id) => id !== secretId) : [...selectedSecrets, secretId])}
-              onSelectAll={updateSelectedSecrets}
-              onClearAll={() => updateSelectedSecrets([])}
-              placement="below"
-              align="right"
-            />
-          </>
-        ) : (
+        {project && onProjectChange ? (
           <button
             type="button"
-            onClick={() => setShowSecretsManager(true)}
+            onClick={() => setShowProjectSecrets(true)}
             className="grid h-8 w-8 place-items-center rounded-full border border-amber-200 bg-amber-50 text-amber-700 transition hover:bg-amber-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-amber-500 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300 dark:hover:bg-amber-950"
-            aria-label="Manage secrets"
-            title="Manage secrets"
+            aria-label="Project secrets"
+            title="Project secrets"
           >
             <KeyRound className="h-3.5 w-3.5" />
           </button>
-        )}
+        ) : null}
         <div className="hidden items-center gap-2 rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-[11px] font-semibold text-emerald-700 sm:flex dark:border-emerald-900 dark:bg-emerald-950/50 dark:text-emerald-300">
           <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
           {user?.username || user?.email || 'Signed in'}
         </div>
       </div>
-      {showSecretsManager ? <SecretsManagerModal onClose={() => setShowSecretsManager(false)} /> : null}
+      {showProjectSecrets && project && onProjectChange ? <VideoStudioSecretsModal project={project} tabId={projectTabId ?? null} onProjectChange={(updated) => { onProjectChange(updated) }} onClose={() => setShowProjectSecrets(false)} /> : null}
     </header>
   )
 }
@@ -732,6 +712,7 @@ function DeletePresentationDialog({ presentation, deleting, error, onClose, onCo
 }
 
 function ProjectWorkspace({ project, onBack }: { project: VideoProject; onBack: () => void }) {
+  const [liveProject, setLiveProject] = useState(project)
   const [tabId, setTabId] = useState<string | null>(null)
   const [panel, setPanel] = useState<WorkspacePanel>('production')
   const [videos, setVideos] = useState<VideoPresentation[]>([])
@@ -939,7 +920,7 @@ function ProjectWorkspace({ project, onBack }: { project: VideoProject; onBack: 
 
   return (
     <div className="flex h-screen min-h-0 flex-col overflow-hidden bg-slate-50 dark:bg-slate-950">
-      <VideoStudioHeader projectTabId={tabId}>
+      <VideoStudioHeader project={liveProject} projectTabId={tabId} onProjectChange={setLiveProject}>
         <div className="hidden h-7 w-px bg-slate-200 sm:block dark:bg-slate-800" />
         <button type="button" onClick={onBack} className="grid h-8 w-8 place-items-center rounded-lg border border-slate-200 text-slate-500 hover:bg-slate-50 dark:border-slate-700 dark:hover:bg-slate-800" aria-label="Back to projects"><ArrowLeft className="h-4 w-4" /></button>
         <div className="min-w-0"><span className="block text-[10px] font-medium text-slate-400">Projects /</span><h1 className="truncate text-sm font-semibold text-slate-900 dark:text-slate-100">{project.title}</h1></div>

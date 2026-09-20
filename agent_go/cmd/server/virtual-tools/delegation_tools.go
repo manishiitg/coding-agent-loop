@@ -640,9 +640,9 @@ func GetMultiAgentDelegationInstructionsWithUser(chatsFolder string, _ string) s
 	capabilityInstructions := `
 ## Secret Management (brief)
 
-Buckets: **workflow** (scoped to workflow), **user** (reusable), **global** (read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `, ` + "`set_user_secret`" + `, ` + "`delete_user_secret`" + `.
+Buckets: **workflow** (scoped to workflow) and **global** (read-only). Tools: ` + "`list_secrets`" + `, ` + "`set_workflow_secret`" + `, ` + "`delete_workflow_secret`" + `.
 
-**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. ` + "`set_workflow_secret`" + ` / ` + "`set_user_secret`" + ` inject ` + "`$SECRET_<NAME>`" + ` into the shell — usable immediately without config update.
+**Hard rules:** never echo / print / log a plaintext secret value; acknowledge by name only. ` + "`set_workflow_secret`" + ` injects ` + "`$SECRET_<NAME>`" + ` into the shell — usable immediately without config update.
 
 **Secret changes:** ` + "`read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/secret-management.md\"}])`" + `.
 `

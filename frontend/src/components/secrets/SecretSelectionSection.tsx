@@ -1,8 +1,13 @@
 import axios from 'axios';
 import { useAuthStore } from '../../stores/useAuthStore';
 import React, { useEffect, useMemo, useState } from 'react';
+import { Badge } from '../ui/badge';
+import { Button } from '../ui/Button';
 import { Checkbox } from '../ui/checkbox';
+import { SettingsCard } from '../ui/SettingsCard';
+import { Input } from '../ui/Input';
 import { KeyRound, Globe, Plus, Trash2, Eye, EyeOff } from 'lucide-react';
+import ConfirmationDialog from '../ui/ConfirmationDialog';
 import { useSecretsStore } from '../../stores';
 import { secretsApi } from '../../api/secrets';
 import { useCanWriteWorkflow, READ_ONLY_TITLE } from '../../hooks/useCanWriteWorkflow';
@@ -18,14 +23,12 @@ interface SecretSelectionSectionProps {
   fillAvailableHeight?: boolean;
   workspaceNoun?: string;
   workspaceSecretHeading?: string;
-  workspaceBadgeLabel?: string;
-  workspaceSharingBadgeLabel?: string;
   showGlobalSecrets?: boolean;
-  showSharedSecrets?: boolean;
   workspaceSecretsAlwaysEnabled?: boolean;
   allowGlobalPromotion?: boolean;
   persistExplicitGlobalSelection?: boolean;
 }
+
 
 const isValidName = (name: string) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(name);
 
@@ -38,20 +41,14 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   fillAvailableHeight = false,
   workspaceNoun = 'workflow',
   workspaceSecretHeading = 'Automation Secrets',
-  workspaceBadgeLabel = 'Automation',
-  workspaceSharingBadgeLabel = 'Shared',
   showGlobalSecrets = true,
-  showSharedSecrets = true,
   workspaceSecretsAlwaysEnabled = false,
   allowGlobalPromotion = true,
   persistExplicitGlobalSelection = false,
 }) => {
-  const secrets = useSecretsStore((s) => s.secrets);
   const globalSecrets = useSecretsStore((s) => s.globalSecrets);
-  const storedUserSecrets = useSecretsStore((s) => s.storedUserSecrets);
   const workflowSecretsByPath = useSecretsStore((s) => s.workflowSecretsByPath);
   const fetchGlobalSecrets = useSecretsStore((s) => s.fetchGlobalSecrets);
-  const fetchStoredUserSecrets = useSecretsStore((s) => s.fetchStoredUserSecrets);
   const fetchWorkflowSecrets = useSecretsStore((s) => s.fetchWorkflowSecrets);
   const addWorkflowSecret = useSecretsStore((s) => s.addWorkflowSecret);
   const removeWorkflowSecret = useSecretsStore((s) => s.removeWorkflowSecret);
@@ -61,22 +58,16 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
   // mutation, so the controls disable here rather than fail on click.
   const canWrite = useCanWriteWorkflow(workflowPath?.trim() || undefined);
   const isAdmin = useAuthStore(state => state.user?.is_admin === true || (state.isMultiUserModeChecked && !state.isMultiUserMode));
-  const [globalEditor, setGlobalEditor] = useState<string | null>(null);
-  const [globalValue, setGlobalValue] = useState('');
   const [globalBusy, setGlobalBusy] = useState(false);
   const [globalStatus, setGlobalStatus] = useState('');
-  const manageGlobal = async (action: 'promote' | 'set' | 'delete', name: string) => {
+  const manageGlobal = async (action: 'promote' | 'delete', name: string) => {
     if (!isAdmin || globalBusy) return;
-    if (action === 'promote' && !confirm(`Make ${name} global? It will be available server-wide to all users and workflows. Its source workflow will use the global value.`)) return;
-    if (action === 'delete' && !confirm(`Delete global secret ${name}? Workflows using it will no longer receive its value on new runs.`)) return;
     setGlobalBusy(true); setGlobalStatus('');
     try {
       if (action === 'promote') await secretsApi.promoteWorkflowSecret(workflowPath!.trim(), name);
-      else if (action === 'set') await secretsApi.saveGlobalSecret(name, globalValue);
       else await secretsApi.deleteGlobalSecret(name);
       await fetchGlobalSecrets();
       if (workflowPath) await fetchWorkflowSecrets(workflowPath.trim());
-      setGlobalEditor(null); setGlobalValue('');
       setGlobalStatus(action === 'delete' ? `Removed global secret ${name}.` : `${name} is global. Changes apply to new turns and runs.`);
     } catch (error) {
       setGlobalStatus(axios.isAxiosError(error) && typeof error.response?.data === 'string' ? error.response.data : 'Could not update global secret.');
@@ -113,6 +104,31 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
     }
   };
 
+  // Global reveal mirrors the scoped one: admin-only, decrypted on demand
+  // through /api/secrets/global/reveal, dropped from state on hide.
+  const [revealedGlobals, setRevealedGlobals] = useState<Record<string, string>>({});
+  const [revealingGlobalName, setRevealingGlobalName] = useState<string | null>(null);
+
+  const toggleRevealGlobal = async (name: string) => {
+    if (revealedGlobals[name] !== undefined) {
+      setRevealedGlobals((current) => {
+        const next = { ...current };
+        delete next[name];
+        return next;
+      });
+      return;
+    }
+    setRevealingGlobalName(name);
+    try {
+      const { value } = await secretsApi.revealGlobalSecret(name);
+      setRevealedGlobals((current) => ({ ...current, [name]: value }));
+    } catch {
+      setGlobalStatus(`Could not read the value of ${name}.`);
+    } finally {
+      setRevealingGlobalName(null);
+    }
+  };
+
   const normalizedWorkflowPath = workflowPath?.trim() || '';
   const workflowSecrets = normalizedWorkflowPath
     ? workflowSecretsByPath[normalizedWorkflowPath] || []
@@ -122,8 +138,7 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
     if (globalSecrets.length === 0) {
       fetchGlobalSecrets();
     }
-    fetchStoredUserSecrets();
-  }, [fetchGlobalSecrets, fetchStoredUserSecrets, globalSecrets.length]);
+  }, [fetchGlobalSecrets, globalSecrets.length]);
 
   useEffect(() => {
     if (normalizedWorkflowPath) {
@@ -141,44 +156,15 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
     return () => window.removeEventListener(PROJECT_SECRETS_REFRESH_EVENT, refresh)
   }, [normalizedWorkflowPath, fetchWorkflowSecrets])
 
-  const toggleSecretName = (name: string, legacyId?: string) => {
-    const isSelected = selectedSecrets.includes(name) || (!!legacyId && selectedSecrets.includes(legacyId));
-    if (isSelected) {
-      onSecretChange(selectedSecrets.filter(s => s !== name && s !== legacyId));
+  const toggleSecretName = (name: string) => {
+    if (selectedSecrets.includes(name)) {
+      onSecretChange(selectedSecrets.filter(s => s !== name));
     } else {
       onSecretChange([...selectedSecrets, name]);
     }
   };
 
-  const selectedSecretNames = useMemo(() => {
-    const names = new Set<string>();
-    for (const selected of selectedSecrets) {
-      const byId = secrets.find((s) => s.id === selected);
-      names.add(byId?.name || selected);
-    }
-    return names;
-  }, [selectedSecrets, secrets]);
-
-  const sharedSecrets = useMemo(() => {
-    const byName = new Map<string, { name: string; legacyId?: string; local: boolean; serverStored: boolean }>();
-    for (const secret of storedUserSecrets) {
-      byName.set(secret.name, {
-        name: secret.name,
-        local: false,
-        serverStored: true,
-      });
-    }
-    for (const secret of secrets) {
-      const existing = byName.get(secret.name);
-      byName.set(secret.name, {
-        name: secret.name,
-        legacyId: secret.id,
-        local: true,
-        serverStored: existing?.serverStored ?? false,
-      });
-    }
-    return [...byName.values()].sort((a, b) => a.name.localeCompare(b.name));
-  }, [secrets, storedUserSecrets]);
+  const selectedSecretNames = useMemo(() => new Set(selectedSecrets), [selectedSecrets]);
 
   const toggleGlobal = (name: string) => {
     if (!onGlobalSecretChange) return;
@@ -229,147 +215,202 @@ export const SecretSelectionSection: React.FC<SecretSelectionSectionProps> = ({
 
   const handleDeleteWorkflowSecret = async (name: string) => {
     if (!normalizedWorkflowPath) return;
-    if (!confirm(`Delete ${workspaceNoun} secret "${name}"?`)) return;
     await removeWorkflowSecret(normalizedWorkflowPath, name);
     onSecretChange(selectedSecrets.filter(s => s !== name));
   };
 
-  if (sharedSecrets.length === 0 && globalSecrets.length === 0 && workflowSecrets.length === 0 && !normalizedWorkflowPath) return null;
+  // Destructive and scope-widening actions confirm through the shared dialog
+  // instead of a native alert. The dialog stays open with a spinner while a
+  // global mutation runs; a scoped delete closes first and runs behind it.
+  const [pendingConfirm, setPendingConfirm] = useState<null | { kind: 'promote' | 'delete-global' | 'delete-scoped'; name: string }>(null);
+  const runPendingConfirm = () => {
+    if (!pendingConfirm) return;
+    if (pendingConfirm.kind === 'delete-scoped') {
+      const name = pendingConfirm.name;
+      setPendingConfirm(null);
+      void handleDeleteWorkflowSecret(name);
+      return;
+    }
+    const action = pendingConfirm.kind === 'promote' ? 'promote' : 'delete';
+    void manageGlobal(action, pendingConfirm.name).finally(() => setPendingConfirm(null));
+  };
+  const confirmCopy = pendingConfirm === null ? null : {
+    promote: {
+      title: `Make ${pendingConfirm.name} global?`,
+      message: 'It will be available server-wide to all users and workflows. Its source workflow will use the global value.',
+      confirmText: 'Make global',
+      loadingText: 'Making global...',
+      type: 'warning' as const,
+    },
+    'delete-global': {
+      title: `Delete global secret ${pendingConfirm.name}?`,
+      message: 'Workflows using it will no longer receive its value on new runs.',
+      confirmText: 'Delete',
+      loadingText: 'Deleting...',
+      type: 'danger' as const,
+    },
+    'delete-scoped': {
+      title: `Delete ${workspaceNoun} secret "${pendingConfirm.name}"?`,
+      message: 'The stored value is removed. Anything attaching this name stops receiving it.',
+      confirmText: 'Delete',
+      loadingText: 'Deleting...',
+      type: 'danger' as const,
+    },
+  }[pendingConfirm.kind];
+
+  if (globalSecrets.length === 0 && workflowSecrets.length === 0 && !normalizedWorkflowPath) return null;
 
   const sortedWorkflowSecrets = [...workflowSecrets].sort((a, b) => a.name.localeCompare(b.name));
+  const hasRows = sortedWorkflowSecrets.length > 0
+    || (showGlobalSecrets && globalSecrets.length > 0);
 
   return (
-    <div className={fillAvailableHeight ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-2'}>
-      <label className="block shrink-0 text-sm font-medium text-gray-900 dark:text-gray-100 flex items-center gap-2">
-        <KeyRound className="w-4 h-4 text-amber-500" />
-        Secrets
-      </label>
-
+    <div className={fillAvailableHeight ? 'flex h-full min-h-0 flex-col gap-2' : 'space-y-4'}>
       {normalizedWorkflowPath && canWrite && (
-        <div className="shrink-0 space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
-          <div className="flex items-center justify-between gap-2">
-            <div className="min-w-0">
-              <div className="text-sm font-medium text-gray-900 dark:text-gray-100">{workspaceSecretHeading}</div>
-              <div className="truncate text-xs text-gray-500 dark:text-gray-400">{normalizedWorkflowPath}</div>
-            </div>
-            <span
-              className="shrink-0 rounded bg-amber-100 px-1.5 py-0.5 text-[10px] font-medium text-amber-700 dark:bg-amber-900/60 dark:text-amber-300"
-              title={`Stored for this ${workspaceNoun}; only authorized users can change or reveal values`}
-            >
-              {workspaceSharingBadgeLabel}
-            </span>
-          </div>
+        <SettingsCard
+          icon={<KeyRound aria-hidden="true" className="h-4 w-4 text-primary" />}
+          title={workspaceSecretHeading}
+          count={`${sortedWorkflowSecrets.length} saved`}
+          description={<span className="block truncate">{normalizedWorkflowPath}</span>}
+          className="shrink-0"
+        >
           <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)_auto]">
-            <input
+            <Input
               type="text"
               value={workflowSecretName}
               onChange={(e) => setWorkflowSecretName(e.target.value.toUpperCase())}
               placeholder="SECRET_NAME"
-              className="min-w-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              aria-label="Secret name"
+              className="min-w-0"
             />
-            <input
+            <Input
               type="password"
               value={workflowSecretValue}
               onChange={(e) => setWorkflowSecretValue(e.target.value)}
               placeholder="Secret value"
-              className="min-w-0 rounded-md border border-gray-300 bg-white px-3 py-1.5 text-sm text-gray-900 focus:outline-none focus:ring-1 focus:ring-amber-500 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-100"
+              aria-label="Secret value"
+              className="min-w-0"
             />
-            <button
+            <Button
               type="button"
               onClick={handleSaveWorkflowSecret}
               disabled={savingWorkflowSecret}
-              className="inline-flex items-center justify-center gap-1.5 rounded-md bg-amber-600 px-3 py-1.5 text-sm font-medium text-white transition-colors hover:bg-amber-700 disabled:opacity-50"
             >
               <Plus className="h-4 w-4" />
               {savingWorkflowSecret ? 'Saving' : 'Save'}
-            </button>
+            </Button>
           </div>
-          {workflowSecretError && <p className="text-xs text-red-600 dark:text-red-400">{workflowSecretError}</p>}
-        </div>
+          {workflowSecretError && <p className="text-xs text-destructive">{workflowSecretError}</p>}
+        </SettingsCard>
       )}
 
       {globalStatus && <p role="status" className="text-xs text-muted-foreground">{globalStatus}</p>}
-      {isAdmin && globalEditor !== null && <form className="flex shrink-0 flex-wrap items-center gap-2 rounded border border-border p-3" onSubmit={event => { event.preventDefault(); void manageGlobal('set', globalEditor); }}>
-        <span className="text-xs">Update global {globalEditor}</span>
-        <input type="password" aria-label="New global secret value" autoComplete="new-password" value={globalValue} onChange={event => setGlobalValue(event.target.value)} className="min-w-0 flex-1 rounded border border-border bg-background px-2 py-1 text-sm" />
-        <button type="submit" disabled={globalBusy || !globalValue} className="text-xs disabled:opacity-40">Save</button>
-        <button type="button" disabled={globalBusy} onClick={() => { setGlobalEditor(null); setGlobalValue(''); }} className="text-xs">Cancel</button>
-      </form>}
 
-      <div className={`border border-gray-200 dark:border-gray-700 rounded-md bg-white dark:bg-gray-800 ${fillAvailableHeight ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
+      {hasRows && <div className={`rounded-md border border-border bg-card ${fillAvailableHeight ? 'min-h-0 flex-1 overflow-y-auto' : ''}`}>
         {sortedWorkflowSecrets.map((secret) => (
-          <div key={`workflow-${secret.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
+          <div key={`workflow-${secret.name}`} className="flex items-center gap-2 border-b border-border p-3 last:border-b-0 hover:bg-muted">
             <Checkbox
               id={`workflow-secret-${secret.name}`}
               checked={workspaceSecretsAlwaysEnabled || selectedSecretNames.has(secret.name)}
               onCheckedChange={() => toggleSecretName(secret.name)}
               disabled={workspaceSecretsAlwaysEnabled}
             />
-            <label htmlFor={`workflow-secret-${secret.name}`} className="flex-1 flex min-w-0 items-center gap-2 text-sm cursor-pointer select-none text-gray-900 dark:text-gray-100">
-              <span className="min-w-0 flex-1 flex flex-col">
+            <label htmlFor={`workflow-secret-${secret.name}`} className="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 text-sm text-foreground">
+              <span className="flex min-w-0 flex-1 flex-col">
                 <span className="min-w-0 truncate font-mono">{secret.name}</span>
                 {revealedValues[secret.name] !== undefined && (
-                  <span className="mt-0.5 break-all font-mono text-xs text-gray-600 dark:text-gray-300">{revealedValues[secret.name]}</span>
+                  <span className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{revealedValues[secret.name]}</span>
                 )}
               </span>
-              <span className="ml-auto shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-amber-100 dark:bg-amber-900/50 text-amber-700 dark:text-amber-300">{workspaceBadgeLabel}</span>
             </label>
-            {allowGlobalPromotion && isAdmin && canWrite && <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('promote', secret.name)} className="shrink-0 text-xs text-blue-600 disabled:opacity-40" aria-label={`Make ${secret.name} global`}>Make global</button>}
-            <button
+            {allowGlobalPromotion && isAdmin && canWrite && <Button type="button" variant="link" size="sm" disabled={globalBusy} onClick={() => setPendingConfirm({ kind: 'promote', name: secret.name })} className="shrink-0" aria-label={`Make ${secret.name} global`}>Make global</Button>}
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               onClick={() => { void toggleReveal(secret) }}
               disabled={!canWrite || !secret.encrypted_value || revealingName === secret.name}
-              className="shrink-0 p-1 text-gray-400 transition-colors hover:text-gray-700 dark:hover:text-gray-200 disabled:cursor-not-allowed disabled:opacity-40"
+              className="h-7 w-7 shrink-0"
               title={!canWrite ? READ_ONLY_TITLE : revealedValues[secret.name] !== undefined ? 'Hide value' : secret.encrypted_value ? 'Show value' : 'Value not available'}
             >
               {revealedValues[secret.name] !== undefined ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
-            </button>
-            <button
+            </Button>
+            <Button
               type="button"
-              onClick={() => handleDeleteWorkflowSecret(secret.name)}
+              variant="ghost"
+              size="icon"
+              onClick={() => setPendingConfirm({ kind: 'delete-scoped', name: secret.name })}
               disabled={!canWrite}
-              className="shrink-0 p-1 text-gray-400 transition-colors hover:text-red-600 dark:hover:text-red-400 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:text-gray-400"
+              className="h-7 w-7 shrink-0 hover:text-destructive"
               title={canWrite ? `Delete ${workspaceNoun} secret` : READ_ONLY_TITLE}
             >
               <Trash2 className="h-3.5 w-3.5" />
-            </button>
+            </Button>
           </div>
         ))}
 
         {showGlobalSecrets && globalSecrets.map((gs) => (
-          <div key={`global-${gs.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
+          <div key={`global-${gs.name}`} className="flex items-center gap-2 border-b border-border p-3 last:border-b-0 hover:bg-muted">
             <Checkbox
               id={`global-secret-${gs.name}`}
               checked={selectedSecretNames.has(gs.name) || selectedGlobalSecrets === null || selectedGlobalSecrets.includes(gs.name)}
               onCheckedChange={() => toggleGlobal(gs.name)}
               disabled={!onGlobalSecretChange}
             />
-            <label htmlFor={`global-secret-${gs.name}`} className="flex-1 flex items-center gap-2 text-sm cursor-pointer select-none">
-              <Globe className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
-              <span className="font-mono">{gs.name}</span>
-              <span className="ml-auto text-[10px] px-1.5 py-0.5 rounded bg-blue-100 dark:bg-blue-900/50 text-blue-600 dark:text-blue-400">Global</span>
+            <label htmlFor={`global-secret-${gs.name}`} className="flex min-w-0 flex-1 cursor-pointer select-none items-center gap-2 text-sm text-foreground">
+              <Globe className="h-3.5 w-3.5 flex-shrink-0 text-primary" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="min-w-0 truncate font-mono">{gs.name}</span>
+                {revealedGlobals[gs.name] !== undefined && (
+                  <span className="mt-0.5 break-all font-mono text-xs text-muted-foreground">{revealedGlobals[gs.name]}</span>
+                )}
+              </span>
+              <Badge className="ml-auto shrink-0">Global</Badge>
             </label>
-            {isAdmin && gs.managed && <>
-              <button type="button" disabled={globalBusy} onClick={() => { setGlobalEditor(gs.name); setGlobalValue(''); }} className="text-xs" aria-label={`Update global ${gs.name}`}>Update</button>
-              <button type="button" disabled={globalBusy} onClick={() => void manageGlobal('delete', gs.name)} className="text-xs text-destructive" aria-label={`Delete global ${gs.name}`}>Remove</button>
-            </>}
+            {isAdmin && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => { void toggleRevealGlobal(gs.name) }}
+                disabled={revealingGlobalName === gs.name}
+                className="h-7 w-7 shrink-0"
+                title={revealedGlobals[gs.name] !== undefined ? 'Hide value' : 'Show value'}
+                aria-label={`Reveal global ${gs.name}`}
+              >
+                {revealedGlobals[gs.name] !== undefined ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </Button>
+            )}
+            {isAdmin && gs.managed && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setPendingConfirm({ kind: 'delete-global', name: gs.name })}
+                disabled={globalBusy}
+                className="h-7 w-7 shrink-0 hover:text-destructive"
+                title="Delete global secret"
+                aria-label={`Delete global ${gs.name}`}
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         ))}
 
-        {showSharedSecrets && sharedSecrets.map((secret) => (
-          <div key={`shared-${secret.name}`} className="flex items-center gap-2 p-3 border-b border-gray-200 dark:border-gray-700 last:border-b-0 hover:bg-gray-100 dark:hover:bg-gray-700">
-            <Checkbox
-              id={`secret-${secret.name}`}
-              checked={selectedSecretNames.has(secret.name)}
-              onCheckedChange={() => toggleSecretName(secret.name, secret.legacyId)}
-            />
-            <label htmlFor={`secret-${secret.name}`} className="flex-1 text-sm font-medium cursor-pointer select-none text-gray-900 dark:text-gray-100">
-              {secret.name}
-              <span className="ml-2 text-[10px] px-1.5 py-0.5 rounded bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-300">Shared</span>
-            </label>
-          </div>
-        ))}
-      </div>
+      </div>}
+
+      {confirmCopy && <ConfirmationDialog
+        isOpen={pendingConfirm !== null}
+        onClose={() => setPendingConfirm(null)}
+        onConfirm={runPendingConfirm}
+        title={confirmCopy.title}
+        message={confirmCopy.message}
+        confirmText={confirmCopy.confirmText}
+        type={confirmCopy.type}
+        isLoading={globalBusy}
+        loadingText={confirmCopy.loadingText}
+      />}
     </div>
   );
 };

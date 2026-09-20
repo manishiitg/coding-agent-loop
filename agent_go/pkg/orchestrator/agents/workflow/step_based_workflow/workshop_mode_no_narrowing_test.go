@@ -13,7 +13,7 @@ import (
 // buildToolIndex and get_api_spec — the catalog a coding CLI caches once at
 // launch — a tool it omitted was undiscoverable rather than refused. The agent
 // never learned the tool existed, so it shelled out instead of calling it. That
-// is how set_user_secret and list_llm_capabilities were each lost for a while,
+// is how set_workflow_secret and list_llm_capabilities were each lost for a while,
 // and it is unrecoverable in a way a rejected call is not: you can always take a
 // tool away from an agent that knows about it, but you can never add one it was
 // never told about.

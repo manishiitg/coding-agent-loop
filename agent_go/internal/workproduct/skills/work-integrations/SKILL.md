@@ -11,9 +11,10 @@ from selection for this project. MCP setup has its own `work-mcp` skill.
 ## Secrets
 
 - Call `list_secrets` before creating, replacing, or deleting a secret.
-- `set_workflow_secret` and `delete_workflow_secret` are legacy tool names for
-  project-scoped secrets in Crew. Use `set_user_secret` and
-  `delete_user_secret` only when the user requests an account-level secret.
+- `set_workflow_secret` and `delete_workflow_secret` manage project-scoped
+  secrets in Crew (legacy tool names for the shared project store). There is
+  no account-level secret: a credential shared across projects must be a
+  global, promoted by an administrator (see below).
 - After `set_workflow_secret` succeeds, `$SECRET_<NAME>` is available to shell
   tools immediately in the current chat and remains available in later turns.
   Continue the requested work in the same chat; do not ask the user to start a

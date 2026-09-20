@@ -49,8 +49,8 @@ func newCrewCreationTestEnvWithOptions(t *testing.T, providerOptions []agentprof
 	}
 	svc := NewProductScheduleService(nil, registry)
 	// Hermetic availability fixtures: github is connected, gitlab is
-	// configured but disconnected, GH_TOKEN is a user secret, SHARED_GH is
-	// global, and the creating workflow holds no scoped secrets.
+	// configured but disconnected, SHARED_GH is global, and the creating
+	// workflow holds no scoped secrets.
 	svc.crewAvailability = &crewCreationAvailability{
 		MCPServer: func(name string) (string, bool, error) {
 			switch name {
@@ -61,9 +61,6 @@ func newCrewCreationTestEnvWithOptions(t *testing.T, providerOptions []agentprof
 			default:
 				return "", false, fmt.Errorf("MCP server %q is not configured; use list_mcp_servers or search_mcp_catalog first", name)
 			}
-		},
-		UserSecrets: func(context.Context, string) (map[string]bool, error) {
-			return map[string]bool{"GH_TOKEN": true}, nil
 		},
 		ScopedSecrets: func(context.Context, string, string) (map[string]bool, error) {
 			return map[string]bool{}, nil
@@ -257,7 +254,7 @@ func TestCreateCrewProjectSeedsStarterAndSelections(t *testing.T) {
 		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Release Reviewer",
 		Purpose: "Own release quality", Instructions: "Check the changelog first.",
 		Skills: []string{"reviewer"}, Servers: []string{"github"},
-		Secrets: []string{"GH_TOKEN"}, GlobalSecrets: []string{"SHARED_GH"},
+		Secrets: []string{"SHARED_GH"}, GlobalSecrets: []string{"SHARED_GH"},
 		StepInstruction: "Review the release.", IdempotencyKey: "proposal-1",
 	})
 	if err != nil {
@@ -291,14 +288,14 @@ func TestCreateCrewProjectSeedsStarterAndSelections(t *testing.T) {
 	}
 	assertStringSet("selected_skills", "reviewer")
 	assertStringSet("selected_servers", "github")
-	assertStringSet("selected_secrets", "GH_TOKEN")
+	assertStringSet("selected_secrets", "SHARED_GH")
 	assertStringSet("selected_global_secret_names", "SHARED_GH")
 	// Re-entry converges without duplicating selections.
 	if _, err := svc.CreateCrewProject(ctx, CreateCrewRequest{
 		UserID: "owner", WorkflowPath: "Workflow/build", Title: "Release Reviewer",
 		Purpose: "Own release quality", Instructions: "Check the changelog first.",
 		Skills: []string{"reviewer"}, Servers: []string{"github"},
-		Secrets: []string{"GH_TOKEN"}, GlobalSecrets: []string{"SHARED_GH"},
+		Secrets: []string{"SHARED_GH"}, GlobalSecrets: []string{"SHARED_GH"},
 		StepInstruction: "Review the release.", IdempotencyKey: "proposal-1",
 	}); err != nil {
 		t.Fatal(err)

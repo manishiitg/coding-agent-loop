@@ -46,6 +46,7 @@ class SharedRootlessDeploymentTest(unittest.TestCase):
             "RUNTIME_CONFIG_REQUIRED_SNIPPETS",
             "PLAYBOOK_SMOKE_PATH",
             "RUN_WORKFLOW_BUILDER_MIGRATION",
+            "RUN_PRODUCT_SECRETS_MIGRATION",
             "PERSIST_MCP_STATE",
             "AGENT_EXTRA_ENV",
             "deployment_checks.py",

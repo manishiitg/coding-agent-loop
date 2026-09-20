@@ -361,7 +361,7 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 	req.SelectedSkills = appendUniqueStrings(req.SelectedSkills, profile.Skills...)
 	if profile.Runtime.Capabilities.Secrets == agentprofiles.CapabilityDisabled {
 		// Product profiles may explicitly opt out of the shared secret runtime.
-		// Clear both user and global selections after saved chat configuration has
+		// Clear both scoped and global selections after saved chat configuration has
 		// been applied, so a profile cannot inherit credentials accidentally.
 		req.DecryptedSecrets = nil
 		noGlobalSecrets := []string{}

@@ -101,8 +101,8 @@ profile:
       - notify_user
       - agent_browser
       - list_secrets
-      - set_user_secret
-      - delete_user_secret
+      - set_workflow_secret
+      - delete_workflow_secret
       - set_child_profile
       - set_parent_label
       - pin_page

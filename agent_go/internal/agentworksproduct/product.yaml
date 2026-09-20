@@ -90,7 +90,6 @@ chat:
       - debug_step
       - delete_plan_steps
       - delete_schedule
-      - delete_user_secret
       - delete_workflow_secret
       - edit_mcp_server
       - execute_step
@@ -140,7 +139,6 @@ chat:
       - search_playbooks
       - search_skills
       - send_step_message
-      - set_user_secret
       - set_workflow_contract_version
       - set_workflow_secret
       - stop_all_executions

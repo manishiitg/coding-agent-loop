@@ -233,6 +233,32 @@ if [[ "${RUN_WORKFLOW_BUILDER_MIGRATION:-false}" == "true" ]]; then
   fi
 fi
 
+# One-time migration of retired personal ("yours") secrets into the
+# product's secret box, if this product opted in. Same shape as the Workflow
+# Builder migration above: runs after `current` points at the new release
+# but before the new agent starts, stamping a marker outside releases so
+# later deploys are a no-op. The agent binary reads AUTH_SECRET and
+# WORKSPACE_DOCS_PATH from the service .env (exported in a subshell so the
+# rest of this script keeps its own environment). Personal files are
+# archived, never deleted, and only after every secret for that user
+# migrated cleanly; anything unreadable is reported and left in place.
+if [[ "${RUN_PRODUCT_SECRETS_MIGRATION:-false}" == "true" ]]; then
+  migration_state="$REMOTE_APP/state/migrations"
+  migration_marker="$migration_state/product-secrets-v1.done"
+  install -d -m 0700 "$migration_state"
+  if [[ ! -f "$migration_marker" ]]; then
+    echo "==> [$RELEASE_ID] Migrating personal secrets into the $PRODUCT box"
+    MIGRATION_STOPPED_AGENT=1
+    systemctl --user stop "$PRODUCT-agent"
+    # shellcheck disable=SC1091
+    ( set -a; . "$REMOTE_APP/.env"; set +a; exec "$BUILD_DIR/bin/$PRODUCT-agent" server migrate-product-secrets --product "$PRODUCT" --apply )
+    marker_tmp="$(mktemp "$migration_state/.product-secrets-v1.XXXXXX")"
+    printf 'release=%s\ncompleted_at=%s\n' "$RELEASE_ID" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$marker_tmp"
+    chmod 0600 "$marker_tmp"
+    mv "$marker_tmp" "$migration_marker"
+  fi
+fi
+
 # Drain before the restart: restarting while a turn is running hands the user
 # a 502 mid-message. Poll the agent's /health "drain" block until it is idle,
 # up to DRAIN_TIMEOUT_SECONDS (default 5 min); new turns can still start

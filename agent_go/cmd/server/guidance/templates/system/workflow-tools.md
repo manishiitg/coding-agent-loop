@@ -253,11 +253,10 @@ Use `get_workflow_config` to see the workflow's selected skills. Use `list_skill
 
 Secrets are credentials (API keys, tokens, passwords) injected into step agents as `$SECRET_<NAME>` environment variables at execution time. They exist in three buckets:
 
-- **Workflow secrets** — per-user, encrypted server-side, scoped only to this workflow. Use these by default for workflow-specific credentials.
-- **User secrets** — per-user, encrypted server-side, reusable across workflows.
+- **Workflow secrets** — encrypted server-side, scoped only to this workflow. Use these by default for workflow-specific credentials.
 - **Global secrets** — operator-managed via `GLOBAL_SECRET_*` env vars on the server. Read-only from chat.
 
-**Storing a new secret is one step.** `set_workflow_secret(name="BUFFER_API_KEY", value="<plaintext>")` stores, attaches, and injects the value into the active builder shell and future workflow steps. Use `set_user_secret` only when the same credential should be reusable across workflows; it also auto-attaches in a workflow-builder session.
+**Storing a new secret is one step.** `set_workflow_secret(name="BUFFER_API_KEY", value="<plaintext>")` stores, attaches, and injects the value into the active builder shell and future workflow steps.
 
 **Attaching an already-stored secret is a separate operation.** Call `list_secrets`, then `update_workflow_config(add_secrets=["BUFFER_API_KEY"])`. The builder can use it immediately as `$SECRET_BUFFER_API_KEY`; no restart or new chat is required. If the requested name does not exist, ask for the value and store it. Never claim that a stored secret is unusable merely because its plaintext cannot be returned—the builder should consume it through the injected environment without displaying it.
 
@@ -265,9 +264,9 @@ Do **not** give boilerplate advice like `"rotate this secret"` after a normal us
 
 **Other secret ops**:
 
-- **Inspect**: `list_secrets` returns `global`, `workflow`, and `user` buckets — values are never exposed.
-- **Edit a value**: call `set_workflow_secret` or `set_user_secret` again with the same name — it upserts.
-- **Delete from store**: `delete_workflow_secret(name)` or `delete_user_secret(name)`. Workflow attachments are separate — also run `update_workflow_config(remove_secrets=["NAME"])` to detach.
+- **Inspect**: `list_secrets` returns `global` and `workflow` buckets — values are never exposed.
+- **Edit a value**: call `set_workflow_secret` again with the same name — it upserts.
+- **Delete from store**: `delete_workflow_secret(name)`. Workflow attachments are separate — also run `update_workflow_config(remove_secrets=["NAME"])` to detach.
 - **Detach only (keep value)**: `update_workflow_config(remove_secrets=["NAME"])`.
 
 Secret VALUES are never rendered into prompts, logs, or tool outputs. Builder and step agents consume them only through `$SECRET_<NAME>` in `execute_shell_command`. Never echo, print, or hardcode a secret value in descriptions, learnings, or `main.py`.

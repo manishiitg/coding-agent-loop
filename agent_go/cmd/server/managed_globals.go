@@ -188,6 +188,32 @@ func (api *StreamingAPI) handleManageGlobalSecret(w http.ResponseWriter, r *http
 	json.NewEncoder(w).Encode(map[string]bool{"success": true})
 }
 
+// handleRevealGlobalSecret returns one global's value to admins, so the
+// Secrets UI can offer the same eye-icon reveal for globals that
+// workflow boxes get through /api/secrets/decrypt. Covers managed and
+// environment globals alike.
+// GET /api/secrets/global/reveal?name=X
+func (api *StreamingAPI) handleRevealGlobalSecret(w http.ResponseWriter, r *http.Request) {
+	userID := GetUserIDFromContext(r.Context())
+	if !canManageGlobalSecrets(userID) {
+		globalSecretError(w, errGlobalAdmin)
+		return
+	}
+	name := strings.TrimSpace(r.URL.Query().Get("name"))
+	if name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+	for _, secret := range sortedGlobalSecrets() {
+		if secret.Name == name {
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(secretDecryptResponse{Value: secret.Value})
+			return
+		}
+	}
+	globalSecretError(w, errGlobalNotFound)
+}
+
 func sortedGlobalSecrets() []globalSecretEntry {
 	managedGlobalsMu.RLock()
 	defer managedGlobalsMu.RUnlock()

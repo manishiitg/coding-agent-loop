@@ -87,7 +87,7 @@ func ensureProjectRuntimeManifest(ctx context.Context, profileID, workspacePath 
 	// here on first use -- unlike Work, there is no legacy product.json to
 	// migrate from. Without this, every read/write of selected_secrets or
 	// selected_servers for such a profile failed with "product manifest not
-	// found" forever, silently: a secret saved via set_user_secret was stored
+	// found" forever, silently: a secret saved via the secret tools was stored
 	// but never attached to the conversation, so it never reached the agent's
 	// environment (confirmed live: SparkQuill's agent_browser tool could not
 	// see a parent-saved portal password).

@@ -20,7 +20,7 @@ import type {
 import { messagesFromEvents, type PlatformEvent } from './platform/events'
 import { quickCommandsFromProfile } from './platform/commands'
 import { fetchSessionEvents, conversationToRestoredEvents, type RestorableConversation } from '../../../../shared/session'
-import { FamilyWorkspace, documentsURL } from './platform/workspace'
+import { FAMILY_ROOT, FamilyWorkspace, documentsURL } from './platform/workspace'
 
 export const PARENT_PROFILE = 'sparkquill'
 export const CHILD_PROFILE = 'sparkquill-child'
@@ -305,19 +305,18 @@ export function createPlatformApi(options: PlatformApiOptions): FamilyApi {
     saveModel: async () => {},
     fastMode: async () => ({ enabled: false, child_enabled: false }) as FastMode,
     saveFastMode: async () => {},
-    // The platform's per-user secret store: the value is encrypted server-side
-    // first, only the name is ever listed back. This is the same store the
-    // agent's set_user_secret / list_secrets tools use, so Settings and chat
-    // see one list.
-    secrets: async () => (await (await secrets()).listStoredSecrets()).map((s) => s.name),
+    // The family's product secret box, scoped to the SparkQuill workspace like
+    // any workflow's: the value is encrypted server-side first, only the name
+    // is ever listed back.
+    secrets: async () => (await (await secrets()).listWorkflowSecrets(FAMILY_ROOT)).map((s) => s.name),
     saveSecret: async (name, value) => {
       const { encrypted } = await (await secrets()).encrypt(value)
-      await (await secrets()).storeSecret(name, encrypted)
-      return (await (await secrets()).listStoredSecrets()).map((s) => s.name)
+      await (await secrets()).storeWorkflowSecret(FAMILY_ROOT, name, encrypted)
+      return (await (await secrets()).listWorkflowSecrets(FAMILY_ROOT)).map((s) => s.name)
     },
     deleteSecret: async (name) => {
-      await (await secrets()).deleteStoredSecret(name)
-      return (await (await secrets()).listStoredSecrets()).map((s) => s.name)
+      await (await secrets()).deleteWorkflowSecret(FAMILY_ROOT, name)
+      return (await (await secrets()).listWorkflowSecrets(FAMILY_ROOT)).map((s) => s.name)
     },
     // The platform runs one shared speech engine for every product; Settings
     // shows it as a single tier in the family server's catalog shape.

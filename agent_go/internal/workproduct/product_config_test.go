@@ -91,8 +91,6 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"list_secrets":                           false,
 		"set_workflow_secret":                    false,
 		"delete_workflow_secret":                 false,
-		"set_user_secret":                        false,
-		"delete_user_secret":                     false,
 		"manage_global_secret":                   false,
 		"update_project_global_secret_selection": false,
 		"list_skills":                            false,

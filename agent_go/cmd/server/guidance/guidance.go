@@ -166,7 +166,7 @@ var referenceKinds = map[string]kindMeta{
 	"slack-bot-routing": {Group: "system", Description: "Manage scoped Slack bot grants, product routes, deterministic listeners, and scripted cross-step thread replies without exposing credentials", Modes: []string{"workshop", "run"}},
 	"webhook-triggers":  {Group: "system", Description: "Create, authenticate and test inbound route webhooks with manage_workflow_webhook; configure raw-payload mappings for groups, branches and standalone steps; inspect accepted runs and distinguish internal testing from public delivery", Modes: []string{"workshop"}},
 	"user-management":   {Group: "system", Description: "Builder user administration and workflow ownership/sharing: inspect permissions, resolve shared KB audience mismatches, owner/admin enforcement", Modes: []string{"workshop"}},
-	"secret-management": {Group: "system", Description: "Manage workflow / user / global secrets via list_secrets, set_workflow_secret, set_user_secret, delete_workflow_secret, delete_user_secret — buckets, naming rules, attach-after-store discipline", Modes: []string{"multi-agent", "workshop"}},
+	"secret-management": {Group: "system", Description: "Manage workflow / global secrets via list_secrets, set_workflow_secret, delete_workflow_secret — buckets, naming rules, attach-after-store discipline", Modes: []string{"multi-agent", "workshop"}},
 
 	// Cross-mode operational reference docs (browser and code-execution bridge).
 	// Currently duplicated in the always-on system-prompt sections;

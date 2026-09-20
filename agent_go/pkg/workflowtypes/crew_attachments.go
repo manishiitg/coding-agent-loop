@@ -64,12 +64,15 @@ func errCrewAttachmentAlias(msg string) error { return crewAttachmentAliasError{
 func (e crewAttachmentAliasError) Error() string { return "invalid crew attachment alias: " + e.msg }
 
 // ValidateCrewAttachmentBinding verifies one attachment's stored binding
-// without touching the filesystem: the alias must be valid and the stored
-// path must be shaped like the named crew project's workspace (last segment
-// equals the project ID under a projects directory, so a hand-edited
-// manifest cannot retarget the alias at another crew or an arbitrary path).
-// Server paths use this where the workspace API — not the local disk — is
-// the source of truth, pairing it with a live crew access check.
+// without touching the filesystem: the alias must be valid, a crew project
+// and workspace path must be named, and the path must sit under a projects
+// directory (so a hand-edited manifest cannot retarget the alias at an
+// arbitrary path). It deliberately does not couple the path to the project
+// ID: crew directories are named <slug>-<id-prefix>, so the last segment
+// never equals a UUID project ID. Exact binding is enforced server-side by
+// comparing the stored root against the freshly authorized project binding
+// (run preflight and session grants); this shape check is the local,
+// service-free companion for read paths.
 func ValidateCrewAttachmentBinding(attachment CrewAttachment) error {
 	if err := ValidateCrewAttachmentAlias(attachment.Alias); err != nil {
 		return err
@@ -80,15 +83,15 @@ func ValidateCrewAttachmentBinding(attachment CrewAttachment) error {
 		return errCrewAttachmentAlias("attachment must name a crew project and workspace path")
 	}
 	segments := strings.Split(filepath.ToSlash(root), "/")
-	if len(segments) < 2 || segments[len(segments)-1] != projectID {
-		return errCrewAttachmentAlias("attachment workspace path does not match its crew project")
+	if len(segments) < 2 {
+		return errCrewAttachmentAlias("attachment workspace path is not a crew workspace")
 	}
 	for _, segment := range segments[:len(segments)-1] {
 		if segment == "projects" {
 			return nil
 		}
 	}
-	return errCrewAttachmentAlias("attachment workspace path does not match its crew project")
+	return errCrewAttachmentAlias("attachment workspace path is not a crew workspace")
 }
 
 // CanonicalCrewAttachmentRoot normalizes a stored or freshly resolved crew

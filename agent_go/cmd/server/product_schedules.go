@@ -551,6 +551,7 @@ func (s *ProductScheduleService) projectManifest(ctx context.Context, userID, pr
 		manifest.Capabilities = runtimeManifest.Capabilities
 		manifest.Schedules = runtimeManifest.Schedules
 		manifest.Triggers = runtimeManifest.Triggers
+		manifest.WorkflowContextPaths = runtimeManifest.WorkflowContextPaths
 		binding.ManifestPath = runtimePath
 	}
 	return profile, binding, manifest, nil

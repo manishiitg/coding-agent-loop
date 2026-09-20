@@ -732,6 +732,12 @@ type productProjectManifest struct {
 		SelectedSecrets           *[]string `json:"selected_secrets,omitempty"`
 		SelectedGlobalSecretNames *[]string `json:"selected_global_secret_names,omitempty"`
 		WorkflowContextPaths      []string  `json:"workflow_context_paths,omitempty"`
+		// The UI writes these on creation; the struct must carry them so
+		// server-side manifest rewrites (trigger saves, selection updates)
+		// preserve rather than drop them.
+		SelectedTools        []string `json:"selected_tools,omitempty"`
+		BrowserMode          string   `json:"browser_mode,omitempty"`
+		UseCodeExecutionMode bool     `json:"use_code_execution_mode,omitempty"`
 	} `json:"capabilities,omitempty"`
 }
 

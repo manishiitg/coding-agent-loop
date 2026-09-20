@@ -56,10 +56,24 @@ func TestValidateCrewAttachmentBinding(t *testing.T) {
 	if err := ValidateCrewAttachmentBinding(valid); err != nil {
 		t.Fatalf("valid binding rejected: %v", err)
 	}
+	// Real crew directories are <slug>-<id-prefix>, so the last segment
+	// never equals a UUID project ID; the shape check must accept them.
+	uuidCrew := CrewAttachment{Alias: "reviewer", CrewProfileID: "work", CrewProjectID: "550e8400-e29b-41d4-a716-446655440000", CrewWorkspacePath: "_users/owner/Chats/Work/projects/release-reviewer-550e8400"}
+	if err := ValidateCrewAttachmentBinding(uuidCrew); err != nil {
+		t.Fatalf("uuid crew binding rejected: %v", err)
+	}
+	// A same-shaped path under another crew passes the shape check: exact
+	// binding is enforced server-side by comparing against the freshly
+	// authorized project binding (preflight and grants), not here.
+	retargeted := valid
+	retargeted.CrewWorkspacePath = "_users/other/Chats/Work/projects/evil"
+	if err := ValidateCrewAttachmentBinding(retargeted); err != nil {
+		t.Fatalf("retargeted shape rejected: %v (shape cannot distinguish crews; equality does)", err)
+	}
 	for name, mutate := range map[string]func(*CrewAttachment){
-		"retargeted crew": func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/other/Chats/Work/projects/evil" },
 		"arbitrary path":  func(a *CrewAttachment) { a.CrewWorkspacePath = "_users/owner/secrets" },
 		"missing project": func(a *CrewAttachment) { a.CrewProjectID = "" },
+		"missing path":    func(a *CrewAttachment) { a.CrewWorkspacePath = " " },
 		"bad alias":       func(a *CrewAttachment) { a.Alias = "Bad Alias!" },
 	} {
 		bad := valid

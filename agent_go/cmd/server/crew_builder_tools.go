@@ -158,7 +158,7 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 		return err
 	}
 
-	return reg.RegisterCustomTool("manage_crew_attachment", "Attach a Crew project's workspace to this workflow read-only so downstream steps can read crew files as <alias>/<crew-relative path>. First discover crews with list_accessible_workflows. Attach validates crew access and alias uniqueness, then records the fixed crew workspace path; reads re-resolve through the alias on every access while run-start and per-step checks fail fast on revoked access. Detach removes the alias immediately.", map[string]interface{}{
+	if err := reg.RegisterCustomTool("manage_crew_attachment", "Attach a Crew project's workspace to this workflow read-only so downstream steps can read crew files as <alias>/<crew-relative path>. First discover crews with list_accessible_workflows. Attach validates crew access and alias uniqueness, then records the fixed crew workspace path; reads re-resolve through the alias on every access while run-start and per-step checks fail fast on revoked access. Detach removes the alias immediately.", map[string]interface{}{
 		"type": "object", "additionalProperties": false, "required": []string{"action"}, "properties": map[string]interface{}{
 			"action":          map[string]interface{}{"type": "string", "enum": []string{"list", "attach", "detach"}},
 			"alias":           map[string]interface{}{"type": "string", "description": "Short lowercase alias for crew file reads, for example rts-reviewer."},
@@ -180,39 +180,15 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 			return string(encoded), err
 		case "attach":
 			alias := strings.TrimSpace(fmt.Sprint(args["alias"]))
-			if err := workflowtypes.ValidateCrewAttachmentAlias(alias); err != nil {
-				return "", err
-			}
 			projectID := strings.TrimSpace(fmt.Sprint(args["crew_project_id"]))
 			profileID := strings.TrimSpace(fmt.Sprint(args["crew_profile_id"]))
-			if profileID == "" {
-				profileID = "work"
-			}
-			if projectID == "" {
-				return "", fmt.Errorf("crew_project_id is required")
-			}
-			for _, attachment := range manifest.CrewAttachments {
-				if attachment.Alias == alias {
-					return "", fmt.Errorf("alias %q is already attached", alias)
-				}
-				if strings.TrimSpace(attachment.CrewProfileID) == profileID && strings.TrimSpace(attachment.CrewProjectID) == projectID {
-					return "", fmt.Errorf("crew project %q is already attached as %q", projectID, attachment.Alias)
-				}
-			}
-			_, binding, _, err := api.productSchedules.projectManifest(ctx, userID, profileID, projectID)
+			_, created, err := attachCrewProjectToWorkflow(ctx, api.productSchedules, userID, workspace, profileID, projectID, alias)
 			if err != nil {
-				return "", fmt.Errorf("Crew project is unavailable or access denied")
-			}
-			previousRoots := crewAttachmentStoredRoots(manifest.CrewAttachments)
-			manifest.CrewAttachments = append(manifest.CrewAttachments, workflowtypes.CrewAttachment{
-				ID: uuid.NewString(), Alias: alias, CrewProfileID: profileID, CrewProjectID: projectID,
-				CrewWorkspacePath: filepath.ToSlash(binding.WorkspacePath), CreatedAt: time.Now().UTC().Format(time.RFC3339),
-			})
-			if err := writeWorkflowManifest(ctx, workspace, manifest); err != nil {
 				return "", err
 			}
-			live := liveCrewAttachmentBindings(manifest.CrewAttachments)
-			common.ReconcileSessionCrewAttachments(workspace, previousRoots, crewAttachmentStoredRoots(live), workflowtypes.CrewAttachmentEnvKeys(live))
+			if !created {
+				return "", fmt.Errorf("alias %q is already attached", alias)
+			}
 			return fmt.Sprintf("Crew project %q attached as %q (read-only). Downstream steps read crew files as %s/<path>.", projectID, alias, alias), nil
 		case "detach":
 			alias := strings.TrimSpace(fmt.Sprint(args["alias"]))
@@ -239,6 +215,95 @@ func (api *StreamingAPI) registerCrewBuilderTools(reg definitionToolRegistrar, u
 		default:
 			return "", fmt.Errorf("Unknown crew attachment action")
 		}
+	}, "workflow_webhooks"); err != nil {
+		return err
+	}
+	return reg.RegisterCustomTool("create_crew", "Create a new Crew for the workflow being built, with trigger, read-only attachment, and step configuration in one call. Propose a Crew only when the responsibility is ongoing and stateful enough to deserve maturing: prefer a message sequence for fixed flows and an orchestrator step for one-shot agentic work. Before calling, list skills, servers, and secrets and propose only available ones; tell the user which integrations need connecting in the Crew UI. Call only after the user explicitly approves the proposal in chat. Pass a fresh UUID idempotency_key per proposal and reuse it verbatim on retry: the same key returns the existing crew instead of minting a duplicate. Secrets pass as names only; never send values. After success, immediately call add_step(type=crew) with the returned step configuration plus placement and reason; if that step id already exists, verify it matches and continue.", map[string]interface{}{
+		"type": "object", "additionalProperties": false,
+		"required": []string{"title", "step_instruction", "idempotency_key"},
+		"properties": map[string]interface{}{
+			"title":                map[string]interface{}{"type": "string", "description": "Crew display name, 1-60 characters."},
+			"description":          map[string]interface{}{"type": "string", "description": "Short Crew summary shown in the Crew list."},
+			"icon":                 map[string]interface{}{"type": "string", "description": "Crew icon, at most 8 characters. Defaults to the title initial."},
+			"purpose":              map[string]interface{}{"type": "string", "description": "What the Crew owns, seeded into its starter brief."},
+			"instructions":         map[string]interface{}{"type": "string", "description": "Starter instructions seeded into the Crew brief."},
+			"skills":               map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Installed skill names to select. Unknown skills fail the call."},
+			"servers":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "MCP server names to select."},
+			"secrets":              map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Secret names to reference. Names only, never values."},
+			"global_secrets":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Global secret names to reference. Names only, never values."},
+			"alias":                map[string]interface{}{"type": "string", "description": "Read-only attachment alias. Defaults to the slugified title."},
+			"trigger_name":         map[string]interface{}{"type": "string", "description": "Internal trigger name. Defaults to '<title> trigger'."},
+			"trigger_message":      map[string]interface{}{"type": "string", "description": "Trigger base instruction. Falls back to instructions, then purpose."},
+			"step_id":              map[string]interface{}{"type": "string", "description": "Suggested crew step id. Defaults to 'crew-<slug>'."},
+			"step_title":           map[string]interface{}{"type": "string", "description": "Crew step title. Defaults to the Crew title."},
+			"step_instruction":     map[string]interface{}{"type": "string", "description": "Workflow-specific instruction for the crew step."},
+			"context_dependencies": map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "description": "Step context dependency file names."},
+			"idempotency_key":      map[string]interface{}{"type": "string", "description": "Fresh UUID per proposal; reuse verbatim on retry."},
+			"crew_profile_id":      map[string]interface{}{"type": "string", "description": "Crew profile. Only 'work' is supported."},
+		},
+	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		ctx, err := authorize(ctx)
+		if err != nil {
+			return "", err
+		}
+		str := func(key string) string {
+			raw, present := args[key]
+			if !present || raw == nil {
+				return ""
+			}
+			return strings.TrimSpace(fmt.Sprint(raw))
+		}
+		lists := func(key string) ([]string, error) {
+			raw, present := args[key]
+			if !present || raw == nil {
+				return nil, nil
+			}
+			values, err := strictStringSliceToolArg(raw)
+			if err != nil {
+				return nil, fmt.Errorf("%s: %w", key, err)
+			}
+			return values, nil
+		}
+		req := CreateCrewRequest{
+			UserID: userID, WorkflowPath: workspace, ProfileID: str("crew_profile_id"),
+			Title: str("title"), Description: str("description"), Icon: str("icon"),
+			Purpose: str("purpose"), Instructions: str("instructions"),
+			Alias: str("alias"), TriggerName: str("trigger_name"), TriggerMessage: str("trigger_message"),
+			StepID: str("step_id"), StepTitle: str("step_title"), StepInstruction: str("step_instruction"),
+			IdempotencyKey: str("idempotency_key"),
+		}
+		for _, key := range []string{"skills", "servers", "secrets", "global_secrets", "context_dependencies"} {
+			values, err := lists(key)
+			if err != nil {
+				return "", err
+			}
+			switch key {
+			case "skills":
+				req.Skills = values
+			case "servers":
+				req.Servers = values
+			case "secrets":
+				req.Secrets = values
+			case "global_secrets":
+				req.GlobalSecrets = values
+			case "context_dependencies":
+				req.ContextDependencies = values
+			}
+		}
+		created, err := api.productSchedules.CreateCrewProject(ctx, req)
+		if err != nil {
+			return "", err
+		}
+		stepJSON, err := json.Marshal(created.Step)
+		if err != nil {
+			return "", err
+		}
+		status := "Created"
+		if created.Duplicate {
+			status = "Adopted existing"
+		}
+		return fmt.Sprintf("%s crew %q (id %s) with internal trigger %s, attached read-only as %q. Next: call add_step(type=crew) with step=%s plus insert_after_step_id and reason; if that step id already exists with the same crew and trigger, continue without re-adding.",
+			status, created.Title, created.CrewID, created.TriggerID, created.AttachmentAlias, string(stepJSON)), nil
 	}, "workflow_webhooks")
 }
 
@@ -303,6 +368,62 @@ func crewAttachmentReadRoots(ctx context.Context, svc *ProductScheduleService, u
 		roots = append(roots, authorized)
 	}
 	return roots
+}
+
+// attachCrewProjectToWorkflow records a read-only crew attachment on a
+// workflow and reconciles live sessions. It returns the stored root and
+// whether the attachment was newly created: attaching the same crew under
+// the same alias adopts the existing record (created=false) so retried
+// creation flows converge; every other conflict is an error.
+func attachCrewProjectToWorkflow(ctx context.Context, svc *ProductScheduleService, userID, workspace, profileID, projectID, alias string) (string, bool, error) {
+	alias = strings.TrimSpace(alias)
+	if err := workflowtypes.ValidateCrewAttachmentAlias(alias); err != nil {
+		return "", false, err
+	}
+	projectID = strings.TrimSpace(projectID)
+	profileID = strings.TrimSpace(profileID)
+	if profileID == "" {
+		profileID = "work"
+	}
+	if projectID == "" {
+		return "", false, fmt.Errorf("crew_project_id is required")
+	}
+	manifest, exists, err := ReadWorkflowManifest(ctx, workspace)
+	if err != nil || !exists || manifest == nil {
+		return "", false, fmt.Errorf("Workflow is unavailable or access denied")
+	}
+	for _, attachment := range manifest.CrewAttachments {
+		sameAlias := attachment.Alias == alias
+		sameCrew := strings.TrimSpace(attachment.CrewProfileID) == profileID && strings.TrimSpace(attachment.CrewProjectID) == projectID
+		if sameAlias && sameCrew {
+			return strings.TrimSpace(attachment.CrewWorkspacePath), false, nil
+		}
+		if sameAlias {
+			return "", false, fmt.Errorf("alias %q is already attached", alias)
+		}
+		if sameCrew {
+			return "", false, fmt.Errorf("crew project %q is already attached as %q", projectID, attachment.Alias)
+		}
+	}
+	if svc == nil {
+		return "", false, fmt.Errorf("Crew project is unavailable or access denied")
+	}
+	_, binding, _, err := svc.projectManifest(ctx, userID, profileID, projectID)
+	if err != nil {
+		return "", false, fmt.Errorf("Crew project is unavailable or access denied")
+	}
+	previousRoots := crewAttachmentStoredRoots(manifest.CrewAttachments)
+	root := filepath.ToSlash(binding.WorkspacePath)
+	manifest.CrewAttachments = append(manifest.CrewAttachments, workflowtypes.CrewAttachment{
+		ID: uuid.NewString(), Alias: alias, CrewProfileID: profileID, CrewProjectID: projectID,
+		CrewWorkspacePath: root, CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	if err := writeWorkflowManifest(ctx, workspace, manifest); err != nil {
+		return "", false, err
+	}
+	live := liveCrewAttachmentBindings(manifest.CrewAttachments)
+	common.ReconcileSessionCrewAttachments(workspace, previousRoots, crewAttachmentStoredRoots(live), workflowtypes.CrewAttachmentEnvKeys(live))
+	return root, true, nil
 }
 
 // liveCrewAttachmentBindings drops attachments whose stored binding no

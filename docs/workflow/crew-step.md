@@ -894,10 +894,11 @@ manifest to another owner's path is not re-authorized there.
 
 ## Builder-created Crews
 
-**Recommended next feature; not implemented yet.** Workflow Builder should be
-able to create a Crew while the user is building a workflow. This removes the
-current multi-screen setup in which the user must create a Crew separately,
-return to the workflow, attach it, create a trigger, and select several IDs.
+**Implemented 2026-09-20.** Workflow Builder creates a Crew while the user is
+building a workflow through the `create_crew` tool (`CreateCrewProject`
+service). This removes the multi-screen setup in which the user must create a
+Crew separately, return to the workflow, attach it, create a trigger, and
+select several IDs.
 
 The simple user flow is:
 
@@ -922,8 +923,12 @@ One Builder action should create the usable integration, including:
 - the MCP connections the Crew uses by default;
 - references to the authorized secrets required by those connections;
 - one enabled platform-internal trigger restricted to the creating workflow;
-- a read-only Crew attachment on the workflow; and
-- a Crew step already configured with the new Crew, trigger, and attachment.
+- a read-only Crew attachment on the workflow;
+- the creating workflow in the Crew's `workflow_context_paths`, so the new
+  Crew automatically gets read-only context on the workflow it serves; and
+- a Crew step already configured with the new Crew, trigger, and attachment
+  (returned as an exact `add_step` configuration; the Builder issues the call
+  through the gated plan path).
 
 Secrets are passed only as references to existing authorized secret or
 connection records. Raw secret values must not be written into the workflow
@@ -937,6 +942,13 @@ instruction and workflow inputs, and is automatically selected by the new Crew
 step. The creation result returns the Crew ID, trigger ID, attachment alias, and
 step configuration so Builder can finish without asking the user to copy IDs.
 
+The two links are symmetric and both read-only: the workflow reads the Crew
+through its attachment, and the Crew reads the workflow through
+`workflow_context_paths` (always mounted read-only and authorized through
+the same boundary as transient references). Neither side can write to the
+other. The user can remove the workflow from the Crew's context paths later
+through the existing picker; the trigger binding and attachment are unaffected.
+
 Creation should initially happen only while building the workflow and after the
 user approves it. Automatically creating permanent Crews during workflow
 execution is deferred; retries, loops, and parallel groups could otherwise fill
@@ -944,12 +956,97 @@ the user's Crew list with resources they did not explicitly choose to keep.
 
 ### Current state
 
-No creation path exists. Crews are created by users in the UI; the code only
-resolves existing ones. The Builder picks a pre-existing Crew, attaches it
-read-only, and selects or creates a trigger; run time only invokes that
-trigger (one shot in, final response out). Multi-turn "talk" is possible only
-as consecutive steps against the same persistent trigger conversation.
+Implemented. `create_crew` mints the Crew (UI-identical manifests, starter
+`MEMORY.md` brief, skills/servers/secret selections, default LLM config),
+creates the enabled internal trigger bound to the workflow, attaches the Crew
+read-only, seeds the creating workflow into the Crew's context paths, and
+returns the exact step configuration; the Builder then issues `add_step`
+through the normal gated path. Retries under the same idempotency key adopt
+every record instead of duplicating. Only the `work` profile is supported.
+
+One deliberate deviation from the plan below: the service does not write the
+plan step itself. Direct executor invocation would bypass the schedule
+collision guard and phase policies that wrap `add_step`; returning the step
+configuration keeps plan mutations on the gated tool path. The user still
+approves once and copies no IDs.
 
 If a later use case requires fresh runtime instances or parallel Crew fan-out,
-add that as a separate lifecycle feature after Builder-created Crews are proven
-useful. It should not complicate the first user-facing creation flow.
+add that as a separate lifecycle feature now that Builder-created Crews exist.
+
+### Implementation plan
+
+**Goal.** Let Workflow Builder create a new Crew while the user builds a
+workflow: one user approval produces a usable, testable specialist — Crew
+project, skills/servers/secret references, an enabled internal trigger
+restricted to the workflow, a read-only attachment, and a configured crew
+step.
+
+**Success criteria.** From Builder chat, a user goes from proposal to an
+approved, working crew step without copying IDs or leaving the workflow. The
+created Crew is immediately openable and testable in normal Crew chat, and a
+workflow run using it passes preflight and executes. Secrets travel as
+references only. Retrying the creation never mints duplicates. Missing OAuth
+connections surface as a pending list.
+
+**Current facts.** Creation today is client-side only
+(`createProductProject` in `frontend/src/platform/chat/productProjects.ts`
+plus `createWorkSession`): it writes `workflow.json`, `product.json`, and a
+`code/` folder through generic planner-file APIs, with no server validation,
+idempotency, or wiring. Reusable server pieces: `manage_crew_trigger`
+(internal + caller binding), `manage_crew_attachment`, `add_step(type="crew")`,
+`list_accessible_workflows`, `list_secrets` / `manage_global_secret`,
+`list_mcp_servers`, `list_skills` / `search_skills`, and the
+`updateProductSelected*` writers. Builder approval is conversational
+(blocking `human_feedback` is forbidden in Builder mode).
+
+**Constraints and non-goals.** Runtime creation stays out of scope. No new
+frontend in v1 (chat-only flow). No deletion cascade: a created Crew survives
+workflow deletion. Non-goals: ephemeral crews, run-scoped conversations,
+migration of existing Crews, frontend creation dialog.
+
+**Key decisions.**
+
+- One server action, not composed tool calls: a single `create_crew` Builder
+  tool backed by one service method (create, selections, trigger, attachment,
+  step). Only server coordination gives atomicity and idempotency.
+- Conversational approval plus idempotency key: Builder proposes in chat,
+  calls the tool after the user's approving reply with a client-generated key.
+- Idempotency via deterministic path check: the key derives a stable
+  project-path suffix; re-entry returns the existing record. Duplicate display
+  names stay allowed.
+- Secrets as validated references only: the schema accepts names, the service
+  verifies existence and authorization, and no value-bearing fields exist.
+- Selections land through the existing `updateProductSelected*` writers.
+- Trigger defaults: internal, `isolated`, enabled, caller-bound to the
+  creating workflow; alias defaults to the slugified Crew name.
+
+**Work plan (strictly ordered).**
+
+1. Creation core (backend): user-scoped projects root, slug+id path,
+   `product.json`, `workflow.json` runtime manifest, `code/` folder, session
+   id; input validation; idempotent re-entry. Mirror the UI file layout
+   byte-for-byte, with the creating workflow pre-seeded in the Crew's
+   `workflow_context_paths`.
+2. Starter content plus selections: seed starter instructions/purpose; apply
+   skill/server/secret selections; reject unknown secret names; resolve
+   default LLM config server-side (fallback: omit, profile default applies).
+3. One-shot wiring: internal trigger and read-only attachment via the
+   internal implementations behind the existing tools; return all IDs plus the
+   exact step configuration (the Builder writes the step via `add_step`, so
+   plan policies apply — see Current state).
+4. `create_crew` Builder tool plus guidance: schema per the creation contract
+   plus `idempotency_key`; Builder-mode gating; proposal format and
+   pending-connection reporting; the sequence < orchestrator < crew proposal
+   ladder.
+5. Docs: flip this section to implemented; record the orphan rule and
+   pending-connections behavior.
+
+**Validation.** Creation/wiring/preflight Go suites green; `gofmt` and server
+build clean; manual Builder-chat E2E (propose, approve, verify Crew, test in
+chat, run workflow, retry approval with zero duplicates, missing-OAuth
+pending list).
+
+**Risks.** Partial failure across six writes (mitigate with ordered writes
+plus idempotent re-entry; rollback is deregistering the tool — created crews
+are ordinary crews). Over-eager proposals (guidance ladder). Secret-name
+confusion (fail closed).

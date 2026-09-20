@@ -17,7 +17,7 @@ not exist yet; a shipped one describes the current system.
 | [terminal_live_attach_transport.md](terminal_live_attach_transport.md) | Shipped on `main`; sole transport. |
 | [live_attach_app_vs_demo_debug.md](live_attach_app_vs_demo_debug.md) | Resolved, then re-architected in-band. Read with the entry above; alone it describes a superseded design. |
 | [cli_live_input_unification.md](cli_live_input_unification.md) | Core implemented surgically. |
-| [codex_durable_ack_p0.md](codex_durable_ack_p0.md) | **In progress (2026-09-19).** File-ack P0 + pane fast-confirm P1 split, starting with Codex: observe-only rollout arbiter behind the pane submit loop, accepted-but-unflushed outcome, and WhatsApp-style single/double delivery ticks in chat. |
+| [durable_ack_p0.md](durable_ack_p0.md) | **Done for codex/pi/muse/Claude (2026-09-19/20); Cursor live pending quota 9/21.** File-ack P0 + pane fast-confirm P1 split across all five CLI agents: observe-only durable arbiter behind the pane submit loop, accepted-but-unflushed outcome, and WhatsApp-style single/double delivery ticks in chat. |
 
 ## Reading order for the agent-API work
 

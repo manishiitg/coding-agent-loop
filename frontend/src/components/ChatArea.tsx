@@ -4,7 +4,7 @@ import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMem
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
 import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codingCliTranscriptReconciliation'
-import { applyLiveInputConfirmation, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
+import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
@@ -1731,9 +1731,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // tab); appended windows go through the shared helper instead.
     const applyConfirmationsToStore = () => {
       if (confirmations.length === 0) return
-      let upgraded = chatStore.getTabEvents(actualSessionId)
-      for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
-      chatStore.setTabEvents(actualSessionId, upgraded)
+      // patchTabEvents, not get+set: setTabEvents clears the micro-batch
+      // buffer, dropping tool events that arrived in this same window.
+      chatStore.patchTabEvents(actualSessionId, events => applyLiveInputConfirmations(events, confirmations))
     }
     const newEvents: PollingEvent[] = []
     let hasCompletionEvent = false

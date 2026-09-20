@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   addTabEvents: vi.fn(),
   setTabEvents: vi.fn(),
+  patchTabEvents: vi.fn(),
   setTabLastEventIndex: vi.fn(),
   setTabHasMoreOlderEvents: vi.fn(),
   setTabHistoryPagination: vi.fn(),
@@ -17,6 +18,7 @@ vi.mock('../stores/useChatStore', () => ({
     getState: () => ({
       addTabEvents: mocks.addTabEvents,
       setTabEvents: mocks.setTabEvents,
+      patchTabEvents: mocks.patchTabEvents,
       setTabLastEventIndex: mocks.setTabLastEventIndex,
       setTabHasMoreOlderEvents: mocks.setTabHasMoreOlderEvents,
       setTabHistoryPagination: mocks.setTabHistoryPagination,

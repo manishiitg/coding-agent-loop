@@ -667,6 +667,7 @@ export interface ChatState extends StoreActions {
       addTabEvents: (sessionId: string, events: PollingEvent[]) => void
       _addTabEventsImmediate: (sessionId: string, events: PollingEvent[]) => void
       setTabEvents: (sessionId: string, events: PollingEvent[]) => void
+      patchTabEvents: (sessionId: string, patch: (events: PollingEvent[]) => PollingEvent[]) => void
       clearTabEvents: (sessionId: string) => void
       cleanupTabEvents: (sessionId: string, keepCount: number) => void
       cleanupOrphanedTabEvents: () => void
@@ -1318,7 +1319,36 @@ export const useChatStore = create<ChatState>()(
           }
         })
       },
-      
+
+      // Metadata-only upgrade of committed rows WITHOUT dropping the
+      // micro-batch buffer (unlike setTabEvents, which clears it via
+      // clearPendingEventBatch). Durability receipts use this so a tool
+      // event buffered in the same window still flushes afterwards.
+      // The patch maps 1:1 (same rows, upgraded metadata) across both
+      // the committed array and any pending buffer; it never grows the
+      // timeline, so no cleanup/badge bookkeeping runs here. Indexes
+      // rebuild like setTabEvents since the array ref is replaced.
+      patchTabEvents: (sessionId: string, patch: (events: PollingEvent[]) => PollingEvent[]) => {
+        const buffered = _eventBatchBuffers.get(sessionId)
+        if (buffered) _eventBatchBuffers.set(sessionId, patch(buffered))
+        let patched: PollingEvent[] | undefined
+        set((state) => {
+          const current = state.tabEvents[sessionId]
+          if (!current) return state
+          patched = patch(current)
+          return {
+            tabEvents: {
+              ...state.tabEvents,
+              [sessionId]: patched
+            }
+          }
+        })
+        if (patched) {
+          tabEventIdSets.set(sessionId, new Set(patched.map(e => e.id).filter(Boolean) as string[]))
+          tabAutoNotificationKeys.set(sessionId, collectAutoNotificationKeys(patched))
+        }
+      },
+
       clearTabEvents: (sessionId: string) => {
         clearPendingEventBatch(sessionId)
         tabEventIdSets.delete(sessionId)

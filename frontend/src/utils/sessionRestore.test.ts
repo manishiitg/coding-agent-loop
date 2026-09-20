@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   addTabEvents: vi.fn(),
   _addTabEventsImmediate: vi.fn(),
   setTabEvents: vi.fn(),
+  patchTabEvents: vi.fn(),
   setTabLastEventIndex: vi.fn(),
   setTabHasMoreOlderEvents: vi.fn(),
   setTabHistoryPagination: vi.fn(),
@@ -21,6 +22,7 @@ vi.mock('../stores/useChatStore', () => ({
       addTabEvents: mocks.addTabEvents,
       _addTabEventsImmediate: mocks._addTabEventsImmediate,
       setTabEvents: mocks.setTabEvents,
+      patchTabEvents: mocks.patchTabEvents,
       setTabLastEventIndex: mocks.setTabLastEventIndex,
       setTabHasMoreOlderEvents: mocks.setTabHasMoreOlderEvents,
       setTabHistoryPagination: mocks.setTabHistoryPagination,
@@ -828,6 +830,7 @@ describe('hydrateTabEvents live-input durability receipts', () => {
     mocks.getTabEvents.mockImplementation(() => [...stored])
     mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
     mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
+    mocks.patchTabEvents.mockImplementation((_sid: string, patch: (events: any[]) => any[]) => { const next = patch([...stored]); stored.length = 0; stored.push(...next) })
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [confirmedWireEvent()],
       last_processed_index: 1,
@@ -856,6 +859,7 @@ describe('hydrateTabEvents live-input durability receipts', () => {
     mocks.getTabEvents.mockImplementation(() => [...stored])
     mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
     mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
+    mocks.patchTabEvents.mockImplementation((_sid: string, patch: (events: any[]) => any[]) => { const next = patch([...stored]); stored.length = 0; stored.push(...next) })
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [liveUserRow(), confirmedWireEvent()],
       last_processed_index: 2,
@@ -875,6 +879,7 @@ describe('hydrateTabEvents live-input durability receipts', () => {
       mocks.getTabEvents.mockImplementation(() => [...stored])
       mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
       mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
+      mocks.patchTabEvents.mockImplementation((_sid: string, patch: (events: any[]) => any[]) => { const next = patch([...stored]); stored.length = 0; stored.push(...next) })
       return stored
     }
     const parsedReceipt = () => {

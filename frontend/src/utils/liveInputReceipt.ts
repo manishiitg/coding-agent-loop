@@ -60,6 +60,15 @@ export function applyLiveInputConfirmation(events: PollingEvent[], update: LiveI
   })
 }
 
+// applyLiveInputConfirmations upgrades rows for every update in order.
+// Single place for the receipt-application loop shared by the restore
+// helper and the live receipt-only path.
+export function applyLiveInputConfirmations(events: PollingEvent[], updates: ReadonlyArray<LiveInputConfirmationUpdate>): PollingEvent[] {
+  let upgraded = events
+  for (const update of updates) upgraded = applyLiveInputConfirmation(upgraded, update)
+  return upgraded
+}
+
 // stampLiveInputIdentity transfers a suppressed backend echo's identity
 // onto the surviving optimistic row WITHOUT flipping its source: a query
 // that the backend steered live keeps its normal bubble, and the
@@ -107,9 +116,7 @@ export function splitLiveInputConfirmations(events: ReadonlyArray<PollingEvent>)
 // store instead (see appendRestoredLiveTail in sessionRestore).
 export function resolveLiveInputConfirmations(events: PollingEvent[]): PollingEvent[] {
   const { timelineEvents, confirmations } = splitLiveInputConfirmations(events)
-  let upgraded = timelineEvents
-  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
-  return upgraded
+  return applyLiveInputConfirmations(timelineEvents, confirmations)
 }
 
 // readLiveInputConfirmation parses a live_input_confirmed wire event.

@@ -6,7 +6,7 @@ import { agentApi } from '../services/api'
 import type { ChatHistoryConversation, PollingEvent } from '../services/api-types'
 import type { ChatHistorySession } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
-import { applyLiveInputConfirmation, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withDeliveryConfirmation } from './liveInputReceipt'
+import { applyLiveInputConfirmations, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withDeliveryConfirmation } from './liveInputReceipt'
 import type { LiveInputConfirmationUpdate } from './liveInputReceipt'
 import axios from 'axios'
 
@@ -325,14 +325,15 @@ function isAcceptedOptimisticLiveInput(event: PollingEvent): boolean {
 // against the merged store. The synchronous append keeps row visibility
 // immediate so a receipt in this same window matches a row it arrived
 // with — the live path and restore share this helper rather than
-// maintaining two ingestion orderings.
+// maintaining two ingestion orderings. Verdicts apply via patchTabEvents
+// so micro-batched events from the same window still flush afterwards.
 export function appendTimelineAndApplyConfirmations(sessionId: string, timelineEvents: PollingEvent[], confirmations: LiveInputConfirmationUpdate[]) {
   const chatStore = useChatStore.getState()
   if (timelineEvents.length > 0) chatStore._addTabEventsImmediate(sessionId, timelineEvents)
   if (confirmations.length === 0) return
-  let upgraded = chatStore.getTabEvents(sessionId)
-  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
-  chatStore.setTabEvents(sessionId, upgraded)
+  // patchTabEvents, not get+set: setTabEvents clears the micro-batch
+  // buffer, dropping tool events that arrived in this same window.
+  chatStore.patchTabEvents(sessionId, events => applyLiveInputConfirmations(events, confirmations))
 }
 
 // appendRestoredLiveTail appends a raw live-tail window the same way the live
@@ -350,7 +351,7 @@ export function appendRestoredLiveTail(sessionId: string, incoming: ReadonlyArra
   // Identity-transfer against the merged rows first, then the shared
   // append+apply consumes the receipts (with an empty remainder: this
   // window's rows already landed above).
-  chatStore.setTabEvents(sessionId, transferLiveTailInputIdentity(chatStore.getTabEvents(sessionId), timelineEvents))
+  chatStore.patchTabEvents(sessionId, events => transferLiveTailInputIdentity(events, timelineEvents))
   appendTimelineAndApplyConfirmations(sessionId, [], confirmations)
 }
 

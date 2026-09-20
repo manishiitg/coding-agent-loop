@@ -11,9 +11,12 @@ its server↔chat e2e remains pending. 2026-09-20 fix: durability receipts are
 now consumed on every ingestion path including durable restore
 (see "Restore-path receipt consumption" below).**
 
-**Current review disposition: changes required.** The follow-up code review
-below reproduced three remaining correctness bugs after the FIFO-receipt and
-append-then-apply fixes. Historical live passes do not cover those regressions.
+**Current review disposition: changes required (fixes implemented, pending
+re-review).** The follow-up code review below reproduced three remaining
+correctness bugs after the FIFO-receipt and append-then-apply fixes; the
+"Follow-up P1a/P1b/P2 resolutions" section records the fixes with committed
+regression coverage. Historical live passes do not cover those cases, and the
+reviewer has not yet re-verified.
 
 ## Problem
 
@@ -799,3 +802,130 @@ Required fix:
 
 Passing the existing focused suites is not sufficient to close the feature.
 Fix the three reproduced cases and retain regression coverage before sign-off.
+
+## Follow-up P1a/P1b/P2 resolutions (2026-09-20)
+
+Fixes for the three open follow-up findings above. SDK changes are in
+`multi-llm-provider-go` (all five `pkg/adapters/*/ *_durable_ack.go`
+pairs); frontend changes are in this repo. Each fix was verified
+failing-first: the new regression test failed on the old code, then
+passed after the fix.
+
+### P1a: occurrence-bound receipts (SDK, all five adapters)
+
+Each stashed receipt now carries a 1-based `occurrence`: 1 + identical
+unexpired already pending. Stashes run inside the broker-serialized
+send, so occurrence is send-ordered. Takes still pop FIFO under the
+session/pool lock, and each wait's poll needs the occurrence-th
+matching proof row — k takes need k distinct rows however watcher
+goroutines schedule. The old "watchers take in spawn order" claim is
+removed from all five take doc comments (acquisition order, not send
+order); occurrence keeps the binding sound without that assumption.
+
+* Codex/Muse: `codexRolloutUserMessageOccurrenceSince` /
+  `museUserAckRowOccurrence` count matches in file order and return
+  the occurrence-th; the old first-match functions are occurrence-1
+  wrappers, so all existing matcher tests still execute the new code.
+* Pi: the poll advances its marker offset across ticks, so the new
+  `piUserAckMarkers` (plural) lists every match per chunk and the poll
+  accumulates them, confirming on the occurrence-th overall with its
+  timestamp. `piUserAckMarker` (first match) now delegates to the
+  plural form; the inline 6s submit check is unchanged.
+* Claude: occurrence applies to all three matchers — the user-row and
+  drain confirm paths plus the enqueue check at budget expiry (one
+  enqueue can no longer report two sends as unflushed). Drain events
+  (`remove` with our text, `dequeue` after our enqueue) count in file
+  order.
+* Cursor: `cursorStoreUserQueryCountSince` counts matching new-ref
+  rows; the poll confirms at count >= occurrence. Threshold counting
+  needs no ref ordering.
+* Poll structs gained an `occurrence` field (values < 1 mean 1);
+  Await entry points pass the taken receipt's occurrence. No Await,
+  stash, take, or matcher signatures changed.
+
+Correction to the "Review P1/P2 resolutions" P1 note: the Muse inline
+arbiter did NOT take — it used a send-path baseline parameter, which
+left its receipt pending for a later identical send's watcher to take
+(a stale-baseline false-confirm hole). `museArbiterAfterSubmitFailure`
+now takes its receipt like the Codex/Pi arbiters, falling back to the
+caller's snapshot on a take miss.
+
+Regression tests per adapter: `TestTake*OccurrenceRepeat` (stash two
+identical receipts on the same baseline, prove occurrence 1 matches
+one row while occurrence 2 does not, then satisfy it with a second
+row), `TestTake*ConcurrentOccurrence` (two racing goroutines bind
+occurrences {1, 2} in either order — the out-of-order scheduling
+coverage, `-race` clean), and poll-level occurrence tests (occurrence
+2 times out on one row; Pi additionally proves the second marker's
+timestamp; Claude proves one enqueue fails rather than double-reports
+unflushed). New `TestPollClaudeDurableAck` / `TestPollCursorDurableAck`
+suites also lock in basic confirm/cancel behavior those polls lacked.
+
+Known residual: under inverted take order PLUS actual message loss,
+two identical waits could misattribute verdicts between the texts
+(counts stay correct). Absolute send↔watch binding needs send
+identity (e.g. `message_id`) threaded through the Send/Await API —
+a larger cross-layer change left as future hardening. Also out of
+scope: Pi's inline 6s submit check still first-matches per call
+(send1 lost + identical send2 inside its 6s window could falsely
+satisfy it); only the durable arbiter/watcher paths use receipts.
+
+### P1b: live capture context on budget expiry (SDK, codex/pi/muse/cursor)
+
+Each affected poll's deadline branch now derives a fresh bounded
+context from the poll's parent
+(`context.WithTimeout(ctx, <provider>DurableAckCaptureTimeout)`,
+5s) for the final pane read instead of passing the expired budget
+deadline. Budget-only expiry gets its pane read back (queued verdict
+restored); a cancelled parent still fails fast via the existing
+`ctx.Err()` return, since the derived context inherits cancellation.
+Claude is unaffected — its expiry verdict reads the transcript, with
+no capture call.
+
+Regression tests per affected adapter: "expiry capture runs under a
+live context" (cancellation-aware stub that rejects an expired
+context; failed on old code, unflushed on new) and "parent cancel
+fails fast even when queued" (locks in cancellation semantics).
+Existing ctx-ignoring queue-expiry tests still pass unchanged.
+
+### P2: atomic receipt patch preserving the micro-batch (frontend)
+
+New `useChatStore.patchTabEvents(sessionId, patch)`: maps the
+committed array AND any pending micro-batch buffer through the patch
+without `clearPendingEventBatch`, rebuilding the ID/auto-notification
+indexes like `setTabEvents` (no cleanup/badge bookkeeping — a 1:1
+metadata map never grows the timeline). All three receipt-application
+sites use it: `appendTimelineAndApplyConfirmations`, the ChatArea
+receipt-only closure, and the live-tail identity transfer. The
+receipt loop now lives in one plural
+`applyLiveInputConfirmations` helper shared by all three (plus the
+pure `resolveLiveInputConfirmations`). Full-timeline replaces
+(hydrate, backfill) intentionally keep `setTabEvents` — replacing
+the timeline should drop stale buffered events.
+
+Regression tests: new real-store timer suite
+`sessionRestore.batchPreservation.test.ts` (seed a committed row,
+buffer a `tool_call`, apply a same-window receipt, advance timers —
+the tool event survives and the row upgrades; failed on old code).
+Mocked-store receipt tests updated to the patch call shape with
+identical assertions; no ChatArea mount harness exists, so the
+closure rewiring is covered by inspection plus the shared helper.
+
+### Verification
+
+* SDK focused durable suites: 5/5 green, incl. the new occurrence,
+  concurrent-take, live-context, and parent-cancel tests.
+* SDK full adapter suites with `-race`: codex/pi/cursor/claude
+  green; muse has one failure
+  (`TestMuseExecLaneMCPMountReachesCLIAndRestores`) that reproduces
+  identically on a pristine-HEAD worktree (pre-existing, unrelated
+  to durable ack). `go vet` clean on all five adapters.
+* Frontend: 41 receipt/restore tests green (incl. the 3 new
+  batch-preservation tests), 59 store/ChatArea tests green,
+  `tsc -b` clean, eslint 0 errors (2 pre-existing react-hooks
+  warnings in ChatArea). `sessionRestore.productFallback.test.ts`
+  has 2 failures that reproduce identically on pristine HEAD
+  (history-pagination arg drift, unrelated to this diff).
+* Not rerun: live provider certification and live server↔chat
+  delivery. Cursor's pending server↔chat gate and the unfinished
+  P0/P1 runner split remain outstanding, as before.

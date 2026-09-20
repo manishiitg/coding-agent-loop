@@ -3621,11 +3621,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }, false)
   const visibleWorkflowSurface = workflowSurface
 
-  // Keep the bottom "Resuming coding session" indicator in sync with the surface
-  // (both modes). A native/terminal resume that settles onto the previous-chats
-  // list (landing) yielded nothing live, so its restore markers are stale: clear
-  // them so the indicator disappears and typing starts a fresh chat instead of
-  // silently resuming a chat you're no longer viewing. (File-fallback resumes —
+  // Keep stale restore markers in sync with the surface (both modes).
+  // A native/terminal resume that settles onto the previous-chats list
+  // (landing) yielded nothing live, so its restore markers are stale: clear
+  // them so typing starts a fresh chat instead of silently resuming a chat
+  // you're no longer viewing. (File-fallback resumes —
   // NativeResume false — stay: their attached file context still drives the next
   // turn. Read-only run views never reach landing, so they're untouched.)
   const activeChatSurface = selectedModeCategory === 'workflow' ? visibleWorkflowSurface : multiAgentSurface
@@ -3915,7 +3915,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           onStopStreaming={stopStreaming}
           onNewChat={() => void handleNewChat(targetTabId ?? undefined)}
           tabId={targetTabId}
-          restoredConversationPending={resumePending && !hasRestoredLiveContent}
           surfaceVariant={inputVariant}
           hideRuntimeStatus={hideRuntimeStatus}
           showCompactRuntimeLoading={showCompactRuntimeLoading}

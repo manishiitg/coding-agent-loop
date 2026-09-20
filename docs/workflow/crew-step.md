@@ -1177,3 +1177,13 @@ controller's options untouched) and run_full_workflow copies it onto its
 fresh controller. Binding also falls back to the single-user default
 identity like every other per-user lookup, instead of requiring JWT
 claims.
+
+Caller-stamp follow-up: triggers are bound to the workflow manifest ID
+at creation, but dispatch presented the controller's random
+per-construction workflow ID, so every invoke failed with caller
+mismatch. Crew steps now stamp the manifest ID read from workflow.json
+(same ReadWorkspaceFile pattern as the code-layout loader); the random
+ID stays for human-feedback correlation and as the no-manifest
+fallback. Side benefit: the delivery idempotency key is now stable
+across sessions, so retried runs adopt the live crew run instead of
+invoking twice.

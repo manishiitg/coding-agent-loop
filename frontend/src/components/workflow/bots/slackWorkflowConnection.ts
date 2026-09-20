@@ -16,10 +16,11 @@ export function resolveWorkflowSlackConnection(
   workspacePath: string | null,
   selectionId: string | undefined,
   defaultId: string | undefined,
+  profileId?: string | null,
 ): WorkflowSlackSelection {
   const list = connections || []
   const byId = new Map(list.map(entry => [entry.id, entry]))
-  const own = (workspacePath ? list.find(entry => entry.workspace_path === workspacePath) : undefined) || null
+  const own = (workspacePath ? list.find(entry => entry.workspace_path === workspacePath && (profileId ? entry.profile_id === profileId : !entry.profile_id)) : undefined) || null
   const selection = (selectionId || '').trim()
   let effective: SlackConnection | null = null
   if (selection) {

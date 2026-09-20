@@ -1087,6 +1087,9 @@ func mergeSlackConfigForSave(current, incoming *SlackConfig) (*SlackConfig, erro
 				if strings.TrimSpace(conn.WorkspacePath) == "" {
 					conn.WorkspacePath = prev.WorkspacePath
 				}
+				if strings.TrimSpace(conn.ProfileID) == "" {
+					conn.ProfileID = prev.ProfileID
+				}
 			} else {
 				if isMaskedToken(conn.BotToken) || isMaskedToken(conn.AppToken) {
 					return nil, fmt.Errorf("slack connection %q carries masked tokens for an unknown connection", conn.ID)
@@ -1187,13 +1190,15 @@ func (s *SlackService) modifySlackRegistry(ctx context.Context, mutate func(*Sla
 
 // SlackConnectionInput is the caller-supplied subset for connection writes.
 // Empty tokens mean "leave unchanged" on update; WorkspacePath scopes the
-// connection to an owning workflow ("" = platform-managed).
+// connection to an owning workflow or product project ("" = platform-managed).
+// ProfileID names the agent profile for product scopes.
 type SlackConnectionInput struct {
 	DisplayName   string
 	BotToken      string
 	AppToken      string
 	Enabled       bool
 	WorkspacePath string
+	ProfileID     string
 }
 
 // CreateSlackConnection adds a registry entry with a server-minted ID.
@@ -1220,6 +1225,7 @@ func (s *SlackService) CreateSlackConnection(ctx context.Context, input SlackCon
 			AppToken:      strings.TrimSpace(input.AppToken),
 			Enabled:       input.Enabled,
 			WorkspacePath: strings.TrimSpace(input.WorkspacePath),
+			ProfileID:     strings.TrimSpace(input.ProfileID),
 		}
 		cfg.Connections = append(cfg.Connections, conn)
 		return conn, nil
@@ -1257,6 +1263,7 @@ func (s *SlackService) UpdateSlackConnection(ctx context.Context, connID string,
 			}
 			conn.Enabled = input.Enabled
 			conn.WorkspacePath = strings.TrimSpace(input.WorkspacePath)
+			conn.ProfileID = strings.TrimSpace(input.ProfileID)
 			cfg.Connections[i] = conn
 			return conn, nil
 		}

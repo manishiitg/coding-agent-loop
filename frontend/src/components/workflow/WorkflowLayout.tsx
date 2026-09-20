@@ -22,6 +22,7 @@ import { startRestoredTransportTerminal } from '../../utils/restoredTerminal'
 import { isInternalChildSession, isScheduledSession, shouldDiscoverWorkflowChatTab } from '../../utils/workflowSessionKinds'
 import { activeWorkflowTabIdForPreset } from '../../utils/workflowTabOwnership'
 import { activateTab } from '../../utils/activateTab'
+import { findLatestRestorableWorkflowChatSession, isRestorableWorkflowChatSession, resolveLatestWorkflowChatAction } from '../../utils/latestWorkflowChat'
 import {
   reconcileWorkflowRuntimeTab,
   shouldCatchUpRunningWorkflowTranscript,
@@ -153,21 +154,6 @@ function workflowTabSortTimestamp(tab: ChatTab): number {
 
 function isInteractiveWorkflowTab(tab: ChatTab): boolean {
   return tab.metadata?.mode === 'workflow' && tab.metadata?.isViewOnly !== true
-}
-
-function isRestorableWorkflowChatSession(session: ChatHistorySession): boolean {
-  const sessionId = (session.session_id || '').toLowerCase()
-  if (!sessionId) return false
-  if (sessionId.startsWith('schedule-') || sessionId.startsWith('sched_') || sessionId.startsWith('bot-')) {
-    return false
-  }
-
-  const mode = (session.agent_mode || '').toLowerCase()
-  if (mode && mode !== 'workflow' && mode !== 'workflow_phase') {
-    return false
-  }
-
-  return (session.message_count ?? 0) > 0 || (session.preview_messages?.length ?? 0) > 0 || !!session.query?.trim()
 }
 
 function applyRestoredWorkflowConversationConfig(tabId: string, session: ChatHistorySession): void {
@@ -1490,13 +1476,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const hasLiveInteractiveSession = sessionsToRestore.some(session =>
           session.isActive && !session.isScheduledRun && !session.botPlatform,
         )
+        // Hoisted: the latest-first activation below reuses this list, and
+        // fetches it itself when live sessions skip this block entirely.
+        let historySessions: ChatHistorySession[] | undefined
         if (!hasLiveInteractiveSession && workspacePath) {
           try {
             const history = await agentApi.listChatHistorySessions(5, 0, workspacePath, 'chat')
             if (cancelled) return
-            const latestSavedChat = (history.sessions || []).find(session =>
-              session.can_resume !== false && isRestorableWorkflowChatSession(session),
-            )
+            historySessions = history.sessions || []
+            const latestSavedChat = findLatestRestorableWorkflowChatSession(historySessions)
             if (latestSavedChat && !queuedSessionIds.has(latestSavedChat.session_id)) {
               queuedSessionIds.add(latestSavedChat.session_id)
               sessionsToRestore.push({
@@ -1589,10 +1577,71 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           await rehydrateWorkflowTabs(existingWorkflowTabs, workspacePath)
         }
 
+        // Restores one durable chat into an Automation Builder tab (reusing the
+        // tab when the session already has one) and hydrates its transcript,
+        // preferring the list response's indexed tail over a full fetch.
+        // Shared by the new-session loop and the latest-first activation below.
+        // Mirrors the loop's resolution exactly: same session-scoped reuse,
+        // same reset-on-session-change, no idle-tab takeover (no getTabEvents).
+        const restoreHistorySessionTab = async (historySession: ChatHistorySession, sessionId: string): Promise<string> => {
+          const { tabId } = await resolveWorkflowTabForSession({
+            getTabs: () => useChatStore.getState().chatTabs,
+            presetQueryId: activePresetId,
+            sessionId,
+            name: 'Automation Builder',
+            metadata: {
+              mode: 'workflow',
+              phaseId: 'workflow-builder',
+              phaseName: 'Automation Builder',
+              presetQueryId: activePresetId,
+              isViewOnly: false,
+            },
+            createChatTab,
+            updateTabSessionId: (targetTabId, targetSessionId) => {
+              const store = useChatStore.getState()
+              const currentSessionId = store.chatTabs[targetTabId]?.sessionId
+              if (currentSessionId && currentSessionId !== targetSessionId) {
+                store.resetTabChat(targetTabId)
+              }
+              store.updateTabSessionId(targetTabId, targetSessionId)
+            },
+          })
+          const chatStore = useChatStore.getState()
+          applyRestoredWorkflowConversationConfig(tabId, historySession)
+          chatStore.setTabViewMode(tabId, 'formatted')
+          // The list response already carries a compact, indexed transcript
+          // tail. Use it for automatic startup so a mature conversation does
+          // not block the whole right pane while the server parses its full
+          // archive. Explicit "Load earlier" requests still page the durable
+          // conversation endpoint.
+          if (!hydrateTabEventsFromSessionPreview(historySession)) {
+            chatStore.beginWorkflowSessionRestore(sessionId)
+            try {
+              await withWorkflowRestoreTimeout(
+                hydrateTabEvents(sessionId, {
+                  workspacePath: workspacePath || undefined,
+                  fallbackToChatHistory: true,
+                  preferChatHistory: true,
+                }),
+                `Restoring latest workflow chat ${sessionId}`,
+              )
+            } finally {
+              chatStore.endWorkflowSessionRestore(sessionId)
+            }
+          }
+          chatStore.setTabStreaming(tabId, false)
+          chatStore.setTabCompleted(tabId, true)
+          return tabId
+        }
+
         // 4. Create tabs and load events for new sessions only
         let lastTabId: string | null = null
         for (const session of sessionsToActuallyRestore) {
           if (cancelled) return
+          if (session.historySession) {
+            lastTabId = await restoreHistorySessionTab(session.historySession, session.sessionId)
+            continue
+          }
           // Extract phase ID from workflow metadata, query, or title
           let phaseId: string | null = session.phaseId || null
           if (!phaseId) {
@@ -1661,43 +1710,6 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             },
           })
 
-          if (session.historySession) {
-            const chatStore = useChatStore.getState()
-            applyRestoredWorkflowConversationConfig(tabId, session.historySession)
-            chatStore.setTabMetadata(tabId, {
-              mode: 'workflow',
-              phaseId: 'workflow-builder',
-              phaseName: 'Automation Builder',
-              presetQueryId: activePresetId,
-              isViewOnly: false,
-            })
-            chatStore.setTabViewMode(tabId, 'formatted')
-            // The list response already carries a compact, indexed transcript
-            // tail. Use it for automatic startup so a mature conversation does
-            // not block the whole right pane while the server parses its full
-            // archive. Explicit "Load earlier" requests still page the durable
-            // conversation endpoint.
-            if (!hydrateTabEventsFromSessionPreview(session.historySession)) {
-              chatStore.beginWorkflowSessionRestore(session.sessionId)
-              try {
-                await withWorkflowRestoreTimeout(
-                  hydrateTabEvents(session.sessionId, {
-                    workspacePath: workspacePath || undefined,
-                    fallbackToChatHistory: true,
-                    preferChatHistory: true,
-                  }),
-                  `Restoring latest workflow chat ${session.sessionId}`,
-                )
-              } finally {
-                chatStore.endWorkflowSessionRestore(session.sessionId)
-              }
-            }
-            chatStore.setTabStreaming(tabId, false)
-            chatStore.setTabCompleted(tabId, true)
-            lastTabId = tabId
-            continue
-          }
-
           // Workflow switches default to terminal/report surfaces. Event history
           // is only hydrated for the tree/debug view.
           if (shouldHydrateWorkflowEvents && session.preloadedEvents && session.preloadedEvents.length > 0) {
@@ -1735,12 +1747,41 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           lastTabId = tabId
         }
 
-        // Reconnect may create/update tabs, but the active tab is user-owned.
-        // Preserve any valid tab for this workflow—Chat, Schedule, or Bot—and
-        // auto-select only when the current tab belongs elsewhere or is absent.
+        // Latest-first: the persisted active tab wins only when it already
+        // shows the newest restorable chat. Otherwise the newest chat takes
+        // focus so a reload always lands on the latest conversation instead
+        // of a stale tab. Runs, schedules, bots, and fresh tabs keep
+        // today's preserve behavior (see resolveLatestWorkflowChatAction).
         {
           const store = useChatStore.getState()
           if (activeWorkflowTabIdForPreset(store.activeTabId, activePresetId, store.chatTabs)) {
+            try {
+              if (!historySessions && workspacePath) {
+                const history = await agentApi.listChatHistorySessions(5, 0, workspacePath, 'chat')
+                if (!cancelled) historySessions = history.sessions || []
+              }
+              if (cancelled) return
+              const latestStore = useChatStore.getState()
+              const action = resolveLatestWorkflowChatAction({
+                sessions: historySessions,
+                tabs: latestStore.chatTabs,
+                activeTabId: latestStore.activeTabId,
+              })
+              if (action.action === 'activate-tab') {
+                activateTab(action.tabId)
+                setShowChatArea(true)
+                return
+              }
+              if (action.action === 'restore-latest') {
+                const restoredTabId = await restoreHistorySessionTab(action.session, action.sessionId)
+                if (cancelled) return
+                activateTab(restoredTabId)
+                setShowChatArea(true)
+                return
+              }
+            } catch (error) {
+              logger.warn('WorkflowLayout', 'Failed to resolve the latest workflow chat tab', error)
+            }
             setShowChatArea(true)
             return
           }

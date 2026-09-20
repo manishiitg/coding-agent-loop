@@ -11,6 +11,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
@@ -513,4 +514,236 @@ func TestSlackEnabledConnectionStartsChildRuntime(t *testing.T) {
 	}
 	_ = api
 	_ = workspace
+}
+
+func TestSlackConfigureToolScopeFollowsContext(t *testing.T) {
+	api, _ := setupSlackConnectionTest(t)
+
+	// A pre-existing platform default the workflow call must leave alone.
+	platform := slackConnectionRequest(t, "POST", "admin-1", `{"display_name":"Platform","bot_token":"xoxb-plat","app_token":"xapp-plat","enabled":false}`)
+	w := httptest.NewRecorder()
+	createSlackConnectionHandler(api)(w, platform)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("platform create status %d: %s", w.Code, w.Body.String())
+	}
+	defaultID := decodeSlackConnectionResponse(t, w.Body.Bytes()).ID
+	svc := services.GetSlackService()
+	before, ok := svc.GetConnection(defaultID)
+	if !ok {
+		t.Fatal("default connection missing after create")
+	}
+
+	// An admin in a workflow builder chat configures the workflow's own
+	// connection, not the platform default.
+	reg := &recordingRegistrar{}
+	if err := api.registerSlackBotTools(reg, "session", "Workflow/alpha", "", true); err != nil {
+		t.Fatal(err)
+	}
+	configure, found := reg.tools["configure_slack_bot"]
+	if !found {
+		t.Fatal("configure_slack_bot not registered")
+	}
+	admin := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("admin-1"))
+	out, err := configure.exec(admin, map[string]interface{}{"enabled": false, "bot_token": "xoxb-" + "alpha-admin", "app_token": "xapp-alpha-admin", "app_name": "Alpha Admin App"})
+	if err != nil {
+		t.Fatalf("admin workflow configure failed: %v", err)
+	}
+	var ack map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &ack); err != nil || ack["saved"] != true || ack["connection_id"] == "" {
+		t.Fatalf("admin workflow configure ack = %q, %v", out, err)
+	}
+	if ack["connection_id"] == defaultID {
+		t.Fatal("admin workflow call overwrote the platform default")
+	}
+	manifest, found, err := ReadWorkflowManifest(context.Background(), "Workflow/alpha")
+	if err != nil || !found || manifest.Capabilities.SlackConnectionID != ack["connection_id"] {
+		t.Fatalf("workflow did not adopt its connection: %+v", manifest)
+	}
+	conn, ok := svc.GetConnection(ack["connection_id"].(string))
+	if !ok || normalizeConversationWorkspace(conn.WorkspacePath) != normalizeConversationWorkspace("Workflow/alpha") {
+		t.Fatalf("connection not scoped to the workflow: %+v", conn)
+	}
+	if conn.DisplayName != "Alpha Admin App" {
+		t.Fatalf("app_name not applied for admin workflow call: %+v", conn)
+	}
+	after, ok := svc.GetConnection(defaultID)
+	if !ok || after.BotToken != before.BotToken || after.AppToken != before.AppToken || after.DisplayName != before.DisplayName {
+		t.Fatalf("platform default changed: before=%+v after=%+v", before, after)
+	}
+
+	// Without a workflow or project context the admin still manages the default.
+	regProfile := &recordingRegistrar{}
+	if err := api.registerSlackBotTools(regProfile, "session", "", "work", true); err != nil {
+		t.Fatal(err)
+	}
+	configureDefault, found := regProfile.tools["configure_slack_bot"]
+	if !found {
+		t.Fatal("configure_slack_bot not registered for unbound context")
+	}
+	out, err = configureDefault.exec(admin, map[string]interface{}{"enabled": false, "bot_token": "xoxb-" + "plat-new", "app_token": "xapp-plat-new"})
+	if err != nil {
+		t.Fatalf("admin default configure failed: %v", err)
+	}
+	var defAck map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &defAck); err != nil || defAck["saved"] != true {
+		t.Fatalf("admin default configure ack = %q, %v", out, err)
+	}
+	if svc.DefaultConnectionID() != defaultID {
+		t.Fatalf("unbound save moved the default to %q", svc.DefaultConnectionID())
+	}
+
+	// A non-admin without a workflow or project context is refused.
+	alice := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("alice"))
+	if _, err := configureDefault.exec(alice, map[string]interface{}{"enabled": false}); err == nil || !strings.Contains(err.Error(), "only an admin may configure the shared default") {
+		t.Fatalf("non-admin unbound configure err = %v", err)
+	}
+}
+
+func TestSlackConfigureToolProductScope(t *testing.T) {
+	api, workspace := setupSlackConnectionTest(t)
+	profiles := agentprofiles.NewRegistry()
+	if err := profiles.RegisterProfile(agentprofiles.Profile{
+		ID: "work", Name: "Work", Version: 1, SystemPromptTemplate: "test", BuiltIn: true,
+		Runtime: agentprofiles.RuntimePolicy{
+			Workspace: agentprofiles.WorkspacePolicy{Mode: agentprofiles.WorkspaceModeProject, ProjectsRoot: "Chats/Work/projects"},
+		},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	api.agentProfiles = profiles
+
+	projectPath := "_users/alice/Chats/Work/projects/alpha"
+	workspace.files[projectPath+"/workflow.json"] = `{"schema_version":1,"id":"proj_alpha","label":"Alpha Project","capabilities":{}}`
+
+	reg := &recordingRegistrar{}
+	if err := api.registerSlackBotTools(reg, "session", projectPath, "work", true); err != nil {
+		t.Fatal(err)
+	}
+	configure, found := reg.tools["configure_slack_bot"]
+	if !found {
+		t.Fatal("configure_slack_bot not registered")
+	}
+	alice := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("alice"))
+	bob := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("bob"))
+	admin := context.WithValue(context.Background(), UserContextKey, slackConnectionClaims("admin-1"))
+
+	// A product owner creates the project's own connection; the platform
+	// default is untouched (none exists).
+	out, err := configure.exec(alice, map[string]interface{}{"enabled": false, "bot_token": "xoxb-" + "proj-alice", "app_token": "xapp-proj-alice", "app_name": "Alpha Crew App"})
+	if err != nil {
+		t.Fatalf("owner product configure failed: %v", err)
+	}
+	var ack map[string]interface{}
+	if err := json.Unmarshal([]byte(out), &ack); err != nil || ack["saved"] != true || ack["connection_id"] == "" {
+		t.Fatalf("owner product configure ack = %q, %v", out, err)
+	}
+	connID := ack["connection_id"].(string)
+	svc := services.GetSlackService()
+	conn, ok := svc.GetConnection(connID)
+	if !ok || conn.ProfileID != "work" || normalizeConversationWorkspace(conn.WorkspacePath) != normalizeConversationWorkspace(projectPath) {
+		t.Fatalf("connection not scoped to the project: %+v", conn)
+	}
+	if conn.DisplayName != "Alpha Crew App" {
+		t.Fatalf("app_name not saved on create: %+v", conn)
+	}
+	if svc.DefaultConnectionID() != "" {
+		t.Fatalf("project save created a default: %q", svc.DefaultConnectionID())
+	}
+	selected, err := productSlackConnectionID(context.Background(), "work", projectPath)
+	if err != nil || selected != connID {
+		t.Fatalf("project did not adopt its connection: %q, %v", selected, err)
+	}
+
+	// A second call updates the same connection instead of minting another.
+	out2, err := configure.exec(alice, map[string]interface{}{"enabled": false, "app_name": "Alpha Crew Renamed"})
+	if err != nil {
+		t.Fatalf("owner product reconfigure failed: %v", err)
+	}
+	var ack2 map[string]interface{}
+	if err := json.Unmarshal([]byte(out2), &ack2); err != nil || ack2["connection_id"] != connID {
+		t.Fatalf("reconfigure minted a second connection: %q", out2)
+	}
+
+	// Another user's project path is outside the caller's product root.
+	bobProject := "_users/bob/Chats/Work/projects/beta"
+	workspace.files[bobProject+"/workflow.json"] = `{"schema_version":1,"id":"proj_beta","label":"Beta Project","capabilities":{}}`
+	regBob := &recordingRegistrar{}
+	if err := api.registerSlackBotTools(regBob, "session", bobProject, "work", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := regBob.tools["configure_slack_bot"].exec(alice, map[string]interface{}{"enabled": false}); err == nil {
+		t.Fatal("configured another user's project connection")
+	}
+	// An admin may configure any project's connection.
+	if _, err := regBob.tools["configure_slack_bot"].exec(admin, map[string]interface{}{"enabled": false, "app_name": "Beta Admin App"}); err != nil {
+		t.Fatalf("admin product configure failed: %v", err)
+	}
+
+	// Owners inspect their own masked connection; outsiders cannot.
+	inspect, found := reg.tools["get_slack_bot_credentials"]
+	if !found {
+		t.Fatal("get_slack_bot_credentials not registered")
+	}
+	raw, err := inspect.exec(alice, map[string]interface{}{})
+	if err != nil {
+		t.Fatalf("owner product inspect failed: %v", err)
+	}
+	if !strings.Contains(raw, connID) || strings.Contains(raw, "proj-alice") {
+		t.Fatalf("owner product inspect = %q", raw)
+	}
+	if _, err := inspect.exec(bob, map[string]interface{}{}); err == nil {
+		t.Fatal("outsider inspected another project's connection")
+	}
+
+	// Route sends resolve the project selection.
+	routeID := slackConnectionIDForRoute(context.Background(), ChannelRoute{ProfileID: "work", WorkspacePath: projectPath})
+	if routeID != connID {
+		t.Fatalf("route resolved %q, want %q", routeID, connID)
+	}
+
+	// Delete is blocked while the project selects the connection.
+	del := mux.SetURLVars(slackConnectionRequest(t, "DELETE", "alice", ""), map[string]string{"id": connID})
+	w := httptest.NewRecorder()
+	deleteSlackConnectionHandler(api)(w, del)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("referenced delete status %d, want 409: %s", w.Code, w.Body.String())
+	}
+
+	// The selection endpoint mirrors the workflow manifest write: unknown
+	// selections are rejected, outsiders are refused, and clearing the
+	// selection unblocks the delete.
+	putUnknown := httptest.NewRequest("PUT", "/api/human-feedback/slack/connections/project/selection?profile_id=work&workspace_path="+projectPath, strings.NewReader(`{"slack_connection_id":"nope"}`))
+	putUnknown = putUnknown.WithContext(alice)
+	w = httptest.NewRecorder()
+	projectSlackConnectionHandler(api)(w, putUnknown)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("unknown selection status %d, want 400: %s", w.Code, w.Body.String())
+	}
+	putBob := httptest.NewRequest("PUT", "/api/human-feedback/slack/connections/project/selection?profile_id=work&workspace_path="+projectPath, strings.NewReader(`{"slack_connection_id":""}`))
+	putBob = putBob.WithContext(bob)
+	w = httptest.NewRecorder()
+	projectSlackConnectionHandler(api)(w, putBob)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("outsider selection write status %d, want 403: %s", w.Code, w.Body.String())
+	}
+	getSel := httptest.NewRequest("GET", "/api/human-feedback/slack/connections/project/selection?profile_id=work&workspace_path="+projectPath, nil)
+	getSel = getSel.WithContext(alice)
+	w = httptest.NewRecorder()
+	projectSlackConnectionHandler(api)(w, getSel)
+	if w.Code != http.StatusOK || !strings.Contains(w.Body.String(), connID) {
+		t.Fatalf("selection read = %d %q", w.Code, w.Body.String())
+	}
+	putClear := httptest.NewRequest("PUT", "/api/human-feedback/slack/connections/project/selection?profile_id=work&workspace_path="+projectPath, strings.NewReader(`{"slack_connection_id":""}`))
+	putClear = putClear.WithContext(alice)
+	w = httptest.NewRecorder()
+	projectSlackConnectionHandler(api)(w, putClear)
+	if w.Code != http.StatusOK {
+		t.Fatalf("selection clear status %d: %s", w.Code, w.Body.String())
+	}
+	del = mux.SetURLVars(slackConnectionRequest(t, "DELETE", "alice", ""), map[string]string{"id": connID})
+	w = httptest.NewRecorder()
+	deleteSlackConnectionHandler(api)(w, del)
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("unreferenced delete status %d: %s", w.Code, w.Body.String())
+	}
 }

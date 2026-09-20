@@ -363,6 +363,33 @@ func TestExecuteCrewStep(t *testing.T) {
 	}
 }
 
+func TestExecuteCrewStepStampsManifestWorkflowID(t *testing.T) {
+	files := map[string]string{
+		"Workflow/instagram/workflow.json": `{"id": "manifest-9", "label": "instagram"}`,
+	}
+	fake := &fakeCrewRunner{result: CrewStepResult{CrewRunID: "run-9", Status: "success", FinalResponse: "ok"}}
+	base := newFakeWorkspaceAPIWithContent(t, files)
+	base.SetWorkspacePath("Workflow/instagram")
+	hcpo := &StepBasedWorkflowOrchestrator{
+		BaseOrchestrator:  base,
+		selectedRunFolder: "iteration-0",
+		workflowID:        "workflow_9random",
+		executionOptions:  &ExecutionOptions{CrewRunner: fake},
+	}
+	crew := &CrewPlanStep{
+		Type:             StepTypeCrew,
+		CommonStepFields: CommonStepFields{ID: "crew-1", Title: "Review"},
+		CrewProfileID:    "work", CrewProjectID: "rts", TriggerID: "trig-1", Instruction: "x",
+	}
+	_, _, err := hcpo.executeCrewStep(context.Background(), crew, 0, &StepProgress{}, nil, &ExecutionContext{}, []PlanStepInterface{crew})
+	if err != nil {
+		t.Fatalf("executeCrewStep: %v", err)
+	}
+	if fake.req.WorkflowID != "manifest-9" {
+		t.Fatalf("caller workflow ID = %q, want manifest id", fake.req.WorkflowID)
+	}
+}
+
 func TestExecuteCrewStepRejectsWithoutRunner(t *testing.T) {
 	hcpo := &StepBasedWorkflowOrchestrator{
 		BaseOrchestrator: newFakeWorkspaceAPIWithContent(t, map[string]string{}),

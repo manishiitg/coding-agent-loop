@@ -73,6 +73,7 @@ import type {
   SlackConnection,
   SlackConnectionRequest,
   SlackConnectionsResponse,
+  ProjectSlackSelectionResponse,
   SlackTestResponse,
   SlackTestReplyResponse,
   GmailConfigRequest,
@@ -1459,6 +1460,23 @@ export const agentApi = {
 
   testSlackConnectionEntry: async (id: string): Promise<SlackTestResponse> => {
     const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/test`)
+    return apiResponse.data
+  },
+
+  getProjectSlackSelection: async (profileId: string, workspacePath: string): Promise<ProjectSlackSelectionResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/connections/project/selection', {
+      params: { profile_id: profileId, workspace_path: workspacePath },
+      timeout: 10000,
+    })
+    return apiResponse.data
+  },
+
+  setProjectSlackSelection: async (profileId: string, workspacePath: string, connectionId: string): Promise<ProjectSlackSelectionResponse> => {
+    const apiResponse = await api.put('/api/human-feedback/slack/connections/project/selection', {
+      slack_connection_id: connectionId,
+    }, {
+      params: { profile_id: profileId, workspace_path: workspacePath },
+    })
     return apiResponse.data
   },
 

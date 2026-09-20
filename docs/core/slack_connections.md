@@ -1,27 +1,33 @@
-# Slack Connections (Per-Workflow Slack Apps)
+# Slack Connections (Per-Workflow and Per-Project Slack Apps)
 
 Each workflow may talk through its own Slack app (bot token + app token
-pair), or inherit the platform default app. Profile projects always use the
-platform default. This document describes the registry, the multi-listener
-runtime, and the ownership rules.
+pair), or inherit the platform default app. Crew projects work the same
+way: each project may use its own app or inherit the default. This
+document describes the registry, the multi-listener runtime, and the
+ownership rules.
 
 ## Model
 
 ```text
 slack-config.json
   connections[]: [{ id, display_name, bot_token, app_token,
-                    enabled, workspace_path }]
+                    enabled, workspace_path, profile_id }]
   default_connection_id: "slack_001"
 
-workflow.json capabilities
+workflow.json capabilities (workflows)
+  slack_connection_id: "slack_abc123" | "" (= inherit default)
+
+project runtime manifest capabilities (crew projects)
   slack_connection_id: "slack_abc123" | "" (= inherit default)
 ```
 
 - One connection = one Slack app = one Socket Mode websocket. Tokens are
   encrypted at rest (`operator:slack` AAD) and masked on every read.
-- `workspace_path` scopes a connection to its owning workflow. Empty means
-  platform-managed. A lone workflow-scoped connection never auto-becomes the
-  default; inheriting platform traffic is an explicit admin decision.
+- `workspace_path` scopes a connection to its owning workflow or product
+  project (`profile_id` names the agent profile for product scopes).
+  Empty means platform-managed. A lone scoped connection never
+  auto-becomes the default; inheriting platform traffic is an explicit
+  admin decision.
 - Pre-registry single-credential configs migrate on load into an unscoped
   `slack_001` "Default" connection. Legacy save shapes fold onto the
   default connection.
@@ -53,18 +59,21 @@ BotConversationManager (connection rides ThreadID / BotIncomingMessage)
   the optional `connectionScopedConnector` interface; other platforms keep
   the legacy channel-only behavior.
 - Resolution order for a send: live bot execution's arrival connection,
-  else the route workflow's manifest selection, else the platform default.
+  else the route target's selection (workflow manifest or project runtime
+  manifest), else the platform default.
 
 ## Ownership
 
 | Action | Who |
 |---|---|
 | Create/update/delete/test a workflow-scoped connection | Owner of that workflow (create requires the scope; scope changes are admin-only) |
+| Create/update/delete/test a project-scoped connection | Owner of that product project (same scope rules as workflows) |
 | Create/update the default or any unscoped connection | Platform admin |
 | Change the default connection | Platform admin |
 | Flip the global Enable switch / bot mode | Platform admin (one-time platform step) |
 | Select an app on a workflow (`slack_connection_id`) | Anyone who can edit the manifest; unknown IDs fail validation |
-| Delete a connection | Blocked while it is the default or still selected by any workflow |
+| Select an app on a project (`slack_connection_id`) | Product owner (reads need product access); unknown IDs fail validation |
+| Delete a connection | Blocked while it is the default or still selected by any workflow or project |
 
 Bot-route principals can never manage connections. WhatsApp turns are not
 bot-route principals: they run as the paired owner (`bot_owner` — the bot is
@@ -100,6 +109,7 @@ these gates as the owner would. All API responses carry masked tokens only.
 | Connection threading, scoped helpers | `agent_go/cmd/server/services/bot_connector.go` |
 | Connections API + permission gates | `agent_go/cmd/server/slack_connection_routes.go` |
 | Manifest selection + validation | `agent_go/cmd/server/workflow_manifest*.go` |
-| Tool owner branch | `agent_go/cmd/server/slack_bot_tools.go` |
+| Project selection + product ownership | `agent_go/cmd/server/slack_connection_routes.go` (`productSlackConnectionID`, `requireProductSlackScopeOwner`) |
+| Tool owner branches | `agent_go/cmd/server/slack_bot_tools.go` |
 | Bots panel UI | `frontend/src/components/workflow/bots/SlackSetup.tsx`, `useWorkflowBots.ts` |
 | Agent guidance | `agent_go/cmd/server/guidance/templates/system/slack-bot-routing.md` |

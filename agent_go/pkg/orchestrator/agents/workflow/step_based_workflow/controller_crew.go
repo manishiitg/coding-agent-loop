@@ -91,7 +91,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeCrewStep(
 	hcpo.GetLogger().Info(fmt.Sprintf("📡 Crew step %d (%q) invoking trigger %q on project %q",
 		stepIndex+1, crewStep.GetID(), crewStep.TriggerID, crewStep.CrewProjectID))
 	result, err := opts.CrewRunner.RunCrewStep(runCtx, CrewStepRequest{
-		WorkflowID:        hcpo.getWorkflowID(),
+		WorkflowID:        hcpo.callerWorkflowID(ctx),
 		WorkflowRunFolder: hcpo.selectedRunFolder,
 		ExecutionID:       hcpo.bridgeExecutionID(),
 		StepID:            crewStep.GetID(),
@@ -134,6 +134,23 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeCrewStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("💾 Saved progress: crew step %d marked as completed", stepIndex+1))
 	}
 	return result, updatedContextFiles, nil
+}
+
+// callerWorkflowID returns the workflow manifest ID for crew caller stamps.
+// Triggers are bound to the manifest ID at creation; the controller's own
+// workflowID is a random per-construction value used for human-feedback
+// correlation and never matches the binding. Falls back to it only when
+// the manifest is unreadable (tests, ad-hoc runs without a workflow).
+func (hcpo *StepBasedWorkflowOrchestrator) callerWorkflowID(ctx context.Context) string {
+	if content, err := hcpo.ReadWorkspaceFile(ctx, "workflow.json"); err == nil {
+		var manifest struct {
+			ID string `json:"id"`
+		}
+		if json.Unmarshal([]byte(content), &manifest) == nil && strings.TrimSpace(manifest.ID) != "" {
+			return strings.TrimSpace(manifest.ID)
+		}
+	}
+	return hcpo.getWorkflowID()
 }
 
 // readCrewStepInputs resolves the step's context dependencies to run files

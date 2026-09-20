@@ -77,7 +77,7 @@ describe('UserMessageEventDisplay', () => {
     )
     expect(fast).toContain('data-testid="delivery-tick"')
     expect(fast).toContain('data-state="fast"')
-    expect(fast).toContain('>✓<')
+    expect(fast).toContain('<svg')
 
     const confirmed = renderToStaticMarkup(
       <UserMessageEventDisplay
@@ -89,7 +89,7 @@ describe('UserMessageEventDisplay', () => {
       />,
     )
     expect(confirmed).toContain('data-state="confirmed"')
-    expect(confirmed).toContain('>✓✓<')
+    expect(confirmed).toContain('<svg')
     expect(confirmed).toContain('Confirmed in codex-cli CLI record in 1.2s')
   })
 

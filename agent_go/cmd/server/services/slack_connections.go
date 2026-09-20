@@ -29,9 +29,12 @@ type SlackConnection struct {
 	// Enabled gates this connection's Socket Mode listener. A disabled
 	// connection fails sends; it never falls through to another identity.
 	Enabled bool `json:"enabled"`
-	// WorkspacePath scopes the connection to the owning workflow. Empty
-	// means platform-managed (admins only).
+	// WorkspacePath scopes the connection to the owning workflow or product
+	// project. Empty means platform-managed (admins only).
 	WorkspacePath string `json:"workspace_path,omitempty"`
+	// ProfileID names the agent profile for product-scoped connections
+	// (crew projects). Empty for workflow and platform scopes.
+	ProfileID string `json:"profile_id,omitempty"`
 }
 
 // maskedSlackConnection returns a copy with credential values replaced by
@@ -88,6 +91,7 @@ func normalizeSlackConnections(cfg *SlackConfig) {
 		c.ID = strings.TrimSpace(c.ID)
 		c.DisplayName = strings.TrimSpace(c.DisplayName)
 		c.WorkspacePath = strings.TrimSpace(c.WorkspacePath)
+		c.ProfileID = strings.TrimSpace(c.ProfileID)
 		if c.ID == "" || seen[c.ID] {
 			continue
 		}

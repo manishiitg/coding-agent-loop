@@ -1005,7 +1005,8 @@ export interface SlackConnection {
   enabled: boolean
   configured: boolean
   is_default: boolean
-  workspace_path?: string  // Owning workflow; empty = platform-managed
+  workspace_path?: string  // Owning workflow/project; empty = platform-managed
+  profile_id?: string  // Agent profile for product scopes; empty = workflow/platform
 }
 
 export interface SlackConnectionsResponse {
@@ -1019,6 +1020,11 @@ export interface SlackConnectionRequest {
   app_token?: string
   enabled?: boolean
   workspace_path?: string
+  profile_id?: string
+}
+
+export interface ProjectSlackSelectionResponse {
+  slack_connection_id: string
 }
 
 export interface SlackConfigRequest {

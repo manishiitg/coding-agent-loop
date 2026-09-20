@@ -73,7 +73,7 @@ describe('shared transcript failure retry', () => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: status },
     })])
-    expect(host.querySelector('[data-testid="delivery-tick"]')?.textContent).toBe('✓')
+    expect(host.querySelector('[data-testid="delivery-tick"] svg.lucide-check')).not.toBeNull()
   })
 
   it('retries the latest failed turn once while acknowledgement is pending', async () => {

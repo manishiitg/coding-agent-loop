@@ -105,18 +105,18 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
             add their email addresses under that channel’s Options → Blocked email addresses.
           </p>
 
-          {/* This workflow's Slack app */}
-          {!hasProfileTarget && (
+          {/* This workflow/project's Slack app */}
+          {(
             <FormSection
-              title="This workflow’s Slack app"
+              title={hasProfileTarget ? 'This project’s Slack app' : 'This workflow’s Slack app'}
               description={effectiveConn
-                ? <>Using <b>{effectiveConn.display_name}</b>{effectiveConn.is_default ? ' (platform default)' : ' (this workflow)'} · {effectiveConn.enabled ? 'enabled' : 'disabled'}{effectiveConn.configured ? '' : ' · missing tokens'}</>
+                ? <>Using <b>{effectiveConn.display_name}</b>{effectiveConn.is_default ? ' (platform default)' : hasProfileTarget ? ' (this project)' : ' (this workflow)'} · {effectiveConn.enabled ? 'enabled' : 'disabled'}{effectiveConn.configured ? '' : ' · missing tokens'}</>
                 : selectionDangles
                   ? 'The selected app is gone — pick another below.'
                   : 'No Slack app selected yet.'}
             >
               {selectionDangles && (
-                <StatusBanner tone="error">This workflow points at a Slack app that no longer exists. Sends will fail until you switch to the platform default or set up this workflow’s own app.</StatusBanner>
+                <StatusBanner tone="error">This {hasProfileTarget ? 'project' : 'workflow'} points at a Slack app that no longer exists. Sends will fail until you switch to the platform default or set up this {hasProfileTarget ? 'project’s' : 'workflow’s'} own app.</StatusBanner>
               )}
               <div className="space-y-2" title={ownTitle}>
                 <label className={`flex items-center gap-2 text-sm ${!canManageWorkflowSlack ? 'opacity-60' : 'cursor-pointer'}`}>
@@ -137,7 +137,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                     disabled={!canManageWorkflowSlack || !ownConn || slackConnSaving}
                     onChange={() => ownConn && void selectWorkflowSlackConnection(ownConn.id)}
                   />
-                  <span>This workflow’s own app{ownConn ? ` — ${ownConn.display_name}` : ' — set up below'}</span>
+                  <span>This {hasProfileTarget ? 'project’s' : 'workflow’s'} own app{ownConn ? ` — ${ownConn.display_name}` : ' — set up below'}</span>
                 </label>
               </div>
 
@@ -181,12 +181,9 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                     </Button>
                   )}
                 </div>
-                <p className="text-xs text-muted-foreground">Saving a new app selects it for this workflow. Test saves first, then checks tokens and scopes.</p>
+                <p className="text-xs text-muted-foreground">Saving a new app selects it for this {hasProfileTarget ? 'project' : 'workflow'}. Test saves first, then checks tokens and scopes.</p>
                 {slackConnTestResult && <SlackChecksView result={slackConnTestResult} />}
             </FormSection>
-          )}
-          {hasProfileTarget && (
-            <p className="text-xs text-muted-foreground">Profile projects use the platform default Slack app below.</p>
           )}
 
           {botEnabled && (

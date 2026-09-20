@@ -521,3 +521,33 @@ func TestPersistCrewStepTokenUsageNoopsAndUnknownFallback(t *testing.T) {
 		t.Fatalf("fallback bucket = %+v", daily.Executions["exec-2"].TokenUsage.ByStepAndModel)
 	}
 }
+
+func TestBindCrewRunner(t *testing.T) {
+	fake := &fakeCrewRunner{}
+
+	plain := &StepBasedWorkflowOrchestrator{}
+	bindCrewRunner(plain, fake)
+	opts := plain.GetExecutionOptions()
+	if opts == nil || opts.CrewRunner == nil {
+		t.Fatal("session without options binds no crew runner")
+	}
+
+	scheduled := &StepBasedWorkflowOrchestrator{}
+	scheduled.SetExecutionOptions(&ExecutionOptions{SelectedRunFolder: "iteration-0/prod", RunKind: "schedule"})
+	bindCrewRunner(scheduled, fake)
+	kept := scheduled.GetExecutionOptions()
+	if kept == nil || kept.CrewRunner == nil {
+		t.Fatal("scheduled session binds no crew runner")
+	}
+	if kept.SelectedRunFolder != "iteration-0/prod" || kept.RunKind != "schedule" {
+		t.Fatalf("binding clobbered schedule options: %+v", kept)
+	}
+
+	unbound := &StepBasedWorkflowOrchestrator{}
+	bindCrewRunner(unbound, nil)
+	if unbound.GetExecutionOptions() != nil {
+		t.Fatal("nil runner created execution options")
+	}
+
+	bindCrewRunner(nil, fake)
+}

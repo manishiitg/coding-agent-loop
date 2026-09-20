@@ -10262,6 +10262,11 @@ func (api *StreamingAPI) buildWorkshopConfig(
 		ancestor = active.ParentSessionID
 	}
 
+	// Builder-run crew steps (execute_step, run_full_workflow) resolve their
+	// runner from the session config; without it they fail as unbound even
+	// on fully authenticated runs.
+	cfg.CrewRunner = crewRunnerForRun(ctx, api.productSchedules)
+
 	cfg.ScheduleCollisionCheck = api.scheduleCollisionCheck(cfg.WorkspacePath, sessionID, req.TriggeredBy)
 	cfg.SkillFuncs = api.buildSkillCallbacks()
 	cfg.LLMToolsFuncs = api.buildLLMToolsCallbacks()

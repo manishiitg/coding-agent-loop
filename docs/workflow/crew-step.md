@@ -1167,3 +1167,13 @@ crew runner now binds on every authenticated run path — UI runs, Builder
 chat runs, live input, schedules, webhooks — instead of only runs carrying
 execution options, so crew steps test identically from Builder; the old
 error text wrongly claimed scheduler-only execution.
+
+Workshop follow-up the same day: Builder's own execute_step and
+run_full_workflow build their own execution options and never saw that
+binding, so live logs showed the same "does not bind a Crew runner"
+failure. The server now injects the runner into WorkshopConfig;
+session init carries it onto the controller (execute_step reads the
+controller's options untouched) and run_full_workflow copies it onto its
+fresh controller. Binding also falls back to the single-user default
+identity like every other per-user lookup, instead of requiring JWT
+claims.

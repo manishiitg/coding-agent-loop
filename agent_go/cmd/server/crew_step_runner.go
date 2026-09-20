@@ -36,19 +36,22 @@ func newCrewStepRunner(crews *ProductScheduleService, userID string) *crewStepRu
 	return &crewStepRunner{crews: crews, userID: userID, pollInterval: crewStepPollInterval}
 }
 
-// crewRunnerForRun returns the server-owned crew runner for an authenticated
-// run, or nil when the run has no user or no crew service. Every run path
-// (UI runs, Builder chat runs, live input, schedules, webhooks) resolves
-// the runner through here so crew steps execute identically everywhere.
+// crewRunnerForRun returns the server-owned crew runner for a run, or nil
+// when the run has no user or no crew service. The owner resolves the same
+// way as every other per-user lookup: live claims when present, the
+// single-user default otherwise. Every run path (UI runs, Builder chat
+// runs, workshop execute_step/run_full_workflow, live input, schedules,
+// webhooks) resolves the runner through here so crew steps execute
+// identically everywhere.
 func crewRunnerForRun(ctx context.Context, schedules *ProductScheduleService) stepworkflow.CrewStepRunner {
 	if ctx == nil || schedules == nil {
 		return nil
 	}
-	claims := GetUserFromContext(ctx)
-	if claims == nil {
+	userID := GetUserIDFromContext(ctx)
+	if strings.TrimSpace(userID) == "" {
 		return nil
 	}
-	return newCrewStepRunner(schedules, claims.UserID)
+	return newCrewStepRunner(schedules, userID)
 }
 
 // RunCrewStep invokes the trigger and returns the successful Crew run's

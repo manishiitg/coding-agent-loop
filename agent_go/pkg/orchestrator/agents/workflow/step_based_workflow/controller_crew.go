@@ -13,6 +13,21 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
+// bindCrewRunner attaches the session's crew runner to the controller's
+// execution options, creating minimal options when the session set none.
+// Minimal options are behavior-neutral: every other options consumer
+// nil-guards and matches on specific fields.
+func bindCrewRunner(controller *StepBasedWorkflowOrchestrator, runner CrewStepRunner) {
+	if controller == nil || runner == nil {
+		return
+	}
+	if opts := controller.GetExecutionOptions(); opts != nil {
+		opts.CrewRunner = runner
+		return
+	}
+	controller.SetExecutionOptions(&ExecutionOptions{CrewRunner: runner})
+}
+
 // executeCrewStep invokes the Crew trigger named by a crew plan step and
 // waits for the Crew run's final response. Declared context dependencies
 // are read from the workflow run and sent as trigger input; the final

@@ -484,11 +484,21 @@ func testPreflightWorkspaceWithoutCrew(t *testing.T, plan string, manifestJSON s
 func TestCrewRunnerForRun(t *testing.T) {
 	schedules := &ProductScheduleService{}
 	withUser := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
-	if runner := crewRunnerForRun(withUser, schedules); runner == nil {
+	runner := crewRunnerForRun(withUser, schedules)
+	if runner == nil {
 		t.Fatal("authenticated run has no crew runner")
 	}
-	if runner := crewRunnerForRun(context.Background(), schedules); runner != nil {
-		t.Fatal("anonymous run bound a crew runner")
+	if got := runner.(*crewStepRunner).userID; got != "owner" {
+		t.Fatalf("runner scoped to %q, want owner", got)
+	}
+	// Single-user mode carries no claims: the run still binds, scoped to
+	// the same default identity every other per-user lookup uses.
+	fallback := crewRunnerForRun(context.Background(), schedules)
+	if fallback == nil {
+		t.Fatal("single-user run has no crew runner")
+	}
+	if got := fallback.(*crewStepRunner).userID; got != GetDefaultUserID() {
+		t.Fatalf("runner scoped to %q, want default %q", got, GetDefaultUserID())
 	}
 	if runner := crewRunnerForRun(withUser, nil); runner != nil {
 		t.Fatal("run without crew service bound a crew runner")

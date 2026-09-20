@@ -266,16 +266,17 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                 <h3 className="text-sm font-medium text-foreground">{pairTitle}</h3>
                 <p className="mt-0.5 text-xs text-muted-foreground">Scan this QR from WhatsApp → Linked Devices.</p>
               </div>
-              <button
+              <Button
                 type="button"
+                variant="outline"
+                size="sm"
                 onClick={refreshWaQR}
                 disabled={qrLoading}
-                className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground disabled:opacity-50"
                 aria-label="Refresh WhatsApp QR"
               >
                 <RotateCcw className="h-3.5 w-3.5" />
                 Refresh
-              </button>
+              </Button>
             </div>
             <div className="flex w-full items-center gap-2">
               <Input
@@ -366,13 +367,15 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                     link {waStatus.link_code || '123456'}
                   </code>
                 </div>
-                <button
+                <Button
                   type="button"
+                  variant="outline"
+                  size="sm"
                   onClick={handleCopyLinkCommand}
-                  className="shrink-0 rounded border border-border px-2 py-1 text-xs text-muted-foreground hover:text-foreground"
+                  className="shrink-0"
                 >
                   {linkCopyState === 'copied' ? 'Copied!' : linkCopyState === 'failed' ? 'Copy failed' : 'Copy'}
-                </button>
+                </Button>
               </div>
               {waStatus.link_code && (
                 <div className="mt-2 text-[11px] text-muted-foreground/80">

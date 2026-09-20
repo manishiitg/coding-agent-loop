@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff, Files } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -11,6 +11,8 @@ import RenameFileDialog from './workspace/RenameFileDialog'
 import ConfirmationDialog from './ui/ConfirmationDialog'
 import ImportProgressDialog from './ui/ImportProgressDialog'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { WorkspaceViewHeader } from './workflow/WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './workflow/WorkspaceViewIconButton'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useCapabilitiesStore } from '../stores/useCapabilitiesStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -1973,8 +1975,8 @@ export default function Workspace({
     <TooltipProvider>
       <div data-tour="workspace-open" data-testid="workspace-panel" className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
       {/* Header */}
-      <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-        {minimized ? (
+      {minimized ? (
+        <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between">
             <Tooltip>
               <TooltipTrigger asChild>
@@ -1998,97 +2000,70 @@ export default function Workspace({
               </TooltipContent>
             </Tooltip>
           </div>
-        ) : (
-          <div className="flex items-center justify-between mb-3">
-            <div className="flex items-center gap-3">
-              <h2 className="text-base font-semibold text-gray-900 dark:text-gray-100">
-                {title}
-              </h2>
-              {/* Selection mode UI */}
-              {isSelectionMode && (
-                <div className="flex items-center gap-2">
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <label className="flex items-center cursor-pointer relative">
-                        <input
-                          type="checkbox"
-                          checked={areAllFilesSelected}
-                          onChange={toggleSelectAll}
-                          className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
-                        />
-                        {selectedFiles.size > 0 && (
-                          <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
-                            {selectedFiles.size}
-                          </span>
-                        )}
-                      </label>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>Select All</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              )}
-            </div>
-            <div className="flex items-center gap-2">
-              {headerAction}
-              {/* Selection mode controls */}
-              {isSelectionMode && (
-                <>
+        </div>
+      ) : (
+        <WorkspaceViewHeader
+          icon={Files}
+          title={title}
+          context={isSelectionMode && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <label className="flex items-center cursor-pointer relative">
+                  <input
+                    type="checkbox"
+                    checked={areAllFilesSelected}
+                    onChange={toggleSelectAll}
+                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                  />
                   {selectedFiles.size > 0 && (
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <button
-                          onClick={handleBulkDelete}
-                          disabled={loading || bulkDeleteDialog.isLoading}
-                          className="p-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50 relative"
-                        >
-                          <Trash2 className="w-4 h-4" />
-                          <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
-                            {selectedFiles.size}
-                          </span>
-                        </button>
-                      </TooltipTrigger>
-                      <TooltipContent>
-                        <p>Delete {selectedFiles.size} selected file{selectedFiles.size !== 1 ? 's' : ''}</p>
-                      </TooltipContent>
-                    </Tooltip>
+                    <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                      {selectedFiles.size}
+                    </span>
                   )}
+                </label>
+              </TooltipTrigger>
+              <TooltipContent>
+                <p>Select All</p>
+              </TooltipContent>
+            </Tooltip>
+          )}
+          actions={<>
+            {isSelectionMode && (
+              <>
+                {selectedFiles.size > 0 && (
                   <Tooltip>
                     <TooltipTrigger asChild>
                       <button
-                        onClick={toggleSelectionMode}
-                        className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                        onClick={handleBulkDelete}
+                        disabled={loading || bulkDeleteDialog.isLoading}
+                        className="p-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50 relative"
                       >
-                        <X className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4" />
+                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                          {selectedFiles.size}
+                        </span>
                       </button>
                     </TooltipTrigger>
                     <TooltipContent>
-                      <p>Exit selection mode</p>
+                      <p>Delete {selectedFiles.size} selected file{selectedFiles.size !== 1 ? 's' : ''}</p>
                     </TooltipContent>
                   </Tooltip>
-                </>
-              )}
-
-              {/* Refresh button - always visible when not in selection mode */}
-              {!isSelectionMode && (
+                )}
                 <Tooltip>
                   <TooltipTrigger asChild>
                     <button
-                      onClick={() => fetchFiles(activeFolder, { force: true })}
-                      disabled={loading}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50"
+                      onClick={toggleSelectionMode}
+                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
                     >
-                      <svg className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
-                      </svg>
+                      <X className="w-4 h-4" />
                     </button>
                   </TooltipTrigger>
                   <TooltipContent>
-                    <p>Refresh files</p>
+                    <p>Exit selection mode</p>
                   </TooltipContent>
                 </Tooltip>
-              )}
+              </>
+            )}
 
               {hideManagedEntriesByDefault && !isSelectionMode && (
                 <Tooltip>
@@ -2171,6 +2146,11 @@ export default function Workspace({
                 </div>
               )}
 
+              {headerAction}
+              {!isSelectionMode && (
+                <WorkspaceViewIconButton label="Refresh files" onClick={() => fetchFiles(activeFolder, { force: true })} disabled={loading} spinning={loading} />
+              )}
+
               {/* Minimize button - Hidden in selection mode */}
               {!isSelectionMode && !hideMinimizeControl && (
                 <div className="flex items-center gap-1">
@@ -2192,13 +2172,11 @@ export default function Workspace({
                   </Tooltip>
                 </div>
               )}
-            </div>
-          </div>
-        )}
-
-        {/* Search/Filter Input */}
-        {!minimized && (
-          <div className="relative">
+            </>
+          }
+          below={
+            <div className="mt-2">
+            <div className="relative">
             <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
               <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2230,10 +2208,11 @@ export default function Workspace({
                 </Tooltip>
               </div>
             )}
-          </div>
-        )}
-
-      </div>
+            </div>
+            </div>
+          }
+        />
+      )}
 
       {/* Content */}
       {!minimized && (

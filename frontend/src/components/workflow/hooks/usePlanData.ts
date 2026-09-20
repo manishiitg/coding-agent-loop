@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import type { PlanChangelogEntry } from '../../../services/api-types'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // and to preserve per-workspace data across workflow switches.
@@ -48,6 +49,24 @@ export interface PlanChanges {
   updated: string[]    // Step IDs that were updated
   deleted: string[]    // Step IDs that were deleted
   hasChanges: boolean
+}
+
+function diffPlanSteps(previous: PlanningResponse | null, fresh: PlanningResponse): PlanChanges {
+  const prevSteps = previous?.steps || []
+  const freshSteps = fresh?.steps || []
+  const prevById = new Map(prevSteps.map(step => [step.id, step]))
+  const freshById = new Map(freshSteps.map(step => [step.id, step]))
+  const added = freshSteps.filter(step => step.id && !prevById.has(step.id)).map(step => step.id)
+  const deleted = prevSteps.filter(step => step.id && !freshById.has(step.id)).map(step => step.id)
+  const updated = freshSteps.filter(step => {
+    if (!step.id || !prevById.has(step.id)) return false
+    try {
+      return JSON.stringify(prevById.get(step.id)) !== JSON.stringify(step)
+    } catch {
+      return true
+    }
+  }).map(step => step.id)
+  return { added, updated, deleted, hasChanges: added.length + updated.length + deleted.length > 0 }
 }
 
 export interface UsePlanDataReturn {
@@ -223,6 +242,14 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
 
   // Track workspace path to detect workflow switches
   const currentWorkspaceRef = useRef<string | null>(null)
+
+  // Head marker of the plan changelog the rendered plan reflects. Every
+  // Builder plan mutation journals an entry, so a moved head means this
+  // tab's cached plan is stale (e.g. a crew step added from chat).
+  const changelogHeadRef = useRef<{ workspacePath: string; marker: string } | null>(null)
+  const changelogCheckInFlightRef = useRef(false)
+  const planRef = useRef<PlanningResponse | null>(null)
+  useEffect(() => { planRef.current = plan }, [plan])
 
   // Construct the plan file path
   const getPlanFilePath = useCallback(() => {
@@ -677,6 +704,48 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     return loadPlan()
   }, [loadPlan, invalidatePlanCache])
 
+  // Marker for the newest changelog entry. Includes the tool, touched step
+  // IDs, and total count: several entries can share one timestamp.
+  const changelogHeadMarker = useCallback((entries: PlanChangelogEntry[], count: number): string => {
+    const head = entries[0]
+    if (!head) return `empty|${count}`
+    return `${head.timestamp || ''}|${head.tool || ''}|${(head.step_ids || []).join(',')}|${count}`
+  }, [])
+
+  // Detect plan mutations made outside this tab (Builder chat add_step and
+  // friends never invalidate the module-level cache) and reload with a
+  // step diff so new nodes highlight exactly like local edits.
+  const checkForExternalPlanChanges = useCallback(async (): Promise<void> => {
+    if (!workspacePath) return
+    if (typeof document !== 'undefined' && document.hidden) return
+    if (changelogCheckInFlightRef.current) return
+    changelogCheckInFlightRef.current = true
+    try {
+      const changelog = await agentApi.getPlanChangelog(workspacePath).catch(() => null)
+      if (!changelog || changelog.success === false) return
+      const marker = changelogHeadMarker(changelog.entries || [], changelog.count || 0)
+      const seen = changelogHeadRef.current
+      if (!seen || seen.workspacePath !== workspacePath) {
+        changelogHeadRef.current = { workspacePath, marker }
+        return
+      }
+      if (seen.marker === marker) return
+      changelogHeadRef.current = { workspacePath, marker }
+      // Plan still loading: loadPlan already fetches fresh, nothing to do.
+      const previous = planRef.current
+      if (!previous) return
+      const fresh = await fetchPlanData().catch(() => null)
+      if (!fresh) return
+      const cacheEntry = getPlanCacheEntry(workspacePath)
+      cacheEntry.data = fresh
+      cacheEntry.timestamp = Date.now()
+      setPlan(fresh)
+      setChanges(diffPlanSteps(previous, fresh))
+    } finally {
+      changelogCheckInFlightRef.current = false
+    }
+  }, [workspacePath, fetchPlanData, changelogHeadMarker])
+
   // Clear changes state (call after highlighting animation completes)
   const clearChanges = useCallback(() => {
     setChanges(null)
@@ -698,6 +767,22 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [workspacePath]) // Only re-run when workspace changes, not when loadPlan is recreated
+
+  // Watch for Builder-side plan mutations while the canvas sits open: poll
+  // the changelog head and re-check on focus for the chat-then-canvas flow.
+  useEffect(() => {
+    if (!workspacePath) return
+    void checkForExternalPlanChanges()
+    const timer = setInterval(() => { void checkForExternalPlanChanges() }, 15000)
+    const onFocus = () => { void checkForExternalPlanChanges() }
+    window.addEventListener('focus', onFocus)
+    document.addEventListener('visibilitychange', onFocus)
+    return () => {
+      clearInterval(timer)
+      window.removeEventListener('focus', onFocus)
+      document.removeEventListener('visibilitychange', onFocus)
+    }
+  }, [workspacePath, checkForExternalPlanChanges])
 
   return {
     plan,

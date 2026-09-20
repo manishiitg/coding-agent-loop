@@ -11,6 +11,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 func newCrewCreationTestEnv(t *testing.T) (*ProductScheduleService, *mockWorkspaceAPI, context.Context) {
@@ -741,6 +742,77 @@ func TestCreateCrewProjectSucceedsUnderBuilderFolderGuard(t *testing.T) {
 	if _, ok := mock.files[created.WorkspacePath+"/product.json"]; !ok {
 		t.Fatal("product.json was not written under the guard")
 	}
+}
+
+func TestCreateCrewProjectInheritsWorkflowLLM(t *testing.T) {
+	setWorkflowLLM := func(t *testing.T, mock *mockWorkspaceAPI, llm *workflowtypes.PresetLLMConfig) {
+		t.Helper()
+		var manifest WorkflowManifest
+		if err := json.Unmarshal([]byte(mock.files[manifestPath("Workflow/build")]), &manifest); err != nil {
+			t.Fatal(err)
+		}
+		manifest.Capabilities.LLMConfig = llm
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.files[manifestPath("Workflow/build")] = string(raw)
+	}
+	crewBuilderLLM := func(t *testing.T, mock *mockWorkspaceAPI, created CreatedCrew) map[string]interface{} {
+		t.Helper()
+		var runtime map[string]interface{}
+		if err := json.Unmarshal([]byte(mock.files[created.WorkspacePath+"/workflow.json"]), &runtime); err != nil {
+			t.Fatal(err)
+		}
+		caps, _ := runtime["capabilities"].(map[string]interface{})
+		llm, _ := caps["llm_config"].(map[string]interface{})
+		builder, _ := llm["builder_llm"].(map[string]interface{})
+		return builder
+	}
+	baseReq := func(key string) CreateCrewRequest {
+		return CreateCrewRequest{UserID: "owner", WorkflowPath: "Workflow/build", Title: "T", Purpose: "P", StepInstruction: "S", IdempotencyKey: key}
+	}
+	t.Run("provider profile resolves", func(t *testing.T) {
+		svc, mock, ctx := newCrewCreationTestEnv(t)
+		profile := &workflowtypes.PresetLLMConfig{SchemaVersion: 2, Mode: workflowtypes.LLMConfigModeProviderProfile, Provider: "muse-cli"}
+		setWorkflowLLM(t, mock, profile)
+		created, err := svc.CreateCrewProject(ctx, baseReq("k"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		expected, _, ok := workflowtypes.ResolveProviderProfileConfig(profile)
+		if !ok || expected == nil {
+			t.Fatal("muse-cli has no tier defaults")
+		}
+		builder := crewBuilderLLM(t, mock, created)
+		if builder["provider"] != expected.Provider || builder["model_id"] != expected.ModelID {
+			t.Fatalf("builder_llm = %v, want %s/%s", builder, expected.Provider, expected.ModelID)
+		}
+	})
+	t.Run("explicit builder carries over", func(t *testing.T) {
+		svc, mock, ctx := newCrewCreationTestEnv(t)
+		setWorkflowLLM(t, mock, &workflowtypes.PresetLLMConfig{SchemaVersion: 2, Mode: workflowtypes.LLMConfigModeExplicit,
+			BuilderLLM: &workflowtypes.AgentLLMConfig{Provider: "custom", ModelID: "m1", ConnectionID: "c9", Options: map[string]interface{}{"temperature": "0.1"}}})
+		created, err := svc.CreateCrewProject(ctx, baseReq("k"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		builder := crewBuilderLLM(t, mock, created)
+		if builder["provider"] != "custom" || builder["model_id"] != "m1" || builder["connection_id"] != "c9" {
+			t.Fatalf("builder_llm = %v, want the explicit workflow model", builder)
+		}
+	})
+	t.Run("unknown provider falls back to profile default", func(t *testing.T) {
+		svc, mock, ctx := newCrewCreationTestEnv(t)
+		setWorkflowLLM(t, mock, &workflowtypes.PresetLLMConfig{SchemaVersion: 2, Mode: workflowtypes.LLMConfigModeProviderProfile, Provider: "nope-nope"})
+		created, err := svc.CreateCrewProject(ctx, baseReq("k"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if builder := crewBuilderLLM(t, mock, created); len(builder) != 0 {
+			t.Fatalf("builder_llm = %v, want profile-default fallback (none in test env)", builder)
+		}
+	})
 }
 
 func TestCreateCrewProjectResolves(t *testing.T) {

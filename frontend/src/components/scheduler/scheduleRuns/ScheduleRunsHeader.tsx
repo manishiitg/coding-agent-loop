@@ -1,7 +1,9 @@
 import React from 'react'
-import { X, Play, Loader, Pause, Calendar, RefreshCw } from 'lucide-react'
+import { X, Play, Loader, Pause, Calendar } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../../ui/tooltip'
-import { formatExactDateTime, formatLastRunLabel } from './helpers'
+import { WorkspaceViewHeader } from '../../workflow/WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from '../../workflow/WorkspaceViewIconButton'
+import { ScheduleStatusPills } from './ScheduleStatusPills'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
 
 type ScheduleRunsHeaderProps = {
@@ -15,11 +17,9 @@ type ScheduleRunsHeaderProps = {
   headerAction?: React.ReactNode
   compact?: boolean
   navigation?: React.ReactNode
-  /** The parent already names the selected section (for example, a Schedules tab). */
-  hideTitle?: boolean
 }
 
-export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction, compact = false, navigation, hideTitle = false }) => {
+export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, onClose, showClose = true, headerAction, compact = false, navigation }) => {
   const {
     panelTitle,
     isLoading,
@@ -33,74 +33,18 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
     loadJobs,
   } = panel
 
-  const statusPills = !isLoading && (
-    <div className="flex flex-wrap gap-1.5">
-      {!isWorkflowScoped && (
-        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-          {workflowScheduleSummary.workflows} automation{workflowScheduleSummary.workflows === 1 ? '' : 's'}
-        </span>
-      )}
-      {isWorkflowScoped && (
-        <span className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground">
-          {summary.total} schedule{summary.total === 1 ? '' : 's'}
-        </span>
-      )}
-      {isWorkflowScoped && summary.total > 0 && (
-        <span
-          className="rounded-full border border-border bg-background px-2 py-0.5 text-xs text-muted-foreground"
-          title={formatExactDateTime(summary.lastRunAt)}
-        >
-          {summary.lastRunAt ? `Last ran ${formatLastRunLabel(summary.lastRunAt)}` : 'Never run'}
-        </span>
-      )}
-      {!isWorkflowScoped && workflowScheduleSummary.running > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-          {workflowScheduleSummary.running} running
-        </span>
-      )}
-      {!isWorkflowScoped && workflowScheduleSummary.fullyPaused > 0 && (
-        <span className="rounded-full border border-border bg-muted px-2 py-0.5 text-xs text-muted-foreground">
-          {workflowScheduleSummary.fullyPaused} fully paused
-        </span>
-      )}
-      {!isWorkflowScoped && workflowScheduleSummary.partlyPaused > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs text-amber-700 dark:text-amber-300">
-          {workflowScheduleSummary.partlyPaused} partly paused
-        </span>
-      )}
-      {isWorkflowScoped && summary.running > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
-          {summary.running} running
-        </span>
-      )}
-      {isWorkflowScoped && (
-        <span className={`rounded-full border px-2 py-0.5 text-xs ${
-          isSchedulerPaused
-            ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
-            : 'border-border bg-background text-muted-foreground'
-        }`}
-        >
-          {isSchedulerPaused ? 'globally paused' : `${summary.enabled} active`}
-        </span>
-      )}
-    </div>
-  )
+  const statusPills = <ScheduleStatusPills status={{ summary, workflowScheduleSummary, isLoading, isSchedulerPaused, isWorkflowScoped }} />
 
   return (
-    <div className={`flex shrink-0 flex-wrap items-center justify-between gap-x-4 gap-y-2 border-b border-border px-4 sm:px-6 ${compact || hideTitle ? 'py-2' : 'py-4'}`}>
-      {hideTitle ? <div className="min-w-0">{statusPills}</div> : compact ? <div className="flex min-w-0 flex-wrap items-center gap-3">
+    <WorkspaceViewHeader
+      icon={compact ? undefined : Calendar}
+      title={compact ? '' : panelTitle}
+      context={compact ? <>
         {navigation}
         <span className="text-xs text-muted-foreground">{summary.total} schedules{isSchedulerPaused ? ' · Scheduling paused' : ''}</span>
-      </div> : <div className="min-w-0 space-y-2">
-        <div className="flex items-center gap-2">
-          <Calendar className="w-5 h-5 text-amber-500" />
-          <h2 className="text-base font-semibold text-foreground">
-            {panelTitle}
-          </h2>
-        </div>
-        {statusPills}
-      </div>}
-      <div className="ml-auto flex shrink-0 items-center gap-2">
+      </> : undefined}
+      below={!compact ? statusPills : undefined}
+      actions={<>
         {!isWorkflowScoped && !isReadOnlyUser && (
           <button
             onClick={handleToggleGlobalPause}
@@ -121,26 +65,25 @@ export const ScheduleRunsHeader: React.FC<ScheduleRunsHeaderProps> = ({ panel, o
             {isSchedulerPaused ? 'Resume schedules' : 'Pause all schedules'}
           </button>
         )}
+        {headerAction}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button
+            <WorkspaceViewIconButton
+              label={isLoading ? 'Refreshing schedule status' : 'Refresh schedule status'}
               onClick={() => loadJobs(true)}
               disabled={isLoading}
-              className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:cursor-wait disabled:opacity-60"
-              aria-label={isLoading ? 'Refreshing schedule status' : 'Refresh schedule status'}
-            >
-              <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            </button>
+              spinning={isLoading}
+              className="disabled:cursor-wait"
+            />
           </TooltipTrigger>
           <TooltipContent side="bottom">{isLoading ? 'Refreshing…' : 'Refresh'}</TooltipContent>
         </Tooltip>
-        {headerAction}
         {showClose && (
           <button onClick={onClose} className="p-1.5 rounded-md text-muted-foreground hover:text-foreground hover:bg-muted transition-colors" aria-label="Close schedules">
             <X className="w-4 h-4" />
           </button>
         )}
-      </div>
-    </div>
+      </>}
+    />
   )
 }

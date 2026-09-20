@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo, useRef, useState } from 'react'
 import {
   Loader2,
   AlertCircle,
@@ -10,47 +10,41 @@ import {
 import type { RunFolderInfo, StepExecutionLogs } from '../../services/api-types'
 import { agentApi } from '../../services/api'
 import InspectorShell from './InspectorShell'
+import { AskAIButton } from './AskAIButton'
 import { PulseReviewsPanel } from './executionLogs/LogPrimitives'
 import { LogsHeader } from './executionLogs/LogsHeader'
 import { StepContent } from './executionLogs/StepContent'
 import { StepList } from './executionLogs/StepList'
 import { useExecutionLogsData } from './executionLogs/useExecutionLogsData'
-import { formatLogFileContent, isWebhookRunFolder } from './executionLogs/helpers'
+import { buildEmptyAskMessage, buildRunAskMessage } from './executionLogs/logsAskAI'
+import { formatLogFileContent, formatRunFolderLabel, getStepDisplayTitle, getStepLatestError, getStepStatus, isWebhookRunFolder, sortStepEntriesByExecution } from './executionLogs/helpers'
 
-const headerRowClass = (embedded: boolean) =>
-  `flex items-center justify-between gap-3 border-b border-border ${embedded ? 'px-3 py-2' : 'px-4 py-3 sm:px-6 sm:py-4'}`
+const headerRowClass = 'flex items-center justify-between gap-3 border-b border-border px-3 py-2'
 
 interface ExecutionLogsPopupProps {
-  isOpen: boolean
-  onClose: () => void
   workspacePath: string | null
   allowDefaultRunFolder?: boolean
   runFolder: string | null
   runFolders: string[] // Available run folders (iterations and groups)
   runFolderInfos?: RunFolderInfo[] // Lifecycle timestamps for dropdown labels
   startedAt?: string | null
-  embedded?: boolean
   // Refreshes the run_folder LIST itself (a new folder appearing after a
   // standalone execute_step run, e.g.), as opposed to the panel's own
   // refresh, which only re-fetches logs for the already-selected folder.
   // Without this, a folder that didn't exist when runFolders was last loaded
   // stays invisible in the dropdown no matter how many times the panel's own
-  // refresh is clicked. Optional: the standalone (non-embedded) popup has no
-  // parent-owned folder list to refresh.
+  // refresh is clicked.
   onRefreshRunFolders?: () => void | Promise<void>
   headerAction?: React.ReactNode
 }
 
 const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
-  isOpen,
-  onClose,
   workspacePath,
   runFolder: initialRunFolder,
   runFolders,
   allowDefaultRunFolder = true,
   runFolderInfos = [],
   startedAt,
-  embedded = false,
   onRefreshRunFolders,
   headerAction,
 }) => {
@@ -82,9 +76,38 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     toggleExecution,
     toggleArchived,
     toggleFileExpansion,
-  } = useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder })
+  } = useExecutionLogsData({ workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder })
 
   const webhookRun = isWebhookRunFolder(selectedRunFolder)
+  const [failedOnly, setFailedOnly] = useState(false)
+  useEffect(() => { setFailedOnly(false) }, [selectedRunFolder])
+  const sortedStepEntries = useMemo(
+    () => Object.entries(logs?.steps || {}).sort(sortStepEntriesByExecution),
+    [logs],
+  )
+  const failedEntries = useMemo(
+    () => sortedStepEntries.filter(([, stepLogs]) => getStepStatus(stepLogs) === 'failed'),
+    [sortedStepEntries],
+  )
+  const askMessage = useMemo(() => selectedRunFolder ? buildRunAskMessage({
+    runFolder: selectedRunFolder,
+    folderLabel: formatRunFolderLabel(selectedRunFolder),
+    stepCount: sortedStepEntries.length,
+    failedSteps: failedEntries.map(([stepId, stepLogs]) => ({
+      title: getStepDisplayTitle(stepId, stepLogs),
+      error: getStepLatestError(stepLogs) || undefined,
+    })),
+  }) : buildEmptyAskMessage(), [selectedRunFolder, sortedStepEntries, failedEntries])
+  // Open the first failed step once per run folder so the failure is the
+  // first thing read. Never steals an explicit user selection, and never
+  // re-fires on the 2.5 s silent polls.
+  const autoExpandedFolders = useRef<Set<string>>(new Set())
+  useEffect(() => {
+    if (!logs || autoExpandedFolders.current.has(selectedRunFolder)) return
+    autoExpandedFolders.current.add(selectedRunFolder)
+    if (expandedSteps.size > 0 || failedEntries.length === 0) return
+    toggleStep(failedEntries[0][0])
+  }, [logs, selectedRunFolder, expandedSteps.size, failedEntries, toggleStep])
   const [webhookPayloadOpen, setWebhookPayloadOpen] = useState(false)
   const [webhookPayload, setWebhookPayload] = useState<string | null>(null)
   const [webhookPayloadLoading, setWebhookPayloadLoading] = useState(false)
@@ -141,6 +164,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
       stepId={stepId}
       stepLogs={stepLogs}
       logs={logs}
+      askContext={{ workspacePath, runFolder: selectedRunFolder }}
       stepSearchQueries={stepSearchQueries}
       setStepSearchQueries={setStepSearchQueries}
       expandedValidations={expandedValidations}
@@ -158,15 +182,10 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
 
   return (
     <InspectorShell
-      embedded={embedded}
-      isOpen={isOpen}
-      onClose={onClose}
-      embeddedClassName="bg-background flex flex-col border border-border relative h-full min-h-0 rounded-none border-0"
-      modalClassName="bg-background flex flex-col border border-border relative rounded-lg shadow-xl w-full max-w-[calc(100vw-1rem)] sm:max-w-[90vw] h-[calc(100dvh-1rem)] sm:h-[95vh]"
-      headerClassName={headerRowClass(embedded)}
+      className="bg-background flex flex-col border border-border relative h-full min-h-0 rounded-none border-0"
+      headerClassName={headerRowClass}
       header={
         <LogsHeader
-          embedded={embedded}
           startedAt={startedAt}
           runFolderOptions={runFolderOptions}
           runFolderInfos={runFolderInfos}
@@ -176,6 +195,8 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
           loadLogs={loadLogs}
           onRefreshRunFolders={onRefreshRunFolders}
           headerAction={headerAction}
+          askMessage={askMessage}
+          askWorkspacePath={workspacePath}
           showWebhookPayload={webhookRun}
           webhookPayloadOpen={webhookPayloadOpen}
           onToggleWebhookPayload={() => setWebhookPayloadOpen(open => !open)}
@@ -184,7 +205,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
     >
         {/* Content */}
         <div
-          className={`flex-1 overflow-y-auto bg-background ${embedded ? 'p-4' : 'p-6'}`}
+          className="flex-1 overflow-y-auto bg-background p-4"
           onScroll={focusedStepId ? handleStepDetailScroll : undefined}
         >
           {loading ? (
@@ -208,10 +229,13 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
               <FileText className="w-12 h-12 mb-3 opacity-50" />
               <p className="text-sm font-medium">Select an iteration or group to view logs</p>
               <p className="text-xs mt-2 opacity-70">
-                {runFolderOptions.length > 0 
+                {runFolderOptions.length > 0
                   ? `Choose from ${runFolderOptions.length} available ${runFolderOptions.length === 1 ? 'run' : 'runs'} above.`
                   : 'No run folders available. Execute an automation to generate logs.'}
               </p>
+              <div className="mt-4">
+                <AskAIButton workspacePath={workspacePath} message={buildEmptyAskMessage()} />
+              </div>
             </div>
           ) : (
             <div className="space-y-4">
@@ -246,10 +270,31 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       Try selecting a different iteration or group from the dropdown above.
                     </p>
                   )}
+                  <div className="mt-4">
+                    <AskAIButton workspacePath={workspacePath} message={askMessage} />
+                  </div>
                 </div>
               )}
 
               {!focusedStepId && <PulseReviewsPanel reviews={logs?.pulse_reviews || []} />}
+
+              {!focusedStepId && sortedStepEntries.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5 pb-1">
+                  <button
+                    type="button"
+                    onClick={() => setFailedOnly(value => !value)}
+                    aria-pressed={failedOnly}
+                    disabled={failedEntries.length === 0}
+                    className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors disabled:cursor-default disabled:opacity-50 ${
+                      failedOnly
+                        ? 'bg-primary text-primary-foreground border-primary'
+                        : 'bg-muted text-muted-foreground border-border hover:bg-accent'
+                    }`}
+                  >
+                    Failed · {failedEntries.length}
+                  </button>
+                </div>
+              )}
 
               {!focusedStepId && routingRouteGroups.length > 0 && (
                 <div className="flex flex-wrap items-center gap-1.5 pb-1">
@@ -272,7 +317,7 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                       title={`Route "${group.routeName}" -- selected by ${group.routeStepTitle}`}
                       className={`inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium border transition-colors ${
                         routeFilterKey === group.key
-                          ? 'bg-teal-600 text-white border-teal-600'
+                          ? 'bg-primary text-primary-foreground border-primary'
                           : 'bg-muted text-muted-foreground border-border hover:bg-accent'
                       }`}
                     >
@@ -287,9 +332,11 @@ const ExecutionLogsPopup: React.FC<ExecutionLogsPopupProps> = ({
                 logs={logs}
                 focusedStepId={focusedStepId}
                 routeFilterKey={routeFilterKey}
+                showFailedOnly={failedOnly}
                 expandedSteps={expandedSteps}
                 toggleStep={toggleStep}
                 renderStepContent={renderStepContent}
+                askContext={{ workspacePath, runFolder: selectedRunFolder }}
               />
             </div>
           )}

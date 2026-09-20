@@ -1,18 +1,17 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Check, Copy, ExternalLink, Eye, EyeOff, Globe, Info, Loader2, LockKeyhole, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, Check, ChevronRight, Copy, ExternalLink, Eye, EyeOff, Globe, Loader2, LockKeyhole, X } from 'lucide-react'
 import type { WorkflowPublishInfoResponse, WorkflowPublishStrategyInfo } from '../../services/api-types'
 import { formatPublishStateLabel, getPublishStateVisual } from '../workflow/publishStatus'
+import { AskAIButton } from '../workflow/AskAIButton'
+import { WorkspaceViewHeader } from '../workflow/WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from '../workflow/WorkspaceViewIconButton'
 import {
   extractErrorMessage,
   findPublishDestinationStatus,
   formatRelativeTime,
   publishDestinationTitle,
+  type StrategyAskContext,
 } from './popupUtils'
-
-type PublishSetupAction = {
-  label: React.ReactNode
-  onClick?: () => void
-}
 
 export interface PublishPopupProps {
   loadInfo: () => Promise<WorkflowPublishInfoResponse>
@@ -23,18 +22,14 @@ export interface PublishPopupProps {
   destinationsHelp: string
   supportedTitle?: string
   supportedHelp?: string
-  statusPathFallback: string
   defaultTargetLabel: string
-  setupAction: PublishSetupAction
   getSummary: (info: WorkflowPublishInfoResponse | null) => string
+  askContext?: StrategyAskContext
   loadAccessSecret?: (secretName: string) => Promise<string>
   loadErrorMessage?: string
   showEnabledBadge?: boolean
   headerAction?: React.ReactNode
 }
-
-const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
-const actionClass = 'inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted'
 
 const formatTargets = (info: WorkflowPublishInfoResponse | null, fallback: string): string => {
   const targets = info?.config?.targets?.length ? info.config.targets : (info?.status?.targets || [])
@@ -130,10 +125,9 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
   destinationsHelp,
   supportedTitle = 'Common hosts',
   supportedHelp,
-  statusPathFallback,
   defaultTargetLabel,
-  setupAction,
   getSummary,
+  askContext,
   loadAccessSecret,
   loadErrorMessage = 'Failed to load publish status',
   showEnabledBadge = false,
@@ -226,26 +220,18 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
   const destinations = info?.config?.destinations || []
   const supported = info?.supported?.length ? info.supported : fallbackStrategies
   const url = info?.url || info?.status?.url || ''
-  const setupControl = setupAction.onClick ? (
-    <button type="button" onClick={setupAction.onClick} className={actionClass}>
-      {setupAction.label}
-    </button>
-  ) : (
-    <span className={actionClass}>{setupAction.label}</span>
-  )
 
   return (
         <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
-            <div className="min-w-0">
-              <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-                <Globe className="h-4 w-4 text-primary" />
-                Publish
-              </h2>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
-            </div>
-            {headerAction}
-          </div>
+          <WorkspaceViewHeader
+            icon={Globe}
+            title="Publish"
+            subtitle={subtitle}
+            actions={<>
+              {headerAction}
+              <WorkspaceViewIconButton label="Refresh publish status" onClick={() => { void load() }} disabled={loading} spinning={loading} />
+            </>}
+          />
 
           {error && (
             <div className="flex items-center gap-2 bg-destructive/10 px-5 py-2 text-xs text-destructive">
@@ -282,15 +268,13 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
                           {formatPublishStateLabel(state)}
                         </span>
                       </div>
-                      <h3 className="mt-2 text-base font-semibold text-foreground">Public site</h3>
-                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{getSummary(info)}</p>
+                      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{getSummary(info)}</p>
                       {info?.status?.last_error && <p className="mt-2 text-xs text-destructive">{info.status.last_error}</p>}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button onClick={() => { void load() }} disabled={loading} className={iconButtonClass} aria-label="Refresh publish status">
-                        <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                      </button>
-                      {setupControl}
+                      {askContext && (
+                        <AskAIButton workspacePath={askContext.workspacePath} label="Set up" message="/publish" />
+                      )}
                     </div>
                   </div>
 
@@ -401,7 +385,7 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
                               <div className="flex flex-wrap items-center gap-2">
                                 <DestinationIcon className={`h-3.5 w-3.5 ${destinationVisual.icon}`} />
                                 <span className="text-sm font-medium text-foreground">{destination.id || 'Destination'}</span>
-                                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{destination.provider}</span>
+                                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{destination.provider}</span>
                                 {destination.method && <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{destination.method}</span>}
                                 {destinationAccess.mode !== 'public' && (
                                   <span className="inline-flex items-center gap-1 rounded bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-700 dark:text-amber-300">
@@ -425,29 +409,37 @@ const PublishPopupBody: React.FC<PublishPopupProps> = ({
                   )}
                 </section>
 
-                <section className="rounded-md border border-border">
-                  <div className="border-b border-border px-4 py-3">
-                    <h3 className="text-sm font-semibold text-foreground">{supportedTitle}</h3>
-                    {supportedHelp && <p className="mt-0.5 text-xs text-muted-foreground">{supportedHelp}</p>}
-                  </div>
-                  <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
-                    {supported.map(strategy => (
-                      <div key={strategy.id} className="px-4 py-3">
-                        <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                          <Globe className="h-3.5 w-3.5 text-muted-foreground" />
-                          {strategy.label}
-                          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{strategy.method}</span>
+                <details className="group rounded-md border border-border">
+                  <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground">
+                    <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                    {supportedTitle}
+                    <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{supported.length}</span>
+                  </summary>
+                  <div className="border-t border-border px-4 py-3">
+                    {supportedHelp && <p className="mb-3 text-xs text-muted-foreground">{supportedHelp}</p>}
+                    <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+                      {supported.map(strategy => (
+                        <div key={strategy.id} className="flex items-start justify-between gap-3 px-4 py-3 first:pl-0">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                              <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                              {strategy.label}
+                              <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{strategy.method}</span>
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{strategy.description}</p>
+                          </div>
+                          {askContext && (
+                            <AskAIButton
+                              workspacePath={askContext.workspacePath}
+                              iconOnly
+                              message={`Help me ${askContext.strategyVerb} ${strategy.label}. Explain what I need and walk me through it.`}
+                            />
+                          )}
                         </div>
-                        <p className="mt-1 text-xs leading-5 text-muted-foreground">{strategy.description}</p>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </section>
-
-                <p className="flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
-                  <Info className="h-3 w-3" />
-                  Status: {info?.status_path || statusPathFallback}
-                </p>
+                </details>
               </div>
             )}
           </div>

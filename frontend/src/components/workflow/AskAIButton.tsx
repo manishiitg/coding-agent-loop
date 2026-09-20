@@ -1,7 +1,25 @@
-import { MessageCircle } from 'lucide-react'
+import { Check, MessageCircle } from 'lucide-react'
+import { useEffect, useRef, useState } from 'react'
 import { useChatStore } from '../../stores/useChatStore'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+
+// Two-click confirm: the first click arms, the second sends. A single click
+// used to send straight to chat, so a misclick (this button sits next to
+// Refresh in WorkspaceViewActions) burned a chat turn. A modal per click
+// would punish every intentional use instead; arming keeps the confirm
+// inline. CONFIRM_FLOOR_MS rejects the second half of a double-click: a
+// deliberate confirm comes after reading the armed state, never within
+// half a second of arming. After a successful send the button briefly shows
+// Sent! so the hop to chat reads as acknowledged.
+const ARM_TIMEOUT_MS = 4000
+const CONFIRM_FLOOR_MS = 600
+const SENT_TIMEOUT_MS = 1800
+
+function hoverCapable(): boolean {
+  if (typeof window === 'undefined' || typeof window.matchMedia !== 'function') return true
+  return window.matchMedia('(hover: hover)').matches
+}
 
 /**
  * Every settings/config panel in the workflow builder (MCP, skills, secrets,
@@ -37,21 +55,82 @@ export function AskAIButton({
   /** Renders just the icon (for a tight icon-toolbar spot) instead of icon+label. */
   iconOnly?: boolean
 }) {
-  const buttonClassName = className ?? (iconOnly
-    ? 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary'
-    : 'flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary')
-  const handleClick = () => {
+  const [armed, setArmed] = useState(false)
+  const [sent, setSent] = useState(false)
+  // Icon-only buttons expand on hover/focus to reveal the label, and a click
+  // only counts once expanded: hovering is what tells a fast-moving user
+  // which icon they are about to hit. Touch taps emulate hover before the
+  // click, so touch needs no extra tap; keyboard focus expands as well.
+  const [expanded, setExpanded] = useState(false)
+  const armedAtRef = useRef(0)
+  const disarmTimerRef = useRef<number | null>(null)
+  const sentTimerRef = useRef<number | null>(null)
+
+  useEffect(() => () => {
+    if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current)
+    if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current)
+  }, [])
+
+  const disarm = () => {
+    if (disarmTimerRef.current !== null) {
+      window.clearTimeout(disarmTimerRef.current)
+      disarmTimerRef.current = null
+    }
+    setArmed(false)
+    setExpanded(false)
+  }
+
+  const deliver = async () => {
     if (onAsk) {
-      void Promise.resolve(onAsk(message)).catch(err => {
-        useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open chat.', 'error')
-      })
+      await onAsk(message)
       return
     }
     if (!workspacePath) return
-    void sendWorkspacePaneMessageToChat({ workspacePath, message }).catch(err => {
-      useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open chat.', 'error')
-    })
+    await sendWorkspacePaneMessageToChat({ workspacePath, message })
   }
+
+  const buttonClassName = className ?? (iconOnly
+    ? 'inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary'
+    : 'flex shrink-0 items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary')
+  const showExpanded = iconOnly && (expanded || sent)
+  const handleClick = () => {
+    if (sent) return
+    if (iconOnly && hoverCapable() && !expanded) {
+      setExpanded(true)
+      return
+    }
+    if (!armed) {
+      setArmed(true)
+      armedAtRef.current = Date.now()
+      if (disarmTimerRef.current !== null) window.clearTimeout(disarmTimerRef.current)
+      disarmTimerRef.current = window.setTimeout(() => { setArmed(false); setExpanded(false) }, ARM_TIMEOUT_MS)
+      return
+    }
+    if (Date.now() - armedAtRef.current < CONFIRM_FLOOR_MS) return
+    if (disarmTimerRef.current !== null) {
+      window.clearTimeout(disarmTimerRef.current)
+      disarmTimerRef.current = null
+    }
+    setArmed(false)
+    void deliver().then(
+      () => {
+        setSent(true)
+        if (sentTimerRef.current !== null) window.clearTimeout(sentTimerRef.current)
+        sentTimerRef.current = window.setTimeout(() => { setSent(false); setExpanded(false) }, SENT_TIMEOUT_MS)
+      },
+      err => {
+        setExpanded(false)
+        useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open chat.', 'error')
+      },
+    )
+  }
+
+  const stateClassName = sent
+    ? ' border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400'
+    : armed
+      ? ' border-primary/60 bg-primary/5 text-primary'
+      : ''
+  const stateLabel = sent ? 'Sent!' : armed ? 'Sure?' : label
 
   return (
     // A native `title` attribute is unreliable here: this button is disabled
@@ -60,12 +139,32 @@ export function AskAIButton({
     // (backed by the TooltipProvider in App.tsx) doesn't have that problem.
     <Tooltip>
       <TooltipTrigger asChild>
-        <button type="button" onClick={handleClick} aria-label={iconOnly ? label : undefined} className={buttonClassName} disabled={!workspacePath && !onAsk}>
-          <MessageCircle className="h-3.5 w-3.5" />
-          {!iconOnly && label}
+        <button
+          type="button"
+          onClick={handleClick}
+          onMouseEnter={() => { if (iconOnly) setExpanded(true) }}
+          onMouseLeave={() => { if (iconOnly) setExpanded(false) }}
+          onFocus={() => { if (iconOnly) setExpanded(true) }}
+          onBlur={() => { if (iconOnly) setExpanded(false) }}
+          onKeyDown={event => { if (event.key === 'Escape') disarm() }}
+          aria-label={iconOnly ? (sent ? `${label} (sent to chat)` : armed ? `${label} (click again to send)` : label) : undefined}
+          className={`${buttonClassName}${showExpanded ? ' gap-1.5' : ''}${stateClassName}`}
+          style={showExpanded ? { width: 'auto', paddingLeft: '0.625rem', paddingRight: '0.625rem' } : undefined}
+          disabled={!workspacePath && !onAsk}
+        >
+          {sent ? <Check className="h-3.5 w-3.5 shrink-0" /> : <MessageCircle className="h-3.5 w-3.5 shrink-0" />}
+          {iconOnly ? (
+            <span aria-hidden="true" className={`${showExpanded ? 'w-auto opacity-100' : 'w-0 opacity-0'} overflow-hidden whitespace-nowrap text-xs font-medium transition-opacity motion-reduce:transition-none`}>
+              {stateLabel}
+            </span>
+          ) : (
+            stateLabel
+          )}
         </button>
       </TooltipTrigger>
-      <TooltipContent side="bottom">{label}</TooltipContent>
+      {(!showExpanded || armed || sent) && (
+        <TooltipContent side="bottom">{sent ? 'Sent to chat' : armed ? 'Click again to send to chat' : label}</TooltipContent>
+      )}
     </Tooltip>
   )
 }

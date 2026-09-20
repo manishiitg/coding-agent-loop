@@ -1,4 +1,6 @@
 import ProviderAccounts from '../providers/ProviderAccounts'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
 import { stripRetiredLLMFallbacks } from '../../utils/retiredLLMFallbacks'
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
@@ -663,14 +665,15 @@ export default function WorkflowLLMConfigurationPanel({
       <div className="space-y-4">
 
 
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="sm"
           onClick={() => setActiveProviderId(null)}
-          className="inline-flex items-center gap-1.5 text-sm font-medium text-muted-foreground transition-colors hover:text-foreground"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to providers
-        </button>
+        </Button>
 
         {!activeRow ? (
           <div className="py-8 text-center text-sm text-muted-foreground">Loading provider info...</div>
@@ -747,7 +750,7 @@ export default function WorkflowLLMConfigurationPanel({
             <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">{account.scope === 'global' ? 'Shared' : 'Private'}</span>
             {inUse && <span className="text-[10px] font-medium text-primary">In use</span>}
             <span className="min-w-0 flex-1" />
-            <button type="button" disabled={readOnly || !available || inUse || rowUsing === row.id} onClick={() => void applyAccountToWorkflow(row, account.id)} className="rounded-md border border-border px-2 py-0.5 text-xs text-foreground hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed" title={!available ? 'Account needs setup or CLI is unavailable' : `Use ${account.display_name}`} aria-label={`Use ${row.name} account ${account.display_name}`}>{inUse ? 'Selected' : 'Use account'}</button>
+            <Button type="button" variant="outline" size="xs" disabled={readOnly || !available || inUse || rowUsing === row.id} onClick={() => void applyAccountToWorkflow(row, account.id)} title={!available ? 'Account needs setup or CLI is unavailable' : `Use ${account.display_name}`} aria-label={`Use ${row.name} account ${account.display_name}`}>{inUse ? 'Selected' : 'Use account'}</Button>
           </div>
         })}
         {selectedProvider && selectedAccountUnavailable && <p role="alert" className="py-2 text-xs text-amber-600 dark:text-amber-400">The selected account is unavailable. Choose another configured account or manage accounts in Providers.</p>}
@@ -787,26 +790,28 @@ export default function WorkflowLLMConfigurationPanel({
               <span className={`text-xs font-medium ${tone.text}`} title={statusTitle(status.label)}>
                 {statusActionText(status.label) ?? status.label}
               </span>
-              <button
+              <Button
                 type="button"
+                size="xs"
                 onClick={() => selectedRow.entry.integration_kind === 'coding_agent'
                   ? setShowLLMModal(true)
                   : setActiveProviderId(selectedRow.id)}
                 disabled={readOnly}
-                className="rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90"
               >
                 {selectedRow.entry.integration_kind === 'coding_agent' ? 'Manage in Providers' : 'Set up'}
-              </button>
+              </Button>
             </>
           )}
           {!readOnly && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => setChanging(open => !open)}
-              className="ml-auto rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+              className="ml-auto"
             >
               {changing ? 'Cancel' : 'Change provider'}
-            </button>
+            </Button>
           )}
         </div>
       )
@@ -821,13 +826,15 @@ export default function WorkflowLLMConfigurationPanel({
           <span className="font-medium text-foreground">custom per-role setup</span>
           <span className="text-muted-foreground">— see Models per role below.</span>
           {!readOnly && (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => setChanging(open => !open)}
-              className="ml-auto rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+              className="ml-auto"
             >
               {changing ? 'Cancel' : 'Change provider'}
-            </button>
+            </Button>
           )}
         </div>
       )
@@ -934,24 +941,27 @@ export default function WorkflowLLMConfigurationPanel({
             </span>
           )}
           {connected && !selected ? (
-            <button
+            <Button
               type="button"
+              size="xs"
               onClick={() => void applyRowToWorkflow(row)}
               disabled={readOnly || !row.selectable || rowUsing === row.id}
               title={readOnly ? disabledTitle : `Use ${row.name} for this ${scopeNoun}`}
-              className="inline-flex shrink-0 items-center gap-1 rounded-md bg-primary px-2 py-0.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-50"
+              className="shrink-0"
             >
               {rowUsing === row.id ? <><Loader2 className="h-3 w-3 animate-spin" /> Saving…</> : 'Use'}
-            </button>
+            </Button>
           ) : !connected ? (
-            <button
+            <Button
               type="button"
+              variant="outline"
+              size="xs"
               onClick={() => setShowLLMModal(true)}
               title={`Manage ${row.name} accounts in Providers`}
-              className="inline-flex shrink-0 items-center rounded-md border border-border px-2 py-0.5 text-xs font-medium text-foreground hover:bg-muted"
+              className="shrink-0"
             >
               Manage in Providers
-            </button>
+            </Button>
           ) : null}
         </div>
         {open && renderAccountTree(row)}
@@ -1068,14 +1078,16 @@ export default function WorkflowLLMConfigurationPanel({
               <span className={`h-1.5 w-1.5 rounded-full ${tone.dot}`} />
               {statusActionText(status.label)}
             </span>
-            <button
+            <Button
               type="button"
+              variant="link"
+              size="xs"
               onClick={() => setShowLLMModal(true)}
-              className="inline-flex shrink-0 items-center gap-0.5 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
+              className="shrink-0"
               title={`${connected ? 'Manage' : 'Set up'} Pi in global Providers`}
             >
               {connected ? 'Providers' : 'Set up in Providers'} <ChevronRight className="h-3 w-3" />
-            </button>
+            </Button>
           </div>
           {open && renderAccountTree(selectedInGroup || head)}
           {open && models.map(row => {
@@ -1158,9 +1170,9 @@ export default function WorkflowLLMConfigurationPanel({
           )}
           <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
             {isCustomized && defaultValue && (
-              <button type="button" onClick={() => resetRole(row.key)} disabled={readOnly} title={readOnly ? disabledTitle : undefined} className="text-[11px] text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50 disabled:no-underline">
+              <Button type="button" variant="link" size="xs" onClick={() => resetRole(row.key)} disabled={readOnly} title={readOnly ? disabledTitle : undefined}>
                 Reset to provider default
-              </button>
+              </Button>
             )}
 
           </div>
@@ -1193,25 +1205,27 @@ export default function WorkflowLLMConfigurationPanel({
       <div className="flex items-center gap-2">
         <div className="relative min-w-0 flex-1">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <input
+          <Input
             type="search"
             value={query}
             onChange={event => setQuery(event.target.value)}
             placeholder="Search providers"
             aria-label="Search providers"
-            className="h-9 w-full rounded-md border border-border bg-background pl-9 pr-3 text-sm text-foreground outline-none focus:border-primary"
+            className="pl-9"
           />
         </div>
-        <button
+        <Button
           type="button"
+          variant="outline"
+          size="icon"
           onClick={() => { void handleRefresh() }}
           disabled={refreshing}
           title="Refresh providers"
           aria-label="Refresh providers"
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:text-foreground disabled:opacity-50"
+          className="shrink-0"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
-        </button>
+        </Button>
       </div>
 
       <div role="radiogroup" aria-label={`Provider for this ${scopeNoun}`} className="divide-y divide-border overflow-hidden rounded-md border border-border bg-background">
@@ -1274,15 +1288,17 @@ export default function WorkflowLLMConfigurationPanel({
           <div className="space-y-3 border-t border-border p-3">
             {advanced && (
               <div className="flex justify-end">
-                <button
+                <Button
                   type="button"
+                  variant="link"
+                  size="xs"
                   onClick={useManagedDefaults}
                   disabled={readOnly || !selectedProfile}
                   title={readOnly ? disabledTitle : selectedProfile ? undefined : 'No provider profile to return to'}
-                  className="shrink-0 text-xs font-medium text-primary hover:underline disabled:cursor-not-allowed disabled:opacity-50"
+                  className="shrink-0"
                 >
                   Use provider defaults for all roles
-                </button>
+                </Button>
               </div>
             )}
             {(['Execution', 'Workflow agents'] as const).map(group => (

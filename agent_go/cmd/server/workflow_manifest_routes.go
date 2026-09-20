@@ -338,7 +338,7 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 
 	// Apply partial updates
 	if req.Label != nil {
-		manifest.Label = *req.Label
+		manifest.Label = strings.TrimSpace(*req.Label)
 	}
 	if req.Icon != nil {
 		manifest.Icon = strings.TrimSpace(*req.Icon)

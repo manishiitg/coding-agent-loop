@@ -2,12 +2,12 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('bot and notification settings separation', () => {
-  it('keeps email in its own Setup section and webhooks in Notifications', () => {
+  it('keeps email out of the bots panel and webhooks in Notifications', () => {
     const bots = readFileSync('src/components/workflow/WorkflowBotsPanel.tsx', 'utf8')
     expect(bots).not.toContain('Slack Incoming Webhook')
-    expect(bots).toContain('Routes for this {scopeNoun}')
-    expect(bots).toContain('route.kind === kind')
-    expect(bots).toContain('kind={kind} manageRoutes')
+    expect(bots).toContain('Routes for this ${scopeNoun}')
+    expect(bots).toContain('route.kind === channel')
+    expect(bots).toContain('kind={channel} manageRoutes')
     expect(bots).not.toContain('Gmail')
     const email = readFileSync('src/components/workflow/WorkflowEmailPanel.tsx', 'utf8')
     expect(email).toContain('<GmailNotifications')
@@ -28,7 +28,7 @@ describe('bot and notification settings separation', () => {
     // attribute is no longer a JSX literal; the hook itself must still be in
     // the toolbar and nowhere near the global header.
     expect(workflowToolbar).toContain("'data-tour': 'bot-connector'")
-    expect(workflowToolbar).toContain("openFromToolbarMenu('notify')")
+    expect(workflowToolbar).toContain("onClick={() => openWorkspaceView('notify')}")
     expect(host).toContain('<WorkflowNotificationView')
     expect(workflowToolbar).toContain('Icon={BellRing}')
     expect(notifications).toContain('Agentic notification delivery')

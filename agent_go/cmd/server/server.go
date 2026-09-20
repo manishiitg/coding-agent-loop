@@ -380,6 +380,10 @@ type StreamingAPI struct {
 	internalSteerTransportReady             func(provider, sessionID string) bool
 	internalChatSubmissionStore             *chatSubmissionStore
 	internalUncertainSubmissionRetryChecker func(context.Context, chatSubmissionRecord) bool
+	// Test seams for the uncertain-submission adopt wait. Zero keeps the
+	// production timeout and poll interval.
+	internalUncertainSubmissionAdoptTimeout      time.Duration
+	internalUncertainSubmissionAdoptPollInterval time.Duration
 
 	// Note: Removed session management - fresh agents created per request
 
@@ -4583,14 +4587,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Crew steps invoke Crew triggers through a server-owned runner.
 				// The run owner scopes crew lookups; without a user there is no
 				// runner and crew steps fail with a clear error at execution.
-				if claims := GetUserFromContext(r.Context()); claims != nil && api.productSchedules != nil {
-					controllerOpts.CrewRunner = newCrewStepRunner(api.productSchedules, claims.UserID)
-				}
+				controllerOpts.CrewRunner = crewRunnerForRun(r.Context(), api.productSchedules)
 				log.Printf("[WORKFLOW EXECUTION] Setting strategy=%s folder=%s", controllerOpts.ExecutionStrategy, controllerOpts.SelectedRunFolder)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
 			} else {
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] No execution options provided in request - req.ExecutionOptions is nil")
+				// Runs without execution options (Builder chat runs, live
+				// input) still need the server-owned crew runner: without
+				// it crew steps fail even though the run is fully
+				// authenticated. A minimal options value is behavior-neutral
+				// for every other consumer — they all nil-guard and match
+				// on specific fields.
+				if runner := crewRunnerForRun(r.Context(), api.productSchedules); runner != nil {
+					workflowOrchestrator.SetExecutionOptions(&todo_creation_human.ExecutionOptions{
+						CrewRunner: runner,
+					})
+				}
 			}
 
 			// Set default working directory and folder guard for workflow shell commands
@@ -8572,7 +8585,10 @@ func (api *StreamingAPI) seedCodingAgentRuntimeFromRestoredConversation(sessionI
 	resumeHandle.Provider.Model = firstNonEmptyTrimmed(resumeHandle.Provider.Model, runtime.ModelID)
 	resumeHandle.Provider.NativeSessionID = externalSessionID
 	resumeHandle.Provider.ProjectDirID = projectDirID
-	mcpagent.ApplyAgentResumeHandle(underlyingAgent, &resumeHandle)
+	if !mcpagent.ApplyAgentResumeHandle(underlyingAgent, &resumeHandle) {
+		log.Printf("[%s] Rejected stale resume handle for session %s; using saved application history", provider, sessionID)
+		return false
+	}
 	log.Printf("[%s] Restored native runtime from chat history for session %s", provider, sessionID)
 	return true
 }

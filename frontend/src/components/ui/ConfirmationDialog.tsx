@@ -1,6 +1,8 @@
 import { AlertTriangle, X } from 'lucide-react'
-import { useEffect } from 'react'
+import { useEffect, useState } from 'react'
 import ModalPortal from './ModalPortal'
+import { Input } from './Input'
+import { Label } from './label'
 
 interface ConfirmationDialogProps {
   isOpen: boolean
@@ -14,6 +16,11 @@ interface ConfirmationDialogProps {
   isLoading?: boolean
   loadingText?: string
   ignoreWorkspaceAutoCollapse?: boolean
+  /**
+   * GitHub-style delete: the exact text the user must type before the
+   * confirm button enables. Omit for a plain two-button confirm.
+   */
+  requireText?: string
 }
 
 export default function ConfirmationDialog({
@@ -27,8 +34,15 @@ export default function ConfirmationDialog({
   type = 'danger',
   isLoading = false,
   loadingText = 'Deleting...',
-  ignoreWorkspaceAutoCollapse = false
+  ignoreWorkspaceAutoCollapse = false,
+  requireText
 }: ConfirmationDialogProps) {
+  const [typed, setTyped] = useState('')
+  useEffect(() => {
+    if (isOpen) setTyped('')
+  }, [isOpen])
+  const confirmed = requireText === undefined || typed === requireText
+
   // Keyboard shortcuts
   useEffect(() => {
     if (!isOpen) return
@@ -41,7 +55,7 @@ export default function ConfirmationDialog({
         }
       } else if (event.key === 'Enter') {
         event.preventDefault()
-        if (!isLoading) {
+        if (!isLoading && confirmed) {
           onConfirm()
         }
       }
@@ -49,7 +63,7 @@ export default function ConfirmationDialog({
 
     document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [isOpen, isLoading, onClose, onConfirm])
+  }, [isOpen, isLoading, confirmed, onClose, onConfirm])
 
   if (!isOpen) return null
 
@@ -114,6 +128,21 @@ export default function ConfirmationDialog({
             {message}
           </p>
 
+          {requireText !== undefined && (
+            <div className="mb-6">
+              <Label className="mb-2 block text-gray-600 dark:text-gray-300">
+                Type <span className="font-semibold text-gray-900 dark:text-gray-100">{requireText}</span> to confirm
+              </Label>
+              <Input
+                value={typed}
+                onChange={event => setTyped(event.target.value)}
+                placeholder={requireText}
+                autoComplete="off"
+                aria-label="Confirmation text"
+              />
+            </div>
+          )}
+
           {/* Actions */}
           <div className="flex gap-3 justify-end">
             <button
@@ -126,7 +155,7 @@ export default function ConfirmationDialog({
             <button
               onClick={onConfirm}
               className={`px-4 py-2 text-sm font-medium rounded-md transition-colors ${styles.confirmButton} disabled:opacity-50 disabled:cursor-not-allowed`}
-              disabled={isLoading}
+              disabled={isLoading || !confirmed}
             >
               {isLoading ? (
                 <div className="flex items-center gap-2">

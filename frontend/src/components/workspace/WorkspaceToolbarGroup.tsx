@@ -7,11 +7,20 @@ type WorkspaceToolbarGroupProps = {
   onToggle?: () => void
   title: string
   hideLabel?: boolean
+  /** Hide the toggle (label and arrow) while open: only the icons show. */
+  hideToggleWhenOpen?: boolean
   children: ReactNode
 } & Record<`data-${string}`, string | undefined>
 
 /** Shared AgentWorks Views/Setup toolbar group used by workflow and product workspaces. */
-export function WorkspaceToolbarGroup({ label, open, onToggle, title, hideLabel = false, children, ...rest }: WorkspaceToolbarGroupProps) {
+export function WorkspaceToolbarGroup({ label, open, onToggle, title, hideLabel = false, hideToggleWhenOpen = false, children, ...rest }: WorkspaceToolbarGroupProps) {
+  if (open && hideToggleWhenOpen) {
+    return (
+      <div {...rest} className="inline-flex h-full items-center gap-0.5 px-1 first:pl-0.5 last:pr-0.5">
+        {children}
+      </div>
+    )
+  }
   return (
     <div {...rest} className="inline-flex h-full items-center gap-0.5 px-1 first:pl-0.5 last:pr-0.5">
       {onToggle ? (

@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import axios from 'axios'
-import { Copy, RefreshCw, Webhook } from 'lucide-react'
+import { Copy, Webhook } from 'lucide-react'
 import { apiTriggerURL, productWebhooksApi, type ProductAPITrigger, type ProductTriggerScope } from '../../api/productWebhooks'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 const buttonClass = 'rounded-md border border-border px-2 py-1 text-xs hover:bg-muted disabled:opacity-50'
 
@@ -10,7 +12,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to update project triggers'
 }
 
-export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHistory, headerAction }: { scope: ProductTriggerScope; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode }) {
+export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHistory, headerAction, hideHeader = false, refreshToken = 0, onCounts }: { scope: ProductTriggerScope; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode; hideHeader?: boolean; refreshToken?: number; onCounts?: (counts: { active: number; paused: number }) => void }) {
   const { profileId, projectId } = scope
   const [triggers, setTriggers] = useState<ProductAPITrigger[]>([])
   const [issued, setIssued] = useState<ProductAPITrigger | null>(null)
@@ -24,6 +26,15 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
   }, [profileId, projectId])
 
   useEffect(() => { setError(''); setIssued(null); void refresh() }, [refresh])
+
+  useEffect(() => {
+    if (refreshToken) void refresh()
+  }, [refreshToken, refresh])
+
+  const activeTriggers = triggers.filter(trigger => trigger.enabled).length
+  useEffect(() => {
+    onCounts?.({ active: activeTriggers, paused: triggers.length - activeTriggers })
+  }, [onCounts, activeTriggers, triggers.length])
 
   const save = async (trigger: ProductAPITrigger, rotate = false) => {
     if (busy) return
@@ -49,14 +60,18 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
     catch { setError('Clipboard access failed. Select and copy the displayed value.') }
   }
 
-  return <div className="h-full min-w-0 w-full max-w-none space-y-4 overflow-x-hidden overflow-y-auto p-4">
-    <div className="flex items-start justify-between gap-3">
-      <div>
-        <h2 className="flex items-center gap-2 text-base font-semibold"><Webhook size={17} />Webhooks</h2>
-        <p className="mt-1 text-xs text-muted-foreground">Send one saved message to this project when an external service sends authenticated JSON.</p>
-      </div>
-      <div className="flex items-center gap-2"><button type="button" aria-label="Refresh project triggers" className={buttonClass} onClick={() => void refresh()}><RefreshCw size={14} /></button>{headerAction}</div>
-    </div>
+  return <div className="h-full min-w-0 w-full max-w-none overflow-x-hidden overflow-y-auto bg-background">
+    {!hideHeader && <WorkspaceViewHeader
+      sticky
+      icon={Webhook}
+      title="Webhooks"
+      subtitle="Send one saved message to this project when an external service sends authenticated JSON."
+      actions={<>
+        {headerAction}
+        <WorkspaceViewIconButton label="Refresh project triggers" onClick={() => void refresh()} />
+      </>}
+    />}
+    <div className="space-y-4 p-4">
     <p className="text-xs leading-relaxed text-muted-foreground">Schedules start by time; webhooks start on delivery. Choose the main Crew chat or a persistent isolated conversation. {!deliveryHistory && onViewRuns && <button type="button" className="underline text-foreground" onClick={onViewRuns}>View delivery history</button>}</p>
     {error && <p role="alert" className="rounded-md border border-destructive/30 p-3 text-sm text-destructive">{error}</p>}
     {issued?.secret && <section className="space-y-3 rounded-lg border border-primary/30 bg-primary/5 p-3">
@@ -83,5 +98,6 @@ export default function ProductAPITriggersView({ scope, onViewRuns, deliveryHist
     {copied && <p role="status" className="text-xs text-muted-foreground">{copied}</p>}
     {deliveryHistory && <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
     <p className="text-xs leading-relaxed text-muted-foreground">Send JSON up to 1 MiB. Bearer triggers use the Authorization header; GitHub triggers verify X-Hub-Signature-256. Reuse an Idempotency-Key or GitHub delivery ID to avoid duplicate runs.</p>
+    </div>
   </div>
 }

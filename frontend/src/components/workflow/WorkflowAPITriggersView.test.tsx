@@ -19,12 +19,21 @@ beforeEach(() => {
   vi.mocked(workflowWebhooksApi.save).mockImplementation(async value => ({ ...trigger, ...value }))
 })
 afterEach(() => { cleanups.splice(0).forEach(clean => clean()); vi.clearAllMocks() })
-async function mount(props: { onViewRuns?: () => void; deliveryHistory?: ReactNode } = {}) {
+type MountProps = { onViewRuns?: () => void; deliveryHistory?: ReactNode; hideHeader?: boolean; refreshToken?: number; onCounts?: (counts: { active: number; paused: number }) => void }
+async function mount(props: MountProps = {}) {
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
   await act(async () => root.render(<WorkflowAPITriggersView workspacePath="Workflow/test" {...props} />))
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   return host
+}
+async function mountRerenderable(initial: MountProps) {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const render = async (props: MountProps) => { await act(async () => root.render(<WorkflowAPITriggersView workspacePath="Workflow/test" {...props} />)) }
+  await render(initial)
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  return { host, render }
 }
 function button(host: HTMLElement, label: string) {
   const found = [...host.querySelectorAll('button')].find(node => node.textContent === label)
@@ -105,4 +114,20 @@ it('keeps delivery history inside Triggers when an embedded feed is available', 
   expect(host.textContent).toContain('Recorded webhook deliveries')
   expect(host.textContent).not.toContain('View delivery history')
   expect(onViewRuns).not.toHaveBeenCalled()
+})
+it('hides its header when embedded in the hub but keeps trigger content', async () => {
+  const host = await mount({ hideHeader: true })
+  expect(host.textContent).not.toContain('External events that start this workflow.')
+  expect(host.querySelector('button[aria-label="Refresh webhooks"]')).toBeNull()
+  expect(host.textContent).toContain('Issues')
+  expect(host.textContent).toContain('https://agent.example/api/hooks/workflow/trigger-1')
+})
+it('reloads and reports counts when the hub bumps its refresh token', async () => {
+  const onCounts = vi.fn()
+  const { render } = await mountRerenderable({ refreshToken: 0, onCounts })
+  expect(workflowWebhooksApi.list).toHaveBeenCalledTimes(1)
+  expect(onCounts).toHaveBeenLastCalledWith({ active: 1, paused: 0 })
+  await render({ refreshToken: 1, onCounts })
+  expect(workflowWebhooksApi.list).toHaveBeenCalledTimes(2)
+  expect(onCounts).toHaveBeenLastCalledWith({ active: 1, paused: 0 })
 })

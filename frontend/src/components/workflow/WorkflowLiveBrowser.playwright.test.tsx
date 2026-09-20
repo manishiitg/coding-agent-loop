@@ -255,3 +255,14 @@ it('allows tall page resizing only after control and maps clicks to the new view
   await act(async () => { ws.onmessage?.({data: JSON.stringify({type:'viewer_control', controlling:false})}) })
   expect(size.disabled).toBe(true)
 })
+
+it('renders the standard header with the session picker below it', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host, selector } = await mountBrowser()
+  expect(host.querySelector('header h2')?.textContent).toBe('Browser')
+  expect(host.querySelector('header [role="status"]')?.textContent).toBeTruthy()
+  expect(host.textContent).toContain('Watch and control the browser your helper uses.')
+  const header = host.querySelector('header')!
+  expect(header.contains(selector)).toBe(false)
+  expect(header.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})

@@ -20,7 +20,6 @@ function KBWriteGrants({
 }) {
   const [loading, setLoading] = useState(true);
   const [grants, setGrants] = useState<string[]>([]);
-  const [newID, setNewID] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const load = useCallback(async () => {
@@ -47,7 +46,6 @@ function KBWriteGrants({
         kb_write_grants: next,
       });
       setGrants(next);
-      setNewID("");
     } catch (e) {
       setError(sourceError(e, "Unable to update KB write grants"));
     } finally {
@@ -61,9 +59,7 @@ function KBWriteGrants({
         KB write grants (this workflow's own knowledgebase)
       </h4>
       <p className="text-muted-foreground">
-        Workflow IDs permitted to write into this workflow's
-        knowledgebase/notes/ via their own read-write attachment. Does not
-        affect read sharing.
+        Workflow IDs allowed to write into this workflow's notes.
       </p>
       {loading && (
         <p role="status" className="text-muted-foreground">
@@ -94,31 +90,6 @@ function KBWriteGrants({
           ))}
         </ul>
       )}
-      <form
-        className="flex flex-wrap items-end gap-2"
-        onSubmit={(e) => {
-          e.preventDefault();
-          const id = newID.trim();
-          if (id && !grants.includes(id)) void save([...grants, id]);
-        }}
-      >
-        <label className="grid gap-1">
-          Workflow ID
-          <input
-            value={newID}
-            onChange={(e) => setNewID(e.target.value)}
-            placeholder="workflow-id"
-            className="rounded border bg-background p-1.5"
-          />
-        </label>
-        <button
-          type="submit"
-          disabled={busy || !newID.trim()}
-          className="rounded border px-2 py-1.5 disabled:opacity-50"
-        >
-          Grant
-        </button>
-      </form>
       {error && (
         <p role="alert" className="text-destructive">
           {error}
@@ -155,13 +126,6 @@ export function KnowledgebaseSources({
   const [reloadKey, setReloadKey] = useState(0);
   const [sourcesLoaded, setSourcesLoaded] = useState(false);
   const [sources, setSources] = useState<KnowledgebaseSourceStatus[]>([]);
-  const [candidates, setCandidates] = useState<
-    Array<{ id: string; label: string }>
-  >([]);
-  const [editing, setEditing] = useState(false);
-  const [sourceID, setSourceID] = useState("");
-  const [alias, setAlias] = useState("");
-  const [accessLevel, setAccessLevel] = useState<"read" | "write">("read");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const refresh = useCallback(async () => {
@@ -223,27 +187,6 @@ export function KnowledgebaseSources({
     )
       onSelect?.("");
   }, [sources, sourcesLoaded, loading, selected, onSelect]);
-  const open = async () => {
-    setBusy(true);
-    setError("");
-    try {
-      const result = await workflowManifestApi.listWorkflowManifests();
-      setCandidates(
-        result.workflows
-          .filter(
-            (w) =>
-              w.workspace_path !== workspacePath &&
-              !sources.some((s) => s.workflow_id === w.manifest.id),
-          )
-          .map((w) => ({ id: w.manifest.id, label: w.manifest.label })),
-      );
-      setEditing(true);
-    } catch (e) {
-      setError(sourceError(e, "Unable to list workflows"));
-    } finally {
-      setBusy(false);
-    }
-  };
   const save = async (next: KnowledgebaseSource[]) => {
     if (variant !== "folders" || !canWrite || !sourcesLoaded) return;
     setBusy(true);
@@ -260,10 +203,6 @@ export function KnowledgebaseSources({
         }),
       );
       await refresh();
-      setEditing(false);
-      setAlias("");
-      setSourceID("");
-      setAccessLevel("read");
     } catch (e) {
       setError(sourceError(e, "Unable to update knowledge sources"));
     } finally {
@@ -296,23 +235,10 @@ export function KnowledgebaseSources({
                 </span>
               )}
             </div>
-            {canWrite && (
-              <button
-                type="button"
-                disabled={busy || loading || !sourcesLoaded}
-                onClick={open}
-                className="rounded border px-2 py-1.5 disabled:opacity-50"
-              >
-                Attach knowledge
-              </button>
-            )}
           </div>
           <p className="text-muted-foreground">
-            Read context and notes from other workflows. Source updates are
-            available directly. A read-write attachment can also contribute
-            to the source's notes/ once the source grants this workflow
-            write access — see “KB write grants” below to grant it the
-            other way.
+            Read context and notes from other workflows. Read-write
+            attachments also need a grant below.
           </p>
           {loading && (
             <p role="status" className="text-muted-foreground">
@@ -403,38 +329,41 @@ export function KnowledgebaseSources({
           )}
           {sources.length > 0 && (
             <p className="text-[11px] text-muted-foreground">
-              Available sources can be read by the builder and reviewers, and by
-              steps with knowledge-base read access. A read-write source is
-              additionally writable in its notes/ folder by steps with
-              knowledge-base write access, once granted.
+              Available sources are readable by the builder, reviewers, and
+              steps with read access.
             </p>
           )}
         </>
       )}
       {variant === "knowledge" && (
         <div className="space-y-2 rounded-lg bg-muted/30 p-2.5">
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor={selectID} className="font-medium">
-              Browsing
-            </label>
-            <select
-              id={selectID}
-              value={selected}
-              onChange={(e) => onSelect?.(e.target.value)}
-              className="min-w-0 max-w-full rounded border bg-background p-1.5"
-            >
-              <option value="">Local knowledge · This workflow</option>
-              {sources.map((source) => (
-                <option key={source.alias} value={source.alias}>
-                  {source.label || source.alias} ({source.alias}) ·{" "}
-                  {source.available
-                    ? source.access === "write"
-                      ? "Read-write"
-                      : "Read only"
-                    : "Unavailable"}
-                </option>
-              ))}
-            </select>
+          <div id={selectID} className="font-medium">
+            Browsing
+          </div>
+          <div role="group" aria-labelledby={selectID} className="grid gap-1.5">
+            {[{ alias: "", label: "Local knowledge", detail: "This workflow" }, ...sources.map((source) => ({
+              alias: source.alias,
+              label: source.label || source.alias,
+              detail: `(${source.alias}) · ${source.available ? (source.access === "write" ? "Read-write" : "Read only") : "Unavailable"}`,
+            }))].map((option) => {
+              const pressed = selected === option.alias;
+              return (
+                <button
+                  key={option.alias || "local"}
+                  type="button"
+                  aria-pressed={pressed}
+                  onClick={() => onSelect?.(option.alias)}
+                  className={`flex w-full flex-wrap items-center gap-x-2 rounded-md border px-2.5 py-1.5 text-left ${
+                    pressed
+                      ? "border-primary/40 bg-primary/5"
+                      : "border-border bg-background hover:bg-muted"
+                  }`}
+                >
+                  <span className="font-medium text-foreground">{option.label}</span>
+                  <span className="text-muted-foreground">{option.detail}</span>
+                </button>
+              );
+            })}
           </div>
           <p className="text-muted-foreground">
             {selected
@@ -444,7 +373,7 @@ export function KnowledgebaseSources({
               : "Viewing this workflow’s local knowledge."}
           </p>
           <p className="text-[11px] text-muted-foreground">
-            Manage shared knowledge bases in Setup → Attached folders.
+            Manage shared knowledge bases in Setup → File access.
           </p>
           {sources.find((s) => s.alias === selected)?.available === false && (
             <p role="status" className="text-amber-700 dark:text-amber-300">
@@ -454,83 +383,6 @@ export function KnowledgebaseSources({
             </p>
           )}
         </div>
-      )}
-      {variant === "folders" && editing && (
-        <form
-          className="flex flex-wrap items-end gap-2"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void save([
-              ...refs,
-              { workflow_id: sourceID, alias, access: accessLevel },
-            ]);
-          }}
-        >
-          <label className="grid gap-1">
-            Source workflow
-            <select
-              required
-              value={sourceID}
-              onChange={(e) => setSourceID(e.target.value)}
-              className="rounded border bg-background p-1.5"
-            >
-              <option value="">Choose workflow</option>
-              {candidates.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label className="grid gap-1">
-            Alias
-            <input
-              required
-              pattern="[a-z][a-z0-9_]{0,47}"
-              maxLength={48}
-              value={alias}
-              onChange={(e) => setAlias(e.target.value)}
-              placeholder="rts"
-              className="rounded border bg-background p-1.5"
-            />
-          </label>
-          <label className="grid gap-1">
-            Access
-            <select
-              value={accessLevel}
-              onChange={(e) =>
-                setAccessLevel(e.target.value as "read" | "write")
-              }
-              className="rounded border bg-background p-1.5"
-            >
-              <option value="read">Read only</option>
-              <option value="write">Read-write (notes/ only)</option>
-            </select>
-          </label>
-          <button
-            disabled={busy || !sourceID || !alias}
-            className="rounded border px-2 py-1.5 disabled:opacity-50"
-          >
-            {accessLevel === "write" ? "Attach read-write" : "Attach read-only"}
-          </button>
-          <button
-            type="button"
-            onClick={() => {
-              setEditing(false);
-              setAccessLevel("read");
-            }}
-            className="px-2 py-1.5"
-          >
-            Cancel
-          </button>
-          {accessLevel === "write" && (
-            <p className="basis-full text-[11px] text-muted-foreground">
-              Takes effect only once the source workflow's owner grants this
-              workflow's ID in its own KB write grants — otherwise this
-              source resolves as unavailable.
-            </p>
-          )}
-        </form>
       )}
       {variant === "folders" && (
         <KBWriteGrants workspacePath={workspacePath} canWrite={canWrite} />

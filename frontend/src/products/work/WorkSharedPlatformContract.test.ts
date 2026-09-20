@@ -7,6 +7,8 @@ describe('Crew shared AgentWorks platform contract', () => {
   it('composes the shared conversation and workspace primitives', () => {
     const surface = read('src/products/work/WorkSurface.tsx')
     const pane = read('src/products/work/WorkWorkspacePane.tsx')
+    const setup = read('src/products/work/WorkIdentityPanel.tsx')
+      + read('src/products/work/WorkIntegrationsPanel.tsx')
 
     for (const sharedConversationPrimitive of [
       "../../components/ChatArea",
@@ -23,12 +25,21 @@ describe('Crew shared AgentWorks platform contract', () => {
       "../../components/workflow/DatabaseView",
       "../../components/workflow/ReportViewer",
       "../../components/workflow/CostsPopup",
+    ]) {
+      expect(pane).toContain(sharedWorkspacePrimitive)
+    }
+
+    // Setup is consolidated into Identity + Integrations tabs, which keep
+    // composing the shared primitives instead of forking them.
+    expect(pane).toContain('./WorkIdentityPanel')
+    expect(pane).toContain('./WorkIntegrationsPanel')
+    for (const sharedSetupPrimitive of [
       "../../components/workflow/WorkflowBotsPanel",
       "../../components/skills/SkillsManagerPanel",
       "../../components/secrets/SecretSelectionSection",
       "../../components/connectors/ConnectorsBrowser",
     ]) {
-      expect(pane).toContain(sharedWorkspacePrimitive)
+      expect(setup).toContain(sharedSetupPrimitive)
     }
   })
 

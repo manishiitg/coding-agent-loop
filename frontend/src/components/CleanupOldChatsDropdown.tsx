@@ -63,7 +63,7 @@ export const CleanupOldChatsDropdown: React.FC<CleanupOldChatsDropdownProps> = (
         onMouseDown={event => event.preventDefault()}
         onClick={() => setIsOpen(current => !current)}
         disabled={isLoading}
-        className={`inline-flex h-7 shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
+        className={`inline-flex h-7 shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
         title="Delete old chats"

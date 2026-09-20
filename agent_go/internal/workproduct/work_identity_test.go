@@ -130,7 +130,7 @@ func TestWorkIdentityStaysCompact(t *testing.T) {
 		Role:         "Assistant",
 		Instructions: "Be concise.",
 	}
-	if got := validateWorkIdentity(identity); got != "The identity icon must be at most 8 characters." {
+	if got := validateWorkIdentity(identity); got != "The identity icon is invalid: icon must be 8 characters or fewer." {
 		t.Fatalf("unexpected icon validation: %q", got)
 	}
 
@@ -138,6 +138,18 @@ func TestWorkIdentityStaysCompact(t *testing.T) {
 	identity.Instructions = strings.Repeat("x", workIdentityInstructionsLimit+1)
 	if got := validateWorkIdentity(identity); got != "The identity instructions must be at most 500 characters." {
 		t.Fatalf("unexpected instructions validation: %q", got)
+	}
+}
+
+func TestWorkIdentityAcceptsUploadedImage(t *testing.T) {
+	image := "data:image/png;base64," + strings.Repeat("A", 1024)
+	identity := workIdentity{Icon: image, Name: "Nova", Role: "Assistant", Instructions: "Be concise."}
+	if got := validateWorkIdentity(identity); got != "" {
+		t.Fatalf("uploaded image icon should validate, got %q", got)
+	}
+	rendered := renderWorkIdentity(identity)
+	if strings.Contains(rendered, "AAAA") || !strings.Contains(rendered, "Icon: (custom uploaded image)") {
+		t.Fatalf("uploaded image icon must be redacted from prompts, got %q", rendered)
 	}
 }
 

@@ -15,25 +15,25 @@ const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
   {
     id: 'git',
     label: 'GitHub / remote Git (recommended)',
-    description: 'Recommended for off-device protection of automation config, planning, knowledgebase, learnings, scripts, and small JSON. Local Git alone is not a durable backup.',
+    description: 'Protects config, planning, knowledge, and learnings off this device.',
     best_for: ['workflow', 'planning', 'knowledgebase', 'learnings']
   },
   {
     id: 'object_store',
     label: 'R2 / S3 / B2',
-    description: 'Best for run folders, generated media, large artifacts, and files that should not live in git.',
+    description: 'For run folders, media, and large files that should not live in git.',
     best_for: ['runs', 'large-artifacts', 'media']
   },
   {
     id: 'huggingface',
     label: 'HuggingFace Hub',
-    description: 'Best for dataset/model-style backups, generated media, and revisioned ML artifacts.',
+    description: 'For dataset and model-style backups with revisions.',
     best_for: ['datasets', 'models', 'media']
   },
   {
     id: 'local_zip',
     label: 'Local ZIP export',
-    description: 'Manual full-folder export for transfer or recovery. This is not automatic remote backup.',
+    description: 'Manual export for moving or recovery. Not automatic.',
     best_for: ['manual-export', 'restore']
   }
 ]
@@ -41,19 +41,26 @@ const FALLBACK_SUPPORTED_STRATEGIES: WorkflowBackupStrategyInfo[] = [
 const getBackupSummary = (backupInfo: WorkflowBackupInfoResponse | null): string => {
   const state = backupInfo?.effective_state
   if (!backupInfo?.config?.enabled) {
-    return 'No off-device backup is configured. Add GitHub, another remote Git host, or an object store to protect this workflow if this laptop is lost.'
+    return 'No backup yet. If this laptop is lost, this workflow is lost. Set one up with /backup in chat.'
   }
   if (state === 'local_only') {
-    return 'This backup exists only on this laptop. Add GitHub, another remote Git host, or an object store for durable off-device recovery.'
+    return 'This backup lives only on this laptop. Add a remote destination with /backup in chat.'
   }
-  if (backupInfo.status?.summary) return backupInfo.status.summary
   switch (state) {
     case 'configured_not_verified':
-      return 'Backup is configured, but the builder has not verified a successful run yet.'
+      return 'Backup is set up. Waiting for the first successful run.'
     case 'running':
-      return 'A builder backup task is running and will update backup/status.json.'
+      return 'A backup is running now.'
+    case 'healthy':
+      return 'Backed up. Everything is protected.'
+    case 'partial':
+      return 'Partly backed up. Check the destinations below.'
+    case 'failed':
+      return 'Last backup failed.'
+    case 'skipped':
+      return 'Last backup was skipped.'
     default:
-      return 'Backup status is waiting for the builder to update backup/status.json.'
+      return 'Waiting for backup status.'
   }
 }
 
@@ -79,12 +86,13 @@ const WorkflowBackupView: React.FC<WorkflowBackupViewProps> = ({
       loadInfo={loadInfo}
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_SUPPORTED_STRATEGIES}
-      subtitle="Remote backup strategy, destination status, and local ZIP export"
-      emptyDestinationsText="Use setup to choose GitHub/Git for config and R2, S3, B2, or HuggingFace for large artifacts."
-      destinationsHelp="The builder executes these and writes destination status."
-      statusPathFallback="backup/status.json"
-      setupAction={{
-        label: <>Set up · run · restore in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/backup</code></>
+      subtitle="Remote backups and local ZIP export"
+      emptyDestinationsText="No backup destinations yet — set one up with /backup in chat."
+      destinationsHelp="Status updates automatically after each run."
+      askContext={{
+        workspacePath,
+        strategyVerb: 'back up this workflow with',
+        exportMessage: 'Help me export this workflow as a ZIP for recovery. Explain the steps.',
       }}
       getSummary={getBackupSummary}
       exportAction={{

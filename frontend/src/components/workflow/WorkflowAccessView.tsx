@@ -6,6 +6,7 @@ import { useAuthStore } from '../../stores/useAuthStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { hasWorkflowOwnerAccess } from '../../utils/workflowPermissions'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { normalizeWorkspacePath } from '../../utils/workspacePathUtils'
 
 type AccessTab = 'workflow' | 'users'
@@ -51,19 +52,13 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
 
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-      <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
-        <div className="min-w-0">
-          <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-            <ShieldCheck className="h-4 w-4 text-primary" />
-            Access
-          </h2>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {tab === 'workflow'
-              ? `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`
-              : 'Accounts, roles and passwords for this deployment.'}
-          </p>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
+      <WorkspaceViewHeader
+        icon={ShieldCheck}
+        title="Access"
+        subtitle={tab === 'workflow'
+          ? `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`
+          : 'Accounts, roles and passwords for this deployment.'}
+        actions={<>
           {workflowTab && usersTab && (
             <div className="flex items-center gap-1 rounded-lg bg-muted/60 p-1" role="tablist" aria-label="Access sections">
               <button type="button" role="tab" aria-selected={tab === 'workflow'} className={tabClass(tab === 'workflow')} onClick={() => setTab('workflow')}>
@@ -75,8 +70,8 @@ export default function WorkflowAccessView({ workspacePath, headerAction }: Work
             </div>
           )}
           {headerAction}
-        </div>
-      </div>
+        </>}
+      />
 
       <div className="flex-1 overflow-y-auto">
         {!workflowTab && !usersTab ? (

@@ -77,6 +77,7 @@ it('separates webhook and time-triggered runs and opens runs outside the chat-hi
   const { host, onSelect } = await mount()
   await select(host, 'Webhooks')
   expect(host.textContent).toContain('PR reviews')
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   expect(host.textContent).toContain('pull_request')
   expect(host.textContent).toContain('delivery-123')
   expect(host.textContent).toContain('iteration-0')
@@ -100,10 +101,10 @@ it('refreshes the visible feed when a webhook finishes', async () => {
   vi.useFakeTimers()
   const { host } = await mount()
   await select(host, 'Webhooks')
-  expect(host.textContent).toContain('Run in progress')
+  expect(host.textContent).toContain('Running')
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [{ ...webhookRun, status: 'success' }] : [cronRun], total: 1, limit: 30, offset: 0 }))
   await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
-  expect(host.textContent).not.toContain('Run in progress')
+  expect(host.textContent).not.toContain('Running')
   expect(host.textContent).toContain('Completed')
 })
 it('does not interpret a webhook received time as a cron slot', () => {
@@ -252,6 +253,7 @@ it('shows every fetched Workshop chat without a load-more control', async () => 
 it('loads and formats the webhook body when delivery details are opened', async () => {
   const { host } = await mount()
   await select(host, 'Webhooks')
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   const details = host.querySelector('details')!
   await act(async () => {
     details.open = true
@@ -260,4 +262,32 @@ it('loads and formats the webhook body when delivery details are opened', async 
   expect(workflowWebhooksApi.getPayload).toHaveBeenCalledWith(hook.id, webhookRun.id)
   expect(host.textContent).toContain('"action": "opened"')
   expect(host.textContent).toContain('"number": 42')
+})
+
+it('right-aligns header controls when the hub owns the title', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel workspacePath="Workflow/test" title="" onSelectSession={vi.fn()} />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  const header = host.querySelector('.chat-history-panel > div > div')
+  expect(header?.className).toContain('justify-end')
+  expect(header?.className).not.toContain('justify-start')
+})
+
+it('reloads history when the hub bumps its refresh token', async () => {
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  const render = async (refreshToken: number) => {
+    await act(async () => root.render(
+      <PreviousChatHistoryPanel workspacePath="Workflow/test" recentOnly onSelectSession={vi.fn()} refreshToken={refreshToken} />,
+    ))
+  }
+  await render(0)
+  const calls = vi.mocked(agentApi.listChatHistorySessions).mock.calls.length
+  expect(calls).toBeGreaterThan(0)
+  await render(1)
+  expect(vi.mocked(agentApi.listChatHistorySessions).mock.calls.length).toBeGreaterThan(calls)
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
 })

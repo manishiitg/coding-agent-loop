@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { Loader2, MessageSquare, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
+import { Loader2, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
 import ChatArea from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
@@ -15,15 +15,17 @@ import { useLLMStore } from '../../stores/useLLMStore'
 import { hydrateTabEvents } from '../../utils/sessionRestore'
 import { activateTab } from '../../utils/activateTab'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
-import { createWorkSession, deleteWorkSession, loadWorkSessions, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
+import { createWorkSession, deleteWorkSession, loadWorkSessions, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
+import { isWorkWorkspaceViewEnabled } from './workViewGating'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
 import { WorkspaceSplitRail } from '../../components/workspace/WorkspaceSplitDivider'
+import { resolveWorkSurfaceLayout } from './workSurfaceLayoutResolver'
 import { WorkspaceTopToolbar } from '../../components/workspace/WorkspaceTopToolbar'
 import { loadAgentProfileInteractionKinds, loadAgentProfileUIPanels } from '../../utils/agentProfileCapabilities'
 import { parseProductInteraction } from '../../../shared/session/interactions'
 import { belongsToWorkProject, findCanonicalWorkProjectTab, markWorkProjectRuntimeDirty, setWorkProjectRuntimeSelection, type ProductEngineSelectionDetail, type WorkRuntimeSelection } from './workTabs'
-import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
+import { updateProductProjectLLMConfig, updateProductProjectSelections, type ProductIdentityPatch } from '../../platform/chat/productProjects'
 import { CreateWorkProjectDialog } from './CreateWorkProjectDialog'
 import { useWorkspaceUIControl, type WorkspaceUIControlAdapter } from '../../platform/ui-control/useWorkspaceUIControl'
 import { usePresentationEvents } from '../../platform/presentations/usePresentationEvents'
@@ -43,12 +45,15 @@ const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
 const WORK_UI_PRESENTATION_VIEWS = {
   report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', workshop: 'schedules', schedules: 'schedules', files: 'files',
-  skills: 'skills', secrets: 'secrets', mcp: 'mcp', llm: 'models', bots: 'bots', email: 'email', folders: 'folders',
+  identity: 'identity', mcp: 'mcp',
+  // Legacy agent + preference ids land on the consolidated Setup views.
+  skills: 'mcp', secrets: 'identity', llm: 'identity', bots: 'mcp', email: 'mcp', folders: 'identity',
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
   report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', workshop: 'Automation', schedules: 'Automation', files: 'Files',
-  skills: 'Skills', secrets: 'Secrets', mcp: 'MCP servers', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
+  identity: 'Identity', mcp: 'Integrations',
+  skills: 'Skills', secrets: 'Secrets', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
 }
 
 function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {
@@ -62,6 +67,7 @@ function readWorkWorkspaceView(projectId?: string): WorkWorkspaceView {
   try {
     const saved = window.localStorage.getItem(`${WORK_VIEW_PREFERENCE_KEY}:${projectId}`)
     if (saved === 'history') return 'schedules'
+    if (saved && saved in WORK_UI_PRESENTATION_VIEWS) return WORK_UI_PRESENTATION_VIEWS[saved as WorkUIPresentationView]
     return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'
   } catch {
     return 'dashboard'
@@ -211,6 +217,14 @@ function useWorkSessions() {
     return updated
   }, [sessions])
 
+  const updateIdentity = useCallback(async (projectId: string, patch: ProductIdentityPatch) => {
+    const project = sessions.find(item => item.id === projectId)
+    if (!project) throw new Error('This Crew project is no longer available.')
+    const updated = await updateWorkSessionIdentity(project, patch)
+    setSessions(current => current.map(item => item.id === projectId ? updated : item))
+    return updated
+  }, [sessions])
+
   return {
     sessions,
     selected: sessions.find((session) => session.id === selectedId) ?? null,
@@ -219,6 +233,7 @@ function useWorkSessions() {
     remove,
     updateLLMConfig,
     updateSelections,
+    updateIdentity,
     refresh,
     loading,
     error,
@@ -528,7 +543,7 @@ function WorkTopBarControl({
 }
 
 export function WorkSurface() {
-  const { sessions, selected, select, create, remove, updateLLMConfig, updateSelections, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
+  const { sessions, selected, select, create, remove, updateLLMConfig, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
   const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
     if (!selected) return
@@ -584,6 +599,9 @@ export function WorkSurface() {
   const splitLayoutRef = useRef<HTMLDivElement>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
   const splitRatioRef = useRef(splitRatio)
+  // All split classes derive from the shared layout resolver: one decision
+  // point for every flag combination (see workSurfaceLayoutResolver.ts).
+  const layout = resolveWorkSurfaceLayout({ chatOpen, panelOpen, splitRatio })
   const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(() => readReportPreviewPreference(selected?.workspacePath))
   const { start: startSplitDrag, stop: stopSplitDrag } = usePointerDrag()
   const [createError, setCreateError] = useState<string | null>(null)
@@ -598,7 +616,7 @@ export function WorkSurface() {
   const openWorkPresentationView = useCallback((view: string, target?: string) => {
     if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
-    if (enabledWorkspacePanels && !enabledWorkspacePanels.has(panel)) return
+    if (!isWorkWorkspaceViewEnabled(panel, enabledWorkspacePanels)) return
     if (panel === 'schedules') {
       const automationTarget = view === 'bots' ? 'bots' : target === 'webhooks' ? 'triggers' : target || 'schedules'
       useWorkflowStore.getState().openWorkspaceView('workshop', automationTarget)
@@ -698,9 +716,11 @@ export function WorkSurface() {
   }, [selected?.workspacePath])
 
   useEffect(() => {
-    if (enabledWorkspacePanels && !enabledWorkspacePanels.has(workspaceView)) {
-      const fallback = enabledWorkspacePanels.has('dashboard') ? 'dashboard' : enabledWorkspacePanels.has('files') ? 'files' : [...enabledWorkspacePanels][0]
-      if (fallback) selectWorkspaceView(fallback as WorkWorkspaceView)
+    if (!isWorkWorkspaceViewEnabled(workspaceView, enabledWorkspacePanels)) {
+      // Identity is always enabled, so this always terminates.
+      const fallback = (['dashboard', 'files', 'identity'] as const)
+        .find(view => isWorkWorkspaceViewEnabled(view, enabledWorkspacePanels)) ?? 'identity'
+      selectWorkspaceView(fallback)
     }
   }, [enabledWorkspacePanels, selectWorkspaceView, workspaceView])
 
@@ -815,6 +835,7 @@ export function WorkSurface() {
         loadingText="Deleting Crew…"
         type="danger"
         isLoading={deletingProjectId !== null}
+        requireText={deleteCandidate ? deleteCandidate.identity?.name || deleteCandidate.title : undefined}
       />
       <div
         data-ui-workspace={selected?.workspacePath}
@@ -893,14 +914,14 @@ export function WorkSurface() {
               ) : null}
               <div
                 ref={splitLayoutRef}
-                className={`grid h-full min-h-0 min-w-0 grid-cols-1 grid-rows-[auto_minmax(0,1fr)] ${chatOpen && panelOpen ? 'md:[grid-template-columns:var(--work-split-columns)]' : ''}`}
-                style={chatOpen && panelOpen ? ({ '--work-split-columns': `minmax(240px, ${splitRatio}fr) minmax(240px, ${1 - splitRatio}fr)` } as React.CSSProperties) : undefined}
+                className={layout.gridClassName}
+                style={layout.gridStyle}
               >
-                <WorkspaceTopToolbar className={`${chatOpen && panelOpen ? 'md:col-span-2' : ''} col-start-1 row-start-1`}>
+                <WorkspaceTopToolbar className={layout.toolbarClassName}>
                   {tabId && canonicalTabId && selected ? <WorkChatTabs projectId={selected.id} canonicalTabId={canonicalTabId} /> : <div className="min-w-0 flex-1" />}
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
-                {chatOpen ? <main className={`flex min-h-0 min-w-0 flex-col overflow-hidden bg-background col-start-1 row-start-2 ${panelOpen ? 'border-b border-border md:border-b-0 md:border-r' : ''}`}>
+                {layout.showChat ? <main className={layout.chatClassName}>
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
@@ -919,7 +940,7 @@ export function WorkSurface() {
                     </div>
                   )}
                 </main> : null}
-                {chatOpen && panelOpen ? (
+                {layout.showDivider ? (
                   <WorkspaceSplitRail
                     ratio={splitRatio}
                     onPointerDown={handleSplitPointerDown}
@@ -931,11 +952,11 @@ export function WorkSurface() {
                     onCollapseWorkspace={() => setPanelOpen(false)}
                   />
                 ) : null}
-                {panelOpen ? (
+                {layout.showPanel ? (
                   <aside
                     data-ui-workspace={selected.workspacePath}
                     data-ui-view={workPresentationView(workspaceView)}
-                    className={`min-h-0 min-w-0 overflow-hidden bg-background row-start-2 ${chatOpen ? 'md:col-start-2' : 'col-start-1'}`}
+                    className={layout.panelClassName}
                   >
                   {tabId ? (
                     <><span hidden data-ui-view-mounted /><WorkWorkspacePane
@@ -947,7 +968,6 @@ export function WorkSurface() {
                         tabId={tabId}
                         onClose={() => setPanelOpen(false)}
                         view={workspaceView}
-                        onViewChange={selectWorkspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}
@@ -962,6 +982,8 @@ export function WorkSurface() {
                           await updateSelections(selected.id, { workflowContextPaths: paths })
                           markWorkProjectRuntimeDirty(selected.id)
                         }}
+                        onUpdateIdentity={patch => updateIdentity(selected.id, patch)}
+                        onDeleteRequest={() => setDeleteCandidate(selected)}
                       /></>
                   ) : (
                     <div className="grid h-full place-items-center text-sm text-muted-foreground">Opening workspace…</div>

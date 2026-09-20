@@ -229,3 +229,35 @@ func TestManagedGlobalPromotionAcceptsOwnedCrewProject(t *testing.T) {
 		t.Fatalf("destination could not resolve Crew-promoted global: %#v", resolved)
 	}
 }
+
+func TestGlobalRevealIsAdminOnly(t *testing.T) {
+	api := managedGlobalTestAPI(t)
+	ctx := context.Background()
+	if err := api.saveManagedGlobalSecret(ctx, "admin", "MANAGED_TOKEN", "managed-value", false); err != nil {
+		t.Fatal(err)
+	}
+	previousEnv := globalSecrets
+	globalSecrets = []globalSecretEntry{{Name: "ENV_TOKEN", Value: "env-value"}}
+	t.Cleanup(func() { globalSecrets = previousEnv })
+
+	reveal := func(uid, name string) *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		api.handleRevealGlobalSecret(rec, sharedSecretsRequest(http.MethodGet, "/api/secrets/global/reveal?name="+name, uid, nil))
+		return rec
+	}
+	if rec := reveal("admin", "MANAGED_TOKEN"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "managed-value") {
+		t.Fatalf("managed reveal: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := reveal("admin", "ENV_TOKEN"); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "env-value") {
+		t.Fatalf("env reveal: %d %s", rec.Code, rec.Body.String())
+	}
+	if rec := reveal("a1", "MANAGED_TOKEN"); rec.Code != http.StatusForbidden {
+		t.Fatalf("owner reveal: %d, want 403", rec.Code)
+	}
+	if rec := reveal("admin", "MISSING"); rec.Code != http.StatusNotFound {
+		t.Fatalf("missing reveal: %d, want 404", rec.Code)
+	}
+	if rec := reveal("admin", ""); rec.Code != http.StatusBadRequest {
+		t.Fatalf("empty reveal: %d, want 400", rec.Code)
+	}
+}

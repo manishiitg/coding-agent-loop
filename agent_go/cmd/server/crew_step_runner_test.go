@@ -481,6 +481,24 @@ func testPreflightWorkspaceWithoutCrew(t *testing.T, plan string, manifestJSON s
 	return svc
 }
 
+func TestCrewRunnerForRun(t *testing.T) {
+	schedules := &ProductScheduleService{}
+	withUser := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	if runner := crewRunnerForRun(withUser, schedules); runner == nil {
+		t.Fatal("authenticated run has no crew runner")
+	}
+	if runner := crewRunnerForRun(context.Background(), schedules); runner != nil {
+		t.Fatal("anonymous run bound a crew runner")
+	}
+	if runner := crewRunnerForRun(withUser, nil); runner != nil {
+		t.Fatal("run without crew service bound a crew runner")
+	}
+	var nilCtx context.Context
+	if runner := crewRunnerForRun(nilCtx, schedules); runner != nil {
+		t.Fatal("nil context bound a crew runner")
+	}
+}
+
 func TestAppendCrewPollTransition(t *testing.T) {
 	var timeline []stepworkflow.CrewPollTransition
 	timeline = appendCrewPollTransition(timeline, "queued")

@@ -84,96 +84,138 @@ export function descriptionFor(serverName: string): string {
 }
 
 /**
- * Section a connector is filed under in the directory, mirroring how the
- * upstream plugin directories group the same services. Presentation copy like
- * the descriptions above, not configuration.
+ * Job-based shelf a connector belongs to in the directory's unconnected
+ * list: fine-grained business shelves first (payments, customers, marketing,
+ * ...), power tools next, developer tools last. Presentation copy like the
+ * descriptions above, not configuration.
  *
- * A server with no entry falls into "Other", which is where user-added custom
- * servers land too, so nothing drops out of the directory for want of a
- * category.
+ * Keyed by the server name exactly as it appears in `mcp_servers_clean.json`.
+ * A server with no entry (including user-added custom servers, which only
+ * ever arrive through the technical JSON path) falls into `developer`, so
+ * nothing drops out of the directory for want of a group. Shelves with no
+ * matches (e.g. `accounting` until QuickBooks lands) simply don't render.
  */
-const CONNECTOR_CATEGORIES: Record<string, string> = {
-  Sentry: 'Developer Tools',
-  Grafana: 'Developer Tools',
-  Honeycomb: 'Developer Tools',
-  MongoDB: 'Developer Tools',
-  Supabase: 'Developer Tools',
-  Vercel: 'Developer Tools',
-  WorkOS: 'Developer Tools',
-  Port: 'Developer Tools',
-  Apify: 'Developer Tools',
-  Resend: 'Developer Tools',
-  Lovable: 'Developer Tools',
-  Notion: 'Productivity',
-  Linear: 'Productivity',
-  Asana: 'Productivity',
-  ClickUp: 'Productivity',
-  Atlassian: 'Productivity',
-  Stripe: 'Business & Operations',
-  Paddle: 'Business & Operations',
-  Intercom: 'Business & Operations',
-  Indeed: 'Business & Operations',
-  PostHog: 'Data & Analytics',
-  Mixpanel: 'Data & Analytics',
-  Airtable: 'Data & Analytics',
-  Canva: 'Creativity',
-  Netlify: 'Developer Tools',
-  Cloudflare: 'Developer Tools',
-  Datadog: 'Developer Tools',
-  Zapier: 'Developer Tools',
-  Miro: 'Productivity',
-  'monday.com': 'Productivity',
-  Square: 'Business & Operations',
-  PayPal: 'Business & Operations',
-  Webflow: 'Creativity',
-  CircleCI: 'Developer Tools',
-  Loops: 'Business & Operations',
-  Shortcut: 'Productivity',
-  Context7: 'Developer Tools',
-  DeepWiki: 'Developer Tools',
-  MicrosoftLearn: 'Developer Tools',
-  AWSKnowledge: 'Developer Tools',
-  Svelte: 'Developer Tools',
-  CloudflareDocs: 'Developer Tools',
-  Exa: 'Developer Tools',
-  Browserbase: 'Developer Tools',
-  Clerk: 'Developer Tools',
-  LlamaCloud: 'Developer Tools',
-  Chainstack: 'Developer Tools',
-  Nslookup: 'Developer Tools',
-  Sonatype: 'Developer Tools',
-  HuggingFace: 'Developer Tools',
-  Postman: 'Developer Tools',
-  Bitrise: 'Developer Tools',
-  BrightData: 'Developer Tools',
-  Unstructured: 'Data & Analytics',
-  Todoist: 'Productivity',
-  Dropbox: 'Productivity',
-  Lucid: 'Productivity',
-  Zendesk: 'Business & Operations',
-  Plain: 'Business & Operations',
-  Typeform: 'Business & Operations',
-  Figma: 'Creativity',
-  OpusClip: 'Creativity',
+export type ConnectorGroup =
+  | 'payments'
+  | 'accounting'
+  | 'customers'
+  | 'marketing'
+  | 'social'
+  | 'seo'
+  | 'gtm'
+  | 'releases'
+  | 'storefront'
+  | 'productivity'
+  | 'hiring'
+  | 'search'
+  | 'data'
+  | 'automation'
+  | 'advanced'
+  | 'developer'
+
+const CONNECTOR_GROUPS: Record<string, ConnectorGroup> = {
+  // Payments: taking money.
+  Stripe: 'payments',
+  Square: 'payments',
+  PayPal: 'payments',
+  // Accounting: intentionally empty until QuickBooks/Xero land.
+  // Customers: support desks today, CRM (HubSpot) tomorrow.
+  Intercom: 'customers',
+  Zendesk: 'customers',
+  Plain: 'customers',
+  // Marketing: design, video, lead forms (Mailchimp/Google Business later).
+  Canva: 'marketing',
+  Figma: 'marketing',
+  OpusClip: 'marketing',
+  Typeform: 'marketing',
+  // Social networks: empty until LinkedIn/X/YouTube land.
+  // SEO: empty until Search Console/Ahrefs/AEO trackers land.
+  // GTM: empty until Clay/Apollo/Instantly land.
+  // Releases: empty until Product Hunt/Beamer/Canny land.
+  // Sell online: sites today, Shopify tomorrow.
+  Webflow: 'storefront',
+  // Productivity: tasks, docs, files, whiteboards.
+  Notion: 'productivity',
+  Asana: 'productivity',
+  ClickUp: 'productivity',
+  'monday.com': 'productivity',
+  Todoist: 'productivity',
+  Dropbox: 'productivity',
+  Atlassian: 'productivity',
+  Miro: 'productivity',
+  Lucid: 'productivity',
+  // Hiring: job posts today, payroll (Gusto) tomorrow.
+  Indeed: 'hiring',
+  // Search: look things up (Tavily and Firecrawl later).
+  Exa: 'search',
+  // Data: structured data stores.
+  Airtable: 'data',
+  // Automation: the glue.
+  Zapier: 'automation',
+  // Advanced tools: situational power tools (scraping, raw email APIs,
+  // product analytics, dev billing, AI builders).
+  Apify: 'advanced',
+  BrightData: 'advanced',
+  Browserbase: 'advanced',
+  Unstructured: 'advanced',
+  Loops: 'advanced',
+  Resend: 'advanced',
+  Mixpanel: 'advanced',
+  PostHog: 'advanced',
+  Paddle: 'advanced',
+  Lovable: 'advanced',
+  // Developer tools: infra, observability, CI, auth, docs, AI plumbing.
+  Sentry: 'developer',
+  Datadog: 'developer',
+  Grafana: 'developer',
+  Honeycomb: 'developer',
+  Cloudflare: 'developer',
+  CloudflareDocs: 'developer',
+  Vercel: 'developer',
+  Netlify: 'developer',
+  Supabase: 'developer',
+  MongoDB: 'developer',
+  CircleCI: 'developer',
+  Bitrise: 'developer',
+  Postman: 'developer',
+  Sonatype: 'developer',
+  Port: 'developer',
+  WorkOS: 'developer',
+  Clerk: 'developer',
+  Chainstack: 'developer',
+  Nslookup: 'developer',
+  Linear: 'developer',
+  Shortcut: 'developer',
+  Context7: 'developer',
+  DeepWiki: 'developer',
+  MicrosoftLearn: 'developer',
+  AWSKnowledge: 'developer',
+  Svelte: 'developer',
+  HuggingFace: 'developer',
+  LlamaCloud: 'developer',
 }
 
-/** Fallback section for connectors with no category, including custom ones. */
-export const OTHER_CATEGORY = 'Other'
-
-/**
- * Display order for the directory's sections. A category outside this list
- * sorts after the known ones rather than disappearing.
- */
-export const CATEGORY_ORDER: string[] = [
-  'Developer Tools',
-  'Productivity',
-  'Business & Operations',
-  'Data & Analytics',
-  'Creativity',
-  OTHER_CATEGORY,
+/** Display order and labels for the directory's shelves. */
+export const GROUP_ORDER: { id: ConnectorGroup; label: string }[] = [
+  { id: 'payments', label: 'Payments' },
+  { id: 'accounting', label: 'Accounting' },
+  { id: 'customers', label: 'Customers' },
+  { id: 'marketing', label: 'Marketing' },
+  { id: 'social', label: 'Social networks' },
+  { id: 'seo', label: 'SEO' },
+  { id: 'gtm', label: 'GTM' },
+  { id: 'releases', label: 'Releases' },
+  { id: 'storefront', label: 'Sell online' },
+  { id: 'productivity', label: 'Productivity' },
+  { id: 'hiring', label: 'Hiring & HR' },
+  { id: 'search', label: 'Search' },
+  { id: 'data', label: 'Data' },
+  { id: 'automation', label: 'Automation' },
+  { id: 'advanced', label: 'Advanced tools' },
+  { id: 'developer', label: 'Developer tools' },
 ]
 
-/** The directory section a connector belongs to. */
-export function categoryFor(serverName: string): string {
-  return CONNECTOR_CATEGORIES[serverName] ?? OTHER_CATEGORY
+/** The shelf a connector belongs to. */
+export function groupFor(serverName: string): ConnectorGroup {
+  return CONNECTOR_GROUPS[serverName] ?? 'developer'
 }

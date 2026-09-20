@@ -1,6 +1,7 @@
 import React from 'react'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
+import { buildAskAIMessage } from '../../../utils/askAIMessage'
 import { UserMessageEventDisplay } from './UserMessageEvent'
 
 describe('UserMessageEventDisplay', () => {
@@ -133,5 +134,25 @@ describe('UserMessageEventDisplay', () => {
       />,
     )
     expect(plain).not.toContain('delivery-tick')
+  })
+
+  it('shows the Ask AI request with builder instructions behind a toggle', () => {
+    const html = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: buildAskAIMessage({
+            view: 'Dashboard',
+            summary: 'Help me understand my results page.',
+            instructions: 'First read the guide with read_skill(skills=[{"name":"builder-reference"}]).',
+          }),
+          role: 'user',
+        }}
+      />,
+    )
+
+    expect(html).toContain('Ask AI')
+    expect(html).toContain('Ask AI · Dashboard — Help me understand my results page.')
+    expect(html).toContain('Show detail')
+    expect(html).not.toContain('read_skill')
   })
 })

@@ -6,7 +6,6 @@ import {
   ShieldCheck,
   Activity,
   BellRing,
-  ChevronDown,
 } from 'lucide-react'
 import { useWorkflowStore, type RunFolder } from '../../../stores/useWorkflowStore'
 import { PRIMARY_WORKSPACE_TOOLBAR_VIEWS, WORKSPACE_VIEWS, type WorkspaceViewId } from '../workspaceViews'
@@ -26,6 +25,7 @@ import { hasWorkflowOwnerAccess } from '../../../utils/workflowPermissions'
 import { usePendingDecisionCount } from '../hooks/usePendingDecisionCount'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import { WorkspaceTopToolbar } from '../../workspace/WorkspaceTopToolbar'
+import { WorkspaceToolbarGroup } from '../../workspace/WorkspaceToolbarGroup'
 import { ReportDocumentSwitcher } from '../ReportDocumentSwitcher'
 import { WorkflowActivityButton } from '../../topbar/WorkflowActivityButton'
 import { useAppStore } from '../../../stores/useAppStore'
@@ -33,69 +33,44 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
-const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'execution-logs'])
-const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'backup', 'publish', 'notify'])
+const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'browser', 'workshop'])
+const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['knowledge', 'costs', 'execution-logs', 'files', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
+  identity: 'Identity',
   playbooks: 'Playbooks',
-  skills: 'Skills',
-  secrets: 'Secrets',
   mcp: 'Integrations',
-  llm: 'LLM',
-  bots: 'Bots',
-  email: 'Gmail',
-  folders: 'Folders',
 }
 
-function ToolbarPopoverGroup({ label, title, open, onToggle, children }: {
-  label: string
-  title: string
-  open: boolean
-  onToggle: () => void
-  children: React.ReactNode
-}) {
-  const rootRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-    const closeOutside = (event: MouseEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) onToggle()
-    }
-    const closeOnEscape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onToggle()
-    }
-    document.addEventListener('mousedown', closeOutside)
-    document.addEventListener('keydown', closeOnEscape)
-    return () => {
-      document.removeEventListener('mousedown', closeOutside)
-      document.removeEventListener('keydown', closeOnEscape)
-    }
-  }, [onToggle, open])
-
-  return (
-    <div ref={rootRef} className="relative inline-flex h-full items-center px-0.5">
-      <button type="button" onClick={onToggle} aria-haspopup="menu" aria-expanded={open} title={title} className={`inline-flex h-6 items-center gap-1 rounded px-2 text-[11px] font-medium transition-colors hover:bg-background/70 ${open ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
-        {label}<ChevronDown className={`h-3 w-3 transition-transform ${open ? 'rotate-180' : ''}`} aria-hidden="true" />
-      </button>
-      {open && <div role="menu" aria-label={label} className="absolute right-0 top-[calc(100%+6px)] z-50 grid w-72 grid-cols-2 gap-1 rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-xl">{children}</div>}
-    </div>
-  )
-}
-
-function ToolbarPopoverItem({ label, Icon, active, onClick, indicatorClass, ...attrs }: {
+// Icon button inside an inline Ops/Setup group: same size and tooltip behavior
+// as the always-visible primary buttons, with an optional status dot.
+function ToolbarInlineItem({ label, Icon, active, onClick, indicatorClass, ...attrs }: {
   label: string
   Icon: React.ComponentType<{ className?: string }>
   active: boolean
   onClick: () => void
   indicatorClass?: string
 } & Record<`data-${string}`, string | undefined>) {
-  return (
-    <button type="button" role="menuitem" onClick={onClick} {...attrs} className={`flex min-w-0 items-center gap-2 rounded-md px-2.5 py-2 text-left text-xs transition-colors ${active ? 'bg-muted text-foreground' : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}>
+  const button = (
+    <button
+      type="button"
+      onClick={onClick}
+      {...attrs}
+      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
+      aria-label={label}
+      aria-pressed={active}
+    >
       <span className="relative shrink-0">
         <Icon className="h-3.5 w-3.5" />
-        {indicatorClass && <span className={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full border border-popover ${indicatorClass}`} />}
+        {indicatorClass && <span className={`absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full border border-border ${indicatorClass}`} />}
       </span>
-      <span className="truncate">{label}</span>
     </button>
+  )
+  if (active) return button
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{button}</TooltipTrigger>
+      <TooltipContent side="bottom"><p>{label}</p></TooltipContent>
+    </Tooltip>
   )
 }
 
@@ -106,7 +81,7 @@ function ToolbarPopoverItem({ label, Icon, active, onClick, indicatorClass, ...a
 // views and setup controls stay expanded so their icons are directly available.
 
 const CAPABILITY_BUTTON_ATTRS: Partial<Record<WorkspaceViewId, { 'data-tour': string; 'data-testid': string }>> = {
-  bots: { 'data-tour': 'bot-connector', 'data-testid': 'tour-bot-connector' },
+  mcp: { 'data-tour': 'bot-connector', 'data-testid': 'tour-bot-connector' },
 }
 
 interface WorkflowToolbarProps {
@@ -174,14 +149,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
-  const [openToolbarMenu, setOpenToolbarMenu] = useState<'ops' | 'setup' | null>(null)
-  const toggleToolbarMenu = useCallback((menu: 'ops' | 'setup') => {
-    setOpenToolbarMenu(current => current === menu ? null : menu)
+  const [openToolbarMenu, setOpenToolbarMenu] = useState<'views' | 'ops' | 'setup'>('views')
+  const toggleToolbarMenu = useCallback((menu: 'views' | 'ops' | 'setup') => {
+    setOpenToolbarMenu(current => current === menu ? 'views' : menu)
   }, [])
-  const openFromToolbarMenu = useCallback((view: WorkspaceViewId) => {
-    openWorkspaceView(view)
-    setOpenToolbarMenu(null)
-  }, [openWorkspaceView])
 
   // Button clusters come from the view registry, in registry order. Plan is
   // always present, including for a new workflow with no steps yet.
@@ -191,6 +162,15 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     () => WORKSPACE_VIEWS.filter(view => view.toolbarGroup === 'capabilities'),
     [],
   )
+
+  // Exactly one group open at a time: the group holding the active view
+  // expands so its active button is always visible; everything else falls
+  // back to Views.
+  useEffect(() => {
+    if (OPERATIONS_TOOLBAR_VIEW_IDS.has(activeWorkspaceView)) setOpenToolbarMenu('ops')
+    else if (capabilityViewDefinitions.some(def => def.id === activeWorkspaceView) || activeWorkspaceView === 'access') setOpenToolbarMenu('setup')
+    else setOpenToolbarMenu('views')
+  }, [activeWorkspaceView, capabilityViewDefinitions])
 
   // Backup/publish/notify status dots -- lightweight polls independent of
   // whether the pane is showing that view.
@@ -406,8 +386,16 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {/* One continuous pill: frequent tools | compact menus. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          {/* Frequent tools stay visible; their icons and tooltips are enough. */}
+          {/* Exactly one group open at a time: Views, Ops, or Setup. */}
           {workspacePath && (
+            <WorkspaceToolbarGroup
+              label="Views"
+              hideLabel
+              hideToggleWhenOpen
+              open={openToolbarMenu === 'views'}
+              onToggle={() => toggleToolbarMenu('views')}
+              title="Views: Pulse, Plan, Browser and Automation"
+            >
               <div className="inline-flex items-center gap-0.5 px-0.5">
                 <Tooltip>
                   <TooltipTrigger asChild>
@@ -433,67 +421,56 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
                     app.setShowWorkflowsOverview(true)
                   }}
                 />
-                {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
-                  const active = view === activeWorkspaceView
-                  const viewButton = (
-                    <button
-                      type="button"
-                      onClick={() => openWorkspaceView(view)}
-                      className={`flex h-6 w-7 items-center justify-center rounded transition-colors ${active ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:bg-background/70 hover:text-foreground'}`}
-                      aria-label={label}
-                      aria-pressed={active}
-                    >
-                      <Icon className="h-3.5 w-3.5" />
-                    </button>
-                  )
-                  if (active) return <React.Fragment key={view}>{viewButton}</React.Fragment>
-                  return (
-                    <Tooltip key={view}>
-                      <TooltipTrigger asChild>{viewButton}</TooltipTrigger>
-                      <TooltipContent side="bottom"><p>{label}</p></TooltipContent>
-                    </Tooltip>
-                  )
-                })}
+                {workspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => (
+                  <ToolbarInlineItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openWorkspaceView(view)} />
+                ))}
               </div>
+            </WorkspaceToolbarGroup>
           )}
 
         {/* Operational views keep status and history separate from setup. */}
         {workspacePath && (
-          <ToolbarPopoverGroup
+          <WorkspaceToolbarGroup
             label="Ops"
+            hideToggleWhenOpen
             open={openToolbarMenu === 'ops'}
             onToggle={() => toggleToolbarMenu('ops')}
-            title="Operations: costs, learnings, database, files, backup, publish and notifications"
+            title="Operations: knowledge, costs, execution logs, files, backup, publish and notifications"
           >
-            {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => {
-              return <ToolbarPopoverItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openFromToolbarMenu(view)} />
-            })}
-            <ToolbarPopoverItem label="Backup" Icon={Cloud} active={activeWorkspaceView === 'backup'} onClick={() => openFromToolbarMenu('backup')} indicatorClass={getBackupDotClass(backupState)} />
-            <ToolbarPopoverItem label="Publish" Icon={Globe} active={activeWorkspaceView === 'publish'} onClick={() => openFromToolbarMenu('publish')} indicatorClass={getPublishDotClass(publishState)} />
-            <ToolbarPopoverItem label="Notifications" Icon={BellRing} active={activeWorkspaceView === 'notify'} onClick={() => openFromToolbarMenu('notify')} indicatorClass={getNotificationDotClass(notificationState)} data-testid="workflow-notification-settings-button" />
-          </ToolbarPopoverGroup>
+            <div className="inline-flex items-center gap-0.5">
+              {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => (
+                <ToolbarInlineItem key={view} label={label} Icon={Icon} active={view === activeWorkspaceView} onClick={() => openWorkspaceView(view)} />
+              ))}
+              <ToolbarInlineItem label="Backup" Icon={Cloud} active={activeWorkspaceView === 'backup'} onClick={() => openWorkspaceView('backup')} indicatorClass={getBackupDotClass(backupState)} />
+              <ToolbarInlineItem label="Publish" Icon={Globe} active={activeWorkspaceView === 'publish'} onClick={() => openWorkspaceView('publish')} indicatorClass={getPublishDotClass(publishState)} />
+              <ToolbarInlineItem label="Notifications" Icon={BellRing} active={activeWorkspaceView === 'notify'} onClick={() => openWorkspaceView('notify')} indicatorClass={getNotificationDotClass(notificationState)} data-testid="workflow-notification-settings-button" />
+            </div>
+          </WorkspaceToolbarGroup>
         )}
 
         {/* Workflow capabilities remain discoverable for readers. Each panel
             owns its read-only state and disables mutations in place. */}
         {workspacePath && (
-          <ToolbarPopoverGroup
+          <WorkspaceToolbarGroup
             label="Setup"
+            hideToggleWhenOpen
             open={openToolbarMenu === 'setup'}
             onToggle={() => toggleToolbarMenu('setup')}
-            title="Setup: playbooks, skills, secrets, integrations, LLM, bots, Gmail, folders and access"
+            title="Setup: identity, integrations, playbooks and access"
           >
-            {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
-              const active = workflowWorkspaceView === id
-              return <ToolbarPopoverItem key={id} label={SETUP_TOOLBAR_LABELS[id] ?? label} Icon={Icon} active={active} onClick={() => openFromToolbarMenu(id)} {...CAPABILITY_BUTTON_ATTRS[id]} />
-            })}
-            {/* Access lives with the rest of setup: one button, one panel
-                with two tabs -- who may see or edit THIS workflow, and (for
-                admins) the deployment's accounts, roles and products. */}
-            {isMultiUser && workspacePath && (
-              <ToolbarPopoverItem label={canManageAccess ? 'Access and users' : 'Access'} Icon={ShieldCheck} active={workflowWorkspaceView === 'access'} onClick={() => openFromToolbarMenu('access')} />
-            )}
-          </ToolbarPopoverGroup>
+            <div className="inline-flex items-center gap-0.5">
+              {capabilityViewDefinitions.map(({ id, icon: Icon, label }) => {
+                const active = workflowWorkspaceView === id
+                return <ToolbarInlineItem key={id} label={SETUP_TOOLBAR_LABELS[id] ?? label} Icon={Icon} active={active} onClick={() => openWorkspaceView(id)} {...CAPABILITY_BUTTON_ATTRS[id]} />
+              })}
+              {/* Access lives with the rest of setup: one button, one panel
+                  with two tabs -- who may see or edit THIS workflow, and (for
+                  admins) the deployment's accounts, roles and products. */}
+              {isMultiUser && workspacePath && (
+                <ToolbarInlineItem label={canManageAccess ? 'Access and users' : 'Access'} Icon={ShieldCheck} active={workflowWorkspaceView === 'access'} onClick={() => openWorkspaceView('access')} />
+              )}
+            </div>
+          </WorkspaceToolbarGroup>
         )}
           </div>
           )}

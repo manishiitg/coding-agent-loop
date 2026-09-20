@@ -19,6 +19,8 @@ import {
   chromeCdpZipUrl,
 } from '../utils/cdpSetup'
 import { isBrowserCDPEnabled } from '../utils/runtimeCapabilities'
+import { Button } from './ui/Button'
+import { Input } from './ui/Input'
 
 export type BrowserAutomationMode = 'none' | 'auto' | 'headless' | 'cdp'
 
@@ -57,15 +59,16 @@ const CommandBlock: React.FC<CommandBlockProps> = ({ command, label }) => {
     <div className="min-w-0 space-y-1.5">
       <div className="flex items-center justify-between gap-3">
         <span className="text-xs font-medium text-gray-600 dark:text-gray-300">{label}</span>
-        <button
+        <Button
           type="button"
+          variant="link"
+          size="sm"
           onClick={copyCommand}
-          className="inline-flex items-center gap-1 text-[11px] font-medium text-gray-500 transition-colors hover:text-gray-900 dark:text-gray-400 dark:hover:text-white"
           aria-label={`Copy ${label.toLowerCase()}`}
         >
           {copied ? <Check className="h-3 w-3 text-emerald-500" /> : <Copy className="h-3 w-3" />}
           {copied ? 'Copied' : 'Copy'}
-        </button>
+        </Button>
       </div>
       <div className="w-full min-w-0 max-w-full overflow-x-auto rounded-md border border-gray-200 bg-gray-950 dark:border-gray-700">
         <pre className="w-max min-w-full whitespace-pre px-3 py-2.5 pr-8 text-[11px] leading-relaxed text-cyan-300"><code>{command}</code></pre>
@@ -224,25 +227,25 @@ const BrowserAutomationSettings: React.FC<BrowserAutomationSettingsProps> = ({
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
               <label className="block sm:w-40">
                 <span className="mb-1 block text-xs font-medium text-gray-600 dark:text-gray-300">Chrome CDP port</span>
-                <input
+                <Input
                   type="number"
                   value={cdpPort}
                   disabled={readOnly}
                   onChange={(event) => onCdpPortChange(parseInt(event.target.value, 10) || 9222)}
-                  className="w-full rounded-md border border-gray-300 bg-white px-3 py-2 text-sm text-gray-900 outline-none focus:border-emerald-500 dark:border-gray-600 dark:bg-gray-800 dark:text-white"
                   min={1}
                   max={65535}
+                  aria-label="Chrome CDP port"
                 />
               </label>
-              <button
+              <Button
                 type="button"
+                variant="outline"
                 onClick={() => onCheckCdpConnection(cdpPort)}
                 disabled={cdpChecking}
-                className="inline-flex h-9 items-center justify-center gap-1.5 rounded-md border border-gray-300 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:bg-gray-100 disabled:opacity-50 dark:border-gray-600 dark:bg-gray-800 dark:text-gray-200 dark:hover:bg-gray-700"
               >
                 {cdpChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
                 Check now
-              </button>
+              </Button>
             </div>
 
             {cdpConnected === false && (

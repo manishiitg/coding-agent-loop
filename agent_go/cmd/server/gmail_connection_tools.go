@@ -40,7 +40,7 @@ const gmailGrantMismatchNote = "granted_scopes reflects the last SUCCESSFUL conn
 // changes what the account can actually do. Google fixes a token's scope at
 // consent time; there is no API to widen it after the fact. The agent must
 // tell the user to open the link and reconnect, and should also open the
-// Bots settings panel (workflowWorkspaceViews "bots") so they can see the
+// Integrations panel (workflowWorkspaceViews "mcp", Gmail tab) so they can see the
 // updated request and click Reconnect there too if the link doesn't suit.
 func (api *StreamingAPI) registerGmailConnectionManagementTools(registrar definitionToolRegistrar, sessionID, workspacePath string) error {
 	serviceNames := services.GoogleServiceCatalog()
@@ -175,7 +175,7 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 		return "", fmt.Errorf("saved the new request, but could not start the reconnect flow: %w. Tell the user to open the Sending accounts panel and click Reconnect themselves", err)
 	}
 
-	if event, viewErr := workspaceViewPresentation("bots", workspacePath); viewErr == nil {
+	if event, viewErr := workspaceViewPresentation("mcp", workspacePath); viewErr == nil {
 		api.emitAgentProfileEvent(sessionID, event)
 	}
 

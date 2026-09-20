@@ -9,7 +9,6 @@ import {
   Database,
   Loader2,
   AlertCircle,
-  RefreshCw,
   ChevronDown,
   ChevronRight,
   FileText,
@@ -18,10 +17,14 @@ import {
 import { agentApi, workflowManifestApi } from '../../services/api'
 import { KnowledgebaseSources } from './KnowledgebaseSources'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 interface KnowledgebaseViewProps {
   workspacePath: string | null
   headerAction?: ReactNode
+  /** Embedded in the Knowledge umbrella: the umbrella owns the header. */
+  hideHeader?: boolean
 }
 
 interface KBNotesTopic {
@@ -189,16 +192,15 @@ function formatFreshnessDate(timestamp: string): string {
   return `Fresh ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 }
 
-export default function KnowledgebaseView({ workspacePath, headerAction }: KnowledgebaseViewProps) {
+export default function KnowledgebaseView({ workspacePath, headerAction, hideHeader = false }: KnowledgebaseViewProps) {
  const [sourceAlias, setSourceAlias] = useState('')
  useEffect(() => setSourceAlias(''), [workspacePath])
  return <div className="flex h-full min-h-0 flex-col">
-   {workspacePath && <KnowledgebaseSources workspacePath={workspacePath} selected={sourceAlias} onSelect={setSourceAlias} />}
-   <div className="min-h-0 flex-1"><KnowledgebaseContent key={`${workspacePath}:${sourceAlias}`} workspacePath={workspacePath} headerAction={sourceAlias ? undefined : headerAction} sourceAlias={sourceAlias} /></div>
+   <div className="min-h-0 flex-1"><KnowledgebaseContent key={`${workspacePath}:${sourceAlias}`} workspacePath={workspacePath} headerAction={sourceAlias ? undefined : headerAction} hideHeader={hideHeader} sourceAlias={sourceAlias} onSelectSource={setSourceAlias} /></div>
  </div>
 }
 
-function KnowledgebaseContent({ workspacePath, headerAction, sourceAlias }: KnowledgebaseViewProps & {sourceAlias: string}) {
+function KnowledgebaseContent({ workspacePath, headerAction, hideHeader = false, sourceAlias, onSelectSource }: KnowledgebaseViewProps & {sourceAlias: string; onSelectSource: (alias: string) => void}) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [notesIndex, setNotesIndex] = useState<KBNotesIndex | null>(null)
@@ -283,27 +285,21 @@ function KnowledgebaseContent({ workspacePath, headerAction, sourceAlias }: Know
 
   return (
       <div className="flex h-full min-h-0 w-full flex-col bg-background">
-        {/* Header */}
-        <div className="flex items-start justify-between gap-3 p-3 border-b border-border flex-shrink-0 sm:p-4">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <Database className="w-5 h-5 text-primary" />
-            <h2 className="text-lg font-semibold">Knowledgebase</h2>
-            <span className="text-xs text-muted-foreground sm:ml-2">
-              notes/ · narrative topics
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={load}
-              disabled={loading}
-              className="p-1.5 rounded-md hover:bg-muted transition-colors disabled:opacity-50"
-              title="Refresh"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-            </button>
-            {headerAction}
-          </div>
-        </div>
+        {/* Header — always first; the source picker below scopes the content. */}
+        {!hideHeader && (
+          <WorkspaceViewHeader
+            icon={Database}
+            title="Knowledgebase"
+            context={<span className="text-xs text-muted-foreground">notes/ · narrative topics</span>}
+            actions={<>
+              {headerAction}
+              <WorkspaceViewIconButton label="Refresh knowledgebase" onClick={load} disabled={loading} spinning={loading} />
+            </>}
+          />
+        )}
+
+        {/* Source picker — which knowledge this view shows. */}
+        {workspacePath && <KnowledgebaseSources workspacePath={workspacePath} selected={sourceAlias} onSelect={onSelectSource} />}
 
         {/* Summary strip */}
         <div className="flex items-center gap-4 px-4 py-3 border-b border-border flex-shrink-0 text-sm">

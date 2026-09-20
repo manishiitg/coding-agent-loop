@@ -983,10 +983,16 @@ func TestThreadlessPlainStopIsForwardedNotControl(t *testing.T) {
 	}
 }
 
-func TestThreadlessPrefixedDoneEndsSession(t *testing.T) {
+func TestThreadlessPrefixedDoneIsForwardedNotControl(t *testing.T) {
 	manager := NewBotConversationManager(nil, "", "")
 	connector := &testBotConnector{}
 	manager.RegisterConnector(connector)
+
+	followUps := make(chan string, 1)
+	manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, _ string, _ string) error {
+		followUps <- req["query"].(string)
+		return nil
+	})
 
 	threadID := ThreadID{Platform: "whatsapp", ChannelID: "dm", ThreadTS: "dm"}
 	active := &activeBotSession{
@@ -1000,17 +1006,28 @@ func TestThreadlessPrefixedDoneEndsSession(t *testing.T) {
 	}
 	manager.sessions[threadID.Key()] = active
 
+	// End commands were removed: "@done" is ordinary text now. The session
+	// stays, and the text reaches the agent as a follow-up.
 	manager.handleExistingSession(active, BotIncomingMessage{
 		Platform:  "whatsapp",
 		ChannelID: "dm",
 		Text:      "@done",
 	}, false)
 
+	select {
+	case got := <-followUps:
+		if got != "@done" {
+			t.Fatalf("follow-up query = %q, want @done", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected @done to be forwarded")
+	}
+
 	manager.mu.RLock()
 	_, exists := manager.sessions[threadID.Key()]
 	manager.mu.RUnlock()
-	if exists {
-		t.Fatal("expected @done to remove active threadless session")
+	if !exists {
+		t.Fatal("expected @done to leave the active threadless session in place")
 	}
 }
 

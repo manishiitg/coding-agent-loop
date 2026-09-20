@@ -1,4 +1,5 @@
 // @vitest-environment happy-dom
+import { readFileSync } from 'node:fs'
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { describe, expect, it, vi } from 'vitest'
@@ -95,6 +96,57 @@ describe('schedule panel views', () => {
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 
+  it('hides its header row for hosts that own the header', async () => {
+    const { state } = buildPanelState({ isWorkflowScoped: true })
+    hookState.current = state
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    await act(async () => root.render(<WorkflowScheduleRunsPanel embedded hideHeader onClose={() => {}} />))
+    try {
+      expect(host.textContent).not.toContain('Automation Schedules')
+      expect(host.querySelector('[aria-label="Schedule views"]')).not.toBeNull()
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('reloads jobs when the owning header bumps refreshToken', async () => {
+    const { state } = buildPanelState()
+    const loadJobs = state.loadJobs as ReturnType<typeof vi.fn>
+    hookState.current = state
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    await act(async () => root.render(<WorkflowScheduleRunsPanel embedded hideHeader refreshToken={0} onClose={() => {}} />))
+    try {
+      expect(loadJobs).not.toHaveBeenCalled()
+      await act(async () => root.render(<WorkflowScheduleRunsPanel embedded hideHeader refreshToken={1} onClose={() => {}} />))
+      expect(loadJobs).toHaveBeenCalledWith(true)
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('reports status snapshots for the owning header', async () => {
+    const { state } = buildPanelState()
+    const onStatus = vi.fn()
+    hookState.current = state
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    await act(async () => root.render(<WorkflowScheduleRunsPanel embedded hideHeader onStatus={onStatus} onClose={() => {}} />))
+    try {
+      expect(onStatus).toHaveBeenCalled()
+      const snapshot = onStatus.mock.calls[0][0] as Record<string, unknown>
+      expect((snapshot.summary as { total: number }).total).toBe(1)
+      expect(snapshot.isLoading).toBe(false)
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('keeps views, search, and state filter in one toolbar row without a count line', async () => {
+    const { state } = buildPanelState({ isWorkflowScoped: true })
+    const { host, root } = await renderPanel(state)
+    try {
+      const toolbar = host.querySelector('.sticky')
+      expect(toolbar?.querySelector('[aria-label="Schedule views"]')).not.toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Search schedules"]')).not.toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Filter schedules by state"]')).not.toBeNull()
+      expect(host.querySelectorAll('[aria-label="Search schedules"]').length).toBe(1)
+      expect(host.textContent).not.toContain('1 schedule · All')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
   it('shares Schedules, Triggers, and Bots in one product automation hub', async () => {
     const { state } = buildPanelState()
     hookState.current = state
@@ -108,5 +160,15 @@ describe('schedule panel views', () => {
       await act(async () => { tabs[2]!.click(); await Promise.resolve() })
       expect(host.querySelector('[data-testid="bots"]')).not.toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
+  })
+})
+
+describe('schedule group headers', () => {
+  it('use card-title style instead of kickers', () => {
+    const list = readFileSync('src/components/scheduler/scheduleRuns/ScheduleListView.tsx', 'utf8')
+    expect(list).toContain('text-sm font-semibold text-foreground">Automation schedules')
+    expect(list).toContain('text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules')
+    expect(list).not.toContain('uppercase tracking-wide text-amber-600')
+    expect(list).not.toContain('uppercase tracking-wide text-muted-foreground">Automation schedules')
   })
 })

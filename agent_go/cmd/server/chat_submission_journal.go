@@ -47,6 +47,19 @@ type chatSubmissionUnknownProjectKey struct{}
 
 const queuedChatSubmissionDedupeWindow = 2 * time.Minute
 
+const (
+	// uncertainSubmissionAdoptTimeout bounds how long a same-key retry waits
+	// for the in-flight dispatch to resolve its journal record before the
+	// retry is answered 409. finish() resolves the record when the first
+	// attempt's HTTP handling completes, so ordinary races (double submit,
+	// impatience retry, timeout redelivery) adopt within seconds; only a
+	// genuinely wedged dispatch still surfaces delivery_uncertain.
+	uncertainSubmissionAdoptTimeout = 30 * time.Second
+	// uncertainSubmissionAdoptPollInterval spaces journal re-reads while a
+	// retry waits. Reads are small single-file fetches.
+	uncertainSubmissionAdoptPollInterval = 500 * time.Millisecond
+)
+
 func submissionDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return hex.EncodeToString(sum[:])
@@ -173,16 +186,15 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 		} else {
 			lock.Unlock()
 			if previous.State == "delivery_uncertain" {
+				if adopted := api.awaitUncertainChatSubmission(r.Context(), store, path); adopted != nil {
+					log.Printf("[CHAT_SUBMISSION] Adopted resolved submission %s for same-key retry", adopted.ID)
+					replayChatSubmissionOutcome(w, *adopted)
+					return w, r, func() {}, false
+				}
 				writeSubmissionUncertain(w, id)
 				return w, r, func() {}, false
 			}
-			if previous.HTTPStatus < 100 || previous.HTTPStatus > 599 || previous.Response == "" {
-				http.Error(w, "Incomplete durable submission outcome", http.StatusServiceUnavailable)
-				return w, r, func() {}, false
-			}
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(previous.HTTPStatus)
-			_, _ = w.Write([]byte(previous.Response))
+			replayChatSubmissionOutcome(w, previous)
 			return w, r, func() {}, false
 		}
 	}
@@ -267,6 +279,63 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 	}
 	r = r.WithContext(context.WithValue(r.Context(), chatSubmissionContextKey{}, chatSubmissionContext{ID: id, Owner: owner, Session: session, Message: message}))
 	return capture, r, finish, true
+}
+
+// awaitUncertainChatSubmission waits for an in-flight dispatch to resolve the
+// journal record at path, returning the resolved record so a same-key retry
+// transparently adopts the first attempt's outcome instead of surfacing 409.
+// It returns nil when the record stays uncertain past the bounded wait, the
+// request ends, or the journal cannot be read: genuinely stuck dispatches keep
+// the 409 so a duplicate is never sent blind. Callers must not hold the path
+// lock: finish() saves without it, and holding it would serialize every
+// same-key retry behind the full wait.
+func (api *StreamingAPI) awaitUncertainChatSubmission(ctx context.Context, store chatSubmissionStore, path string) *chatSubmissionRecord {
+	timeout := uncertainSubmissionAdoptTimeout
+	interval := uncertainSubmissionAdoptPollInterval
+	if api != nil {
+		if api.internalUncertainSubmissionAdoptTimeout > 0 {
+			timeout = api.internalUncertainSubmissionAdoptTimeout
+		}
+		if api.internalUncertainSubmissionAdoptPollInterval > 0 {
+			interval = api.internalUncertainSubmissionAdoptPollInterval
+		}
+	}
+	deadline := time.Now().Add(timeout)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case <-ticker.C:
+		}
+		// A read failure is not a resolution. Workspace reads can flap;
+		// torn output keeps the retry waiting instead of 409ing early.
+		readCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
+		raw, exists, err := store.read(readCtx, path)
+		cancel()
+		if err == nil && exists {
+			var current chatSubmissionRecord
+			if json.Unmarshal([]byte(raw), &current) == nil && current.State != "" && current.State != "delivery_uncertain" {
+				return &current
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil
+		}
+	}
+}
+
+// replayChatSubmissionOutcome serves a previously stored submission outcome so
+// a retry adopts the first attempt's result instead of dispatching again.
+func replayChatSubmissionOutcome(w http.ResponseWriter, record chatSubmissionRecord) {
+	if record.HTTPStatus < 100 || record.HTTPStatus > 599 || record.Response == "" {
+		http.Error(w, "Incomplete durable submission outcome", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(record.HTTPStatus)
+	_, _ = w.Write([]byte(record.Response))
 }
 
 // canRetryUncertainChatSubmission proves that an ambiguous receipt was not

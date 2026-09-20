@@ -1156,3 +1156,14 @@ every other creation write already used raw helpers. A regression test runs
 creation under a Builder-style guard. Retrying with the same idempotency key
 adopts the receipt and converges the half-written crew instead of duplicating
 it.
+
+## Model inheritance + runner binding — 2026-09-20
+
+Two production follow-ups. New crews inherit the creating workflow's model
+(provider profiles resolve through the same defaults the engine uses;
+explicit builder choices carry over verbatim), falling back to the profile
+default only when the workflow names nothing usable. And the server-owned
+crew runner now binds on every authenticated run path — UI runs, Builder
+chat runs, live input, schedules, webhooks — instead of only runs carrying
+execution options, so crew steps test identically from Builder; the old
+error text wrongly claimed scheduler-only execution.

@@ -1323,9 +1323,13 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		if input.Group != "" && !slices.Contains(sched.GroupNames, input.Group) {
 			return "", errors.New("group is no longer allowed by this trigger")
 		}
-		for name := range input.Variables {
-			if !slices.Contains(sched.Webhook.AllowedVariables, name) {
-				return "", fmt.Errorf("variable %q is no longer allowed by this trigger", name)
+		// Internal triggers carry no per-trigger variable allowlist; workflow-
+		// declared variables are still gated by validateWebhookVariableNames.
+		if sched.Webhook != nil {
+			for name := range input.Variables {
+				if !slices.Contains(sched.Webhook.AllowedVariables, name) {
+					return "", fmt.Errorf("variable %q is no longer allowed by this trigger", name)
+				}
 			}
 		}
 		if input.Group != "" {
@@ -1333,9 +1337,11 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		}
 		resolvedStepID, resolvedRoutes := resolvedWebhookExecutionTarget(*sched, input)
 		sctx.Schedule.RouteSelections = resolvedRoutes
-		webhookConfig := *sched.Webhook
-		webhookConfig.StepID = resolvedStepID
-		sctx.Schedule.Webhook = &webhookConfig
+		if sched.Webhook != nil {
+			webhookConfig := *sched.Webhook
+			webhookConfig.StepID = resolvedStepID
+			sctx.Schedule.Webhook = &webhookConfig
+		}
 		if err := validateWebhookTarget(ctx, workspacePath, resolvedStepID, resolvedRoutes); err != nil {
 			return "", err
 		}
@@ -1392,7 +1398,7 @@ func (s *SchedulerService) triggerSavedSchedule(workspacePath, scheduleID, origi
 		activeDeliveries := activeWebhookDeliveryCount(s.runtimeStates, workspacePath, scheduleID)
 		if activeDeliveries >= maxWebhookConcurrency {
 			s.runtimeStatesMu.Unlock()
-			return "", fmt.Errorf("webhook concurrency limit reached (%d active deliveries)", activeDeliveries)
+			return "", fmt.Errorf("%w (%d active deliveries)", ErrWebhookConcurrencyLimit, activeDeliveries)
 		}
 	}
 	state := s.getRuntimeStateLocked(runtimeKey)

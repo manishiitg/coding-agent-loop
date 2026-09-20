@@ -42,7 +42,7 @@ import ToastHost from './components/ui/ToastHost'
 const queryClient = new QueryClient();
 
 const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'))
-const WorkflowsOverviewPage = lazy(() => import('./components/WorkflowsOverviewPage').then(module => ({ default: module.WorkflowsOverviewPage })))
+const WorkflowsOverviewPage = lazy(() => import('./components/ActivityPage'))
 const SchedulesPage = lazy(() => import('./components/SchedulesPage'))
 const VideoStudioSurface = lazy(() => import('./products/video-studio/VideoStudioSurface').then(module => ({ default: module.VideoStudioSurface })))
 const DominionSurface = lazy(() => import('./products/dominion/DominionSurface').then(module => ({ default: module.DominionSurface })))

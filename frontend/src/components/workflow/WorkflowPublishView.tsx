@@ -18,9 +18,19 @@ const FALLBACK_SUPPORTED: WorkflowPublishStrategyInfo[] = [
 ]
 
 const getPublishSummary = (info: WorkflowPublishInfoResponse | null): string => {
-  if (info?.status?.summary) return info.status.summary
-  if (!info?.config?.enabled) return 'No publish destination is configured yet.'
-  return 'Publish status is waiting for the builder to update publish/status.json.'
+  if (!info?.config?.enabled) return 'Not published yet. Set one up with /publish in chat.'
+  switch (info?.effective_state) {
+    case 'published':
+      return 'Published. Your site is up to date.'
+    case 'publishing':
+      return 'Publishing now.'
+    case 'configured_not_verified':
+      return 'Set up. Waiting for the first publish.'
+    case 'failed':
+      return 'Last publish failed.'
+    default:
+      return 'Waiting for publish status.'
+  }
 }
 
 const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath, onStateLoaded, headerAction }) => {
@@ -42,14 +52,11 @@ const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath
       onStateLoaded={onStateLoaded}
       fallbackStrategies={FALLBACK_SUPPORTED}
       subtitle="Share this automation's Pulse log and dashboard at a public URL"
-      emptyDestinationsText="Use setup to pick a static host (Netlify, Vercel, Cloudflare Pages, GitHub Pages, S3, ...) — any static host works."
-      destinationsHelp="The builder deploys to these and writes the URL."
+      emptyDestinationsText="No hosts yet — set one up with /publish in chat. Any static host works."
+      destinationsHelp="Deploys update automatically."
+      askContext={{ workspacePath, strategyVerb: 'publish this workflow to' }}
       supportedHelp="Suggestions, not a limit — any static host works."
-      statusPathFallback="publish/status.json"
       defaultTargetLabel="pulse, dashboard"
-      setupAction={{
-        label: <>Set up · publish in chat with <code className="rounded bg-background px-1 font-medium text-foreground">/publish</code></>
-      }}
       getSummary={getPublishSummary}
       headerAction={headerAction}
     />

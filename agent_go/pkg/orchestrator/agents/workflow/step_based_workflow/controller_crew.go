@@ -38,7 +38,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeCrewStep(
 	opts := hcpo.GetExecutionOptions()
 	if opts == nil || opts.CrewRunner == nil {
 		return CrewStepResult{}, updatedContextFiles, fmt.Errorf(
-			"crew step %q cannot run here: the current run path does not bind a Crew runner (crew steps execute on scheduler runs)", crewStep.GetID())
+			"crew step %q cannot run here: the current run path does not bind a Crew runner (crew steps need an authenticated run with crew access)", crewStep.GetID())
 	}
 
 	stepPath := fmt.Sprintf("step-%d", stepIndex+1)

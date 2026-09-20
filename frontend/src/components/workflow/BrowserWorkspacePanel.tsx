@@ -1,7 +1,9 @@
 import { useState, type ReactNode } from 'react'
+import { Button } from '../ui/Button'
 import { Settings2, X } from 'lucide-react'
 import BrowserAutomationSettings, { type BrowserAutomationMode } from '../BrowserAutomationSettings'
 import WorkflowLiveBrowser from './WorkflowLiveBrowser'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 interface BrowserWorkspacePanelProps {
   workspacePath: string | null
@@ -48,16 +50,8 @@ export function BrowserWorkspacePanel({
   return (
     <div className="relative flex h-full min-h-0 flex-1 flex-col">
       <WorkflowLiveBrowser workspacePath={workspacePath} scopeNoun={scopeNoun} toolbar={<>
+        <WorkspaceViewIconButton label="Browser settings" icon={Settings2} onClick={() => setSettingsOpen(value => !value)} />
         {assistantControl}
-        <button
-          type="button"
-          aria-label="Browser settings"
-          title="Browser settings"
-          onClick={() => setSettingsOpen(value => !value)}
-          className="rounded p-1.5 text-muted-foreground hover:bg-muted"
-        >
-          <Settings2 className="h-4 w-4" />
-        </button>
       </>} />
       {settingsOpen && (
         <div
@@ -67,14 +61,16 @@ export function BrowserWorkspacePanel({
         >
           <div className="mb-3 flex items-center justify-between">
             <h3 className="text-sm font-medium">Browser settings</h3>
-            <button
+            <Button
               type="button"
+              variant="ghost"
+              size="icon"
               aria-label="Close browser settings"
               onClick={() => setSettingsOpen(false)}
-              className="rounded p-1 hover:bg-muted"
+              className="h-7 w-7"
             >
               <X className="h-4 w-4" />
-            </button>
+            </Button>
           </div>
           <BrowserAutomationSettings
             browserMode={browserMode}
@@ -91,14 +87,14 @@ export function BrowserWorkspacePanel({
           {!readOnly && onSave && (
             <div className="mt-3 flex items-center justify-end gap-3 border-t pt-3">
               {dirty && <span className="text-xs text-muted-foreground">Unsaved changes</span>}
-              <button
+              <Button
                 type="button"
+                size="sm"
                 disabled={!dirty || saving}
                 onClick={onSave}
-                className="rounded bg-primary px-3 py-1.5 text-xs text-primary-foreground disabled:opacity-50"
               >
                 {saving ? 'Saving…' : 'Save settings'}
-              </button>
+              </Button>
             </div>
           )}
         </div>

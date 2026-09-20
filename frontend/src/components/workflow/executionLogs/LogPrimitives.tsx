@@ -29,7 +29,7 @@ export const StepMetadata = ({ description, successCriteria }: { description?: s
       <div className="max-h-[45vh] space-y-3 overflow-y-auto border-t border-border p-4">
         {description && (
           <div>
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+            <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <FileText className="h-3 w-3" /> Description
             </div>
             <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
@@ -39,7 +39,7 @@ export const StepMetadata = ({ description, successCriteria }: { description?: s
         )}
         {successCriteria && (
           <div>
-            <div className="mb-1 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider text-emerald-600 dark:text-emerald-400">
+            <div className="mb-1 flex items-center gap-1.5 text-xs font-medium text-muted-foreground">
               <CheckCircle className="h-3 w-3" /> Success Criteria
             </div>
             <p className="rounded border border-emerald-500/15 bg-emerald-500/[0.04] p-2 text-xs leading-relaxed text-foreground">
@@ -84,9 +84,9 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
   if (reviews.length === 0) return null
 
   return (
-    <section className="overflow-hidden rounded-lg border border-sky-500/20 bg-sky-500/[0.025]">
-      <div className="flex items-center gap-2 border-b border-sky-500/15 px-4 py-3">
-        <Gauge className="h-4 w-4 text-sky-500" />
+    <section className="overflow-hidden rounded-lg border border-border bg-card">
+      <div className="flex items-center gap-2 border-b border-border px-4 py-3">
+        <Gauge className="h-4 w-4 text-muted-foreground" />
         <div>
           <h3 className="text-sm font-semibold text-foreground">Pulse background reviews</h3>
           <p className="text-xs text-muted-foreground">
@@ -102,7 +102,7 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
               <div className="min-w-0 flex-1">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="text-sm font-medium text-foreground">Pulse review</span>
-                  <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground">
+                  <span className="rounded border border-border bg-muted/50 px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                     {review.trigger_source === 'manual' || review.schedule_id === 'manual-pulse' ? 'Manual' : 'Scheduled'}
                   </span>
                   <span className="text-xs text-muted-foreground">{review.agents.length} {review.agents.length === 1 ? 'agent' : 'agents'}</span>
@@ -120,7 +120,7 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
                   <details key={agent.agent_id} className="group/agent overflow-hidden rounded-md border border-border bg-background/70">
                     <summary className="flex cursor-pointer list-none items-center gap-3 px-3 py-2.5 hover:bg-accent/30">
                       <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground transition-transform group-open/agent:rotate-90" />
-                      {running ? <Loader2 className="h-4 w-4 animate-spin text-indigo-500" /> : failed ? <XCircle className="h-4 w-4 text-rose-500" /> : <CheckCircle className="h-4 w-4 text-emerald-500" />}
+                      {running ? <Loader2 className="h-4 w-4 animate-spin text-sky-600 dark:text-sky-300" /> : failed ? <XCircle className="h-4 w-4 text-destructive" /> : <CheckCircle className="h-4 w-4 text-emerald-500" />}
                       <div className="min-w-0 flex-1">
                         <div className="truncate text-sm font-medium text-foreground">{agent.name || agent.agent_id}</div>
                         <div className="mt-0.5 flex flex-wrap gap-x-2 text-[11px] text-muted-foreground">
@@ -129,7 +129,7 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
                           {(agent.provider || agent.model_id) && <span>{[agent.provider, agent.model_id].filter(Boolean).join(' / ')}</span>}
                         </div>
                       </div>
-                      <span className="text-[10px] font-medium uppercase tracking-wide text-muted-foreground">{agent.status}</span>
+                      <span className="text-[10px] font-medium capitalize text-muted-foreground">{agent.status}</span>
                     </summary>
                     <div className="space-y-3 border-t border-border p-3">
                       {agent.parent_execution_id && (
@@ -144,7 +144,7 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
                       )}
                       {(agent.events || []).map((event, index) => (
                         <div key={`${agent.agent_id}-${index}`} className="overflow-hidden rounded border border-border/80">
-                          <div className="flex items-center gap-2 border-b border-border/70 bg-muted/20 px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                          <div className="flex items-center gap-2 border-b border-border/70 bg-muted/20 px-3 py-1.5 text-[11px] font-semibold text-muted-foreground">
                             {event.type === 'user_message' ? <User className="h-3 w-3" /> : event.type === 'tool_call' ? <Terminal className="h-3 w-3" /> : <Bot className="h-3 w-3" />}
                             {event.type === 'user_message' ? 'Instruction' : event.type === 'tool_call' ? 'Tool call' : 'Agent response'}
                             {event.timestamp && <span className="ml-auto normal-case font-normal">{formatStartedAt(event.timestamp)}</span>}
@@ -159,7 +159,7 @@ export const PulseReviewsPanel = ({ reviews }: { reviews: PulseReviewRunLog[] })
                         </div>
                       ))}
                       {agent.error && (
-                        <div className="rounded border border-rose-500/25 bg-rose-500/5 p-3 text-sm text-rose-700 dark:text-rose-300">{agent.error}</div>
+                        <div className="rounded border border-destructive/25 bg-destructive/5 p-3 text-sm text-destructive">{agent.error}</div>
                       )}
                       {agent.result && (
                         <details className="group/result rounded border border-border/80 bg-muted/10">

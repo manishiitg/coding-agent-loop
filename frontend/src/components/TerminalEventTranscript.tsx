@@ -26,6 +26,7 @@ import { parseProductInteraction, type ProductInteraction } from '../../shared/s
 import { ConversationContinuityNotice, isConversationContinuityNotice } from './ConversationContinuityNotice'
 import { DeliveryTick } from './events/system/DeliveryTick'
 import { deliveryTickState } from './events/system/deliveryTickState'
+import { askAIDisplayText, hasAskAIMessage } from '../utils/askAIMessage'
 
 // Message text sizes multiply --chat-scale (default 1), so a product can offer
 // a bigger reading size (SparkQuill's Child Mode "T" button sets it on the
@@ -217,11 +218,18 @@ const TranscriptEvent: React.FC<{
 const USER_MESSAGE_PREVIEW_LIMIT = 480
 
 const UserTranscriptMessage: React.FC<{ content: string; timestamp: string; metadata?: Record<string, unknown>; compactBottom?: boolean }> = ({ content, timestamp, metadata, compactBottom = false }) => {
-  const collapsible = shouldCollapseTranscriptUserMessage(content)
+  // Ask AI blocks collapse to their plain-words request; the builder-only
+  // instructions stay one click away behind the usual expansion toggle.
+  const askAI = hasAskAIMessage(content)
+  const collapsible = askAI || shouldCollapseTranscriptUserMessage(content)
   const [expanded, setExpanded] = useState(false)
-  const shown = collapsible && !expanded
-    ? `${content.slice(0, USER_MESSAGE_PREVIEW_LIMIT).trimEnd()}…`
-    : content
+  const shown = expanded
+    ? content
+    : askAI
+      ? askAIDisplayText(content)
+      : collapsible
+        ? `${content.slice(0, USER_MESSAGE_PREVIEW_LIMIT).trimEnd()}…`
+        : content
   // The receipt row appears for a timestamped row or a row carrying a
   // delivery verdict; plain untimestamped rows render exactly as before.
   const showReceipt = Boolean(timestamp) || deliveryTickState(metadata) !== null

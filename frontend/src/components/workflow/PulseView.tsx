@@ -1,5 +1,7 @@
-import { Activity, RefreshCw } from 'lucide-react'
+import { Activity } from 'lucide-react'
 import { PulseWorkspace } from './PulseWorkspace'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
 import type { PulseFinalCommandState, PulseModuleState, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
@@ -54,43 +56,26 @@ export default function PulseView({
 }: PulseViewProps) {
   return (
     <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3.5 sm:px-5">
-        <div className="flex min-w-0 items-center gap-3">
-          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-md border border-primary/25 bg-primary/10 text-primary">
-            <Activity className="h-4 w-4" />
-          </div>
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
-              <h2 className="text-sm font-semibold text-foreground">Pulse</h2>
-              <span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${monitorOn ? 'border-primary/25 bg-primary/10 text-primary' : 'border-border bg-muted text-muted-foreground'}`}>
-                {monitorOn ? 'On' : 'Off'}
-              </span>
-            </div>
-            <div className="mt-0.5 flex flex-wrap items-center gap-x-2 text-[11px] text-muted-foreground">
-              <span>{overview.recorded}/{overview.total} statuses recorded</span>
-              {overview.latest && <span>Updated {overview.latest}</span>}
-            </div>
-          </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-        {monitorOn && (
-          <button
-            type="button"
+      <WorkspaceViewHeader
+        icon={Activity}
+        title="Pulse"
+        context={<span className={`rounded-full border px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide ${monitorOn ? 'border-primary/25 bg-primary/10 text-primary' : 'border-border bg-muted text-muted-foreground'}`}>
+          {monitorOn ? 'On' : 'Off'}
+        </span>}
+        subtitle={`${overview.recorded}/${overview.total} statuses recorded${overview.latest ? ` · Updated ${overview.latest}` : ''}`}
+        actions={<>
+          {headerAction}
+          <WorkspaceViewIconButton
+            label="Refresh Pulse status"
             onClick={() => {
               window.dispatchEvent(new CustomEvent(WORKFLOW_SOUL_REFRESH_EVENT))
               onRefresh()
             }}
             disabled={statusLoading}
-            className="shrink-0 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:opacity-60"
-            aria-label="Refresh Pulse status"
-            title="Refresh Pulse status"
-          >
-            <RefreshCw className={`h-3.5 w-3.5 ${statusLoading ? 'animate-spin' : ''}`} />
-          </button>
-        )}
-        {headerAction}
-        </div>
-      </div>
+            spinning={statusLoading}
+          />
+        </>}
+      />
 
       <div className="min-h-0 flex-1 overflow-y-auto">
         <div className="p-3 sm:p-4">

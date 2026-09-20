@@ -20,10 +20,11 @@ interface ToolSelectionSectionProps {
   /** Suppress the "MCP Server Selection" title + description -- for a host
    * that already shows its own equivalent section header above this. */
   hideHeader?: boolean;
-  /** Show only servers already selected for this workflow, instead of every
-   * available (connected) server -- for a host that offers a separate way
-   * to add new ones (e.g. the workflow panel's connectors browser below). */
-  showSelectedOnly?: boolean;
+  /** Filter the server list by name -- for a host that renders one shared
+   * search box above several pickers. */
+  query?: string;
+  /** Let an embedding scroll the complete page instead of only this list. */
+  manageOwnScroll?: boolean;
   /** Keep the selection visible while preventing read-only mutations. */
   disabled?: boolean;
 }
@@ -37,7 +38,8 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
   stepId,
   fillAvailableHeight = false,
   hideHeader = false,
-  showSelectedOnly = false,
+  query = '',
+  manageOwnScroll = true,
   disabled = false,
 }) => {
   // Generate instance ID from stepId or use a default
@@ -298,16 +300,11 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
       {/* Server and Tool List -- no outer border here: each card already has
           its own, and a wrapping frame right up against a full-width
           expanded card reads as a redundant double border. */}
-      <div className={`overflow-y-auto ${fillAvailableHeight ? 'min-h-0 flex-1' : 'max-h-96'}`}>
-        {showSelectedOnly && selectedServers.length === 0 && (
-          <div className="p-3 text-xs text-gray-500 dark:text-gray-400">
-            No MCP servers selected yet. Add one below.
-          </div>
-        )}
+      <div className={manageOwnScroll ? `overflow-y-auto ${fillAvailableHeight ? 'min-h-0 flex-1' : 'max-h-96'}` : ''}>
         <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
         {availableServers
           .filter(serverName => serverName !== 'mcp')
-          .filter(serverName => !showSelectedOnly || isSelectedServer(selectedServers, serverName))
+          .filter(serverName => !query.trim() || serverName.toLowerCase().includes(query.trim().toLowerCase()))
           .sort((a, b) => {
             const aSelected = isSelectedServer(selectedServers, a);
             const bSelected = isSelectedServer(selectedServers, b);
@@ -530,13 +527,6 @@ export const ToolSelectionSection: React.FC<ToolSelectionSectionProps> = ({
         })}
         </div>
       </div>
-
-      {/* Selection Summary */}
-      {selectedTools.length > 0 && (
-        <div className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-          Selected: {selectedTools.length} tool{selectedTools.length !== 1 ? 's' : ''} from {selectedServers.length} server{selectedServers.length !== 1 ? 's' : ''}
-        </div>
-      )}
 
     </div>
   );

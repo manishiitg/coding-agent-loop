@@ -192,10 +192,11 @@ product/profile conversations have separate continuity behavior. Changing a
 thread-less route creates a conversation boundary to avoid mixing workflows.
 
 Thread-less controls require `@`: for example `@status`, `@resume`, `@continue`,
-`@full`, `@concise`, and `@reset`. Bare `@resume` opens a picker; a selector can
-identify a session directly. End aliases include `@done`, `@end`, `@new`,
-`@new session`, `@newsession`, `@quit`, and `@exit`. `stop` is not an end-command
-alias in the current parser.
+`@full`, and `@concise`. Bare `@resume` opens a picker; a selector can
+identify a session directly. There are no session end commands: words like
+`done`, `reset`, or `stop`, with or without `@`, are delivered to the agent
+as ordinary text. Conversations end through the inactivity window, route
+changes (`@switch`/`@off`), or plan rejection.
 
 ## Events, feedback, and output
 
@@ -310,7 +311,9 @@ Slack/WhatsApp delivery. This consolidation changes documentation only.
 Reviewed the connector implementation on `main` at `ca3cf76cb`, focusing on
 authorization, conversation lifecycle, and Slack event handling. The shared
 architecture is reasonable, but the following reproduced bugs prevent sign-off.
-The P1 and the mention-guard P2 are fixed (see notes below).
+All three findings are closed: the P1 and the mention-guard P2 are fixed
+(see notes below), and the reset P2 is moot after the removal of session
+end commands.
 Source line references below refer to the reviewed revision.
 
 ### P1: WhatsApp workflow switches reuse the previous conversation
@@ -345,24 +348,14 @@ Regression coverage: `TestThreadlessRouteSwitchViaIncomingMessageStartsFresh`
 workflow) and `TestThreadlessSameRouteViaIncomingMessageReusesSession`
 (same-route replies still continue the conversation).
 
-### P2: Resetting a running session recreates its cleared binding
+### P2: Resetting a running session recreates its cleared binding — MOOT
 
-Source: [bot_connector.go](../../agent_go/cmd/server/services/bot_connector.go),
-lines 1272–1275 and 2595–2599.
-
-The `@reset` path clears the durable binding and cancels execution. When
-`runSession` observes cancellation, its cleanup unconditionally persists the
-old session binding again.
-
-Reproduction: run a WhatsApp session with a persistent-binding test connector,
-send `@reset`, wait for `runSession` to exit, and load the binding. The binding
-contains the old session ID again. A later message can restore the conversation
-the user explicitly ended.
-
-Fix: distinguish explicit end/reset from normal completion and suppress binding
-persistence for ended sessions. Guard cleanup against overwriting a newer
-session's binding. Add a test that waits for cleanup before checking that reset
-leaves no restorable binding.
+Session end commands (`@reset`, `@done`, and aliases) were removed: the
+`@reset` path no longer exists, so this reproduction cannot run. Residual
+note: `runSession` cleanup still persists the binding unconditionally after
+cancellation, which also fires for route-change cancels. If a canceled
+session's persist ever lands after a newer session's binding, it could
+overwrite it; no reproduction exists today.
 
 ### P2: Completed Slack threads bypass the multi-user mention guard
 

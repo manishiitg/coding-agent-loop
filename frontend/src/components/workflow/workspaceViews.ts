@@ -3,25 +3,18 @@ import {
   BellRing,
   BookMarked,
   BookOpen,
-  Bot,
-  BrainCircuit,
   CalendarClock,
   Cloud,
-  Database,
   DollarSign,
   Files,
   FileText,
-  FolderOpen,
+  Fingerprint,
   Globe,
-  KeyRound,
   LayoutDashboard,
-  Mail,
   Monitor,
-  Puzzle,
   Route,
   Server,
   ShieldCheck,
-  Table2,
   Webhook,
   Zap,
   type LucideIcon,
@@ -78,9 +71,7 @@ const VIEWS = [
   // -- inspectors (toolbar "views" cluster, in button order) ---------------
   { id: 'costs', kind: 'inspector', label: 'Costs', icon: DollarSign, toolbarGroup: 'views', pane: true },
   { id: 'execution-logs', kind: 'inspector', label: 'Execution logs', icon: FileText, toolbarGroup: 'views', pane: true },
-  { id: 'learnings', kind: 'inspector', label: 'Learnings', icon: BookOpen, toolbarGroup: 'views', pane: true },
-  { id: 'knowledgebase', kind: 'inspector', label: 'Knowledgebase', icon: Database, toolbarGroup: 'views', pane: true },
-  { id: 'database', kind: 'inspector', label: 'Database', icon: Table2, toolbarGroup: 'views', pane: true },
+  { id: 'knowledge', kind: 'inspector', label: 'Knowledge', icon: BookOpen, toolbarGroup: 'views', pane: true },
   { id: 'webhooks', kind: 'inspector', label: 'Webhooks', icon: Webhook, toolbarGroup: 'views', pane: true },
   { id: 'schedules', kind: 'inspector', label: 'Schedules', icon: CalendarClock, toolbarGroup: 'views', pane: true },
   // -- files (last button of the "views" cluster) --------------------------
@@ -99,17 +90,12 @@ const VIEWS = [
   // rest of Setup, not a modal (user request 2026-09-03). Button is hand-built
   // in the toolbar because its visibility is permission-gated.
   { id: 'access', kind: 'inspector', label: 'Access', icon: ShieldCheck, toolbarGroup: 'pulse', pane: true },
-  // -- capability sections (WorkflowCapabilitiesPanel), then folders -------
-  { id: 'playbooks', kind: 'capability', label: 'Workflow playbooks', icon: BookMarked, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
-  { id: 'skills', kind: 'capability', label: 'Workflow skills', icon: Puzzle, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
-  { id: 'secrets', kind: 'capability', label: 'Workflow secrets', icon: KeyRound, toolbarGroup: 'capabilities', pane: true },
+  // -- capability sections (WorkflowCapabilitiesPanel) -------------------------
+  { id: 'identity', kind: 'capability', label: 'Identity', icon: Fingerprint, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'mcp', kind: 'capability', label: 'Integrations', icon: Server, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
+  { id: 'playbooks', kind: 'capability', label: 'Workflow playbooks', icon: BookMarked, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
   { id: 'browser', kind: 'capability', label: 'Browser', icon: Monitor, toolbarGroup: 'views', pane: true },
   { id: 'workshop', kind: 'inspector', label: 'Automation', icon: Zap, toolbarGroup: 'views', pane: true },
-  { id: 'llm', kind: 'capability', label: 'Workflow LLM configuration', icon: BrainCircuit, toolbarGroup: 'capabilities', pane: true },
-  { id: 'email', kind: 'capability', label: 'Gmail', icon: Mail, toolbarGroup: 'capabilities', pane: true },
-  { id: 'bots', kind: 'capability', label: 'Connectors', icon: Bot, toolbarGroup: 'capabilities', pane: true, managesOwnScroll: true },
-  { id: 'folders', kind: 'inspector', label: 'Attached folders', icon: FolderOpen, toolbarGroup: 'capabilities', pane: true },
 ] as const satisfies readonly WorkspaceViewDef[]
 
 export type WorkspaceViewId = typeof VIEWS[number]['id']
@@ -193,6 +179,9 @@ const LEGACY_VIEW_IDS: Record<string, WorkspaceViewId | null> = {
   'api-triggers': 'workshop',
   schedules: 'workshop',
   webhooks: 'workshop',
+  learnings: 'knowledge',
+  knowledgebase: 'knowledge',
+  database: 'knowledge',
 }
 
 /** Coerce a persisted/unknown value to a view id, or null. Legacy ids are

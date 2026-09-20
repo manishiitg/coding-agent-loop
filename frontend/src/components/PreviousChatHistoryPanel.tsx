@@ -19,6 +19,7 @@ import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
 import { sanitizeProviderTranscriptContent } from '../utils/restoredConversationFilter'
 import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
+import { askAIDisplayText } from '../utils/askAIMessage'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
 import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
@@ -452,6 +453,8 @@ interface PreviousChatHistoryPanelProps {
   runEntityType?: 'workflow' | 'product'
   /** Crew trigger scope used to identify which automation created a chat. */
   productTriggerScope?: ProductTriggerScope
+  /** External refresh signal: the Automation hub bumps this from its header. */
+  refreshToken?: number
 }
 
 export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> = ({
@@ -473,6 +476,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   runOnly,
   runEntityType = 'workflow',
   productTriggerScope,
+  refreshToken = 0,
 }) => {
   const [sessions, setSessions] = useState<ChatHistorySession[]>([])
   const [isLoading, setIsLoading] = useState(true)
@@ -546,7 +550,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       })
 
     return () => { cancelled = true }
-  }, [addToast, includeAutomationChats, recentOnly, runOnly, workspacePath])
+  }, [addToast, includeAutomationChats, recentOnly, runOnly, workspacePath, refreshToken])
 
   const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
@@ -592,7 +596,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void refresh(true)
     const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
-  }, [addToast, recentOnly, runEntityType, workspacePath, showRunActivity])
+  }, [addToast, recentOnly, runEntityType, workspacePath, showRunActivity, refreshToken])
 
   // Crew automation sessions are ordinary product conversations. Join the
   // durable run indexes by session id so the chat list can name its source.
@@ -628,7 +632,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
       }
     })()
     return () => { cancelled = true }
-  }, [productTriggerScope, recentOnly, workspacePath])
+  }, [productTriggerScope, recentOnly, workspacePath, refreshToken])
 
   const visibleSessions = useMemo(
     () => sessions.filter(session => session.session_id !== activeSessionId),
@@ -923,7 +927,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   return (
     <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
       <div className={`${fill ? 'flex min-h-0 flex-1 flex-col' : ''} w-full`}>
-        {showPanelHeader && <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact ? 'justify-end' : title ? 'justify-between' : 'justify-start'}`}>
+        {showPanelHeader && <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact || !title ? 'justify-end' : 'justify-between'}`}>
           {/* The "Previous … chats" heading is redundant in the compact rail —
               the filter pills + list make the purpose obvious — so hide it there. */}
           {!compact && title && (
@@ -1203,7 +1207,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                                 </pre>
                               ) : (
                                 <div className="break-words leading-relaxed text-muted-foreground">
-                                  <ConversationMarkdownRenderer content={message.text} maxHeight="none" framed={false} />
+                                  <ConversationMarkdownRenderer content={normalizedRole === 'User' ? askAIDisplayText(message.text) : message.text} maxHeight="none" framed={false} />
                                 </div>
                               )}
                             </div>

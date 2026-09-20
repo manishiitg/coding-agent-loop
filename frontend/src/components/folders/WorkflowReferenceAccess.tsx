@@ -18,9 +18,11 @@ type WorkflowReferenceAccessProps = {
   additionalReferences?: AdditionalReadOnlyReference[]
   additionalLabel?: string
   showAdditionalGroup?: boolean
+  /** Hide the attach dropdowns: the list stays visible with remove, adding goes through Ask AI. */
+  hideAdd?: boolean
 }
 
-export function WorkflowReferenceAccess({ selectedPaths, onChange, excludeWorkspacePath, disabled = false, additionalReferences = [], additionalLabel = 'Crew', showAdditionalGroup = false }: WorkflowReferenceAccessProps) {
+export function WorkflowReferenceAccess({ selectedPaths, onChange, excludeWorkspacePath, disabled = false, additionalReferences = [], additionalLabel = 'Crew', showAdditionalGroup = false, hideAdd = false }: WorkflowReferenceAccessProps) {
   const workflows = useWorkflowManifestStore(state => state.workflows)
   const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
   const normalizedSelected = useMemo(
@@ -73,10 +75,15 @@ export function WorkflowReferenceAccess({ selectedPaths, onChange, excludeWorksp
       {references.some(reference => normalizedSelected.includes(reference.path)) && (
         <div className="mt-2 space-y-2">{renderSelected(references)}</div>
       )}
+      {!references.some(reference => normalizedSelected.includes(reference.path)) && hideAdd && (
+        <p className="mt-2 text-[11px] text-muted-foreground">Nothing attached.</p>
+      )}
+      {!hideAdd && (
       <select disabled={disabled || available.length === 0} value="" onChange={event => add(event.target.value)} className="mt-2 w-full rounded-md border border-border bg-background px-2.5 py-2 text-xs text-foreground disabled:opacity-50">
         <option value="">{available.length > 0 ? placeholder : `No other accessible ${label.toLowerCase()}`}</option>
         {available.map(reference => <option key={reference.path} value={reference.path}>{reference.icon ? `${reference.icon} ` : ''}{reference.label} — {reference.path}</option>)}
       </select>
+      )}
     </div>
   )
 

@@ -6,6 +6,7 @@ import type {
   PulseImpactLedger,
 } from "../../services/api-types";
 import { AskAIButton } from "./AskAIButton";
+import { GOAL_SETUP_MESSAGE } from "./goalSetupMessage";
 import { TooltipProvider } from "../ui/tooltip";
 import {
   goalMetricGroups,
@@ -16,9 +17,6 @@ import { goalMetricProgress } from "./goalMetricProgress";
 
 const format = (value: number) =>
   value.toLocaleString(undefined, { maximumFractionDigits: 2 });
-export const GOAL_SETUP_MESSAGE =
-  'Call get_workflow_command_guidance(kind="setup-goals") and follow the shared goal and measurement setup flow for this workflow. Use existing goals and data, preserve constraints and history, and ask only unresolved decisions.';
-
 function MetricCard({
   metric,
   observations,
@@ -263,7 +261,7 @@ export function GoalProgress({
           <AskAIButton
             workspacePath={workspacePath}
             label={
-              metrics.length ? "Edit goals & metrics" : "Set up goals & metrics"
+              metrics.length ? "Edit goals & numbers" : "Set up goals & numbers"
             }
             message={GOAL_SETUP_MESSAGE}
           />

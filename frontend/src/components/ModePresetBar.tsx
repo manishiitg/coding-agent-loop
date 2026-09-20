@@ -606,22 +606,6 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                       dataTour="workflow-add-edit"
                       testId="tour-workflow-add-edit"
                       badge={currentTriggerLabel && <span className="rounded border border-border px-1 text-[10px] text-muted-foreground">{currentTriggerLabel}</span>}
-                      middleControl={activePreset && !isEffectiveReadOnly ? (
-                        <button
-                          type="button"
-                          onClick={(event) => {
-                            event.stopPropagation()
-                            handleEditWorkflowPreset(activePreset as CustomPreset)
-                            setWorkspaceMinimized(true)
-                          }}
-                          className="border-l border-gray-200 px-2 py-1 transition-colors hover:bg-gray-100 dark:border-gray-600 dark:hover:bg-slate-700"
-                          title="Edit automation"
-                        >
-                          <Settings className="h-3 w-3 text-gray-400" />
-                        </button>
-                      ) : !activePreset && !isReadOnlyUser ? (
-                        <div className="border-l border-gray-200 px-2 py-1 dark:border-gray-600"><Settings className="h-3 w-3 text-gray-300" /></div>
-                      ) : null}
                     >
                           <div className="p-2 space-y-1 max-h-96 overflow-y-auto">
                             {/* Add New Workflow Option */}

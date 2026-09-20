@@ -50,6 +50,11 @@ func TestValidateManifestWorkflowIcon(t *testing.T) {
 	if err := ValidateManifest(manifest); err == nil || !strings.Contains(err.Error(), "icon must be 8 characters or fewer") {
 		t.Fatalf("ValidateManifest() error = %v, want icon length error", err)
 	}
+
+	manifest.Icon = "data:image/png;base64," + strings.Repeat("A", 1024)
+	if err := ValidateManifest(manifest); err != nil {
+		t.Fatalf("uploaded image icon rejected: %v", err)
+	}
 }
 
 func TestValidateManifestFolderAccessRequest(t *testing.T) {

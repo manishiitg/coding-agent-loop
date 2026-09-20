@@ -11,33 +11,27 @@ import CostsDailySection from './costs/CostsDailySection'
 import CostsSummarySections from './costs/CostsSummarySections'
 import RunCostsSection from './costs/RunCostsSection'
 
-const HEADER_ROW_CLASS = 'flex items-start justify-between gap-3 px-4 py-3 border-b border-border sm:px-6 sm:py-4'
+const headerRowClass = 'flex items-center justify-between gap-3 border-b border-border px-3 py-2'
 
 interface CostsPopupProps {
-  isOpen: boolean
-  onClose: () => void
   workspacePath: string | null
   runFolders: string[] // Available run folders
   selectedRunFolder: string | null // Currently selected run folder
   startedAt?: string | null
-  embedded?: boolean
   headerAction?: React.ReactNode
   emptyHint?: string
   projectMode?: boolean
 }
 
 const CostsPopup: React.FC<CostsPopupProps> = ({
-  isOpen,
-  onClose,
   workspacePath,
   selectedRunFolder,
   startedAt,
-  embedded = false,
   headerAction,
   emptyHint = 'Run the automation to see cost data here.',
   projectMode = false,
 }) => {
-  const data = useCostsData({ active: embedded || isOpen, workspacePath, selectedRunFolder })
+  const data = useCostsData({ workspacePath, selectedRunFolder })
   const {
     loading,
     error,
@@ -68,12 +62,8 @@ const CostsPopup: React.FC<CostsPopupProps> = ({
 
   return (
     <InspectorShell
-      embedded={embedded}
-      isOpen={isOpen}
-      onClose={onClose}
-      embeddedClassName="flex h-full min-h-0 w-full flex-col bg-background"
-      modalClassName="bg-background rounded-lg shadow-xl w-full max-w-6xl max-h-[calc(100dvh-1rem)] sm:max-h-[90vh] flex flex-col border border-border relative"
-      headerClassName={HEADER_ROW_CLASS}
+      className="flex h-full min-h-0 w-full flex-col bg-background"
+      headerClassName={headerRowClass}
       header={
         <CostsHeader
           startedAt={startedAt}

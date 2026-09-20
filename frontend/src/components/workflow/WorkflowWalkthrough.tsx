@@ -21,8 +21,8 @@ const STEPS: WalkthroughStep[] = [
   },
   {
     selector: '[data-tour="bot-connector"]',
-    title: 'Connectors',
-    body: 'Choose the Slack and WhatsApp slugs this automation answers on, and connect those bots if they are not set up yet.',
+    title: 'Integrations',
+    body: 'Connect apps, skills, Gmail, and bots here. The Slack and WhatsApp tabs hold the slugs this automation answers on — connect those bots if they are not set up yet.',
   },
   {
     selector: '[data-tour="workspace-open"]',

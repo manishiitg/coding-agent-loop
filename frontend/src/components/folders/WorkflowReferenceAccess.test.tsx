@@ -48,4 +48,27 @@ describe('WorkflowReferenceAccess', () => {
       host.remove()
     }
   })
+
+  it('hides the attach dropdowns when adding goes through Ask AI', async () => {
+    const onChange = vi.fn()
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+
+    await act(async () => root.render(<WorkflowReferenceAccess
+      selectedPaths={['Workflow/release']}
+      onChange={onChange}
+      excludeWorkspacePath="Work/projects/current"
+      hideAdd
+    />))
+
+    try {
+      expect(host.querySelector('select')).toBeNull()
+      expect(host.textContent).toContain('Release')
+      expect(host.querySelector('button[aria-label="Remove Workflow/release"]')).not.toBeNull()
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
 })

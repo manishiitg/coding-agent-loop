@@ -5,7 +5,7 @@ import { UI_CONTROL_CONTRACT } from './contract.generated'
 const base = { request_id: 'test', expires_at: '2030-01-01T00:00:00Z' }
 describe('closed semantic UI control contract', () => {
   it('accounts for all views but never advertises placeholder deep actions', () => {
-    expect(UI_CONTROL_CONTRACT.views).toHaveLength(25)
+    expect(UI_CONTROL_CONTRACT.views).toHaveLength(18)
     for (const { id } of UI_CONTROL_CONTRACT.views) {
       expect(supportedAction({ ...base, view: id, action: 'open' })).toBe(true)
       expect(supportedAction({ ...base, view: id, action: 'send' })).toBe(false)
@@ -29,6 +29,12 @@ describe('closed semantic UI control contract', () => {
       expect(supportedAction({ ...base, view: 'workshop', action: 'open', target })).toBe(true)
     }
     expect(supportedAction({ ...base, view: 'workshop', action: 'open', target: 'guessed' })).toBe(false)
+  })
+  it('opens the bounded tabs of the Knowledge view', () => {
+    for (const target of ['learnings', 'knowledgebase', 'database']) {
+      expect(supportedAction({ ...base, view: 'knowledge', action: 'open', target })).toBe(true)
+    }
+    expect(supportedAction({ ...base, view: 'knowledge', action: 'open', target: 'guessed' })).toBe(false)
   })
   it('only expands the two known notification instruction disclosures', () => {
     expect(supportedAction({ ...base, view: 'notify', action: 'expand', target: 'run_summary' })).toBe(true)

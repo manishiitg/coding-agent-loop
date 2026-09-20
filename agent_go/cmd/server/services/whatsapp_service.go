@@ -1325,7 +1325,7 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 		return true
 
-	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
+	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief":
 		w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 		return true
 
@@ -1388,7 +1388,7 @@ func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
 		return "switch", strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	case "status":
 		return "status", strings.TrimSpace(strings.Join(fields[1:], " ")), true
-	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief", "done", "end", "reset", "new", "newsession", "quit", "exit":
+	case "resume", "continue", "sessions", "session", "chats", "runs", "full", "verbose", "details", "concise", "short", "brief":
 		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	case "deactivate", "deactive", "off", "stop":
 		return first, strings.TrimSpace(strings.Join(fields[1:], " ")), true
@@ -1565,7 +1565,7 @@ func formatWhatsAppWorkflowList(candidates []whatsappWorkflowCandidate) string {
 		}
 		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
 	}
-	sb.WriteString("\n@switch 3 [run|workshop]\n@status | @full | @concise | @done | @off")
+	sb.WriteString("\n@switch 3 [run|workshop]\n@status | @full | @concise | @off")
 	return strings.TrimSpace(sb.String())
 }
 
@@ -1908,9 +1908,9 @@ func (w *WhatsAppService) hasProfileRouter() bool {
 
 func unknownWhatsAppWorkflowCommandMessage(slug string) string {
 	if slug = strings.TrimSpace(slug); slug != "" {
-		return fmt.Sprintf("Unknown @%s. Try @list, @switch <number>, @status, @sessions, @resume, @full, @concise, @done, or @off.", slug)
+		return fmt.Sprintf("Unknown @%s. Try @list, @switch <number>, @status, @sessions, @resume, @full, @concise, or @off.", slug)
 	}
-	return "Commands: @list, @switch <number> [mode], @status, @sessions, @resume, @full, @concise, @done, @off"
+	return "Commands: @list, @switch <number> [mode], @status, @sessions, @resume, @full, @concise, @off"
 }
 
 // GetOwner returns the currently-bound owner, or nil when unclaimed.

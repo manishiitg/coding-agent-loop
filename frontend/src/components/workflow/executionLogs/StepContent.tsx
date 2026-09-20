@@ -20,21 +20,32 @@ import {
   Search,
   Users,
   ExternalLink,
+  Gauge,
+  Lightbulb,
+  SkipForward,
+  Route as RouteIcon,
 } from 'lucide-react'
 import type { ExecutionLogsResponse } from '../../../services/api-types'
 import { useProductSurfaceStore } from '../../../stores/useProductSurfaceStore'
 import { ConversationViewer } from '../ConversationViewer'
+import { AskAIButton } from '../AskAIButton'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
-import { StepMetadata, StructuredJsonView } from './LogPrimitives'
+import { StepMetadata, StructuredJsonView, StepMetricChip } from './LogPrimitives'
 import {
   formatDuration,
+  formatRunFolderLabel,
+  formatStepStartedAt,
   formatTokenCount,
   getExecutionMetrics,
   getExecutionOrigin,
   getMessageSequenceReflection,
   getSentAgentMessages,
+  getStepFirstActivityMs,
+  getStepMetrics,
+  hasStepMetrics,
   type ValidationFeedback,
 } from './helpers'
+import { buildErrorAskMessage } from './logsAskAI'
 
 export interface StepContentProps {
   stepId: string
@@ -53,6 +64,7 @@ export interface StepContentProps {
   fileContents: Record<string, string>
   loadingFiles: Set<string>
   toggleFileExpansion: (path: string) => void
+  askContext?: { workspacePath: string | null; runFolder: string }
 }
 
 interface CrewRunRecord {
@@ -74,16 +86,22 @@ interface CrewRunRecord {
   timeline?: { status?: string; at?: string }[]
 }
 
+const explainButtonClassName = 'inline-flex shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary'
+
+function ExplainButton({ workspacePath, message, label = 'Explain' }: { workspacePath: string | null; message: string; label?: string }) {
+  return <AskAIButton workspacePath={workspacePath} label={label} message={message} className={explainButtonClassName} />
+}
+
 const crewStatusChip = (status: string): string => {
   switch (status) {
     case 'success':
       return 'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400'
     case 'error':
     case 'failed':
-      return 'bg-red-500/15 text-red-600 dark:text-red-400'
+      return 'bg-destructive/10 text-destructive'
     case 'running':
     case 'queued':
-      return 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
+      return 'bg-sky-500/15 text-sky-600 dark:text-sky-300'
     default:
       return 'bg-muted text-muted-foreground'
   }
@@ -95,14 +113,18 @@ const crewStatusChip = (status: string): string => {
 // Artifacts section below, so nothing fetches twice.
 function CrewRunSection({
   stepLogs,
+  stepTitle,
   fileContents,
   loadingFiles,
   toggleFileExpansion,
+  askContext,
 }: {
   stepLogs: StepContentProps['stepLogs']
+  stepTitle: string
   fileContents: Record<string, string>
   loadingFiles: Set<string>
   toggleFileExpansion: (path: string) => void
+  askContext?: { workspacePath: string | null; runFolder: string }
 }) {
   const record = ((stepLogs.artifacts || []) as { file_name?: string; file_path: string }[]).find(
     (artifact) => artifact.file_name === 'crew-run.json',
@@ -129,7 +151,7 @@ function CrewRunSection({
 
   return (
     <div className="p-4 bg-muted/30">
-      <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+      <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
         <Users className="w-3.5 h-3.5" />
         Crew run
         {status && (
@@ -173,7 +195,20 @@ function CrewRunSection({
             ) : null}
           </dl>
           {parsed.error && (
-            <p className="text-xs leading-relaxed text-red-600 dark:text-red-400">{parsed.error}</p>
+            <div className="flex items-start justify-between gap-2">
+              <p className="min-w-0 flex-1 text-xs leading-relaxed text-destructive">{parsed.error}</p>
+              {askContext && (
+                <ExplainButton
+                  workspacePath={askContext.workspacePath}
+                  message={buildErrorAskMessage({
+                    runFolder: askContext.runFolder,
+                    folderLabel: formatRunFolderLabel(askContext.runFolder),
+                    stepTitle,
+                    error: parsed.error,
+                  })}
+                />
+              )}
+            </div>
           )}
           {timeline.length > 0 && (
             <ol className="space-y-1">
@@ -222,8 +257,25 @@ export function StepContent(props: StepContentProps) {
     fileContents,
     loadingFiles,
     toggleFileExpansion,
+    askContext,
   } = props
       const validations = stepLogs.validations || []
+      const displayTitle = (stepLogs.title && String(stepLogs.title).trim()) ? stepLogs.title : (stepLogs.original_id || stepId)
+      const explainMessage = (error: string) => askContext ? buildErrorAskMessage({
+        runFolder: askContext.runFolder,
+        folderLabel: formatRunFolderLabel(askContext.runFolder),
+        stepTitle: displayTitle,
+        error,
+      }) : ''
+      // Detail chips that used to crowd the collapsed step row live here now
+      // that the step is open: tier, token splits, first activity, instruction
+      // size, and route provenance.
+      const factsMetrics = getStepMetrics(stepLogs.executions || [])
+      const factsShowMetrics = hasStepMetrics(factsMetrics)
+      const factsStartedAtMs = getStepFirstActivityMs(stepLogs)
+      const factsTier = typeof stepLogs.execution_tier === 'string' ? stepLogs.execution_tier.trim() : ''
+      const factsDescriptionLength = typeof stepLogs.description === 'string' && stepLogs.description.trim() ? stepLogs.description.length : 0
+      const hasFacts = Boolean(factsTier || factsShowMetrics || factsStartedAtMs > 0 || factsDescriptionLength > 0 || stepLogs.parent_step_title || (stepLogs.route_kind === 'routing' && stepLogs.route_name))
       const searchQuery = stepSearchQueries[stepId] || ''
       const searchNeedle = searchQuery.toLowerCase()
 
@@ -237,12 +289,12 @@ export function StepContent(props: StepContentProps) {
       // findIndex-inside-filter that re-stringified every pair.
       const seenArchiveIdentities = new Set<string>()
       const visibleArchivedExecutions = (stepLogs.archived_executions || [])
-        .filter((archive: any) => archive.output_content || (archive.artifacts?.length || 0) > 0)
-        .filter((archive: any) => {
+        .filter((archive: { output_content?: unknown; artifacts?: unknown[] }) => archive.output_content || (archive.artifacts?.length || 0) > 0)
+        .filter((archive: { run_number?: unknown; output_content?: { file_path?: string }; artifacts?: { file_path: string }[] }) => {
           const identity = JSON.stringify({
             run: archive.run_number,
             output: archive.output_content?.file_path || '',
-            artifacts: (archive.artifacts || []).map((artifact: any) => artifact.file_path).sort(),
+            artifacts: (archive.artifacts || []).map((artifact: { file_path: string }) => artifact.file_path).sort(),
           })
           if (seenArchiveIdentities.has(identity)) return false
           seenArchiveIdentities.add(identity)
@@ -280,9 +332,61 @@ export function StepContent(props: StepContentProps) {
             )}
           </div>
 
+          {hasFacts && (
+            <div className="flex flex-wrap items-center gap-1.5 border-b border-border bg-muted/10 px-4 py-2">
+              {factsTier && (
+                <StepMetricChip title={`Execution tier pinned in step config: ${factsTier}`}>
+                  <Gauge className="h-3 w-3" />
+                  {factsTier}
+                </StepMetricChip>
+              )}
+              {factsShowMetrics && factsMetrics.inputTokens > 0 && (
+                <StepMetricChip title={`Input tokens: ${factsMetrics.inputTokens.toLocaleString()}`}>
+                  {formatTokenCount(factsMetrics.inputTokens)} in
+                </StepMetricChip>
+              )}
+              {factsShowMetrics && factsMetrics.outputTokens > 0 && (
+                <StepMetricChip title={`Output tokens: ${factsMetrics.outputTokens.toLocaleString()}${factsMetrics.reasoningTokens > 0 ? ` (includes ${factsMetrics.reasoningTokens.toLocaleString()} reasoning)` : ''}`}>
+                  {formatTokenCount(factsMetrics.outputTokens)} out
+                </StepMetricChip>
+              )}
+              {factsShowMetrics && factsMetrics.cacheTokens > 0 && (
+                <StepMetricChip title={`Cached tokens: ${factsMetrics.cacheTokens.toLocaleString()}`}>
+                  {formatTokenCount(factsMetrics.cacheTokens)} cache
+                </StepMetricChip>
+              )}
+              {factsStartedAtMs > 0 && (
+                <StepMetricChip title={`First recorded activity: ${new Date(factsStartedAtMs).toLocaleString()}`}>
+                  <Clock className="h-3 w-3" />
+                  {formatStepStartedAt(factsStartedAtMs)}
+                </StepMetricChip>
+              )}
+              {factsDescriptionLength > 0 && (
+                <StepMetricChip title={`Authored step instructions: ${factsDescriptionLength.toLocaleString()} characters`}>
+                  <FileText className="h-3 w-3" />
+                  {factsDescriptionLength >= 1000
+                    ? `${(factsDescriptionLength / 1000).toFixed(factsDescriptionLength >= 10_000 ? 0 : 1)}k`
+                    : factsDescriptionLength} instr
+                </StepMetricChip>
+              )}
+              {stepLogs.parent_step_title && (
+                <StepMetricChip title={`This route was dispatched by ${stepLogs.parent_step_title}${stepLogs.route_id ? ` (${stepLogs.route_id})` : ''}`}>
+                  <Split className="h-3 w-3" />
+                  ↳ {stepLogs.parent_step_title}
+                </StepMetricChip>
+              )}
+              {stepLogs.route_kind === 'routing' && stepLogs.route_name && (
+                <StepMetricChip title={`Reached via the "${stepLogs.route_name}" route, selected by ${stepLogs.route_step_title || stepLogs.route_step_id}`}>
+                  <RouteIcon className="h-3 w-3" />
+                  ↳ {stepLogs.route_name}
+                </StepMetricChip>
+              )}
+            </div>
+          )}
+
           {/* Step Metadata (Description & Success Criteria) */}
-          <StepMetadata 
-            description={stepLogs.description} 
+          <StepMetadata
+            description={stepLogs.description}
             successCriteria={stepLogs.success_criteria}
           />
 
@@ -291,7 +395,7 @@ export function StepContent(props: StepContentProps) {
               operators can tell whether the sequence actually reflected, not
               merely whether the enclosing step completed. */}
           {stepLogs.message_sequence && (
-            <div className="p-4 bg-teal-500/[0.03] border-b border-teal-500/15">
+            <div className="p-4 bg-muted/30 border-b border-border">
               {(() => {
                 const reflection = getMessageSequenceReflection(stepLogs)
                 const sessionEntries = stepLogs.message_sequence.entries || []
@@ -299,14 +403,14 @@ export function StepContent(props: StepContentProps) {
                 const reflectionClass = reflectionStatus === 'completed'
                   ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                   : reflectionStatus === 'failed'
-                    ? 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300'
+                    ? 'border-destructive/25 bg-destructive/10 text-destructive'
                     : 'border-border bg-muted/40 text-muted-foreground'
                 return (
                   <>
                     <div className="flex flex-wrap items-center gap-2">
-                      <MessageSquare className="w-4 h-4 text-teal-600 dark:text-teal-300" />
-                      <h4 className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">Agent</h4>
-                      <span className="rounded border border-teal-500/20 bg-teal-500/10 px-2 py-0.5 text-[10px] font-medium text-teal-700 dark:text-teal-300">
+                      <MessageSquare className="w-4 h-4 text-muted-foreground" />
+                      <h4 className="text-sm font-semibold text-foreground">Agent</h4>
+                      <span className="rounded border border-border bg-muted/50 px-2 py-0.5 text-[10px] font-medium text-muted-foreground">
                         {stepLogs.message_sequence.status || 'recorded'}
                       </span>
                       <span className={`rounded border px-2 py-0.5 text-[10px] font-medium ${reflectionClass}`}>
@@ -317,8 +421,8 @@ export function StepContent(props: StepContentProps) {
                       {sessionEntries.length} recorded turn{sessionEntries.length === 1 ? '' : 's'} in this sequence.
                     </p>
                     {reflection?.summary && (
-                      <details className="mt-3 rounded border border-teal-500/15 bg-background/70 p-2.5">
-                        <summary className="cursor-pointer text-xs font-medium text-teal-700 dark:text-teal-300">View reflection result</summary>
+                      <details className="mt-3 rounded border border-border bg-background/70 p-2.5">
+                        <summary className="cursor-pointer text-xs font-medium text-foreground">View reflection result</summary>
                         <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-foreground/85">{reflection.summary}</p>
                       </details>
                     )}
@@ -330,7 +434,7 @@ export function StepContent(props: StepContentProps) {
           {/* Executions Section */}
           {visibleExecutions.length > 0 && (
             <div className="p-4 bg-background">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Execution Logs</h4>
+              <h4 className="text-sm font-semibold text-foreground mb-3">Execution Logs</h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {visibleExecutions.map((exec: any, idx: number) => {
@@ -361,14 +465,14 @@ export function StepContent(props: StepContentProps) {
                   const execTimestampMs = typeof execTimestamp === 'string' ? Date.parse(execTimestamp) : NaN
 
                   return (
-                    <div key={idx} className={`bg-background rounded border overflow-hidden ${isFastPath ? 'border-indigo-200 dark:border-indigo-800' : 'border-border'}`}>
+                    <div key={idx} className="bg-background rounded border border-border overflow-hidden">
                       <button
                         onClick={() => toggleExecution(execId)}
                         aria-expanded={isExecExpanded}
                         aria-label={`${isExecExpanded ? 'Collapse' : 'Expand'} ${isFastPath ? 'saved fast-path execution' : `attempt ${exec.attempt}`}`}
                         className="w-full flex items-start gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
                       >
-                        <Terminal className={`w-4 h-4 mt-0.5 flex-shrink-0 ${isFastPath ? 'text-indigo-600 dark:text-indigo-400' : 'text-muted-foreground'}`} />
+                        <Terminal className="w-4 h-4 mt-0.5 flex-shrink-0 text-muted-foreground" />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -386,7 +490,7 @@ export function StepContent(props: StepContentProps) {
                                 <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${
                                   fpSuccess
                                     ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30'
-                                    : 'bg-rose-500/10 text-rose-600 border-rose-500/20 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30'
+                                    : 'bg-destructive/10 text-destructive border-destructive/20'
                                 }`}>
                                   {fpSuccess ? 'ok' : 'fail'}{fpExit !== undefined ? ` · exit=${fpExit}` : ''}
                                 </span>
@@ -435,7 +539,7 @@ export function StepContent(props: StepContentProps) {
                             </p>
                           )}
                           {executionOrigin?.plannedMessage && (
-                            <p className="mt-1 text-[11px] leading-relaxed text-sky-700 dark:text-sky-300 line-clamp-2">
+                            <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground line-clamp-2">
                               Planned message: {executionOrigin.plannedMessage}
                             </p>
                           )}
@@ -469,8 +573,13 @@ export function StepContent(props: StepContentProps) {
                               )}
                               {exec.content.error && exec.content.error !== exec.content.output && (
                                 <>
-                                  <div className="font-semibold text-rose-600 dark:text-rose-400 mb-1">error:</div>
-                                  <pre className="whitespace-pre-wrap overflow-x-auto text-rose-700 dark:text-rose-300 max-h-[40vh] overflow-y-auto bg-rose-500/10 dark:bg-rose-950/20 border border-rose-500/20 dark:border-rose-900/30 rounded p-2 mb-3">
+                                  <div className="mb-1 flex items-center justify-between gap-2">
+                                    <div className="font-semibold text-destructive">error:</div>
+                                    {askContext && (
+                                      <ExplainButton workspacePath={askContext.workspacePath} message={explainMessage(exec.content.error)} />
+                                    )}
+                                  </div>
+                                  <pre className="whitespace-pre-wrap overflow-x-auto text-destructive max-h-[40vh] overflow-y-auto bg-destructive/10 border border-destructive/20 rounded p-2 mb-3">
                                     {exec.content.error}
                                   </pre>
                                 </>
@@ -497,13 +606,13 @@ export function StepContent(props: StepContentProps) {
                               {expandedFiles.has(exec.conversation_path) && (
                                 <div className="mb-4 bg-background rounded border border-border p-3">
                                   {sentMessages.length > 0 && (
-                                    <div className="mb-4 rounded border border-sky-500/20 bg-sky-500/[0.04] p-3">
-                                      <div className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">
+                                    <div className="mb-4 rounded border border-border bg-muted/30 p-3">
+                                      <div className="mb-2 text-xs font-medium text-muted-foreground">
                                         Messages sent to the agent ({sentMessages.length})
                                       </div>
                                       <div className="space-y-2">
                                         {sentMessages.map((sentMessage, messageIndex) => (
-                                          <details key={`${sentMessage.label}-${messageIndex}`} className="rounded border border-sky-500/15 bg-background/70 p-2">
+                                          <details key={`${sentMessage.label}-${messageIndex}`} className="rounded border border-border bg-background/70 p-2">
                                             <summary className="cursor-pointer text-xs font-medium text-foreground">{sentMessage.label}</summary>
                                             <p className="mt-2 whitespace-pre-wrap text-xs leading-relaxed text-foreground/85">{sentMessage.message}</p>
                                           </details>
@@ -511,7 +620,7 @@ export function StepContent(props: StepContentProps) {
                                       </div>
                                     </div>
                                   )}
-                                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b border-border pb-1">
+                                  <div className="text-xs font-medium text-muted-foreground mb-2 border-b border-border pb-1">
                                     Conversation History
                                   </div>
                                   {fileContents[exec.conversation_path] ? (
@@ -527,11 +636,11 @@ export function StepContent(props: StepContentProps) {
 
                               <div className="font-semibold text-foreground mb-1">Execution Result:</div>
                               <div className="max-h-[60vh] overflow-y-auto mb-3">
-                                <MarkdownRenderer content={result || ''} className="!text-[11px] [&_p]:!text-[11px] [&_li]:!text-[11px] [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-xs [&_code]:!text-[10px]" />
+                                <MarkdownRenderer content={result || ''} className="!text-xs [&_p]:!text-xs [&_li]:!text-xs [&_h1]:!text-base [&_h2]:!text-sm [&_h3]:!text-sm [&_code]:!text-[11px]" />
                               </div>
                               {executionOrigin?.plannedMessage && (
-                                <div className="mb-3 rounded border border-sky-500/20 bg-sky-500/[0.04] p-3">
-                                  <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-300">Planned message sent to the agent</div>
+                                <div className="mb-3 rounded border border-border bg-muted/30 p-3">
+                                  <div className="mb-1 text-xs font-medium text-muted-foreground">Planned message sent to the agent</div>
                                   <p className="whitespace-pre-wrap font-sans text-xs leading-relaxed text-foreground">{executionOrigin.plannedMessage}</p>
                                 </div>
                               )}
@@ -551,16 +660,18 @@ export function StepContent(props: StepContentProps) {
           {stepLogs.type === 'crew' && (
             <CrewRunSection
               stepLogs={stepLogs}
+              stepTitle={displayTitle}
               fileContents={fileContents}
               loadingFiles={loadingFiles}
               toggleFileExpansion={toggleFileExpansion}
+              askContext={askContext}
             />
           )}
 
           {/* Step Output Section */}
           {(stepLogs.output_content || stepLogs.context_output) && (!searchQuery || matchesSearch(stepLogs.output_content)) && (
             <div className="p-4 bg-muted/30">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5" />
                 Step Output
                 <span className="text-[10px] font-normal text-muted-foreground bg-background border border-border px-1.5 py-0.5 rounded font-mono">
@@ -590,8 +701,8 @@ export function StepContent(props: StepContentProps) {
 
           {/* Artifacts Section */}
           {visibleArtifacts.length > 0 && (
-            <div className="p-4 bg-gray-50 dark:bg-gray-900/30">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="p-4 bg-muted/30">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <FileText className="w-3.5 h-3.5" />
                 Artifacts & Files
               </h4>
@@ -636,7 +747,7 @@ export function StepContent(props: StepContentProps) {
           {/* Validations Section */}
           {visibleValidations.length > 0 && (
             <div className="p-4 bg-muted/30">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3">Validations</h4>
+              <h4 className="text-sm font-semibold text-foreground mb-3">Validations</h4>
               <div className="space-y-3">
                 {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                 {visibleValidations.map((val: any, idx: number) => {
@@ -672,7 +783,7 @@ export function StepContent(props: StepContentProps) {
                         onClick={() => toggleValidation(valId)}
                         className="w-full flex items-start gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
                       >
-                        <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${validationSucceeded ? 'bg-emerald-500' : validationFailed ? 'bg-rose-500' : 'bg-slate-400 dark:bg-slate-500'}`} />
+                        <div className={`mt-0.5 w-2 h-2 rounded-full flex-shrink-0 ${validationSucceeded ? 'bg-emerald-500' : validationFailed ? 'bg-destructive' : 'bg-muted-foreground/50'}`} />
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between mb-1">
                             <div className="flex items-center gap-2 flex-wrap">
@@ -687,7 +798,7 @@ export function StepContent(props: StepContentProps) {
                                 </span>
                               )}
                               {isAutomaticFinalValidation && (
-                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${validationSucceeded ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : validationFailed ? 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300' : 'border-border bg-muted text-muted-foreground'}`}>
+                                <span className={`text-[10px] font-medium px-1.5 py-0.5 rounded border ${validationSucceeded ? 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300' : validationFailed ? 'border-destructive/25 bg-destructive/10 text-destructive' : 'border-border bg-muted text-muted-foreground'}`}>
                                   {validationSucceeded ? 'passed' : validationFailed ? 'failed' : 'recorded'}
                                 </span>
                               )}
@@ -709,13 +820,18 @@ export function StepContent(props: StepContentProps) {
                       
                       {isValExpanded && val.content && (
                         <div className="p-3 border-t border-border bg-muted/30 text-xs font-mono">
+                          {validationFailed && validationSummary && askContext && (
+                            <div className="mb-3 font-sans">
+                              <ExplainButton workspacePath={askContext.workspacePath} label="Explain this failure" message={explainMessage(validationSummary)} />
+                            </div>
+                          )}
                           {feedback.length > 0 && (
                             <div className="mb-3">
                               <div className="font-semibold text-foreground mb-1">Feedback:</div>
                               <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
                                 {feedback.map((fb, i: number) => (
                                   <li key={i}>
-                                    <span className={`font-semibold ${fb.severity === 'CRITICAL' || fb.severity === 'HIGH' ? 'text-destructive' : 'text-yellow-500'}`}>[{fb.severity}]</span> {fb.description}
+                                    <span className={`font-semibold ${fb.severity === 'CRITICAL' || fb.severity === 'HIGH' ? 'text-destructive' : 'text-amber-600 dark:text-amber-400'}`}>[{fb.severity}]</span> {fb.description}
                                   </li>
                                 ))}
                               </ul>
@@ -737,7 +853,7 @@ export function StepContent(props: StepContentProps) {
           {/* Learnings Section */}
           {visibleLearnings.length > 0 && (
             <div className="p-4 bg-background border-t border-border">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <BookOpen className="w-4 h-4" /> Learning Logs
               </h4>
               <div className="space-y-3">
@@ -745,11 +861,11 @@ export function StepContent(props: StepContentProps) {
                 {visibleLearnings.map((log: any, idx: number) => (
                   <div key={idx} className="bg-background rounded border border-border p-3 text-sm">
                     <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-2 py-0.5 rounded text-xs uppercase font-medium border ${
+                      <span className={`px-2 py-0.5 rounded text-xs capitalize font-medium border ${
                         log.type === 'learning_completed' ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30' :
-                        log.type === 'learning_failed' ? 'bg-rose-500/10 text-rose-600 border-rose-500/20 dark:bg-rose-500/20 dark:text-rose-300 dark:border-rose-500/30' :
-                        log.type === 'learning_skipped' ? 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700/50' :
-                        'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30'
+                        log.type === 'learning_failed' ? 'bg-destructive/10 text-destructive border-destructive/20' :
+                        log.type === 'learning_skipped' ? 'bg-muted text-muted-foreground border-border' :
+                        'bg-muted text-muted-foreground border-border'
                       }`}>
                         {log.type.replace('learning_', '')}
                       </span>
@@ -762,9 +878,9 @@ export function StepContent(props: StepContentProps) {
 
                     {/* Trigger Reason (Why learning started) */}
                     {log.trigger_reason && (
-                      <div className="mt-2 text-xs bg-indigo-500/[0.04] dark:bg-indigo-500/[0.08] p-2 rounded border border-indigo-500/15 dark:border-indigo-500/25">
-                        <div className="font-semibold text-indigo-600 dark:text-indigo-300 mb-1 flex items-center gap-1.5">
-                          <span className="text-sm">💡</span> Trigger Reason
+                      <div className="mt-2 text-xs bg-muted/30 p-2 rounded border border-border">
+                        <div className="font-semibold text-foreground mb-1 flex items-center gap-1.5">
+                          <Lightbulb className="w-3.5 h-3.5" /> Trigger Reason
                         </div>
                         <p className="text-muted-foreground">{log.trigger_reason}</p>
                       </div>
@@ -772,9 +888,9 @@ export function StepContent(props: StepContentProps) {
 
                     {/* Skip Reason (Why learning was skipped) */}
                     {log.skip_reason && (
-                      <div className="mt-2 text-xs bg-gray-50 dark:bg-gray-800/30 p-2 rounded border border-gray-100 dark:border-gray-800/50">
+                      <div className="mt-2 text-xs bg-muted/30 p-2 rounded border border-border">
                         <div className="font-semibold text-muted-foreground mb-1 flex items-center gap-1.5">
-                          <span className="text-sm">⏭️</span> Skip Reason
+                          <SkipForward className="w-3.5 h-3.5" /> Skip Reason
                         </div>
                         <p className="text-muted-foreground">{log.skip_reason}</p>
                       </div>
@@ -807,7 +923,7 @@ export function StepContent(props: StepContentProps) {
                             
                             {expandedFiles.has(log.conversation_path!) && (
                                 <div className="mt-2 bg-background rounded border border-border p-3">
-                                  <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wider mb-2 border-b border-border pb-1">
+                                  <div className="text-xs font-medium text-muted-foreground mb-2 border-b border-border pb-1">
                                     Learning Conversation History
                                   </div>
                                   {fileContents[log.conversation_path!] ? (
@@ -824,8 +940,11 @@ export function StepContent(props: StepContentProps) {
                     )}
 
                     {log.error && (
-                        <div className="mt-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
-                            Error: {log.error}
+                        <div className="mt-2 flex items-start justify-between gap-2 text-xs text-destructive bg-destructive/10 p-2 rounded">
+                            <span className="min-w-0 flex-1">Error: {log.error}</span>
+                            {askContext && (
+                              <ExplainButton workspacePath={askContext.workspacePath} message={explainMessage(log.error)} />
+                            )}
                         </div>
                     )}
                   </div>
@@ -836,7 +955,7 @@ export function StepContent(props: StepContentProps) {
           {/* Orchestration Section */}
           {visibleOrchestration.length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <Network className="w-4 h-4" /> Orchestration & Routing Logs
               </h4>
               <div className="space-y-6">
@@ -856,7 +975,7 @@ export function StepContent(props: StepContentProps) {
                       <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold ring-4 ring-muted/30">
                         {iteration}
                       </span>
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <span className="text-xs font-semibold text-muted-foreground">
                         Iteration {iteration}
                       </span>
                       <div className="h-px bg-border flex-1 ml-2" />
@@ -868,20 +987,13 @@ export function StepContent(props: StepContentProps) {
                         <div key={idx} className="pl-4 relative">
                           {/* Timeline dot */}
                           <div className={`absolute -left-[5px] top-3 w-2.5 h-2.5 rounded-full border-2 border-background ${
-                            log.type === 'routing' ? 'bg-indigo-500' :
-                            log.type === 'branch' ? 'bg-cyan-500' :
-                            log.type === 'evaluation' ? (log.success_criteria_met ? 'bg-emerald-500' : 'bg-rose-500') :
-                            'bg-slate-400 dark:bg-slate-500'
+                            log.type === 'evaluation' ? (log.success_criteria_met ? 'bg-emerald-500' : 'bg-destructive') :
+                            'bg-muted-foreground/50'
                           }`} />
 
                           <div className="bg-background rounded border border-border p-3 text-sm shadow-sm">
                             <div className="flex items-center gap-2 mb-2">
-                              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wide border ${
-                                log.type === 'routing' ? 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30' :
-                                log.type === 'branch' ? 'bg-cyan-500/10 text-cyan-600 border-cyan-500/20 dark:bg-cyan-500/20 dark:text-cyan-300 dark:border-cyan-500/30' :
-                                log.type === 'evaluation' ? 'bg-violet-500/10 text-violet-600 border-violet-500/20 dark:bg-violet-500/20 dark:text-violet-300 dark:border-violet-500/30' :
-                                'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700/50'
-                              }`}>
+                              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border bg-muted text-muted-foreground border-border">
                                 {log.type}
                               </span>
                               <span className="text-[10px] text-muted-foreground ml-auto font-mono">
@@ -891,10 +1003,10 @@ export function StepContent(props: StepContentProps) {
 
                             {(log.type === 'routing' || log.type === 'branch') && log.routing_evaluation && (
                               <div className="mt-3 space-y-3">
-                                <div className={`rounded border p-3 ${log.type === 'branch' ? 'border-cyan-500/20 bg-cyan-500/[0.05]' : 'border-indigo-500/20 bg-indigo-500/[0.05]'}`}>
+                                <div className="rounded border border-border bg-muted/30 p-3">
                                   <div className="flex flex-wrap items-center justify-between gap-2">
                                     <span className="text-xs font-medium text-foreground">Selected route</span>
-                                    <span className={`rounded border bg-background px-1.5 py-0.5 font-mono text-[10px] ${log.type === 'branch' ? 'border-cyan-500/20 text-cyan-700 dark:text-cyan-300' : 'border-indigo-500/20 text-indigo-700 dark:text-indigo-300'}`}>
+                                    <span className="rounded border border-border bg-background px-1.5 py-0.5 font-mono text-[10px] text-foreground">
                                       {log.routing_evaluation.selected_route_id || 'not recorded'}
                                     </span>
                                   </div>
@@ -952,7 +1064,7 @@ export function StepContent(props: StepContentProps) {
                                                     <ChevronRight className="w-4 h-4 transition-transform group-open:rotate-90" />
                                                     View Sub-Agent Execution ({logs!.steps[log.orchestration_response.selected_sub_agent_path].title})
                                                 </summary>
-                                                <div className="mt-3 pl-2 border-l-2 border-primary/20">
+                                                <div className="mt-3 pl-2 border-l-2 border-border">
                                                     <StepContent {...props} stepId={log.orchestration_response.selected_sub_agent_path} stepLogs={logs!.steps[log.orchestration_response.selected_sub_agent_path]} />
                                                 </div>
                                             </details>
@@ -964,7 +1076,7 @@ export function StepContent(props: StepContentProps) {
                                 {log.orchestration_response.success_reasoning && (
                                     <div className="text-xs">
                                         <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                                          <span className="text-sm">💡</span> Why this agent was selected?
+                                          <Lightbulb className="w-3.5 h-3.5" /> Why this agent was selected?
                                         </div>
                                         <div className="bg-amber-500/10 p-3 rounded-md border border-amber-500/20 text-foreground leading-relaxed shadow-sm">
                                             "{log.orchestration_response.success_reasoning}"
@@ -1005,7 +1117,7 @@ export function StepContent(props: StepContentProps) {
                                 <div className={`flex items-center gap-2 p-2 rounded border ${
                                   log.success_criteria_met 
                                     ? 'bg-emerald-500/10 border-emerald-500/20 text-emerald-800 dark:bg-emerald-950/20 dark:border-emerald-900/30 dark:text-emerald-300' 
-                                    : 'bg-rose-500/10 border-rose-500/20 text-rose-800 dark:bg-rose-950/20 dark:border-rose-900/30 dark:text-rose-300'
+                                    : 'bg-destructive/10 border-destructive/20 text-destructive'
                                 }`}>
                                     {log.success_criteria_met ? <CheckCircle className="w-4 h-4" /> : <XCircle className="w-4 h-4" />}
                                     <span className="font-semibold text-xs">
@@ -1036,7 +1148,7 @@ export function StepContent(props: StepContentProps) {
           {/* Todo Task Section */}
           {visibleTodoTask.length > 0 && (
             <div className="p-4 bg-muted/30 border-t border-border">
-              <h4 className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 flex items-center gap-2">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <ListTodo className="w-4 h-4" /> Todo Task Logs
               </h4>
               <div className="space-y-6">
@@ -1060,14 +1172,14 @@ export function StepContent(props: StepContentProps) {
                   return (
                   <div key={iteration} className="relative">
                     <div className="flex items-center gap-2 mb-3">
-                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-purple-500/10 text-purple-600 text-[10px] font-bold ring-4 ring-muted/30">
+                      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-primary/10 text-primary text-[10px] font-bold ring-4 ring-muted/30">
                         {iteration}
                       </span>
-                      <span className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">
+                      <span className="text-xs font-semibold text-muted-foreground">
                         Iteration {iteration}
                       </span>
                       {subAgentName && (
-                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300">
+                        <span className="text-xs font-medium px-2 py-0.5 rounded bg-muted text-muted-foreground">
                           → {subAgentName}
                         </span>
                       )}
@@ -1079,24 +1191,19 @@ export function StepContent(props: StepContentProps) {
                       <div className="h-px bg-border flex-1 ml-2" />
                     </div>
 
-                    <div className="space-y-3 pl-2.5 border-l-2 border-purple-500/30 ml-2.5 pb-2">
+                    <div className="space-y-3 pl-2.5 border-l-2 border-border/50 ml-2.5 pb-2">
                       {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                       {(iterLogs as any[]).map((log, idx) => (
                         <div key={idx} className="pl-4 relative">
                           {/* Timeline dot */}
                           <div className={`absolute -left-[5px] top-3 w-2.5 h-2.5 rounded-full border-2 border-background ${
-                            log.type === 'routing' ? 'bg-indigo-500' :
                             log.type === 'evaluation' ? (log.all_tasks_complete ? 'bg-emerald-500' : 'bg-amber-500') :
-                            'bg-slate-400 dark:bg-slate-500'
+                            'bg-muted-foreground/50'
                           }`} />
 
                           <div className="bg-background rounded border border-border p-3 text-sm shadow-sm">
                             <div className="flex items-center gap-2 mb-2">
-                              <span className={`font-mono text-[10px] px-1.5 py-0.5 rounded uppercase font-bold tracking-wide border ${
-                                log.type === 'routing' ? 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30' :
-                                log.type === 'evaluation' ? 'bg-amber-500/10 text-amber-600 border-amber-500/20 dark:bg-amber-500/20 dark:text-amber-300 dark:border-amber-500/30' :
-                                'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700/50'
-                              }`}>
+                              <span className="font-mono text-[10px] px-1.5 py-0.5 rounded border bg-muted text-muted-foreground border-border">
                                 {log.type}
                               </span>
                               {log.model && (
@@ -1117,8 +1224,8 @@ export function StepContent(props: StepContentProps) {
                                     log.todo_task_response.next_action === 'complete'
                                       ? 'bg-emerald-500/10 text-emerald-600 border-emerald-500/20 dark:bg-emerald-500/20 dark:text-emerald-300 dark:border-emerald-500/30'
                                       : log.todo_task_response.next_action === 'delegate'
-                                      ? 'bg-indigo-500/10 text-indigo-600 border-indigo-500/20 dark:bg-indigo-500/20 dark:text-indigo-300 dark:border-indigo-500/30'
-                                      : 'bg-slate-100 text-slate-700 border-slate-200 dark:bg-slate-800 dark:text-slate-300 dark:border-slate-700/50'
+                                      ? 'bg-muted text-muted-foreground border-border'
+                                      : 'bg-muted text-muted-foreground border-border'
                                   }`}>
                                     Action: {log.todo_task_response.next_action}
                                   </span>
@@ -1131,17 +1238,17 @@ export function StepContent(props: StepContentProps) {
 
                                 {/* Selected Agent */}
                                 {(log.todo_task_response.selected_route_id || log.todo_task_response.use_generic_agent) && (
-                                  <div className="flex flex-col gap-2 p-3 bg-purple-500/5 rounded border border-purple-500/20">
+                                  <div className="flex flex-col gap-2 p-3 bg-muted/30 rounded border border-border">
                                     <div className="flex justify-between items-start">
                                       <span className="font-medium text-foreground text-xs flex items-center gap-1.5 mt-0.5">
                                         {log.todo_task_response.use_generic_agent ? (
                                           <>
-                                            <Bot className="w-3.5 h-3.5 text-purple-500" />
+                                            <Bot className="w-3.5 h-3.5 text-muted-foreground" />
                                             Generic Agent
                                           </>
                                         ) : (
                                           <>
-                                            <Split className="w-3.5 h-3.5 text-purple-500" />
+                                            <Split className="w-3.5 h-3.5 text-muted-foreground" />
                                             Predefined Sub-Agent
                                           </>
                                         )}
@@ -1153,7 +1260,7 @@ export function StepContent(props: StepContentProps) {
                                       )}
                                     </div>
                                     {log.todo_task_response.selected_route_name && (
-                                      <div className="text-sm font-semibold text-purple-600 dark:text-purple-400 pl-5">
+                                      <div className="text-sm font-semibold text-foreground pl-5">
                                         {log.todo_task_response.selected_route_name}
                                       </div>
                                     )}
@@ -1164,7 +1271,7 @@ export function StepContent(props: StepContentProps) {
                                 {log.todo_task_response.todo_id_to_execute && (
                                   <div className="text-xs">
                                     <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
-                                      <ListTodo className="w-3 h-3 text-purple-500" />
+                                      <ListTodo className="w-3 h-3 text-muted-foreground" />
                                       Todo Item
                                     </div>
                                     <div className="p-2 bg-muted/30 rounded border border-border">
@@ -1180,7 +1287,7 @@ export function StepContent(props: StepContentProps) {
                                 {log.todo_task_response.selection_reasoning && (
                                   <div className="text-xs">
                                     <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5 text-amber-600 dark:text-amber-400">
-                                      <span className="text-sm">💡</span> Why this agent was selected?
+                                      <Lightbulb className="w-3.5 h-3.5" /> Why this agent was selected?
                                     </div>
                                     <div className="bg-amber-500/10 p-3 rounded-md border border-amber-500/20 text-foreground leading-relaxed shadow-sm">
                                       "{log.todo_task_response.selection_reasoning}"
@@ -1192,7 +1299,7 @@ export function StepContent(props: StepContentProps) {
                                 {log.todo_task_response.instructions_to_sub_agent && (
                                   <div className="text-xs mt-2">
                                     <div className="font-semibold text-foreground mb-1.5 flex items-center gap-1.5">
-                                      <Terminal className="w-3 h-3 text-purple-500" />
+                                      <Terminal className="w-3 h-3 text-muted-foreground" />
                                       Instructions to Sub-Agent
                                     </div>
                                     <div className="p-3 bg-muted/30 rounded border border-border font-mono whitespace-pre-wrap text-muted-foreground max-h-[60vh] overflow-y-auto text-[11px] leading-relaxed">
@@ -1225,11 +1332,11 @@ export function StepContent(props: StepContentProps) {
                                 {/* Inline Sub-Agent Logs */}
                                 {log.todo_task_response.selected_sub_agent_path && logs?.steps?.[log.todo_task_response.selected_sub_agent_path] && (
                                   <details className="mt-2 group/sub">
-                                    <summary className="text-xs font-semibold text-purple-600 dark:text-purple-400 cursor-pointer hover:underline flex items-center gap-1.5 select-none list-none">
+                                    <summary className="text-xs font-semibold text-primary cursor-pointer hover:underline flex items-center gap-1.5 select-none list-none">
                                       <ChevronRight className="w-3.5 h-3.5 transition-transform group-open/sub:rotate-90" />
                                       View Sub-Agent Execution ({logs!.steps[log.todo_task_response.selected_sub_agent_path].title})
                                     </summary>
-                                    <div className="mt-3 ml-2 pl-3 border-l-2 border-purple-200 dark:border-purple-900/50">
+                                    <div className="mt-3 ml-2 pl-3 border-l-2 border-border">
                                       <StepContent {...props} stepId={log.todo_task_response.selected_sub_agent_path} stepLogs={logs!.steps[log.todo_task_response.selected_sub_agent_path]} />
                                     </div>
                                   </details>
@@ -1273,8 +1380,8 @@ export function StepContent(props: StepContentProps) {
           )}
           {/* Archived Logs Section (Previous Runs) */}
           {visibleArchivedLogs.length > 0 && (
-            <div className="p-4 bg-amber-500/5 border-t border-amber-500/20">
-              <h4 className="text-xs font-semibold text-amber-600 dark:text-amber-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="p-4 bg-muted/30 border-t border-border">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <History className="w-4 h-4" /> Previous Runs ({visibleArchivedLogs.length})
               </h4>
               <div className="space-y-3">
@@ -1296,12 +1403,12 @@ export function StepContent(props: StepContentProps) {
                   }
 
                   return (
-                    <div key={archiveIdx} className="bg-background rounded border border-amber-500/30 overflow-hidden">
+                    <div key={archiveIdx} className="bg-background rounded border border-border overflow-hidden">
                       <button
                         onClick={() => toggleArchived(archiveId)}
-                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-amber-500/10 transition-colors"
+                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
                       >
-                        {isArchiveExpanded ? <ChevronDown className="w-4 h-4 text-amber-500" /> : <ChevronRight className="w-4 h-4 text-amber-500" />}
+                        {isArchiveExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-medium text-foreground">
@@ -1315,7 +1422,7 @@ export function StepContent(props: StepContentProps) {
                       </button>
 
                       {isArchiveExpanded && (
-                        <div className="border-t border-amber-500/20 p-3 space-y-3 bg-muted/20">
+                        <div className="border-t border-border p-3 space-y-3 bg-muted/20">
                           {/* Archived Executions */}
                                                                       {archive.executions && archive.executions.length > 0 && (
                                                                       <div>
@@ -1378,9 +1485,9 @@ export function StepContent(props: StepContentProps) {
                                                                           return (
                                                                             <div key={idx} className="text-xs bg-background border border-border rounded p-2 mb-1">
                                                                               <div className="flex items-center gap-2">
-                                                                                <div className={`w-2 h-2 rounded-full ${valStatus === 'COMPLETED' ? 'bg-emerald-500' : valStatus === 'FAILED' ? 'bg-rose-500' : 'bg-slate-400 dark:bg-slate-500'}`} />
+                                                                                <div className={`w-2 h-2 rounded-full ${valStatus === 'COMPLETED' ? 'bg-emerald-500' : valStatus === 'FAILED' ? 'bg-destructive' : 'bg-muted-foreground/50'}`} />
                                                                                 <span className="font-medium">Attempt {val.attempt}</span>
-                                                                                <span className={`ml-auto text-xs ${valStatus === 'COMPLETED' ? 'text-emerald-600 dark:text-emerald-400' : valStatus === 'FAILED' ? 'text-rose-600 dark:text-rose-400' : 'text-muted-foreground'}`}>
+                                                                                <span className={`ml-auto text-xs ${valStatus === 'COMPLETED' ? 'text-emerald-600 dark:text-emerald-400' : valStatus === 'FAILED' ? 'text-destructive' : 'text-muted-foreground'}`}>
                                                                                   {valStatus || 'Unknown'}
                                                                                 </span>
                                                                               </div>
@@ -1470,7 +1577,7 @@ export function StepContent(props: StepContentProps) {
                                     <span className="ml-2 text-muted-foreground">Generic Agent</span>
                                   )}
                                   {task.todo_task_response?.all_tasks_complete && (
-                                    <span className="ml-2 text-green-600 dark:text-green-400">✓ Complete</span>
+                                    <span className="ml-2 text-emerald-600 dark:text-emerald-400">✓ Complete</span>
                                   )}
                                 </div>
                               ))}
@@ -1488,8 +1595,8 @@ export function StepContent(props: StepContentProps) {
 
           {/* Archived execution outputs from deterministic routing. */}
           {visibleArchivedRuns.length > 0 && (
-            <div className="p-4 bg-indigo-500/[0.03] border-t border-indigo-500/15">
-              <h4 className="text-xs font-semibold text-indigo-600 dark:text-indigo-400 uppercase tracking-wider mb-3 flex items-center gap-2">
+            <div className="p-4 bg-muted/30 border-t border-border">
+              <h4 className="text-sm font-semibold text-foreground mb-3 flex items-center gap-2">
                 <Archive className="w-4 h-4" /> Archived Execution Runs ({visibleArchivedRuns.length})
               </h4>
               <div className="space-y-3">
@@ -1501,14 +1608,14 @@ export function StepContent(props: StepContentProps) {
                   const artifactCount = archive.artifacts?.length || 0
 
                   return (
-                    <div key={archiveIdx} className="bg-background rounded border border-indigo-500/20 dark:border-indigo-500/30 overflow-hidden">
+                    <div key={archiveIdx} className="bg-background rounded border border-border overflow-hidden">
                       <button
                         onClick={() => toggleArchived(archiveId)}
                         aria-expanded={isArchiveExpanded}
                         aria-label={`${isArchiveExpanded ? 'Collapse' : 'Expand'} archived run ${archive.run_number}`}
-                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-indigo-500/10 transition-colors"
+                        className="w-full flex items-center gap-3 p-3 text-left hover:bg-accent/50 transition-colors"
                       >
-                        {isArchiveExpanded ? <ChevronDown className="w-4 h-4 text-indigo-500" /> : <ChevronRight className="w-4 h-4 text-indigo-500" />}
+                        {isArchiveExpanded ? <ChevronDown className="w-4 h-4 text-muted-foreground" /> : <ChevronRight className="w-4 h-4 text-muted-foreground" />}
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center justify-between">
                             <span className="text-sm font-medium text-foreground">
@@ -1522,7 +1629,7 @@ export function StepContent(props: StepContentProps) {
                       </button>
 
                       {isArchiveExpanded && (
-                        <div className="border-t border-indigo-500/15 p-3 space-y-3 bg-muted/20">
+                        <div className="border-t border-border p-3 space-y-3 bg-muted/20">
                           {/* Archived Output Content */}
                           {archive.output_content && (
                             <div>

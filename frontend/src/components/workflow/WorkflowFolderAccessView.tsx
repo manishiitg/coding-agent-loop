@@ -1,17 +1,26 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react'
 import { FolderOpen, LoaderCircle, Plus } from 'lucide-react'
+import { Button } from '../ui/Button'
+import { Input } from '../ui/Input'
+import { SettingsCard } from '../ui/SettingsCard'
 import { workflowManifestApi } from '../../services/api'
 import type { WorkflowFolderAccessRequest, WorkflowFolderGrant } from '../../services/api-types'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { KnowledgebaseSources } from './KnowledgebaseSources'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { aliasFromPath } from '../../utils/folderAlias'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { FolderGrantList } from '../folders/FolderGrantList'
 import { WorkflowReferenceAccess } from '../folders/WorkflowReferenceAccess'
+import { AskAIButton } from './AskAIButton'
+import { getIdentityTabAskAIMessage } from './workspaceAskAI'
 
 interface WorkflowFolderAccessViewProps {
   workspacePath: string | null
   headerAction?: React.ReactNode
+  /** Embedded under the Identity tab: no header, joins the pane scroll. */
+  hideHeader?: boolean
+  manageOwnScroll?: boolean
 }
 
 function grantID(): string {
@@ -35,8 +44,11 @@ function requestReasonFor(request: WorkflowFolderAccessRequest): string {
   return legacyFolderRequest(request)?.reason || request.reason
 }
 
-export default function WorkflowFolderAccessView({ workspacePath, headerAction }: WorkflowFolderAccessViewProps) {
+export default function WorkflowFolderAccessView({ workspacePath, headerAction, hideHeader = false, manageOwnScroll = true }: WorkflowFolderAccessViewProps) {
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
+  // Host folder picking needs the desktop app's native dialog; the whole
+  // external-folders box stays hidden on server deployments.
+  const canPickFolders = typeof window !== 'undefined' && !!window.electronAPI?.pickWorkflowFolder
   const [grants, setGrants] = useState<WorkflowFolderGrant[]>([])
   const [requests, setRequests] = useState<WorkflowFolderAccessRequest[]>([])
   const [workflowContextPaths, setWorkflowContextPaths] = useState<string[]>([])
@@ -180,28 +192,61 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
   }, [canWriteWorkflow, workspacePath])
 
   return (
-        <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-          <div className="flex items-start justify-between border-b border-border px-5 py-4">
-            <div>
-              <h2 className="text-base font-semibold text-foreground">Attached folders</h2>
-              <p className="mt-1 text-xs text-muted-foreground">Folders and shared knowledge bases this workflow can access.</p>
-            </div>
-            <div className="flex shrink-0 items-center gap-2">
-              {!canWriteWorkflow && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
-              {headerAction}
-            </div>
-          </div>
+        <div className={`flex w-full max-w-none flex-col bg-background ${manageOwnScroll ? 'h-full min-h-0' : ''}`}>
+          {!hideHeader && (
+            <WorkspaceViewHeader
+              icon={FolderOpen}
+              title="Attached folders"
+              subtitle="Folders and shared knowledge bases this workflow can access."
+              actions={<>
+                {!canWriteWorkflow && <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] font-medium text-amber-700 dark:text-amber-300">Read-only</span>}
+                {headerAction}
+              </>}
+            />
+          )}
 
-          <div className="min-h-0 flex-1 space-y-5 overflow-y-auto p-5">
+          <div className={`space-y-5 ${manageOwnScroll ? 'min-h-0 flex-1 overflow-y-auto p-5' : ''}`}>
+            <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+              <div className="min-w-0 flex-1 basis-48">
+                <p className="text-sm font-semibold text-foreground">Need to attach something?</p>
+                <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                  Ask the builder to attach folders, shared knowledge, or other workflows — no manual setup needed.
+                </p>
+              </div>
+              <AskAIButton
+                workspacePath={!canWriteWorkflow ? null : workspacePath ?? null}
+                label="Ask AI to add"
+                message={getIdentityTabAskAIMessage('folders')}
+                className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+              />
+            </div>
             {workspacePath && <KnowledgebaseSources key={workspacePath} workspacePath={workspacePath} variant="folders" />}
-            <WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={persistWorkflowReferences} excludeWorkspacePath={workspacePath} disabled={!canWriteWorkflow || saving} />
-            <h3 className="text-sm font-semibold text-foreground">External folders</h3>
-            {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
-            {loading ? (
-              <div className="flex justify-center py-8"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-            ) : (
-              <FolderGrantList grants={grants} disabled={!canWriteWorkflow || saving} onAccessChange={changeAccess} onRemove={removeGrant} />
-            )}
+            <WorkflowReferenceAccess selectedPaths={workflowContextPaths} onChange={persistWorkflowReferences} excludeWorkspacePath={workspacePath} disabled={!canWriteWorkflow || saving} hideAdd />
+            {canPickFolders && (<>
+            <SettingsCard
+              icon={<FolderOpen aria-hidden="true" className="h-4 w-4 text-primary" />}
+              title="External folders"
+              count={`${grants.length} attached`}
+            >
+              {error && <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">{error}</div>}
+              {loading ? (
+                <div className="flex justify-center py-8"><LoaderCircle className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+              ) : (
+                <FolderGrantList grants={grants} disabled={!canWriteWorkflow || saving} onAccessChange={changeAccess} onRemove={removeGrant} />
+              )}
+              <div className="mt-3 border-t border-border/60 pt-3">
+                <Button type="button" variant="outline" size="sm" disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void chooseFolder()}><FolderOpen className="h-4 w-4" />Choose folder…</Button>
+                {pendingPath && (
+                  <div className="mt-3 grid gap-3 sm:grid-cols-2">
+                    <label className="text-xs text-muted-foreground">Alias<Input value={pendingAlias} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingAlias(event.target.value)} className="mt-1" /></label>
+                    <label className="text-xs text-muted-foreground">Access<select value={pendingAccess} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingAccess(event.target.value as 'read_only' | 'read_write')} className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"><option value="read_only">Read only</option><option value="read_write">Read & write</option></select></label>
+                    <label className="text-xs text-muted-foreground sm:col-span-2">Reason (optional)<Input value={pendingReason} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingReason(event.target.value)} className="mt-1" placeholder="Why this workflow needs the folder" /></label>
+                    <div className="truncate text-xs text-muted-foreground sm:col-span-2" title={pendingPath}>{pendingPath}</div>
+                    <Button type="button" size="sm" disabled={!canWriteWorkflow || !canAdd || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void addGrant()} className="w-fit"><Plus className="h-3.5 w-3.5" />Attach folder</Button>
+                  </div>
+                )}
+              </div>
+            </SettingsCard>
 
             {!loading && requests.length > 0 && (
               <div className="space-y-2">
@@ -217,31 +262,19 @@ export default function WorkflowFolderAccessView({ workspacePath, headerAction }
                         {requestedPath && <div className="mt-1 truncate text-xs text-muted-foreground" title={requestedPath}>{requestedPath}</div>}
                       </div>
                       {requestedPath ? (
-                        <button type="button" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void approveRequest(request)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50">Approve</button>
+                        <Button type="button" size="sm" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void approveRequest(request)}>Approve</Button>
                       ) : (
-                        <button type="button" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void chooseFolder(request)} className="rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground disabled:opacity-50">Choose folder</button>
+                        <Button type="button" size="sm" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void chooseFolder(request)}>Choose folder</Button>
                       )}
-                      <button type="button" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void dismissRequest(request)} className="rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-muted hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50">Deny</button>
+                      <Button type="button" variant="ghost" size="sm" disabled={!canWriteWorkflow || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void dismissRequest(request)}>Deny</Button>
                     </div>
                   </div>
                 } )}
               </div>
             )}
 
-            <div className="rounded-lg border border-border p-4">
-              <div className="text-sm font-medium text-foreground">Attach another folder</div>
-              <button type="button" disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void chooseFolder()} className="mt-3 inline-flex items-center gap-2 rounded-md border border-border bg-muted px-3 py-2 text-xs font-medium text-foreground hover:bg-muted/70 disabled:cursor-not-allowed disabled:opacity-50"><FolderOpen className="h-4 w-4" />Choose folder…</button>
-              {pendingPath && (
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="text-xs text-muted-foreground">Alias<input value={pendingAlias} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingAlias(event.target.value)} className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" /></label>
-                  <label className="text-xs text-muted-foreground">Access<select value={pendingAccess} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingAccess(event.target.value as 'read_only' | 'read_write')} className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50"><option value="read_only">Read only</option><option value="read_write">Read & write</option></select></label>
-                  <label className="text-xs text-muted-foreground sm:col-span-2">Reason (optional)<input value={pendingReason} disabled={!canWriteWorkflow} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onChange={event => setPendingReason(event.target.value)} className="mt-1 w-full rounded-md border border-border bg-background px-2.5 py-2 text-sm text-foreground disabled:cursor-not-allowed disabled:opacity-50" placeholder="Why this workflow needs the folder" /></label>
-                  <div className="truncate text-xs text-muted-foreground sm:col-span-2" title={pendingPath}>{pendingPath}</div>
-                  <button type="button" disabled={!canWriteWorkflow || !canAdd || saving} title={!canWriteWorkflow ? READ_ONLY_TITLE : undefined} onClick={() => void addGrant()} className="inline-flex w-fit items-center gap-2 rounded-md bg-primary px-3 py-2 text-xs font-medium text-primary-foreground disabled:opacity-50"><Plus className="h-3.5 w-3.5" />Attach folder</button>
-                </div>
-              )}
-            </div>
-            <p className="text-[11px] leading-relaxed text-muted-foreground">Attached folders are host-local. Shell commands receive a WORKFLOW_FOLDER_* environment variable, and safe patches can use the linked:// alias. Existing tools are not duplicated or restored.</p>
+            <p className="text-[11px] leading-relaxed text-muted-foreground">Attached folders are host-local, exposed to shells as WORKFLOW_FOLDER_* variables; safe patches can use the linked:// alias. Existing tools are not duplicated or restored.</p>
+            </>)}
           </div>
         </div>
   )

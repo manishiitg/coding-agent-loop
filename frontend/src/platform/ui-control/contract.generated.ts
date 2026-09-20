@@ -42,31 +42,18 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
-      "id": "learnings",
-      "label": "Learnings",
+      "id": "knowledge",
+      "label": "Knowledge",
+      "target_kind": "view_section",
       "actions": [
         "open",
         "refresh"
       ],
-      "targets": []
-    },
-    {
-      "id": "knowledgebase",
-      "label": "Knowledgebase",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "database",
-      "label": "Database",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
+      "targets": [
+        "learnings",
+        "knowledgebase",
+        "database"
+      ]
     },
     {
       "id": "webhooks",
@@ -150,26 +137,8 @@ export const UI_CONTROL_CONTRACT = {
       "targets": []
     },
     {
-      "id": "playbooks",
-      "label": "Workflow playbooks",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "skills",
-      "label": "Workflow skills",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "secrets",
-      "label": "Workflow secrets",
+      "id": "identity",
+      "label": "Identity",
       "actions": [
         "open",
         "refresh"
@@ -179,6 +148,15 @@ export const UI_CONTROL_CONTRACT = {
     {
       "id": "mcp",
       "label": "Integrations",
+      "actions": [
+        "open",
+        "refresh"
+      ],
+      "targets": []
+    },
+    {
+      "id": "playbooks",
+      "label": "Workflow playbooks",
       "actions": [
         "open",
         "refresh"
@@ -208,42 +186,6 @@ export const UI_CONTROL_CONTRACT = {
         "triggers",
         "bots"
       ]
-    },
-    {
-      "id": "llm",
-      "label": "Workflow LLM configuration",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "email",
-      "label": "Gmail",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "bots",
-      "label": "Connectors",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
-    },
-    {
-      "id": "folders",
-      "label": "Attached folders",
-      "actions": [
-        "open",
-        "refresh"
-      ],
-      "targets": []
     }
   ]
 } as const

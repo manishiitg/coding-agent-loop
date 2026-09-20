@@ -12,25 +12,41 @@ describe('workflow Ask AI placement', () => {
     expect(host).toContain('assistantControl={workspacePath ? (')
   })
 
-  it('keeps frequent tools visible without a group label and uses mutually exclusive Ops and Setup popovers', () => {
+  it('keeps exactly one of the Views, Ops, and Setup inline groups open', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
-    expect(toolbar).not.toContain('label="Views"')
     expect(toolbar).not.toContain('label="Tools"')
+    expect(toolbar).toContain('label="Views"')
+    expect(toolbar).toContain('label="Ops"')
+    expect(toolbar).toContain('label="Setup"')
+    expect(toolbar).toContain('hideLabel')
+    expect(toolbar.match(/hideToggleWhenOpen/g)).toHaveLength(3)
+    expect(toolbar).toContain("useState<'views' | 'ops' | 'setup'>('views')")
+    expect(toolbar).toContain("open={openToolbarMenu === 'views'}")
     expect(toolbar).toContain("open={openToolbarMenu === 'ops'}")
     expect(toolbar).toContain("open={openToolbarMenu === 'setup'}")
+    expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('views')}")
     expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('ops')}")
     expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('setup')}")
-    expect(toolbar).toContain('role="menu" aria-label={label}')
+    expect(toolbar).toContain('<WorkspaceToolbarGroup')
+    expect(toolbar).toContain('<ToolbarInlineItem')
+    expect(toolbar).not.toContain('ToolbarPopoverGroup')
+    expect(toolbar).not.toContain('ToolbarPopoverItem')
+    expect(toolbar).not.toContain('role="menu"')
   })
 
-  it('keeps report separate, Knowledgebase visible, Costs in Ops, and Playbooks in Setup', () => {
+  it('keeps report separate, Knowledge visible, Costs and Execution logs in Ops, and Playbooks in Setup', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
-    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'knowledgebase', 'browser', 'workshop', 'execution-logs'])")
-    expect(toolbar).toContain("new Set<WorkspaceViewId>(['costs', 'learnings', 'database', 'files', 'backup', 'publish', 'notify'])")
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['pulse', 'flow', 'browser', 'workshop'])")
+    expect(toolbar).toContain("new Set<WorkspaceViewId>(['knowledge', 'costs', 'execution-logs', 'files', 'backup', 'publish', 'notify'])")
     expect(toolbar).toContain("playbooks: 'Playbooks'")
-    expect(toolbar).toContain("bots: 'Bots'")
+    expect(toolbar).toContain("mcp: 'Integrations'")
+    expect(toolbar).toContain("identity: 'Identity'")
+    expect(toolbar).not.toContain("bots: 'Bots'")
+    expect(toolbar).not.toContain("email: 'Gmail'")
+    expect(toolbar).not.toContain("secrets: 'Secrets'")
+    expect(toolbar).not.toContain("folders: 'Folders'")
     expect(toolbar).toContain("view.toolbarGroup === 'capabilities'")
     expect(toolbar).toContain('PRIMARY_TOOLBAR_VIEW_IDS.has(view.id)')
     expect(toolbar.indexOf('<ReportDocumentSwitcher')).toBeLessThan(toolbar.indexOf('aria-label={pendingDecisionCount'))

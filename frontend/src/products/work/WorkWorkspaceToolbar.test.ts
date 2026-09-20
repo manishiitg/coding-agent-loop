@@ -2,8 +2,9 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('WorkWorkspaceToolbar', () => {
-  it('keeps primary views visible and groups Files and Database under Ops', () => {
+  it('keeps primary views visible and groups Files, Database and Costs under Ops', () => {
     const source = readFileSync('src/products/work/WorkWorkspacePane.tsx', 'utf8')
+    const identity = readFileSync('src/products/work/WorkIdentityPanel.tsx', 'utf8')
 
     expect(source).not.toContain('label="Views"')
     expect(source).toContain('label="Ops"')
@@ -13,13 +14,17 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("visibleViews.filter(item => item.id !== 'dashboard').map")
     expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'files', label: 'Files'"))
     expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'database', label: 'Database'"))
+    expect(source.indexOf("const OPS_BUTTONS")).toBeLessThan(source.indexOf("id: 'costs', label: 'Costs and usage'"))
+    expect(source.indexOf("id: 'costs', label: 'Costs and usage'")).toBeLessThan(source.indexOf('const SETUP_BUTTONS'))
     expect(source).not.toContain("id: 'history'")
     expect(source).toContain("id: 'schedules', label: 'Automation'")
-    expect(source).toContain("id: 'bots', label: 'Bots'")
+    expect(source).toContain("id: 'identity', label: 'Identity'")
+    expect(source).toContain("id: 'mcp', label: 'Integrations'")
+    expect(source).toContain('title="Setup: identity and integrations"')
     expect(source).toContain('<AutomationHubPanel')
     expect(source).not.toContain('botContent=')
     expect(source).toContain("productTriggerScope={enabledPanels?.has('triggers')")
-    expect(source).toContain('showAdditionalGroup')
+    expect(identity).toContain('showAdditionalGroup')
   })
 
   it('binds the Work chat to acknowledged workspace view controls', () => {
@@ -30,7 +35,10 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain('data-ui-view={workPresentationView(workspaceView)}')
     expect(source).toContain('data-ui-view-mounted')
     expect(source).toContain("report: 'dashboard'")
-    expect(source).toContain("llm: 'models'")
+    expect(source).toContain("identity: 'identity'")
+    expect(source).toContain("llm: 'identity'")
+    expect(source).toContain("bots: 'mcp'")
+    expect(source).toContain("email: 'mcp'")
     expect(source).toContain('landingContent={<WorkNewChatGuide />}')
     expect(source).toContain('This is the persistent conversation for this Crew project.')
   })
@@ -40,8 +48,7 @@ describe('WorkWorkspaceToolbar', () => {
 
     expect(source).toContain("const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'")
     expect(source).toContain("if (saved === 'history') return 'schedules'")
-    expect(source).toContain("bots: 'bots'")
-    expect(source).toContain("return saved && WORKSPACE_VIEW_IDS.has(saved as WorkWorkspaceView) ? saved as WorkWorkspaceView : 'dashboard'")
+    expect(source).toContain('if (saved && saved in WORK_UI_PRESENTATION_VIEWS) return WORK_UI_PRESENTATION_VIEWS[saved as WorkUIPresentationView]')
     expect(source).toContain('writeWorkWorkspaceView(selected?.id, view)')
     expect(source).toContain('setWorkspaceView(readWorkWorkspaceView(selected?.id))')
   })

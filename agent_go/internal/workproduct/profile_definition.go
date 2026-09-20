@@ -17,6 +17,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/commands"
 	orchestratorevents "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/uiuxpromax"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 )
 
@@ -207,7 +208,13 @@ func renderWorkIdentity(identity workIdentity) string {
 	}
 	var lines []string
 	if identity.Icon != "" {
-		lines = append(lines, "Icon: "+identity.Icon)
+		// An uploaded image is kilobytes of base64: it feeds the WORK_IDENTITY
+		// prompt variable and tool results, so never inline it.
+		if workflowtypes.IsImageIcon(identity.Icon) {
+			lines = append(lines, "Icon: (custom uploaded image)")
+		} else {
+			lines = append(lines, "Icon: "+identity.Icon)
+		}
 	}
 	if identity.Name != "" {
 		lines = append(lines, "Name: "+identity.Name)
@@ -222,12 +229,15 @@ func renderWorkIdentity(identity workIdentity) string {
 }
 
 func validateWorkIdentity(identity workIdentity) string {
+	// A preserved uploaded image must not block unrelated identity edits.
+	if reason := workflowtypes.ValidateIcon(identity.Icon); reason != "" {
+		return fmt.Sprintf("The identity icon is invalid: %s.", reason)
+	}
 	limits := []struct {
 		label string
 		value string
 		max   int
 	}{
-		{label: "icon", value: identity.Icon, max: workIdentityIconLimit},
 		{label: "name", value: identity.Name, max: workIdentityNameLimit},
 		{label: "role", value: identity.Role, max: workIdentityRoleLimit},
 		{label: "instructions", value: identity.Instructions, max: workIdentityInstructionsLimit},

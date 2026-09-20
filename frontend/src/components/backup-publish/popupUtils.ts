@@ -5,6 +5,15 @@ import type {
   WorkflowPublishDestinationStatus,
 } from '../../services/api-types'
 
+/** Per-strategy Ask AI wiring. The body builds one message per strategy row. */
+export interface StrategyAskContext {
+  workspacePath: string | null
+  /** e.g. "back up this workflow with" / "publish this workflow to" */
+  strategyVerb: string
+  /** Full Ask AI message for the local-export card (backup only). */
+  exportMessage?: string
+}
+
 export const formatRelativeTime = (dateStr?: string): string => {
   if (!dateStr) return 'Never'
   const date = new Date(dateStr)
@@ -25,11 +34,6 @@ export const extractErrorMessage = (err: unknown, fallback: string): string => {
   const data = maybe.response?.data
   if (typeof data === 'string') return data
   return data?.message || data?.error || maybe.message || fallback
-}
-
-export const compactHash = (hash?: string): string => {
-  if (!hash) return 'Not tracked'
-  return hash.length > 12 ? `${hash.slice(0, 12)}...` : hash
 }
 
 export const coverageText = (items?: string[]): string => {

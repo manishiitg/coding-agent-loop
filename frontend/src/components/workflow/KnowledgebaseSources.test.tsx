@@ -23,6 +23,11 @@ vi.mock("../../hooks/useCanWriteWorkflow", () => ({
 vi.mock("../ui/MarkdownRenderer", () => ({
   MarkdownRenderer: ({ content }: { content: string }) => <div>{content}</div>,
 }));
+// The folders view banners Ask AI; stub the button so these tests don't pull
+// the chat/LLM store chain through the services/api mock.
+vi.mock("./AskAIButton", () => ({
+  AskAIButton: ({ label }: { label?: string }) => <button type="button">{label ?? "Ask AI"}</button>,
+}));
 Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true });
 const cleanups: Array<() => void> = [];
 afterEach(() => {
@@ -105,7 +110,12 @@ it("keeps management controls unavailable to readers", async () => {
   );
   expect(host.textContent).not.toContain("Detach");
   expect(host.textContent).not.toContain("Attach knowledge");
-  expect(host.querySelector("select")).not.toBeNull();
+  const options = host.querySelectorAll('[role="group"] button');
+  expect(options).toHaveLength(2);
+  expect(options[0].textContent).toContain("Local knowledge");
+  expect(options[0].getAttribute("aria-pressed")).toBe("false");
+  expect(options[1].textContent).toContain("RTS");
+  expect(options[1].getAttribute("aria-pressed")).toBe("true");
 });
 it("reads shared notes through the consumer-scoped API and surfaces failed collection", async () => {
   vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockResolvedValue({
@@ -130,10 +140,12 @@ it("reads shared notes through the consumer-scoped API and surfaces failed colle
   const host = await mount(
     <KnowledgebaseView workspacePath="Workflow/consumer" />,
   );
+  const pickSource = (label: string) =>
+    Array.from(host.querySelectorAll('[role="group"] button')).find((b) =>
+      b.textContent?.includes(label),
+    )! as HTMLElement;
   await act(async () => {
-    const select = host.querySelector("select")!;
-    select.value = "rts";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    pickSource("RTS").click();
   });
   expect(workflowManifestApi.readKnowledgebaseSource).toHaveBeenCalledWith(
     "Workflow/consumer",
@@ -150,41 +162,19 @@ it("reads shared notes through the consumer-scoped API and surfaces failed colle
     new Error("Source permission revoked"),
   );
   await act(async () => {
-    const refresh = host.querySelector(
-      'button[title="Refresh"]',
-    ) as HTMLButtonElement | null;
-    if (refresh) refresh.click();
-    else {
-      const select = host.querySelector("select")!;
-      select.value = "";
-      select.dispatchEvent(new Event("change", { bubbles: true }));
-    }
+    pickSource("Local knowledge").click();
   });
   // Re-selecting always remounts the source, discarding cached notes.
   await act(async () => {
-    const select = host.querySelector("select")!;
-    select.value = "rts";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
+    pickSource("RTS").click();
   });
   expect(host.textContent).toContain("Source permission revoked");
 });
 
-it("attaches another workflow while preserving existing sources", async () => {
+it("offers no manual attach in the folders variant; adding goes through Ask AI", async () => {
   vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockResolvedValue({
     success: true,
     sources: [source],
-  });
-  vi.mocked(workflowManifestApi.listWorkflowManifests).mockResolvedValue({
-    success: true,
-    workflows: [
-      {
-        workspace_path: "Workflow/security",
-        manifest: { id: "security", label: "Security" },
-      },
-    ],
-  } as never);
-  vi.mocked(workflowManifestApi.updateWorkflowManifest).mockResolvedValue({
-    success: true,
   });
   const host = await mount(
     <KnowledgebaseSources
@@ -192,34 +182,12 @@ it("attaches another workflow while preserving existing sources", async () => {
       variant="folders"
     />,
   );
-  await act(async () => {
-    Array.from(host.querySelectorAll("button"))
-      .find((b) => b.textContent === "Attach knowledge")!
-      .click();
-  });
-  await act(async () => {
-    const select = host.querySelector("form select")! as HTMLSelectElement;
-    select.value = "security";
-    select.dispatchEvent(new Event("change", { bubbles: true }));
-    const input = host.querySelector("input")!;
-    Object.getOwnPropertyDescriptor(
-      HTMLInputElement.prototype,
-      "value",
-    )!.set!.call(input, "security");
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  await act(async () => {
-    host
-      .querySelector("form")!
-      .dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
-  });
-  expect(workflowManifestApi.updateWorkflowManifest).toHaveBeenCalledWith({
-    workspace_path: "Workflow/consumer",
-    knowledgebase_sources: [
-      { workflow_id: "source", alias: "rts", access: "read" },
-      { workflow_id: "security", alias: "security", access: "read" },
-    ],
-  });
+  expect(host.textContent).not.toContain("Attach knowledge");
+  expect(host.querySelector("form")).toBeNull();
+  expect(host.textContent).toContain("RTS");
+  expect(
+    host.querySelector('button[aria-label="Detach RTS knowledge base"]'),
+  ).not.toBeNull();
 });
 
 it("shows shared KB access in Attached folders and refreshes the KB view after detach", async () => {
@@ -259,8 +227,8 @@ it("shows shared KB access in Attached folders and refreshes the KB view after d
   expect(panels[1].querySelector("ul")).toBeNull();
   expect(panels[1].textContent).not.toContain("Attach knowledge");
   expect(panels[1].textContent).not.toContain("Detach");
-  expect(panels[1].textContent).toContain("Setup → Attached folders");
-  expect(panels[1].querySelectorAll("option")).toHaveLength(2);
+  expect(panels[1].textContent).toContain("Setup → File access");
+  expect(panels[1].querySelectorAll('[role="group"] button')).toHaveLength(2);
   expect(panels[0].querySelector("select")).toBeNull();
   await act(async () => {
     (
@@ -276,7 +244,7 @@ it("shows shared KB access in Attached folders and refreshes the KB view after d
   expect(panels[0].textContent).toContain(
     "No shared knowledge bases attached.",
   );
-  expect(panels[1].querySelectorAll("option")).toHaveLength(1);
+  expect(panels[1].querySelectorAll('[role="group"] button')).toHaveLength(1);
   expect(select).toHaveBeenCalledWith("");
 });
 
@@ -298,4 +266,48 @@ it("shows unavailable sources to readers without offering write or detach contro
   expect(host.textContent).toContain("Read only");
   expect(host.textContent).toContain("Shell when available:");
   expect(host.querySelectorAll("button, select")).toHaveLength(0);
+});
+
+it("keeps the file access view free of manual attach forms", async () => {
+  vi.mocked(workflowManifestApi.getWorkflowManifest).mockResolvedValue({
+    success: true,
+    manifest: {},
+  } as never);
+  vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockResolvedValue({
+    success: true,
+    sources: [],
+  });
+  const host = await mount(
+    <WorkflowFolderAccessView workspacePath="Workflow/consumer" />,
+  );
+  expect(host.textContent).not.toContain("Attach knowledge");
+  expect(host.textContent).toContain("Nothing attached.");
+  expect(host.querySelector("form")).toBeNull();
+  expect(host.textContent).not.toContain("External folders");
+});
+
+it("keeps the header above the source picker with Ask AI left of refresh", async () => {
+  vi.mocked(workflowManifestApi.getKnowledgebaseSources).mockResolvedValue({
+    success: true,
+    sources: [source],
+  });
+  vi.mocked(agentApi.getPlannerFileContent).mockResolvedValue({
+    success: true,
+    data: { content: '{"topics":[]}' },
+  } as never);
+  const host = await mount(
+    <KnowledgebaseView
+      workspacePath="Workflow/consumer"
+      headerAction={<button type="button" data-testid="ask-ai">Ask AI</button>}
+    />,
+  );
+  const html = host.innerHTML;
+  const titleIndex = html.indexOf(">Knowledgebase<");
+  const pickerIndex = html.indexOf('aria-label="Knowledge sources"');
+  const askIndex = html.indexOf('data-testid="ask-ai"');
+  const refreshIndex = html.indexOf('aria-label="Refresh knowledgebase"');
+  expect(titleIndex).toBeGreaterThanOrEqual(0);
+  expect(pickerIndex).toBeGreaterThan(titleIndex);
+  expect(askIndex).toBeGreaterThanOrEqual(0);
+  expect(refreshIndex).toBeGreaterThan(askIndex);
 });

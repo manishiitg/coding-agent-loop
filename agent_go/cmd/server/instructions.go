@@ -423,7 +423,7 @@ Workflow-level manifest. **Required fields**: ` + "`schema_version`" + ` (int, 1
 - ` + "`selected_servers`" + ` — MCP server names the workflow uses (array of strings)
 - ` + "`selected_tools`" + ` — specific tool names to allow-list from those servers (optional)
 - ` + "`selected_skills`" + ` — skill folder names to auto-activate
-- ` + "`selected_secrets`" + ` — secret names the workflow needs; values resolve at runtime from workflow-scoped secrets, reusable user secrets, or GLOBAL_SECRET_* globals
+- ` + "`selected_secrets`" + ` — secret names the workflow needs; values resolve at runtime from workflow-scoped secrets or GLOBAL_SECRET_* / managed globals
 - ` + "`browser_mode`" + ` — ` + "`none`" + ` | ` + "`auto`" + ` | ` + "`headless`" + ` | ` + "`cdp`" + `
 - ` + "`cdp_ports`" + ` — optional list of up to four CDP ports for specialized multi-profile/login testing within one workflow; each port must use a distinct Chrome ` + "`--user-data-dir`" + `. Omit for normal single-browser workflow concurrency.
 - Server deployments may disable CDP. Treat the live ` + "`agent_browser status`" + ` field ` + "`cdp_supported`" + ` and the dynamic ` + "`update_workflow_config`" + ` schema as authoritative. When disabled, use ` + "`auto`" + ` (managed headless), ` + "`headless`" + `, or ` + "`none`" + ` and omit ` + "`cdp_ports`" + `.

@@ -208,7 +208,7 @@ export async function renderReportGoalProgress(
       container.append(
         el(
           "p",
-          "Unassigned supporting measurements. Edit goals & metrics to assign them.",
+          "Unassigned supporting measurements. Edit goals & numbers to assign them.",
         ),
       );
       entries.push(...unassigned.map((metric) => ({ metric, container })));

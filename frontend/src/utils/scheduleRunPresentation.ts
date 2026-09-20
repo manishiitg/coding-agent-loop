@@ -32,14 +32,14 @@ export const scheduleStatusPresentation = (item: ScheduleActivityItem): {
       return { label: 'Running', className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300', Icon: CircleDashed, detail: 'This occurrence is still running.' }
     case 'waiting_for_capacity':
     case 'waiting_for_workflow':
-      return { label: 'Waiting', className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300', Icon: Clock3, detail: run.error || 'Waiting for its schedule policy to permit execution.' }
+      return { label: 'Waiting', className: 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300', Icon: Clock3, detail: 'Waiting for its schedule policy to permit execution.' }
     case 'partial':
-      return { label: 'Partial', className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300', Icon: CircleAlert, detail: run.error || 'The occurrence completed only partially.' }
+      return { label: 'Partial', className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300', Icon: CircleAlert, detail: 'The occurrence completed only partially.' }
     case 'interrupted':
     case 'stopped':
-      return { label: 'Interrupted', className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300', Icon: CircleAlert, detail: run.error || 'The occurrence stopped before completion.' }
+      return { label: 'Interrupted', className: 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300', Icon: CircleAlert, detail: 'The occurrence stopped before completion.' }
     default:
-      return { label: 'Failed run', className: 'border-destructive/45 bg-destructive/10 text-destructive', Icon: XCircle, detail: run.error || 'This recorded execution failed.' }
+      return { label: 'Failed run', className: 'border-destructive/45 bg-destructive/10 text-destructive', Icon: XCircle, detail: 'This recorded execution failed.' }
   }
 }
 

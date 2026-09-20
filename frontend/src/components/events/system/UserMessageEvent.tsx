@@ -1,6 +1,7 @@
 import React, { useState } from 'react'
 import { ChevronDown, ListTodo } from 'lucide-react'
 import type { UserMessageEvent } from '../../../generated/events'
+import { askAIDisplayText, hasAskAIMessage } from '../../../utils/askAIMessage'
 import { PlainMarkdown } from '../../ui/PlainMarkdown'
 import { DeliveryTick } from './DeliveryTick'
 
@@ -83,6 +84,35 @@ export const UserMessageEventDisplay: React.FC<UserMessageEventDisplayProps> = (
             {isAutoExpanded && hasDetail && (
               <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-3 py-2 font-mono text-[12.5px] leading-5 text-muted-foreground">
                 {detail}
+              </pre>
+            )}
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (hasAskAIMessage(content)) {
+    const shown = askAIDisplayText(content)
+    return (
+      <div className="ml-6 border-l-2 border-violet-300/70 dark:border-violet-700/70 pl-3 py-1.5">
+        <div className="flex items-start gap-2 text-sm">
+          <span className="mt-0.5 shrink-0 rounded-sm border border-violet-200 bg-violet-50 px-1.5 py-0.5 font-medium text-violet-700 dark:border-violet-800 dark:bg-violet-950/40 dark:text-violet-300">
+            Ask AI
+          </span>
+          <div className="min-w-0 flex-1">
+            <div className="whitespace-pre-wrap break-words text-slate-700 dark:text-slate-300">
+              {shown}
+            </div>
+            <button
+              onClick={() => setIsExpanded(!isExpanded)}
+              className="mt-1 text-xs text-violet-700 hover:text-violet-800 dark:text-violet-400 dark:hover:text-violet-200"
+            >
+              {isExpanded ? 'Hide detail' : 'Show detail'}
+            </button>
+            {isExpanded && (
+              <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-3 py-2 font-mono text-[12.5px] leading-5 text-muted-foreground">
+                {content.trim()}
               </pre>
             )}
           </div>

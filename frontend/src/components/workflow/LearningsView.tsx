@@ -4,11 +4,14 @@ import { agentApi } from '../../services/api'
 import type { PlanningResponse } from '../../utils/stepConfigMatching'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
 import type { PlannerFile } from '../../services/api-types'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 
 interface LearningsViewProps {
   workspacePath: string | null
   plan: PlanningResponse | null
   headerAction?: ReactNode
+  /** Embedded in the Knowledge umbrella: the umbrella owns the header. */
+  hideHeader?: boolean
 }
 
 type LearningFileFreshness = {
@@ -65,7 +68,7 @@ function formatFreshnessDate(timestamp: string): string {
   return `Fresh ${date.toLocaleDateString([], { month: 'short', day: 'numeric' })}`
 }
 
-export default function LearningsView({ workspacePath, headerAction }: LearningsViewProps) {
+export default function LearningsView({ workspacePath, headerAction, hideHeader = false }: LearningsViewProps) {
   // Global skill state: SKILL.md content + the shared learning package tree.
   // Displayed as a featured card at the top (global skill is the primary artifact
   // under the current architecture — per-step learnings are secondary).
@@ -359,13 +362,13 @@ export default function LearningsView({ workspacePath, headerAction }: Learnings
 
   return (
     <div className="flex h-full min-h-0 w-full flex-col bg-background text-foreground">
-      <div className="flex items-start justify-between gap-3 border-b border-border flex-shrink-0 p-3 sm:p-4">
-        <div className="flex min-w-0 items-center gap-2">
-          <BookOpen className="w-5 h-5 text-primary" />
-          <h2 className="truncate text-lg font-semibold">Automation Learnings</h2>
-        </div>
-        {headerAction}
-      </div>
+      {!hideHeader && (
+        <WorkspaceViewHeader
+          icon={BookOpen}
+          title="Automation Learnings"
+          actions={headerAction}
+        />
+      )}
 
       <div className="flex-1 overflow-y-auto p-4">
         <div className="border border-border rounded-md bg-muted/20">

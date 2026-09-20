@@ -1,0 +1,96 @@
+// @vitest-environment happy-dom
+import { act } from 'react'
+import { createRoot } from 'react-dom/client'
+import { expect, it, vi } from 'vitest'
+
+const { askMessages } = vi.hoisted(() => ({ askMessages: [] as string[] }))
+vi.mock('../../services/workflow-notifications', () => ({ loadWorkflowNotificationInfo: vi.fn() }))
+vi.mock('./AskAIButton', () => ({
+  AskAIButton: (props: Record<string, unknown>) => {
+    askMessages.push(String(props.message))
+    return <button type="button" data-testid="ask-ai" data-message={String(props.message)}>{String(props.label ?? 'Ask AI')}</button>
+  },
+}))
+
+import WorkflowNotificationView from './WorkflowNotificationView'
+
+Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
+
+const info = {
+  scopeLabel: 'Shop',
+  effectiveState: 'ready',
+  slackWebhook: { secret_name: 'SLACK_MAIN' },
+  gmail: { state: 'ready', default_recipient: 'me@x.com', blocked_recipients: [], default_sender: 'me@x.com', sender_choices: [] },
+  runSummaryInstructions: 'Summarize the run.',
+  pulseSummaryInstructions: '',
+  runSummaryChannels: ['slack'],
+  pulseSummaryChannels: [],
+  runSummaryRecipients: [],
+  runSummaryGmailConnectionIds: [],
+  pulseSummaryGmailConnectionIds: [],
+  pulseSummaryRecipients: [],
+  runSummarySlackWebhooks: [],
+  pulseSummarySlackWebhooks: [],
+  excludeChannels: [],
+  blockRecipients: [],
+}
+
+async function mount() {
+  askMessages.length = 0
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <WorkflowNotificationView workspacePath="Workflow/test" loadInfo={async () => info as never} />,
+  ))
+  return { host, unmount: async () => { await act(async () => root.unmount()); host.remove() } }
+}
+
+it('keeps the header to scope, one badge, and a short line', async () => {
+  const { host, unmount } = await mount()
+  try {
+    expect(host.textContent).toContain('Shop · Notifications on')
+    expect(host.textContent).not.toContain('Agentic notification delivery')
+    expect(host.textContent?.match(/Ready/g)?.length).toBe(1)
+  } finally {
+    await unmount()
+  }
+})
+
+it('uses title-case section heads without kickers or accent bars', async () => {
+  const { host, unmount } = await mount()
+  try {
+    for (const heading of host.querySelectorAll('h3')) {
+      expect(heading.className).not.toContain('uppercase')
+      expect(heading.className).not.toContain('tracking-')
+    }
+    expect(host.querySelector('.border-l-2')).toBeNull()
+  } finally {
+    await unmount()
+  }
+})
+
+it('lays summaries out as labeled Channels, From, and To lines', async () => {
+  const { host, unmount } = await mount()
+  try {
+    expect(host.textContent).toContain('Run summary')
+    expect(host.textContent).toContain('Channels')
+    expect(host.textContent).toContain('To')
+    expect(host.textContent).toContain('me@x.com')
+  } finally {
+    await unmount()
+  }
+})
+
+it('asks per channel and per summary from chat commands', async () => {
+  const { host, unmount } = await mount()
+  try {
+    expect(host.querySelectorAll('[data-testid="ask-ai"]').length).toBe(5)
+    expect(askMessages).toContain('/notify')
+    expect(askMessages.some(message => message.includes('Slack notifications'))).toBe(true)
+    expect(askMessages.some(message => message.includes('Gmail notifications'))).toBe(true)
+    expect(askMessages.some(message => message.includes('run summary'))).toBe(true)
+    expect(askMessages.some(message => message.includes('pulse review'))).toBe(true)
+  } finally {
+    await unmount()
+  }
+})

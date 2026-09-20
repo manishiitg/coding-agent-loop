@@ -1,20 +1,18 @@
 import React, { useCallback, useEffect, useState } from 'react'
-import { AlertCircle, Cloud, Download, GitBranch, HardDrive, Info, Loader2, RefreshCw, X } from 'lucide-react'
+import { AlertCircle, ChevronRight, Cloud, Download, GitBranch, HardDrive, Loader2, X } from 'lucide-react'
 import type { WorkflowBackupInfoResponse, WorkflowBackupStrategyInfo } from '../../services/api-types'
 import { formatBackupStateLabel, getBackupStateVisual } from '../workflow/backupStatus'
+import { AskAIButton } from '../workflow/AskAIButton'
+import { WorkspaceViewHeader } from '../workflow/WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from '../workflow/WorkspaceViewIconButton'
 import {
   backupDestinationTitle,
-  compactHash,
   coverageText,
   extractErrorMessage,
   findBackupDestinationStatus,
   formatRelativeTime,
+  type StrategyAskContext,
 } from './popupUtils'
-
-type BackupSetupAction = {
-  label: React.ReactNode
-  onClick?: () => void
-}
 
 type BackupExportAction = {
   label: string
@@ -29,17 +27,13 @@ export interface BackupPopupProps {
   subtitle: string
   emptyDestinationsText: string
   destinationsHelp: string
-  statusPathFallback: string
-  setupAction: BackupSetupAction
   getSummary: (info: WorkflowBackupInfoResponse | null) => string
+  askContext?: StrategyAskContext
   loadErrorMessage?: string
   showEnabledBadge?: boolean
   exportAction?: BackupExportAction
   headerAction?: React.ReactNode
 }
-
-const iconButtonClass = 'inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground disabled:opacity-50'
-const actionClass = 'inline-flex items-center gap-1 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground transition-colors hover:bg-muted'
 
 const BackupPopupBody: React.FC<BackupPopupProps> = ({
   loadInfo,
@@ -48,9 +42,8 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
   subtitle,
   emptyDestinationsText,
   destinationsHelp,
-  statusPathFallback,
-  setupAction,
   getSummary,
+  askContext,
   loadErrorMessage = 'Failed to load backup status',
   showEnabledBadge = false,
   exportAction,
@@ -106,26 +99,18 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
   const configEnabled = Boolean(info?.config?.enabled)
   const destinations = info?.config?.destinations || []
   const supportedStrategies = info?.supported?.length ? info.supported : fallbackStrategies
-  const setupControl = setupAction.onClick ? (
-    <button type="button" onClick={setupAction.onClick} className={actionClass}>
-      {setupAction.label}
-    </button>
-  ) : (
-    <span className={actionClass}>{setupAction.label}</span>
-  )
 
   return (
         <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
-          <div className="flex items-start justify-between gap-3 border-b border-border px-4 py-3 sm:px-5 sm:py-3.5">
-            <div className="min-w-0">
-              <h2 className="flex items-center gap-2 text-base font-semibold text-foreground">
-                <Cloud className="h-4 w-4 text-primary" />
-                Backup
-              </h2>
-              <p className="mt-0.5 truncate text-xs text-muted-foreground">{subtitle}</p>
-            </div>
-            {headerAction}
-          </div>
+          <WorkspaceViewHeader
+            icon={Cloud}
+            title="Backup"
+            subtitle={subtitle}
+            actions={<>
+              {headerAction}
+              <WorkspaceViewIconButton label="Refresh backup status" onClick={() => { void load() }} disabled={loading} spinning={loading} />
+            </>}
+          />
 
           {error && (
             <div className="flex items-center gap-2 bg-destructive/10 px-5 py-2 text-xs text-destructive">
@@ -162,19 +147,17 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
                           {formatBackupStateLabel(state)}
                         </span>
                       </div>
-                      <h3 className="mt-2 text-base font-semibold text-foreground">Remote backup</h3>
-                      <p className="mt-1 max-w-2xl text-sm text-muted-foreground">{getSummary(info)}</p>
+                      <p className="mt-2 max-w-2xl text-sm text-muted-foreground">{getSummary(info)}</p>
                       {info?.status?.last_error && <p className="mt-2 text-xs text-destructive">{info.status.last_error}</p>}
                     </div>
                     <div className="flex flex-wrap items-center gap-2">
-                      <button onClick={() => { void load() }} disabled={loading} className={iconButtonClass} aria-label="Refresh backup status">
-                        <RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                      </button>
-                      {setupControl}
+                      {askContext && (
+                        <AskAIButton workspacePath={askContext.workspacePath} label="Set up" message="/backup" />
+                      )}
                     </div>
                   </div>
 
-                  <div className="grid border-t border-border text-sm sm:grid-cols-4">
+                  <div className="grid border-t border-border text-sm sm:grid-cols-3">
                     <div className="border-b border-border px-4 py-3 sm:border-b-0 sm:border-r">
                       <div className="text-xs text-muted-foreground">Last success</div>
                       <div className="mt-1 font-medium text-foreground">{formatRelativeTime(info?.status?.last_success_at)}</div>
@@ -183,15 +166,9 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
                       <div className="text-xs text-muted-foreground">Last attempt</div>
                       <div className="mt-1 font-medium text-foreground">{formatRelativeTime(info?.status?.last_attempt_at)}</div>
                     </div>
-                    <div className="border-b border-border px-4 py-3 sm:border-b-0 sm:border-r">
+                    <div className="px-4 py-3">
                       <div className="text-xs text-muted-foreground">Tracked files</div>
                       <div className="mt-1 font-medium text-foreground">{info?.tracked_files_count ?? 0}</div>
-                    </div>
-                    <div className="px-4 py-3">
-                      <div className="text-xs text-muted-foreground">Source hash</div>
-                      <div className="mt-1 truncate font-mono text-xs text-foreground" title={info?.current_source_hash || ''}>
-                        {compactHash(info?.current_source_hash)}
-                      </div>
                     </div>
                   </div>
                 </section>
@@ -219,16 +196,14 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
                               <div className="flex flex-wrap items-center gap-2">
                                 <DestinationIcon className={`h-3.5 w-3.5 ${destinationVisual.icon}`} />
                                 <span className="text-sm font-medium text-foreground">{destination.id || 'Destination'}</span>
-                                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] uppercase tracking-wide text-muted-foreground">{destination.provider || destination.type}</span>
+                                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{destination.provider || destination.type}</span>
                               </div>
                               <div className="mt-1 truncate text-xs text-muted-foreground">{backupDestinationTitle(destination)}</div>
                               <div className="mt-1 text-xs text-muted-foreground">Covers: {coverageText(destination.covers)}</div>
-                              {status?.summary && <div className="mt-1 text-xs text-foreground">{status.summary}</div>}
                               {status?.error && <div className="mt-1 text-xs text-destructive">{status.error}</div>}
                             </div>
                             <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground sm:justify-end">
                               <span className={`rounded-full border px-2 py-0.5 ${destinationVisual.badge}`}>{formatBackupStateLabel(destinationState)}</span>
-                              {status?.commit && <span className="font-mono">{status.commit.slice(0, 8)}</span>}
                               {typeof status?.objects_synced === 'number' && status.objects_synced > 0 && <span>{status.objects_synced} objects</span>}
                               {status?.last_success_at && <span>{formatRelativeTime(status.last_success_at)}</span>}
                             </div>
@@ -240,32 +215,61 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
                 </section>
 
                 <div className={exportAction ? 'grid gap-3 lg:grid-cols-[1fr_280px]' : ''}>
-                  <section className="rounded-md border border-border">
-                    <div className="border-b border-border px-4 py-3">
-                      <h3 className="text-sm font-semibold text-foreground">Supported strategies</h3>
-                    </div>
-                    <div className="grid divide-y divide-border md:grid-cols-2 md:divide-x md:divide-y-0">
+                  <details className="group rounded-md border border-border">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 px-4 py-3 text-sm font-semibold text-foreground">
+                      <ChevronRight className="h-4 w-4 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+                      Supported strategies
+                      <span className="rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">{supportedStrategies.length}</span>
+                    </summary>
+                    <div className="grid divide-y divide-border border-t border-border md:grid-cols-2 md:divide-x md:divide-y-0">
                       {supportedStrategies.map((strategy) => (
-                        <div key={strategy.id} className="px-4 py-3">
-                          <div className="flex items-center gap-2 text-sm font-medium text-foreground">
-                            {strategy.id === 'git' ? <GitBranch className="h-3.5 w-3.5 text-muted-foreground" /> : <Cloud className="h-3.5 w-3.5 text-muted-foreground" />}
-                            {strategy.label}
+                        <div key={strategy.id} className="flex items-start justify-between gap-3 px-4 py-3">
+                          <div className="min-w-0">
+                            <div className="flex items-center gap-2 text-sm font-medium text-foreground">
+                              {strategy.id === 'git' ? <GitBranch className="h-3.5 w-3.5 shrink-0 text-muted-foreground" /> : <Cloud className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />}
+                              {strategy.label}
+                            </div>
+                            <p className="mt-1 text-xs leading-5 text-muted-foreground">{strategy.description}</p>
+                            {strategy.best_for && strategy.best_for.length > 0 && (
+                              <div className="mt-1.5 flex flex-wrap gap-1">
+                                {strategy.best_for.slice(0, 4).map(tag => (
+                                  <span key={tag} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">{tag}</span>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <p className="mt-1 text-xs leading-5 text-muted-foreground">{strategy.description}</p>
+                          {askContext && (
+                            <AskAIButton
+                              workspacePath={askContext.workspacePath}
+                              iconOnly
+                              message={`Help me ${askContext.strategyVerb} ${strategy.label}. Explain what I need and walk me through it.`}
+                            />
+                          )}
                         </div>
                       ))}
                     </div>
-                  </section>
+                  </details>
 
                   {exportAction && (
                     <section className="rounded-md border border-border px-4 py-3">
-                      <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
-                        <HardDrive className="h-3.5 w-3.5 text-muted-foreground" />
-                        Local export
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+                            <HardDrive className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                            Local export
+                          </div>
+                          <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                            Manual ZIP for recovery. Not a replacement for remote backup.
+                          </p>
+                        </div>
+                        {askContext?.exportMessage && (
+                          <AskAIButton
+                            workspacePath={askContext.workspacePath}
+                            iconOnly
+                            message={askContext.exportMessage}
+                          />
+                        )}
                       </div>
-                      <p className="mt-2 text-xs leading-5 text-muted-foreground">
-                        ZIP export is manual recovery. It does not replace a remote backup destination.
-                      </p>
                       <button
                         onClick={() => { void handleExport() }}
                         disabled={isExporting}
@@ -274,19 +278,9 @@ const BackupPopupBody: React.FC<BackupPopupProps> = ({
                         {isExporting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Download className="h-3.5 w-3.5" />}
                         {exportAction.label}
                       </button>
-                      <div className="mt-3 truncate text-[11px] text-muted-foreground" title={info?.status_path || ''}>
-                        Status: {info?.status_path || statusPathFallback}
-                      </div>
                     </section>
                   )}
                 </div>
-
-                {!exportAction && (
-                  <p className="flex items-center gap-1 px-1 text-[11px] text-muted-foreground">
-                    <Info className="h-3 w-3" />
-                    Status: {info?.status_path || statusPathFallback}
-                  </p>
-                )}
               </div>
             )}
           </div>

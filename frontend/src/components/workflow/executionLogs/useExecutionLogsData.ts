@@ -5,14 +5,13 @@ import type { ExecutionLogsResponse } from '../../../services/api-types'
 import { formatLogFileContent, getDefaultRunFolder } from './helpers'
 
 export interface UseExecutionLogsDataArgs {
-  isOpen: boolean
   workspacePath: string | null
   initialRunFolder: string | null | undefined
   allowDefaultRunFolder?: boolean
   runFolders: string[]
 }
 
-export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder = true }: UseExecutionLogsDataArgs) {
+export function useExecutionLogsData({ workspacePath, initialRunFolder, runFolders, allowDefaultRunFolder = true }: UseExecutionLogsDataArgs) {
   const defaultRunFolder = !allowDefaultRunFolder && !initialRunFolder ? '' : getDefaultRunFolder(initialRunFolder, runFolders)
   const runFolderOptions = useMemo(() => {
     if (!defaultRunFolder || runFolders.includes(defaultRunFolder)) return runFolders
@@ -75,7 +74,7 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
   // Update selected run folder when prop changes
   useEffect(() => {
     setSelectedRunFolder(defaultRunFolder)
-  }, [defaultRunFolder, isOpen])
+  }, [defaultRunFolder])
 
   // A route filter from one run's routes rarely means anything for another run
   useEffect(() => {
@@ -83,7 +82,7 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
   }, [selectedRunFolder])
 
   useEffect(() => {
-    if (isOpen && workspacePath && selectedRunFolder) {
+    if (workspacePath && selectedRunFolder) {
       setExpandedSteps(new Set())
       setExpandedValidations(new Set())
       setExpandedExecutions(new Set())
@@ -96,7 +95,7 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
       setFileContents({})
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen, workspacePath, selectedRunFolder])
+  }, [workspacePath, selectedRunFolder])
 
   // Memoized on the two inputs it reads, so the poll effect below can list it
   // honestly: its identity changes exactly when workspacePath/selectedRunFolder
@@ -126,14 +125,14 @@ export function useExecutionLogsData({ isOpen, workspacePath, initialRunFolder, 
   }, [workspacePath, selectedRunFolder])
 
   useEffect(() => {
-    if (!isOpen || !workspacePath || !selectedRunFolder) return
+    if (!workspacePath || !selectedRunFolder) return
 
     const intervalId = window.setInterval(() => {
       loadLogs({ silent: true })
     }, 2500)
 
     return () => window.clearInterval(intervalId)
-  }, [isOpen, workspacePath, selectedRunFolder, loadLogs])
+  }, [workspacePath, selectedRunFolder, loadLogs])
 
   const toggleStep = (stepId: string) => {
     setExpandedSteps(prev => {

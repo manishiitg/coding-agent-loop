@@ -6,6 +6,7 @@ import { TooltipProvider } from '../ui/tooltip'
 import { useScheduleRunsData } from './scheduleRuns/useScheduleRunsData'
 import type { WorkflowScope } from './scheduleRuns/helpers'
 import { ScheduleRunsHeader } from './scheduleRuns/ScheduleRunsHeader'
+import type { ScheduleStatusSnapshot } from './scheduleRuns/ScheduleStatusPills'
 import { ScheduleOverviewView } from './scheduleRuns/ScheduleOverviewView'
 import { ScheduleCalendarView } from './scheduleRuns/ScheduleCalendarView'
 import { ScheduleGroupsView } from './scheduleRuns/ScheduleGroupsView'
@@ -31,11 +32,23 @@ interface WorkflowScheduleRunsPanelProps {
   productTriggerScope?: ProductTriggerScope
   botContent?: React.ReactNode
   showAutomationTabs?: boolean
-  hideScheduleTitle?: boolean
+  /** Embedded hosts with their own header (the Automation hub) hide this panel's header row. */
+  hideHeader?: boolean
+  /** Hub-owned refresh: bumping this token reloads jobs. Starts at 0 (no reload). */
+  refreshToken?: number
+  /** Reports status snapshots so an owning header can show pills and spinners. */
+  onStatus?: (status: ScheduleStatusSnapshot) => void
 }
 
-const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent, showAutomationTabs = true, hideScheduleTitle = false }) => {
+const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ onClose, onJobsLoaded, workflowScope, embedded = false, active = true, headerAction, entityType = 'workflow', canManage, scopeNoun = 'automation', productTriggerScope, botContent, showAutomationTabs = true, hideHeader = false, refreshToken = 0, onStatus }) => {
   const panel = useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType, canManage, active })
+  const { loadJobs, summary, workflowScheduleSummary, isLoading, isSchedulerPaused, isWorkflowScoped } = panel
+  useEffect(() => {
+    if (refreshToken) void loadJobs(true)
+  }, [refreshToken, loadJobs])
+  useEffect(() => {
+    onStatus?.({ summary, workflowScheduleSummary, isLoading, isSchedulerPaused, isWorkflowScoped })
+  }, [onStatus, summary, workflowScheduleSummary, isLoading, isSchedulerPaused, isWorkflowScoped])
   const workspaceViewTarget = useWorkflowStore(state => state.workspaceViewTarget)
   const hasWorkflowWebhooks = entityType === 'workflow' && Boolean(workflowScope?.workspacePath)
   const hasProductWebhooks = entityType === 'product' && Boolean(productTriggerScope)
@@ -51,9 +64,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     setAutomationSection(hasWebhooks && workspaceViewTarget.target === 'webhooks' ? 'webhooks' : 'schedules')
   }, [hasWebhooks, workspaceViewTarget])
   const {
-    isLoading,
     error,
-    isWorkflowScoped,
     activeView,
     setActiveView,
     activeFilter,
@@ -66,9 +77,7 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     workflowOptions,
     filteredJobs,
     workflowGroups,
-    monthlyCalendar,
     filterPills,
-    activeFilterLabel,
   } = panel
 
   const compact = embedded && !isWorkflowScoped
@@ -143,24 +152,53 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
         ) : <>
 
         {/* Header */}
-        <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction}
-          compact={compact} navigation={compact ? viewControls : undefined} hideTitle={hideScheduleTitle} />
+        {!hideHeader && (
+          <ScheduleRunsHeader panel={panel} onClose={onClose} showClose={!embedded} headerAction={headerAction}
+            compact={compact} navigation={compact ? viewControls : undefined} />
+        )}
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
-          {!compact && panelJobs.length > 0 && (
+          {(!compact || hideHeader) && panelJobs.length > 0 && (
             <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-3">
               <div className="space-y-2">
-                {viewControls}
-
-                <div className="text-xs text-muted-foreground">
-                  {activeView === 'overview'
-                    ? 'Summary and schedule health'
-                    : activeView === 'calendar'
-                      ? `${monthlyCalendar.total} scheduled item${monthlyCalendar.total === 1 ? '' : 's'} this month`
-                      : activeView === 'by-workflow'
-                        ? `${workflowGroups.length} automation${workflowGroups.length === 1 ? '' : 's'} with schedules`
-                        : `${filteredJobs.length} schedule${filteredJobs.length !== 1 ? 's' : ''} · ${activeFilterLabel}`}
+                <div className="flex flex-wrap items-center gap-2">
+                  {viewControls}
+                  {(activeView === 'schedules' || activeView === 'by-workflow') && (
+                    <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
+                      <div className="relative min-w-48 flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input
+                          type="text"
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          aria-label="Search schedules"
+                          placeholder={isWorkflowScoped ? 'Search schedules…' : 'Search automations or schedules…'}
+                          className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        />
+                      </div>
+                      {!isWorkflowScoped && (activeView !== 'by-workflow' || selectedWorkflowFilter !== 'all') && (
+                        <select
+                          aria-label="Filter by automation"
+                          value={selectedWorkflowFilter}
+                          onChange={(event) => setSelectedWorkflowFilter(event.target.value)}
+                          className="min-w-40 max-w-full rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                        >
+                          <option value="all">All automations</option>
+                          {workflowOptions.map((option) => (
+                            <option key={option.value} value={option.value}>{option.label}</option>
+                          ))}
+                        </select>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <select aria-label="Filter schedules by state" value={activeFilter}
+                          onChange={event => setActiveFilter(event.target.value as typeof activeFilter)}
+                          className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
+                          {filterPills.filter(pill => !compact || !['issues', 'missed'].includes(pill.key)).map(pill => <option key={pill.key} value={pill.key}>{pill.key === 'all' ? 'All states' : pill.label} ({pill.count})</option>)}
+                        </select>
+                      </div>
+                    </div>
+                  )}
                 </div>
                 {activeView === 'schedules' && (
                   <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -211,7 +249,8 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                   </span>
                 </div>
               )}
-              <div className={`border-b border-border px-4 sm:px-6 ${compact ? 'py-2.5' : 'py-4'}`}>
+              {compact && !hideHeader && (
+              <div className="border-b border-border px-4 sm:px-6 py-2.5">
                 <div className="flex flex-wrap items-center gap-2">
                     <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                       <div className="relative min-w-48 flex-1">
@@ -241,15 +280,15 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
                     </div>
 
                   <div className="flex items-center gap-2">
-                    <label className="sr-only" htmlFor={compact ? 'global-schedule-status' : 'workflow-schedule-status'}>Filter schedules by state</label>
-                    <select id={compact ? 'global-schedule-status' : 'workflow-schedule-status'} value={activeFilter}
+                    <select aria-label="Filter schedules by state" value={activeFilter}
                       onChange={event => setActiveFilter(event.target.value as typeof activeFilter)}
                       className="rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50">
-                      {filterPills.filter(pill => !compact || !['issues', 'missed'].includes(pill.key)).map(pill => <option key={pill.key} value={pill.key}>{pill.key === 'all' ? 'All states' : pill.label} ({pill.count})</option>)}
+                      {filterPills.filter(pill => !['issues', 'missed'].includes(pill.key)).map(pill => <option key={pill.key} value={pill.key}>{pill.key === 'all' ? 'All states' : pill.label} ({pill.count})</option>)}
                     </select>
                   </div>
                 </div>
               </div>
+              )}
             </>
           )}
           {panelJobs.length > 0 && activeView === 'by-workflow' && workflowGroups.length === 0 && (

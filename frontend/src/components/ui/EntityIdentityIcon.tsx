@@ -1,4 +1,5 @@
 import React from 'react'
+import { isImageIcon } from './entityIcon'
 
 const BADGE_TONES = [
   'bg-blue-100 text-blue-700 dark:bg-blue-950/60 dark:text-blue-300',
@@ -28,13 +29,23 @@ export type EntityIdentityIconProps = {
 
 /** Shared compact identity for workflows and product projects. */
 export function EntityIdentityIcon({ icon, label, className = '' }: EntityIdentityIconProps) {
-  const content = icon?.trim() || entityInitial(label)
+  const trimmed = icon?.trim() || ''
+  if (isImageIcon(trimmed)) {
+    return (
+      <span
+        className={`inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded bg-muted ${className}`}
+        aria-hidden="true"
+      >
+        <img src={trimmed} alt="" className="h-full w-full object-cover" draggable={false} />
+      </span>
+    )
+  }
   return (
     <span
       className={`inline-flex h-5 w-5 shrink-0 items-center justify-center overflow-hidden rounded text-[11px] font-semibold leading-none ${toneForEntity(label)} ${className}`}
       aria-hidden="true"
     >
-      {content}
+      {trimmed || entityInitial(label)}
     </span>
   )
 }

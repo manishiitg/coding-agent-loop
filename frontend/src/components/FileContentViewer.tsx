@@ -1,8 +1,8 @@
 import { sharedLink } from '../utils/sharedLinks'
 import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Download, Edit, Github, Link, Loader2, MoreHorizontal, Save, X } from 'lucide-react'
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip'
+import { ArrowLeft, Download, Edit, FileText, Github, Link, Loader2, MoreHorizontal, Save, X } from 'lucide-react'
+import { WorkspaceViewHeader } from './workflow/WorkspaceViewHeader'
 import { MarkdownRenderer, MermaidDiagram } from './ui/MarkdownRenderer'
 import { CsvRenderer } from './ui/CsvRenderer'
 import { HtmlRenderer } from './ui/HtmlRenderer'
@@ -626,56 +626,37 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
         data-ui-file-path={selectedFile?.path || undefined}
         data-ui-file-ready={showFileContent && !loadingFileContent ? 'true' : 'false'}
       >
-        {/* Fixed Header */}
-        <div className={`flex items-center justify-between ${variant === 'pane' ? 'px-3' : 'px-4'} py-2 border-b border-gray-200 dark:border-gray-700 flex-shrink-0`}>
-          <div className="flex items-center gap-3 min-w-0 flex-1">
-            <button
-              onClick={() => {
-                if (getHasUnsavedChanges()) {
-                  if (window.confirm('You have unsaved changes. Are you sure you want to close?')) {
-                    setEditedContent('')
-                    setIsEditMode(false)
+        <WorkspaceViewHeader
+          icon={FileText}
+          title={selectedFile?.path ? (
+            <span className="inline-flex max-w-full items-center gap-1.5">
+              <button
+                type="button"
+                onClick={() => {
+                  if (getHasUnsavedChanges()) {
+                    if (window.confirm('You have unsaved changes. Are you sure you want to close?')) {
+                      setEditedContent('')
+                      setIsEditMode(false)
+                      setShowFileContent(false)
+                    }
+                  } else {
                     setShowFileContent(false)
                   }
-                } else {
-                  setShowFileContent(false)
-                }
-              }}
-              className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 flex-shrink-0"
-            >
-              ← Back
-            </button>
-            <TooltipProvider>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <div className="flex flex-col min-w-0 cursor-help gap-0.5">
-                    {selectedFile?.path && (
-                      <>
-                        <div className="flex items-center gap-2">
-                          <h2 className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate">
-                            {selectedFile.path.split('/').pop() || selectedFile.path}
-                          </h2>
-                          {getHasUnsavedChanges() && (
-                            <span className="text-[10px] text-orange-500">●</span>
-                          )}
-                        </div>
-                        <p className="text-[10px] text-gray-500 dark:text-gray-400 truncate" title={selectedFile.path}>
-                          {selectedFile.path}
-                        </p>
-                      </>
-                    )}
-                  </div>
-                </TooltipTrigger>
-                {selectedFile?.path && (
-                  <TooltipContent>
-                    <p className="max-w-md break-all">{selectedFile.path}</p>
-                  </TooltipContent>
-                )}
-              </Tooltip>
-            </TooltipProvider>
-          </div>
-          <div className="flex items-center gap-2 flex-shrink-0">
-            {headerAction}
+                }}
+                aria-label="Back to files"
+                title="Back to files"
+                className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
+              >
+                <ArrowLeft className="h-4 w-4" />
+              </button>
+              <span className="truncate">{selectedFile.path.split('/').pop() || selectedFile.path}</span>
+            </span>
+          ) : 'File'}
+          subtitle={selectedFile?.path ? <span title={selectedFile.path}>{selectedFile.path}</span> : undefined}
+          context={getHasUnsavedChanges() && (
+            <span className="text-[10px] text-orange-500" title="Unsaved changes">●</span>
+          )}
+          actions={<>
             {!isEditMode ? (
               <div className="flex items-center gap-0.5">
                 {canEdit && (
@@ -769,8 +750,9 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                 )}
               </>
             )}
-          </div>
-        </div>
+            {headerAction}
+          </>}
+        />
 
         {isRenderedMarkdownSearchAvailable && (
           <RenderedContentSearchBar search={renderedContentSearch} />

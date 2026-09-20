@@ -37,6 +37,8 @@ it('loads Crew trigger runs from the product trigger source and opens their chat
 
   expect(productWebhooksApi.runs).toHaveBeenCalledWith({ profileId: 'work', projectId: 'crew-1' }, 'trigger-1', 30)
   expect(host.textContent).toContain('PR opened')
+  expect(host.textContent).not.toContain('Final response')
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   expect(host.textContent).toContain('Final response')
   expect(host.textContent).toContain('Reviewed PR 87 successfully.')
   expect(host.textContent).not.toContain('No webhooks configured')
@@ -78,9 +80,11 @@ it('keeps older webhook rows compact and explains why their payload is unavailab
 
   expect(host.textContent).toContain('Older delivery')
   expect(host.textContent).not.toContain('Completed in 10s')
-  expect(host.textContent).not.toContain('STARTED WITH')
+  expect(host.textContent).not.toContain('Delivery details')
   expect(host.textContent).not.toContain('Finished successfully')
+  await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   expect(host.textContent).toContain('Delivery details')
+  expect(host.textContent).not.toContain('Finished successfully')
   const details = host.querySelector('details')!
   await act(async () => {
     details.open = true

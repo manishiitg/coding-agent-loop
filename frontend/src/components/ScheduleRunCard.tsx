@@ -1,4 +1,4 @@
-import { ArrowUpRight, ChevronRight, Loader2, RotateCcw, Trash2 } from 'lucide-react'
+import { ArrowUpRight, ChevronDown, ChevronRight, Loader2, RotateCcw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { workflowWebhooksApi } from '../api/workflowWebhooks'
 import type { ChatHistorySession, ScheduledJob, ScheduledJobRun } from '../services/api-types'
@@ -54,6 +54,7 @@ export function ScheduleRunCard({
   loadWebhookPayload: loadWebhookPayloadProp,
   openLabel,
 }: ScheduleRunCardProps) {
+  const [expanded, setExpanded] = useState(false)
   const [webhookPayload, setWebhookPayload] = useState<string>()
   const [webhookPayloadError, setWebhookPayloadError] = useState<string>()
   const [isLoadingWebhookPayload, setIsLoadingWebhookPayload] = useState(false)
@@ -67,9 +68,25 @@ export function ScheduleRunCard({
   const startedWith = scheduleRunStartMessage(job, session)
   const latestAgentUpdate = run.final_response || scheduleRunLatestAgentMessage(session)
   const outcome = latestAgentUpdate || presentation.detail
+  const outcomeLabel = run.final_response || (job.schedule_type === 'webhook' && latestAgentUpdate)
+    ? 'Final response'
+    : latestAgentUpdate ? 'Latest agent update' : 'Outcome'
   const triggerLabel = workflowTriggerLabel({ sessionId: run.session_id, triggeredBy: run.trigger_source || (job.schedule_type === 'webhook' ? 'webhook' : 'cron') })
   const slotLabel = scheduleRunSlotLabel(job, run)
   const isWebhookRun = run.trigger_source === 'webhook' || job.schedule_type === 'webhook'
+  const showOutcome = !isWebhookRun || !!latestAgentUpdate
+  const headline = run.status === 'success'
+    ? duration ? `Completed in ${duration}` : 'Completed'
+    : run.status === 'running'
+      ? 'Run in progress'
+      : duration ? `Stopped after ${duration}` : 'Run stopped'
+  const title = showScheduleName ? (run.webhook?.trigger_name || job.name) : headline
+  const summary = [
+    showScheduleName ? duration : undefined,
+    slotLabel || undefined,
+    `Started ${formatScheduleRunTime(run.started_at)}`,
+    showOutcome ? scheduleRunExcerpt(outcome, 140) : undefined,
+  ].filter((part): part is string => Boolean(part)).join(' · ')
 
   const loadPayload = async () => {
     if (!run.webhook || webhookPayload !== undefined || isLoadingWebhookPayload) return
@@ -96,113 +113,117 @@ export function ScheduleRunCard({
 
   return (
     <div className="space-y-2.5">
-      <div className="flex items-start gap-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(current => !current)}
+        aria-expanded={expanded}
+        className="flex w-full items-start gap-2 text-left"
+      >
         <div className={`mt-0.5 inline-flex shrink-0 items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${presentation.className}`}>
           <Icon className={`h-3 w-3 ${run.status === 'running' ? 'animate-spin' : ''}`} />
           <span>{presentation.label}</span>
         </div>
         <div className="min-w-0 flex-1">
-          {showScheduleName && (
-            <div className={`flex items-center gap-1 font-medium ${isWebhookRun ? 'text-sm text-foreground' : 'text-[11px] text-muted-foreground'}`}>
-              {!isWebhookRun && <ChevronRight className="h-3 w-3 shrink-0" />}
-              <span className="truncate">{run.webhook?.trigger_name || job.name}</span>
-            </div>
-          )}
-          {(!isWebhookRun || !showScheduleName) && <div className="text-sm font-medium text-foreground">
-            {run.status === 'success'
-              ? duration ? `Completed in ${duration}` : 'Completed'
-              : run.status === 'running'
-                ? 'Run in progress'
-                : duration ? `Stopped after ${duration}` : 'Run stopped'}
-          </div>}
-          <div className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
+          <div className="truncate text-sm font-medium text-foreground">{title}</div>
+          <div className="mt-0.5 truncate text-[11px] text-muted-foreground">{summary}</div>
+        </div>
+        {expanded
+          ? <ChevronDown className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+          : <ChevronRight className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />}
+      </button>
+
+      {expanded && (
+        <div className="space-y-3">
+          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
             {triggerLabel && <span className="rounded border border-border px-1.5 py-0.5" aria-label={`Trigger: ${triggerLabel}`}>{triggerLabel}</span>}
-            {isWebhookRun && duration && <span>{duration}</span>}
             {run.run_folder && <span>{run.run_folder}</span>}
-            {run.artifacts_expired && <span className="rounded border border-border px-1.5 py-0.5">Artifacts expired</span>}
             {run.webhook?.event && <span>{run.webhook.event}</span>}
-            {slotLabel && <span className="font-medium text-foreground/75">{slotLabel}</span>}
-            <span>Started {formatScheduleRunTime(run.started_at)}</span>
-            {run.completed_at && <span>ended {formatScheduleRunTime(run.completed_at)}</span>}
+            {run.artifacts_expired && <span className="rounded border border-border px-1.5 py-0.5">Artifacts expired</span>}
+            {run.completed_at && <span>Ended {formatScheduleRunTime(run.completed_at)}</span>}
             {run.group_names?.length ? <span>{run.group_names.join(', ')}</span> : null}
           </div>
-        </div>
-        <div className="flex shrink-0 items-center gap-1">
-          {run.session_id && showCopySessionId && (
-            <ChatSessionIdCopyButton sessionId={run.session_id} compact />
+
+          {!isWebhookRun && (
+            <div>
+              <div className="text-xs text-muted-foreground">Started with</div>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-5 text-foreground/90">{startedWith}</p>
+            </div>
           )}
-          {run.session_id && onOpen && (
-            <button
-              type="button"
-              onClick={() => onOpen(run)}
-              className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+          {showOutcome && (
+            <div>
+              <div className="text-xs text-muted-foreground">{outcomeLabel}</div>
+              <p className="mt-0.5 whitespace-pre-wrap break-words text-xs leading-5 text-foreground/90">{outcome}</p>
+            </div>
+          )}
+
+          {isWebhookRun && (
+            <details
+              className="text-[11px] text-muted-foreground"
+              onToggle={event => {
+                if (event.currentTarget.open && run.webhook) void loadPayload()
+              }}
             >
-              {canResume ? <RotateCcw className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />}
-              {!compact && <span>{canResume ? 'Resume' : (openLabel || 'View chat')}</span>}
-            </button>
+              <summary className="cursor-pointer font-medium">Delivery details</summary>
+              {run.webhook ? (
+                <dl className="mt-1 space-y-1 break-words rounded border border-border p-2">
+                  <dt>Trigger</dt><dd>{run.webhook.trigger_name}</dd>
+                  <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
+                  {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
+                  <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
+                  <dt>Payload (JSON body)</dt>
+                  <dd>
+                    {isLoadingWebhookPayload && <span>Loading payload…</span>}
+                    {webhookPayloadError && <span>{webhookPayloadError}</span>}
+                    {webhookPayload !== undefined && (
+                      <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[10px] leading-4 text-foreground">{webhookPayload}</pre>
+                    )}
+                  </dd>
+                </dl>
+              ) : (
+                <p className="mt-1 rounded border border-border p-2">
+                  Payload and final response were not retained for this delivery because it ran before delivery history capture was enabled. Send a new delivery to record both.
+                </p>
+              )}
+            </details>
           )}
-          {run.session_id && onDelete && (
-            <button
-              type="button"
-              onClick={() => onDelete(run)}
-              disabled={isDeleting}
-              className="inline-flex items-center rounded border border-border bg-background p-1 text-destructive/75 transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
-              aria-label="Delete conversation record"
-              title="Delete conversation record; the schedule execution remains"
-            >
-              {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            </button>
+
+          {run.error && (
+            <details className="text-[11px] text-muted-foreground">
+              <summary className="cursor-pointer select-none font-medium hover:text-foreground">Technical details</summary>
+              <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-destructive/5 px-2 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground">{run.error}</pre>
+            </details>
+          )}
+
+          {run.session_id && (showCopySessionId || onOpen || onDelete) && (
+            <div className="flex items-center gap-1.5">
+              {run.session_id && showCopySessionId && (
+                <ChatSessionIdCopyButton sessionId={run.session_id} compact />
+              )}
+              {run.session_id && onOpen && (
+                <button
+                  type="button"
+                  onClick={() => onOpen(run)}
+                  className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                >
+                  {canResume ? <RotateCcw className="h-3.5 w-3.5" /> : <ArrowUpRight className="h-3.5 w-3.5" />}
+                  {!compact && <span>{canResume ? 'Resume' : (openLabel || 'View chat')}</span>}
+                </button>
+              )}
+              {run.session_id && onDelete && (
+                <button
+                  type="button"
+                  onClick={() => onDelete(run)}
+                  disabled={isDeleting}
+                  className="inline-flex items-center rounded border border-border bg-background p-1 text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:opacity-50"
+                  aria-label="Delete conversation record"
+                  title="Delete conversation record; the schedule execution remains"
+                >
+                  {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+                </button>
+              )}
+            </div>
           )}
         </div>
-      </div>
-
-      {(!isWebhookRun || latestAgentUpdate) && <div className="space-y-2 border-l-2 border-border/80 pl-3">
-        {!isWebhookRun && <div>
-          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">Started with</div>
-          <p className="line-clamp-2 text-xs leading-5 text-muted-foreground">{scheduleRunExcerpt(startedWith)}</p>
-        </div>}
-        {(!isWebhookRun || latestAgentUpdate) && <div>
-          <div className="mb-0.5 text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">{run.final_response || (job.schedule_type === 'webhook' && latestAgentUpdate) ? 'Final response' : latestAgentUpdate ? 'Latest agent update' : 'Outcome'}</div>
-          <p className="line-clamp-3 text-xs leading-5 text-foreground/90">{scheduleRunExcerpt(outcome)}</p>
-        </div>}
-      </div>}
-
-      {isWebhookRun && (
-        <details
-          className="text-[11px] text-muted-foreground"
-          onToggle={event => {
-            if (event.currentTarget.open && run.webhook) void loadPayload()
-          }}
-        >
-          <summary className="cursor-pointer font-medium">Delivery details</summary>
-          {run.webhook ? (
-            <dl className="mt-1 space-y-1 break-words rounded border border-border p-2">
-              <dt>Trigger</dt><dd>{run.webhook.trigger_name}</dd>
-              <dt>Delivery ID</dt><dd className="font-mono">{run.webhook.delivery_id}</dd>
-              {run.webhook.event && <><dt>Event</dt><dd>{run.webhook.event}</dd></>}
-              <dt>Received</dt><dd>{formatScheduleRunTime(run.webhook.received_at)}</dd>
-              <dt>Payload (JSON body)</dt>
-              <dd>
-                {isLoadingWebhookPayload && <span>Loading payload…</span>}
-                {webhookPayloadError && <span>{webhookPayloadError}</span>}
-                {webhookPayload !== undefined && (
-                  <pre className="mt-1 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/50 p-2 font-mono text-[10px] leading-4 text-foreground">{webhookPayload}</pre>
-                )}
-              </dd>
-            </dl>
-          ) : (
-            <p className="mt-1 rounded border border-border p-2">
-              Payload and final response were not retained for this delivery because it ran before delivery history capture was enabled. Send a new delivery to record both.
-            </p>
-          )}
-        </details>
-      )}
-
-      {run.error && (
-        <details className="text-[11px] text-muted-foreground">
-          <summary className="cursor-pointer select-none font-medium hover:text-foreground">Technical details</summary>
-          <pre className="mt-1 max-h-32 overflow-auto whitespace-pre-wrap break-words rounded border border-destructive/20 bg-destructive/5 px-2 py-1.5 font-mono text-[10px] leading-4 text-muted-foreground">{run.error}</pre>
-        </details>
       )}
     </div>
   )

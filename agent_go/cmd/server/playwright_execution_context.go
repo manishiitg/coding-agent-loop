@@ -2,7 +2,7 @@ package server
 
 import "strings"
 
-// Set after user secrets: execution context is platform metadata inherited by
+// Set after scoped secrets: execution context is platform metadata inherited by
 // shell executors and saved-script children, not a workflow-specific variable.
 func (api *StreamingAPI) setPlaywrightExecutionContext(env map[string]string, sessionID string, req QueryRequest) {
 	active, _ := api.getActiveSession(sessionID)

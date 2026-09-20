@@ -60,7 +60,7 @@ it("shows setup without inventing a score for legacy workflows", () => {
     />,
   );
   expect(html).toContain("Measurement setup needed");
-  expect(html).toContain("Set up goals &amp; metrics");
+  expect(html).toContain("Set up goals &amp; numbers");
   expect(html).not.toContain("0%");
 });
 

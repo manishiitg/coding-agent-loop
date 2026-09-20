@@ -62,13 +62,10 @@ const NO_DISABLED_PULSE_REVIEWERS: PulseReviewerModule[] = []
 // "Loading…" line the views use for their own data loading.
 const CostsPopup = lazy(() => import('../CostsPopup'))
 const ExecutionLogsPopup = lazy(() => import('../ExecutionLogsPopup'))
-const LearningsView = lazy(() => import('../LearningsView'))
-const KnowledgebaseView = lazy(() => import('../KnowledgebaseView'))
-const DatabaseView = lazy(() => import('../DatabaseView'))
+const KnowledgeView = lazy(() => import('../KnowledgeView'))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
 const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
-const WorkflowFolderAccessView = lazy(() => import('../WorkflowFolderAccessView'))
 const PulseView = lazy(() => import('../PulseView'))
 const WorkflowBackupView = lazy(() => import('../WorkflowBackupView'))
 const WorkflowPublishView = lazy(() => import('../WorkflowPublishView'))
@@ -159,9 +156,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
       case 'costs':
         return (
           <CostsPopup
-            isOpen
-            embedded
-            onClose={closeInspector}
             workspacePath={workspacePath}
             runFolders={runFolderNames}
             selectedRunFolder={selectedRunFolder}
@@ -171,9 +165,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
       case 'execution-logs':
         return (
           <ExecutionLogsPopup
-            isOpen
-            embedded
-            onClose={closeInspector}
             workspacePath={workspacePath}
             runFolder={selectedRunFolder}
             allowDefaultRunFolder={!historyLogsTarget}
@@ -184,12 +175,8 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             headerAction={askAI('execution-logs')}
           />
         )
-      case 'learnings':
-        return <LearningsView workspacePath={workspacePath} plan={plan} headerAction={refreshAndAskAI('learnings')} />
-      case 'knowledgebase':
-        return <KnowledgebaseView workspacePath={workspacePath} headerAction={askAI('knowledgebase')} />
-      case 'database':
-        return <DatabaseView workspacePath={workspacePath} headerAction={askAI('database')} />
+      case 'knowledge':
+        return <KnowledgeView workspacePath={workspacePath} plan={plan} />
       case 'schedules':
         return (
           <WorkflowScheduleRunsPanel
@@ -207,8 +194,6 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             headerAction={askAI('webhooks')}
           />
         )
-      case 'folders':
-        return <WorkflowFolderAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('folders')} />
       case 'workshop':
         // WorkspaceViewHost renders the caller-supplied Workshop panel before
         // reaching InspectorBody. Keep this branch for registry exhaustiveness.
@@ -245,14 +230,10 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         return <WorkflowNotificationView workspacePath={workspacePath} headerAction={askAI('notify')} />
       case 'access':
         return <WorkflowAccessView workspacePath={workspacePath} headerAction={refreshAndAskAI('access')} />
+      case 'identity':
       case 'playbooks':
-      case 'skills':
       case 'mcp':
-      case 'secrets':
       case 'browser':
-      case 'llm':
-      case 'email':
-      case 'bots':
         return <WorkflowCapabilitiesPanel section={view} workspacePath={workspacePath} />
       default:
         return assertNeverView(view)

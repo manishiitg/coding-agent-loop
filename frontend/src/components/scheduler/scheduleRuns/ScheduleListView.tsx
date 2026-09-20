@@ -84,28 +84,22 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
           <React.Fragment key={job.id}>
             {showRunningHeader && (
               <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Running schedules</div>
-                  <div className="text-sm font-medium text-foreground">Schedules with an active execution right now</div>
-                </div>
+                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Running schedules</div>
+                <div className="text-xs text-muted-foreground">Schedules with an active execution right now</div>
               </div>
             )}
 
             {showScheduledHeader && (
               <div className="px-5 py-3 bg-muted/30 border-b border-border">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Automation schedules</div>
-                  <div className="text-sm font-medium text-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
-                </div>
+                <div className="text-sm font-semibold text-foreground">Automation schedules</div>
+                <div className="text-xs text-muted-foreground">Saved schedules that are idle, paused, or waiting for their next run</div>
               </div>
             )}
 
             {showMissedHeader && (
               <div className="px-5 py-3 bg-amber-500/5 border-b border-amber-500/10">
-                <div>
-                  <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Missed schedules</div>
-                  <div className="text-sm font-medium text-foreground">Schedules that were due, but never started at the scheduled time</div>
-                </div>
+                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules</div>
+                <div className="text-xs text-muted-foreground">Schedules that were due, but never started at the scheduled time</div>
               </div>
             )}
 

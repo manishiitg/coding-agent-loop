@@ -10,7 +10,6 @@ import {
   Link2,
   Loader2,
   Maximize2,
-  RefreshCw,
   Search,
   Table2,
   X,
@@ -18,10 +17,14 @@ import {
 import { agentApi } from '../../services/api'
 import type { PlannerFile } from '../../services/api-types'
 import { describeDatabaseLoadFailure } from './databaseLoadError'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 interface DatabaseViewProps {
   workspacePath: string | null
   headerAction?: ReactNode
+  /** Embedded in the Knowledge umbrella: the umbrella owns the header. */
+  hideHeader?: boolean
 }
 
 type FileSummary = {
@@ -352,7 +355,7 @@ async function readText(filepath: string): Promise<string | null> {
   }
 }
 
-export default function DatabaseView({ workspacePath, headerAction }: DatabaseViewProps) {
+export default function DatabaseView({ workspacePath, headerAction, hideHeader = false }: DatabaseViewProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [files, setFiles] = useState<PlannerFile[]>([])
@@ -479,24 +482,17 @@ export default function DatabaseView({ workspacePath, headerAction }: DatabaseVi
 
   return (
         <div className="flex h-full min-h-0 w-full flex-col bg-background">
-          <div className="flex flex-shrink-0 items-start justify-between gap-3 border-b border-border p-3 sm:p-4">
-            <div className="flex min-w-0 flex-wrap items-center gap-2">
-              <Table2 className="h-5 w-5 text-primary" />
-              <h2 className="text-lg font-semibold">Database</h2>
-              <span className="text-xs text-muted-foreground sm:ml-2">db/db.sqlite - tables</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <button
-                onClick={load}
-                disabled={loading}
-                className="rounded-md p-1.5 transition-colors hover:bg-muted disabled:opacity-50"
-                title="Refresh"
-              >
-                <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
-              </button>
-              {headerAction}
-            </div>
-          </div>
+          {!hideHeader && (
+            <WorkspaceViewHeader
+              icon={Table2}
+              title="Database"
+              context={<span className="text-xs text-muted-foreground">db/db.sqlite - tables</span>}
+              actions={<>
+                {headerAction}
+                <WorkspaceViewIconButton label="Refresh database" onClick={load} disabled={loading} spinning={loading} />
+              </>}
+            />
+          )}
 
           <div className="flex flex-shrink-0 flex-col gap-2 border-b border-border px-4 py-3 text-sm sm:flex-row sm:items-center">
             <div className="grid grid-cols-3 gap-2 text-xs sm:flex sm:items-center sm:gap-3">

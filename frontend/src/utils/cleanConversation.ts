@@ -1,5 +1,6 @@
 import { intermediateUpdateFromTranscriptChunk } from './transcriptChunkUpdates'
 import type { PollingEvent } from '../services/api-types'
+import { askAIDisplayText } from './askAIMessage'
 import { appendStreamingText } from './streamingStatus'
 import { humanReadableAgentResult } from '../components/events/system/eventDisplayUtils'
 import {
@@ -108,7 +109,10 @@ function conversationUsage(payload: Record<string, unknown>): ConversationUsage 
 
 function displaySafeUserMessage(content: string): string {
   const markerIndex = content.indexOf(RESTORED_CONVERSATION_CONTEXT_MARKER)
-  return (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
+  const stripped = (markerIndex >= 0 ? content.slice(0, markerIndex) : content).trim()
+  // Ask AI blocks collapse to their plain-words request; the builder-only
+  // instructions (tool calls, skill paths) never render in chat.
+  return askAIDisplayText(stripped)
 }
 
 function isChildExecution(event: PollingEvent, payload: Record<string, unknown>): boolean {

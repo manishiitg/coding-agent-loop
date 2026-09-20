@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { PollingEvent } from '../services/api-types'
 import { buildCleanConversationItems, buildProductionActivityItems, buildProductionActivityTurns, cleanConversationActivity } from '../utils/cleanConversation'
+import { buildAskAIMessage } from '../utils/askAIMessage'
 
 function event(id: string, type: string, data: Record<string, unknown>, extra: Partial<PollingEvent> = {}): PollingEvent {
   return {
@@ -37,6 +38,23 @@ describe('buildCleanConversationItems', () => {
       expect.objectContaining({ role: 'notification', content: 'internal runtime update' }),
       expect.objectContaining({ role: 'assistant', content: 'Your launch video is ready.' }),
     ])
+  })
+
+  it('collapses Ask AI blocks to their plain-words request', () => {
+    const items = buildCleanConversationItems([
+      event('askai', 'user_message', {
+        content: buildAskAIMessage({
+          view: 'Dashboard',
+          summary: 'Help me understand my results page.',
+          instructions: 'First read the guide with read_skill(skills=[{"name":"builder-reference"}]).',
+        }),
+      }),
+    ])
+
+    expect(items).toEqual([
+      expect.objectContaining({ role: 'user', content: 'Ask AI · Dashboard — Help me understand my results page.' }),
+    ])
+    expect(items[0].content).not.toContain('read_skill')
   })
 
   it('deduplicates echoed user messages and repeated final answers', () => {

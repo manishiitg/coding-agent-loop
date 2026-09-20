@@ -16,6 +16,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 )
 
 func TestChatSubmissionDurableAcceptanceAndReplay(t *testing.T) {
@@ -29,7 +30,13 @@ func TestChatSubmissionDurableAcceptanceAndReplay(t *testing.T) {
 		r.Header.Set("Idempotency-Key", "turn-1")
 		return r
 	}
-	api := &StreamingAPI{internalChatSubmissionStore: store}
+	// Short adopt wait: the in-flight retry below must still 409 once the
+	// wait expires without a resolution; the adopt path is covered below.
+	api := &StreamingAPI{
+		internalChatSubmissionStore:                  store,
+		internalUncertainSubmissionAdoptTimeout:      50 * time.Millisecond,
+		internalUncertainSubmissionAdoptPollInterval: 5 * time.Millisecond,
+	}
 	result := httptest.NewRecorder()
 	w, _, finish, ok := api.beginChatSubmission(result, request(), "session-a", "project-a", "hello")
 	if !ok || len(files) != 1 {
@@ -99,6 +106,8 @@ func TestChatSubmissionKeepsUncertainReceiptWithoutNotDeliveredProof(t *testing.
 		internalUncertainSubmissionRetryChecker: func(context.Context, chatSubmissionRecord) bool {
 			return false
 		},
+		internalUncertainSubmissionAdoptTimeout:      50 * time.Millisecond,
+		internalUncertainSubmissionAdoptPollInterval: 5 * time.Millisecond,
 	}
 
 	first := httptest.NewRecorder()
@@ -112,6 +121,79 @@ func TestChatSubmissionKeepsUncertainReceiptWithoutNotDeliveredProof(t *testing.
 	retry := httptest.NewRecorder()
 	if _, _, _, ok := api.beginChatSubmission(retry, request, "session-a", "project-a", "maybe delivered"); ok || retry.Code != http.StatusConflict {
 		t.Fatalf("unproven receipt was reopened: status=%d body=%s", retry.Code, retry.Body.String())
+	}
+}
+
+func TestChatSubmissionUncertainRetryAdoptsResolvedOutcome(t *testing.T) {
+	store := newTestChatSubmissionStore()
+	request := func() *http.Request {
+		r := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+		r.Header.Set("Idempotency-Key", "adopt-me")
+		return r
+	}
+	api := &StreamingAPI{
+		internalChatSubmissionStore: store,
+		internalUncertainSubmissionRetryChecker: func(context.Context, chatSubmissionRecord) bool {
+			return false
+		},
+		internalUncertainSubmissionAdoptTimeout:      5 * time.Second,
+		internalUncertainSubmissionAdoptPollInterval: 5 * time.Millisecond,
+	}
+	first := httptest.NewRecorder()
+	w, _, finish, ok := api.beginChatSubmission(first, request(), "session-a", "project-a", "hello again")
+	if !ok {
+		t.Fatal("initial submission was not accepted")
+	}
+	retryDone := make(chan struct{})
+	retry := httptest.NewRecorder()
+	var retryOK bool
+	go func() {
+		defer close(retryDone)
+		_, _, _, retryOK = api.beginChatSubmission(retry, request(), "session-a", "project-a", "hello again")
+	}()
+	// Let the retry block in the adopt wait, then resolve the first attempt.
+	time.Sleep(50 * time.Millisecond)
+	_ = json.NewEncoder(w).Encode(map[string]string{"delivery_status": "sent_to_cli", "query_id": "q-adopt"})
+	finish()
+	select {
+	case <-retryDone:
+	case <-time.After(10 * time.Second):
+		t.Fatal("same-key retry did not adopt the resolved outcome")
+	}
+	if retryOK {
+		t.Fatal("adopted retry dispatched a second time")
+	}
+	if retry.Code != http.StatusOK || retry.Body.String() != first.Body.String() {
+		t.Fatalf("retry did not adopt first outcome: %d %s", retry.Code, retry.Body.String())
+	}
+}
+
+func TestChatSubmissionUncertainRetryStopsWhenRequestEnds(t *testing.T) {
+	store := newTestChatSubmissionStore()
+	api := &StreamingAPI{
+		internalChatSubmissionStore: store,
+		internalUncertainSubmissionRetryChecker: func(context.Context, chatSubmissionRecord) bool {
+			return false
+		},
+		internalUncertainSubmissionAdoptTimeout:      5 * time.Second,
+		internalUncertainSubmissionAdoptPollInterval: 5 * time.Millisecond,
+	}
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/query", nil)
+	firstReq.Header.Set("Idempotency-Key", "cancel-me")
+	if _, _, _, ok := api.beginChatSubmission(httptest.NewRecorder(), firstReq, "session-a", "project-a", "hello"); !ok {
+		t.Fatal("initial submission was not accepted")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	retryReq := httptest.NewRequest(http.MethodPost, "/api/query", nil).WithContext(ctx)
+	retryReq.Header.Set("Idempotency-Key", "cancel-me")
+	cancel()
+	retry := httptest.NewRecorder()
+	start := time.Now()
+	if _, _, _, ok := api.beginChatSubmission(retry, retryReq, "session-a", "project-a", "hello"); ok || retry.Code != http.StatusConflict {
+		t.Fatalf("cancelled retry dispatched or missed 409: ok=%v code=%d", ok, retry.Code)
+	}
+	if elapsed := time.Since(start); elapsed > 2*time.Second {
+		t.Fatalf("cancelled adopt wait took %v", elapsed)
 	}
 }
 

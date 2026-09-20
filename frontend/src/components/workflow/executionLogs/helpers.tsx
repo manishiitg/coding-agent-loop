@@ -137,7 +137,7 @@ export const getExecutionOrigin = (execution: unknown, validations: unknown[], p
       detail: plannedMessage
         ? 'This is the sequence’s closing reflection turn. The planned instruction is shown below.'
         : 'This is the sequence’s closing reflection turn, not a workflow retry or another orchestrator dispatch. Its exact sent prompt is available when you expand this entry.',
-      className: 'border-teal-500/25 bg-teal-500/10 text-teal-700 dark:text-teal-300',
+      className: 'border-border bg-muted text-muted-foreground',
       plannedMessage,
     }
   }
@@ -147,7 +147,7 @@ export const getExecutionOrigin = (execution: unknown, validations: unknown[], p
     return {
       label: `Runtime retry ${retryAttempt}`,
       detail: 'The runtime retried this same execution after a transient failure; it was not a new planned item or orchestrator call.',
-      className: 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+      className: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
     }
   }
 
@@ -157,7 +157,7 @@ export const getExecutionOrigin = (execution: unknown, validations: unknown[], p
       detail: plannedMessage
         ? `The plan requested the message-sequence item “${itemID}”.`
         : `The runtime recorded the message-sequence item “${itemID}”. Its exact sent prompt is available when you expand this entry.`,
-      className: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+      className: 'border-border bg-muted text-muted-foreground',
       plannedMessage,
     }
   }
@@ -704,4 +704,42 @@ export const getStepStatus = (stepLogs: StepExecutionLogs): 'completed' | 'faile
   }
 
   return 'pending'
+}
+
+/** Display title with the same fallback chain the step list renders. */
+export const getStepDisplayTitle = (stepId: string, stepLogs: StepExecutionLogs): string => {
+  const title = stepLogs.title?.trim()
+  return title ? title : (stepLogs.original_id || stepId)
+}
+
+/** Latest human-readable failure across executions and validations, newest first. */
+export const getStepLatestError = (stepLogs: StepExecutionLogs): string => {
+  const executions = stepLogs.executions || []
+  for (let index = executions.length - 1; index >= 0; index -= 1) {
+    const content = (executions[index] as { content?: { error?: unknown } })?.content
+    if (typeof content?.error === 'string' && content.error.trim()) {
+      return content.error.replace(/\s+/g, ' ').trim()
+    }
+  }
+  const validations = stepLogs.validations || []
+  for (let index = validations.length - 1; index >= 0; index -= 1) {
+    const errors = (validations[index] as { content?: { errors?: unknown } })?.content?.errors
+    const first = Array.isArray(errors) ? errors[0] as { Message?: unknown; message?: unknown } : null
+    const text = typeof first?.Message === 'string' ? first.Message : typeof first?.message === 'string' ? first.message : ''
+    if (text.trim()) return text.replace(/\s+/g, ' ').trim()
+  }
+  return ''
+}
+
+/** Friendly run picker label: "iteration-84-sched/default" reads as "Run 84 · sched · default". */
+export const formatRunFolderLabel = (folder: string): string => {
+  const match = /^iteration-(\d+)(.*)$/.exec(folder.trim())
+  if (!match) return folder
+  const rest = match[2]
+    .replace(/^-hook\b/, 'Webhook')
+    .replace(/^[/-]/, '')
+    .split('/')
+    .map(part => part.trim())
+    .filter(Boolean)
+  return rest.length > 0 ? `Run ${match[1]} · ${rest.join(' · ')}` : `Run ${match[1]}`
 }

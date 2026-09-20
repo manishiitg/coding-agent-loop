@@ -145,7 +145,8 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if _, err := authorizeWorkflowContextPaths(ctx, []string{workflowPath}); err != nil {
 		return CreatedCrew{}, fmt.Errorf("creating workflow is unavailable or access denied: %w", err)
 	}
-	if _, exists, err := ReadWorkflowManifest(ctx, workflowPath); err != nil || !exists {
+	creatingManifest, exists, err := ReadWorkflowManifest(ctx, workflowPath)
+	if err != nil || !exists || creatingManifest == nil {
 		return CreatedCrew{}, fmt.Errorf("creating workflow is unavailable or access denied")
 	}
 	if s == nil || s.registry == nil {
@@ -155,6 +156,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 	if err != nil {
 		return CreatedCrew{}, err
 	}
+	inheritedLLM := inheritCrewCreationLLM(creatingManifest)
 	if !strings.EqualFold(strings.TrimSpace(profile.Runtime.Conversation.Mode), agentprofiles.ConversationModeKeyed) {
 		return CreatedCrew{}, fmt.Errorf("profile %q does not support crew projects", profileID)
 	}
@@ -212,7 +214,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 			// The receipt outlived its manifests (a crash between the
 			// receipt write and the manifest writes, or deleted
 			// manifests): rebuild under the frozen identity.
-			created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath)
+			created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
 			if err != nil {
 				return CreatedCrew{}, err
 			}
@@ -220,7 +222,7 @@ func (s *ProductScheduleService) CreateCrewProject(ctx context.Context, req Crea
 			created.Pending = pending
 		}
 	} else {
-		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath)
+		created, err = writeCrewCreationManifests(ctx, userID, profile, profileID, workflowPath, title, req.Description, req.Icon, receipt.CrewID, receipt.WorkspacePath, inheritedLLM)
 		if err != nil {
 			return CreatedCrew{}, err
 		}
@@ -387,7 +389,7 @@ func ensureCrewCreationTrigger(ctx context.Context, svc *ProductScheduleService,
 
 // writeCrewCreationManifests writes a fresh crew's runtime manifest, identity
 // manifest, and code folder, mirroring the UI creation layout.
-func writeCrewCreationManifests(ctx context.Context, userID string, profile agentprofiles.Profile, profileID, workflowPath, title, description, icon, crewID, workspacePath string) (CreatedCrew, error) {
+func writeCrewCreationManifests(ctx context.Context, userID string, profile agentprofiles.Profile, profileID, workflowPath, title, description, icon, crewID, workspacePath string, inheritedLLM *workflowtypes.AgentLLMConfig) (CreatedCrew, error) {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	sessionID := profileID + ":project:" + crewID
 	description = strings.TrimSpace(description)
@@ -407,7 +409,7 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 		"browser_mode":                 "auto",
 		"use_code_execution_mode":      false,
 	}
-	if llmConfig := defaultCrewLLMConfig(profile); llmConfig != nil {
+	if llmConfig := resolveCrewCreationLLMConfig(profile, inheritedLLM); llmConfig != nil {
 		capabilities["llm_config"] = llmConfig
 	}
 	runtimeManifest := map[string]interface{}{
@@ -448,6 +450,70 @@ func writeCrewCreationManifests(ctx context.Context, userID string, profile agen
 		return CreatedCrew{}, fmt.Errorf("initialize crew code folder: %w", err)
 	}
 	return CreatedCrew{CrewID: crewID, Title: title, WorkspacePath: workspacePath, ManifestPath: manifestPath, SessionID: sessionID}, nil
+}
+
+// inheritCrewCreationLLM resolves the creating workflow's model choice into
+// a concrete builder LLM for the crew: a provider_profile resolves through
+// the same provider defaults the workflow engine uses, and an explicit
+// builder_llm carries over verbatim. Nil means no usable choice, and the
+// crew falls back to the profile default.
+func inheritCrewCreationLLM(manifest *WorkflowManifest) *workflowtypes.AgentLLMConfig {
+	if manifest == nil {
+		return nil
+	}
+	config := manifest.Capabilities.LLMConfig
+	if config == nil {
+		return nil
+	}
+	if config.Mode == workflowtypes.LLMConfigModeExplicit && config.BuilderLLM != nil {
+		return cloneCrewCreationLLM(config.BuilderLLM)
+	}
+	if config.Mode == workflowtypes.LLMConfigModeProviderProfile && strings.TrimSpace(config.Provider) != "" {
+		builder, _, ok := workflowtypes.ResolveProviderProfileConfig(config)
+		if !ok || builder == nil {
+			return nil
+		}
+		return cloneCrewCreationLLM(builder)
+	}
+	return nil
+}
+
+func cloneCrewCreationLLM(config *workflowtypes.AgentLLMConfig) *workflowtypes.AgentLLMConfig {
+	if config == nil {
+		return nil
+	}
+	out := *config
+	if config.Options != nil {
+		options := make(map[string]interface{}, len(config.Options))
+		for key, value := range config.Options {
+			options[key] = value
+		}
+		out.Options = options
+	}
+	if strings.TrimSpace(out.Provider) == "" || strings.TrimSpace(out.ModelID) == "" {
+		return nil
+	}
+	return &out
+}
+
+// resolveCrewCreationLLMConfig prefers the creating workflow's model so a
+// Builder-created crew runs where its workflow runs; otherwise it mirrors
+// the UI creation default from the profile.
+func resolveCrewCreationLLMConfig(profile agentprofiles.Profile, inherited *workflowtypes.AgentLLMConfig) map[string]interface{} {
+	if inherited != nil {
+		builder := map[string]interface{}{"provider": inherited.Provider, "model_id": inherited.ModelID}
+		if len(inherited.Options) > 0 {
+			builder["options"] = inherited.Options
+		}
+		if strings.TrimSpace(inherited.ConnectionID) != "" {
+			builder["connection_id"] = inherited.ConnectionID
+		}
+		if strings.TrimSpace(inherited.PublishedLLMID) != "" {
+			builder["published_llm_id"] = inherited.PublishedLLMID
+		}
+		return map[string]interface{}{"schema_version": 2, "mode": "explicit", "builder_llm": builder}
+	}
+	return defaultCrewLLMConfig(profile)
 }
 
 // defaultCrewLLMConfig mirrors the UI creation default: the profile's

@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from 'react'
 import type { KeyboardEvent, MouseEvent, ReactNode } from 'react'
-import { CheckCircle2, Circle, Copy, FolderOpen, Loader2, Square, X } from 'lucide-react'
+import { CheckCircle2, Circle, Copy, FolderOpen, Loader2, Monitor, Square, X } from 'lucide-react'
 import api, { getApiBaseUrl, getAuthToken } from '../../services/api'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 
 // Keep the persisted value for compatibility with existing browser selections,
 // but treat it as automatic activity following. Older clients described this
@@ -315,37 +316,59 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         {tabs.map(tab => <button key={tab.tabId} disabled={!canControl || tab.active} aria-pressed={tab.active} title={controlling ? tab.url : 'Switch tab and take control'} onClick={() => { if (controlling) send({ type: 'switch_tab', tab: tab.tabId }); else { pendingTab.current = tab.tabId; send({ type: 'take_control' }) } }} className={`max-w-52 shrink-0 truncate rounded px-3 py-1.5 text-xs ${tab.active ? 'bg-muted font-medium' : 'text-muted-foreground'} disabled:cursor-default`}>{tab.title || tab.url || tab.tabId}</button>)}
       </div>)
 
+  const statusLabel = controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'
+  // Tertiary labeled buttons sit left of the Ask/refresh pair at the standard
+  // action height. Minimal mode keeps its compact embed header (drawer use).
+  const tertiaryButtonClass = 'inline-flex h-8 shrink-0 items-center rounded-md border border-border bg-background px-3 text-xs text-muted-foreground transition-colors hover:bg-muted hover:text-foreground'
+
   return (
     <section className="live-browser flex min-h-0 flex-1 flex-col overflow-hidden bg-background" aria-label={`Live ${scopeNoun} browser`}>
-      <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <h3 className="text-sm font-medium">Browser</h3>
-        <span className="text-xs text-muted-foreground" role="status">{controlling ? 'You have control' : connected ? 'Watching' : completed ? 'Completed' : retainedFrame ? 'Disconnected' : 'Not connected'}</span>
-        {!minimal && (
-          <select className="min-w-0 max-w-96 rounded border border-border bg-background p-1 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
+      {minimal ? (
+        <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+          <h3 className="text-sm font-medium">Browser</h3>
+          <span className="text-xs text-muted-foreground" role="status">{statusLabel}</span>
+          {browserTabs}
+          <div className="live-browser-actions ml-auto flex gap-2">
+            {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
+            {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
+            {connected && canControl && <select aria-label="Browser page size" title={controlling ? 'Resize the actual browser page' : 'Take control to change page size'} disabled={!controlling} defaultValue="" onChange={event => { const [width, height] = event.target.value.split('x').map(Number); send({ type: 'resize_viewport', width, height }); event.target.value = '' }}>
+              <option value="" disabled>Page size</option>
+              <option value="900x1200">Tall · 900 × 1200</option>
+              <option value="1280x800">Wide · 1280 × 800</option>
+            </select>}
+            {toolbar}
+          </div>
+        </div>
+      ) : (
+        <WorkspaceViewHeader
+          icon={Monitor}
+          title="Browser"
+          subtitle="Watch and control the browser your helper uses."
+          context={<span className="text-xs text-muted-foreground" role="status">{statusLabel}</span>}
+          actions={<>
+            {session && !connected && !sourceCompleted && <button type="button" className={tertiaryButtonClass} onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
+            {connected && canControl && <button type="button" className={tertiaryButtonClass} onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
+            {session && canControl && (
+              <button type="button" disabled={recordingBusy} className={`inline-flex h-8 shrink-0 items-center gap-1.5 rounded-md px-2.5 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
+                {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
+                {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
+              </button>
+            )}
+            {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
+            {toolbar}
+          </>}
+        />
+      )}
+      {!minimal && (
+        <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
+          <span className="shrink-0 text-xs text-muted-foreground">Session</span>
+          <select className="h-8 min-w-0 max-w-96 flex-1 rounded-md border border-border bg-background px-2 text-xs" aria-label="Browser session" title={followingActivity ? followLabel : currentBrowser?.kind === 'playwright' ? testBrowserLabel(currentBrowser) : currentBrowser?.label} value={selection || session} onChange={event => chooseBrowser(event.target.value)}>
             {!selection && !session && <option value="" disabled>No managed browser</option>}
             <option value={AUTO_BROWSER}>{followingActivity ? followLabel : 'Follow browser activity'}</option>
             {sessions.map((item, index) => <option key={item.browser_session} value={item.browser_session}>{item.kind === 'playwright' ? testBrowserLabel(item) : item.label || `Browser ${index + 1} · ${item.workflow_session.slice(0, 8)}`}</option>)}
           </select>
-        )}
-        {minimal && browserTabs}
-        <div className="live-browser-actions ml-auto flex gap-2">
-          {session && !connected && !sourceCompleted && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => setRetry(value => value + 1)}>Reconnect</button>}
-          {connected && canControl && <button className="rounded border border-border px-3 py-1 text-xs" onClick={() => send({ type: controlling ? 'release_control' : 'take_control' })}>{controlling ? 'Return control to agent' : 'Take control'}</button>}
-          {!minimal && session && canControl && (
-            <button type="button" disabled={recordingBusy} className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 ${recording.recording ? 'bg-red-500/10 text-red-600 hover:bg-red-500/15 dark:text-red-400' : 'bg-muted text-foreground hover:bg-muted/70'}`} onClick={() => void toggleRecording()}>
-              {recordingBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden="true" /> : recording.recording ? <Square className="h-3 w-3 fill-current" aria-hidden="true" /> : <Circle className="h-3 w-3 fill-red-500 text-red-500" aria-hidden="true" />}
-              {recordingBusy ? recording.recording ? 'Saving recording…' : 'Starting recording…' : recording.recording ? 'Stop recording' : 'Start recording'}
-            </button>
-          )}
-          {!minimal && replayURL && <a href={replayURL} download="playwright-replay.mp4" className="rounded border border-border px-3 py-1 text-xs">Download video</a>}
-          {minimal && connected && canControl && <select aria-label="Browser page size" title={controlling ? 'Resize the actual browser page' : 'Take control to change page size'} disabled={!controlling} defaultValue="" onChange={event => { const [width, height] = event.target.value.split('x').map(Number); send({ type: 'resize_viewport', width, height }); event.target.value = '' }}>
-            <option value="" disabled>Page size</option>
-            <option value="900x1200">Tall · 900 × 1200</option>
-            <option value="1280x800">Wide · 1280 × 800</option>
-          </select>}
-          {toolbar}
         </div>
-      </div>
+      )}
       {!minimal && !recording.recording && recording.directory && recording.directory !== dismissedRecording && (
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-muted/30 px-3 py-2 text-xs">
           <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />

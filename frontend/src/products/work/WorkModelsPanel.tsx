@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { BrainCircuit, ChevronDown, Gauge, Loader2 } from 'lucide-react'
 import { TierModelSelector } from '../../components/ui/TierModelSelector'
 import { AskAIButton } from '../../components/workflow/AskAIButton'
+import { WorkspaceViewHeader } from '../../components/workflow/WorkspaceViewHeader'
 import GuidedProviderTerminal from '../../components/providers/GuidedProviderTerminal'
 import WorkflowLLMConfigurationPanel from '../../components/workflow/WorkflowLLMConfigurationPanel'
 import type { LLMProvider, PresetLLMConfig } from '../../services/api-types'
@@ -22,12 +23,14 @@ export function WorkModelsPanel({
   onAsk,
   projectLLMConfig,
   onRuntimeChange,
+  hideHeader,
 }: {
   tabId: string
   workspacePath: string
-  onAsk: (message: string) => void
+  onAsk?: (message: string) => void
   projectLLMConfig?: PresetLLMConfig
   onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>
+  hideHeader?: boolean
 }) {
   const tab = useChatStore(state => state.chatTabs[tabId])
   const events = useChatStore(state => tab?.sessionId ? state.tabEvents[tab.sessionId] : undefined)
@@ -194,25 +197,10 @@ export function WorkModelsPanel({
     })
   }
 
-  return (
-    <section className="flex h-full min-h-0 w-full flex-col bg-background">
-      <header className="flex shrink-0 items-start gap-3 border-b px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <BrainCircuit className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-foreground">Project agent configuration</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">Choose the coding agent and model this project uses. You can change either at any time.</p>
-        </div>
-        <AskAIButton
-          workspacePath={workspacePath}
-          message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
-          onAsk={onAsk}
-          iconOnly
-          className="inline-flex h-8 w-8 shrink-0 items-center justify-center self-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
-        />
-      </header>
-      <div className="min-h-0 flex-1 overflow-y-auto p-4">
+  // Embedded in the Identity view's Models tab: the shared header owns the
+  // title, tabs, and Ask AI, and the tab owns the scroll.
+  const body = (
+    <>
         <WorkflowLLMConfigurationPanel
           workspacePath={workspacePath}
           llmConfig={llmConfig}
@@ -293,7 +281,25 @@ export function WorkModelsPanel({
             )}
           </section>
         )}
-      </div>
+    </>
+  )
+
+  if (hideHeader) return body
+
+  return (
+    <section className="flex h-full min-h-0 w-full flex-col bg-background">
+      <WorkspaceViewHeader
+        icon={BrainCircuit}
+        title="Project agent configuration"
+        subtitle="Choose the coding agent and model this project uses. You can change either at any time."
+        actions={<AskAIButton
+          workspacePath={workspacePath}
+          message="Help me choose between the coding agents available for this project. Explain the practical differences before changing anything."
+          onAsk={onAsk}
+          iconOnly
+        />}
+      />
+      <div className="min-h-0 flex-1 overflow-y-auto p-4">{body}</div>
     </section>
   )
 }

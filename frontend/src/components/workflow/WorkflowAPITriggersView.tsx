@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import axios from 'axios'
-import { Copy, GitBranch, RefreshCw, ShieldCheck, Webhook, Zap } from 'lucide-react'
+import { Copy, GitBranch, ShieldCheck, Webhook, Zap } from 'lucide-react'
 import { workflowWebhooksApi, apiTriggerURL, type APITriggerOptions, type WorkflowAPITrigger } from '../../api/workflowWebhooks'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 const emptyOptions: APITriggerOptions = { triggers: [], routes: [], groups: [] }
 const buttonClass = 'rounded-md border border-border px-3 py-1.5 text-xs hover:bg-muted disabled:opacity-50'
@@ -14,7 +16,7 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : 'Unable to update API triggers'
 }
 
-export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, deliveryHistory, headerAction }: { workspacePath: string | null; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode }) {
+export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, deliveryHistory, headerAction, hideHeader = false, refreshToken = 0, onCounts }: { workspacePath: string | null; onViewRuns?: () => void; deliveryHistory?: ReactNode; headerAction?: React.ReactNode; hideHeader?: boolean; refreshToken?: number; onCounts?: (counts: { active: number; paused: number }) => void }) {
   const canWrite = useCanWriteWorkflow(workspacePath)
   const [options, setOptions] = useState<APITriggerOptions>(emptyOptions)
   const [issued, setIssued] = useState<WorkflowAPITrigger | null>(null)
@@ -41,6 +43,15 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
     void refresh()
     return cancelPendingRequests
   }, [refresh, cancelPendingRequests])
+
+  useEffect(() => {
+    if (refreshToken) void refresh()
+  }, [refreshToken, refresh])
+
+  const activeTriggers = options.triggers.filter(trigger => trigger.enabled).length
+  useEffect(() => {
+    onCounts?.({ active: activeTriggers, paused: options.triggers.length - activeTriggers })
+  }, [onCounts, activeTriggers, options.triggers.length])
 
   const afterSave = async () => {
     if (!workspacePath) return
@@ -76,30 +87,24 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
   }
 
   if (!workspacePath) return <p className="p-4 text-sm text-muted-foreground">Select a workflow to configure API triggers.</p>
-  const activeTriggers = options.triggers.filter(trigger => trigger.enabled).length
   return (
-    <div className="h-full min-w-0 w-full max-w-none overflow-x-hidden overflow-y-auto bg-background">
-      <div className="sticky top-0 z-10 border-b border-border bg-background/95 px-4 py-3 backdrop-blur sm:px-6">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2">
-              <Webhook className="h-4 w-4 text-muted-foreground" />
-              <h2 className="text-base font-semibold">Webhooks</h2>
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{options.triggers.length}</span>
-            </div>
-            <p className="mt-1 text-xs text-muted-foreground">External events that start this workflow.</p>
-          </div>
-          <div className="flex items-center gap-2">
-            <button type="button" aria-label="Refresh webhooks" title="Refresh webhooks" className={buttonClass} onClick={() => { setError(''); void refresh() }}><RefreshCw size={14} /></button>
-            {headerAction}
-          </div>
-        </div>
-        <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+    <div className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
+      {!hideHeader && <WorkspaceViewHeader
+        icon={Webhook}
+        title="Webhooks"
+        context={<span className="rounded-full bg-muted px-2 py-0.5 text-[11px] text-muted-foreground">{options.triggers.length}</span>}
+        subtitle="External events that start this workflow."
+        actions={<>
+          {headerAction}
+          <WorkspaceViewIconButton label="Refresh webhooks" onClick={() => { setError(''); void refresh() }} />
+        </>}
+        below={<div className="mt-1.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
           <span><span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500" />{activeTriggers} active</span>
           <span>{options.triggers.length - activeTriggers} paused</span>
           {!deliveryHistory && <button type="button" className="text-foreground underline underline-offset-2" onClick={() => onViewRuns ? onViewRuns() : useWorkflowStore.getState().openWorkspaceView('schedules')}>View delivery history</button>}
-        </div>
-      </div>
+        </div>}
+      />}
+      <div className="min-h-0 flex-1 overflow-x-hidden overflow-y-auto">
       <div className="space-y-4 p-4 sm:p-6">
       <div className="flex min-w-0 max-w-full items-start gap-2 rounded-lg bg-muted/35 px-3 py-2.5 text-xs text-muted-foreground">
         <Zap className="mt-0.5 h-3.5 w-3.5 shrink-0" />
@@ -167,6 +172,7 @@ export default function WorkflowAPITriggersView({ workspacePath, onViewRuns, del
         <p className="mt-2 leading-relaxed">Use a server URL reachable by the caller. Send JSON up to 1 MiB. A successful delivery returns 202 with a run ID. When all four delivery slots are busy, the endpoint returns 503 with Retry-After. Reuse Idempotency-Key or GitHub’s delivery ID when retrying.</p>
       </details>
       {deliveryHistory && <div className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border">{deliveryHistory}</div>}
+      </div>
       </div>
     </div>
   )

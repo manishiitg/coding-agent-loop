@@ -1,4 +1,5 @@
 import { routeForQueuedMessage, splitQueuedMessages } from '../utils/queuedMessageDelivery'
+import { askAIDisplayText } from '../utils/askAIMessage'
 import { resolvePiModelGroup } from '../utils/llmDisplay'
 import React, { useRef, useCallback, useMemo, useState, useEffect, useLayoutEffect, useSyncExternalStore } from 'react'
 import { useQuery } from '@tanstack/react-query'
@@ -3383,8 +3384,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     )
                   }
 
-                  const isLong = item.msg.length > 150
-                  const preview = isLong ? item.msg.substring(0, 150) + '...' : item.msg
+                  const display = askAIDisplayText(item.msg)
+                  const isLong = display.length > 150
+                  const preview = isLong ? display.substring(0, 150) + '...' : display
                   return (
                     <QueuedMessageItem
                       key={item.index}

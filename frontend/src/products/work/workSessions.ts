@@ -1,4 +1,4 @@
-import { createProductProject, loadProductProjects, parseProductProjectManifest, updateProductProjectSelections, type ProductProject } from '../../platform/chat/productProjects'
+import { createProductProject, loadProductProjects, parseProductProjectManifest, updateProductProjectIdentity, updateProductProjectSelections, type ProductIdentityPatch, type ProductProject } from '../../platform/chat/productProjects'
 import { agentApi } from '../../services/api'
 import { secretsApi } from '../../api/secrets'
 import type { LLMProvider, PresetLLMConfig } from '../../services/api-types'
@@ -100,4 +100,8 @@ export async function createWorkSession(title: string, description: string, icon
 
 export async function deleteWorkSession(session: WorkSession): Promise<void> {
   await agentApi.deleteAgentProfileProject(WORK_PROFILE_ID, session.id)
+}
+
+export async function updateWorkSessionIdentity(session: WorkSession, patch: ProductIdentityPatch): Promise<WorkSession> {
+  return updateProductProjectIdentity(session, patch, `Update Crew project identity ${session.title}`)
 }

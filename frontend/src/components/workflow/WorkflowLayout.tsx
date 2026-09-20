@@ -13,6 +13,7 @@ import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { resolveWorkflowHistoryPath } from '../../utils/workflowHistoryPath'
 import ChatArea, { type ChatAreaRef } from '../ChatArea'
 import { WorkflowChatTabs } from './WorkflowChatTabs'
+import { resolveWorkspaceLayout } from './workspaceLayoutResolver'
 import { useRunningWorkflowsStore, useShowRunningDrawer } from '../../stores/useRunningWorkflowsStore'
 import { useAppStore } from '../../stores/useAppStore'
 import { sanitizeDisplayNameForFolder } from '../../utils/workflowUtils'
@@ -256,7 +257,8 @@ const WorkflowPreviousChatsPanel: React.FC<{
   // When true the panel fills the right-side Workshop workspace view.
   primary?: boolean
   chatOnly?: boolean
-}> = ({ workspacePath, onHasChatsChange, primary = false, chatOnly = false }) => {
+  refreshToken?: number
+}> = ({ workspacePath, onHasChatsChange, primary = false, chatOnly = false, refreshToken = 0 }) => {
   const activeTabId = useChatStore(state => state.activeTabId)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const setShowChatArea = useWorkflowStore(state => state.setShowChatArea)
@@ -448,6 +450,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       fill={primary}
       showAll={primary}
       recentOnly={chatOnly}
+      refreshToken={refreshToken}
     />
   )
 }
@@ -1027,56 +1030,18 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
   }, [workspacePath])
 
-  const workspacePaneVisible = !showChatArea || showWorkspacePane
-  // The device tier controls the OUTER workspace pane for every workspace view,
-  // not only Plan and Report. Cost, Logs, Learnings, KB, DB, and Files are peer
-  // destinations in the same workspace and must retain the same layout choice.
-  //
-  //   mobile  → preview/files 480px column, chat takes the rest (review-style)
-  //   tablet  → equal 50/50 split between chat and preview
-  //   laptop  → compact mobile-width chat beside the full desktop workspace
-  //   default → 50/50 split (no preview pref, or running in non-preview views)
-  const isResponsiveWorkspaceCanvas = showChatArea && workspacePaneVisible
-  const previewPaneTier: 'mobile' | 'tablet' | 'laptop' | null = isResponsiveWorkspaceCanvas
-    ? reportPreviewPreference === 'mobile'
-      ? 'mobile'
-      : reportPreviewPreference === 'tablet'
-        ? 'tablet'
-      : reportPreviewPreference === 'desktop'
-        ? 'laptop'
-        : null
-    : null
-  // Backward-compat alias kept for downstream readers — mobile pane behaviour
-  // is unchanged.
-  const shouldUseMobileReportPane = previewPaneTier === 'mobile'
-  const isWorkspaceViewActive = isWorkspacePaneView(workflowWorkspaceView)
-  // A narrow workflow viewport is a single-pane surface. The shared toolbar
-  // remains above it and focusedPane decides whether chat or workspace owns
-  // the content row. At md+ both panes remain visible as the normal split.
-  const chatPaneVisibilityClass =
-    workspacePaneVisible && focusedPane === 'preview'
-      ? 'hidden md:flex'
-      : 'flex'
-  // The report preview preference drives the outer pane width:
-  //   mobile/files → right pane 480px, chat fills the rest (chat is col 1, pane col 2)
-  //   tablet → report/flow and chat each take half the available width
-  //   laptop → mobile-width chat, report/flow takes the remaining width
-  //   default → normal split pane
-  // The divider sits between chat and the workspace. Each device preview keeps
-  // its own saved ratio, so Mobile, Tablet, and Laptop can be switched without
-  // one mode inheriting another mode's layout.
-  const splitLayoutClassName = !showChatArea
-    ? 'flex-1 min-h-0 flex flex-col'
-    : 'flex-1 min-h-0 grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)] md:[grid-template-columns:var(--workflow-split-columns)] md:transition-[grid-template-columns] md:duration-150 md:ease-out'
-  const splitLayoutStyle = showChatArea && workspacePaneVisible
-    ? ({ '--workflow-split-columns': `minmax(240px, ${workspaceSplitRatio}fr) minmax(240px, ${1 - workspaceSplitRatio}fr)` } as React.CSSProperties)
-    : undefined
-  const canvasPaneClassName = !showChatArea
-    ? 'flex-1 min-h-0 min-w-0'
-    : !workspacePaneVisible
-      ? 'hidden'
-      : `min-h-0 min-w-0 w-full col-start-1 row-start-2 md:w-auto md:col-start-2 md:row-start-2 ${focusedPane === 'chat' ? 'hidden md:block' : ''} ${isWorkspaceViewActive ? 'md:border-l md:border-border' : ''}`
-  // Below md, canvasPaneClassName above toggles this pane between `hidden`
+  // All split classes derive from the shared layout resolver: one decision
+  // point for every flag combination (see workspaceLayoutResolver.ts).
+  const layout = resolveWorkspaceLayout({
+    showChatArea,
+    showWorkspacePane,
+    focusedPane,
+    reportPreviewPreference,
+    workspaceSplitRatio,
+    isWorkspaceViewActive: isWorkspacePaneView(workflowWorkspaceView),
+  })
+  const workspacePaneVisible = layout.workspacePaneVisible
+  // Below md, layout.canvasPaneClassName above toggles this pane between `hidden`
   // (display:none) and visible as focusedPane changes. Two things inside it
   // size themselves from their own element-level ResizeObserver rather than
   // from this pane's own layout: a report's auto-height iframe
@@ -2247,13 +2212,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           key={`${activePresetId || 'workflow'}:${workspacePath}`}
           entityType="workflow"
           workspacePath={workspacePath}
-          entityLabel={activeWorkflowPreset?.label || 'Workflow'}
-          entityIcon={activeWorkflowPreset?.icon}
           workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
           chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
         />
       ) : undefined}
-      paneClassName={canvasPaneClassName}
+      paneClassName={layout.canvasPaneClassName}
       onToggleChatArea={handleToggleChatArea}
       className={showChatArea && !workspacePaneVisible ? '!h-auto shrink-0' : 'h-full'}
     />
@@ -2294,13 +2257,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           clicks: that store update can make stateful workspace views repaint. */}
       <div
         ref={splitLayoutRef}
-        className={splitLayoutClassName}
-        style={splitLayoutStyle}
+        className={layout.splitLayoutClassName}
+        style={layout.splitLayoutStyle}
         onMouseDownCapture={showChatArea && workspacePaneVisible ? () => {
           if (window.innerWidth < 768) setFocusedPane('preview')
         } : undefined}
       >
-        {showChatArea && !workspacePaneVisible && canvasElement}
+        {layout.renderCanvasStandalone && canvasElement}
 
         {showChatArea && (
           <div
@@ -2309,11 +2272,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             onMouseDownCapture={() => {
               if (window.innerWidth < 768) setFocusedPane('chat')
             }}
-            className={`${chatPaneVisibilityClass} col-start-1 row-start-2 min-h-0 min-w-0 overflow-hidden flex-col bg-background transition-all duration-300 ${
-            workspacePaneVisible
-              ? `border-b border-border md:col-start-1 md:row-start-2 md:border-b-0 md:border-r ${shouldUseMobileReportPane ? 'flex-1 md:flex-[1.35]' : 'flex-1 basis-1/2'}`
-              : 'flex-1'
-          }`}>
+            className={layout.chatPaneClassName}>
             {/* WorkflowChatTabs now renders inline in the WorkflowToolbar (chatTabsSlot
                 on canvasElement above) so the tabs + status + tools share one bar. */}
 

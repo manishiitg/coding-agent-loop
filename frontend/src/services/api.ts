@@ -33,6 +33,7 @@ import { useModeStore } from '../stores/useModeStore'
 import { getActiveWorkspaceProfile, useWorkspaceConnectionStore } from '../stores/useWorkspaceConnectionStore'
 import { GATEWAY_LOGIN_HEADER, gatewayLoginTarget, redirectToGatewayLogin } from '../utils/gatewayAuth'
 import { apiTimingPathFor, recordApiTiming, sanitizeApiBody } from '../utils/apiTiming'
+import { retryUncertainChatSubmission } from './uncertainSubmissionRetry'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
@@ -632,6 +633,11 @@ api.interceptors.response.use(
     if (redirectOnGatewayAuthenticationRequired(error)) return Promise.reject(error)
     if (is401DueToBadToken(error) && error.config?.headers?.Authorization === `Bearer ${getAuthToken()}`) {
       clearAuthToken()
+    }
+    try {
+      return await retryUncertainChatSubmission(api, error)
+    } catch {
+      // Not an uncertain-submission retry (or retries exhausted): fall through.
     }
     try {
       return await retryWithFreshRuntimeConfig(api, error, getApiBaseUrl)

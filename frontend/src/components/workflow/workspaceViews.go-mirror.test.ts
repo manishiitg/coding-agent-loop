@@ -24,9 +24,7 @@ describe('primary workspace toolbar views', () => {
       'flow',
       'costs',
       'execution-logs',
-      'learnings',
-      'knowledgebase',
-      'database',
+      'knowledge',
       'webhooks',
       'files',
       'browser',
@@ -34,11 +32,29 @@ describe('primary workspace toolbar views', () => {
     ])
   })
 
-  it('maps schedule and trigger destinations into Automation while keeping Bots in Setup', () => {
+  it('maps schedule and trigger destinations into Automation while retired Setup views fall back', () => {
     expect(WORKSPACE_VIEWS.map(view => view.id)).not.toContain('api-triggers')
     expect(normalizeWorkspaceViewId('api-triggers')).toBe('workshop')
     expect(normalizeWorkspaceViewId('schedules')).toBe('workshop')
     expect(normalizeWorkspaceViewId('webhooks')).toBe('workshop')
-    expect(normalizeWorkspaceViewId('bots')).toBe('bots')
+    // Bots and Gmail live under the Integrations tabs now: a persisted
+    // standalone id remaps to nothing so restore falls back to the default.
+    expect(normalizeWorkspaceViewId('bots')).toBeNull()
+    expect(normalizeWorkspaceViewId('email')).toBeNull()
+    // Secrets and folders live under the Identity tabs now.
+    expect(normalizeWorkspaceViewId('secrets')).toBeNull()
+    expect(normalizeWorkspaceViewId('folders')).toBeNull()
+    expect(normalizeWorkspaceViewId('llm')).toBeNull()
+    expect(normalizeWorkspaceViewId('identity')).toBe('identity')
+    // Learnings, Knowledgebase, and Database live under the Knowledge tabs.
+    expect(normalizeWorkspaceViewId('learnings')).toBe('knowledge')
+    expect(normalizeWorkspaceViewId('knowledgebase')).toBe('knowledge')
+    expect(normalizeWorkspaceViewId('database')).toBe('knowledge')
+  })
+
+  it('orders Setup as Identity, Integrations, then Playbooks', () => {
+    const ids = WORKSPACE_VIEWS.map(view => view.id)
+    expect(ids.indexOf('identity')).toBeLessThan(ids.indexOf('mcp'))
+    expect(ids.indexOf('mcp')).toBeLessThan(ids.indexOf('playbooks'))
   })
 })

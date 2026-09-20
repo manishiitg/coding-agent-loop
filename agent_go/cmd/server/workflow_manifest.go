@@ -12,7 +12,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
@@ -714,8 +713,8 @@ func ValidateManifest(m *WorkflowManifest) error {
 	if m.Label == "" {
 		return fmt.Errorf("label is required")
 	}
-	if utf8.RuneCountInString(strings.TrimSpace(m.Icon)) > 8 {
-		return fmt.Errorf("icon must be 8 characters or fewer")
+	if reason := workflowtypes.ValidateIcon(m.Icon); reason != "" {
+		return fmt.Errorf("%s", reason)
 	}
 	if m.RunRetentionCount != nil {
 		if *m.RunRetentionCount < 1 || *m.RunRetentionCount > MaxRunRetentionCount {

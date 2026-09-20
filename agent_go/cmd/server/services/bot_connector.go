@@ -746,16 +746,6 @@ func (m *BotConversationManager) persistBotSessionBinding(active *activeBotSessi
 	}
 }
 
-func (m *BotConversationManager) clearBotSessionBinding(platform string, threadID ThreadID) {
-	store, ok := m.GetConnector(platform).(botSessionBindingStore)
-	if !ok {
-		return
-	}
-	if err := store.ClearBotSessionBinding(context.Background(), threadID); err != nil {
-		log.Printf("[BOT_MANAGER] Failed to clear conversation binding for thread %s: %v", threadID.Key(), err)
-	}
-}
-
 // loadMCPServerNames reads server names from the MCP config.
 func (m *BotConversationManager) loadMCPServerNames() []string {
 	cfg, err := mcpclient.LoadMergedConfig(m.mcpConfigPath, nil)
@@ -1325,18 +1315,11 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		m.setActiveBotDetailMode(active, mode == "full")
 		return
 	}
-	if !supportsThreads && isSessionEndCommand(msg.Text, requireControlPrefix) {
-		log.Printf("[BOT_MANAGER] Session end command received for %s", active.SessionID)
-		m.clearBotSessionBinding(active.Platform, active.ThreadID)
-		m.cancelSession(active, "Session ended by user.")
-		return
-	}
-
 	// @switch / @off on thread-less platforms changes the effective workflow
 	// route for the next normal message. Treat that as a hard conversation
 	// boundary: continuing the same session would mix workflow files, workshop
 	// mode, and native coding-agent resume state across unrelated routes.
-	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
+	if !supportsThreads && !awaiting {
 		incomingRouteKey := botMessageRouteKey(msg)
 		if incomingRouteKey != oldRouteKey {
 			log.Printf("[BOT_MANAGER] Thread-less route changed for session %s (%q → %q) — starting fresh conversation",
@@ -1356,7 +1339,7 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 	// we mint a fresh sessionID and prepend a few lines of the prior
 	// conversation as context, so the agent has some memory of "last
 	// time" without inheriting the whole history.
-	if !supportsThreads && !awaiting && !isSessionEndCommand(msg.Text, requireControlPrefix) {
+	if !supportsThreads && !awaiting {
 		idle := time.Since(lastActivity)
 		if idle > threadlessSessionIdleLimit {
 			if profileTurn {
@@ -1395,12 +1378,6 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			return
 		}
 
-		// For thread-less platforms, check for explicit session end commands
-		if !supportsThreads && isSessionEndCommand(msg.Text, requireControlPrefix) {
-			log.Printf("[BOT_MANAGER] Session end command received for %s", active.SessionID)
-			m.cancelSession(active, "Session ended by user.")
-			return
-		}
 		if !supportsThreads {
 			active.mu.Lock()
 			sid := active.SessionID
@@ -1464,13 +1441,6 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 
 func (m *BotConversationManager) handleBotControlWithoutSession(msg BotIncomingMessage, threadID ThreadID, supportsThreads bool) bool {
 	requireControlPrefix := !supportsThreads
-	if isSessionEndCommand(msg.Text, requireControlPrefix) {
-		m.clearBotSessionBinding(msg.Platform, threadID)
-		if connector := m.GetConnector(msg.Platform); connector != nil {
-			connector.SendThreadMessage(context.Background(), threadID, "No active bot session in this thread.")
-		}
-		return true
-	}
 	if !isSessionStatusCommand(msg.Text, requireControlPrefix) {
 		if _, ok := parseBotDetailModeCommand(msg.Text, requireControlPrefix); !ok {
 			return false
@@ -1935,21 +1905,6 @@ func (m *BotConversationManager) clearBlockingState(active *activeBotSession) {
 	if ef != nil {
 		ef.ClearBlockingState()
 	}
-}
-
-// isSessionEndCommand checks if a message is an explicit session end command.
-// Thread-less channels require an @ prefix so ordinary words like "done" or
-// "stop" are delivered to the agent instead of being swallowed as controls.
-func isSessionEndCommand(text string, requirePrefix bool) bool {
-	normalized, ok := botControlText(text, requirePrefix)
-	if !ok {
-		return false
-	}
-	switch normalized {
-	case "done", "end", "reset", "new", "new session", "newsession", "quit", "exit":
-		return true
-	}
-	return false
 }
 
 func isSessionStatusCommand(text string, requirePrefix bool) bool {

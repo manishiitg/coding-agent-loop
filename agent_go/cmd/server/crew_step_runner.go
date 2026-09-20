@@ -36,6 +36,21 @@ func newCrewStepRunner(crews *ProductScheduleService, userID string) *crewStepRu
 	return &crewStepRunner{crews: crews, userID: userID, pollInterval: crewStepPollInterval}
 }
 
+// crewRunnerForRun returns the server-owned crew runner for an authenticated
+// run, or nil when the run has no user or no crew service. Every run path
+// (UI runs, Builder chat runs, live input, schedules, webhooks) resolves
+// the runner through here so crew steps execute identically everywhere.
+func crewRunnerForRun(ctx context.Context, schedules *ProductScheduleService) stepworkflow.CrewStepRunner {
+	if ctx == nil || schedules == nil {
+		return nil
+	}
+	claims := GetUserFromContext(ctx)
+	if claims == nil {
+		return nil
+	}
+	return newCrewStepRunner(schedules, claims.UserID)
+}
+
 // RunCrewStep invokes the trigger and returns the successful Crew run's
 // final response. Anything else — revoked access, crew run failed or
 // stopped, timeout, or cancellation — returns an error.

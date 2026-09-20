@@ -10,8 +10,10 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/productschedule"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/schedulerstate"
 )
 
@@ -770,5 +772,63 @@ func TestSaveProductWebhookRejectsInaccessibleCallerWorkflow(t *testing.T) {
 	}
 	if rec := post(own.ID); rec.Code != http.StatusCreated {
 		t.Fatalf("own caller: code=%d body=%q, want 201", rec.Code, rec.Body.String())
+	}
+}
+
+func TestExecuteAutomationRunSetupFailureBecomesTerminal(t *testing.T) {
+	svc, _ := newInternalDispatchCrew(t, internalDispatchCrewTriggers)
+	ctx := context.Background()
+	crewWS := "_users/owner/Chats/Work/projects/rts"
+	runsWorkspace := agentProfileRuntimeWorkspace("owner", crewWS)
+	runID := "run-setup-fail"
+	if _, claimed, err := ClaimScheduleRun(ctx, runsWorkspace, &ScheduleRunEntry{
+		ID: runID, ScheduleID: "crewx:rts:trig-1", TriggerSource: "webhook",
+		Status: "queued", StartedAt: time.Now().UTC(),
+	}); err != nil || !claimed {
+		t.Fatalf("pre-claim = claimed=%v err=%v", claimed, err)
+	}
+	// A profile declaring no conversation policy fails binding resolution
+	// before the worker touches the conversation registry or run store.
+	job := productScheduleJob{
+		UserID: "owner", Profile: agentprofiles.Profile{ID: "crewx"},
+		ProjectID: "rts", ProjectTitle: "RTS", WorkspacePath: crewWS,
+		Schedule: productschedule.Schedule{ID: "trig-1", Name: "Review", Enabled: true},
+	}
+	runCtx, cancel := context.WithCancel(ctx)
+	_, err := svc.executeAutomationRun(runCtx, cancel, job, "webhook", time.Time{},
+		productScheduleRunOptions{RunID: runID}, &productScheduleRun{}, "job-key", "conv-key", nil)
+	if err == nil || !strings.Contains(err.Error(), "resolve product conversation") {
+		t.Fatalf("setup err = %v, want conversation resolution failure", err)
+	}
+	entry, err := FindScheduleRun(ctx, runsWorkspace, runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if entry.Status != "error" || !isTerminalScheduleRunStatus(entry.Status) || entry.CompletedAt == nil {
+		t.Fatalf("entry = %+v, want terminal error", entry)
+	}
+	if !strings.Contains(entry.Error, "resolve product conversation") {
+		t.Fatalf("entry error = %q, want setup failure detail", entry.Error)
+	}
+	// Redelivery adopts the terminal error instead of a stranded queue record.
+	existing, claimed, err := ClaimScheduleRun(ctx, runsWorkspace, &ScheduleRunEntry{ID: runID, Status: "queued"})
+	if err != nil || claimed {
+		t.Fatalf("redelivery claim = claimed=%v err=%v", claimed, err)
+	}
+	if existing.Status != "error" {
+		t.Fatalf("redelivery status = %q, want terminal error", existing.Status)
+	}
+	// Schedules claim nothing up front: setup failure reports without writing.
+	runCtx2, cancel2 := context.WithCancel(ctx)
+	if _, err := svc.executeAutomationRun(runCtx2, cancel2, job, "cron", time.Time{},
+		productScheduleRunOptions{}, &productScheduleRun{}, "job-key-2", "conv-key-2", nil); err == nil {
+		t.Fatal("cron setup failure must still report its error")
+	}
+	runs, err := ReadScheduleRuns(ctx, runsWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 1 {
+		t.Fatalf("runs = %d, want 1 (no record for the unclaimed cron run)", len(runs))
 	}
 }

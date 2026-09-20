@@ -273,18 +273,36 @@ func authorizeTriggerCallerWorkflow(ctx context.Context, userID string, caller *
 	return nil
 }
 
-// crewAttachmentReadRoots returns the validated crew workspace roots attached
-// to a workflow, for session read grants. Missing manifests or attachments
-// yield no roots, and attachments whose stored binding no longer validates
-// (a hand-edited manifest retargeting the alias) are never granted. Live
-// crew access is enforced separately by the run preflight before any step
-// executes.
-func crewAttachmentReadRoots(ctx context.Context, workspace string) []string {
+// crewAttachmentReadRoots returns the crew workspace roots attached to a
+// workflow, for session read grants. Each root is granted only when the
+// stored attachment still equals the freshly authorized project binding:
+// shape checks alone cannot tell `_users/owner/.../projects/rts` from
+// `_users/other/.../projects/rts`, so the grant is derived from the
+// binding the access check just authorized, never from the stored path.
+// Missing manifests, revoked crews, and retargeted roots yield no grant.
+// A nil service or empty user grants nothing; crew features require a user.
+func crewAttachmentReadRoots(ctx context.Context, svc *ProductScheduleService, userID, workspace string) []string {
+	if svc == nil || strings.TrimSpace(userID) == "" {
+		return nil
+	}
 	manifest, exists, err := ReadWorkflowManifest(ctx, workspace)
 	if err != nil || !exists || manifest == nil {
 		return nil
 	}
-	return crewAttachmentStoredRoots(liveCrewAttachmentBindings(manifest.CrewAttachments))
+	roots := make([]string, 0, len(manifest.CrewAttachments))
+	for _, attachment := range liveCrewAttachmentBindings(manifest.CrewAttachments) {
+		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
+		_, binding, _, err := svc.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
+		if err != nil {
+			continue
+		}
+		authorized := workflowtypes.CanonicalCrewAttachmentRoot(binding.WorkspacePath)
+		if authorized == "" || workflowtypes.CanonicalCrewAttachmentRoot(attachment.CrewWorkspacePath) != authorized {
+			continue
+		}
+		roots = append(roots, authorized)
+	}
+	return roots
 }
 
 // liveCrewAttachmentBindings drops attachments whose stored binding no

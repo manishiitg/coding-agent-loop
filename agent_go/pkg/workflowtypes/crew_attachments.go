@@ -91,6 +91,13 @@ func ValidateCrewAttachmentBinding(attachment CrewAttachment) error {
 	return errCrewAttachmentAlias("attachment workspace path does not match its crew project")
 }
 
+// CanonicalCrewAttachmentRoot normalizes a stored or freshly resolved crew
+// root so the two can be compared for exact equality: slash separators,
+// trimmed whitespace, no leading or trailing slashes.
+func CanonicalCrewAttachmentRoot(path string) string {
+	return strings.Trim(filepath.ToSlash(strings.TrimSpace(path)), "/")
+}
+
 // ValidateCrewAttachmentRoot verifies one attachment before its root is
 // granted or resolved: the binding must validate and the root must still
 // exist under the docs root (a deleted crew fails closed). Callers re-run

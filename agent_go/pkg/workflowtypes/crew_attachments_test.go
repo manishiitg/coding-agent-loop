@@ -32,6 +32,22 @@ func TestValidateCrewAttachmentAlias(t *testing.T) {
 	}
 }
 
+func TestCanonicalCrewAttachmentRoot(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"_users/owner/Chats/Work/projects/rts", "_users/owner/Chats/Work/projects/rts"},
+		{"/_users/owner/Chats/Work/projects/rts/", "_users/owner/Chats/Work/projects/rts"},
+		{"  _users/owner/Chats/Work/projects/rts  ", "_users/owner/Chats/Work/projects/rts"},
+		{"", ""},
+	} {
+		if got := CanonicalCrewAttachmentRoot(tt.in); got != tt.want {
+			t.Fatalf("canonical(%q) = %q, want %q", tt.in, got, tt.want)
+		}
+	}
+	if CanonicalCrewAttachmentRoot("_users/owner/Chats/Work/projects/rts") == CanonicalCrewAttachmentRoot("_users/other/Chats/Work/projects/rts") {
+		t.Fatal("different owners canonicalized equal")
+	}
+}
+
 func TestValidateCrewAttachmentBinding(t *testing.T) {
 	// Binding validation is filesystem-free: a well-shaped attachment
 	// passes even when its crew directory does not exist here. Server

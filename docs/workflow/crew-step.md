@@ -1,7 +1,6 @@
 # Crew workflow step
 
-**Status:** Implemented; changes required after follow-up code review.
-Three reproduced findings remain open; see the follow-up review below.
+**Status:** Implemented; follow-up review findings addressed.
 
 ## Summary
 
@@ -863,3 +862,86 @@ Current disposition: **changes required**. Fix these findings and retain their
 regression coverage before sign-off. The previously documented mid-run access
 revocation limitation also remains open; the existing passing tests do not
 establish that every attachment access is dynamically authorized.
+
+### Follow-up resolution — 2026-09-20
+
+All three findings were confirmed against the code and are fixed below, each
+with permanent regression coverage.
+
+- **P1 wrong-owner grant — fixed.** The run preflight now compares the stored
+  attachment root against the freshly authorized project binding and fails
+  fast on mismatch; session grants derive each root from that binding and
+  grant nothing on mismatch, revoked access, or missing user. Tests:
+  `TestPreflightCrewAttachmentsWithoutCrewSteps` (wrong-owner case),
+  `TestCrewAttachmentReadRootsSkipInvalidBindings` (wrong-owner omission),
+  and `TestCanonicalCrewAttachmentRoot`.
+- **P1 shared group identity — fixed.** The delivery identity is now
+  workflow + execution + group + step, matching the design's idempotency
+  contract; retries of the same group and step attempt stay idempotent.
+  Test: `TestRunCrewStepGroupsDoNotShareDelivery`.
+- **P2 stranded queued run — fixed.** `executeAutomationRun` records a
+  terminal error against the pre-claimed run on every conversation setup
+  failure (recreating the record if retention trimmed the pre-claim), so
+  pollers receive the failure and redelivery adopts a terminal record
+  instead of a stranded queue entry. Cron runs claim nothing up front and
+  keep their existing behavior. Test:
+  `TestExecuteAutomationRunSetupFailureBecomesTerminal`.
+
+Residual: cross-owner equality is enforced server-side, where the
+user-scoped binding can be resolved. The orchestrator's local read path
+still validates shape and existence only; a mid-run hand-edit of the
+manifest to another owner's path is not re-authorized there.
+
+## Open question: runtime Crew creation
+
+Should a workflow be able to create a new Crew at run time when required,
+then talk to it through a trigger — instead of only using Crews that already
+exist? Undecided; recorded here with the current analysis.
+
+### Current state
+
+No creation path exists. Crews are created by users in the UI; the code only
+resolves existing ones. The Builder picks a pre-existing Crew, attaches it
+read-only, and selects or creates a trigger; run time only invokes that
+trigger (one shot in, final response out). Multi-turn "talk" is possible only
+as consecutive steps against the same persistent trigger conversation.
+
+### Case for
+
+- **Fresh slate.** Both conversation destinations retain history forever, so
+  there is currently no way to get an unbiased Crew context. Some tasks
+  (a second review, no anchoring on old runs) need one.
+- **Fan-out isolation.** N parallel items each needing their own file
+  workspace plus memory cannot share one Crew: isolated triggers isolate
+  the conversation but not files or memory.
+- **Dynamic specialization.** Pre-creating every Crew a workflow might need
+  (per customer, per PR, per incident) does not scale; some specialists are
+  only known at run time.
+
+### Case against
+
+- **Stewardship debt.** A Crew is defined as a persistent, human-cultivated
+  specialist. Workflows minting persistent Crews into the user's list leaves
+  unmaintained crews rotting in the sidebar, each a cost and confusion
+  source. If nobody curates it, it is a subagent with extra steps, not a
+  specialist.
+- **Concept dilution.** Runtime-spawned Crews blur the Crew/subagent line
+  the rest of this document draws deliberately.
+- **New risk surface.** Creation plus binding plus attachment plus invocation
+  in one runtime motion needs its own auth, quotas, teardown, and cost
+  attribution — on top of the static path that just took two review rounds
+  to harden. A loop spawning Crews per iteration could explode cost.
+- **Overlap.** Orchestrator subagent steps already serve one-shot work with
+  no persistence needs.
+
+### Options if pursued
+
+1. **Ephemeral task crews (recommended direction).** A step type that spawns
+   a Crew, auto-binds trigger plus attachment, runs the task, then archives
+   or destroys it: an orchestrator step with a Crew-grade workspace. Full
+   isolation, no sidebar debt, bounded cost.
+2. **Run-scoped trigger conversations.** A third destination: a fresh
+   conversation per execution, auto-discarded. Much cheaper; solves
+   fresh-slate but not file/memory isolation.
+3. **Do nothing.** Wait for a concrete use case that options 1–2 and
+   existing subagent steps cannot serve.

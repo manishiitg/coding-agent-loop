@@ -10,7 +10,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
-func newCrewBuilderToolsTestEnv(t *testing.T) (map[string]recordedTool, *mockWorkspaceAPI, string) {
+func newCrewBuilderToolsTestEnv(t *testing.T) (map[string]recordedTool, *mockWorkspaceAPI, string, *ProductScheduleService) {
 	t.Helper()
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_create":true}]}`)
@@ -41,11 +41,11 @@ func newCrewBuilderToolsTestEnv(t *testing.T) (map[string]recordedTool, *mockWor
 	if err := api.registerCrewBuilderTools(reg, "owner", "Workflow/test"); err != nil {
 		t.Fatal(err)
 	}
-	return reg.tools, mock, manifest.ID
+	return reg.tools, mock, manifest.ID, svc
 }
 
 func TestManageCrewTriggerInternalDefaultsCaller(t *testing.T) {
-	tools, _, workflowID := newCrewBuilderToolsTestEnv(t)
+	tools, _, workflowID, _ := newCrewBuilderToolsTestEnv(t)
 	tool := tools["manage_crew_trigger"]
 	ctx := context.Background()
 
@@ -109,7 +109,7 @@ func TestManageCrewTriggerInternalDefaultsCaller(t *testing.T) {
 }
 
 func TestManageCrewTriggerRejectsUnknownCallerWorkflow(t *testing.T) {
-	tools, _, _ := newCrewBuilderToolsTestEnv(t)
+	tools, _, _, _ := newCrewBuilderToolsTestEnv(t)
 	tool := tools["manage_crew_trigger"]
 	if _, err := tool.exec(context.Background(), map[string]interface{}{
 		"action": "create", "crew_project_id": "rts", "crew_profile_id": "crewx",
@@ -121,7 +121,7 @@ func TestManageCrewTriggerRejectsUnknownCallerWorkflow(t *testing.T) {
 }
 
 func TestDetachCrewAttachmentRevokesLiveSessionGrant(t *testing.T) {
-	tools, mock, _ := newCrewBuilderToolsTestEnv(t)
+	tools, mock, _, _ := newCrewBuilderToolsTestEnv(t)
 	tool := tools["manage_crew_attachment"]
 	ctx := context.Background()
 	if _, err := tool.exec(ctx, map[string]interface{}{
@@ -178,29 +178,59 @@ func TestDetachCrewAttachmentRevokesLiveSessionGrant(t *testing.T) {
 }
 
 func TestCrewAttachmentReadRootsSkipInvalidBindings(t *testing.T) {
-	_, mock, _ := newCrewBuilderToolsTestEnv(t)
-	raw, err := json.Marshal(map[string]interface{}{
-		"id": "wf-grants", "label": "Grant filter",
-		"crew_attachments": []map[string]string{
-			{"id": "a1", "alias": "rts", "crew_profile_id": "crewx", "crew_project_id": "rts", "crew_workspace_path": "_users/owner/Chats/Work/projects/rts"},
-			{"id": "a2", "alias": "evil", "crew_profile_id": "crewx", "crew_project_id": "rts", "crew_workspace_path": "_users/owner/secrets"},
-		},
-	})
-	if err != nil {
+	tools, mock, _, svc := newCrewBuilderToolsTestEnv(t)
+	ctx := context.Background()
+	// Attach through the tool so the stored root equals the resolved binding.
+	if _, err := tools["manage_crew_attachment"].exec(ctx, map[string]interface{}{
+		"action": "attach", "alias": "rts", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	}); err != nil {
+		t.Fatalf("attach failed: %v", err)
+	}
+	var manifest WorkflowManifest
+	if err := json.Unmarshal([]byte(mock.files[manifestPath("Workflow/test")]), &manifest); err != nil {
 		t.Fatal(err)
 	}
-	mock.files[manifestPath("Workflow/test")] = string(raw)
-	roots := crewAttachmentReadRoots(context.Background(), "Workflow/test")
-	if len(roots) != 1 || roots[0] != "_users/owner/Chats/Work/projects/rts" {
-		t.Fatalf("roots = %v, want only the validated crew root", roots)
+	if len(manifest.CrewAttachments) != 1 {
+		t.Fatalf("attachments = %+v", manifest.CrewAttachments)
 	}
-	if roots := crewAttachmentReadRoots(context.Background(), "Workflow/missing"); len(roots) != 0 {
+	root := manifest.CrewAttachments[0].CrewWorkspacePath
+	if roots := crewAttachmentReadRoots(ctx, svc, "owner", "Workflow/test"); len(roots) != 1 || roots[0] != root {
+		t.Fatalf("roots = %v, want the authorized crew root %q", roots, root)
+	}
+	rewrite := func(path string) {
+		t.Helper()
+		manifest.CrewAttachments[0].CrewWorkspacePath = path
+		raw, err := json.Marshal(manifest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		mock.files[manifestPath("Workflow/test")] = string(raw)
+	}
+	// Same project-name suffix under another owner: shape-valid, but it is
+	// not the freshly authorized binding and must never be granted.
+	other := strings.Replace(root, "_users/owner/", "_users/other/", 1)
+	if other == root {
+		t.Fatalf("fixture root %q has no owner segment to swap", root)
+	}
+	rewrite(other)
+	if roots := crewAttachmentReadRoots(ctx, svc, "owner", "Workflow/test"); len(roots) != 0 {
+		t.Fatalf("wrong-owner roots = %v, want none", roots)
+	}
+	// Non-project paths still fail the shape check first.
+	rewrite("_users/owner/secrets")
+	if roots := crewAttachmentReadRoots(ctx, svc, "owner", "Workflow/test"); len(roots) != 0 {
+		t.Fatalf("retargeted roots = %v, want none", roots)
+	}
+	if roots := crewAttachmentReadRoots(ctx, nil, "owner", "Workflow/test"); len(roots) != 0 {
+		t.Fatalf("nil-service roots = %v, want none", roots)
+	}
+	if roots := crewAttachmentReadRoots(ctx, svc, "owner", "Workflow/missing"); len(roots) != 0 {
 		t.Fatalf("missing manifest roots = %v, want none", roots)
 	}
 }
 
 func TestManageCrewTriggerRejectsInaccessibleCallerWorkflow(t *testing.T) {
-	tools, mock, _ := newCrewBuilderToolsTestEnv(t)
+	tools, mock, _, _ := newCrewBuilderToolsTestEnv(t)
 	foreign := NewWorkflowManifest("Foreign pipeline")
 	foreign.ID = "wf-foreign"
 	foreign.CreatedBy = "stranger"
@@ -221,7 +251,7 @@ func TestManageCrewTriggerRejectsInaccessibleCallerWorkflow(t *testing.T) {
 }
 
 func TestManageCrewAttachmentRoundTrip(t *testing.T) {
-	tools, mock, _ := newCrewBuilderToolsTestEnv(t)
+	tools, mock, _, _ := newCrewBuilderToolsTestEnv(t)
 	tool := tools["manage_crew_attachment"]
 	ctx := context.Background()
 

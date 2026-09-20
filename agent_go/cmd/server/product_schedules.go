@@ -965,6 +965,38 @@ func (s *ProductScheduleService) finishAutomationRun(jobKey, convKey string) {
 	go s.executeAutomationRun(nextCtx, nextCancel, next.job, next.triggerSource, next.scheduledFor, next.options, nextRun, nextJobKey, convKey, next.onStarted)
 }
 
+// failAutomationSetupRun records a terminal error for a pre-claimed run when
+// the worker fails before execution starts (unresolvable conversation
+// binding or registry). Without this the accepted run stays queued with no
+// worker: pollers wait until timeout instead of receiving the failure, and
+// redelivery adopts the same stranded record. Only webhook deliveries
+// pre-claim a record (options.RunID); cron runs claim nothing up front and
+// keep their existing report-the-error behavior.
+func (s *ProductScheduleService) failAutomationSetupRun(job productScheduleJob, options productScheduleRunOptions, setupErr error) {
+	runID := strings.TrimSpace(options.RunID)
+	if runID == "" || strings.TrimSpace(job.WorkspacePath) == "" {
+		return
+	}
+	runsWorkspace := agentProfileRuntimeWorkspace(job.UserID, job.WorkspacePath)
+	duration := int64(0)
+	completion := ScheduleRunCompletion{Status: "error", Error: setupErr.Error(), DurationMs: &duration}
+	if uerr := UpdateScheduleRunResult(context.Background(), runsWorkspace, runID, completion); uerr == nil {
+		return
+	} else if !strings.Contains(uerr.Error(), "not found") {
+		scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record setup failure for %s: %v", job.ID(), job.UserID, uerr)
+		return
+	}
+	// Retention trimmed the pre-claim between acceptance and worker start;
+	// recreate the record already terminal so the delivery still polls.
+	now := time.Now().UTC()
+	if aerr := AppendScheduleRun(context.Background(), runsWorkspace, &ScheduleRunEntry{
+		ID: runID, ScheduleID: job.ID(), TriggerSource: "webhook", Webhook: options.Webhook,
+		Status: "error", Error: setupErr.Error(), StartedAt: now, CompletedAt: &now,
+	}); aerr != nil {
+		scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record setup failure for %s: %v", job.ID(), job.UserID, aerr)
+	}
+}
+
 // executeAutomationRun runs one claimed automation turn to completion, then
 // releases the conversation and starts the next queued delivery, if any.
 func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, cancel context.CancelFunc, job productScheduleJob, triggerSource string, scheduledFor time.Time, options productScheduleRunOptions, run *productScheduleRun, jobKey, convKey string, onStarted []func(sessionID string)) (string, error) {
@@ -986,11 +1018,15 @@ func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, ca
 		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, "")
 	}
 	if bindErr != nil {
-		return "", fmt.Errorf("resolve product conversation: %w", bindErr)
+		setupErr := fmt.Errorf("resolve product conversation: %w", bindErr)
+		s.failAutomationSetupRun(job, options, setupErr)
+		return "", setupErr
 	}
 	conversation, err := defaultProductConversationRegistryStore().resolveOrCreate(runCtx, job.UserID, job.Profile, binding, "")
 	if err != nil {
-		return "", fmt.Errorf("open product conversation: %w", err)
+		setupErr := fmt.Errorf("open product conversation: %w", err)
+		s.failAutomationSetupRun(job, options, setupErr)
+		return "", setupErr
 	}
 	sessionID := conversation.SessionID
 	s.mu.Lock()

@@ -31,7 +31,7 @@ func crewRunnerDeliveryBase(req stepworkflow.CrewStepRequest) string {
 	if scope == "" {
 		scope = req.WorkflowRunFolder
 	}
-	return crewStepDeliveryBase(req.WorkflowID, scope, req.StepID)
+	return crewStepDeliveryBase(req.WorkflowID, scope, req.Group, req.StepID)
 }
 
 func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {
@@ -128,6 +128,59 @@ func TestRunCrewStepIsolatesExecutionsSharingRunFolder(t *testing.T) {
 	}
 	if len(runs) != 2 {
 		t.Fatalf("runs = %d, want 2 (one delivery per execution)", len(runs))
+	}
+}
+
+func TestRunCrewStepGroupsDoNotShareDelivery(t *testing.T) {
+	svc, _ := newInternalDispatchCrew(t, crewRunnerTriggers)
+	convKey := "owner\x1fconversation:crewx:rts"
+	svc.conversations = map[string]bool{convKey: true}
+	ctx := context.Background()
+	runsWorkspace := agentProfileRuntimeWorkspace("owner", "_users/owner/Chats/Work/projects/rts")
+
+	// Groups share one execution identity but render their own instruction
+	// and inputs. The production group completes first; the staging group
+	// in the same execution must dispatch its own delivery (which never
+	// finishes here, so the step times out) instead of adopting the
+	// production response.
+	prod := testCrewStepRequest()
+	prod.ExecutionID = "exec-groups"
+	prod.Group = "production"
+	runProd := webhookDeliveryRunID("rts", "trig-1", crewRunnerDeliveryBase(prod))
+	if _, err := svc.dispatchInternalProductTrigger(ctx, internalCrewTriggerCall{
+		UserID: "owner", ProfileID: "crewx", ProjectID: "rts", TriggerID: "trig-1",
+		Caller:     triggerCaller{Type: "workflow", ID: "wf-1"},
+		DeliveryID: crewRunnerDeliveryBase(prod), Payload: []byte(`{}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	duration := int64(100)
+	if err := UpdateScheduleRunResult(ctx, runsWorkspace, runProd, ScheduleRunCompletion{
+		Status: "success", DurationMs: &duration, FinalResponse: "verdict-production",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	staging := testCrewStepRequest()
+	staging.ExecutionID = "exec-groups"
+	staging.Group = "staging"
+	staging.Instruction = "Review it for staging"
+	runner := newCrewStepRunner(svc, "owner")
+	runner.pollInterval = 5 * time.Millisecond
+	deadline, cancel := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel()
+	result, err := runner.RunCrewStep(deadline, staging)
+	if err == nil || !strings.Contains(err.Error(), "timed out") {
+		t.Fatalf("staging err = %v result = %+v, want a timeout on its own delivery", err, result)
+	}
+	if result.CrewRunID == runProd || result.FinalResponse == "verdict-production" {
+		t.Fatalf("staging adopted the production delivery: %+v", result)
+	}
+	runs, err := ReadScheduleRuns(ctx, runsWorkspace)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(runs) != 2 {
+		t.Fatalf("runs = %d, want 2 (one delivery per group)", len(runs))
 	}
 }
 
@@ -397,6 +450,14 @@ func TestPreflightCrewAttachmentsWithoutCrewSteps(t *testing.T) {
 	retargeted := `{"id":"wf-1","label":"WF1","crew_attachments":[{"id":"att-1","alias":"rts","crew_profile_id":"crewx","crew_project_id":"rts","crew_workspace_path":"_users/owner/secrets"}]}`
 	if err := preflightCrewSteps(ctx, testPreflightWorkspace(t, plain, retargeted), "owner", "Workflow/wf1"); err == nil || !strings.Contains(err.Error(), `"rts"`) {
 		t.Fatalf("retargeted attachment err = %v, want failure naming the alias", err)
+	}
+	// Same project-name suffix under another owner: shape-valid, and the
+	// named crew exists for this user, but the stored root is not the
+	// freshly authorized binding. Authorizing the project without comparing
+	// roots would grant a workspace the check never authorized.
+	wrongOwner := `{"id":"wf-1","label":"WF1","crew_attachments":[{"id":"att-1","alias":"rts","crew_profile_id":"crewx","crew_project_id":"rts","crew_workspace_path":"_users/other/Chats/Work/projects/rts"}]}`
+	if err := preflightCrewSteps(ctx, testPreflightWorkspace(t, plain, wrongOwner), "owner", "Workflow/wf1"); err == nil || !strings.Contains(err.Error(), `"rts"`) {
+		t.Fatalf("wrong-owner attachment err = %v, want failure naming the alias", err)
 	}
 }
 

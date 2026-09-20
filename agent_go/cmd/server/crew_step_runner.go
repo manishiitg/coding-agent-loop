@@ -71,7 +71,7 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 	// the live delivery instead of invoking the trigger twice. It keys on
 	// the immutable execution identity: run folders are reused between
 	// executions and would let a later execution adopt a stale success.
-	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.StepID)
+	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.Group, req.StepID)
 	runID := ""
 	for attempt := 0; ; attempt++ {
 		deliveryID := base
@@ -181,9 +181,11 @@ func crewStepResultFromStatus(status productWebhookRunStatus) stepworkflow.CrewS
 }
 
 // crewStepDeliveryBase builds the idempotency key for one step attempt.
-// runScope is the immutable execution identity (see RunCrewStep).
-func crewStepDeliveryBase(workflowID, runScope, stepID string) string {
-	return "crew-step:" + workflowID + ":" + runScope + ":" + stepID
+// runScope is the immutable execution identity (see RunCrewStep); group is
+// the variable group, which shares the execution but renders its own
+// instruction and inputs and must never adopt another group's delivery.
+func crewStepDeliveryBase(workflowID, runScope, group, stepID string) string {
+	return "crew-step:" + workflowID + ":" + runScope + ":" + group + ":" + stepID
 }
 
 // appendCrewPollTransition records a newly observed Crew run status. Only
@@ -247,8 +249,17 @@ func preflightCrewSteps(ctx context.Context, crews *ProductScheduleService, user
 			return fmt.Errorf("crew attachment %q cannot run: %v; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, err)
 		}
 		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
-		if _, _, _, err := crews.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID)); err != nil {
+		_, binding, _, err := crews.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
+		if err != nil {
 			return fmt.Errorf("crew attachment %q cannot run: crew project %q is unavailable or access was revoked: %w", attachment.Alias, strings.TrimSpace(attachment.CrewProjectID), err)
+		}
+		// The stored root must equal the freshly authorized binding. Shape
+		// checks alone accept another owner's same-named project path, so
+		// authorizing the project without comparing roots would grant a
+		// workspace the check never authorized.
+		authorized := workflowtypes.CanonicalCrewAttachmentRoot(binding.WorkspacePath)
+		if authorized == "" || workflowtypes.CanonicalCrewAttachmentRoot(attachment.CrewWorkspacePath) != authorized {
+			return fmt.Errorf("crew attachment %q cannot run: its stored workspace no longer matches crew project %q; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, strings.TrimSpace(attachment.CrewProjectID))
 		}
 	}
 	if !seenCrew {

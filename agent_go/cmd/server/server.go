@@ -4635,8 +4635,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					[]string{workflowWorkspacePath},
 				)
 				// Crew attachments resolve through aliases at read time; grant
-				// the attached roots read-only for the run.
-				common.GrantSessionCrewAttachmentReads(sessionID, crewAttachmentReadRoots(workflowCtx, workflowWorkspacePath))
+				// the attached roots read-only for the run. Roots derive from
+				// the freshly authorized crew binding, like the run preflight
+				// below; without a user there is no authorization and no grant.
+				if claims := GetUserFromContext(r.Context()); claims != nil && api.productSchedules != nil {
+					common.GrantSessionCrewAttachmentReads(sessionID, crewAttachmentReadRoots(workflowCtx, api.productSchedules, claims.UserID, workflowWorkspacePath))
+				}
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadWrite(sessionID, workflowBrowserMode); hostDownloads != "" {
 					log.Printf("[WORKFLOW EXECUTION] Added read-write CDP host Downloads: %s", hostDownloads)
 				}

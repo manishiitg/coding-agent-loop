@@ -1,3 +1,4 @@
+import type { ReactNode } from 'react'
 import { FileContentViewerBody } from './FileContentViewer'
 import Workspace from './Workspace'
 import { useWorkspaceStore } from '../stores/useWorkspaceStore'
@@ -11,9 +12,6 @@ type FileWorkspacePaneProps = {
   hideRootActions?: boolean
   expandFirstLevelFolders?: boolean
   hideManagedEntriesByDefault?: boolean
-  hideMinimizeControl?: boolean
-  showMinimizeShortcut?: boolean
-  onClose: () => void
   testId?: string
   headerAction?: ReactNode
 }
@@ -32,9 +30,6 @@ export function FileWorkspacePane({
   hideRootActions = false,
   expandFirstLevelFolders = EXPAND_FIRST_LEVEL_FOLDERS_BY_DEFAULT,
   hideManagedEntriesByDefault = false,
-  hideMinimizeControl = true,
-  showMinimizeShortcut = true,
-  onClose,
   testId,
   headerAction,
 }: FileWorkspacePaneProps) {
@@ -44,10 +39,6 @@ export function FileWorkspacePane({
     <div className="relative flex h-full min-h-0 flex-col bg-background" data-testid={testId}>
       <div className="min-h-0 flex-1" hidden={showFileContent}>
         <Workspace
-          minimized={false}
-          onToggleMinimize={onClose}
-          hideMinimizeControl={hideMinimizeControl}
-          showMinimizeShortcut={showMinimizeShortcut}
           scopedWorkspacePath={workspacePath}
           hiddenRootFolders={hiddenRootFolders}
           hideAddToChat={hideAddToChat}
@@ -60,10 +51,9 @@ export function FileWorkspacePane({
       </div>
       {showFileContent && (
         <div className="min-h-0 flex-1">
-          <FileContentViewerBody variant="pane" headerAction={headerAction} />
+          <FileContentViewerBody headerAction={headerAction} />
         </div>
       )}
     </div>
   )
 }
-import type { ReactNode } from 'react'

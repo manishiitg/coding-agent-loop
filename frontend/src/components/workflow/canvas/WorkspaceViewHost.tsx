@@ -12,7 +12,6 @@ import React, {
 } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ReactFlowProvider } from '@xyflow/react'
-import { FileWorkspacePane } from '../../FileWorkspacePane'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { AskAIButton } from '../AskAIButton'
@@ -71,6 +70,7 @@ const WorkflowBackupView = lazy(() => import('../WorkflowBackupView'))
 const WorkflowPublishView = lazy(() => import('../WorkflowPublishView'))
 const WorkflowNotificationView = lazy(() => import('../WorkflowNotificationView'))
 const WorkflowAccessView = lazy(() => import('../WorkflowAccessView'))
+const FileWorkspacePane = lazy(() => import('../../FileWorkspacePane').then(module => ({ default: module.FileWorkspacePane })))
 
 function formatPulseTimestamp(value?: string): string {
   if (!value) return ''
@@ -113,15 +113,8 @@ function ReportBody({ workspacePath }: { workspacePath: string | null }) {
 }
 
 function FilesBody({ workspacePath }: { workspacePath: string | null }) {
-  const lastCanvasView = useWorkflowStore(state => state.lastCanvasView)
-  // Closing the tree returns to the last canvas view; openWorkspaceView
-  // minimizes the file workspace for every view except Files itself.
-  const handleCloseFiles = useCallback(() => {
-    useWorkflowStore.getState().openWorkspaceView(lastCanvasView)
-  }, [lastCanvasView])
   return <FileWorkspacePane
     hideManagedEntriesByDefault
-    onClose={handleCloseFiles}
     headerAction={<AskAIButton workspacePath={workspacePath} message={getWorkspaceAskAIMessage('files')} iconOnly />}
   />
 }
@@ -674,7 +667,17 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   } else if (effectiveView === 'workshop') {
     body = workshopPanel ?? null
   } else if (kind === 'files') {
-    body = <FilesBody workspacePath={workspacePath} />
+    body = (
+      <Suspense
+        fallback={
+          <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
+            Loading…
+          </div>
+        }
+      >
+        <FilesBody workspacePath={workspacePath} />
+      </Suspense>
+    )
   } else {
     body = <InspectorBody workspacePath={workspacePath} presetQueryId={presetQueryId} />
   }

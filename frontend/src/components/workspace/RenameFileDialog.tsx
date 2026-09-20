@@ -90,19 +90,19 @@ export default function RenameFileDialog({
   const isFolder = item.type === 'folder'
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4 flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-md shadow-md border border-border w-full max-w-md mx-4 flex flex-col">
+        <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-2">
-            <Edit2 className="w-5 h-5 text-blue-500" />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <Edit2 className="w-5 h-5 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">
               Rename {isFolder ? 'Folder' : 'File'}
             </h3>
           </div>
           <button
             onClick={handleClose}
             disabled={isLoading}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -112,10 +112,10 @@ export default function RenameFileDialog({
           <div className="p-4 space-y-4">
             {/* Current Path Display */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Location
               </label>
-              <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md flex items-center gap-2 text-gray-500 dark:text-gray-400">
+              <div className="px-3 py-2 bg-muted border border-border rounded-md flex items-center gap-2 text-muted-foreground">
                 {isFolder ? <Folder className="w-4 h-4" /> : <FileText className="w-4 h-4" />}
                 <span className="text-sm truncate">
                   {item.filepath.split('/').slice(0, -1).join('/') || '/'}
@@ -125,7 +125,7 @@ export default function RenameFileDialog({
 
             {/* New Name Input */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Name
               </label>
               <input
@@ -135,13 +135,13 @@ export default function RenameFileDialog({
                 placeholder={`Enter new name`}
                 autoFocus
                 disabled={isLoading}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               />
             </div>
 
             {/* Commit Message Input */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Commit Message (Optional)
               </label>
               <input
@@ -150,31 +150,31 @@ export default function RenameFileDialog({
                 onChange={(e) => setCommitMessage(e.target.value)}
                 placeholder="Add commit message for version control"
                 disabled={isLoading}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               />
             </div>
 
             {error && (
-              <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-2">
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-2">
                 {error}
               </div>
             )}
           </div>
 
           {/* Action Buttons */}
-          <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex justify-end gap-2 border-t border-border p-4">
             <button
               type="button"
               onClick={handleClose}
               disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-secondary-foreground bg-secondary hover:bg-secondary/80 rounded-md disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading || !newName.trim()}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md disabled:opacity-50 flex items-center gap-2"
             >
               {isLoading ? (
                 <>

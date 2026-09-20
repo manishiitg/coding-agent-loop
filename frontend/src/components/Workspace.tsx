@@ -1,6 +1,6 @@
 import { useEffect, useCallback, useRef, useMemo, useState, type ReactNode } from 'react'
 import { useShallow } from 'zustand/react/shallow'
-import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, PanelRightClose, Loader2, Eye, EyeOff, Files } from 'lucide-react'
+import { Plus, Upload, FolderPlus, ChevronDown, CheckSquare, X, Trash2, Loader2, Eye, EyeOff, Files, Search, RefreshCw } from 'lucide-react'
 import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
@@ -35,10 +35,6 @@ import {
 import { useIterationExpansion } from './workspace/useIterationExpansion'
 
 interface WorkspaceProps {
-  minimized: boolean
-  onToggleMinimize: () => void
-  hideMinimizeControl?: boolean
-  showMinimizeShortcut?: boolean
   /** Restrict the reusable Files experience to one trusted workspace root. */
   scopedWorkspacePath?: string
   /** Provider/runtime directories to keep out of a creator-facing file tree. */
@@ -99,10 +95,6 @@ function scopeFilesToWorkspace(files: PlannerFile[], workspacePath: string, hidd
 }
 
 export default function Workspace({
-  minimized,
-  onToggleMinimize,
-  hideMinimizeControl = false,
-  showMinimizeShortcut = true,
   scopedWorkspacePath,
   hiddenRootFolders = [],
   hideAddToChat = false,
@@ -120,6 +112,7 @@ export default function Workspace({
   const showSchedulesOverview = useAppStore(state => state.showSchedulesOverview)
   const getActiveTab = useChatStore(state => state.getActiveTab)
   const setTabConfig = useChatStore(state => state.setTabConfig)
+  const addToast = useChatStore(state => state.addToast)
   const { getActivePreset } = usePresetApplication()
 
   // Get file context based on mode: multi-agent mode uses tab config, workflow mode uses preset
@@ -163,9 +156,7 @@ export default function Workspace({
   const [isImporting, setIsImporting] = useState(false)
   const [importProgress, setImportProgress] = useState(0)
   const [importingFileName, setImportingFileName] = useState<string>('')
-  const [exportError, setExportError] = useState<string | null>(null)
-  const [importError, setImportError] = useState<string | null>(null)
-  const [importSuccess, setImportSuccess] = useState<string | null>(null)
+  const [importConfirm, setImportConfirm] = useState<{ file: File; fullPath: string } | null>(null)
   const backupFileInputRef = useRef<HTMLInputElement>(null)
 
   // Multi-select state
@@ -273,7 +264,7 @@ export default function Workspace({
 
   const fetchCapabilities = useCapabilitiesStore(s => s.fetchCapabilities)
 
-  // Note: moveDialog from store is shadowed by local state below
+  // Move dialog state lives here (not in the store) because only this tree uses it.
   // We should rename the local one to avoid confusion or remove the one from store if unused
   // But for now, we'll keep the local one as it was added for the rename feature
   // and the store one might be used by other components or hooks
@@ -349,9 +340,6 @@ export default function Workspace({
   const fullyLoadedWorkflowFoldersRef = useRef<Set<string>>(new Set())
   // Tracks which iterations have been lazy-loaded, keyed by workflowFolder
   const loadedIterationsRef = useRef<Map<string, Set<string>>>(new Map())
-  // Stable empty Set for loadingChildren prop to prevent unnecessary re-renders
-  const emptyLoadingSet = useMemo(() => new Set<string>(), [])
-
   // Get workflow folder path from selected workflow folder in the preset
   // The selectedFolder.filepath is the folder path stored in the database
   // We'll use this directly to filter the workspace
@@ -473,11 +461,6 @@ export default function Workspace({
     // Only update if something changed AND we had folders expanded before
     // This prevents auto-collapse when files refresh during agent runs
     if (previouslyExpanded.size > 0 && restoredExpanded.size !== previouslyExpanded.size) {
-      console.log('[Workspace] Restoring expanded folders:', {
-        previousCount: previouslyExpanded.size,
-        restoredCount: restoredExpanded.size,
-        lost: previouslyExpanded.size - restoredExpanded.size
-      })
       setExpandedFolders(restoredExpanded)
     }
   }, [files, applyFilteringAndPathAdjustment, expandedFolders, setExpandedFolders, selectedModeCategory, effectiveWorkflowFolderPath])
@@ -829,7 +812,6 @@ export default function Workspace({
     workflowFolderPath: effectiveWorkflowFolderPath,
     filteredFiles,
     selectedRunFolder,
-    workspaceMinimized: minimized,
     expandedFolders,
     setExpandedFolders
   })
@@ -868,7 +850,6 @@ export default function Workspace({
   }, [showActionsDropdown, setShowActionsDropdown])
 
   // Load files on component mount and re-fetch when active folder changes.
-  // Optimization: skip the fetch when workspace panel is minimized to avoid wasting bandwidth
   // Keep the store's activeFolder in sync with the workspace scope.
   // This ensures that unscoped fetchFiles() calls from other components (StepNode, WorkflowCanvas,
   // etc.) stay scoped to the workflow folder instead of fetching the entire root tree.
@@ -876,35 +857,31 @@ export default function Workspace({
     setActiveFolder(activeFolder ?? null)
   }, [activeFolder, setActiveFolder])
 
-  // on data the user can't see. When the user opens the panel (minimized transitions false → true),
-  // this effect re-runs and triggers the fetch automatically.
   // Workflow folders now prefer the full tree on first load so the files panel is complete immediately.
   useEffect(() => {
-    if (!minimized) {
-      // PERF: Use getState() to avoid re-running this effect when fetchFiles reference changes.
-      // fetchFiles is a zustand store function — its reference changes on every store update,
-      // which would cause this effect to re-run and re-fetch on every render.
-      const { fetchFiles: fetch } = useWorkspaceStore.getState()
-      if (selectedModeCategory === 'workflow' || scopedWorkspacePath) {
-        const targetFolder = activeFolder
-        const shouldForceInitialWorkflowLoad = !!targetFolder && !fullyLoadedWorkflowFoldersRef.current.has(targetFolder)
-        fetch(targetFolder, shouldForceInitialWorkflowLoad ? { force: true } : undefined)
-          .then(() => {
-            if (targetFolder) {
-              fullyLoadedWorkflowFoldersRef.current.add(targetFolder)
-            }
-          })
-          .catch(() => {
-            if (targetFolder) {
-              fullyLoadedWorkflowFoldersRef.current.delete(targetFolder)
-            }
-          })
-      } else {
-        fetch(activeFolder, { maxDepth: 2 })
-      }
+    // PERF: Use getState() to avoid re-running this effect when fetchFiles reference changes.
+    // fetchFiles is a zustand store function — its reference changes on every store update,
+    // which would cause this effect to re-run and re-fetch on every render.
+    const { fetchFiles: fetch } = useWorkspaceStore.getState()
+    if (selectedModeCategory === 'workflow' || scopedWorkspacePath) {
+      const targetFolder = activeFolder
+      const shouldForceInitialWorkflowLoad = !!targetFolder && !fullyLoadedWorkflowFoldersRef.current.has(targetFolder)
+      fetch(targetFolder, shouldForceInitialWorkflowLoad ? { force: true } : undefined)
+        .then(() => {
+          if (targetFolder) {
+            fullyLoadedWorkflowFoldersRef.current.add(targetFolder)
+          }
+        })
+        .catch(() => {
+          if (targetFolder) {
+            fullyLoadedWorkflowFoldersRef.current.delete(targetFolder)
+          }
+        })
+    } else {
+      fetch(activeFolder, { maxDepth: 2 })
     }
 
-  }, [activeFolder, minimized, selectedModeCategory, scopedWorkspacePath])
+  }, [activeFolder, selectedModeCategory, scopedWorkspacePath])
 
   // Check if a file is a viewable binary format that we can render inline.
   const isViewableBinaryFile = (fileName: string): boolean => {
@@ -1140,20 +1117,13 @@ export default function Workspace({
   // Handle bulk delete
   const handleBulkDelete = useCallback(() => {
     const selectedItems = getSelectedFilesAsObjects()
-    console.log('[BulkDelete] Selected files set:', Array.from(selectedFiles))
-    console.log('[BulkDelete] Resolved items:', selectedItems.map(item => ({
-      filepath: item.filepath,
-      originalFilepath: item.originalFilepath,
-      type: item.type,
-      hasChildren: !!(item.children && item.children.length > 0)
-    })))
     if (selectedItems.length === 0) return
     setBulkDeleteDialog({
       isOpen: true,
       isLoading: false,
       items: selectedItems
     })
-  }, [getSelectedFilesAsObjects, selectedFiles])
+  }, [getSelectedFilesAsObjects])
 
   // Confirm bulk delete
   const confirmBulkDelete = async () => {
@@ -1176,31 +1146,21 @@ export default function Workspace({
           const ancestorPath = parts.slice(0, i).join('/')
           if (allPaths.has(ancestorPath)) {
             // An ancestor folder is also selected — skip this item (parent will handle it)
-            console.log(`[BulkDelete] Skipping "${itemPath}" — ancestor "${ancestorPath}" is also selected`)
             return false
           }
         }
         return true
       })
 
-      console.log('[BulkDelete] Items to delete:', itemsToDelete.map(item => ({
-        filepath: item.filepath,
-        originalFilepath: item.originalFilepath,
-        resolvedPath: getOriginalFilePath(item),
-        type: item.type
-      })))
-
       // Delete each item sequentially
       for (const item of itemsToDelete) {
         try {
           const fullFilePath = getOriginalFilePath(item)
-          console.log(`[BulkDelete] Deleting ${item.type || 'file'}: "${fullFilePath}" (display: "${item.filepath}")`)
           if (item.type !== 'folder') {
             await wsFileApi.deleteFile(fullFilePath)
           } else {
             await wsFileApi.deleteFolder(fullFilePath)
           }
-          console.log(`[BulkDelete] Successfully deleted: "${fullFilePath}"`)
         } catch (err) {
           const fileName = item.filepath.split('/').pop() || item.filepath
           errors.push(`${fileName}: ${err instanceof Error ? err.message : 'Failed to delete'}`)
@@ -1833,7 +1793,6 @@ export default function Workspace({
     }
 
     setIsExporting(true)
-    setExportError(null)
 
     try {
       // If folderPath is provided from folder dropdown, it's already the original path
@@ -1860,11 +1819,7 @@ export default function Workspace({
       window.URL.revokeObjectURL(url)
     } catch (error) {
       console.error('Export failed:', error)
-      setExportError(error instanceof Error ? error.message : 'Failed to export backup')
-      // Auto-dismiss error message after 5 seconds
-      setTimeout(() => {
-        setExportError(null)
-      }, 5000)
+      addToast(error instanceof Error ? error.message : 'Failed to export backup', 'error')
     } finally {
       setIsExporting(false)
     }
@@ -1879,8 +1834,9 @@ export default function Workspace({
     backupFileInputRef.current?.click()
   }
 
-  // Import backup handler
-  const handleImportBackup = async (event: React.ChangeEvent<HTMLInputElement>) => {
+  // Import backup handler: validates the picked file, then asks for
+  // confirmation in a kit dialog before overwriting anything.
+  const handleImportBackup = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0]
     if (!file) return
 
@@ -1895,70 +1851,56 @@ export default function Workspace({
 
     // Validate file type
     if (!file.name.endsWith('.zip')) {
-      setImportError('Please select a ZIP file')
-      setIsImporting(false)
-      // Auto-dismiss error message after 5 seconds
-      setTimeout(() => {
-        setImportError(null)
-      }, 5000)
+      addToast('Please select a ZIP file', 'error')
       return
     }
 
+    // If folderPath is provided from folder dropdown, it's already the original path
+    // Otherwise, use the workflow preset's selected folder path
+    // Only reconstruct if we're in workflow mode and the path might be adjusted
+    const fullPath = folderPath && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath
+      ? getOriginalFilePath(folderPath)
+      : workspacePath
+    setImportConfirm({ file, fullPath })
+  }
+
+  const cancelImportBackup = () => {
+    setImportConfirm(null)
+    if (backupFileInputRef.current) {
+      backupFileInputRef.current.value = ''
+      backupFileInputRef.current.removeAttribute('data-folder-path')
+    }
+  }
+
+  const confirmImportBackup = async () => {
+    const pending = importConfirm
+    if (!pending) return
+    setImportConfirm(null)
     setIsImporting(true)
     setImportProgress(0)
-    setImportingFileName(file.name)
-    setImportError(null)
-    setImportSuccess(null)
+    setImportingFileName(pending.file.name)
 
     try {
-      // If folderPath is provided from folder dropdown, it's already the original path
-      // Otherwise, use the workflow preset's selected folder path
-      // Only reconstruct if we're in workflow mode and the path might be adjusted
-      const fullPath = folderPath && selectedModeCategory === 'workflow' && effectiveWorkflowFolderPath
-        ? getOriginalFilePath(folderPath)
-        : workspacePath
-
-      // Ask for confirmation
-      const overwrite = window.confirm(
-        'This will restore the workspace from the backup. Existing files may be overwritten. Continue?'
-      )
-
-      if (!overwrite) {
-        setIsImporting(false)
-        setImportingFileName('')
-        if (backupFileInputRef.current) backupFileInputRef.current.value = ''
-        return
-      }
-
       const result = await agentApi.importWorkflowBackup(
-        fullPath,
-        file,
+        pending.fullPath,
+        pending.file,
         true, // overwrite confirmed above
         (progress) => setImportProgress(progress)
       )
 
       if (result.success) {
-        setImportSuccess(`Successfully imported ${result.data?.files_extracted || 0} files`)
+        addToast(`Imported ${result.data?.files_extracted || 0} files`, 'success')
 
         // Refresh workspace files
         setTimeout(() => {
           fetchFiles(activeFolder, { force: true }).catch(console.error)
         }, 500)
-
-        // Auto-dismiss success message after 5 seconds
-        setTimeout(() => {
-          setImportSuccess(null)
-        }, 5000)
       } else {
-        setImportError(result.message || 'Import failed')
-        // Auto-dismiss error message after 5 seconds
-        setTimeout(() => {
-          setImportError(null)
-        }, 5000)
+        addToast(result.message || 'Import failed', 'error')
       }
     } catch (error) {
       console.error('Import failed:', error)
-      setImportError(error instanceof Error ? error.message : 'Failed to import backup')
+      addToast(error instanceof Error ? error.message : 'Failed to import backup', 'error')
     } finally {
       setIsImporting(false)
       setImportProgress(0)
@@ -1973,35 +1915,8 @@ export default function Workspace({
 
   return (
     <TooltipProvider>
-      <div data-tour="workspace-open" data-testid="workspace-panel" className="flex flex-col h-full bg-gray-50 dark:bg-gray-900">
+      <div data-tour="workspace-open" data-testid="workspace-panel" className="flex flex-col h-full bg-background">
       {/* Header */}
-      {minimized ? (
-        <div className="px-4 py-2 border-b border-gray-200 dark:border-gray-700">
-          <div className="flex items-center justify-between">
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  onClick={(e) => {
-                    e.stopPropagation()
-                    onToggleMinimize()
-                  }}
-                  className="flex items-center gap-2 px-2 py-1 text-gray-700 dark:text-gray-300 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-slate-700 rounded transition-colors"
-                  title="Expand workspace"
-                >
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
-                  </svg>
-                  <span className="text-sm font-medium">{title}</span>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent>
-                <p>Expand workspace (Ctrl+6)</p>
-              </TooltipContent>
-            </Tooltip>
-          </div>
-        </div>
-      ) : (
         <WorkspaceViewHeader
           icon={Files}
           title={title}
@@ -2013,10 +1928,10 @@ export default function Workspace({
                     type="checkbox"
                     checked={areAllFilesSelected}
                     onChange={toggleSelectAll}
-                    className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700"
+                    className="h-4 w-4 accent-primary"
                   />
                   {selectedFiles.size > 0 && (
-                    <span className="absolute -top-1 -right-1 bg-blue-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                    <span className="absolute -top-1 -right-1 bg-primary text-primary-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
                       {selectedFiles.size}
                     </span>
                   )}
@@ -2036,10 +1951,10 @@ export default function Workspace({
                       <button
                         onClick={handleBulkDelete}
                         disabled={loading || bulkDeleteDialog.isLoading}
-                        className="p-2 text-red-600 hover:text-red-700 dark:text-red-400 dark:hover:text-red-300 disabled:opacity-50 relative"
+                        className="p-2 text-destructive hover:text-destructive disabled:opacity-50 relative"
                       >
                         <Trash2 className="w-4 h-4" />
-                        <span className="absolute -top-1 -right-1 bg-red-500 text-white text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
+                        <span className="absolute -top-1 -right-1 bg-destructive text-destructive-foreground text-xs rounded-full w-5 h-5 flex items-center justify-center font-medium">
                           {selectedFiles.size}
                         </span>
                       </button>
@@ -2053,7 +1968,7 @@ export default function Workspace({
                   <TooltipTrigger asChild>
                     <button
                       onClick={toggleSelectionMode}
-                      className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200"
+                      className="p-2 text-muted-foreground hover:text-foreground"
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -2074,8 +1989,8 @@ export default function Workspace({
                       aria-pressed={showHiddenFiles}
                       aria-label={showHiddenFiles ? 'Hide internal files' : 'Show hidden files'}
                       className={`p-2 transition-colors ${showHiddenFiles
-                        ? 'text-blue-600 dark:text-blue-400'
-                        : 'text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200'}`}
+                        ? 'text-primary'
+                        : 'text-muted-foreground hover:text-foreground'}`}
                     >
                       {showHiddenFiles ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
                     </button>
@@ -2094,7 +2009,7 @@ export default function Workspace({
                       <button
                         onClick={() => setShowActionsDropdown(!showActionsDropdown)}
                         disabled={loading}
-                        className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 disabled:opacity-50 flex items-center gap-1"
+                        className="p-2 text-muted-foreground hover:text-foreground disabled:opacity-50 flex items-center gap-1"
                       >
                         <Plus className="w-4 h-4" />
                         <ChevronDown className="w-3 h-3" />
@@ -2107,14 +2022,14 @@ export default function Workspace({
 
                   {/* Dropdown Menu */}
                   {showActionsDropdown && (
-                  <div className="absolute top-full right-0 mt-2 w-48 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg z-50">
+                  <div className="absolute top-full right-0 mt-2 w-48 bg-card border border-border rounded-md shadow-md z-50">
                     <div className="py-1">
                       <button
                         onClick={() => {
                           handleUploadClick()
                           setShowActionsDropdown(false)
                         }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Upload className="w-4 h-4" />
                         Upload File
@@ -2124,18 +2039,18 @@ export default function Workspace({
                           handleCreateFolder()
                           setShowActionsDropdown(false)
                         }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <FolderPlus className="w-4 h-4" />
                         Create Folder
                       </button>
-                      <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                      <div className="border-t border-border my-1"></div>
                       <button
                         onClick={() => {
                           toggleSelectionMode()
                           setShowActionsDropdown(false)
                         }}
-                        className="w-full px-4 py-2 text-left text-sm text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-4 py-2 text-left text-sm text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <CheckSquare className="w-4 h-4" />
                         Select Files
@@ -2151,94 +2066,65 @@ export default function Workspace({
                 <WorkspaceViewIconButton label="Refresh files" onClick={() => fetchFiles(activeFolder, { force: true })} disabled={loading} spinning={loading} />
               )}
 
-              {/* Minimize button - Hidden in selection mode */}
-              {!isSelectionMode && !hideMinimizeControl && (
-                <div className="flex items-center gap-1">
-                  {showMinimizeShortcut && <span className="text-xs text-gray-400 dark:text-gray-500 font-mono">⌘6</span>}
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <button
-                        onClick={onToggleMinimize}
-                        className="p-1 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors relative group"
-                        aria-label="Close workspace"
-                        title="Close workspace"
-                      >
-                        <PanelRightClose className="h-5 w-5" />
-                      </button>
-                    </TooltipTrigger>
-                    <TooltipContent>
-                      <p>{minimized ? "Expand workspace" : "Minimize workspace"} (Ctrl+6)</p>
-                    </TooltipContent>
-                  </Tooltip>
-                </div>
-              )}
             </>
           }
-          below={
-            <div className="mt-2">
-            <div className="relative">
-            <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
-              <svg className="h-4 w-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-              </svg>
-            </div>
-            <input
-              type="text"
-              placeholder="Search files and folders..."
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              className="block w-full pl-10 pr-10 py-2 border border-gray-300 dark:border-gray-600 rounded-md leading-5 bg-white dark:bg-gray-800 placeholder-gray-500 dark:placeholder-gray-400 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm"
-            />
-            {searchQuery && (
-              <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <button
-                      onClick={() => setSearchQuery('')}
-                      className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                    >
-                      <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-                      </svg>
-                    </button>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p>Clear search</p>
-                  </TooltipContent>
-                </Tooltip>
-              </div>
-            )}
-            </div>
-            </div>
-          }
         />
-      )}
 
       {/* Content */}
-      {!minimized && (
-        <div className="flex-1 overflow-hidden">
+        <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
           {/* Stale workspace banner */}
           {needsRefresh && (
-            <div className="flex items-center justify-between px-3 py-1.5 bg-yellow-500/10 border-b border-yellow-500/20 text-xs">
-              <span className="text-yellow-600 dark:text-yellow-500">Files may be out of date</span>
+            <div className="flex items-center justify-between px-2 py-1.5 bg-amber-500/10 border-b border-amber-500/20 text-xs">
+              <span className="text-amber-700 dark:text-amber-400">Files may be out of date</span>
                   <button
                     onClick={() => {
-                      console.log('[Workspace] Manual refresh triggered by user')
                       setNeedsRefresh(false)
                       fetchFiles(activeFolder, { force: true })
                     }}
                     disabled={loading}
-                    className="ml-2 px-2 py-0.5 rounded text-yellow-600 dark:text-yellow-500 hover:bg-yellow-500/20 font-medium disabled:opacity-50"
+                    className="ml-2 px-2 py-0.5 rounded text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 font-medium disabled:opacity-50"
               >
                 Refresh
               </button>
             </div>
           )}
+          {/* Search sits in the content, below the header line */}
+          <div className="shrink-0 px-2 pt-2">
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                <Search className="h-4 w-4 text-muted-foreground" />
+              </div>
+              <input
+                type="text"
+                placeholder="Search files and folders..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="block w-full rounded-md border border-input bg-transparent py-1.5 pl-10 pr-10 text-sm leading-5 text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              {searchQuery && (
+                <div className="absolute inset-y-0 right-0 pr-3 flex items-center">
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        onClick={() => setSearchQuery('')}
+                        className="text-muted-foreground hover:text-foreground"
+                      >
+                        <X className="h-4 w-4" />
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p>Clear search</p>
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
+              )}
+            </div>
+          </div>
           {/* Folder Structure - Full Width */}
-          <div ref={workspaceScrollRef} className="h-full overflow-y-auto">
-            <div className="p-4">
+          <div ref={workspaceScrollRef} className="min-h-0 flex-1 overflow-y-auto">
+            <div className="px-2 py-2">
               {downloadStatus ? (
-                <div role="status" aria-live="polite" data-testid="workspace-download-progress" className="mb-3 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-800 dark:border-blue-900/60 dark:bg-blue-950/30 dark:text-blue-200">
+                <div role="status" aria-live="polite" data-testid="workspace-download-progress" className="mb-3 rounded-md border border-border bg-muted px-3 py-2 text-xs text-foreground">
                   <div className="flex items-center gap-2">
                     <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" />
                     <span className="min-w-0 flex-1 truncate font-medium">Downloading {downloadStatus.name}</span>
@@ -2246,7 +2132,7 @@ export default function Workspace({
                       <span className="shrink-0 tabular-nums">{Math.min(100, Math.round((downloadStatus.loaded / downloadStatus.total) * 100))}%</span>
                     ) : null}
                   </div>
-                  <p className="mt-1 pl-5 text-[11px] text-blue-700/80 dark:text-blue-300/80">
+                  <p className="mt-1 pl-5 text-xs text-muted-foreground">
                     {formatTransferSize(downloadStatus.loaded)}{downloadStatus.total ? ` of ${formatTransferSize(downloadStatus.total)}` : ' received'}
                   </p>
                 </div>
@@ -2265,7 +2151,6 @@ export default function Workspace({
                   selectedModeCategory === 'workflow' ? { force: true } : { force: true, maxDepth: 2 }
                 )}
                 expandedFolders={expandedFolders}
-                loadingChildren={emptyLoadingSet}
                 chatFileContext={chatFileContext}
                 addFileToContext={addFileToContext}
                 highlightedFile={highlightedFile}
@@ -2281,10 +2166,8 @@ export default function Workspace({
                 hideRootActions={hideRootActions}
                 onExportBackup={handleExportBackup}
                 onImportBackup={handleImportBackupClick}
-                workflowFolderPath={effectiveWorkflowFolderPath}
                 isExporting={isExporting}
                 isImporting={isImporting}
-                importProgress={importProgress}
                 isSelectionMode={isSelectionMode}
                 selectedFiles={selectedFiles}
                 onToggleFileSelection={toggleFileSelection}
@@ -2298,16 +2181,16 @@ export default function Workspace({
                   <button
                     onClick={handleRefreshAndSearch}
                     disabled={serverSearchLoading}
-                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded-md transition-colors disabled:opacity-50"
+                    className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-muted-foreground border border-border hover:bg-muted hover:text-foreground rounded-md transition-colors disabled:opacity-50"
                   >
                     {serverSearchLoading ? (
                       <>
-                        <svg className="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" /><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" /></svg>
+                        <Loader2 className="h-3 w-3 animate-spin" />
                         Refreshing files...
                       </>
                     ) : (
                       <>
-                        <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                        <RefreshCw className="h-3 w-3" />
                         Refresh &amp; search
                       </>
                     )}
@@ -2317,67 +2200,6 @@ export default function Workspace({
             </div>
           </div>
         </div>
-      )}
-
-      {/* Minimized Icons */}
-      {minimized && (
-        <div className="flex-1 flex flex-col items-center py-4 space-y-4">
-          {/* Files Icon - Click to expand workspace */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-          <button
-                onClick={onToggleMinimize}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                title="Expand Workspace"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2H5a2 2 0 00-2-2z" />
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 5a2 2 0 012-2h4a2 2 0 012 2v2H8V5z" />
-            </svg>
-          </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Expand Workspace</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Search Icon - Click to expand workspace */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-          <button
-                onClick={onToggleMinimize}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                title="Expand Workspace"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-            </svg>
-          </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Expand Workspace</p>
-            </TooltipContent>
-          </Tooltip>
-
-          {/* Document Icon - Click to expand workspace */}
-          <Tooltip>
-            <TooltipTrigger asChild>
-          <button
-                onClick={onToggleMinimize}
-            className="p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-                title="Expand Workspace"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-            </svg>
-          </button>
-            </TooltipTrigger>
-            <TooltipContent>
-              <p>Expand Workspace</p>
-            </TooltipContent>
-          </Tooltip>
-        </div>
-      )}
 
       {/* Delete Confirmation Dialog */}
       <ConfirmationDialog
@@ -2407,6 +2229,7 @@ export default function Workspace({
         type="warning"
         isLoading={deleteAllFilesDialog.isLoading}
         ignoreWorkspaceAutoCollapse
+        requireText={deleteAllFilesDialog.folder?.filepath.split('/').pop() || 'DELETE'}
       />
 
       {/* Bulk Delete Confirmation Dialog */}
@@ -2427,20 +2250,20 @@ export default function Workspace({
 
       {/* Upload Dialog */}
       {uploadDialog.isOpen && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg p-6 w-full max-w-md mx-4 max-h-[80vh] flex flex-col">
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card rounded-md border border-border p-6 w-full max-w-md mx-4 max-h-[80vh] flex flex-col shadow-md">
+            <h3 className="text-sm font-semibold text-foreground mb-4">
               Upload Files
             </h3>
 
             <div className="space-y-4 overflow-y-auto flex-1 min-h-0">
               {/* Upload Destination Display */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   Upload Destination
                 </label>
-                <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md">
-                  <p className="text-sm text-gray-900 dark:text-gray-100">
+                <div className="px-3 py-2 bg-muted border border-border rounded-md">
+                  <p className="text-sm text-foreground">
                     {uploadDialog.folderPath === '/' ? 'Root directory (/)' : uploadDialog.folderPath}
                   </p>
                 </div>
@@ -2448,7 +2271,7 @@ export default function Workspace({
 
               {/* Commit Message Input */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   Commit Message (Optional)
                 </label>
                 <input
@@ -2457,13 +2280,13 @@ export default function Workspace({
                   onChange={(e) => setUploadDialog({ commitMessage: e.target.value })}
                   placeholder="Upload description"
                   disabled={uploadDialog.isLoading}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 disabled:opacity-50"
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
                 />
               </div>
 
               {/* Drag & Drop Zone */}
               <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-sm font-medium text-foreground mb-1">
                   Select Files
                 </label>
                 <div
@@ -2473,15 +2296,15 @@ export default function Workspace({
                   onClick={() => !uploadDialog.isLoading && fileInputRef.current?.click()}
                   className={`border-2 border-dashed rounded-md p-6 text-center cursor-pointer transition-colors ${
                     isDragOver
-                      ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                      : 'border-gray-300 dark:border-gray-600 hover:border-gray-400 dark:hover:border-gray-500'
+                      ? 'border-primary bg-primary/10'
+                      : 'border-border hover:border-muted-foreground'
                   } ${uploadDialog.isLoading ? 'opacity-50 pointer-events-none' : ''}`}
                 >
-                  <Upload className="mx-auto h-8 w-8 text-gray-400 dark:text-gray-500 mb-2" />
-                  <p className="text-sm text-gray-600 dark:text-gray-400">
+                  <Upload className="mx-auto h-8 w-8 text-muted-foreground mb-2" />
+                  <p className="text-sm text-muted-foreground">
                     Drag files here or click to browse
                   </p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  <p className="text-xs text-muted-foreground mt-1">
                     Any files, 5MB max each
                   </p>
                 </div>
@@ -2497,29 +2320,29 @@ export default function Workspace({
               {/* Selected Files List */}
               {pendingFiles.length > 0 && (
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-medium text-foreground mb-1">
                     {pendingFiles.length} file{pendingFiles.length !== 1 ? 's' : ''} selected
                   </label>
-                  <div className="border border-gray-200 dark:border-gray-600 rounded-md divide-y divide-gray-200 dark:divide-gray-600 max-h-40 overflow-y-auto">
+                  <div className="border border-border rounded-md divide-y divide-border max-h-40 overflow-y-auto">
                     {pendingFiles.map((file, index) => {
                       const validationError = validateFile(file)
                       return (
                         <div key={`${file.name}-${index}`} className="flex items-center justify-between px-3 py-2 text-sm">
                           <div className="flex-1 min-w-0 mr-2">
-                            <p className={`truncate ${validationError ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-gray-100'}`}>
+                            <p className={`truncate ${validationError ? 'text-destructive' : 'text-foreground'}`}>
                               {file.name}
                             </p>
                             {validationError ? (
-                              <p className="text-xs text-red-500 dark:text-red-400">{validationError}</p>
+                              <p className="text-xs text-destructive">{validationError}</p>
                             ) : (
-                              <p className="text-xs text-gray-500 dark:text-gray-400">{formatFileSize(file.size)}</p>
+                              <p className="text-xs text-muted-foreground">{formatFileSize(file.size)}</p>
                             )}
                           </div>
                           {!uploadDialog.isLoading && (
                             <button
                               type="button"
                               onClick={() => removeFile(index)}
-                              className="flex-shrink-0 p-1 text-gray-400 hover:text-red-500 dark:hover:text-red-400"
+                              className="flex-shrink-0 p-1 text-muted-foreground hover:text-destructive"
                             >
                               <X className="h-4 w-4" />
                             </button>
@@ -2533,22 +2356,22 @@ export default function Workspace({
 
               {/* Upload Progress */}
               {uploadProgress && (
-                <div className="text-sm text-blue-600 dark:text-blue-400">
+                <div className="text-sm text-primary">
                   Uploading file {uploadProgress.current} of {uploadProgress.total}...
                 </div>
               )}
 
               {/* Upload Results */}
               {uploadResults && (
-                <div className="border border-gray-200 dark:border-gray-600 rounded-md divide-y divide-gray-200 dark:divide-gray-600 max-h-32 overflow-y-auto">
+                <div className="border border-border rounded-md divide-y divide-border max-h-32 overflow-y-auto">
                   {uploadResults.map((result, index) => (
                     <div key={index} className="flex items-center px-3 py-1.5 text-sm">
-                      <span className={`mr-2 ${result.success ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                      <span className={`mr-2 ${result.success ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>
                         {result.success ? '\u2713' : '\u2717'}
                       </span>
-                      <span className="truncate text-gray-900 dark:text-gray-100">{result.name}</span>
+                      <span className="truncate text-foreground">{result.name}</span>
                       {result.error && (
-                        <span className="ml-2 text-xs text-red-500 dark:text-red-400 truncate">{result.error}</span>
+                        <span className="ml-2 text-xs text-destructive truncate">{result.error}</span>
                       )}
                     </div>
                   ))}
@@ -2562,7 +2385,7 @@ export default function Workspace({
                 type="button"
                 onClick={cancelUpload}
                 disabled={uploadDialog.isLoading}
-                className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200 disabled:opacity-50"
+                className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -2570,7 +2393,7 @@ export default function Workspace({
                 type="button"
                 onClick={handleUploadAll}
                 disabled={uploadDialog.isLoading || pendingFiles.length === 0}
-                className="px-4 py-2 text-sm bg-blue-600 text-white rounded-md hover:bg-blue-700 disabled:opacity-50"
+                className="px-4 py-2 text-sm bg-primary text-primary-foreground rounded-md hover:bg-primary/90 disabled:opacity-50"
               >
                 {uploadDialog.isLoading
                   ? uploadProgress
@@ -2622,63 +2445,18 @@ export default function Workspace({
         className="hidden"
       />
 
-      {/* Error/Success Messages for Backup Operations */}
-      {exportError && (
-        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium">Export Failed</p>
-              <p className="text-sm text-red-100">{exportError}</p>
-            </div>
-            <button
-              onClick={() => setExportError(null)}
-              className="text-white hover:text-red-100 flex-shrink-0"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {importError && (
-        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium">Import Failed</p>
-              <p className="text-sm text-red-100">{importError}</p>
-            </div>
-            <button
-              onClick={() => setImportError(null)}
-              className="text-white hover:text-red-100 flex-shrink-0"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-
-      {importSuccess && (
-        <div className="fixed bottom-4 right-4 bg-green-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 max-w-md">
-          <div className="flex items-start justify-between gap-3">
-            <div>
-              <p className="font-medium">Import Successful</p>
-              <p className="text-sm text-green-100">{importSuccess}</p>
-            </div>
-            <button
-              onClick={() => setImportSuccess(null)}
-              className="text-white hover:text-green-100 flex-shrink-0"
-            >
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
+      {/* Backup import confirmation; results surface as chat toasts */}
+      <ConfirmationDialog
+        isOpen={importConfirm !== null}
+        onClose={cancelImportBackup}
+        onConfirm={() => { void confirmImportBackup() }}
+        title="Restore from backup?"
+        message={`This restores files from "${importConfirm?.file.name || 'the backup'}" into "${importConfirm?.fullPath || 'the workspace'}". Existing files may be overwritten.`}
+        confirmText="Restore"
+        cancelText="Cancel"
+        type="warning"
+        ignoreWorkspaceAutoCollapse
+      />
 
       <ImportProgressDialog
         isOpen={isImporting}

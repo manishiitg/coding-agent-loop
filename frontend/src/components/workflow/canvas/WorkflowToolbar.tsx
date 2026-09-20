@@ -483,6 +483,4 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   )
 }
 
-WorkflowToolbar.whyDidYouRender = true
-
 export default WorkflowToolbar

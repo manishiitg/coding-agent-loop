@@ -71,27 +71,23 @@ export default function ConfirmationDialog({
     switch (type) {
       case 'danger':
         return {
-          icon: 'text-red-500',
-          confirmButton: 'bg-red-600 hover:bg-red-700 text-white',
-          border: 'border-red-200'
+          icon: 'text-destructive',
+          confirmButton: 'bg-destructive hover:bg-destructive/90 text-destructive-foreground',
         }
       case 'warning':
         return {
-          icon: 'text-yellow-500',
-          confirmButton: 'bg-yellow-600 hover:bg-yellow-700 text-white',
-          border: 'border-yellow-200'
+          icon: 'text-amber-500',
+          confirmButton: 'bg-amber-600 hover:bg-amber-700 text-white',
         }
       case 'info':
         return {
-          icon: 'text-blue-500',
-          confirmButton: 'bg-blue-600 hover:bg-blue-700 text-white',
-          border: 'border-blue-200'
+          icon: 'text-primary',
+          confirmButton: 'bg-primary hover:bg-primary/90 text-primary-foreground',
         }
       default:
         return {
-          icon: 'text-red-500',
-          confirmButton: 'bg-red-600 hover:bg-red-700 text-white',
-          border: 'border-red-200'
+          icon: 'text-destructive',
+          confirmButton: 'bg-destructive hover:bg-destructive/90 text-destructive-foreground',
         }
     }
   }
@@ -101,21 +97,21 @@ export default function ConfirmationDialog({
   return (
     <ModalPortal>
     <div
-      className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000]"
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-[10000]"
       data-workspace-collapse-ignore={ignoreWorkspaceAutoCollapse ? 'true' : undefined}
     >
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl max-w-md w-full mx-4">
+      <div className="bg-card rounded-md shadow-md border border-border max-w-md w-full mx-4">
         {/* Header */}
-        <div className="flex items-center justify-between p-6 border-b border-gray-200 dark:border-gray-700">
+        <div className="flex items-center justify-between p-6 border-b border-border">
           <div className="flex items-center gap-3">
             <AlertTriangle className={`w-6 h-6 ${styles.icon}`} />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <h3 className="text-sm font-semibold text-foreground">
               {title}
             </h3>
           </div>
           <button
             onClick={onClose}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+            className="text-muted-foreground hover:text-foreground"
             disabled={isLoading}
           >
             <X className="w-5 h-5" />
@@ -124,14 +120,14 @@ export default function ConfirmationDialog({
 
         {/* Content */}
         <div className="p-6">
-          <p className="text-gray-600 dark:text-gray-300 mb-6">
+          <p className="text-muted-foreground mb-6">
             {message}
           </p>
 
           {requireText !== undefined && (
             <div className="mb-6">
-              <Label className="mb-2 block text-gray-600 dark:text-gray-300">
-                Type <span className="font-semibold text-gray-900 dark:text-gray-100">{requireText}</span> to confirm
+              <Label className="mb-2 block text-muted-foreground">
+                Type <span className="font-semibold text-foreground">{requireText}</span> to confirm
               </Label>
               <Input
                 value={typed}
@@ -147,7 +143,7 @@ export default function ConfirmationDialog({
           <div className="flex gap-3 justify-end">
             <button
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+              className="px-4 py-2 text-sm font-medium text-secondary-foreground bg-secondary hover:bg-secondary/80 rounded-md transition-colors"
               disabled={isLoading}
             >
               {cancelText}

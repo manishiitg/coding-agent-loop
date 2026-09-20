@@ -126,16 +126,16 @@ export default function PushToGistDialog({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm animate-in fade-in duration-200">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-800/50">
-          <div className="flex items-center gap-2 text-gray-900 dark:text-gray-100 font-semibold">
+      <div className="bg-card rounded-md shadow-md border border-border w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-border bg-muted/50">
+          <div className="flex items-center gap-2 text-foreground font-semibold">
             <Github className="w-5 h-5" />
             Push to GitHub Gist
           </div>
           <button
             onClick={onClose}
             disabled={isPushing}
-            className="text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors disabled:opacity-50"
+            className="text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -144,32 +144,32 @@ export default function PushToGistDialog({
         <div className="p-6">
           {gistUrl ? (
             <div className="space-y-4">
-              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-green-100 dark:bg-green-900/30 text-green-600 dark:text-green-400 mx-auto mb-4">
+              <div className="flex items-center justify-center w-12 h-12 rounded-full bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 mx-auto mb-4">
                 <Check className="w-6 h-6" />
               </div>
-              <h3 className="text-center text-lg font-medium text-gray-900 dark:text-gray-100">
+              <h3 className="text-center text-sm font-medium text-foreground">
                 Gist Created Successfully!
               </h3>
               
-              <div className="flex items-center gap-2 p-3 bg-gray-50 dark:bg-gray-900 rounded-md border border-gray-200 dark:border-gray-700">
+              <div className="flex items-center gap-2 p-3 bg-muted rounded-md border border-border">
                 <input 
                   type="text" 
                   readOnly 
                   value={gistUrl}
-                  className="bg-transparent flex-1 outline-none text-sm text-gray-600 dark:text-gray-300 min-w-0"
+                  className="bg-transparent flex-1 outline-none text-sm text-muted-foreground min-w-0"
                 />
                 <button
                   onClick={handleCopyUrl}
-                  className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 transition-colors"
+                  className="p-1.5 text-muted-foreground hover:text-foreground bg-card rounded border border-border shadow-sm transition-colors"
                   title="Copy URL"
                 >
-                  {copied ? <Check className="w-4 h-4 text-green-500" /> : <Copy className="w-4 h-4" />}
+                  {copied ? <Check className="w-4 h-4 text-emerald-500" /> : <Copy className="w-4 h-4" />}
                 </button>
                 <a
                   href={gistUrl}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="p-1.5 text-blue-500 hover:text-blue-700 dark:text-blue-400 dark:hover:text-blue-300 bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 transition-colors"
+                  className="p-1.5 text-primary hover:text-primary bg-card rounded border border-border shadow-sm transition-colors"
                   title="Open in new tab"
                 >
                   <ExternalLink className="w-4 h-4" />
@@ -179,7 +179,7 @@ export default function PushToGistDialog({
               <div className="pt-4 flex justify-center">
                 <button
                   onClick={onClose}
-                  className="px-4 py-2 bg-gray-100 hover:bg-gray-200 dark:bg-gray-700 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-200 rounded-md font-medium transition-colors"
+                  className="px-4 py-2 bg-secondary hover:bg-secondary/80 text-secondary-foreground rounded-md font-medium transition-colors"
                 >
                   Close
                 </button>
@@ -187,20 +187,20 @@ export default function PushToGistDialog({
             </div>
           ) : (
             <form onSubmit={handlePush} className="space-y-4">
-              <p className="text-sm text-gray-600 dark:text-gray-400">
-                Push <span className="font-mono text-xs bg-gray-100 dark:bg-gray-700 px-1 py-0.5 rounded">{fileName}</span> to GitHub Gist.
+              <p className="text-sm text-muted-foreground">
+                Push <span className="font-mono text-xs bg-muted px-1 py-0.5 rounded">{fileName}</span> to GitHub Gist.
               </p>
 
-              <div className="flex flex-col gap-3 p-3 bg-gray-50 dark:bg-gray-900/50 rounded-md border border-gray-100 dark:border-gray-700">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300">Visibility</label>
-                <div className="flex p-1 bg-gray-200 dark:bg-gray-800 rounded-lg">
+              <div className="flex flex-col gap-3 p-3 bg-muted/50 rounded-md border border-border">
+                <label className="text-sm font-medium text-foreground">Visibility</label>
+                <div className="flex rounded-md bg-muted p-1">
                   <button
                     type="button"
                     onClick={() => setIsPublic(false)}
                     className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-medium rounded-md transition-all ${
                       !isPublic 
-                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' 
-                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                        ? 'bg-card text-foreground shadow-sm' 
+                        : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     Secret
@@ -210,14 +210,14 @@ export default function PushToGistDialog({
                     onClick={() => setIsPublic(true)}
                     className={`flex-1 flex items-center justify-center gap-2 py-1.5 text-xs font-medium rounded-md transition-all ${
                       isPublic 
-                        ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm' 
-                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-300'
+                        ? 'bg-card text-foreground shadow-sm' 
+                        : 'text-muted-foreground hover:text-foreground'
                     }`}
                   >
                     Public
                   </button>
                 </div>
-                <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                <p className="text-xs text-muted-foreground">
                   {isPublic 
                     ? 'Public gists are searchable and appear in your GitHub profile.' 
                     : 'Secret gists are not searchable but can be viewed by anyone with the URL.'}
@@ -225,7 +225,7 @@ export default function PushToGistDialog({
               </div>
 
               <div className="space-y-1.5">
-                <label className="text-sm font-medium text-gray-700 dark:text-gray-300 flex items-center gap-1.5">
+                <label className="text-sm font-medium text-foreground flex items-center gap-1.5">
                   <Key className="w-4 h-4" />
                   GitHub Personal Access Token
                 </label>
@@ -234,17 +234,17 @@ export default function PushToGistDialog({
                   value={pat}
                   onChange={(e) => setPat(e.target.value)}
                   placeholder="ghp_..."
-                  className="w-full px-3 py-2 bg-white dark:bg-gray-900 border border-gray-300 dark:border-gray-600 rounded-md text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/50 dark:focus:ring-blue-400/50"
+                  className="w-full px-3 py-2 border border-input bg-transparent rounded-md text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   disabled={isPushing}
                   required
                 />
-                <p className="text-xs text-gray-500 dark:text-gray-400">
-                  Requires <code className="bg-gray-100 dark:bg-gray-800 px-1 rounded">gist</code> scope. Your token will be saved locally in your browser.
+                <p className="text-xs text-muted-foreground">
+                  Requires <code className="bg-muted px-1 rounded">gist</code> scope. Your token will be saved locally in your browser.
                 </p>
               </div>
 
               {error && (
-                <div className="p-3 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md text-sm text-red-600 dark:text-red-400">
+                <div className="rounded-md border border-destructive/20 bg-destructive/10 p-3 text-sm text-destructive">
                   {error}
                 </div>
               )}
@@ -254,14 +254,14 @@ export default function PushToGistDialog({
                   type="button"
                   onClick={onClose}
                   disabled={isPushing}
-                  className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors disabled:opacity-50"
+                  className="px-4 py-2 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors disabled:opacity-50"
                 >
                   Cancel
                 </button>
                 <button
                   type="submit"
                   disabled={isPushing || !pat.trim()}
-                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors disabled:opacity-50"
+                  className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors disabled:opacity-50"
                 >
                   {isPushing ? (
                     <>

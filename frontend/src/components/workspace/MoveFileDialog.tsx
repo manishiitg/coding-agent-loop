@@ -190,19 +190,19 @@ export default function MoveFileDialog({
   const isFolder = item.type === 'folder'
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-md shadow-md border border-border w-full max-w-2xl mx-4 max-h-[90vh] flex flex-col">
+        <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-2">
-            <Move className="w-5 h-5 text-blue-500" />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <Move className="w-5 h-5 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">
               Move {isFolder ? 'Folder' : 'File'}
             </h3>
           </div>
           <button
             onClick={handleClose}
             disabled={isLoading}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -212,11 +212,11 @@ export default function MoveFileDialog({
           <div className="p-4 space-y-4 flex-1 overflow-y-auto">
             {/* Current Path Display */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Current Path
               </label>
-              <div className="px-3 py-2 bg-gray-50 dark:bg-gray-700 border border-gray-300 dark:border-gray-600 rounded-md">
-                <p className="text-sm text-gray-900 dark:text-gray-100 truncate">
+              <div className="px-3 py-2 bg-muted border border-border rounded-md">
+                <p className="text-sm text-foreground truncate">
                   {item.filepath}
                 </p>
               </div>
@@ -224,27 +224,27 @@ export default function MoveFileDialog({
 
             {/* Choose Destination Folder */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+              <label className="block text-sm font-medium text-foreground mb-2">
                 Choose Destination Folder
               </label>
               
               {/* Search Input */}
               <div className="relative mb-2">
-                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-gray-400" />
+                <Search className="absolute left-2 top-1/2 transform -translate-y-1/2 w-4 h-4 text-muted-foreground" />
                 <input
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   placeholder="Search folders..."
                   disabled={isLoading}
-                  className="w-full pl-8 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50 text-sm"
+                  className="w-full pl-8 pr-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50 text-sm"
                 />
               </div>
 
               {/* Folder List */}
-              <div className="border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 max-h-64 overflow-y-auto">
+              <div className="border border-border rounded-md bg-transparent max-h-64 overflow-y-auto">
                 {filteredFolders.length === 0 ? (
-                  <div className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
+                  <div className="px-4 py-8 text-center text-sm text-muted-foreground">
                     {searchQuery ? 'No folders found' : 'No folders available'}
                   </div>
                 ) : (
@@ -257,7 +257,7 @@ export default function MoveFileDialog({
                       return (
                         <div
                           key={folder.filepath}
-                          className="flex items-center gap-2 px-3 py-2 hover:bg-gray-100 dark:hover:bg-gray-600 cursor-pointer transition-colors"
+                          className="flex items-center gap-2 px-3 py-2 hover:bg-muted cursor-pointer transition-colors"
                           style={{ paddingLeft: `${12 + folderDepth * 16}px` }}
                           onClick={() => handleFolderSelect(folder)}
                         >
@@ -269,7 +269,7 @@ export default function MoveFileDialog({
                                 e.stopPropagation()
                                 toggleFolder(folder.filepath)
                               }}
-                              className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                              className="flex-shrink-0 w-4 h-4 flex items-center justify-center text-muted-foreground hover:text-foreground"
                             >
                               {isExpanded ? (
                                 <ChevronDown className="w-3 h-3" />
@@ -282,10 +282,10 @@ export default function MoveFileDialog({
                           )}
                           
                           {/* Folder Icon */}
-                          <Folder className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                          <Folder className="w-4 h-4 text-muted-foreground flex-shrink-0" />
                           
                           {/* Folder Name */}
-                          <span className="text-sm text-gray-900 dark:text-gray-100 truncate flex-1">
+                          <span className="text-sm text-foreground truncate flex-1">
                             {folder.filepath.split('/').pop() || folder.filepath}
                           </span>
                         </div>
@@ -298,7 +298,7 @@ export default function MoveFileDialog({
 
             {/* Destination Path Input (Manual Override) */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Destination Path (or enter manually)
               </label>
               <input
@@ -307,13 +307,13 @@ export default function MoveFileDialog({
                 onChange={(e) => setDestinationPath(e.target.value)}
                 placeholder={`Enter destination path for ${itemName}`}
                 disabled={isLoading}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               />
             </div>
 
             {/* Commit Message Input */}
             <div>
-              <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+              <label className="block text-sm font-medium text-foreground mb-1">
                 Commit Message (Optional)
               </label>
               <input
@@ -322,31 +322,31 @@ export default function MoveFileDialog({
                 onChange={(e) => setCommitMessage(e.target.value)}
                 placeholder="Add commit message for version control"
                 disabled={isLoading}
-                className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+                className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               />
             </div>
 
             {error && (
-              <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-2">
+              <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-2">
                 {error}
               </div>
             )}
           </div>
 
           {/* Action Buttons */}
-          <div className="flex justify-end gap-2 p-4 border-t border-gray-200 dark:border-gray-700">
+          <div className="flex justify-end gap-2 border-t border-border p-4">
             <button
               type="button"
               onClick={handleClose}
               disabled={isLoading}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-secondary-foreground bg-secondary hover:bg-secondary/80 rounded-md disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isLoading || !destinationPath.trim()}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md disabled:opacity-50 flex items-center gap-2"
             >
               {isLoading ? (
                 <>

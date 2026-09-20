@@ -1,5 +1,5 @@
 import { sharedLink } from '../utils/sharedLinks'
-import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import { ArrowLeft, Download, Edit, FileText, Github, Link, Loader2, MoreHorizontal, Save, X } from 'lucide-react'
 import { WorkspaceViewHeader } from './workflow/WorkspaceViewHeader'
@@ -10,7 +10,8 @@ import { ConversationRenderer, isConversationJSON } from './ui/ConversationRende
 import { DiffRenderer } from './ui/DiffRenderer'
 import { RenderedContentSearchBar, RenderedContentSearchButton, useRenderedContentSearch } from './ui/RenderedContentSearch'
 import LazyModalFallback from './ui/LazyModalFallback'
-import { useWorkspaceStore } from '../stores'
+import ConfirmationDialog from './ui/ConfirmationDialog'
+import { useWorkspaceStore, useChatStore } from '../stores'
 import { useAuthStore } from '../stores/useAuthStore'
 import { agentApi } from '../services/api'
 import type { FileVersion } from '../services/api-types'
@@ -20,6 +21,15 @@ import { convertToSlackMarkdown } from '../utils/slackMarkdown'
 import { isDiffFilePath, looksLikeDiffContent } from '../utils/diff'
 import { copyToClipboard } from '../utils/textUtils'
 import { isCodeFile } from '../utils/codeFileLanguage'
+import {
+  AUDIO_MIME_TYPES,
+  VIDEO_MIME_TYPES,
+  isAudioPath,
+  isOfficeOrPdfPath,
+  isTallSurfacePath,
+  isVideoPath,
+  mimeForExtension,
+} from '../utils/fileTypes'
 
 const FileEditor = lazy(() => import('./workspace/FileEditor'))
 const FileRevisionsModal = lazy(() => import('./workspace/FileRevisionsModal'))
@@ -35,8 +45,36 @@ const FileSurfaceFallback = () => (
   </div>
 )
 
+// Builds (and revokes) one object URL for the media bytes the store holds.
+// One hook serves audio and video; previously each had its own copy.
+function useMediaObjectUrl(mimeType: string | null, data: ArrayBuffer | null): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!mimeType || !data) {
+      setUrl(current => {
+        if (current) URL.revokeObjectURL(current)
+        return null
+      })
+      return
+    }
+
+    const next = URL.createObjectURL(new Blob([data], { type: mimeType }))
+    setUrl(current => {
+      if (current) URL.revokeObjectURL(current)
+      return next
+    })
+
+    return () => {
+      URL.revokeObjectURL(next)
+    }
+  }, [mimeType, data])
+
+  return url
+}
+
 const ICON_BUTTON_CLASS =
-  'flex items-center p-1.5 text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors'
+  'flex items-center p-1.5 text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors'
 
 const CopyIcon = () => (
   <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -103,12 +141,12 @@ function PaneActionsMenu({ actions }: { actions: PaneAction[] }) {
         aria-label="More actions"
         aria-expanded={open}
         title="More actions"
-        className={`${ICON_BUTTON_CLASS} ${open ? 'bg-gray-100 text-gray-900 dark:bg-gray-700 dark:text-gray-100' : ''}`}
+        className={`${ICON_BUTTON_CLASS} ${open ? 'bg-muted text-foreground' : ''}`}
       >
         <MoreHorizontal className="w-4 h-4" />
       </button>
       {open && (
-        <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-52 rounded-lg border border-gray-200 bg-white p-1 shadow-xl dark:border-gray-700 dark:bg-gray-800">
+        <div role="menu" className="absolute right-0 top-full z-50 mt-1 w-52 rounded-md border border-border bg-card p-1 shadow-md">
           {actions.map(action => (
             <button
               key={action.key}
@@ -119,7 +157,7 @@ function PaneActionsMenu({ actions }: { actions: PaneAction[] }) {
                 setOpen(false)
                 action.onSelect()
               }}
-              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-gray-700 hover:bg-gray-100 disabled:cursor-not-allowed disabled:opacity-50 dark:text-gray-200 dark:hover:bg-gray-700"
+              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
             >
               {action.icon}
               <span>{action.label}</span>
@@ -137,18 +175,14 @@ function PaneActionsMenu({ actions }: { actions: PaneAction[] }) {
  * save+commit, revision history, PDF export, and Gist push). Reads everything
  * from `useWorkspaceStore` (selectedFile, fileContent, showFileContent, ...).
  *
- * It fills whatever box it's given. Two shells mount it:
- *   - `pane`: the workspace pane's Files view swaps the file tree for this
- *     body while a file is open. The header collapses its secondary actions
- *     into a menu so it fits a narrow pane, tall surfaces (PDF, video, HTML)
- *     size to the pane instead of the viewport, and keyboard shortcuts only
- *     fire while focus is inside the viewer so Ctrl+E / Ctrl+S / Esc typed in
- *     the chat next to it are left alone.
- *   - `overlay`: `FileContentViewerOverlay` below, a full-viewport shell for
- *     surfaces with no workspace pane (Video Studio). Behaves as the original
- *     full-screen viewer did, shortcuts included.
+ * It fills whatever box it's given. The workspace pane's Files view swaps
+ * the file tree for this body while a file is open. The header collapses its
+ * secondary actions into a menu so it fits a narrow pane, tall surfaces (PDF,
+ * video, HTML) size to the pane, and keyboard shortcuts only fire while focus
+ * is inside the viewer so Ctrl+E / Ctrl+S / Esc typed in the chat next to it
+ * are left alone.
  */
-export function FileContentViewerBody({ variant, headerAction }: { variant: 'pane' | 'overlay'; headerAction?: React.ReactNode }) {
+export function FileContentViewerBody({ headerAction }: { headerAction?: React.ReactNode }) {
   const rootRef = useRef<HTMLDivElement>(null)
   const {
     selectedFile,
@@ -188,98 +222,41 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
     binaryFileData: state.binaryFileData,
   })))
 
-  const [videoObjectUrl, setVideoObjectUrl] = useState<string | null>(null)
-  const [audioObjectUrl, setAudioObjectUrl] = useState<string | null>(null)
-
-  useEffect(() => {
-    const filePath = selectedFile?.path?.toLowerCase() || ''
-    const isVideoFile = filePath.endsWith('.webm') || filePath.endsWith('.mp4') || filePath.endsWith('.mov')
-
-    if (!isVideoFile || !binaryFileData) {
-      setVideoObjectUrl((current) => {
-        if (current) {
-          URL.revokeObjectURL(current)
-        }
-        return null
-      })
-      return
-    }
-
-    const mimeType = filePath.endsWith('.webm')
-      ? 'video/webm'
-      : filePath.endsWith('.mov')
-        ? 'video/quicktime'
-        : 'video/mp4'
-    const blob = new Blob([binaryFileData], { type: mimeType })
-    const nextUrl = URL.createObjectURL(blob)
-
-    setVideoObjectUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current)
-      }
-      return nextUrl
-    })
-
-    return () => {
-      URL.revokeObjectURL(nextUrl)
-    }
-  }, [binaryFileData, selectedFile?.path])
-
-  useEffect(() => {
-    const filePath = selectedFile?.path?.toLowerCase() || ''
-    const isAudioFile = ['.mp3', '.wav', '.m4a', '.aac', '.ogg', '.oga', '.flac', '.opus'].some(ext => filePath.endsWith(ext))
-
-    if (!isAudioFile || !binaryFileData) {
-      setAudioObjectUrl((current) => {
-        if (current) {
-          URL.revokeObjectURL(current)
-        }
-        return null
-      })
-      return
-    }
-
-    const mimeType = filePath.endsWith('.wav')
-      ? 'audio/wav'
-      : filePath.endsWith('.m4a')
-        ? 'audio/mp4'
-        : filePath.endsWith('.aac')
-          ? 'audio/aac'
-          : filePath.endsWith('.ogg') || filePath.endsWith('.oga')
-            ? 'audio/ogg'
-            : filePath.endsWith('.flac')
-              ? 'audio/flac'
-              : filePath.endsWith('.opus')
-                ? 'audio/opus'
-                : 'audio/mpeg'
-    const blob = new Blob([binaryFileData], { type: mimeType })
-    const nextUrl = URL.createObjectURL(blob)
-
-    setAudioObjectUrl((current) => {
-      if (current) {
-        URL.revokeObjectURL(current)
-      }
-      return nextUrl
-    })
-
-    return () => {
-      URL.revokeObjectURL(nextUrl)
-    }
-  }, [binaryFileData, selectedFile?.path])
+  const videoObjectUrl = useMediaObjectUrl(
+    selectedFile?.path ? mimeForExtension(selectedFile.path, VIDEO_MIME_TYPES) : null,
+    binaryFileData,
+  )
+  const audioObjectUrl = useMediaObjectUrl(
+    selectedFile?.path ? mimeForExtension(selectedFile.path, AUDIO_MIME_TYPES) : null,
+    binaryFileData,
+  )
 
   const [commitMessage, setCommitMessage] = useState('')
   const [showCommitDialog, setShowCommitDialog] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [isRestoring, setIsRestoring] = useState(false)
-  const [restoreError, setRestoreError] = useState<string | null>(null)
+  const addToast = useChatStore(state => state.addToast)
+  const [pendingConfirm, setPendingConfirm] = useState<'discard-changes' | 'save-large-file' | 'close-viewer' | null>(null)
   const [isExportingPdf, setIsExportingPdf] = useState(false)
   const [showPushToGistDialog, setShowPushToGistDialog] = useState(false)
-  const [exportProgress, setExportProgress] = useState<string | null>(null)
   const [shareCopied, setShareCopied] = useState(false)
   const [contentCopied, setContentCopied] = useState(false)
   const [slackCopied, setSlackCopied] = useState(false)
+  const [failedImagePath, setFailedImagePath] = useState<string | null>(null)
   const markdownContentRef = useRef<HTMLDivElement>(null)
   const selectedFilePathLower = selectedFile?.path?.toLowerCase() || ''
+  const isOfficeOrPdf = isOfficeOrPdfPath(selectedFilePathLower)
+  // Edit is hidden for binary documents and for code files (code is written by the agent).
+  const canEdit = !isOfficeOrPdf && !isCodeFile(selectedFile?.path || '')
+  // Parsed once per render: the dispatch below used to re-parse the whole
+  // file up to four times (search gate, conversation check, JSON check).
+  const parsedJsonContent: unknown = useMemo(() => {
+    try {
+      return JSON.parse(fileContent) as unknown
+    } catch {
+      return undefined
+    }
+  }, [fileContent])
   const isRenderedMarkdownSearchAvailable = (
     showFileContent &&
     !loadingFileContent &&
@@ -293,7 +270,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
     !selectedFilePathLower.endsWith('.htm') &&
     !selectedFilePathLower.endsWith('.mmd') &&
     !selectedFilePathLower.endsWith('.mermaid') &&
-    !isValidJSON(fileContent) &&
+    parsedJsonContent === undefined &&
     !looksLikeDiffContent(fileContent)
   )
   const renderedContentSearch = useRenderedContentSearch({
@@ -311,10 +288,11 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
 
   // Handle edit mode toggle
   const handleEdit = useCallback(() => {
+    if (!canEdit) return
     setEditedContent(fileContent)
     setIsEditMode(true)
     setSaveError(null)
-  }, [fileContent, setEditedContent, setIsEditMode])
+  }, [canEdit, fileContent, setEditedContent, setIsEditMode])
 
   // Handle download
   const handleDownload = useCallback(() => {
@@ -342,17 +320,28 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
   // Handle cancel edit
   const handleCancelEdit = useCallback(() => {
     if (getHasUnsavedChanges()) {
-      if (window.confirm('You have unsaved changes. Are you sure you want to cancel?')) {
-        setEditedContent('')
-        setIsEditMode(false)
-        setSaveError(null)
-      }
+      setPendingConfirm('discard-changes')
     } else {
       setEditedContent('')
       setIsEditMode(false)
       setSaveError(null)
     }
   }, [getHasUnsavedChanges, setEditedContent, setIsEditMode])
+
+  const confirmPendingAction = useCallback(() => {
+    if (pendingConfirm === 'discard-changes') {
+      setEditedContent('')
+      setIsEditMode(false)
+      setSaveError(null)
+    } else if (pendingConfirm === 'save-large-file') {
+      setShowCommitDialog(true)
+    } else if (pendingConfirm === 'close-viewer') {
+      setEditedContent('')
+      setIsEditMode(false)
+      setShowFileContent(false)
+    }
+    setPendingConfirm(null)
+  }, [pendingConfirm, setEditedContent, setIsEditMode, setShowFileContent])
 
   // Handle save
   const handleSave = useCallback(async () => {
@@ -368,9 +357,8 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
 
     // Check file size (warn if > 1MB)
     if (editedContent.length > 1024 * 1024) {
-      if (!window.confirm('File is larger than 1MB. Continue saving?')) {
-        return
-      }
+      setPendingConfirm('save-large-file')
+      return
     }
 
     setShowCommitDialog(true)
@@ -393,12 +381,11 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
   // Handle restore version
   const handleRestoreVersion = useCallback(async (version: FileVersion) => {
     if (!selectedFile) {
-      setRestoreError('No file selected')
+      addToast('No file selected', 'error')
       return
     }
 
     setIsRestoring(true)
-    setRestoreError(null)
 
     try {
       // Call restore API
@@ -453,21 +440,20 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
         // Close modal on success
         setShowRevisionsModal(false)
       } else {
-        setRestoreError(response.message || 'Failed to restore file version')
+        addToast(response.message || 'Failed to restore file version', 'error')
       }
     } catch (error) {
       console.error('Failed to restore file version:', error)
-      setRestoreError(error instanceof Error ? error.message : 'Failed to restore file version')
+      addToast(error instanceof Error ? error.message : 'Failed to restore file version', 'error')
     } finally {
       setIsRestoring(false)
     }
-  }, [selectedFile, isEditMode, setIsEditMode, setEditedContent, setFileContent, setLoadingFileContent, setShowRevisionsModal])
+  }, [selectedFile, isEditMode, setIsEditMode, setEditedContent, setFileContent, setLoadingFileContent, setShowRevisionsModal, addToast])
 
   // Handle export to PDF
   const handleExportPdf = useCallback(async () => {
     if (!markdownContentRef.current || !selectedFile) return
     setIsExportingPdf(true)
-    setExportProgress(null)
     const filename = (selectedFile.name || selectedFile.path?.split('/').pop() || 'document')
       .replace(/\.[^.]+$/, '') + '.pdf'
     const isElectron = !!window.electronAPI?.printToPDF
@@ -511,24 +497,21 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
       }
     } catch (err) {
       console.error('PDF export failed:', err)
+      addToast('Could not export this file as PDF.', 'error')
     } finally {
       setIsExportingPdf(false)
-      setExportProgress(null)
     }
-  }, [selectedFile])
+  }, [selectedFile, addToast])
 
   // Keyboard shortcuts
   useEffect(() => {
     if (!showFileContent) return
 
     const handleKeyDown = (e: KeyboardEvent) => {
-      // In the pane the viewer sits next to the chat; only act on shortcuts
-      // typed while focus is inside the viewer. The overlay covers the
-      // viewport, so there it keeps the original global behavior.
-      if (variant === 'pane') {
-        const active = document.activeElement
-        if (!(active instanceof Node) || !rootRef.current?.contains(active)) return
-      }
+      // The viewer sits next to the chat; only act on shortcuts typed while
+      // focus is inside the viewer.
+      const active = document.activeElement
+      if (!(active instanceof Node) || !rootRef.current?.contains(active)) return
       // Ctrl+S or Cmd+S: Save
       if ((e.ctrlKey || e.metaKey) && e.key === 's') {
         e.preventDefault()
@@ -545,9 +528,13 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
           handleEdit()
         }
       }
-      // Esc: Cancel edit mode
-      if (e.key === 'Escape' && isEditMode) {
-        if (!getHasUnsavedChanges()) {
+      // Esc: leave edit mode, confirming first when there are unsaved
+      // changes. Skipped while the commit dialog is open (it handles its
+      // own Escape) so the two dialogs don't stack.
+      if (e.key === 'Escape' && isEditMode && !showCommitDialog) {
+        if (getHasUnsavedChanges()) {
+          setPendingConfirm('discard-changes')
+        } else {
           handleCancelEdit()
         }
       }
@@ -555,21 +542,23 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
 
     window.addEventListener('keydown', handleKeyDown)
     return () => window.removeEventListener('keydown', handleKeyDown)
-  }, [showFileContent, variant, isEditMode, getHasUnsavedChanges, handleSave, handleEdit, handleCancelEdit])
+  }, [showFileContent, showCommitDialog, isEditMode, getHasUnsavedChanges, handleSave, handleEdit, handleCancelEdit])
 
   const copyContent = useCallback(async () => {
     if (!fileContent) return
-    await navigator.clipboard.writeText(fileContent)
-    setContentCopied(true)
-    setTimeout(() => setContentCopied(false), 2000)
+    if (await copyToClipboard(fileContent)) {
+      setContentCopied(true)
+      setTimeout(() => setContentCopied(false), 2000)
+    }
   }, [fileContent])
 
   const copyAsSlack = useCallback(async () => {
     if (!fileContent) return
     const slack = convertToSlackMarkdown(fileContent)
-    await navigator.clipboard.writeText(slack)
-    setSlackCopied(true)
-    setTimeout(() => setSlackCopied(false), 2000)
+    if (await copyToClipboard(slack)) {
+      setSlackCopied(true)
+      setTimeout(() => setSlackCopied(false), 2000)
+    }
   }, [fileContent])
 
   const copyShareLink = useCallback(() => {
@@ -584,15 +573,11 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
     })
   }, [selectedFile?.path])
 
-  const isOfficeOrPdf = ['.xls', '.xlsx', '.docx', '.pdf'].some(ext => selectedFilePathLower.endsWith(ext))
-  // Edit is hidden for binary documents and for code files (code is written by the agent).
-  const canEdit = !isOfficeOrPdf && !isCodeFile(selectedFile?.path || '')
   const canShowRevisions = !isOfficeOrPdf
   const isMarkdownFile = selectedFilePathLower.endsWith('.md') || selectedFilePathLower.endsWith('.markdown')
-  // PDF, video, and HTML surfaces fill the viewport in the overlay and the
-  // pane in the pane.
-  const isTallSurface = /\.(pdf|html?|webm|mp4|mov)$/i.test(selectedFile?.path || '')
-  const tallSurfaceClass = variant === 'pane' ? 'h-full min-h-0' : 'h-[calc(100vh-120px)]'
+  // PDF, video, and HTML surfaces fill the pane.
+  const isTallSurface = isTallSurfacePath(selectedFile?.path || '')
+  const tallSurfaceClass = 'h-full min-h-0'
 
   const paneActions: PaneAction[] = [
     { key: 'copy', label: contentCopied ? 'Copied!' : 'Copy content', icon: <CopyIcon />, onSelect: () => { void copyContent() } },
@@ -600,7 +585,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
     { key: 'share', label: shareCopied ? 'Copied!' : 'Copy share link', icon: <Link className="w-4 h-4" />, onSelect: copyShareLink },
     ...(canShowRevisions ? [{ key: 'revisions', label: 'File revisions', icon: <HistoryIcon />, onSelect: () => setShowRevisionsModal(true) }] : []),
     ...(isMarkdownFile ? [
-      { key: 'pdf', label: isExportingPdf ? (exportProgress || 'Exporting…') : 'Export as PDF', icon: isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <PdfIcon />, onSelect: () => { void handleExportPdf() }, disabled: isExportingPdf },
+      { key: 'pdf', label: isExportingPdf ? 'Exporting…' : 'Export as PDF', icon: isExportingPdf ? <Loader2 className="w-4 h-4 animate-spin" /> : <PdfIcon />, onSelect: () => { void handleExportPdf() }, disabled: isExportingPdf },
       { key: 'gist', label: 'Push to GitHub Gist', icon: <Github className="w-4 h-4" />, onSelect: () => setShowPushToGistDialog(true) },
     ] : []),
   ]
@@ -622,7 +607,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
     <>
       <div
         ref={rootRef}
-        className="flex h-full min-h-0 flex-col bg-white dark:bg-gray-900"
+        className="flex h-full min-h-0 flex-col bg-background"
         data-ui-file-path={selectedFile?.path || undefined}
         data-ui-file-ready={showFileContent && !loadingFileContent ? 'true' : 'false'}
       >
@@ -634,11 +619,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                 type="button"
                 onClick={() => {
                   if (getHasUnsavedChanges()) {
-                    if (window.confirm('You have unsaved changes. Are you sure you want to close?')) {
-                      setEditedContent('')
-                      setIsEditMode(false)
-                      setShowFileContent(false)
-                    }
+                    setPendingConfirm('close-viewer')
                   } else {
                     setShowFileContent(false)
                   }
@@ -654,7 +635,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
           ) : 'File'}
           subtitle={selectedFile?.path ? <span title={selectedFile.path}>{selectedFile.path}</span> : undefined}
           context={getHasUnsavedChanges() && (
-            <span className="text-[10px] text-orange-500" title="Unsaved changes">●</span>
+            <span className="text-[10px] text-amber-500" title="Unsaved changes">●</span>
           )}
           actions={<>
             {!isEditMode ? (
@@ -670,63 +651,13 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                 {isRenderedMarkdownSearchAvailable && (
                   <RenderedContentSearchButton search={renderedContentSearch} className={ICON_BUTTON_CLASS} />
                 )}
-                {variant === 'pane' ? (
-                  <PaneActionsMenu actions={paneActions} />
-                ) : (
-                  <>
-                    <button onClick={() => { void copyContent() }} className={`${ICON_BUTTON_CLASS} gap-1`} title="Copy formatted content">
-                      <CopyIcon />
-                      {contentCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
-                    </button>
-                    <button onClick={() => { void copyAsSlack() }} className={`${ICON_BUTTON_CLASS} gap-1`} title="Copy as Slack format">
-                      <SlackIcon />
-                      {slackCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
-                    </button>
-                    <button onClick={copyShareLink} className={`${ICON_BUTTON_CLASS} gap-1`} title="Copy share link (sign-in required)">
-                      <Link className="w-4 h-4" />
-                      {shareCopied && <span className="text-xs text-green-600 dark:text-green-400">Copied!</span>}
-                    </button>
-                    {canShowRevisions && (
-                      <button onClick={() => setShowRevisionsModal(true)} className={ICON_BUTTON_CLASS} title="View file revisions">
-                        <HistoryIcon />
-                      </button>
-                    )}
-                    {isMarkdownFile && (
-                      <button
-                        onClick={handleExportPdf}
-                        disabled={isExportingPdf}
-                        className={`${ICON_BUTTON_CLASS} disabled:opacity-50 disabled:cursor-not-allowed`}
-                        title="Export as PDF"
-                      >
-                        {isExportingPdf ? (
-                          <>
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                            {exportProgress && (
-                              <span className="ml-1 text-xs text-gray-500 dark:text-gray-400">{exportProgress}</span>
-                            )}
-                          </>
-                        ) : (
-                          <PdfIcon />
-                        )}
-                      </button>
-                    )}
-                    {isMarkdownFile && (
-                      <button
-                        onClick={() => setShowPushToGistDialog(true)}
-                        className={`${ICON_BUTTON_CLASS} disabled:opacity-50 disabled:cursor-not-allowed`}
-                        title="Push to GitHub Gist"
-                      >
-                        <Github className="w-4 h-4" />
-                      </button>
-                    )}
-                  </>
-                )}
+                <PaneActionsMenu actions={paneActions} />
               </div>
             ) : (
               <>
                 <button
                   onClick={handleCancelEdit}
-                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                  className="flex items-center gap-1 px-3 py-1.5 text-sm text-muted-foreground hover:text-foreground hover:bg-muted rounded-md transition-colors"
                   title="Cancel edit (Esc)"
                   disabled={isSaving}
                 >
@@ -737,7 +668,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                   <button
                     onClick={handleSave}
                     disabled={isSaving}
-                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="flex items-center gap-1 px-3 py-1.5 text-sm text-primary-foreground bg-primary hover:bg-primary/90 rounded-md transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                     title="Save file (Ctrl+S)"
                   >
                     {isSaving ? (
@@ -760,20 +691,20 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
 
         {/* Save Error Message */}
         {saveError && (
-          <div className="px-4 py-2 bg-red-50 dark:bg-red-900/20 border-b border-red-200 dark:border-red-800">
-            <p className="text-sm text-red-600 dark:text-red-400">{saveError}</p>
+          <div className="px-4 py-2 bg-destructive/10 border-b border-destructive/20">
+            <p className="text-sm text-destructive">{saveError}</p>
           </div>
         )}
 
         {/* Commit Message Dialog */}
         {showCommitDialog && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 w-full max-w-md">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-4">
+          <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+            <div className="bg-card rounded-md shadow-md border border-border p-6 w-full max-w-md">
+              <h3 className="text-sm font-semibold text-foreground mb-4">
                 Save File
               </h3>
               <div className="mb-4">
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                <label className="block text-sm font-medium text-foreground mb-2">
                   Commit Message (optional)
                 </label>
                 <input
@@ -789,7 +720,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                       setCommitMessage('')
                     }
                   }}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  className="w-full rounded-md border border-input bg-transparent px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
                   placeholder="Enter commit message..."
                   autoFocus
                 />
@@ -800,14 +731,14 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                     setShowCommitDialog(false)
                     setCommitMessage('')
                   }}
-                  className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-gray-100"
+                  className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={handleSaveWithCommit}
                   disabled={isSaving}
-                  className="px-4 py-2 text-sm text-white bg-blue-500 hover:bg-blue-600 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 text-sm text-primary-foreground bg-primary hover:bg-primary/90 rounded-md disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {isSaving ? 'Saving...' : 'Save'}
                 </button>
@@ -816,26 +747,50 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
           </div>
         )}
 
+        {/* Discard-changes / large-file confirmations */}
+        <ConfirmationDialog
+          isOpen={pendingConfirm !== null}
+          onClose={() => setPendingConfirm(null)}
+          onConfirm={confirmPendingAction}
+          title={pendingConfirm === 'save-large-file' ? 'Save large file?' : 'Discard changes?'}
+          message={
+            pendingConfirm === 'save-large-file'
+              ? 'This file is larger than 1MB. Continue saving?'
+              : 'You have unsaved changes. They will be lost.'
+          }
+          confirmText={pendingConfirm === 'save-large-file' ? 'Save' : 'Discard'}
+          cancelText="Cancel"
+          type="warning"
+          ignoreWorkspaceAutoCollapse
+        />
+
         {/* Scrollable Content */}
         <div className="min-h-0 flex-1 overflow-y-auto">
           {loadingFileContent ? (
             <div className="flex items-center justify-center h-full">
               <div className="text-center">
-                <div className="w-8 h-8 border-4 border-gray-300 border-t-blue-500 rounded-full animate-spin mx-auto mb-4"></div>
-                <p className="text-gray-500">Loading file content...</p>
+                <div className="w-8 h-8 border-4 border-border border-t-primary rounded-full animate-spin mx-auto mb-4"></div>
+                <p className="text-muted-foreground">Loading file content...</p>
               </div>
             </div>
           ) : (
             <>
               {fileContent.startsWith('data:image/') ? (
                 <div className="flex flex-col items-center justify-center h-full p-4">
-                  <img
-                    src={fileContent}
-                    alt="File content"
-                    className="max-w-full max-h-full object-contain rounded-lg shadow-lg"
-                    onError={(e) => console.error('❌ Image failed to load:', e)}
-                  />
-                  <p className="text-sm text-gray-500 mt-2">Image file</p>
+                  {failedImagePath === selectedFile?.path ? (
+                    <div className="rounded-md border border-border bg-muted p-8 text-center">
+                      <p className="text-sm font-medium text-foreground">Couldn't load this image</p>
+                      <p className="mt-1 text-xs text-muted-foreground">The file may be damaged. Nothing was changed.</p>
+                    </div>
+                  ) : (
+                    <img
+                      src={fileContent}
+                      alt="File content"
+                      className="max-w-full max-h-full object-contain rounded-md shadow-md"
+                      onError={() => setFailedImagePath(selectedFile?.path ?? null)}
+                    />
+                  )}
+                  <p className="text-sm text-muted-foreground mt-2">Image file</p>
                 </div>
               ) : isEditMode ? (
                 <div className="h-full overflow-hidden">
@@ -861,7 +816,7 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                   </Suspense>
                 </div>
               ) : (
-                <div className={`${variant === 'pane' && isTallSurface ? 'h-full min-h-0 ' : ''}${/\.(pdf|html?)$/i.test(selectedFile?.path || '') ? '' : 'p-6'}`}>
+                <div className={`${isTallSurface ? 'h-full min-h-0 ' : ''}${/\.(pdf|html?)$/i.test(selectedFile?.path || '') ? '' : 'p-6'}`}>
                   {(() => {
                     const filePath = selectedFile?.path?.toLowerCase() || ''
 
@@ -900,12 +855,11 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                     }
 
                     // Video files
-                    if ((filePath.endsWith('.webm') || filePath.endsWith('.mp4') || filePath.endsWith('.mov')) && videoObjectUrl) {
+                    if (isVideoPath(filePath) && videoObjectUrl) {
                       return (
-                        <div className={`${tallSurfaceClass} w-full flex items-center justify-center bg-black rounded-lg`}>
+                        <div className={`${tallSurfaceClass} w-full flex items-center justify-center bg-black rounded-md`}>
                           <video
                             controls
-                            autoPlay
                             className="max-h-full max-w-full"
                             src={videoObjectUrl}
                           />
@@ -914,12 +868,11 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                     }
 
                     // Audio files
-                    if ((filePath.endsWith('.mp3') || filePath.endsWith('.wav') || filePath.endsWith('.m4a') || filePath.endsWith('.aac') || filePath.endsWith('.ogg') || filePath.endsWith('.oga') || filePath.endsWith('.flac') || filePath.endsWith('.opus')) && audioObjectUrl) {
+                    if (isAudioPath(filePath) && audioObjectUrl) {
                       return (
-                        <div className="min-h-[260px] w-full flex items-center justify-center rounded-lg border border-gray-200 bg-gray-50 p-8 dark:border-gray-700 dark:bg-gray-900">
+                        <div className="min-h-[260px] w-full flex items-center justify-center rounded-md border border-border bg-muted p-8">
                           <audio
                             controls
-                            autoPlay
                             className="w-full max-w-3xl"
                             src={audioObjectUrl}
                           />
@@ -940,9 +893,9 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                     if (filePath.endsWith('.mmd') || filePath.endsWith('.mermaid')) {
                       return (
                         <div className="space-y-2">
-                          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
                             <span className="font-medium">Mermaid Diagram</span>
-                            <span className="text-xs bg-purple-100 dark:bg-purple-900 text-purple-800 dark:text-purple-200 px-2 py-1 rounded font-mono">
+                            <span className="text-xs bg-muted text-muted-foreground px-2 py-1 rounded font-mono">
                               {selectedFile?.path?.split('.').pop()}
                             </span>
                           </div>
@@ -952,32 +905,27 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
                     }
 
                     // Conversation log files (-conversation.json)
-                    if (selectedFile?.path && isValidJSON(fileContent)) {
-                      try {
-                        const parsed = JSON.parse(fileContent)
-                        if (isConversationJSON(selectedFile.path, parsed)) {
-                          return <ConversationRenderer content={fileContent} />
-                        }
-                      } catch { /* fall through to generic JSON */ }
+                    if (selectedFile?.path && parsedJsonContent !== undefined && isConversationJSON(selectedFile.path, parsedJsonContent)) {
+                      return <ConversationRenderer content={fileContent} />
                     }
 
                     // Check for JSON files
-                    if (selectedFile?.path?.toLowerCase().endsWith('.json') || isValidJSON(fileContent)) {
+                    if (selectedFile?.path?.toLowerCase().endsWith('.json') || parsedJsonContent !== undefined) {
                       // Check if content looks like formatted JSON (has proper indentation)
                       const isFormattedJson = fileContent.includes('{\n  ') || fileContent.includes('[\n  ')
 
                       return (
                         <div className="space-y-2">
-                          <div className="flex items-center gap-2 text-sm text-gray-600 dark:text-gray-400">
-                            <span className="font-medium">📄 JSON File</span>
+                          <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                            <span className="font-medium">JSON File</span>
                             {isFormattedJson && (
-                              <span className="text-xs bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200 px-2 py-1 rounded">
+                              <span className="text-xs bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 px-2 py-1 rounded">
                                 Formatted
                               </span>
                             )}
                           </div>
-                          <div className="bg-gray-50 dark:bg-gray-900 border border-gray-200 dark:border-gray-700 rounded-lg p-4">
-                            <pre className="text-xs font-mono text-gray-800 dark:text-gray-200 overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
+                          <div className="bg-muted border border-border rounded-md p-4">
+                            <pre className="text-xs font-mono text-foreground overflow-x-auto whitespace-pre-wrap break-words leading-relaxed">
                               {fileContent}
                             </pre>
                           </div>
@@ -1029,7 +977,6 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
             isOpen
             onClose={() => {
               setShowRevisionsModal(false)
-              setRestoreError(null)
             }}
             filepath={selectedFile?.path || ''}
             onRestoreVersion={handleRestoreVersion}
@@ -1037,46 +984,15 @@ export function FileContentViewerBody({ variant, headerAction }: { variant: 'pan
         </Suspense>
       )}
 
-      {/* Restore Error Toast */}
-      {restoreError && (
-        <div className="fixed bottom-4 right-4 bg-red-500 text-white px-4 py-3 rounded-lg shadow-lg z-50 flex items-center gap-3 max-w-md">
-          <div className="flex-1">
-            <p className="font-medium">Restore Failed</p>
-            <p className="text-sm text-red-100">{restoreError}</p>
-          </div>
-          <button
-            onClick={() => setRestoreError(null)}
-            className="text-white hover:text-red-100"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
-      )}
-
       {/* Restore Loading Overlay */}
       {isRestoring && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 flex flex-col items-center gap-4">
-            <Loader2 className="w-8 h-8 animate-spin text-blue-500" />
-            <p className="text-gray-900 dark:text-gray-100">Restoring file version...</p>
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+          <div className="bg-card rounded-md shadow-md border border-border p-6 flex flex-col items-center gap-4">
+            <Loader2 className="w-8 h-8 animate-spin text-primary" />
+            <p className="text-foreground">Restoring file version...</p>
           </div>
         </div>
       )}
     </>
-  )
-}
-
-/**
- * Full-viewport shell for surfaces that have no workspace pane to host the
- * viewer in (Video Studio). `fixed inset-0` rather than `absolute` so it
- * needs no positioned ancestor, same as the body's own nested dialogs.
- */
-export function FileContentViewerOverlay() {
-  const showFileContent = useWorkspaceStore(state => state.showFileContent)
-  if (!showFileContent) return null
-  return (
-    <div className="fixed inset-0 bg-white dark:bg-gray-900 z-40 flex flex-col">
-      <FileContentViewerBody variant="overlay" />
-    </div>
   )
 }

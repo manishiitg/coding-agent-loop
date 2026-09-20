@@ -85,18 +85,6 @@ interface WorkspaceState {
   openDeleteAllFilesDialog: (folder: PlannerFile) => void
   closeDeleteAllFilesDialog: () => void
   
-  // Move Dialog
-  moveDialog: {
-    isOpen: boolean
-    item: PlannerFile | null
-    destinationPath: string
-    commitMessage: string
-    isLoading: boolean
-  }
-  setMoveDialog: (dialog: Partial<WorkspaceState['moveDialog']>) => void
-  openMoveDialog: (item: PlannerFile) => void
-  closeMoveDialog: () => void
-  
   // Actions Dropdown
   showActionsDropdown: boolean
   setShowActionsDropdown: (show: boolean) => void
@@ -133,17 +121,12 @@ interface WorkspaceState {
   needsRefresh: boolean
   setNeedsRefresh: (needsRefresh: boolean) => void
 
-  // Dirty folders can be marked by an explicit workspace refresh request.
-  dirtyFolders: Set<string>
-  markDirtyFolder: (folder: string | null | undefined) => void
-  refreshDirtyFolders: (options?: { fallbackToFullFetch?: boolean }) => Promise<void>
-
   // Reset all state
   resetWorkspaceState: () => void
 }
 
-const DIRTY_REFRESH_DEBOUNCE_MS = 600
-let dirtyRefreshTimeout: ReturnType<typeof setTimeout> | null = null
+const WORKSPACE_REFRESH_DEBOUNCE_MS = 600
+let scheduledRefreshTimeout: ReturnType<typeof setTimeout> | null = null
 
 // Helper function to build file index for O(1) lookups
 const buildFileIndex = (files: PlannerFile[]): Map<string, PlannerFile> => {
@@ -183,96 +166,6 @@ const normalizeWorkspacePath = (path: string | null | undefined): string | null 
   return normalized || null
 }
 
-const getParentFolderPath = (path: string | null | undefined): string | null => {
-  const normalized = normalizeWorkspacePath(path)
-  if (!normalized) return null
-  const lastSlash = normalized.lastIndexOf('/')
-  return lastSlash === -1 ? null : normalized.slice(0, lastSlash)
-}
-
-const pathsOverlap = (left: string | null | undefined, right: string | null | undefined): boolean => {
-  const normalizedLeft = normalizeWorkspacePath(left)
-  const normalizedRight = normalizeWorkspacePath(right)
-
-  if (!normalizedLeft || !normalizedRight) {
-    return !normalizedLeft && !normalizedRight
-  }
-
-  return (
-    normalizedLeft === normalizedRight ||
-    normalizedLeft.startsWith(normalizedRight + '/') ||
-    normalizedRight.startsWith(normalizedLeft + '/')
-  )
-}
-
-const pruneDirtyFoldersToScope = (dirtyFolders: Set<string>, scope: string | null | undefined): Set<string> => {
-  const normalizedScope = normalizeWorkspacePath(scope)
-  if (!normalizedScope) {
-    return new Set(dirtyFolders)
-  }
-
-  return new Set(
-    Array.from(dirtyFolders).filter(folder => pathsOverlap(folder, normalizedScope))
-  )
-}
-
-const hasRelevantDirtyFolders = (dirtyFolders: Set<string>, scope: string | null | undefined): boolean => (
-  pruneDirtyFoldersToScope(dirtyFolders, scope).size > 0
-)
-
-const pruneDirtyFoldersForFetch = (
-  dirtyFolders: Set<string>,
-  refreshedFolder: string | null | undefined,
-  clearDescendants: boolean
-): Set<string> => {
-  const normalizedRefreshedFolder = normalizeWorkspacePath(refreshedFolder)
-  if (!normalizedRefreshedFolder) {
-    return new Set()
-  }
-
-  return new Set(
-    Array.from(dirtyFolders).filter(folder => {
-      if (folder === normalizedRefreshedFolder) return false
-      if (clearDescendants && folder.startsWith(normalizedRefreshedFolder + '/')) return false
-      return true
-    })
-  )
-}
-
-const isFetchAffectedByDirtyState = (fetchFolder: string | null | undefined, dirtyFolders: Set<string>): boolean => {
-  if (dirtyFolders.size === 0) return false
-
-  const normalizedFetchFolder = normalizeWorkspacePath(fetchFolder)
-  if (!normalizedFetchFolder) {
-    return true
-  }
-
-  return Array.from(dirtyFolders).some(folder => pathsOverlap(folder, normalizedFetchFolder))
-}
-
-const resolveRefreshTargetFolder = (
-  candidate: string | null | undefined,
-  state: Pick<WorkspaceState, 'activeFolder' | 'fileIndex'>
-): string | null => {
-  let current = normalizeWorkspacePath(candidate)
-  const activeFolder = normalizeWorkspacePath(state.activeFolder)
-
-  while (current) {
-    if (activeFolder && current === activeFolder) {
-      return activeFolder
-    }
-
-    const indexed = state.fileIndex.get(current)
-    if (indexed?.type === 'folder') {
-      return current
-    }
-
-    current = getParentFolderPath(current)
-  }
-
-  return activeFolder ?? null
-}
-
 const initialState = {
   files: [],
   fileIndex: new Map<string, PlannerFile>(),
@@ -308,20 +201,12 @@ const initialState = {
     folder: null,
     isLoading: false
   },
-  moveDialog: {
-    isOpen: false,
-    item: null,
-    destinationPath: '',
-    commitMessage: '',
-    isLoading: false
-  },
   showActionsDropdown: false,
   activeFolder: null,
   highlightedFile: null,
   highlightTimeout: null,
   expandedFolders: new Set<string>(),
-  needsRefresh: false,
-  dirtyFolders: new Set<string>()
+  needsRefresh: false
 }
 
 interface FileTreeCacheEntry {
@@ -415,78 +300,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
     (set, get) => ({
       ...initialState,
 
-      // Debounced smart refresh so bursts of completion/progress events trigger a single reconcile pass.
-      // This preserves the "don't fetch on every workspace event" behavior while still updating
-      // automatically without a separate user-facing toggle.
-      markDirtyFolder: (folder) => {
-        const normalizedFolder = normalizeWorkspacePath(folder)
-        if (!normalizedFolder) return
-
-        set((state) => {
-          if (state.dirtyFolders.has(normalizedFolder)) {
-            return state
-          }
-
-          const nextDirtyFolders = new Set(state.dirtyFolders)
-          nextDirtyFolders.add(normalizedFolder)
-
-          return {
-            dirtyFolders: nextDirtyFolders,
-            needsRefresh: true
-          }
-        })
-      },
-
-      refreshDirtyFolders: async (options?: { fallbackToFullFetch?: boolean }) => {
-        const state = get()
-        const activeFolder = normalizeWorkspacePath(state.activeFolder)
-        const scopedDirtyFolders = pruneDirtyFoldersToScope(state.dirtyFolders, activeFolder)
-
-        if (scopedDirtyFolders.size === 0) {
-          if (options?.fallbackToFullFetch) {
-            await get().fetchFiles(
-              state.activeFolder ?? undefined,
-              state.activeFolder ? { force: true } : { force: true, maxDepth: 2 }
-            )
-            return
-          }
-
-          set({ needsRefresh: false })
-          return
-        }
-
-        const refreshTargetByDirtyFolder = new Map<string, string>()
-        const refreshTargets = Array.from(scopedDirtyFolders)
-          .map(folder => {
-            const target = activeFolder && activeFolder.startsWith(folder + '/')
-              ? activeFolder
-              : folder
-            refreshTargetByDirtyFolder.set(folder, target)
-            return target
-          })
-          .filter((folder): folder is string => !!folder)
-          .sort((left, right) => left.split('/').length - right.split('/').length)
-
-        const uniqueTargets = Array.from(new Set(refreshTargets))
-        const targetSet = new Set(uniqueTargets)
-
-        for (const folder of uniqueTargets) {
-          await get().fetchFiles(folder, { force: true, maxDepth: 1 })
-        }
-
-        const remainingDirtyFolders = new Set(get().dirtyFolders)
-        refreshTargetByDirtyFolder.forEach((target, dirtyFolder) => {
-          if (targetSet.has(target)) {
-            remainingDirtyFolders.delete(dirtyFolder)
-          }
-        })
-
-        set({
-          dirtyFolders: remainingDirtyFolders,
-          needsRefresh: hasRelevantDirtyFolders(remainingDirtyFolders, get().activeFolder)
-        })
-      },
-      
       // File Management
       setFiles: (files) => {
         clearFileTreeCache()
@@ -631,56 +444,29 @@ export const useWorkspaceStore = create<WorkspaceState>()(
         }
       }),
       
-      // Move Dialog
-      setMoveDialog: (dialog) => set((state) => ({
-        moveDialog: { ...state.moveDialog, ...dialog }
-      })),
-      openMoveDialog: (item) => {
-        set({
-          moveDialog: {
-            isOpen: true,
-            item,
-            destinationPath: '',
-            commitMessage: '',
-            isLoading: false
-          }
-        })
-      },
-      closeMoveDialog: () => set({
-        moveDialog: {
-          isOpen: false,
-          item: null,
-          destinationPath: '',
-          commitMessage: '',
-          isLoading: false
-        }
-      }),
-      
       // Actions Dropdown
       setShowActionsDropdown: (showActionsDropdown) => set({ showActionsDropdown }),
 
-      // Stale indicator
+      // Stale indicator. Setting it also schedules one debounced full fetch,
+      // so bursts of completion/progress events reconcile automatically.
       setNeedsRefresh: (needsRefresh: boolean) => {
-        const scheduleDirtyRefresh = (fallbackToFullFetch: boolean) => {
-          if (dirtyRefreshTimeout) {
-            clearTimeout(dirtyRefreshTimeout)
-          }
-
-          dirtyRefreshTimeout = setTimeout(() => {
-            dirtyRefreshTimeout = null
-            get().refreshDirtyFolders({ fallbackToFullFetch }).catch(error => {
-              console.error('[Workspace] Failed to refresh dirty folders:', error)
-            })
-          }, DIRTY_REFRESH_DEBOUNCE_MS)
-        }
-
-        // Smart refresh is always enabled: reconcile dirty folders instead of fetching the full tree.
         if (needsRefresh) {
-          console.log('[Workspace] Smart refresh — reconciling dirty folders automatically')
           if (!get().needsRefresh) {
             set({ needsRefresh: true })
           }
-          scheduleDirtyRefresh(true)
+          if (scheduledRefreshTimeout) {
+            clearTimeout(scheduledRefreshTimeout)
+          }
+          scheduledRefreshTimeout = setTimeout(() => {
+            scheduledRefreshTimeout = null
+            const activeFolder = get().activeFolder
+            get().fetchFiles(
+              activeFolder ?? undefined,
+              activeFolder ? { force: true } : { force: true, maxDepth: 2 }
+            ).catch(() => {
+              // The banner stays up; fetchFiles surfaces the error itself.
+            })
+          }, WORKSPACE_REFRESH_DEBOUNCE_MS)
           return
         }
 
@@ -800,14 +586,10 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // When components call fetchFiles() without a folder, this prevents them from
       // accidentally fetching the entire root tree and replacing the workflow-scoped tree.
       setActiveFolder: (folder: string | null) => {
-        set((state) => {
-          const scopedDirtyFolders = pruneDirtyFoldersToScope(state.dirtyFolders, folder)
-          return {
-            activeFolder: folder,
-            error: null,
-            dirtyFolders: scopedDirtyFolders,
-            needsRefresh: hasRelevantDirtyFolders(scopedDirtyFolders, folder)
-          }
+        set({
+          activeFolder: folder,
+          error: null,
+          needsRefresh: false
         })
       },
 
@@ -822,7 +604,6 @@ export const useWorkspaceStore = create<WorkspaceState>()(
 
         const applyProcessedFiles = (processedFiles: PlannerFile[]) => {
           const currentActiveFolder = get().activeFolder
-          const nextNeedsRefresh = hasRelevantDirtyFolders(get().dirtyFolders, currentActiveFolder)
 
           if (!effectiveFolder && currentActiveFolder) {
             return
@@ -841,16 +622,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (rootNode) {
               const mergedFiles = mergeSubfolderIntoTree(get().files, effectiveFolder, rootNode)
               const index = buildFileIndex(mergedFiles)
-              set({ files: mergedFiles, fileIndex: index, needsRefresh: nextNeedsRefresh, error: null })
+              set({ files: mergedFiles, fileIndex: index, needsRefresh: false, error: null })
             }
             return
           }
 
           const index = buildFileIndex(processedFiles)
-          set({ files: processedFiles, fileIndex: index, needsRefresh: nextNeedsRefresh, error: null })
+          set({ files: processedFiles, fileIndex: index, needsRefresh: false, error: null })
         }
 
-        if (!options?.force && !isFetchAffectedByDirtyState(effectiveFolder, get().dirtyFolders)) {
+        if (!options?.force) {
           const cachedEntry = findReusableFileTreeCacheEntry(effectiveFolder, options?.maxDepth)
           if (cachedEntry) {
             applyProcessedFiles(cachedEntry.files)
@@ -887,15 +668,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               applyProcessedFiles(processedFiles)
 
               if (options?.force) {
-                const nextDirtyFolders = pruneDirtyFoldersForFetch(
-                  get().dirtyFolders,
-                  effectiveFolder,
-                  options.maxDepth === undefined
-                )
-                set({
-                  dirtyFolders: nextDirtyFolders,
-                  needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
-                })
+                set({ needsRefresh: false })
               }
             } else {
               const currentActiveFolder = get().activeFolder
@@ -910,11 +683,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
               if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
                 console.warn('[WorkspaceStore] Ignoring missing scoped subfolder during lazy-load:', effectiveFolder)
                 if (options?.force) {
-                  const nextDirtyFolders = pruneDirtyFoldersForFetch(get().dirtyFolders, effectiveFolder, false)
-                  set({
-                    dirtyFolders: nextDirtyFolders,
-                    needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
-                  })
+                  set({ needsRefresh: false })
                 }
                 return
               }
@@ -943,11 +712,7 @@ export const useWorkspaceStore = create<WorkspaceState>()(
             if (isScopedSubfolderFetch && /folder does not exist/i.test(message)) {
               console.warn('[WorkspaceStore] Ignoring missing scoped subfolder error during lazy-load:', effectiveFolder)
               if (options?.force) {
-                const nextDirtyFolders = pruneDirtyFoldersForFetch(get().dirtyFolders, effectiveFolder, false)
-                set({
-                  dirtyFolders: nextDirtyFolders,
-                  needsRefresh: hasRelevantDirtyFolders(nextDirtyFolders, get().activeFolder)
-                })
+                set({ needsRefresh: false })
               }
               return
             }
@@ -1143,17 +908,16 @@ export const useWorkspaceStore = create<WorkspaceState>()(
       // Reset all state
       resetWorkspaceState: () => {
         clearFileTreeCache()
-        if (dirtyRefreshTimeout) {
-          clearTimeout(dirtyRefreshTimeout)
-          dirtyRefreshTimeout = null
+        if (scheduledRefreshTimeout) {
+          clearTimeout(scheduledRefreshTimeout)
+          scheduledRefreshTimeout = null
         }
         set({
           ...initialState,
           fileIndex: new Map<string, PlannerFile>(),
           expandedFolders: new Set<string>(),
           highlightTimeout: null,
-          needsRefresh: false,
-          dirtyFolders: new Set<string>()
+          needsRefresh: false
         })
       }
     })

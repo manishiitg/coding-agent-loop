@@ -966,7 +966,6 @@ export function WorkSurface() {
                         projectTitle={selected.title}
                         projectIdentity={selected.identity}
                         tabId={tabId}
-                        onClose={() => setPanelOpen(false)}
                         view={workspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}

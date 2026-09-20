@@ -77,7 +77,6 @@ describe('PlannerFileList Work controls', () => {
             onFolderDelete={() => undefined}
             onRetry={() => undefined}
             expandedFolders={new Set(['my-project'])}
-            loadingChildren={new Set()}
             chatFileContext={[]}
             addFileToContext={() => undefined}
             onCreateFolder={() => undefined}

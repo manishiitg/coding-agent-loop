@@ -23,7 +23,6 @@ interface PlannerFileListProps {
   onDeleteAllFilesInFolder?: (folder: PlannerFile) => void
   onRetry: () => void
   expandedFolders: Set<string>
-  loadingChildren: Set<string>
   chatFileContext: Array<{name: string, path: string, type: 'file' | 'folder'}>
   addFileToContext: (file: {name: string, path: string, type: 'file' | 'folder'}) => void
   highlightedFile?: string | null
@@ -39,10 +38,8 @@ interface PlannerFileListProps {
   hideRootActions?: boolean
   onExportBackup?: (folderPath: string) => void
   onImportBackup?: (folderPath: string) => void
-  workflowFolderPath?: string | null
   isExporting?: boolean
   isImporting?: boolean
-  importProgress?: number
   isSelectionMode?: boolean
   selectedFiles?: Set<string>
   onToggleFileSelection?: (file: PlannerFile) => void
@@ -66,7 +63,6 @@ export default function PlannerFileList({
   onDeleteAllFilesInFolder,
   onRetry,
   expandedFolders,
-  loadingChildren,
   chatFileContext,
   addFileToContext,
   highlightedFile,
@@ -82,11 +78,8 @@ export default function PlannerFileList({
   hideRootActions = false,
   onExportBackup,
   onImportBackup,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
-  workflowFolderPath,
   isExporting = false,
   isImporting = false,
-  // importProgress = 0,
   isSelectionMode = false,
   selectedFiles = new Set(),
   onToggleFileSelection,
@@ -191,7 +184,6 @@ export default function PlannerFileList({
   // Render a single item (file or folder) with proper hierarchy
   const renderFileItem = (file: PlannerFile, depth: number = 0) => {
     const isExpanded = forceExpandFolders || expandedFolders.has(file.filepath)
-    const isLoadingChildren = loadingChildren.has(file.filepath)
     const isClickable = true // backend determines if content is viewable; binary files show error after fetch
     const fileName = file.filepath.split('/').pop() || file.filepath
     // Check both filepath (adjusted for display) and originalFilepath (original path)
@@ -208,10 +200,10 @@ export default function PlannerFileList({
         <div
           className={`
             flex h-9 items-center gap-2 p-2 rounded-md transition-colors
-            ${isSelectionMode ? 'cursor-default' : isClickable ? 'cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-800' : 'cursor-default'}
-            ${isHighlighted ? 'bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700' : ''}
-            ${isInContext ? 'bg-green-50 dark:bg-green-900/20 border-l-2 border-green-500' : ''}
-            ${isSelected && isSelectionMode ? 'bg-blue-50 dark:bg-blue-900/20' : ''}
+            ${isSelectionMode ? 'cursor-default' : isClickable ? 'cursor-pointer hover:bg-muted' : 'cursor-default'}
+            ${isHighlighted ? 'bg-primary/10 border border-primary/40' : ''}
+            ${isInContext ? 'bg-emerald-500/10 border-l-2 border-emerald-500' : ''}
+            ${isSelected && isSelectionMode ? 'bg-primary/10' : ''}
           `}
           style={{ paddingLeft: `${depth * 16 + 8}px` }}
           data-filepath={file.filepath}
@@ -236,7 +228,7 @@ export default function PlannerFileList({
                 type="checkbox"
                 checked={isSelected}
                 onChange={() => onToggleFileSelection?.(file)}
-                className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-1 focus:ring-blue-500 dark:border-gray-600 dark:bg-gray-700 cursor-pointer"
+                className="h-4 w-4 accent-primary cursor-pointer"
               />
             </div>
           )}
@@ -245,28 +237,23 @@ export default function PlannerFileList({
           <div className="flex-shrink-0">
             {file.type === 'folder' ? (
               isExpanded ? (
-                <ChevronDown className="w-4 h-4 text-blue-500" />
+                <ChevronDown className="w-4 h-4 text-muted-foreground" />
               ) : (
-                <ChevronRight className="w-4 h-4 text-blue-500" />
+                <ChevronRight className="w-4 h-4 text-muted-foreground" />
               )
             ) : file.is_image ? (
-              <Image className="w-4 h-4 text-green-600" />
+              <Image className="w-4 h-4 text-muted-foreground" />
             ) : (
-              <FileText className="w-4 h-4 text-gray-600" />
+              <FileText className="w-4 h-4 text-muted-foreground" />
             )}
           </div>
 
           {/* File Name - with reserved space for icons */}
           <div className="flex-1 min-w-0 max-w-[calc(100%-80px)]">
-            <span className="text-sm font-medium truncate block text-gray-900 dark:text-gray-100">
+            <span className="text-sm font-medium truncate block text-foreground">
               {fileName}
             </span>
           </div>
-
-          {/* Loading indicator for children */}
-          {file.type === 'folder' && isLoadingChildren && (
-            <Loader2 className="w-4 h-4 text-gray-400 animate-spin flex-shrink-0" />
-          )}
 
           {/* Action buttons container - compact space */}
           <div className="flex items-center gap-1 flex-shrink-0">
@@ -288,7 +275,7 @@ export default function PlannerFileList({
                       // Auto-scroll to the file in workspace
                       scrollToFile(file.filepath)
                     }}
-                    className="p-1 hover:bg-blue-100 dark:hover:bg-blue-900/20 rounded text-blue-500 hover:text-blue-700 dark:hover:text-blue-400"
+                    className="p-1 hover:bg-primary/10 rounded text-primary"
                   >
                     <MessageSquare className="w-3 h-3" />
                   </button>
@@ -312,7 +299,7 @@ export default function PlannerFileList({
                       aria-label={`More actions for ${fileName}`}
                       aria-expanded={isActionMenuOpen}
                       aria-haspopup="menu"
-                      className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <MoreHorizontal className="w-3 h-3" />
                     </button>
@@ -325,7 +312,7 @@ export default function PlannerFileList({
                 {/* Dropdown menu */}
                 <div
                   role="menu"
-                  className={`absolute right-0 top-full mt-1 w-32 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50 ${isActionMenuOpen ? 'block' : 'hidden'}`}
+                  className={`absolute right-0 top-full mt-1 w-32 bg-card border border-border rounded-md shadow-md z-50 ${isActionMenuOpen ? 'block' : 'hidden'}`}
                 >
                   <div className="py-1">
                     {onCreateFolder && (
@@ -335,7 +322,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onCreateFolder(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Plus className="w-3 h-3" />
                         Create Folder
@@ -348,7 +335,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onFolderUpload(file.originalFilepath || file.filepath)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Upload className="w-3 h-3" />
                         Upload File
@@ -361,7 +348,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onFolderMove(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Move className="w-3 h-3" />
                         Move
@@ -374,7 +361,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onFolderRename(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Edit2 className="w-3 h-3" />
                         Rename
@@ -383,7 +370,7 @@ export default function PlannerFileList({
                     {/* Export/Import Backup - Show for any folder */}
                     {file.type === 'folder' && onExportBackup && onImportBackup && (
                       <>
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-border my-1"></div>
                         <button
                           onClick={(e) => {
                           e.stopPropagation()
@@ -391,7 +378,7 @@ export default function PlannerFileList({
                           onExportBackup(file.originalFilepath || file.filepath)
                           }}
                           disabled={isExporting}
-                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           {isExporting ? (
                             <Loader2 className="w-3 h-3 animate-spin" />
@@ -407,7 +394,7 @@ export default function PlannerFileList({
                           onImportBackup(file.originalFilepath || file.filepath)
                           }}
                           disabled={isImporting}
-                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                          className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                           <Upload className="w-3 h-3" />
                           Import Backup
@@ -416,14 +403,14 @@ export default function PlannerFileList({
                     )}
                     {onSelectFileAndEnterSelectionMode && (
                       <>
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-border my-1"></div>
                         <button
                           onClick={(e) => {
                           e.stopPropagation()
                           setOpenActionsPath(null)
                           onSelectFileAndEnterSelectionMode(file)
                           }}
-                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                          className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                         >
                           <CheckSquare className="w-3 h-3" />
                           Select
@@ -443,10 +430,10 @@ export default function PlannerFileList({
                           }
                         })
                       }}
-                      className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                     >
                       {copiedPath === file.filepath
-                        ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600 dark:text-green-400">Copied!</span></>
+                        ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600 dark:text-emerald-400">Copied!</span></>
                         : <><Link className="w-3 h-3" />Copy Share Link</>
                       }
                     </button>
@@ -457,7 +444,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onDeleteAllFilesInFolder(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-orange-600 dark:text-orange-400 hover:bg-orange-50 dark:hover:bg-orange-900/20 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-destructive hover:bg-destructive/10 flex items-center gap-2"
                       >
                         <Trash2 className="w-3 h-3" />
                         Delete All Contents
@@ -469,7 +456,7 @@ export default function PlannerFileList({
                         setOpenActionsPath(null)
                         onFolderDelete(file)
                       }}
-                      className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                      className="w-full px-3 py-1 text-left text-xs text-destructive hover:bg-destructive/10 flex items-center gap-2"
                     >
                       <Trash2 className="w-3 h-3" />
                       Delete
@@ -492,7 +479,7 @@ export default function PlannerFileList({
                       aria-label={`More actions for ${fileName}`}
                       aria-expanded={isActionMenuOpen}
                       aria-haspopup="menu"
-                      className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 transition-colors"
+                      className="p-1 text-muted-foreground hover:text-foreground transition-colors"
                     >
                       <MoreHorizontal className="w-3 h-3" />
                     </button>
@@ -505,7 +492,7 @@ export default function PlannerFileList({
                 {/* Dropdown menu */}
                 <div
                   role="menu"
-                  className={`absolute right-0 top-full mt-1 w-40 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-md shadow-lg z-50 ${isActionMenuOpen ? 'block' : 'hidden'}`}
+                  className={`absolute right-0 top-full mt-1 w-40 bg-card border border-border rounded-md shadow-md z-50 ${isActionMenuOpen ? 'block' : 'hidden'}`}
                 >
                   <div className="py-1">
                     {onFileDownload && (
@@ -516,7 +503,7 @@ export default function PlannerFileList({
                           onFileDownload(file)
                         }}
                         disabled={downloadingFilePath === (file.originalFilepath || file.filepath)}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 disabled:cursor-wait disabled:opacity-60 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2 disabled:cursor-wait disabled:opacity-60"
                       >
                         {downloadingFilePath === (file.originalFilepath || file.filepath)
                           ? <><Loader2 className="w-3 h-3 animate-spin" />Downloading…</>
@@ -531,7 +518,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onFileMove(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Move className="w-3 h-3" />
                         Move
@@ -544,7 +531,7 @@ export default function PlannerFileList({
                           setOpenActionsPath(null)
                           onFileRename(file)
                         }}
-                        className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                        className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                       >
                         <Edit2 className="w-3 h-3" />
                         Rename
@@ -552,14 +539,14 @@ export default function PlannerFileList({
                     )}
                     {onSelectFileAndEnterSelectionMode && (
                       <>
-                        <div className="border-t border-gray-200 dark:border-gray-700 my-1"></div>
+                        <div className="border-t border-border my-1"></div>
                         <button
                           onClick={(e) => {
                           e.stopPropagation()
                           setOpenActionsPath(null)
                           onSelectFileAndEnterSelectionMode(file)
                           }}
-                          className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                          className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                         >
                           <CheckSquare className="w-3 h-3" />
                           Select
@@ -579,10 +566,10 @@ export default function PlannerFileList({
                           }
                         })
                       }}
-                      className="w-full px-3 py-1 text-left text-xs text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 flex items-center gap-2"
+                      className="w-full px-3 py-1 text-left text-xs text-foreground hover:bg-muted flex items-center gap-2"
                     >
                       {copiedPath === file.filepath
-                        ? <><Check className="w-3 h-3 text-green-500" /><span className="text-green-600 dark:text-green-400">Copied!</span></>
+                        ? <><Check className="w-3 h-3 text-emerald-500" /><span className="text-emerald-600 dark:text-emerald-400">Copied!</span></>
                         : <><Link className="w-3 h-3" />Copy Share Link</>
                       }
                     </button>
@@ -592,7 +579,7 @@ export default function PlannerFileList({
                         setOpenActionsPath(null)
                         onFileDelete(file)
                       }}
-                      className="w-full px-3 py-1 text-left text-xs text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 flex items-center gap-2"
+                      className="w-full px-3 py-1 text-left text-xs text-destructive hover:bg-destructive/10 flex items-center gap-2"
                     >
                       <Trash2 className="w-3 h-3" />
                       Delete
@@ -611,8 +598,8 @@ export default function PlannerFileList({
   if (loading) {
     return (
       <div className="flex items-center justify-center p-8">
-        <Loader2 className="w-6 h-6 animate-spin text-gray-500" />
-        <span className="ml-2 text-sm text-gray-500">Loading files...</span>
+        <Loader2 className="w-6 h-6 animate-spin text-muted-foreground" />
+        <span className="ml-2 text-sm text-muted-foreground">Loading files...</span>
       </div>
     )
   }
@@ -620,11 +607,11 @@ export default function PlannerFileList({
   if (error && files.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center">
-        <AlertCircle className="w-8 h-8 text-red-500 mb-2" />
-        <p className="text-sm text-red-600 dark:text-red-400 mb-4">{error}</p>
+        <AlertCircle className="w-8 h-8 text-destructive mb-2" />
+        <p className="text-sm text-destructive mb-4">{error}</p>
         <button
           onClick={onRetry}
-          className="px-4 py-2 text-sm bg-red-500 text-white rounded-md hover:bg-red-600 transition-colors"
+          className="px-4 py-2 text-sm bg-destructive text-destructive-foreground rounded-md hover:bg-destructive/90 transition-colors"
         >
           Retry
         </button>
@@ -635,8 +622,8 @@ export default function PlannerFileList({
   if (files.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center p-8 text-center">
-        <Folder className="w-8 h-8 text-gray-400 mb-2" />
-        <p className="text-sm text-gray-500">No files found</p>
+        <Folder className="w-8 h-8 text-muted-foreground mb-2" />
+        <p className="text-sm text-muted-foreground">No files found</p>
       </div>
     )
   }

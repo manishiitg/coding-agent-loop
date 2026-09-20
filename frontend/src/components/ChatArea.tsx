@@ -3944,6 +3944,5 @@ ChatAreaInner.displayName = 'ChatAreaInner'
 const ChatArea = ChatAreaInner
 
 ChatArea.displayName = 'ChatArea'
-ChatArea.whyDidYouRender = true
 
 export default ChatArea

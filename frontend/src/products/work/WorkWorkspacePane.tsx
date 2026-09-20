@@ -10,7 +10,6 @@ import {
   Zap,
   type LucideIcon,
 } from 'lucide-react'
-import { FileWorkspacePane } from '../../components/FileWorkspacePane'
 import { AskAIButton } from '../../components/workflow/AskAIButton'
 import { WorkspaceViewActions } from '../../components/workflow/WorkspaceViewActions'
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip'
@@ -35,6 +34,7 @@ const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const AutomationHubPanel = lazy(() => import('../../components/automation/AutomationHubPanel').then(module => ({ default: module.AutomationHubPanel })))
 const ReportView = lazy(() => import('../../components/workflow/ReportViewer').then(module => ({ default: module.ReportView })))
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
+const FileWorkspacePane = lazy(() => import('../../components/FileWorkspacePane').then(module => ({ default: module.FileWorkspacePane })))
 
 export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'identity' | 'mcp'
 
@@ -192,7 +192,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, onClose, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; onClose: () => void; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void }) {
   const openHistoryChat = useResumePreviousChat()
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
   const canonicalSessionId = useChatStore(state => Object.values(state.chatTabs).find(tab =>
@@ -217,12 +217,12 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'files' && <FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions onClose={onClose} testId="work-files-panel" headerAction={<AskAIButton
+        {view === 'files' && <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}><FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions testId="work-files-panel" headerAction={<AskAIButton
           workspacePath={workspacePath}
           message="Help me with this Crew project's files. Ask what I want to find, understand, or change."
           onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           iconOnly
-        />} />}
+        />} /></Suspense>}
         {view === 'identity' && <WorkIdentityPanel
           workspacePath={workspacePath}
           projectTitle={projectTitle}

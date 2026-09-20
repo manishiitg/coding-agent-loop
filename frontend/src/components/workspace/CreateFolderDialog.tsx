@@ -89,19 +89,19 @@ export default function CreateFolderDialog({
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl w-full max-w-md mx-4">
-        <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+      <div className="bg-card rounded-md shadow-md border border-border w-full max-w-md mx-4">
+        <div className="flex items-center justify-between border-b border-border p-4">
           <div className="flex items-center gap-2">
-            <FolderPlus className="w-5 h-5 text-blue-500" />
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-gray-100">
+            <FolderPlus className="w-5 h-5 text-primary" />
+            <h3 className="text-sm font-semibold text-foreground">
               Create New Folder
             </h3>
           </div>
           <button
             onClick={handleClose}
             disabled={isCreating}
-            className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 disabled:opacity-50"
+            className="text-muted-foreground hover:text-foreground disabled:opacity-50"
           >
             <X className="w-5 h-5" />
           </button>
@@ -109,7 +109,7 @@ export default function CreateFolderDialog({
 
         <form onSubmit={handleSubmit} className="p-4 space-y-4">
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-foreground mb-1">
               Folder Name
             </label>
             <input
@@ -118,18 +118,18 @@ export default function CreateFolderDialog({
               onChange={(e) => setFolderName(e.target.value)}
               placeholder="Enter folder name"
               disabled={isCreating}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+              className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
               autoFocus
             />
             {parentPath && (
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+              <p className="text-xs text-muted-foreground mt-1">
                 Will be created in: {parentPath}
               </p>
             )}
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+            <label className="block text-sm font-medium text-foreground mb-1">
               Commit Message (Optional)
             </label>
             <input
@@ -138,12 +138,12 @@ export default function CreateFolderDialog({
               onChange={(e) => setCommitMessage(e.target.value)}
               placeholder="Add commit message for version control"
               disabled={isCreating}
-              className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-gray-100 disabled:opacity-50"
+              className="w-full px-3 py-2 rounded-md border border-input bg-transparent text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
             />
           </div>
 
           {error && (
-            <div className="text-sm text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-md p-2">
+            <div className="text-sm text-destructive bg-destructive/10 border border-destructive/20 rounded-md p-2">
               {error}
             </div>
           )}
@@ -153,14 +153,14 @@ export default function CreateFolderDialog({
               type="button"
               onClick={handleClose}
               disabled={isCreating}
-              className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md disabled:opacity-50"
+              className="px-4 py-2 text-sm font-medium text-secondary-foreground bg-secondary hover:bg-secondary/80 rounded-md disabled:opacity-50"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={isCreating || !folderName.trim()}
-              className="px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 rounded-md disabled:opacity-50 flex items-center gap-2"
+              className="px-4 py-2 text-sm font-medium text-primary-foreground bg-primary hover:bg-primary/90 rounded-md disabled:opacity-50 flex items-center gap-2"
             >
               {isCreating ? (
                 <>

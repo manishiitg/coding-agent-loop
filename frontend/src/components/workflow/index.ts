@@ -1,7 +1,6 @@
 // Main exports
 export { WorkflowLayout } from './WorkflowLayout'
 export type { default as WorkflowLayoutType } from './WorkflowLayout'
-export { EventViewer } from './EventViewer'
 
 // Canvas components
 export { WorkflowCanvas, WorkflowToolbar } from './canvas'

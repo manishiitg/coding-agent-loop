@@ -1,5 +1,5 @@
 import { usePointerDrag } from '../../hooks/usePointerDrag'
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   AlertCircle,
   ArrowLeft,
@@ -26,7 +26,6 @@ import {
   X,
 } from 'lucide-react'
 import ChatArea, { type ChatContentRendererProps } from '../../components/ChatArea'
-import { FileWorkspacePane } from '../../components/FileWorkspacePane'
 import { TerminalEventTranscript } from '../../components/TerminalEventTranscript'
 import { ConversationMarkdownRenderer } from '../../components/ui/MarkdownRenderer'
 import { clampPanelWidth, loadStoredPanelWidth, saveStoredPanelWidth } from './panelWidth'
@@ -663,15 +662,18 @@ function DocumentsSection({ documents }: { documents: DocumentPresentation[] }) 
   )
 }
 
+const FileWorkspacePane = lazy(() => import('../../components/FileWorkspacePane').then(module => ({ default: module.FileWorkspacePane })))
+
 function FilesPanel({ project }: { project: VideoProject }) {
   return (
-    <FileWorkspacePane
-      workspacePath={project.workspacePath}
-      hiddenRootFolders={['.git', 'node_modules']}
-      title="Project files"
-      onClose={() => {}}
-      testId="video-studio-files-panel"
-    />
+    <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
+      <FileWorkspacePane
+        workspacePath={project.workspacePath}
+        hiddenRootFolders={['.git', 'node_modules']}
+        title="Project files"
+        testId="video-studio-files-panel"
+      />
+    </Suspense>
   )
 }
 

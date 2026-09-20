@@ -7,7 +7,6 @@ import { UpdateProgressToast } from "./components/UpdateProgressToast";
 import { GlobalHumanFeedbackPrompt } from "./components/GlobalHumanFeedbackPrompt";
 import { resetSessionId } from "./services/api";
 import { AuthWrapper } from "./components/AuthWrapper";
-import { isScheduledSession } from "./utils/workflowSessionKinds";
 import { activateTab } from "./utils/activateTab";
 import { Loader2 } from "lucide-react";
 import { WorkflowLayout } from "./components/workflow";
@@ -20,21 +19,19 @@ import { deploymentDefaultProductSurface, isEnabledProductSurface, intersectAllo
 import { useLLMStore } from "./stores/useLLMStore";
 import { normalizeEventViewMode, waitForChatStoreHydration, type ChatTab } from "./stores/useChatStore";
 import { useLLMDefaults } from "./hooks/useLLMDefaults";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./components/ui/tooltip";
+import { TooltipProvider } from "./components/ui/tooltip";
 import "./App.css";
 
 // Extend window interface for global functions
 declare global {
   interface Window {
     highlightFile?: (filepath: string) => void;
-    toggleAutoScroll?: () => void;
     perfDiag?: () => void;
     apiPerf?: () => void;
     apiLog?: (filter?: string) => void;
   }
 }
 
-import { copyToClipboard } from './utils/textUtils'
 import LazyModalFallback from './components/ui/LazyModalFallback'
 import { apiLogEntries, summarizeApiTimings } from './utils/apiTiming'
 import ToastHost from './components/ui/ToastHost'
@@ -134,7 +131,6 @@ function App() {
   const {
     setSelectedPresetId,
     workspaceMinimized,
-    workspaceMinimizedByMode,
     setWorkspaceMinimized,
     setWorkspaceMinimizedForLayout,
     showWorkflowsOverview,
@@ -144,7 +140,6 @@ function App() {
   } = useAppStore(useShallow(state => ({
     setSelectedPresetId: state.setSelectedPresetId,
     workspaceMinimized: state.workspaceMinimized,
-    workspaceMinimizedByMode: state.workspaceMinimizedByMode,
     setWorkspaceMinimized: state.setWorkspaceMinimized,
     setWorkspaceMinimizedForLayout: state.setWorkspaceMinimizedForLayout,
     showWorkflowsOverview: state.showWorkflowsOverview,

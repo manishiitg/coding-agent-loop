@@ -1,6 +1,6 @@
 # Crew workflow step
 
-**Status:** Proposed
+**Status:** Implemented, review changes required before deployment
 
 ## Summary
 
@@ -622,3 +622,74 @@ stop tool, and an accepted Crew delivery runs to completion on its own.
 - A crew step's run entry links to its exact Crew turn, and the execution logs
   include a crew category with the polling timeline and final response.
 - Crew projects remain persistent projects and do not gain iteration folders.
+
+## Implementation review — 2026-09-20
+
+The implementation was reviewed against this design after steps 1–10 landed.
+It is not ready to deploy until the blocking findings below are resolved.
+
+### Blocking findings
+
+1. **P0 — Current `main` does not compile.**
+   `server.go` and `live_input_durable.go` reference `DurableAck`,
+   `SupportsDurableAck`, and provider durable-await functions that are absent
+   from the pinned and locally replaced `mcpagent` dependencies. This blocks
+   the server test package and deployment. Either land and pin the dependency
+   API first or remove the incomplete integration from this release.
+
+2. **P1 — Crew-step idempotency collides across workflow executions.**
+   The delivery key is currently built from workflow ID, selected run folder,
+   and step ID. Normal executions reuse `iteration-0`, so a later execution can
+   adopt the successful Crew delivery from an earlier execution and return its
+   stale response without running the Crew. Include the workflow's immutable
+   execution ID in the delivery identity, while keeping that identity stable
+   across retries of the same step attempt.
+
+3. **P1 — Terminal success is visible before the response and usage.**
+   Crew-run persistence writes terminal `success` first, then writes the final
+   response and token usage in separate operations. A poll between those
+   writes can return a successful run with an empty response and no cost data.
+   Persist the terminal status, final response, usage, completion time, and
+   error as one atomic run-record update, or make terminal status the final
+   write after every required result field is durable.
+
+4. **P1 — A stale Crew attachment can remain readable after access is
+   revoked.** Session folder grants are created directly from the attachment's
+   stored workspace path. The run preflight validates only plans containing a
+   Crew step, and access is not rechecked when an ordinary downstream step
+   reads through the alias. Removing the Crew step while retaining the
+   attachment, or revoking access during a run, can therefore leave the Crew
+   workspace readable. Resolve and authorize attachment reads dynamically, or
+   validate every attachment before granting its root and revoke the grant as
+   soon as access changes.
+
+5. **P2 — The shared Crew-trigger mutation path does not authorize the caller
+   workflow.** The Builder tool performs this authorization before calling the
+   shared save function, but the product-webhook REST endpoint reaches the same
+   function directly. The shared mutation boundary checks only that the caller
+   workflow ID exists. It must also require the requesting user to have read
+   access to that workflow.
+
+### Required regression coverage
+
+- Run the same Crew step in two separate executions that both use
+  `iteration-0`; assert that two Crew deliveries run and return their own
+  responses.
+- Retry one step attempt with the same immutable execution identity; assert
+  that it adopts the original delivery instead of starting another.
+- Poll continuously while a Crew run finishes; assert that no terminal
+  response is observable without its final response and token usage.
+- Revoke Crew access before a run, between a Crew step and a downstream read,
+  and after removing the Crew step while retaining its attachment; every read
+  must fail closed.
+- Attempt to create an internal trigger bound to an inaccessible workflow
+  through both Builder tools and the REST endpoint; both paths must reject it.
+
+### Validation performed during review
+
+- Crew workflow, orchestrator, attachment, and workflow-type Go tests passed.
+- Frontend Crew tests passed: 11 tests across the Crew node, canvas
+  presentation, and execution-log helpers.
+- TypeScript compilation passed.
+- The server test package could not build because of the P0 dependency/API
+  mismatch above.

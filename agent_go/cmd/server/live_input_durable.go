@@ -59,28 +59,40 @@ func (api *StreamingAPI) watchLiveInputDurable(sessionID, provider, messageID, m
 	}()
 }
 
+// durableAckAwaiters binds every SupportsDurableAck provider to its typed
+// await entry point. A new durable-ack provider must add its entry here;
+// TestDurableAckDispatchCoversAckContracts fails otherwise. The zero
+// timeout selects each adapter's env-tuned budget.
+var durableAckAwaiters = map[llmproviders.Provider]func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error){
+	llmproviders.ProviderClaudeCode: func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error) {
+		return llm.AwaitClaudeInputDurable(ctx, sessionID, message, 0)
+	},
+	llmproviders.ProviderCursorCLI: func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error) {
+		return llm.AwaitCursorInputDurable(ctx, sessionID, message, 0)
+	},
+	llmproviders.ProviderCodexCLI: func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error) {
+		return llm.AwaitCodexInputDurable(ctx, sessionID, message, 0)
+	},
+	llmproviders.ProviderPiCLI: func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error) {
+		return llm.AwaitPiInputDurable(ctx, sessionID, message, 0)
+	},
+	llmproviders.ProviderMuseCLI: func(ctx context.Context, sessionID, message string) (llmtypes.DurableAck, error) {
+		return llm.AwaitMuseInputDurable(ctx, sessionID, message, 0)
+	},
+}
+
 // awaitLiveInputDurable dispatches to the provider's durable-ack entry
 // point. internalDurableAckHandler lets routing tests observe the watch
 // without a real CLI; production falls through to the typed adapter
-// await, which today exists only for providers with the contract flag.
+// await, which exists for every provider with the contract flag.
 func (api *StreamingAPI) awaitLiveInputDurable(ctx context.Context, provider llmproviders.Provider, sessionID, message string) (llmtypes.DurableAck, error) {
 	if api != nil && api.internalDurableAckHandler != nil {
 		return api.internalDurableAckHandler(ctx, provider, sessionID, message)
 	}
-	switch provider {
-	case llmproviders.ProviderClaudeCode:
-		return llm.AwaitClaudeInputDurable(ctx, sessionID, message, 0)
-	case llmproviders.ProviderCursorCLI:
-		return llm.AwaitCursorInputDurable(ctx, sessionID, message, 0)
-	case llmproviders.ProviderCodexCLI:
-		return llm.AwaitCodexInputDurable(ctx, sessionID, message, 0)
-	case llmproviders.ProviderPiCLI:
-		return llm.AwaitPiInputDurable(ctx, sessionID, message, 0)
-	case llmproviders.ProviderMuseCLI:
-		return llm.AwaitMuseInputDurable(ctx, sessionID, message, 0)
-	default:
-		return llmtypes.DurableAck{Outcome: llmtypes.DurableAckFailed}, nil
+	if await, ok := durableAckAwaiters[provider]; ok {
+		return await(ctx, sessionID, message)
 	}
+	return llmtypes.DurableAck{Outcome: llmtypes.DurableAckFailed}, nil
 }
 
 // recordLiveInputConfirmed persists the durability verdict as a session

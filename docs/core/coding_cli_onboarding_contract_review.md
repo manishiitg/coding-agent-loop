@@ -3,8 +3,9 @@
 Review date: 2026-09-20. Reviewed snapshots: AgentWorks `e5817f944`,
 `multi-llm-provider-go` `6ef98fb`, and `mcpagent` `cb3f8c6`.
 
-Status: **changes required**. This is a review and proposed consolidation plan;
-the registration refactor and findings below are not implemented by this document.
+Status: **fixes implemented 2026-09-20, pending reviewer re-verification**.
+The resolutions section at the end records what changed; the findings below are
+kept as the historical review.
 
 ## Assessment
 
@@ -160,7 +161,8 @@ per-surface transport requirement; a single default `Transport` value is not eno
 ## P0/P1 acceptance contract
 
 Use `RequiredP0CodingAgentCertificationIDs` as the current executable SDK
-inventory, with R2 tracked as an unresolved discrepancy. Do not infer a release
+inventory; R2 is resolved (priority and requirement now derive from one proof
+definition — see resolutions). Do not infer a release
 pass from the existence of certification records: records identify tests, while
 successful live runs supply evidence.
 
@@ -458,3 +460,102 @@ authenticated P0/P1 tests; a synthetic provider only certifies the plumbing.
 - No authenticated CLI runs, full suites, or production code changes. The
   mcpagent working tree remained clean. This follow-up is recorded here to keep
   the onboarding review combined rather than duplicating it in both repositories.
+
+## Resolutions — 2026-09-20
+
+All five findings are fixed. Each fix was written failing-first where a
+regression test applies, then verified with the owning repo's gates.
+
+### R1 — resolved: release matrix derives from the SDK registry
+
+- `SDK/cmd/coding-agent-p0-tests/main.go` gained `-list-providers`, printing
+  `<provider> <package>` lines from the new `CodingAgentP0ReleaseMatrix()`
+  registry query (provider set, test package, and proof selection all derive
+  from registered P0 proofs).
+- `scripts/run-coding-cli-p0.sh` resolves the matrix once, expands `all` from
+  it, replaces the five-branch provider switch with a registry lookup (Codex
+  keeps its per-test-process isolation), labels explicit subset runs as
+  partial evidence, and exits 2 on an unknown provider.
+- `.github/workflows/coding-cli-p0.yml` passes `all` through and runs the new
+  `TestCodingAgentP0ReleaseMatrix`, which asserts the default release matrix
+  equals the active release-provider set.
+- Verified: `go run ./cmd/coding-agent-p0-tests -list-providers` prints all
+  five providers including `muse-cli`; `bash -n` clean; SDK root suite green.
+  Missing authentication still fails the selected provider's certification
+  rather than removing it from the matrix (unchanged fail-closed behavior).
+
+### R2 — resolved: one proof definition drives priority and requirement
+
+- `SDK/coding_agent_certification.go` now keeps one shared proof list per
+  capability (e.g. `structuredStreamingCertificationIDs` holds both
+  `structured_streaming` and `stream_no_history_replay`), spread by
+  `RequiredP0CodingAgentCertificationIDs`; `CodingAgentCertificationPriorityForID`
+  derives priority from requirement (P0 exactly when some active contract
+  requires the ID), so the two can never contradict again.
+- `stream_no_history_replay` is P0 and required for every streaming
+  provider; the tolerated-gap allowances for Claude, Codex, Cursor, and Pi
+  are removed from `SDK/coding_agent_contract_test.go`. Muse is
+  non-streaming, so the capability predicate excludes it without a named
+  exception.
+- Real restart-spanning evidence exists per streaming provider as live
+  no-replay tests (real CLI turn commits real history, then a
+  freshly-computed restart offset must not re-read it):
+  `TestClaudeTranscriptStreamNoHistoryReplayLive` and
+  `TestCodexTranscriptStreamNoHistoryReplayLive` **passed live**;
+  `TestCursorTranscriptStreamNoHistoryReplayLive` is blocked on Cursor usage
+  limits in this environment; `TestPiMarkerStreamNoHistoryReplayLive` cannot
+  run here because the `pi` CLI is not installed and no provider key is
+  configured. Both pending cases are registered P0 proofs, so the release
+  runner and `TestCodingAgentCertificationReferencesExistingTests` enforce
+  them wherever credentials exist — nothing was relabeled as passed.
+
+### R3 — resolved, with a noted deferral
+
+- `Agent/agent/coding_agent_integrations.go` routes launch through
+  `applyCodingAgentIntegrationOptions`, which rejects a bridge-required
+  provider with no registered binding before launch instead of starting it
+  without orchestration context (`Agent/agent/llm_generation.go` call site).
+- `TestCodingAgentIntegrationAppenderCoverage` now checks both directions,
+  plus `TestApplyCodingAgentIntegrationOptionsRejectsMissingBinding` and
+  `TestCodingAgentNativeSessionBindingsCoverResumeContracts` (native
+  resume claims require getter/setter bindings).
+- Extended to durable ACK per the required change and follow-up gap 3:
+  `agent_go/cmd/server/live_input_durable.go` dispatches through the
+  `durableAckAwaiters` table with
+  `TestDurableAckDispatchCoversAckContracts` binding every
+  `SupportsDurableAck` contract to an entry.
+- Deferred: retained progress/final reads and transcript-reader dispatch
+  remain handwritten per-provider without a bidirectional guard; persistent
+  lifecycle keeps its existing
+  `TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts` coverage.
+- Verified: `go vet` clean; full `mcpagent/agent` and `mcpagent/llm` suites
+  green; builder `cmd/server` live-input tests green.
+
+### R4 — resolved: provider identity validated before handle mutation
+
+- `Agent/agent/session_handle.go` rejects a handle naming another provider
+  before any agent state mutation (case-insensitive; empty-provider
+  session-only restores keep the legacy path; same-provider model changes
+  still succeed) and returns an explicit accepted/rejected outcome through
+  `applyAgentSessionHandle` and `ApplyAgentResumeHandle`
+  (`Agent/agent/runtime_services.go`), so callers replay history on rejection
+  (`Agent/agent/definition.go` documents the fallback).
+- `Agent/agent/session_handle_provider_test.go` permanently covers empty,
+  named, and normalized-global connections, cross-provider rejection with no
+  partial mutation of owner/cwd/native IDs, same-provider model changes, and
+  case-insensitive matching.
+- Verified: the review's foreign-native-ID reproduction now rejects; full
+  `mcpagent/agent` and `mcpagent/llm` suites green; `go vet` clean.
+
+### R5 — resolved: shared helper binds Muse owner cleanup
+
+- The `internal/agentsession` construction path is retained and fixed:
+  `agent_go/internal/agentsession/agentsession.go` dispatches owner close
+  through the `interactiveOwnerClosers` table, which now includes the
+  previously missing Muse binding (`CloseMuseCLIInteractiveSessionForOwner`).
+- `agent_go/internal/agentsession/owner_close_test.go` requires a binding
+  for every persistent tmux provider and proves actual per-provider dispatch
+  with an injected recorder.
+- Verified: `internal/agentsession` suite green. No production call sites of
+  this helper exist yet, so it remains latent — but it can no longer diverge
+  silently from the persistent-provider set.

@@ -216,6 +216,26 @@ func TestWatchLiveInputDurableMapsAwaitErrorToFailed(t *testing.T) {
 	}
 }
 
+func TestDurableAckDispatchCoversAckContracts(t *testing.T) {
+	// Every SupportsDurableAck contract must have a dispatch entry: the
+	// watch only runs for flag-holders, so a missing entry would
+	// silently report failed for a provider that proves durability.
+	for _, contract := range llmproviders.CodingAgentProviderContracts() {
+		if !contract.SupportsDurableAck {
+			continue
+		}
+		if _, ok := durableAckAwaiters[contract.Provider]; !ok {
+			t.Errorf("contract claims durable ack for %s but no dispatch entry is registered", contract.Provider)
+		}
+	}
+	for provider := range durableAckAwaiters {
+		contract, ok := llmproviders.GetCodingAgentProviderContract(provider, "")
+		if !ok || !contract.SupportsDurableAck {
+			t.Errorf("dispatch entry %s has no durable-ack contract", provider)
+		}
+	}
+}
+
 func TestWatchLiveInputDurablePassesThroughUnflushed(t *testing.T) {
 	store := internalevents.NewEventStore(10)
 	defer store.Stop()

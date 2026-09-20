@@ -76,7 +76,7 @@ jobs:
         working-directory: coding-agent-loop
         run: >-
           go -C ../multi-llm-provider-go test .
-          -run 'TestActiveCodingAgentProvidersSatisfyP0Contract|TestCodingAgentCertificationReferencesExistingTests'
+          -run 'TestActiveCodingAgentProvidersSatisfyP0Contract|TestCodingAgentCertificationReferencesExistingTests|TestCodingAgentP0ReleaseMatrix'
           -count=1
 
       - name: Verify provider cleanup and terminal metadata contracts
@@ -202,7 +202,7 @@ jobs:
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
         run: >-
           ./scripts/run-coding-cli-p0.sh
-          --providers "${{ github.event_name == 'workflow_dispatch' && inputs.providers != 'all' && inputs.providers || 'claude-code,codex-cli,cursor-cli,pi-cli' }}"
+          --providers "${{ github.event_name == 'workflow_dispatch' && inputs.providers != 'all' && inputs.providers || 'all' }}"
           --server-url "${{ vars.CODING_CLI_P0_SERVER_URL || 'http://localhost:18743' }}"
           --workspace-api "${{ vars.CODING_CLI_P0_WORKSPACE_API_URL || 'http://127.0.0.1:18744' }}"
           --workspace-docs "${{ vars.CODING_CLI_P0_WORKSPACE_DOCS_PATH || format('{0}/coding-agent-loop/workspace-docs', github.workspace) }}"

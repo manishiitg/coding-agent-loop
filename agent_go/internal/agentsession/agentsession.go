@@ -613,17 +613,22 @@ func closeOtherInteractiveSessions(keepSessionID string) {
 	}
 }
 
+// interactiveOwnerClosers binds every persistent provider to its
+// owner-scoped close. A provider missing here would silently skip its
+// close while the caller already dropped its bookkeeping; the package
+// variable keeps the binding injectable for dispatch tests.
+var interactiveOwnerClosers = map[llm.Provider]func(id, reason string){
+	llm.ProviderClaudeCode: llmproviders.CloseClaudeCodeInteractiveSessionForOwner,
+	llm.ProviderCodexCLI:   llmproviders.CloseCodexCLIInteractiveSessionForOwner,
+	llm.ProviderCursorCLI:  llmproviders.CloseCursorCLIInteractiveSessionForOwner,
+	llm.ProviderPiCLI:      llmproviders.ClosePiCLIInteractiveSessionForOwner,
+	llm.ProviderMuseCLI:    llmproviders.CloseMuseCLIInteractiveSessionForOwner,
+}
+
 // closeInteractiveOwner dispatches to the provider-specific owner-scoped close.
 func closeInteractiveOwner(id string, p llm.Provider, reason string) {
-	switch p {
-	case llm.ProviderClaudeCode:
-		llmproviders.CloseClaudeCodeInteractiveSessionForOwner(id, reason)
-	case llm.ProviderCodexCLI:
-		llmproviders.CloseCodexCLIInteractiveSessionForOwner(id, reason)
-	case llm.ProviderCursorCLI:
-		llmproviders.CloseCursorCLIInteractiveSessionForOwner(id, reason)
-	case llm.ProviderPiCLI:
-		llmproviders.ClosePiCLIInteractiveSessionForOwner(id, reason)
+	if close, ok := interactiveOwnerClosers[p]; ok {
+		close(id, reason)
 	}
 }
 

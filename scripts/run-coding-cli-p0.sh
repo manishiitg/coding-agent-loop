@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MULTI_LLM_DIR="$(cd "$ROOT_DIR/../multi-llm-provider-go" && pwd)"
 MCPAGENT_DIR="$(cd "$ROOT_DIR/../mcpagent" && pwd)"
-PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
+PROVIDERS="all"
 SERVER_URL="http://localhost:18743"
 WORKSPACE_API_URL="http://127.0.0.1:18744"
 WORKSPACE_DOCS="$ROOT_DIR/workspace-docs"
@@ -95,8 +95,21 @@ if [[ -z "${MCP_API_TOKEN:-}" ]]; then
   exit 1
 fi
 
+# Resolve the release matrix once from the SDK registry: provider set and test
+# packages both derive from registered P0 proofs, so onboarding a provider
+# cannot silently skip it. A resolution failure aborts the run loudly.
+P0_MATRIX="$(go -C "$MULTI_LLM_DIR" run ./cmd/coding-agent-p0-tests -list-providers)"
+p0_full_providers() { printf '%s\n' "$P0_MATRIX" | cut -d' ' -f1 | paste -sd, -; }
+p0_package_for_provider() { printf '%s\n' "$P0_MATRIX" | awk -v provider="$1" '$1 == provider { print $2 }'; }
+
 if [[ "$(printf '%s' "$PROVIDERS" | tr '[:upper:]' '[:lower:]')" == "all" ]]; then
-  PROVIDERS="claude-code,codex-cli,cursor-cli,pi-cli,muse-cli"
+  PROVIDERS="$(p0_full_providers)"
+fi
+
+# Label explicit subset runs as partial evidence.
+full_providers="$(p0_full_providers)"
+if [[ "$(printf '%s' "$PROVIDERS" | tr ',' '\n' | sort | paste -sd, -)" != "$(printf '%s' "$full_providers" | tr ',' '\n' | sort | paste -sd, -)" ]]; then
+  echo "Partial P0 provider selection: $PROVIDERS (full release set: $full_providers)"
 fi
 
 for endpoint in "$SERVER_URL" "$WORKSPACE_API_URL"; do
@@ -134,11 +147,10 @@ run_required_go_tests() {
 
 # Fail before launching CLIs if any registered live P0 test moved outside its
 # provider package or cannot be selected by the runner.
-p0_test_regex claude-code pkg/adapters/claudecode >/dev/null
-p0_test_regex codex-cli pkg/adapters/codexcli >/dev/null
-p0_test_regex cursor-cli pkg/adapters/cursorcli >/dev/null
-p0_test_regex pi-cli pkg/adapters/picli >/dev/null
-p0_test_regex muse-cli pkg/adapters/musecli >/dev/null
+while IFS=' ' read -r preflight_provider preflight_package || [[ -n "$preflight_provider" ]]; do
+  [[ -z "$preflight_provider" ]] && continue
+  p0_test_regex "$preflight_provider" "$preflight_package" >/dev/null
+done <<< "$P0_MATRIX"
 
 # IC-12 is provider-neutral and credential-free. Run it before spending any
 # live-provider capacity so a missing turn ID or duplicate/missing canonical
@@ -167,45 +179,27 @@ run_required_go_tests go -C "$ROOT_DIR/agent_go" test -json ./cmd/server \
 IFS=',' read -r -a provider_list <<< "$PROVIDERS"
 for raw_provider in "${provider_list[@]}"; do
   provider="$(printf '%s' "$raw_provider" | tr '[:upper:]' '[:lower:]' | xargs)"
-  case "$provider" in
-    claude-code)
-      test_regex="$(p0_test_regex "$provider" pkg/adapters/claudecode)"
-      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/claudecode \
-        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
-      ;;
-    codex-cli)
-      test_regex="$(p0_test_regex "$provider" pkg/adapters/codexcli)"
-      # Codex P0 cases own global tmux/session cleanup. Keep each live case in
-      # its own Go process so cleanup from a completed test cannot corrupt or
-      # tear down state belonging to the next one. This also gives each failed
-      # contract an exact receipt instead of losing it in a package crash.
-      while IFS= read -r test_name; do
-        [[ -n "$test_name" ]] || continue
-        run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/codexcli \
-          -run "^${test_name}$" -count=1 -timeout=8m -args -coding-cli-p0-live
-      done < <(printf '%s\n' "$test_regex" | sed -e 's/^\^(//' -e 's/)\$$//' -e 's/|/\
+  package="$(p0_package_for_provider "$provider")"
+  if [[ -z "$package" ]]; then
+    echo "Unknown coding CLI P0 provider: $provider" >&2
+    exit 2
+  fi
+  test_regex="$(p0_test_regex "$provider" "$package")"
+  if [[ "$provider" == "codex-cli" ]]; then
+    # Codex P0 cases own global tmux/session cleanup. Keep each live case in
+    # its own Go process so cleanup from a completed test cannot corrupt or
+    # tear down state belonging to the next one. This also gives each failed
+    # contract an exact receipt instead of losing it in a package crash.
+    while IFS= read -r test_name; do
+      [[ -n "$test_name" ]] || continue
+      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json "./$package" \
+        -run "^${test_name}$" -count=1 -timeout=8m -args -coding-cli-p0-live
+    done < <(printf '%s\n' "$test_regex" | sed -e 's/^\^(//' -e 's/)\$$//' -e 's/|/\
 /g')
-      ;;
-    cursor-cli)
-      test_regex="$(p0_test_regex "$provider" pkg/adapters/cursorcli)"
-      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/cursorcli \
-        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
-      ;;
-    pi-cli)
-      test_regex="$(p0_test_regex "$provider" pkg/adapters/picli)"
-      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/picli \
-        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
-      ;;
-    muse-cli)
-      test_regex="$(p0_test_regex "$provider" pkg/adapters/musecli)"
-      run_required_go_tests go -C "$MULTI_LLM_DIR" test -json ./pkg/adapters/musecli \
-        -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
-      ;;
-    *)
-      echo "Unknown coding CLI P0 provider: $provider" >&2
-      exit 2
-      ;;
-  esac
+  else
+    run_required_go_tests go -C "$MULTI_LLM_DIR" test -json "./$package" \
+      -run "$test_regex" -count=1 -timeout=35m -args -coding-cli-p0-live
+  fi
 
   # The release-blocking application contract must exercise the CLI with the
   # real MCP agent bridge active. This launches a plan step, performs a bridge

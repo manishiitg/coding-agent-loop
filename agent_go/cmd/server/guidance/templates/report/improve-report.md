@@ -62,10 +62,8 @@ correctly. The parent applying a fix can load
 `builder-reference/references/reporting-policy.md` for examples.
 
 Check meaning rather than just appearance: configured goal targets and freshness
-must be preserved; evaluations keep each criterion and distinguish captured zero,
-missing score and skipped evaluation; cost total/activity are all-time while
+must be preserved; cost total/activity are all-time while
 model/daily breakdowns and window_total_usd cover the selected UTC window.
-Evaluation history is bounded to 200 results, so its run count is not all-time.
 A useful Dashboard may include only some widgets; their absence alone is not a defect
 when the reader's questions are already answered accurately.
 
@@ -147,14 +145,14 @@ queries through `query_workflow_db` (schema from `sqlite_master` plus bounded
 Show proposed changes concretely with before/after HTML or plan intent. Do not edit files or ask the user from the reviewer.
 
 Recommend safe, local Dashboard-only changes such as:
-- adding a clearer goal-tracking/status band from existing `soul.md`, eval, Pulse, cost/time, workflow, or db data
+- adding a clearer goal-tracking/status band from existing `soul.md`, Pulse, cost/time, workflow, or db data
 - adding the required plain-language activity/actions section (see `design-reporting-ui`/`reporting-policy`) when it is missing or stale
 - reordering sections so goal verdicts/issues come before detailed tables
 - fixing static/stale values to live `window.report` reads
 - fixing bad SQL, missing tabs, broken theme handling, responsive overflow, or low-contrast styling
 - adding explicit empty/error states when evidence is missing
 
-Mark a recommendation as requiring user judgment when it needs new workflow data, a new plan step, evaluation redesign, business meaning, or a broad visual rewrite.
+Mark a recommendation as requiring user judgment when it needs new workflow data, a new plan step, business meaning, or a broad visual rewrite.
 
 When you finish, return to the Pulse Fixer:
 - flag activity views that discard `route_summaries_json`, merge same-named

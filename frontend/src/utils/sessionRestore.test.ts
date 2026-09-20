@@ -41,7 +41,8 @@ vi.mock('../services/api', () => ({
   },
 }))
 
-import { conversationToRestoredEvents, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from './sessionRestore'
+import { appendTimelineAndApplyConfirmations, conversationToRestoredEvents, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from './sessionRestore'
+import { readLiveInputConfirmation } from './liveInputReceipt'
 import { buildCleanConversationItems } from './cleanConversation'
 
 describe('hydrateTabEvents restored chat fallback', () => {
@@ -823,7 +824,10 @@ describe('hydrateTabEvents live-input durability receipts', () => {
   })
 
   it('upgrades merged rows on the existing-tab append path', async () => {
-    mocks.getTabEvents.mockReturnValue([liveUserRow()])
+    const stored: any[] = [liveUserRow()]
+    mocks.getTabEvents.mockImplementation(() => [...stored])
+    mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
+    mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [confirmedWireEvent()],
       last_processed_index: 1,
@@ -835,7 +839,7 @@ describe('hydrateTabEvents live-input durability receipts', () => {
     const appended = [...mocks.addTabEvents.mock.calls, ...mocks._addTabEventsImmediate.mock.calls]
       .map(([, events]) => events).flat()
     expect(appended.some(event => event?.type === 'live_input_confirmed')).toBe(false)
-    const row = storedRows().find(event => event?.type === 'user_message')
+    const row = stored.find(event => event?.type === 'user_message')
     expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
   })
 
@@ -848,7 +852,10 @@ describe('hydrateTabEvents live-input durability receipts', () => {
       timestamp: '2026-09-20T09:36:50.000+05:30',
       data: { data: { content: 'ok dont run workflow' } },
     }
-    mocks.getTabEvents.mockReturnValue([durableRow])
+    const stored: any[] = [durableRow]
+    mocks.getTabEvents.mockImplementation(() => [...stored])
+    mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
+    mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
     mocks.getRecentSessionEvents.mockResolvedValue({
       events: [liveUserRow(), confirmedWireEvent()],
       last_processed_index: 2,
@@ -857,8 +864,51 @@ describe('hydrateTabEvents live-input durability receipts', () => {
 
     await hydrateTabEvents('restore-receipts', { fallbackToChatHistory: true })
 
-    const row = storedRows().find(event => event?.id === 'durable-user-1')
+    const row = stored.find(event => event?.id === 'durable-user-1')
     expect(row?.data?.data?.metadata?.message_id).toBe(steerMessageId)
     expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
+  })
+
+  describe('appendTimelineAndApplyConfirmations ordering (P2)', () => {
+    const useLiveStore = (seed: any[] = []) => {
+      const stored: any[] = [...seed]
+      mocks.getTabEvents.mockImplementation(() => [...stored])
+      mocks._addTabEventsImmediate.mockImplementation((_sid: string, events: any[]) => { stored.push(...events) })
+      mocks.setTabEvents.mockImplementation((_sid: string, events: any[]) => { stored.length = 0; stored.push(...events) })
+      return stored
+    }
+    const parsedReceipt = () => {
+      const update = readLiveInputConfirmation(confirmedWireEvent())
+      expect(update).not.toBeNull()
+      return [update!]
+    }
+
+    it('upgrades a row arriving in the same window as its receipt', () => {
+      const stored = useLiveStore()
+
+      appendTimelineAndApplyConfirmations('p2-window', [liveUserRow()], parsedReceipt())
+
+      expect(stored.some(event => event?.type === 'live_input_confirmed')).toBe(false)
+      const row = stored.find(event => event?.type === 'user_message')
+      expect(row?.data?.data?.metadata?.confirmation).toBe('confirmed')
+      expect(row?.data?.data?.metadata?.proof_source).toBe('/tmp/session.jsonl')
+    })
+
+    it('upgrades a stored row when the window carries only the receipt', () => {
+      const stored = useLiveStore([liveUserRow()])
+
+      appendTimelineAndApplyConfirmations('p2-window', [], parsedReceipt())
+
+      expect(stored).toHaveLength(1)
+      expect(stored[0]?.data?.data?.metadata?.confirmation).toBe('confirmed')
+    })
+
+    it('stores nothing when neither rows nor a match exist', () => {
+      const stored = useLiveStore()
+
+      appendTimelineAndApplyConfirmations('p2-window', [], parsedReceipt())
+
+      expect(stored).toHaveLength(0)
+    })
   })
 })

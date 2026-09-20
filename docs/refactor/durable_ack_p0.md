@@ -533,6 +533,69 @@ timestamp-only). 3 new tests in
 `TerminalEventTranscript.deliveryTick.test.tsx` (failed
 pre-fix); focused suites 50/50 green, `tsc -b` + eslint clean.
 
+## Review P1/P2 resolutions (2026-09-20)
+
+Fixes for the two "changes required" findings in "Implementation
+review" above.
+
+### P1: FIFO-take receipts (SDK, all five adapters)
+
+Each adapter gained `take<Provider>DurableReceipt`: same match
+rule as peek, but atomically removes the earliest match under
+the session/pool lock. All 7 production peek sites now take
+(codex/pi: inline arbiter + Await; Claude/cursor/Muse: Await;
+the Muse inline arbiter already takes its baseline as a send-
+path parameter, so it never had the bug). `peek` stays for
+introspection and existing tests.
+
+Why take is safe: sends are broker-serialized per session, the
+inline arbiter runs inside the send (strictly ordered takes),
+and watchers take in spawn order under the lock — takes match
+sends FIFO. Arbiter and watcher are mutually exclusive per
+send (pane-failure path vs fast-ack path), so exactly one of
+them takes each receipt; the fallback for a missing receipt is
+unchanged.
+
+Regression test per provider (`TestTake*FIFORepeat`): stash
+identical text twice with distinct baselines, assert FIFO take
+order + third take empty, then prove with the adapter's own
+matcher and fixtures that the first row satisfies the first
+baseline but cannot satisfy the second. Deterministic, no
+sleeps. This implements the P0 contract bullet "Never confirm
+repeated identical text using an older send's receipt."
+
+### P2: append-then-apply in the live path (frontend)
+
+`processEventsResponse` applied receipts to the store before
+appending its own window, so a same-window row+receipt pair
+(reconnect replay) lost the verdict. New shared helper
+`appendTimelineAndApplyConfirmations` (sessionRestore.ts):
+synchronous append, then apply against the merged store.
+The live path calls it for receipt windows; the hot path stays
+micro-batched; receipt-only windows and the `!finalTab` early
+return still consume receipts against stored rows (control
+flow otherwise unchanged). `appendRestoredLiveTail` delegates
+to the same helper, so live and restore share one ordering.
+
+Regression tests: 3 helper tests at the seam (same-window
+upgrade, receipt-only upgrade, no-op without a match) using
+the real wire shape + parser. No ChatArea mount harness
+exists in the repo, so the one-line wiring (live path calls
+the helper) is covered by inspection, not a mount test.
+
+Out of scope, deliberately: the background-workflow poll
+appends raw windows to non-visible tabs, but opening a tab
+runs restore (which now consumes receipts), so any receipt
+there self-heals and the hot poll path stays untouched.
+
+Verification: new Go tests 5/5 green, incl. a `-race` pass
+over receipt stash/peek/take tests in all five adapters;
+codex/claude/cursor suites green; pi's wedged-process test
+flakes under load (passes serially, shares nothing with this
+diff); muse's MCP exec-lane failure reproduces on the
+pristine tree (pre-existing). Frontend focused suites green,
+`tsc -b` + eslint clean.
+
 ## Implementation review (2026-09-20)
 
 Reviewed against:

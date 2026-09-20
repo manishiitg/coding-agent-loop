@@ -37,7 +37,7 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
 import type { CustomPreset } from '../types/preset'
-import { conversationToRestoredEvents, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
+import { appendTimelineAndApplyConfirmations, conversationToRestoredEvents, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
 import { secretsApi } from '../api/secrets'
 import { useSecretsStore } from '../stores'
@@ -1718,12 +1718,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     let eventsBeforeFilter = response.events as PollingEvent[]
     // Durability receipts upgrade rows in place and never enter the
     // timeline: a live_input_confirmed event carries no chat content,
-    // only the verdict for the user_message row it names. Handling it
-    // here (rather than in the SSE branch alone) also covers polling
-    // fallback, reconnect replay, and durable restore uniformly.
+    // only the verdict for the user_message row it names. Receipts are
+    // filtered here but applied after the append below: a window can
+    // carry a user_message and its own receipt together (reconnect
+    // replay), and the row must exist before the verdict can match it.
     const confirmations = eventsBeforeFilter.map(readLiveInputConfirmation).filter((u): u is NonNullable<typeof u> => u !== null)
     if (confirmations.length > 0) {
       eventsBeforeFilter = eventsBeforeFilter.filter(e => e.type !== 'live_input_confirmed')
+    }
+    // Consumes this window's receipts against the stored rows. Used only
+    // when the append below is skipped (receipt-only window, vanished
+    // tab); appended windows go through the shared helper instead.
+    const applyConfirmationsToStore = () => {
+      if (confirmations.length === 0) return
       let upgraded = chatStore.getTabEvents(actualSessionId)
       for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
       chatStore.setTabEvents(actualSessionId, upgraded)
@@ -2059,8 +2066,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // auto-notifications) are still gated on isActivePresetTab above.
     if (tab && newEvents.length > 0) {
       const finalTab = chatStore.getTab(tab.tabId)
-      if (!finalTab) return
-      addTabEvents(actualSessionId, newEvents)
+      if (!finalTab) {
+        applyConfirmationsToStore()
+        return
+      }
+      // Receipt windows take the synchronous append+apply helper so a
+      // verdict matches rows it arrived with; the hot path stays
+      // micro-batched exactly as before.
+      if (confirmations.length > 0) appendTimelineAndApplyConfirmations(actualSessionId, newEvents, confirmations)
+      else addTabEvents(actualSessionId, newEvents)
+    } else {
+      applyConfirmationsToStore()
     }
 
     // A retained CLI can accept a second message while it is still answering

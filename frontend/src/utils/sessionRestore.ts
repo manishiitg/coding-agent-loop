@@ -7,6 +7,7 @@ import type { ChatHistoryConversation, PollingEvent } from '../services/api-type
 import type { ChatHistorySession } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
 import { applyLiveInputConfirmation, resolveLiveInputConfirmations, splitLiveInputConfirmations, stampLiveInputIdentity, withDeliveryConfirmation } from './liveInputReceipt'
+import type { LiveInputConfirmationUpdate } from './liveInputReceipt'
 import axios from 'axios'
 
 const TAG = '[SessionRestore]'
@@ -319,12 +320,25 @@ function isAcceptedOptimisticLiveInput(event: PollingEvent): boolean {
     && ACCEPTED_LIVE_INPUT_STATUSES.has(String(metadata.delivery_status || ''))
 }
 
+// appendTimelineAndApplyConfirmations lands a timeline window and consumes
+// its durability receipts in one ordering: rows first, verdicts second,
+// against the merged store. The synchronous append keeps row visibility
+// immediate so a receipt in this same window matches a row it arrived
+// with — the live path and restore share this helper rather than
+// maintaining two ingestion orderings.
+export function appendTimelineAndApplyConfirmations(sessionId: string, timelineEvents: PollingEvent[], confirmations: LiveInputConfirmationUpdate[]) {
+  const chatStore = useChatStore.getState()
+  if (timelineEvents.length > 0) chatStore._addTabEventsImmediate(sessionId, timelineEvents)
+  if (confirmations.length === 0) return
+  let upgraded = chatStore.getTabEvents(sessionId)
+  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
+  chatStore.setTabEvents(sessionId, upgraded)
+}
+
 // appendRestoredLiveTail appends a raw live-tail window the same way the live
 // path ingests it: durability receipts never enter the timeline and upgrade
-// the merged rows they name. A receipt-only window appends nothing. The
-// immediate append keeps row visibility synchronous so a receipt in this
-// same window can match a row it arrived with; without receipts the call
-// stays on the micro-batched path exactly as before.
+// the merged rows they name. A receipt-only window appends nothing. Without
+// receipts the call stays on the micro-batched path exactly as before.
 export function appendRestoredLiveTail(sessionId: string, incoming: ReadonlyArray<PollingEvent>) {
   const chatStore = useChatStore.getState()
   const { timelineEvents, confirmations } = splitLiveInputConfirmations(incoming)
@@ -333,9 +347,11 @@ export function appendRestoredLiveTail(sessionId: string, incoming: ReadonlyArra
     return
   }
   if (timelineEvents.length > 0) chatStore._addTabEventsImmediate(sessionId, timelineEvents)
-  let upgraded = transferLiveTailInputIdentity(chatStore.getTabEvents(sessionId), timelineEvents)
-  for (const update of confirmations) upgraded = applyLiveInputConfirmation(upgraded, update)
-  chatStore.setTabEvents(sessionId, upgraded)
+  // Identity-transfer against the merged rows first, then the shared
+  // append+apply consumes the receipts (with an empty remainder: this
+  // window's rows already landed above).
+  chatStore.setTabEvents(sessionId, transferLiveTailInputIdentity(chatStore.getTabEvents(sessionId), timelineEvents))
+  appendTimelineAndApplyConfirmations(sessionId, [], confirmations)
 }
 
 // transferLiveTailInputIdentity copies live-input identity (message_id and

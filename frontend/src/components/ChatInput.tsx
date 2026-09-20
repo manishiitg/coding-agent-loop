@@ -156,10 +156,6 @@ interface ChatInputProps {
   // Optional tab scope for embedded chat panes, such as WorkflowLayout. When
   // omitted, ChatInput uses the globally active chat tab.
   tabId?: string | null
-  // True while a native restored terminal is still being located. Once the
-  // terminal exists, ChatArea passes false so the input does not keep showing a
-  // stale "Resuming coding session" banner.
-  restoredConversationPending?: boolean
   // Product surfaces keep the shared transport but hide developer/provider
   // controls and render a simple customer-facing composer.
   surfaceVariant?: 'default' | 'product'
@@ -437,7 +433,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   onSubmit: onSubmitProp,
   onStopStreaming,
   tabId: scopedTabId,
-  restoredConversationPending = true,
   surfaceVariant = 'default',
   placeholderOverride,
   showNewChatAction = false,
@@ -693,7 +688,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Memoize to prevent unnecessary re-renders when other config values change
   const chatFileContext = useMemo(() => tabConfig?.fileContext || [], [tabConfig?.fileContext])
   const chatPastedAttachments = useMemo(() => tabConfig?.pastedAttachments || [], [tabConfig?.pastedAttachments])
-  const restoredConversationPath = tabConfig?.restoredConversationPath?.trim() || ''
 
   // Get input text from tab config (source of truth for persistence)
   const storedInputText = tabConfig?.inputText || ''
@@ -1591,36 +1585,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const [pulseReviewPicker, setPulseReviewPicker] = useState<{ tabId: string; workspacePath: string | null | undefined; initialContext: string } | null>(null)
   const closePulseReviewPicker = useCallback(() => setPulseReviewPicker(null), [])
-
-  const restoredResumeTitle = useMemo(() => {
-    if (tabConfig?.restoredConversationTitle?.trim()) return tabConfig.restoredConversationTitle.trim()
-    return restoredConversationPath.split('/').pop() || 'Previous chat'
-  }, [restoredConversationPath, tabConfig?.restoredConversationTitle])
-
-  const restoredResumeRuntimeLabel = tabConfig?.restoredConversationRuntimeLabel?.trim() || undefined
-
-  const restoredResumeWorkshopModeLabel = tabConfig?.restoredConversationWorkshopModeLabel?.trim() || undefined
-
-  const restoredResumeUsesNative = tabConfig?.restoredConversationNativeResume === true
-  const showRestoredConversationIndicator =
-    !!restoredConversationPath && (!restoredResumeUsesNative || restoredConversationPending)
-
-  const clearRestoredConversation = useCallback(() => {
-    if (!activeTabId) return
-    setTabConfig(activeTabId, {
-      fileContext: restoredConversationPath
-        ? chatFileContext.filter(item => item.path !== restoredConversationPath)
-        : chatFileContext,
-      restoredConversationPath: undefined,
-      restoredConversationSummary: undefined,
-      restoredConversationTitle: undefined,
-      restoredConversationWorkshopModeLabel: undefined,
-      restoredConversationRuntimeLabel: undefined,
-      restoredConversationNativeResume: undefined,
-    })
-    addToast('Resume cleared', 'info')
-    setTimeout(() => textareaRef.current?.focus(), 0)
-  }, [activeTabId, addToast, chatFileContext, restoredConversationPath, setTabConfig])
 
   // Command editor dialog state
   const [showCommandEditor, setShowCommandEditor] = useState(false)
@@ -3201,47 +3165,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 className="text-xs text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 hover:underline ml-0.5"
               >
                 Clear
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Pending resume indicator */}
-      {!isProductSurface && showRestoredConversationIndicator && (
-        <div className={`${inputPadX} border-t border-border`}>
-          <div className="mb-1 rounded-md border border-border bg-card px-2 py-1 shadow-sm">
-            <div className="flex min-w-0 items-center justify-between gap-2">
-              <div className="flex min-w-0 items-center gap-1.5 text-xs text-foreground">
-                {restoredResumeUsesNative ? (
-                  <Terminal className="h-3.5 w-3.5 shrink-0 text-primary" />
-                ) : (
-                  <History className="h-3.5 w-3.5 shrink-0 text-primary" />
-                )}
-                <span className="shrink-0 font-semibold">
-                  {restoredResumeUsesNative ? 'Resuming coding session' : 'Resuming previous chat'}
-                </span>
-                <span className="truncate text-muted-foreground" title={restoredConversationPath}>
-                  {restoredResumeTitle}
-                </span>
-                {restoredResumeWorkshopModeLabel && (
-                  <span className="hidden shrink-0 rounded border border-border bg-background px-1 py-0.5 text-[10px] font-medium uppercase text-muted-foreground sm:inline">
-                    Mode: {restoredResumeWorkshopModeLabel}
-                  </span>
-                )}
-                {restoredResumeRuntimeLabel && (
-                  <span className="hidden shrink-0 rounded border border-border bg-background px-1 py-0.5 font-mono text-[10px] uppercase text-muted-foreground sm:inline">
-                    {restoredResumeRuntimeLabel}
-                  </span>
-                )}
-              </div>
-              <button
-                type="button"
-                onClick={clearRestoredConversation}
-                className="rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground"
-                title="Clear pending resume"
-              >
-                <X className="h-3 w-3" />
               </button>
             </div>
           </div>

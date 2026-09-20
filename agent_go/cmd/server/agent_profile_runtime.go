@@ -552,7 +552,7 @@ func (api *StreamingAPI) emitAgentProfileEvent(sessionID string, event any) {
 // its reply.
 func stampEventData(data unifiedevents.EventData, now time.Time) {
 	v := reflect.ValueOf(data)
-	if v.Kind() != reflect.Ptr || v.IsNil() {
+	if v.Kind() != reflect.Pointer || v.IsNil() {
 		return
 	}
 	base := v.Elem().FieldByName("BaseEventData")

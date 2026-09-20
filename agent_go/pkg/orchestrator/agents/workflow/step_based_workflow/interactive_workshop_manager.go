@@ -8035,11 +8035,6 @@ type WorkflowPlanReviewAgent struct {
 	*agents.BaseOrchestratorAgent
 }
 
-func newWorkflowPlanReviewAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowPlanReviewAgent {
-	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(config, logger, tracer, agents.TodoPlannerExecutionQAAgentType, eventBridge)
-	return &WorkflowPlanReviewAgent{BaseOrchestratorAgent: baseAgent}
-}
-
 func (agent *WorkflowPlanReviewAgent) Execute(ctx context.Context, templateVars map[string]string, conversationHistory []llmtypes.MessageContent) (string, []llmtypes.MessageContent, error) {
 	if agent.BaseOrchestratorAgent.BaseAgent() == nil || agent.BaseOrchestratorAgent.BaseAgent().Agent() == nil {
 		return "", nil, fmt.Errorf("agent not initialized")

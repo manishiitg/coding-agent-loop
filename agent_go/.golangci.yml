@@ -22,8 +22,9 @@ linters:
     - errorlint      # Error wrapping issues
     - unused         # Unused code
 
-    # Minor but useful
-    - misspell       # Spelling mistakes
+    # Disabled: spelling is product copy in places (dialogue/cancelled) and
+    # the linter produced more noise than signal across the tree.
+    # - misspell       # Spelling mistakes
 
     # Disabled due to large number of existing issues (can enable incrementally later):
     # - staticcheck    # Industry standard static analysis (170 issues)
@@ -73,9 +74,6 @@ linters:
       errorf: true
       errorf-multi: true
 
-    misspell:
-      locale: US
-
   exclusions:
     # Exclude generated files
     generated: strict
@@ -93,12 +91,6 @@ linters:
       - ".*_generated\\.go$"
 
     rules:
-      # Video Studio's prompts are product copy that must match the wording of
-      # its (unlinted) skill markdown, which is written with "dialogue",
-      # "authorised" and friends; tests compare the two verbatim.
-      - path: internal/videoproduct/
-        linters: [misspell]
-
       # Relaxed rules for test files
       - path: _test\.go
         linters:

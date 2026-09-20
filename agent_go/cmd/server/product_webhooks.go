@@ -577,7 +577,7 @@ func (s *ProductScheduleService) deliverProductTrigger(ctx context.Context, matc
 		Status: "queued", StartedAt: receivedAt, Caller: caller,
 	})
 	if err != nil {
-		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotRecord, err)
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %w", ErrProductTriggerNotRecord, err)
 	}
 	if !claimed {
 		return internalTriggerDeliveryResult{RunID: runID, DeliveryID: deliveryID, Duplicate: true, Status: existing.Status}, nil
@@ -586,7 +586,7 @@ func (s *ProductScheduleService) deliverProductTrigger(ctx context.Context, matc
 	payloadPath := filepath.ToSlash(filepath.Join(match.Binding.WorkspacePath, relativePayloadPath))
 	if err := s.writeFile(ctx, payloadPath, string(body)+"\n"); err != nil {
 		_ = UpdateScheduleRun(context.Background(), runsWorkspace, runID, "error", "cannot persist trigger payload", nil, "", "")
-		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotPersist, err)
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %w", ErrProductTriggerNotPersist, err)
 	}
 	message := strings.TrimSpace(match.Trigger.Message) + "\n\n" + sourceNote + " Read its JSON payload from `" + relativePayloadPath + "` and use it as input."
 	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: strings.EqualFold(match.Trigger.RunDestination, runDestinationIsolated), Messages: []string{message}}}
@@ -601,7 +601,7 @@ func (s *ProductScheduleService) deliverProductTrigger(ctx context.Context, matc
 		return internalTriggerDeliveryResult{}, dispatchErr
 	default:
 		_ = UpdateScheduleRun(context.Background(), runsWorkspace, runID, "error", dispatchErr.Error(), nil, "", "")
-		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotStart, dispatchErr)
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %w", ErrProductTriggerNotStart, dispatchErr)
 	}
 }
 
@@ -659,7 +659,7 @@ func (s *ProductScheduleService) getInternalProductTriggerRun(ctx context.Contex
 func (s *ProductScheduleService) findInternalProductTrigger(ctx context.Context, userID, profileID, projectID, triggerID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, *productWebhookTrigger, error) {
 	profile, binding, manifest, err := s.projectManifest(ctx, userID, normalizeInternalProfileID(profileID), projectID)
 	if err != nil {
-		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, nil, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, nil, fmt.Errorf("%w: %w", ErrInternalTriggerNotFound, err)
 	}
 	trigger, err := selectInternalProductTrigger(manifest.Triggers, triggerID)
 	if err != nil {

@@ -354,13 +354,13 @@ func readWebhookRunResult(workspacePath string, run schedulerstate.Run) (webhook
 		snapshot, readErr := root.ReadFile(".webhook-result.json")
 		if result.Terminal && readErr == nil {
 			if uErr := json.Unmarshal(snapshot, &result); uErr != nil {
-				return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookStoredResult, uErr)
+				return webhookRunResult{}, fmt.Errorf("%w: %w", errWebhookStoredResult, uErr)
 			}
 		} else {
 			result.Progress = collectWebhookProgress(root)
 			result.Steps, result.Truncated, e = collectWebhookOutputs(root)
 			if e != nil {
-				return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookRunOutputs, e)
+				return webhookRunResult{}, fmt.Errorf("%w: %w", errWebhookRunOutputs, e)
 			}
 			if result.Terminal {
 				b, _ := json.Marshal(result)
@@ -376,12 +376,12 @@ func readWebhookRunResult(workspacePath string, run schedulerstate.Run) (webhook
 					}
 				}
 				if err != nil && !os.IsExist(err) {
-					return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookPersistResult, err)
+					return webhookRunResult{}, fmt.Errorf("%w: %w", errWebhookPersistResult, err)
 				}
 			}
 		}
 	} else if run.RunFolder != "" && !result.ArtifactsExpired {
-		return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookRunOutputs, e)
+		return webhookRunResult{}, fmt.Errorf("%w: %w", errWebhookRunOutputs, e)
 	}
 	return result, nil
 }
@@ -401,17 +401,6 @@ func signWebhookRunArtifacts(result *webhookRunResult, run schedulerstate.Run) e
 		}
 	}
 	return nil
-}
-
-// getInternalWorkflowTriggerRun serves one workflow trigger run to the bound
-// Crew caller so a Crew run can poll a delivery to terminal state. Disabling
-// the trigger revokes reads, mirroring the public endpoint.
-func (s *SchedulerService) getInternalWorkflowTriggerRun(ctx context.Context, workflowID, triggerID, runID string, caller triggerCaller) (webhookRunResult, error) {
-	workspacePath, manifest, err := findWorkflowManifestByID(ctx, workflowID)
-	if err != nil {
-		return webhookRunResult{}, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
-	}
-	return s.readInternalWorkflowTriggerRun(ctx, workspacePath, manifest, triggerID, runID, caller)
 }
 
 // readInternalWorkflowTriggerRun resolves the trigger from a known manifest

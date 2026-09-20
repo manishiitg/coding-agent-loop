@@ -264,7 +264,7 @@ func preflightCrewSteps(ctx context.Context, crews *ProductScheduleService, user
 	}
 	for _, attachment := range manifest.CrewAttachments {
 		if err := workflowtypes.ValidateCrewAttachmentBinding(attachment); err != nil {
-			return fmt.Errorf("crew attachment %q cannot run: %v; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, err)
+			return fmt.Errorf("crew attachment %q cannot run: %w; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, err)
 		}
 		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
 		_, binding, _, err := crews.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))

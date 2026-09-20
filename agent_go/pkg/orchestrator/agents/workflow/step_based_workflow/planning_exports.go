@@ -362,37 +362,6 @@ func (s *WorkshopChatSession) SetOnStepCorrelationDone(fn func(string)) {
 	s.onStepCorrelationDone = fn
 }
 
-// resolveGroupFolderName resolves a group name (e.g. "group-11") to the actual folder name
-// used in the runs directory (e.g. "excellence"). Falls back to groupName if no matching name found.
-func (s *WorkshopChatSession) resolveGroupFolderName(ctx context.Context, groupName string) string {
-	if s.controller == nil || groupName == "" {
-		return groupName
-	}
-	// Read fresh manifest from file
-	manifest, err := readVariablesFromFile(ctx, s.controller.GetWorkspacePath(), func(ctx context.Context, path string) (string, error) {
-		return s.controller.ReadWorkspaceFile(ctx, path)
-	})
-	if err != nil || manifest == nil {
-		// Fallback to cached manifest
-		manifest = s.controller.variablesManifest
-	}
-	if manifest == nil {
-		return groupName
-	}
-	for _, g := range manifest.Groups {
-		if g.Name == groupName || s.controller.sanitizeDisplayNameForFolder(g.Name) == groupName {
-			if g.Name != "" {
-				sanitized := s.controller.sanitizeDisplayNameForFolder(g.Name)
-				if sanitized != "" {
-					return sanitized
-				}
-			}
-			break
-		}
-	}
-	return groupName
-}
-
 func workflowRunValidationVariableValues(ctx context.Context, session *WorkshopChatSession, groupName string) map[string]string {
 	if session == nil || session.controller == nil {
 		return nil
@@ -577,32 +546,6 @@ func (s *WorkshopChatSession) SetExecutionStateChecks(hasPending, hasRunning fun
 // This takes priority over auto-detection when building AUTO-NOTIFICATION action hints.
 func (s *WorkshopChatSession) SetWorkshopModeOverride(mode string) {
 	s.workshopModeOverride = mode
-}
-
-func splitWorkshopRunFolderParts(targetRunFolder string) (string, string) {
-	targetRunFolder = filepath.ToSlash(strings.TrimSpace(targetRunFolder))
-	if targetRunFolder == "" {
-		return "", ""
-	}
-	parts := strings.Split(targetRunFolder, "/")
-	iteration := strings.TrimSpace(parts[0])
-	group := ""
-	if len(parts) >= 2 {
-		group = strings.TrimSpace(parts[len(parts)-1])
-	}
-	return iteration, group
-}
-
-func formatWorkshopExecutionName(kind string, targetRunFolder string) string {
-	iteration, group := splitWorkshopRunFolderParts(targetRunFolder)
-	switch {
-	case iteration != "" && group != "":
-		return fmt.Sprintf("%s: %s | Group: %s", kind, iteration, group)
-	case iteration != "":
-		return fmt.Sprintf("%s: %s", kind, iteration)
-	default:
-		return fmt.Sprintf("%s: %s", kind, targetRunFolder)
-	}
 }
 
 // WorkshopConfig bundles all settings for a workshop session to replicate the

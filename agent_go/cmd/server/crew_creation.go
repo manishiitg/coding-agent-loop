@@ -816,11 +816,10 @@ func (s *ProductScheduleService) validateCrewCreationSecrets(ctx context.Context
 		if globals[name] {
 			continue
 		}
-		if creatingScope == nil {
-			creatingScope, err = s.probeCrewCreationScopedSecrets(ctx, workflowPath, userID)
-			if err != nil {
-				return nil, err
-			}
+		// Runs at most once: the first non-global name below always returns.
+		creatingScope, err = s.probeCrewCreationScopedSecrets(ctx, workflowPath, userID)
+		if err != nil {
+			return nil, err
 		}
 		if creatingScope[name] {
 			return nil, fmt.Errorf("crew secret %q exists in workflow %q, but workflow secrets do not carry over to a new crew; add it in the Crew UI after creation or drop it", name, workflowPath)

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -420,7 +421,8 @@ func (api *StreamingAPI) handleAddWorkFolder(w http.ResponseWriter, r *http.Requ
 	})
 	if err != nil {
 		status := http.StatusBadRequest
-		if _, ok := err.(errWorkFolderAliasConflict); ok {
+		var aliasConflict errWorkFolderAliasConflict
+		if errors.As(err, &aliasConflict) {
 			status = http.StatusConflict
 		}
 		http.Error(w, err.Error(), status)
@@ -462,7 +464,8 @@ func (api *StreamingAPI) handleDeleteWorkFolder(w http.ResponseWriter, r *http.R
 		return applyWorkFolderDelete(doc, key, id)
 	})
 	if err != nil {
-		if _, ok := err.(errWorkFolderNotFound); ok {
+		var folderNotFound errWorkFolderNotFound
+		if errors.As(err, &folderNotFound) {
 			http.Error(w, err.Error(), http.StatusNotFound)
 			return
 		}

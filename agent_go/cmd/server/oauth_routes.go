@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -574,7 +575,8 @@ func (api *StreamingAPI) handleOAuthStart(w http.ResponseWriter, r *http.Request
 	startResp, discoveryResp, err := api.beginOAuthFlow(userID, "", req.ServerName, redirectURI, req.ClientID, nil)
 	if err != nil {
 		status := http.StatusInternalServerError
-		if se, ok := err.(*oauthStartError); ok {
+		var se *oauthStartError
+		if errors.As(err, &se) {
 			status = se.status
 		}
 		http.Error(w, err.Error(), status)

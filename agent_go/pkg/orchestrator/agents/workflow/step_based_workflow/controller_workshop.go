@@ -395,6 +395,20 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyWorkshopExecuteOptions(ctx conte
 		releaseGroupSession = releaseFn
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP] Active MCP session for group %s: %s", resolvedGroupName, hcpo.GetMCPSessionID()))
 
+		// Propagate the group into the run context. Crew steps key their
+		// delivery idempotency on the current group; without this every
+		// workshop execute_step shares one group-less key, so a second
+		// group's step adopts the first group's success instead of
+		// invoking its trigger fresh. Restored on release so group
+		// context never leaks between execute_step calls.
+		prevGroupName := hcpo.currentGroupName
+		hcpo.currentGroupName = resolvedGroupName
+		prevRelease := releaseGroupSession
+		releaseGroupSession = func() {
+			hcpo.currentGroupName = prevGroupName
+			prevRelease()
+		}
+
 		// Resolve run folder if not explicitly provided
 		if opts.RunFolder == "" {
 			// Build run folder from group: use latest iteration + group folder name

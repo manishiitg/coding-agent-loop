@@ -9,7 +9,7 @@
 #
 # Usage:
 #   deploy-dominion.sh              # clone/pull, build, stage a new release. Does NOT touch `current` or restart anything.
-#   deploy-dominion.sh --activate   # also flip `current` to the just-built release and restart dominion-agent, with a health-check and automatic rollback.
+#   deploy-dominion.sh --activate   # also flip `current` to the just-built release and restart the services, with a health-check and automatic rollback.
 #
 # Lessons baked in from a bad manual deploy this session:
 #   1. agent_go's actual `go build` target is the module root (agent_go/,
@@ -151,6 +151,35 @@ echo "==> Building mcpbridge"
 echo "==> Building dominion-gateway (generic cookie-auth gateway, shared source with Video Studio)"
 "$GO_BIN" build -o "$RELEASE_DIR/bin/dominion-gateway" "$REPO/deploy/aws-ec2/server/auth-gateway.go"
 
+echo "==> Building AgentWorks CLI matrix for /api/downloads/cli (static builds)"
+mkdir -p "$RELEASE_DIR/downloads"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  os="${target%-*}"
+  arch="${target#*-}"
+  name="agentworks-$os-$arch"
+  (cd "$REPO/agent_go" && GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 "$GO_BIN" build -o "$RELEASE_DIR/downloads/$name" ./cmd/agentworks)
+  chmod +x "$RELEASE_DIR/downloads/$name"
+  (cd "$RELEASE_DIR/downloads" && sha256sum "$name" > "$name.sha256")
+done
+cp "$REPO/scripts/install-agentworks-cli.sh" "$RELEASE_DIR/downloads/install-agentworks.sh"
+
+echo "==> Verifying staged CLI downloads (format per OS + checksums)"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  os="${target%-*}"
+  name="agentworks-$target"
+  filetype="$(file -b "$RELEASE_DIR/downloads/$name")"
+  case "$os" in
+    darwin) want="Mach-O" ;;
+    linux) want="ELF" ;;
+  esac
+  if [[ "$filetype" != *"$want"* ]]; then
+    echo "FATAL: downloads/$name is not a valid $want binary (got: $filetype)" >&2
+    exit 1
+  fi
+  (cd "$RELEASE_DIR/downloads" && sha256sum -c "$name.sha256") || { echo "FATAL: downloads/$name.sha256 does not verify" >&2; exit 1; }
+done
+bash -n "$RELEASE_DIR/downloads/install-agentworks.sh" || { echo "FATAL: staged install-agentworks.sh has a syntax error" >&2; exit 1; }
+
 echo "==> Verifying every binary is a real, runnable executable (not just 'go build exit 0')"
 for bin in dominion-agent dominion-workspace video-studio-landlock-runner mcpbridge dominion-gateway; do
   path="$RELEASE_DIR/bin/$bin"
@@ -223,7 +252,7 @@ fi
 
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
-echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent"
+echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent, dominion-gateway"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/dominion/state/mcp' > "$HOME/.config/systemd/user/dominion-agent.service.d/30-durable-mcp.conf"
@@ -250,6 +279,25 @@ if ! systemctl --user is-active --quiet dominion-workspace; then
 fi
 systemctl --user restart dominion-agent
 sleep 3
+# The gateway binary is rebuilt into every release but was never restarted
+# here, so it kept running the previous release indefinitely — gateway fixes
+# (e.g. PAT pass-through for CLI/MCP) staged on disk yet never took effect.
+systemctl --user restart dominion-gateway
+sleep 2
+if ! systemctl --user is-active --quiet dominion-gateway; then
+  echo "FATAL: dominion-gateway failed to start on the new release — rolling back to $PREVIOUS_RELEASE" >&2
+  if [[ -n "$PREVIOUS_RELEASE" ]]; then
+    ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
+    systemctl --user restart dominion-agent
+    sleep 3
+    systemctl --user restart dominion-gateway
+    sleep 2
+    systemctl --user is-active --quiet dominion-gateway && echo "    rollback successful, dominion-gateway active again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
+  fi
+  exit 1
+fi
 
 if curl -fsS -o /dev/null -w '' http://127.0.0.1:21000/api/health; then
   echo "==> Health check passed. Active release: $(readlink -f "$CURRENT_LINK")"
@@ -261,6 +309,8 @@ else
     sleep 2
     systemctl --user restart dominion-agent
     sleep 3
+    systemctl --user restart dominion-gateway
+    sleep 2
     curl -fsS -o /dev/null http://127.0.0.1:21000/api/health && echo "    rollback successful, service healthy again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
   fi
   exit 1

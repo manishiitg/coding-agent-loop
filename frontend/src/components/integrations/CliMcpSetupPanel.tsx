@@ -149,7 +149,8 @@ export function CliMcpSetupPanel() {
   }
 
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
-  const login = connection ? `printf '%s' ${quoted(connection.token)} | agentworks login --server ${JSON.stringify(server)} --token-stdin` : ''
+  const origin = server.replace(/\/+$/, '')
+  const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
 
   return (
     <div className="space-y-4">
@@ -163,8 +164,8 @@ export function CliMcpSetupPanel() {
         title="Command line"
         description={
           connection
-            ? 'Ready to paste. This read-only token opens every workflow you can access and expires after 30 days.'
-            : 'Generate a read-only token for this installation. It opens every workflow you can access and expires after 30 days.'
+            ? 'Ready to paste. Installs the CLI and logs it in with this read-only token.'
+            : 'Generate a read-only token for this installation. The command installs the CLI and logs it in.'
         }
         actions={
           connection ? (
@@ -188,14 +189,14 @@ export function CliMcpSetupPanel() {
           <p className="text-sm text-muted-foreground">The command appears here with the token filled in. Nothing is created until you generate.</p>
         ) : (
           <div className="space-y-2">
-            <CommandRow label="Log in command" command={login} />
+            <CommandRow label="Install and log in command" command={installer} />
           </div>
         )}
       </SettingsCard>
       <SettingsCard
         icon={<Plug className="h-4 w-4 text-primary" />}
         title="AI assistants"
-        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. The assistant loads instructions and guidance from this server on its own."
+        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. Install the CLI above first — the bridge runs through it."
       >
         {!connection ? (
           <p className="text-sm text-muted-foreground">Generate a connection above first.</p>

@@ -6,6 +6,8 @@ vi.mock('./workflowSessionRestore', async importOriginal => {
   const actual = await importOriginal<typeof import('./workflowSessionRestore')>()
   return { ...actual, openCanonicalActivitySession }
 })
+const openWorkAutomationRunChat = vi.hoisted(() => vi.fn(async () => {}))
+vi.mock('../products/work/workAutomationRunRestore', () => ({ openWorkAutomationRunChat }))
 import type { ActiveSessionInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useProductSurfaceStore } from '../stores/useProductSurfaceStore'
@@ -51,9 +53,10 @@ afterEach(() => {
     selectedWorkProjectId: null,
     pendingWorkView: null,
   })
-  useChatStore.setState({ chatTabs: {}, activeTabId: null })
+  useChatStore.setState({ chatTabs: {}, activeTabId: null, toasts: [] })
   activateTab.mockClear()
   openCanonicalActivitySession.mockClear()
+  openWorkAutomationRunChat.mockClear()
 })
 
 describe('global AgentWorks and Crew navigation', () => {
@@ -91,6 +94,28 @@ describe('global AgentWorks and Crew navigation', () => {
     expect(useProductSurfaceStore.getState().productSurface).toBe('agentworks')
     expect(useProductSurfaceStore.getState().selectedWorkProjectId).toBeNull()
     expect(useProductSurfaceStore.getState().pendingWorkView).toBeNull()
+  })
+
+  it('opens a Crew product-schedule run in a Crew run tab, not AgentWorks restore', async () => {
+    const trigger = session({
+      session_id: 'product-af49f7f6-151d-4f94-9578-acd2c155e1a0',
+      agent_mode: 'multi-agent',
+      workspace_path: 'Chats/Work/projects/news-monitor',
+      triggered_by: 'webhook',
+      title: 'News Monitor · news monitor trigger · 2026-09-20 21:52',
+    })
+    await openGlobalActivitySession(trigger, { title: trigger.title, source: 'global-activity-monitor' })
+
+    expect(openWorkAutomationRunChat).toHaveBeenCalledWith(trigger, { title: trigger.title })
+    expect(openCanonicalActivitySession).not.toHaveBeenCalled()
+  })
+
+  it('toasts instead of rejecting when the open fails', async () => {
+    openCanonicalActivitySession.mockRejectedValueOnce(new Error('boom'))
+    await openGlobalActivitySession(session({ session_id: 'plain-chat' }))
+
+    const toasts = useChatStore.getState().toasts
+    expect(toasts[toasts.length - 1]).toMatchObject({ type: 'error' })
   })
 
   it('keeps routing interactive Crew sessions to the Work surface', async () => {

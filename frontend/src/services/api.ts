@@ -69,6 +69,9 @@ import type {
   VariablesManifest,
   SlackConfigRequest,
   SlackConfigResponse,
+  SlackConnection,
+  SlackConnectionRequest,
+  SlackConnectionsResponse,
   SlackTestResponse,
   SlackTestReplyResponse,
   GmailConfigRequest,
@@ -1420,6 +1423,36 @@ export const agentApi = {
   // Update Slack configuration
   updateSlackFeedbackConfig: async (config: SlackConfigRequest): Promise<SlackConfigResponse> => {
     const apiResponse = await api.post('/api/human-feedback/slack/config', config)
+    return apiResponse.data
+  },
+
+  // Named Slack app connections (per-workflow Slack apps).
+  listSlackConnections: async (): Promise<SlackConnectionsResponse> => {
+    const apiResponse = await api.get('/api/human-feedback/slack/connections', { timeout: 10000 })
+    return apiResponse.data
+  },
+
+  createSlackConnection: async (request: SlackConnectionRequest): Promise<SlackConnection> => {
+    const apiResponse = await api.post('/api/human-feedback/slack/connections', request)
+    return apiResponse.data
+  },
+
+  updateSlackConnection: async (id: string, request: SlackConnectionRequest): Promise<SlackConnection> => {
+    const apiResponse = await api.patch(`/api/human-feedback/slack/connections/${id}`, request)
+    return apiResponse.data
+  },
+
+  deleteSlackConnection: async (id: string): Promise<void> => {
+    await api.delete(`/api/human-feedback/slack/connections/${id}`)
+  },
+
+  setDefaultSlackConnection: async (id: string): Promise<SlackConnection> => {
+    const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/default`)
+    return apiResponse.data
+  },
+
+  testSlackConnectionEntry: async (id: string): Promise<SlackTestResponse> => {
+    const apiResponse = await api.post(`/api/human-feedback/slack/connections/${id}/test`)
     return apiResponse.data
   },
 

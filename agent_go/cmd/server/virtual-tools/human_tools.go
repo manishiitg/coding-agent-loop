@@ -1123,8 +1123,9 @@ func cloneNotificationDestination(dest *services.NotificationDestination) *servi
 	}
 	if dest.Slack != nil {
 		clone.Slack = &services.SlackDest{
-			ChannelID: dest.Slack.ChannelID,
-			ThreadTS:  dest.Slack.ThreadTS,
+			ChannelID:    dest.Slack.ChannelID,
+			ThreadTS:     dest.Slack.ThreadTS,
+			ConnectionID: dest.Slack.ConnectionID,
 		}
 	}
 	if dest.SlackWebhook != nil {

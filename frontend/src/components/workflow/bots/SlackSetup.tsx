@@ -4,8 +4,11 @@ import { Card } from '../../ui/Card'
 import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
+import type { SlackTestResponse } from '../../../services/api-types'
 
 const toggleClass = "w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer dark:bg-gray-700 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all dark:border-gray-600 peer-checked:bg-blue-600"
+
+const OWNER_ONLY_TITLE = 'Only a workflow owner can manage its Slack app'
 
 // ── Drill-in: Slack setup ─────────────────────────────────────────────────
 
@@ -14,7 +17,42 @@ type SlackSetupBots = Pick<WorkflowBots,
   | 'slackConfig' | 'setSlackConfig' | 'slackLoading' | 'slackSaving' | 'slackTesting' | 'slackError' | 'slackSuccess'
   | 'testResult' | 'testReply' | 'pollingForReply' | 'showBotToken' | 'setShowBotToken' | 'showAppToken' | 'setShowAppToken'
   | 'handleSlackSave' | 'handleSlackTest' | 'slackHasChanges'
+  | 'canManageSlackDefault' | 'canManageWorkflowSlack' | 'hasProfileTarget' | 'slackSelection'
+  | 'slackConnName' | 'setSlackConnName' | 'slackConnBot' | 'setSlackConnBot' | 'slackConnApp' | 'setSlackConnApp'
+  | 'slackConnEnabled' | 'setSlackConnEnabled' | 'slackConnSaving' | 'slackConnTesting' | 'slackConnTestResult'
+  | 'slackConnConfirmDelete' | 'slackConnShowBot' | 'setSlackConnShowBot' | 'slackConnShowApp' | 'setSlackConnShowApp'
+  | 'slackConnHasChanges' | 'saveWorkflowSlackConnection' | 'selectWorkflowSlackConnection'
+  | 'testWorkflowSlackConnection' | 'removeWorkflowSlackConnection'
 >
+
+function SlackChecksView({ result }: { result: SlackTestResponse }) {
+  return (
+    <div className={`p-3 border rounded-lg flex items-start gap-2 ${result.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
+      {result.success ? <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />}
+      <div className="min-w-0 space-y-2 text-sm">
+        <p>{result.message}</p>
+        {!!result.checks?.length && (
+          <details open={!result.success}>
+            <summary className="cursor-pointer font-medium">Setup checks</summary>
+            <ul className="mt-2 space-y-2">
+              {result.checks.map(check => (
+                <li key={check.name}>
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-medium">{check.name}</span>
+                    <span className={check.status === 'passed' ? 'text-green-600 dark:text-green-400' : check.status === 'manual' ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}>
+                      {check.status === 'manual' ? 'Verify manually' : check.status === 'passed' ? 'Passed' : check.status === 'missing' ? 'Missing' : 'Failed'}
+                    </span>
+                  </div>
+                  {check.status !== 'passed' && <p className="text-xs text-muted-foreground">{check.message}</p>}
+                </li>
+              ))}
+            </ul>
+          </details>
+        )}
+      </div>
+    </div>
+  )
+}
 
 export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
   const {
@@ -22,7 +60,21 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
     slackConfig, setSlackConfig, slackLoading, slackSaving, slackTesting, slackError, slackSuccess,
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
     handleSlackSave, handleSlackTest, slackHasChanges,
+    canManageSlackDefault, canManageWorkflowSlack, hasProfileTarget, slackSelection,
+    slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
+    slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
+    slackConnConfirmDelete, slackConnShowBot, setSlackConnShowBot, slackConnShowApp, setSlackConnShowApp,
+    slackConnHasChanges, saveWorkflowSlackConnection, selectWorkflowSlackConnection,
+    testWorkflowSlackConnection, removeWorkflowSlackConnection,
   } = bots
+
+  const defaultConn = (slackConfig.connections || []).find(c => c.is_default) || null
+  const ownConn = slackSelection.own
+  const effectiveConn = slackSelection.effective
+  const selectionDangles = slackSelection.selectionId !== '' && !effectiveConn
+  const defaultTitle = canManageSlackDefault ? undefined : 'Only a platform admin can change the shared default'
+  const ownTitle = canManageWorkflowSlack ? undefined : (readOnly ? READ_ONLY_TITLE : OWNER_ONLY_TITLE)
+  const botEnabled = slackConfig.enabled && !!slackConfig.bot_mode
 
   return (
     <div className="space-y-4">
@@ -33,15 +85,15 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
           {slackError && <StatusBanner tone="error">{slackError}</StatusBanner>}
           {slackSuccess && <StatusBanner tone="success">{slackSuccess}</StatusBanner>}
 
-          {/* Enable Slack */}
+          {/* Enable Slack (platform switch) */}
           <Card className="p-4">
             <div className="flex items-center justify-between">
               <div>
                 <h3 className="text-sm font-medium text-foreground">Enable Slack bot</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Start and continue agent sessions through @mentions, threads, and channel triggers</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Platform switch for @mentions, threads, and channel triggers{canManageSlackDefault ? '' : ' — a platform admin turns this on'}</p>
               </div>
-              <label className="relative inline-flex items-center cursor-pointer">
-                <input type="checkbox" checked={slackConfig.enabled && !!slackConfig.bot_mode} disabled={readOnly} onChange={e => setSlackConfig({ ...slackConfig, enabled: e.target.checked, bot_mode: e.target.checked })} className="sr-only peer" />
+              <label className="relative inline-flex items-center cursor-pointer" title={defaultTitle}>
+                <input type="checkbox" checked={botEnabled} disabled={!canManageSlackDefault} onChange={e => setSlackConfig({ ...slackConfig, enabled: e.target.checked, bot_mode: e.target.checked })} className="sr-only peer" />
                 <div className={toggleClass}></div>
               </label>
             </div>
@@ -52,7 +104,98 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
             add their email addresses under that channel’s Options → Blocked email addresses.
           </p>
 
-          {slackConfig.enabled && slackConfig.bot_mode && (
+          {/* This workflow's Slack app */}
+          {!hasProfileTarget && (
+            <Card className="p-4 space-y-3">
+              <div>
+                <h3 className="text-sm font-medium text-foreground">This workflow’s Slack app</h3>
+                <p className="text-xs text-muted-foreground mt-0.5">
+                  {effectiveConn
+                    ? <>Using <b>{effectiveConn.display_name}</b>{effectiveConn.is_default ? ' (platform default)' : ' (this workflow)'} · {effectiveConn.enabled ? 'enabled' : 'disabled'}{effectiveConn.configured ? '' : ' · missing tokens'}</>
+                    : selectionDangles
+                      ? 'The selected app is gone — pick another below.'
+                      : 'No Slack app selected yet.'}
+                </p>
+              </div>
+              {selectionDangles && (
+                <StatusBanner tone="error">This workflow points at a Slack app that no longer exists. Sends will fail until you switch to the platform default or set up this workflow’s own app.</StatusBanner>
+              )}
+              <div className="space-y-2" title={ownTitle}>
+                <label className={`flex items-center gap-2 text-sm ${!canManageWorkflowSlack ? 'opacity-60' : 'cursor-pointer'}`}>
+                  <input
+                    type="radio"
+                    name="slack-app-selection"
+                    checked={slackSelection.selectionId === ''}
+                    disabled={!canManageWorkflowSlack || slackConnSaving}
+                    onChange={() => void selectWorkflowSlackConnection(null)}
+                  />
+                  <span>Platform default{defaultConn ? ` — ${defaultConn.display_name}` : ' — not configured'}</span>
+                </label>
+                <label className={`flex items-center gap-2 text-sm ${!canManageWorkflowSlack || !ownConn ? 'opacity-60' : 'cursor-pointer'}`}>
+                  <input
+                    type="radio"
+                    name="slack-app-selection"
+                    checked={slackSelection.selectionId !== '' && !!effectiveConn}
+                    disabled={!canManageWorkflowSlack || !ownConn || slackConnSaving}
+                    onChange={() => ownConn && void selectWorkflowSlackConnection(ownConn.id)}
+                  />
+                  <span>This workflow’s own app{ownConn ? ` — ${ownConn.display_name}` : ' — set up below'}</span>
+                </label>
+              </div>
+
+              <div className="space-y-3 pt-1">
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">App name</label>
+                  <input type="text" value={slackConnName} onChange={e => setSlackConnName(e.target.value)} disabled={!canManageWorkflowSlack} placeholder="e.g. Support bot" title={ownTitle} className="w-full px-3 py-2 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">Bot Token</label>
+                  <div className="relative">
+                    <input type={slackConnShowBot ? 'text' : 'password'} value={slackConnBot} onChange={e => setSlackConnBot(e.target.value)} disabled={!canManageWorkflowSlack} placeholder="xoxb-..." title={ownTitle} className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                    <button type="button" onClick={() => setSlackConnShowBot(!slackConnShowBot)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      {slackConnShowBot ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-foreground mb-2">App Token (Socket Mode)</label>
+                  <div className="relative">
+                    <input type={slackConnShowApp ? 'text' : 'password'} value={slackConnApp} onChange={e => setSlackConnApp(e.target.value)} disabled={!canManageWorkflowSlack} placeholder="xapp-..." title={ownTitle} className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                    <button type="button" onClick={() => setSlackConnShowApp(!slackConnShowApp)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
+                      {slackConnShowApp ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="text-sm text-foreground">Enable this app</span>
+                  <label className="relative inline-flex items-center cursor-pointer" title={ownTitle}>
+                    <input type="checkbox" checked={slackConnEnabled} disabled={!canManageWorkflowSlack} onChange={e => setSlackConnEnabled(e.target.checked)} className="sr-only peer" />
+                    <div className={toggleClass}></div>
+                  </label>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button onClick={() => void saveWorkflowSlackConnection()} disabled={!canManageWorkflowSlack || !slackConnHasChanges || slackConnSaving || slackConnTesting} title={ownTitle} className="flex items-center gap-2">
+                    {slackConnSaving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving...</> : <><CheckCircle className="w-4 h-4" />Save app</>}
+                  </Button>
+                  <Button variant="outline" onClick={() => void testWorkflowSlackConnection()} disabled={!canManageWorkflowSlack || slackConnTesting || slackConnSaving} title={ownTitle} className="flex items-center gap-2">
+                    {slackConnTesting ? <><Loader2 className="w-4 h-4 animate-spin" />Testing...</> : 'Test app'}
+                  </Button>
+                  {ownConn && (
+                    <Button variant="outline" onClick={() => void removeWorkflowSlackConnection()} disabled={!canManageWorkflowSlack || slackConnSaving || slackConnTesting} title={ownTitle} className="ml-auto">
+                      {slackConnConfirmDelete ? 'Click again to remove' : 'Remove'}
+                    </Button>
+                  )}
+                </div>
+                <p className="text-xs text-muted-foreground">Saving a new app selects it for this workflow. Test saves first, then checks tokens and scopes.</p>
+                {slackConnTestResult && <SlackChecksView result={slackConnTestResult} />}
+              </div>
+            </Card>
+          )}
+          {hasProfileTarget && (
+            <p className="text-xs text-muted-foreground">Profile projects use the platform default Slack app below.</p>
+          )}
+
+          {botEnabled && (
             <>
               <Card className="p-4 bg-blue-50 dark:bg-blue-900/20 border-blue-300 dark:border-blue-700">
                 <details>
@@ -111,11 +254,12 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
               </Card>
 
               <div className="space-y-3">
+                <h3 className="text-sm font-medium text-foreground">Platform default Slack app{canManageSlackDefault ? '' : ' (managed by a platform admin)'}</h3>
                 {/* Bot Token */}
                 <Card className="p-4">
                   <label className="block text-sm font-medium text-foreground mb-2">Bot Token <span className="text-red-500">*</span></label>
                   <div className="relative">
-                    <input type={showBotToken ? 'text' : 'password'} value={slackConfig.bot_token || ''} onChange={e => setSlackConfig({ ...slackConfig, bot_token: e.target.value })} disabled={readOnly} placeholder="xoxb-..." className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                    <input type={showBotToken ? 'text' : 'password'} value={slackConfig.bot_token || ''} onChange={e => setSlackConfig({ ...slackConfig, bot_token: e.target.value })} disabled={!canManageSlackDefault} placeholder="xoxb-..." title={defaultTitle} className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
                     <button type="button" onClick={() => setShowBotToken(!showBotToken)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                       {showBotToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -127,7 +271,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                 <Card className="p-4">
                   <label className="block text-sm font-medium text-foreground mb-2">App Token (Socket Mode) <span className="text-red-500">*</span></label>
                   <div className="relative">
-                    <input type={showAppToken ? 'text' : 'password'} value={slackConfig.app_token || ''} onChange={e => setSlackConfig({ ...slackConfig, app_token: e.target.value })} disabled={readOnly} placeholder="xapp-..." className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                    <input type={showAppToken ? 'text' : 'password'} value={slackConfig.app_token || ''} onChange={e => setSlackConfig({ ...slackConfig, app_token: e.target.value })} disabled={!canManageSlackDefault} placeholder="xapp-..." title={defaultTitle} className="w-full px-3 py-2 pr-10 border border-border rounded-md bg-background text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
                     <button type="button" onClick={() => setShowAppToken(!showAppToken)} className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground">
                       {showAppToken ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                     </button>
@@ -137,7 +281,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
 
                 {/* Test Connection */}
                 <div className="space-y-1">
-                  <Button variant="outline" onClick={handleSlackTest} disabled={readOnly || !slackConfig.enabled || slackTesting || slackSaving || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="w-full flex items-center justify-center gap-2">
+                  <Button variant="outline" onClick={handleSlackTest} disabled={!canManageSlackDefault || !slackConfig.enabled || slackTesting || slackSaving || slackLoading} title={defaultTitle} className="w-full flex items-center justify-center gap-2">
                     {slackTesting ? <><Loader2 className="w-4 h-4 animate-spin" />Testing...</> : 'Test Connection'}
                   </Button>
                   <p className="text-xs text-muted-foreground text-center">
@@ -145,32 +289,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
                   </p>
                 </div>
 
-                {testResult && (
-                  <div className={`p-3 border rounded-lg flex items-start gap-2 ${testResult.success ? 'bg-green-50 dark:bg-green-900/20 border-green-200 dark:border-green-800' : 'bg-red-50 dark:bg-red-900/20 border-red-200 dark:border-red-800'}`}>
-                    {testResult.success ? <CheckCircle className="w-4 h-4 text-green-600 dark:text-green-400 flex-shrink-0 mt-0.5" /> : <AlertCircle className="w-4 h-4 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" />}
-                    <div className="min-w-0 space-y-2 text-sm">
-                      <p>{testResult.message}</p>
-                      {!!testResult.checks?.length && (
-                        <details open={!testResult.success}>
-                          <summary className="cursor-pointer font-medium">Setup checks</summary>
-                          <ul className="mt-2 space-y-2">
-                            {testResult.checks.map(check => (
-                              <li key={check.name}>
-                                <div className="flex items-center justify-between gap-2">
-                                  <span className="font-medium">{check.name}</span>
-                                  <span className={check.status === 'passed' ? 'text-green-600 dark:text-green-400' : check.status === 'manual' ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}>
-                                    {check.status === 'manual' ? 'Verify manually' : check.status === 'passed' ? 'Passed' : check.status === 'missing' ? 'Missing' : 'Failed'}
-                                  </span>
-                                </div>
-                                {check.status !== 'passed' && <p className="text-xs text-muted-foreground">{check.message}</p>}
-                              </li>
-                            ))}
-                          </ul>
-                        </details>
-                      )}
-                    </div>
-                  </div>
-                )}
+                {testResult && <SlackChecksView result={testResult} />}
                 {testResult?.success && pollingForReply && !testReply && (
                   <div className="p-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg flex items-center gap-2">
                     <Loader2 className="w-4 h-4 animate-spin text-blue-600 dark:text-blue-400" />
@@ -187,7 +306,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
           )}
 
           <div className="flex items-center justify-end gap-2">
-            <Button onClick={handleSlackSave} disabled={readOnly || !slackHasChanges || slackSaving || slackTesting || slackLoading} title={readOnly ? READ_ONLY_TITLE : undefined} className="flex items-center gap-2">
+            <Button onClick={handleSlackSave} disabled={!canManageSlackDefault || !slackHasChanges || slackSaving || slackTesting || slackLoading} title={defaultTitle} className="flex items-center gap-2">
               {slackSaving ? <><Loader2 className="w-4 h-4 animate-spin" />Saving...</> : <><CheckCircle className="w-4 h-4" />Save</>}
             </Button>
           </div>

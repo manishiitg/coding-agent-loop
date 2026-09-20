@@ -87,10 +87,13 @@ type GmailDest struct {
 
 // SlackDest is the Slack-specific destination hint. ThreadTS is optional —
 // when set, the message is posted as a reply in that thread instead of a
-// top-level post in the channel.
+// top-level post in the channel. ConnectionID selects which configured Slack
+// app identity sends; empty means the default connection. An unknown or
+// disabled ID fails the send rather than falling back to another identity.
 type SlackDest struct {
-	ChannelID string
-	ThreadTS  string
+	ChannelID    string
+	ThreadTS     string
+	ConnectionID string
 }
 
 // WhatsAppDest is the WhatsApp-specific destination hint. ChannelID is a

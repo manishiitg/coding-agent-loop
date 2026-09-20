@@ -992,6 +992,33 @@ export interface SlackConfig {
   app_token?: string  // Masked in GET response (App-level token for Socket Mode)
   bot_mode?: boolean  // Enable @mention bot mode
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
+  connections?: SlackConnection[]  // Named Slack apps; top-level tokens mirror the default
+  default_connection_id?: string
+  manage_default_allowed?: boolean
+}
+
+export interface SlackConnection {
+  id: string
+  display_name: string
+  bot_token?: string  // Masked in GET responses
+  app_token?: string  // Masked in GET responses
+  enabled: boolean
+  configured: boolean
+  is_default: boolean
+  workspace_path?: string  // Owning workflow; empty = platform-managed
+}
+
+export interface SlackConnectionsResponse {
+  connections: SlackConnection[]
+  default_connection_id?: string
+}
+
+export interface SlackConnectionRequest {
+  display_name?: string
+  bot_token?: string
+  app_token?: string
+  enabled?: boolean
+  workspace_path?: string
 }
 
 export interface SlackConfigRequest {
@@ -1008,6 +1035,9 @@ export interface SlackConfigResponse {
   app_token?: string  // Masked in GET
   bot_mode?: boolean
   channel_routing?: Record<string, BotRoute>  // Slack channel ID -> workflow route
+  connections?: SlackConnection[]
+  default_connection_id?: string
+  manage_default_allowed: boolean
 }
 
 export interface SlackConnectionCheck {
@@ -3228,6 +3258,8 @@ export interface WorkflowCapabilities {
   use_code_execution_mode: boolean
   llm_config?: PresetLLMConfig
   notifications?: WorkflowNotificationConfig
+  // Named Slack app this workflow talks through; empty inherits the default.
+  slack_connection_id?: string
 }
 
 export interface WorkflowNotificationConfig {

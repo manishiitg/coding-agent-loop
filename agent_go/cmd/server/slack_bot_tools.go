@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -40,6 +41,120 @@ func (api *StreamingAPI) slackToolTarget(ctx context.Context, workspace, profile
 		target.WorkflowID = manifest.ID
 	}
 	return target, nil
+}
+
+// toolSlackConnection resolves the bound target's effective Slack
+// connection: the workflow manifest selection, or the platform default for
+// anything without a selection. The returned connection is masked.
+func (api *StreamingAPI) toolSlackConnection(ctx context.Context, svc *services.SlackService, workspace, profile string) (services.SlackConnection, bool) {
+	if profile == "" && workspace != "" {
+		if manifest, found, err := ReadWorkflowManifest(ctx, workspace); err == nil && found && manifest != nil {
+			if id := strings.TrimSpace(manifest.Capabilities.SlackConnectionID); id != "" {
+				return svc.GetConnection(id)
+			}
+		}
+	}
+	if id := svc.DefaultConnectionID(); id != "" {
+		return svc.GetConnection(id)
+	}
+	return services.SlackConnection{}, false
+}
+
+// parseSlackToolTokens extracts and type-checks the optional token args.
+// Empty means "not supplied" (preserve on save).
+func parseSlackToolTokens(args map[string]interface{}) (botToken, appToken string, err error) {
+	for key, prefix := range map[string]string{"bot_token": "xoxb-", "app_token": "xapp-"} {
+		raw, present := args[key]
+		if !present {
+			continue
+		}
+		token, ok := raw.(string)
+		if !ok {
+			return "", "", fmt.Errorf("%s must be a string", key)
+		}
+		token = strings.TrimSpace(token)
+		if token != "" && !strings.HasPrefix(token, prefix) {
+			return "", "", fmt.Errorf("%s has the wrong token type", key)
+		}
+		if key == "bot_token" {
+			botToken = token
+		} else {
+			appToken = token
+		}
+	}
+	return botToken, appToken, nil
+}
+
+// configureWorkflowSlackConnection implements the non-admin branch of
+// configure_slack_bot: a workflow owner creates or updates the connection
+// scoped to their workflow, and the workflow selects it.
+func (api *StreamingAPI) configureWorkflowSlackConnection(ctx context.Context, workspace, profile string, enabled bool, botToken, appToken string) (string, error) {
+	if profile != "" {
+		return "", fmt.Errorf("profile projects use the platform default Slack connection; ask an admin to configure it")
+	}
+	manifest, found, err := ReadWorkflowManifest(ctx, workspace)
+	if err != nil || !found || manifest == nil {
+		return "", fmt.Errorf("workflow manifest unavailable")
+	}
+	if workflowAccessForManifest(GetUserFromContext(ctx), manifest) != WorkflowAccessOwner {
+		return "", fmt.Errorf("only a workflow owner may configure this workflow's Slack connection")
+	}
+	svc, err := ensureSlackService()
+	if err != nil {
+		return "", fmt.Errorf("Slack service unavailable")
+	}
+	connID := strings.TrimSpace(manifest.Capabilities.SlackConnectionID)
+	if connID == "" {
+		// Adopt a connection previously scoped to this workflow (created
+		// via the UI or an earlier call) instead of minting duplicates.
+		for _, conn := range svc.ListConnections() {
+			if normalizeConversationWorkspace(conn.WorkspacePath) == normalizeConversationWorkspace(workspace) {
+				connID = conn.ID
+				break
+			}
+		}
+	}
+	if connID == "" {
+		displayName := strings.TrimSpace(manifest.Label)
+		if displayName == "" {
+			displayName = "Workflow Slack"
+		}
+		conn, err := svc.CreateSlackConnection(ctx, services.SlackConnectionInput{
+			DisplayName:   displayName,
+			BotToken:      botToken,
+			AppToken:      appToken,
+			Enabled:       enabled,
+			WorkspacePath: workspace,
+		})
+		if err != nil {
+			return "", err
+		}
+		connID = conn.ID
+	} else {
+		existing, ok := svc.GetConnection(connID)
+		if !ok {
+			return "", fmt.Errorf("the workflow's Slack connection is no longer registered; clear the selection in Setup > Bots and retry")
+		}
+		if normalizeConversationWorkspace(existing.WorkspacePath) != normalizeConversationWorkspace(workspace) {
+			return "", fmt.Errorf("the workflow uses a platform-managed Slack connection; ask an admin to change it")
+		}
+		if _, err := svc.UpdateSlackConnection(ctx, connID, services.SlackConnectionInput{
+			BotToken:      botToken,
+			AppToken:      appToken,
+			Enabled:       enabled,
+			WorkspacePath: workspace,
+		}); err != nil {
+			return "", err
+		}
+	}
+	if strings.TrimSpace(manifest.Capabilities.SlackConnectionID) != connID {
+		manifest.Capabilities.SlackConnectionID = connID
+		if err := WriteWorkflowManifest(ctx, workspace, manifest); err != nil {
+			return "", fmt.Errorf("Slack connection saved but the workflow selection failed: %w", err)
+		}
+	}
+	raw, _ := json.Marshal(map[string]interface{}{"saved": true, "connection_id": connID, "credentials_redacted": true})
+	return string(raw), nil
 }
 
 func (api *StreamingAPI) slackRoutes(ctx context.Context) (*chathistory.BotConnectorConfig, map[string]ChannelRoute, error) {
@@ -181,18 +296,32 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 			result["enabled"] = config.Enabled
 			result["bot_token_configured"] = config.BotToken != ""
 			result["app_token_configured"] = config.AppToken != ""
+			result["default_connection_id"] = config.DefaultConnectionID
+		}
+		if conn, ok := api.toolSlackConnection(ctx, svc, workspace, profile); ok {
+			result["connection"] = map[string]interface{}{
+				"id":           conn.ID,
+				"display_name": conn.DisplayName,
+				"configured":   strings.TrimSpace(conn.BotToken) != "" && strings.TrimSpace(conn.AppToken) != "",
+				"enabled":      conn.Enabled,
+				"is_default":   conn.ID == svc.DefaultConnectionID(),
+			}
 		}
 		raw, err := json.Marshal(result)
 		return string(raw), err
 	}); err != nil {
 		return err
 	}
-	if err := register("test_slack_bot_connection", "Check Slack bot/app tokens and granted bot scopes. Returns passed, missing, failed, or manual checks. Event subscriptions and mention delivery require manual verification; token success alone does not verify incoming events. Credentials are never returned.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+	if err := register("test_slack_bot_connection", "Check this workflow/project's effective Slack connection: bot/app tokens and granted bot scopes. Returns passed, missing, failed, or manual checks. Event subscriptions and mention delivery require manual verification; token success alone does not verify incoming events. Credentials are never returned.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
 		svc, err := ensureSlackService()
 		if err != nil {
 			return "", fmt.Errorf("Slack connector unavailable; check Setup > Bots")
 		}
-		raw, err := json.Marshal(svc.DiagnoseConnection(ctx))
+		connID := ""
+		if conn, ok := api.toolSlackConnection(ctx, svc, workspace, profile); ok {
+			connID = conn.ID
+		}
+		raw, err := json.Marshal(svc.DiagnoseConnectionFor(ctx, connID))
 		return string(raw), err
 	}); err != nil {
 		return err
@@ -203,19 +332,26 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 
 	// Reuse the UI handler so credential encryption, operator authorization,
 	// route preservation, session revocation and connector activation stay shared.
-	if err := register("configure_slack_bot", "Save shared Slack bot credentials and enable/disable the bot. Interactive operators only. Omit either token to keep it unchanged. Tokens are encrypted and never returned. Channel routes are preserved. Use test_slack_bot_connection afterward.", map[string]interface{}{
+	if err := register("configure_slack_bot", "Save Slack bot credentials and enable/disable the bot. Admins configure the shared default connection; a workflow owner configures this workflow's own connection (created on first use) and selects it on the workflow. Interactive users only. Omit either token to keep it unchanged. Tokens are encrypted and never returned. Channel routes are preserved. Use test_slack_bot_connection afterward.", map[string]interface{}{
 		"enabled":   map[string]interface{}{"type": "boolean"},
 		"bot_token": map[string]interface{}{"type": "string", "description": "New Bot User OAuth Token (xoxb-); omit to preserve"},
 		"app_token": map[string]interface{}{"type": "string", "description": "New App-Level Token (xapp-); omit to preserve"},
 	}, []string{"enabled"}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		claims := GetUserFromContext(ctx)
 		operatorRequest, _ := http.NewRequestWithContext(ctx, http.MethodPost, "/api/slack/config", nil)
-		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" || !currentUserIsAdmin(operatorRequest) {
-			return "", fmt.Errorf("only an authenticated interactive operator may configure Slack credentials")
+		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" {
+			return "", fmt.Errorf("only an authenticated interactive user may configure Slack credentials")
 		}
 		enabled, ok := args["enabled"].(bool)
 		if !ok {
 			return "", fmt.Errorf("enabled is required")
+		}
+		botToken, appToken, err := parseSlackToolTokens(args)
+		if err != nil {
+			return "", err
+		}
+		if !currentUserIsAdmin(operatorRequest) {
+			return api.configureWorkflowSlackConnection(ctx, workspace, profile, enabled, botToken, appToken)
 		}
 		svc, err := ensureSlackService()
 		if err != nil {
@@ -223,21 +359,11 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 		}
 		current := svc.GetConfig()
 		request := SlackConfigRequest{Enabled: enabled, BotMode: enabled, BotToken: current.BotToken, AppToken: current.AppToken}
-		for key, target := range map[string]*string{"bot_token": &request.BotToken, "app_token": &request.AppToken} {
-			if raw, present := args[key]; present {
-				token, ok := raw.(string)
-				if !ok {
-					return "", fmt.Errorf("%s must be a string", key)
-				}
-				*target = strings.TrimSpace(token)
-				prefix := "xoxb-"
-				if key == "app_token" {
-					prefix = "xapp-"
-				}
-				if *target != "" && !strings.HasPrefix(*target, prefix) {
-					return "", fmt.Errorf("%s has the wrong token type", key)
-				}
-			}
+		if botToken != "" {
+			request.BotToken = botToken
+		}
+		if appToken != "" {
+			request.AppToken = appToken
 		}
 		body, err := json.Marshal(request)
 		if err != nil {
@@ -256,17 +382,35 @@ func (api *StreamingAPI) registerSlackBotTools(registrar definitionToolRegistrar
 	}); err != nil {
 		return err
 	}
-	if err := register("get_slack_bot_credentials", "Read masked Slack bot/app credentials and enablement. Interactive operators only; full token values are never exposed.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
+	if err := register("get_slack_bot_credentials", "Read masked Slack bot/app credentials and enablement for this workflow/project's effective connection (admins: the shared default). Interactive users only; full token values are never exposed.", map[string]interface{}{}, nil, func(ctx context.Context, _ map[string]interface{}) (string, error) {
 		claims := GetUserFromContext(ctx)
 		request, _ := http.NewRequestWithContext(ctx, http.MethodGet, "/api/slack/config", nil)
-		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" || !currentUserIsAdmin(request) {
-			return "", fmt.Errorf("only an authenticated interactive operator may inspect Slack credentials")
+		if claims == nil || claims.Provider == "bot_route" || claims.BotRouteGrant != "" {
+			return "", fmt.Errorf("only an authenticated interactive user may inspect Slack credentials")
 		}
 		svc, err := ensureSlackService()
 		if err != nil {
 			return "", fmt.Errorf("Slack service unavailable")
 		}
-		raw, err := json.Marshal(svc.GetConfig())
+		if currentUserIsAdmin(request) {
+			raw, err := json.Marshal(svc.GetConfig())
+			return string(raw), err
+		}
+		if profile != "" {
+			return "", fmt.Errorf("profile projects use the platform default Slack connection; ask an admin to inspect it")
+		}
+		manifest, found, err := ReadWorkflowManifest(ctx, workspace)
+		if err != nil || !found {
+			return "", fmt.Errorf("workflow manifest unavailable")
+		}
+		if workflowAccessForManifest(GetUserFromContext(ctx), manifest) != WorkflowAccessOwner {
+			return "", fmt.Errorf("only a workflow owner may inspect this workflow's Slack credentials")
+		}
+		conn, ok := api.toolSlackConnection(ctx, svc, workspace, profile)
+		if !ok {
+			return "", fmt.Errorf("no Slack connection is configured for this workflow")
+		}
+		raw, err := json.Marshal(projectSlackConnection(conn, svc.DefaultConnectionID()))
 		return string(raw), err
 	}); err != nil {
 		return err

@@ -114,5 +114,5 @@ func (api *StreamingAPI) slackCLIFromTool(ctx context.Context, args map[string]i
 	if _, err = api.authorizeSlackToolRoute(ctx, session, channel, route); err != nil {
 		return "", err
 	}
-	return services.RunSlackCLI(ctx, method, parameters)
+	return services.RunSlackCLIOnConnection(ctx, slackToolConnectionID(ctx, api, session, route), method, parameters)
 }

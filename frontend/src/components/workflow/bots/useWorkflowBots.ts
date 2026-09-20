@@ -9,6 +9,7 @@ import type {
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 import { slackConnectionStatus } from './slackConnectionStatus'
+import { resolveWorkflowSlackConnection } from './slackWorkflowConnection'
 
 type WaRoute = WhatsAppRoute
 
@@ -49,6 +50,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // ── Workflow identity ─────────────────────────────────────────────────────
   const workflows = useWorkflowManifestStore(state => state.workflows)
   const refreshWorkflows = useWorkflowManifestStore(state => state.refreshWorkflows)
+  const updateWorkflow = useWorkflowManifestStore(state => state.updateWorkflow)
   const workflow = useMemo(
     () => (workspacePath ? workflows.find(w => w.workspace_path === workspacePath) : undefined),
     [workflows, workspacePath],
@@ -59,6 +61,9 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // no Save step for the panel to gate -- so each mutating control disables.
   const canWriteWorkflow = useCanWriteWorkflow(workspacePath)
   const readOnly = target ? false : !canWriteWorkflow
+  // Slack apps are owner-managed (writers get a 403 server-side); readers see
+  // everything disabled through readOnly as usual.
+  const canManageWorkflowSlack = !readOnly && (workflow?.my_access || 'owner') === 'owner'
 
   const routeMatchesTarget = useCallback((route: ChannelRoute | WaRoute) => {
     if (target) {
@@ -107,6 +112,22 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   const [emailsDirty, setEmailsDirty] = useState(false)
   const [emailsSaving, setEmailsSaving] = useState(false)
   const [emailsSaved, setEmailsSaved] = useState(false)
+
+  // ── This workflow's own Slack app ─────────────────────────────────────────
+  // Owners edit these drafts; admins own the platform default below instead.
+  const [slackConnName, setSlackConnName] = useState('')
+  const [slackConnBot, setSlackConnBot] = useState('')
+  const [slackConnApp, setSlackConnApp] = useState('')
+  const [slackConnEnabled, setSlackConnEnabled] = useState(true)
+  const [slackConnSaving, setSlackConnSaving] = useState(false)
+  const [slackConnTesting, setSlackConnTesting] = useState(false)
+  const [slackConnTestResult, setSlackConnTestResult] = useState<SlackTestResponse | null>(null)
+  const [slackConnConfirmDelete, setSlackConnConfirmDelete] = useState(false)
+  const [slackConnShowBot, setSlackConnShowBot] = useState(false)
+  const [slackConnShowApp, setSlackConnShowApp] = useState(false)
+  // Bumped after saves so the form resyncs from the server without clobbering
+  // typing on unrelated reloads (route adds reload the Slack config too).
+  const [slackConnSyncKey, setSlackConnSyncKey] = useState(0)
 
   // ── WhatsApp ──────────────────────────────────────────────────────────────
   const [waStatus, setWaStatus] = useState<WhatsAppStatus | null>(null)
@@ -465,6 +486,37 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
       void loadWaRouting()
     }
   }, [section, loadEmails, loadGmail, loadSlack, loadWaRouting, loadWaStatus])
+
+  // ── This workflow's Slack app: derived state ──────────────────────────────
+  const canManageSlackDefault = slackOriginal.manage_default_allowed === true
+  const slackSelection = useMemo(
+    () => resolveWorkflowSlackConnection(
+      slackOriginal.connections,
+      target ? null : workspacePath,
+      target ? undefined : workflow?.manifest.capabilities.slack_connection_id,
+      slackOriginal.default_connection_id,
+    ),
+    [slackOriginal.connections, slackOriginal.default_connection_id, target, workspacePath, workflow?.manifest.capabilities.slack_connection_id],
+  )
+  const slackOwnConnId = slackSelection.own?.id || null
+  useEffect(() => {
+    const own = slackSelection.own
+    setSlackConnName(own?.display_name || '')
+    setSlackConnBot(own?.bot_token || '')
+    setSlackConnApp(own?.app_token || '')
+    setSlackConnEnabled(own ? own.enabled : true)
+    setSlackConnTestResult(null)
+    setSlackConnConfirmDelete(false)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [slackOwnConnId, slackConnSyncKey])
+  const slackConnHasChanges = (() => {
+    const own = slackSelection.own
+    if (!own) return slackConnName.trim() !== '' || slackConnBot !== '' || slackConnApp !== '' || slackConnEnabled !== true
+    return slackConnName !== (own.display_name || '')
+      || slackConnBot !== (own.bot_token || '')
+      || slackConnApp !== (own.app_token || '')
+      || slackConnEnabled !== own.enabled
+  })()
 
   // ── WhatsApp: status polling while the pairing screen is open ─────────────
   // Not yet paired → poll /status every 3s so a fresh QR (rotating every
@@ -831,6 +883,118 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     } finally { setSlackTesting(false) }
   }
 
+  // ── This workflow's Slack app: actions ──────────────────────────────────
+  const saveWorkflowSlackConnection = async (): Promise<string | null> => {
+    if (!workspacePath || target) return null
+    try {
+      setSlackConnSaving(true)
+      setSlackError(null)
+      setSlackSuccess(null)
+      let conn = slackSelection.own
+      if (conn) {
+        conn = await agentApi.updateSlackConnection(conn.id, {
+          display_name: slackConnName.trim() || conn.display_name,
+          // Masked values round-trip as "no change" server-side.
+          bot_token: slackConnBot,
+          app_token: slackConnApp,
+          enabled: slackConnEnabled,
+        })
+      } else {
+        conn = await agentApi.createSlackConnection({
+          display_name: slackConnName.trim() || (workflow?.manifest.label || 'Workflow Slack'),
+          bot_token: slackConnBot,
+          app_token: slackConnApp,
+          enabled: slackConnEnabled,
+          workspace_path: workspacePath,
+        })
+      }
+      // A fresh app becomes this workflow's selection unless the workflow
+      // already selects a live connection.
+      const capabilities = workflow?.manifest.capabilities
+      if (capabilities && (capabilities.slack_connection_id || '') !== conn.id && !slackSelection.effective) {
+        await updateWorkflow(workspacePath, {
+          capabilities: { ...capabilities, slack_connection_id: conn.id },
+        })
+      }
+      setSlackConnTestResult(null)
+      setSlackSuccess('Workflow Slack app saved.')
+      await loadSlack()
+      setSlackConnSyncKey(key => key + 1)
+      setTimeout(() => setSlackSuccess(null), 3000)
+      return conn.id
+    } catch (err) {
+      setSlackError(err instanceof Error ? err.message : 'Failed to save the workflow Slack app')
+      return null
+    } finally { setSlackConnSaving(false) }
+  }
+
+  const selectWorkflowSlackConnection = async (connectionId: string | null) => {
+    if (!workspacePath || target) return false
+    const capabilities = workflow?.manifest.capabilities
+    if (!capabilities) return false
+    try {
+      setSlackConnSaving(true)
+      setSlackError(null)
+      await updateWorkflow(workspacePath, {
+        capabilities: { ...capabilities, slack_connection_id: connectionId || '' },
+      })
+      await loadSlack()
+      return true
+    } catch (err) {
+      setSlackError(err instanceof Error ? err.message : 'Failed to switch the workflow Slack app')
+      return false
+    } finally { setSlackConnSaving(false) }
+  }
+
+  const testWorkflowSlackConnection = async () => {
+    try {
+      setSlackConnTesting(true)
+      setSlackError(null)
+      setSlackConnTestResult(null)
+      // The backend tests saved settings; persist form edits before testing.
+      let id = slackSelection.own?.id || null
+      if (!id || slackConnHasChanges) {
+        id = await saveWorkflowSlackConnection()
+        if (!id) return
+      }
+      setSlackConnTestResult(await agentApi.testSlackConnectionEntry(id))
+    } catch (err) {
+      setSlackConnTestResult({ success: false, message: err instanceof Error ? err.message : 'Connection test failed' })
+    } finally { setSlackConnTesting(false) }
+  }
+
+  const removeWorkflowSlackConnection = async () => {
+    const conn = slackSelection.own
+    if (!conn || !workspacePath || target) return false
+    if (!slackConnConfirmDelete) {
+      setSlackConnConfirmDelete(true)
+      window.setTimeout(() => setSlackConnConfirmDelete(false), 5000)
+      return false
+    }
+    try {
+      setSlackConnSaving(true)
+      setSlackError(null)
+      const capabilities = workflow?.manifest.capabilities
+      // A selected app cannot be deleted; move the workflow back to the
+      // platform default first.
+      if (capabilities && (capabilities.slack_connection_id || '') === conn.id) {
+        await updateWorkflow(workspacePath, {
+          capabilities: { ...capabilities, slack_connection_id: '' },
+        })
+      }
+      await agentApi.deleteSlackConnection(conn.id)
+      setSlackConnConfirmDelete(false)
+      setSlackSuccess('Workflow Slack app removed; the workflow now uses the platform default.')
+      await loadSlack()
+      setSlackConnSyncKey(key => key + 1)
+      setTimeout(() => setSlackSuccess(null), 3000)
+      return true
+    } catch (err) {
+      setSlackError(err instanceof Error ? err.message : 'Failed to remove the workflow Slack app')
+      return false
+    } finally { setSlackConnSaving(false) }
+  }
+
   // ── WhatsApp handlers (setup screen) ──────────────────────────────────────
   const openAddWhatsAppDevice = useCallback(() => {
     setWaAddDeviceOpen(true)
@@ -990,6 +1154,14 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     testResult, testReply, pollingForReply, showBotToken, setShowBotToken, showAppToken, setShowAppToken,
     allowedEmails, setAllowedEmails, emailsDirty, setEmailsDirty, emailsSaving, emailsSaved, setEmailsSaved,
     handleEmailsSave, handleSlackSave, handleSlackTest, slackHasChanges, slackReady, slackStatusLabel,
+    canManageSlackDefault, canManageWorkflowSlack, hasProfileTarget: !!target,
+    // slack: this workflow's own app
+    slackSelection,
+    slackConnName, setSlackConnName, slackConnBot, setSlackConnBot, slackConnApp, setSlackConnApp,
+    slackConnEnabled, setSlackConnEnabled, slackConnSaving, slackConnTesting, slackConnTestResult,
+    slackConnConfirmDelete, slackConnShowBot, setSlackConnShowBot, slackConnShowApp, setSlackConnShowApp,
+    slackConnHasChanges, saveWorkflowSlackConnection, selectWorkflowSlackConnection,
+    testWorkflowSlackConnection, removeWorkflowSlackConnection,
     // whatsapp
     waStatus, waError, waRoutingError, qrImageURL, qrLoading, qrError,
     waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,

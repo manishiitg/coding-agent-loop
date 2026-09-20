@@ -23,11 +23,27 @@ type SlackConnectionTestResult struct {
 
 // DiagnoseConnection is shared by the settings UI and Builder tool. No test
 // message is posted, and no credentials or WebSocket URLs are returned.
+// It diagnoses this instance's effective connection (the default on root).
 func (s *SlackService) DiagnoseConnection(ctx context.Context) SlackConnectionTestResult {
 	if err := s.ReloadConfig(ctx); err != nil {
 		return SlackConnectionTestResult{Message: "Failed to load Slack configuration"}
 	}
-	return s.DiagnoseConnectionWithConfig(ctx, s.config)
+	return s.DiagnoseConnectionWithConfig(ctx, s.probeConfig())
+}
+
+// DiagnoseConnectionFor diagnoses one named registry entry. Root only.
+func (s *SlackService) DiagnoseConnectionFor(ctx context.Context, connID string) SlackConnectionTestResult {
+	if s.isChildService() {
+		return SlackConnectionTestResult{Message: "Diagnose through the root Slack service"}
+	}
+	if err := s.ReloadConfig(ctx); err != nil {
+		return SlackConnectionTestResult{Message: "Failed to load Slack configuration"}
+	}
+	conn, ok := effectiveSlackConnection(s.config, connID)
+	if !ok {
+		return SlackConnectionTestResult{Message: "Slack connection is unknown or has no tokens"}
+	}
+	return s.DiagnoseConnectionWithConfig(ctx, &SlackConfig{Enabled: conn.Enabled, BotToken: conn.BotToken, AppToken: conn.AppToken})
 }
 
 func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config *SlackConfig) SlackConnectionTestResult {

@@ -399,6 +399,14 @@ type WorkflowCapabilities struct {
 	UseCodeExecutionMode      bool                           `json:"use_code_execution_mode"`
 	LLMConfig                 *workflowtypes.PresetLLMConfig `json:"llm_config,omitempty"`
 	Notifications             *WorkflowNotificationConfig    `json:"notifications,omitempty"`
+	// SlackConnectionID selects WHICH configured Slack app identity this
+	// workflow talks through — for bot replies, tool sends, and
+	// notifications alike. Empty means "inherit the platform default
+	// connection", so existing workflows are unaffected. An unknown or
+	// disabled connection fails the send: it never falls back to another
+	// identity, because delivering from an unintended Slack app is worse
+	// than not delivering. An identifier, never a secret.
+	SlackConnectionID string `json:"slack_connection_id,omitempty"`
 }
 
 // WorkflowNotificationConfig contains only safe references. Credential values

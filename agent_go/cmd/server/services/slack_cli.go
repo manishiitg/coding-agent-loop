@@ -14,13 +14,27 @@ import (
 
 // RunSlackCLI uses the saved connector token only in the CLI child's environment.
 func RunSlackCLI(ctx context.Context, method string, parameters map[string]interface{}) (string, error) {
+	return RunSlackCLIOnConnection(ctx, "", method, parameters)
+}
+
+// RunSlackCLIOnConnection runs a Slack CLI read through one named app
+// connection. An empty connection ID means the default connection. An
+// unknown or disabled connection fails rather than using another identity.
+func RunSlackCLIOnConnection(ctx context.Context, connID, method string, parameters map[string]interface{}) (string, error) {
 	slackFSMu.Lock()
 	cfg, err := loadSlackConfigFromDisk()
 	slackFSMu.Unlock()
 	if err != nil {
 		return "", fmt.Errorf("could not load Slack connector credentials")
 	}
-	if cfg == nil || !cfg.Enabled || cfg.BotToken == "" {
+	conn, ok := effectiveSlackConnection(cfg, connID)
+	if !ok {
+		if strings.TrimSpace(connID) != "" {
+			return "", fmt.Errorf("Slack connection is unknown or has no tokens")
+		}
+		return "", fmt.Errorf("Slack bot is disabled or its token is missing; configure Setup > Connectors > Slack")
+	}
+	if !conn.Enabled {
 		return "", fmt.Errorf("Slack bot is disabled or its token is missing; configure Setup > Connectors > Slack")
 	}
 	binary, err := exec.LookPath("slack")
@@ -35,7 +49,7 @@ func RunSlackCLI(ctx context.Context, method string, parameters map[string]inter
 			return "", fmt.Errorf("Slack CLI is not installed on the backend; install the official Slack CLI")
 		}
 	}
-	return executeSlackCLI(ctx, binary, cfg.BotToken, method, parameters)
+	return executeSlackCLI(ctx, binary, conn.BotToken, method, parameters)
 }
 
 type slackCLIOutput struct{ bytes.Buffer }

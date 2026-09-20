@@ -394,6 +394,9 @@ func (api *StreamingAPI) botWorkflowTurn(ctx context.Context, query string, rout
 	req["bot_platform"] = thread.Platform
 	req["bot_channel_id"] = thread.ChannelID
 	req["bot_thread_ts"] = thread.ThreadTS
+	if thread.ConnectionID != "" {
+		req["bot_connection_id"] = thread.ConnectionID
+	}
 	req["bot_route_grant"] = route.BotGrant
 	req["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)
 	req["execution_options"].(map[string]interface{})["workshop_mode"] = services.WorkshopModeForBotGrant(route.BotGrant)

@@ -42,5 +42,10 @@ func decryptSlackConfig(cfg *SlackConfig) (*SlackConfig, error) {
 	if err != nil {
 		return nil, err
 	}
+	for i, conn := range cfg.Connections {
+		if cfg.Connections[i], err = decryptSlackConnection(conn); err != nil {
+			return nil, err
+		}
+	}
 	return cfg, nil
 }

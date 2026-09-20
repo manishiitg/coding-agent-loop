@@ -760,6 +760,11 @@ type QueryRequest struct {
 	// conversation so human tools can notify the same Slack/WhatsApp thread.
 	BotChannelID string `json:"bot_channel_id,omitempty"`
 	BotThreadTS  string `json:"bot_thread_ts,omitempty"`
+	// BotConnectionID names the Slack app connection the originating
+	// conversation lives on (empty = platform default). Set from the
+	// arrival connection for bot sessions — which wins over the manifest
+	// selection — and from the manifest otherwise.
+	BotConnectionID string `json:"bot_connection_id,omitempty"`
 	// BotUser* identifies the external chat user who created or continued the
 	// bot thread. These fields are display metadata only, not authorization.
 	BotUserID    string `json:"bot_user_id,omitempty"`
@@ -885,8 +890,9 @@ func notificationDestinationFromQuery(req QueryRequest, userID string) *services
 	case "slack":
 		if req.BotChannelID != "" {
 			dest.Slack = &services.SlackDest{
-				ChannelID: req.BotChannelID,
-				ThreadTS:  req.BotThreadTS,
+				ChannelID:    req.BotChannelID,
+				ThreadTS:     req.BotThreadTS,
+				ConnectionID: strings.TrimSpace(req.BotConnectionID),
 			}
 		}
 	case "whatsapp":
@@ -2409,6 +2415,9 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Slack Feedback API routes
 	SlackFeedbackRoutes(router, api)
+
+	// Slack connection registry (per-workflow Slack apps)
+	SlackConnectionRoutes(router, api)
 
 	// Gmail (outbound-only) config/status/test API routes
 	GmailFeedbackRoutes(router, api)
@@ -3989,6 +3998,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// Manifest is the source of truth for workflow-selected user secrets too.
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, resolvedWPath, manifest.Capabilities.SelectedSecrets)
+				// A bot session already carries its arrival connection, which
+				// wins over the manifest selection for that conversation.
+				if strings.TrimSpace(req.BotConnectionID) == "" {
+					req.BotConnectionID = strings.TrimSpace(manifest.Capabilities.SlackConnectionID)
+				}
 				if manifest.Capabilities.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(manifest.Capabilities.Notifications.SlackWebhookSecretName)
 					req.NotificationRunSummaryInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
@@ -4116,6 +4130,11 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				}
 				// User-stored secrets from manifest are authoritative for workflow UI edits.
 				req.DecryptedSecrets = api.loadSelectedSecrets(context.Background(), currentUserID, manifestWorkspacePath, caps.SelectedSecrets)
+				// A bot session already carries its arrival connection, which
+				// wins over the manifest selection for that conversation.
+				if strings.TrimSpace(req.BotConnectionID) == "" {
+					req.BotConnectionID = strings.TrimSpace(caps.SlackConnectionID)
+				}
 				if caps.Notifications != nil {
 					req.NotificationSlackWebhookSecretName = strings.TrimSpace(caps.Notifications.SlackWebhookSecretName)
 					req.NotificationRunSummaryInstructions = caps.Notifications.EffectiveRunSummaryInstructions()

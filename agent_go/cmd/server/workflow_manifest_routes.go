@@ -162,6 +162,10 @@ func (api *StreamingAPI) handleCreateWorkflowManifest(w http.ResponseWriter, r *
 	if req.ExecutionDefaults != nil {
 		manifest.ExecutionDefs = *req.ExecutionDefaults
 	}
+	if err := validateWorkflowSlackConnectionID(manifest.Capabilities.SlackConnectionID); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 
 	// Write manifest
 	if err := WriteWorkflowManifest(r.Context(), req.WorkspacePath, manifest); err != nil {
@@ -341,6 +345,10 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 	}
 	if req.Capabilities != nil {
 		manifest.Capabilities = mergeWorkflowCapabilitiesUpdate(manifest.Capabilities, req.Capabilities)
+		if err := validateWorkflowSlackConnectionID(manifest.Capabilities.SlackConnectionID); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
 	}
 	if req.ExecutionDefaults != nil {
 		manifest.ExecutionDefs = *req.ExecutionDefaults

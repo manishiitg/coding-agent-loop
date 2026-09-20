@@ -179,6 +179,10 @@ type ThreadID struct {
 	Platform  string // "slack", "discord", "telegram", "whatsapp"
 	ChannelID string
 	ThreadTS  string // platform-specific thread root ID
+	// ConnectionID names the Slack app connection the thread lives on.
+	// Empty means the default connection. It is deliberately excluded from
+	// Key so session lookup stays stable for manually-built IDs.
+	ConnectionID string
 }
 
 // Key returns a unique string key for this thread
@@ -196,13 +200,16 @@ type BotIncomingMessage struct {
 	UserEmail       string // resolved by platform connector (e.g. Slack users.info)
 	WorkspaceUserID string // pre-resolved workspace user ID (set by simulator from HTTP auth)
 	ChannelID       string
-	ThreadTS        string // empty = new conversation, set = existing thread
-	Text            string // @mention stripped
-	MessageTS       string // platform timestamp of the incoming message (used to add/remove reactions)
-	Timestamp       time.Time
-	IsThreadReply   bool
-	IsMention       bool            // true when the bot was @mentioned (vs plain thread reply)
-	ThreadHistory   []ThreadMessage // populated when tagged in existing thread
+	// ConnectionID names the Slack app connection the message arrived on.
+	// Empty means the default connection. Replies inherit it.
+	ConnectionID  string
+	ThreadTS      string // empty = new conversation, set = existing thread
+	Text          string // @mention stripped
+	MessageTS     string // platform timestamp of the incoming message (used to add/remove reactions)
+	Timestamp     time.Time
+	IsThreadReply bool
+	IsMention     bool            // true when the bot was @mentioned (vs plain thread reply)
+	ThreadHistory []ThreadMessage // populated when tagged in existing thread
 	// PresetWorkflow, when set, overrides channel-based workflow routing
 	// for this message. WhatsApp uses it after its @<slug> router has
 	// selected a workflow explicitly.
@@ -367,6 +374,38 @@ type BotConnector interface {
 	SetMessageHandler(handler BotMessageHandler)
 	SetInteractionHandler(handler BotInteractionHandler)
 	GetFormatter() MessageFormatter
+}
+
+// connectionScopedConnector is an optional BotConnector extension for
+// platforms that serve several identities (Slack app connections) behind
+// one platform name. The manager prefers these ThreadID-carrying variants
+// so reactions and lookups land on the connection the thread lives on;
+// connectors without it keep the legacy channel-only behavior.
+type connectionScopedConnector interface {
+	AddReactionOnConnection(ctx context.Context, threadID ThreadID, messageTS, emoji string) error
+	RemoveReactionOnConnection(ctx context.Context, threadID ThreadID, messageTS, emoji string) error
+	GetChannelNameOnConnection(ctx context.Context, threadID ThreadID) string
+}
+
+func botConnectorAddReaction(ctx context.Context, connector BotConnector, threadID ThreadID, messageTS, emoji string) error {
+	if scoped, ok := connector.(connectionScopedConnector); ok {
+		return scoped.AddReactionOnConnection(ctx, threadID, messageTS, emoji)
+	}
+	return connector.AddReaction(ctx, threadID.ChannelID, messageTS, emoji)
+}
+
+func botConnectorRemoveReaction(ctx context.Context, connector BotConnector, threadID ThreadID, messageTS, emoji string) error {
+	if scoped, ok := connector.(connectionScopedConnector); ok {
+		return scoped.RemoveReactionOnConnection(ctx, threadID, messageTS, emoji)
+	}
+	return connector.RemoveReaction(ctx, threadID.ChannelID, messageTS, emoji)
+}
+
+func botConnectorChannelName(ctx context.Context, connector BotConnector, threadID ThreadID) string {
+	if scoped, ok := connector.(connectionScopedConnector); ok {
+		return scoped.GetChannelNameOnConnection(ctx, threadID)
+	}
+	return connector.GetChannelName(ctx, threadID.ChannelID)
 }
 
 // BotEventSubscriber abstracts event subscription so services doesn't import internal/events.
@@ -977,9 +1016,10 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	}
 
 	threadID := ThreadID{
-		Platform:  msg.Platform,
-		ChannelID: msg.ChannelID,
-		ThreadTS:  msg.ThreadTS,
+		Platform:     msg.Platform,
+		ChannelID:    msg.ChannelID,
+		ThreadTS:     msg.ThreadTS,
+		ConnectionID: msg.ConnectionID,
 	}
 
 	// Determine thread key based on whether platform supports threads
@@ -1373,7 +1413,8 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 				// bug. Best-effort: log and move on if the platform doesn't
 				// support reactions or the call fails.
 				if connector := m.GetConnector(active.Platform); connector != nil && connector.Capabilities().Reactions && msg.ChannelID != "" && msg.MessageTS != "" {
-					if err := connector.AddReaction(context.Background(), msg.ChannelID, msg.MessageTS, "zipper_mouth_face"); err != nil {
+					thread := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ConnectionID: msg.ConnectionID}
+					if err := botConnectorAddReaction(context.Background(), connector, thread, msg.MessageTS, "zipper_mouth_face"); err != nil {
 						log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
 					}
 				}
@@ -1638,7 +1679,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 	active.mu.Lock()
 	active.LastActivity = time.Now()
 	if msg.ChannelID != "" && msg.MessageTS != "" {
-		ack := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.MessageTS}
+		ack := ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ThreadTS: msg.MessageTS, ConnectionID: msg.ConnectionID}
 		found := false
 		for _, previous := range active.followUpAcks {
 			if previous == ack {
@@ -1651,7 +1692,7 @@ func (m *BotConversationManager) startFollowUpTurn(active *activeBotSession, msg
 		}
 	}
 	active.mu.Unlock()
-	m.acknowledgeBotMessage(msg.Platform, msg.ChannelID, msg.MessageTS)
+	m.acknowledgeBotMessage(ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ConnectionID: msg.ConnectionID}, msg.MessageTS)
 	go func() {
 		followCtx, followCancel := context.WithTimeout(context.Background(), 5*time.Minute)
 		defer followCancel()
@@ -2403,7 +2444,7 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 	// hourglass reaction on top of the "eyes" ack so the user knows the bot is
 	// still thinking, not stuck. Quick responses never see the hourglass.
 	if msg.ChannelID != "" && msg.MessageTS != "" {
-		go func(channelID, messageTS, platform string) {
+		go func(threadID ThreadID, messageTS string) {
 			time.Sleep(10 * time.Second)
 			active.mu.Lock()
 			stillRunning := active.Status == chathistory.BotSessionStatusRunning
@@ -2411,12 +2452,12 @@ func (m *BotConversationManager) startNewSessionDirect(msg BotIncomingMessage, t
 			if !stillRunning {
 				return
 			}
-			if connector := m.GetConnector(platform); connector != nil && connector.Capabilities().Reactions {
-				if err := connector.AddReaction(context.Background(), channelID, messageTS, "hourglass_flowing_sand"); err != nil {
+			if connector := m.GetConnector(threadID.Platform); connector != nil && connector.Capabilities().Reactions {
+				if err := botConnectorAddReaction(context.Background(), connector, threadID, messageTS, "hourglass_flowing_sand"); err != nil {
 					log.Printf("[BOT_MANAGER] Failed to add hourglass reaction: %v", err)
 				}
 			}
-		}(msg.ChannelID, msg.MessageTS, msg.Platform)
+		}(ThreadID{Platform: msg.Platform, ChannelID: msg.ChannelID, ConnectionID: msg.ConnectionID}, msg.MessageTS)
 	}
 
 	// No "Starting session..." announcement — the agent's first streamed
@@ -2505,7 +2546,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 	if connector == nil {
 		return
 	}
-	m.acknowledgeBotMessage(active.Platform, active.ackChannelID, active.ackMessageTS)
+	m.acknowledgeBotMessage(ThreadID{Platform: active.Platform, ChannelID: active.ackChannelID, ConnectionID: active.ThreadID.ConnectionID}, active.ackMessageTS)
 
 	// Set up event filter for streaming updates to thread
 	sessionCtx, cancel := context.WithCancel(ctx)
@@ -2582,7 +2623,7 @@ func (m *BotConversationManager) runSession(active *activeBotSession, queryReq m
 		active.Status = chathistory.BotSessionStatusCompleted
 	}
 	acks := append([]ThreadID(nil), active.followUpAcks...)
-	acks = append(acks, ThreadID{Platform: active.Platform, ChannelID: active.ackChannelID, ThreadTS: active.ackMessageTS})
+	acks = append(acks, ThreadID{Platform: active.Platform, ChannelID: active.ackChannelID, ThreadTS: active.ackMessageTS, ConnectionID: active.ThreadID.ConnectionID})
 	active.followUpAcks = nil
 	active.mu.Unlock()
 
@@ -2611,12 +2652,12 @@ func botSessionFailureMessage(err error) string {
 }
 
 // Acknowledge only messages accepted for an agent turn, never raw channel events.
-func (m *BotConversationManager) acknowledgeBotMessage(platform, channelID, messageTS string) {
-	connector := m.GetConnector(platform)
-	if connector == nil || !connector.Capabilities().Reactions || channelID == "" || messageTS == "" {
+func (m *BotConversationManager) acknowledgeBotMessage(threadID ThreadID, messageTS string) {
+	connector := m.GetConnector(threadID.Platform)
+	if connector == nil || !connector.Capabilities().Reactions || threadID.ChannelID == "" || messageTS == "" {
 		return
 	}
-	if err := connector.AddReaction(context.Background(), channelID, messageTS, "eyes"); err != nil {
+	if err := botConnectorAddReaction(context.Background(), connector, threadID, messageTS, "eyes"); err != nil {
 		log.Printf("[BOT_MANAGER] Failed to acknowledge accepted message: %v", err)
 	}
 }
@@ -2639,7 +2680,7 @@ func (m *BotConversationManager) clearBotMessageReactions(ctx context.Context, a
 		connector := m.GetConnector(ack.Platform)
 		if connector != nil && connector.Capabilities().Reactions {
 			for _, emoji := range []string{"eyes", "hourglass_flowing_sand"} {
-				if err := connector.RemoveReaction(ctx, ack.ChannelID, ack.ThreadTS, emoji); err != nil {
+				if err := botConnectorRemoveReaction(ctx, connector, ack, ack.ThreadTS, emoji); err != nil {
 					log.Printf("[BOT_MANAGER] Failed to remove %s reaction: %v", emoji, err)
 				}
 			}
@@ -2963,7 +3004,7 @@ func (m *BotConversationManager) buildQueryWithThreadHistory(query string, platf
 	}
 
 	ctx := context.Background()
-	channelName := connector.GetChannelName(ctx, threadID.ChannelID)
+	channelName := botConnectorChannelName(ctx, connector, threadID)
 
 	history, err := connector.GetThreadHistory(ctx, threadID)
 	if err != nil {
@@ -3090,6 +3131,9 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		}
 		if threadID.ThreadTS != "" {
 			req["bot_thread_ts"] = threadID.ThreadTS
+		}
+		if threadID.ConnectionID != "" {
+			req["bot_connection_id"] = threadID.ConnectionID
 		}
 	}
 

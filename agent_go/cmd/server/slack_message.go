@@ -160,7 +160,14 @@ func (api *StreamingAPI) sendSlackMessageFromTool(ctx context.Context, args map[
 		if err != nil {
 			return "", fmt.Errorf("Slack connector unavailable")
 		}
-		post = svc.PostRouteMessage
+		target := svc
+		if connID := slackToolConnectionID(ctx, api, session, route); connID != "" {
+			target, err = svc.ServiceForConnection(connID)
+			if err != nil {
+				return "", fmt.Errorf("Slack connection unavailable")
+			}
+		}
+		post = target.PostRouteMessage
 	}
 	ts, err := post(ctx, channel, root, message)
 	if err != nil {

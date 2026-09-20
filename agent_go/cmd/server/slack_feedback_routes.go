@@ -32,13 +32,18 @@ type SlackConfigRequest struct {
 	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
 }
 
-// SlackConfigResponse represents the Slack configuration response
+// SlackConfigResponse represents the Slack configuration response.
+// The top-level credential fields mirror the default connection; the full
+// masked registry is in Connections.
 type SlackConfigResponse struct {
-	Enabled        bool                    `json:"enabled"`
-	BotToken       string                  `json:"bot_token,omitempty"` // Masked in GET
-	AppToken       string                  `json:"app_token,omitempty"` // Masked in GET
-	BotMode        bool                    `json:"bot_mode"`
-	ChannelRouting map[string]ChannelRoute `json:"channel_routing,omitempty"`
+	Enabled              bool                      `json:"enabled"`
+	BotToken             string                    `json:"bot_token,omitempty"` // Masked in GET
+	AppToken             string                    `json:"app_token,omitempty"` // Masked in GET
+	BotMode              bool                      `json:"bot_mode"`
+	ChannelRouting       map[string]ChannelRoute   `json:"channel_routing,omitempty"`
+	Connections          []SlackConnectionResponse `json:"connections,omitempty"`
+	DefaultConnectionID  string                    `json:"default_connection_id,omitempty"`
+	ManageDefaultAllowed bool                      `json:"manage_default_allowed"`
 }
 
 // SlackTestResponse represents test connection response
@@ -288,11 +293,14 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		resp := SlackConfigResponse{
-			Enabled:        config.Enabled,
-			BotToken:       config.BotToken,
-			AppToken:       config.AppToken,
-			BotMode:        botMode,
-			ChannelRouting: channelRouting,
+			Enabled:              config.Enabled,
+			BotToken:             config.BotToken,
+			AppToken:             config.AppToken,
+			BotMode:              botMode,
+			ChannelRouting:       channelRouting,
+			Connections:          projectSlackConnections(slackService),
+			DefaultConnectionID:  slackService.DefaultConnectionID(),
+			ManageDefaultAllowed: currentUserIsAdmin(r),
 		}
 
 		w.Header().Set("Content-Type", "application/json")
@@ -300,7 +308,24 @@ func getSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 	}
 }
 
-// updateSlackConfigHandler creates/updates Slack configuration
+// projectSlackConnections renders the masked registry for the config response.
+func projectSlackConnections(svc *services.SlackService) []SlackConnectionResponse {
+	if svc == nil {
+		return nil
+	}
+	defaultID := svc.DefaultConnectionID()
+	conns := svc.ListConnections()
+	out := make([]SlackConnectionResponse, 0, len(conns))
+	for _, c := range conns {
+		out = append(out, projectSlackConnection(c, defaultID))
+	}
+	return out
+}
+
+// updateSlackConfigHandler creates/updates Slack configuration. The legacy
+// credential fields map onto the default connection (admin-only); channel
+// routing is owner-scoped per destination workflow. Named connections are
+// managed through the connections API.
 func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "OPTIONS" {
@@ -436,9 +461,12 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 
 		response := SlackConfigResponse{
-			Enabled:        config.Enabled,
-			BotMode:        req.BotMode,
-			ChannelRouting: channelRouting,
+			Enabled:              config.Enabled,
+			BotMode:              req.BotMode,
+			ChannelRouting:       channelRouting,
+			Connections:          projectSlackConnections(slackService),
+			DefaultConnectionID:  slackService.DefaultConnectionID(),
+			ManageDefaultAllowed: currentUserIsAdmin(r),
 		}
 
 		w.Header().Set("Content-Type", "application/json")

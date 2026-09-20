@@ -61,7 +61,7 @@ func (api *StreamingAPI) dispatchSlackTrigger(ctx context.Context, channel strin
 	if cfg == nil || !cfg.Enabled || !cfg.BotMode || !ok || !services.SlackTriggerMatches(route.Trigger, event, "") {
 		return fmt.Errorf("Slack trigger is inactive or no longer matches")
 	}
-	if event.BotID == "" && !services.SlackRouteAllowsEmail(route, slackTriggerActorEmail(event.User)) {
+	if event.BotID == "" && !services.SlackRouteAllowsEmail(route, slackTriggerActorEmail(slackConnectionIDForRoute(ctx, route), event.User)) {
 		return fmt.Errorf("Slack email is blocked or unverifiable")
 	}
 	if route.BotGrant != "run" && route.BotGrant != "owner" {
@@ -110,7 +110,12 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 	if err := validateSlackTrigger(ctx, route); err != nil {
 		return err
 	}
-	history, err := captureSlackTriggerContext(ctx, services.GetSlackService(), channel, event, route.Trigger.Context)
+	connID := slackConnectionIDForRoute(ctx, route)
+	reader, err := slackServiceForRoute(ctx, route)
+	if err != nil {
+		return fmt.Errorf("Slack connection unavailable: %w", err)
+	}
+	history, err := captureSlackTriggerContext(ctx, reader, channel, event, route.Trigger.Context)
 	if err != nil {
 		return err
 	}
@@ -137,8 +142,11 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 		}
 		req["bot_route_grant"] = route.BotGrant
 		req["bot_thread_ts"] = event.TimeStamp
+		if connID != "" {
+			req["bot_connection_id"] = connID
+		}
 		req["bot_user_id"] = event.User
-		req["bot_user_email"] = slackTriggerActorEmail(event.User)
+		req["bot_user_email"] = slackTriggerActorEmail(connID, event.User)
 		req["_trusted_slack_app"] = event.BotID != ""
 		return api.startSessionInternal(ctx, req, sid, route.WorkspaceUserID, nil)
 	}
@@ -194,19 +202,27 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 	req["bot_platform"] = "slack"
 	req["bot_channel_id"] = channel
 	req["bot_thread_ts"] = event.TimeStamp
+	if connID != "" {
+		req["bot_connection_id"] = connID
+	}
 	req["bot_route_grant"] = route.BotGrant
 	req["bot_user_id"] = event.User
-	req["bot_user_email"] = slackTriggerActorEmail(event.User)
+	req["bot_user_email"] = slackTriggerActorEmail(connID, event.User)
 	req["_trusted_slack_app"] = event.BotID != ""
 	req["triggered_by"] = "bot:slack"
 	return api.startSessionInternal(context.WithValue(ctx, directWebhookExecutionKey{}, opts), req, sessionID, userID, nil)
 }
 
-func slackTriggerActorEmail(user string) string {
-	if svc := services.GetSlackService(); svc != nil {
-		return svc.UserEmailForRoute(user)
+func slackTriggerActorEmail(connID, user string) string {
+	svc := services.GetSlackService()
+	if svc == nil {
+		return ""
 	}
-	return ""
+	target, err := svc.ServiceForConnection(connID)
+	if err != nil {
+		return ""
+	}
+	return target.UserEmailForRoute(user)
 }
 
 func resolveSlackTriggerDelivery(ctx context.Context, route ChannelRoute, id string, payload []byte) (WorkflowSchedule, *WorkflowWebhookDelivery, error) {

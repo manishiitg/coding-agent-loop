@@ -24,7 +24,10 @@ type SlackTrigger struct {
 }
 type SlackTriggerHandler func(context.Context, string, *slackevents.MessageEvent) error
 
-func (s *SlackService) SetTriggerHandler(handler SlackTriggerHandler) { s.triggerHandler = handler }
+func (s *SlackService) SetTriggerHandler(handler SlackTriggerHandler) {
+	s.triggerHandler = handler
+	s.propagateToChildren(func(child *SlackService) { child.triggerHandler = handler })
+}
 func SlackTriggerMatches(trigger *SlackTrigger, event *slackevents.MessageEvent, ownUserID string) bool {
 	if trigger == nil || event == nil || event.TimeStamp == "" || event.User == ownUserID && ownUserID != "" || event.ThreadTimeStamp != "" && event.ThreadTimeStamp != event.TimeStamp {
 		return false

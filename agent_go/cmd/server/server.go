@@ -11208,7 +11208,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 				}
 				ctx = context.WithValue(ctx, UserContextKey, &UserClaims{UserID: userID})
 				if (name == "install_mcp_server" || name == "add_mcp_server" || name == "edit_mcp_server" || name == "remove_mcp_server") && !canManageGlobalSecrets(userID) {
-					return "Only a platform administrator can add, authenticate, edit, or remove shared MCP connections.", nil
+					return "Managing shared MCP connections requires admin access.", nil
 				}
 				return original(ctx, args)
 			}
@@ -11297,7 +11297,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"list_mcp_servers",
-		"List shared platform MCP servers: for each, whether an administrator has connected it for AgentWorks (versus merely present in the catalog), whether it is a custom platform server, and whether discovery succeeded. Connected credentials are reusable by Work, workflows, chats, and schedules. Use search_mcp_catalog for servers not yet configured.",
+		"List shared platform MCP servers: for each, whether it is connected for AgentWorks (versus merely present in the catalog), whether it is a custom platform server, and whether discovery succeeded. Connecting requires admin access; in single-user setups the user is the admin, so proceed instead of asking for one. Connected credentials are reusable by Work, workflows, chats, and schedules. Use search_mcp_catalog for servers not yet configured.",
 		map[string]interface{}{
 			"type":       "object",
 			"properties": map[string]interface{}{},
@@ -11362,7 +11362,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 					case "error":
 						statusLabel = "discovery failed"
 					case "not_connected":
-						statusLabel = "platform administrator sign-in required"
+						statusLabel = "admin sign-in required"
 					case "not_loaded", "":
 						statusLabel = "not yet discovered"
 					default:
@@ -11497,7 +11497,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"install_mcp_server",
-		"Administrator-only platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. Installation does not select the server: workflows use update_workflow_config(add_servers=[name]), while an active Work project uses update_project_mcp_server_selection(action=select, server=name). Before OAuth or API-key setup, explicitly tell the administrator that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
+		"Platform install of an MCP server, shared by AgentWorks, Work, workflows, chats, and schedules. Requires admin access; in single-user setups the user is the admin, so proceed instead of asking for one. Installation does not select the server: workflows use update_workflow_config(add_servers=[name]), while an active Work project uses update_project_mcp_server_selection(action=select, server=name). Before OAuth or API-key setup in multi-user mode, explicitly tell the user that every AgentWorks user will be able to use the connected external account. For a fresh URL, live-probe its auth requirements and verify the provider. To reauthorize an existing OAuth connection, set reconnect=true.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11526,7 +11526,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if isMCPConfigLocked() {
-				return "MCP configuration is locked by the administrator, so chat cannot install servers.", nil
+				return "MCP configuration is locked (MCP_CONFIG_LOCKED is set), so chat cannot install servers.", nil
 			}
 			name, _ := args["name"].(string)
 			name = strings.TrimSpace(name)
@@ -11587,7 +11587,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 						connected = hasOAuthTokenFile(owned)
 					}
 					if connected {
-						return fmt.Sprintf("%q is already connected across AgentWorks. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project. For OAuth reauthorization, a platform administrator can call install_mcp_server with reconnect=true.", name, name, name), nil
+						return fmt.Sprintf("%q is already connected across AgentWorks. Select it with update_workflow_config(add_servers=[%q]) in a workflow, or update_project_mcp_server_selection(action=select, server=%q) in an active Work project. For OAuth reauthorization, call install_mcp_server with reconnect=true (requires admin access).", name, name, name), nil
 					}
 				}
 			}
@@ -11672,7 +11672,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"add_mcp_server",
-		"Administrator-only: add a shared platform MCP server configuration, then trigger discovery. Every AgentWorks product and user can reuse it; workflows still select servers explicitly.",
+		"Add a shared platform MCP server configuration, then trigger discovery. Requires admin access; in single-user setups the user is the admin, so proceed instead of asking for one. Every AgentWorks product and user can reuse it; workflows still select servers explicitly.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11721,7 +11721,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if isMCPConfigLocked() {
-				return "MCP configuration is locked by the administrator, so chat cannot add or update servers.", nil
+				return "MCP configuration is locked (MCP_CONFIG_LOCKED is set), so chat cannot add or update servers.", nil
 			}
 
 			name, _ := args["name"].(string)
@@ -11769,7 +11769,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"edit_mcp_server",
-		"Administrator-only: edit an existing shared platform MCP server configuration, then trigger discovery. Base catalog servers cannot be edited from chat.",
+		"Edit an existing shared platform MCP server configuration, then trigger discovery. Requires admin access; in single-user setups the user is the admin, so proceed instead of asking for one. Base catalog servers cannot be edited from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11818,7 +11818,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if isMCPConfigLocked() {
-				return "MCP configuration is locked by the administrator, so chat cannot edit servers.", nil
+				return "MCP configuration is locked (MCP_CONFIG_LOCKED is set), so chat cannot edit servers.", nil
 			}
 
 			name, _ := args["name"].(string)
@@ -11865,7 +11865,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 
 	if err := registerTool(
 		"remove_mcp_server",
-		"Administrator-only: remove a shared platform MCP server configuration. This affects Work, AgentWorks chats, workflows, and schedules. Base catalog servers cannot be removed from chat.",
+		"Remove a shared platform MCP server configuration. Requires admin access; in single-user setups the user is the admin, so proceed instead of asking for one. This affects Work, AgentWorks chats, workflows, and schedules. Base catalog servers cannot be removed from chat.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -11878,7 +11878,7 @@ func (api *StreamingAPI) registerMultiAgentMCPServerTools(registrar interface {
 		},
 		func(ctx context.Context, args map[string]interface{}) (string, error) {
 			if isMCPConfigLocked() {
-				return "MCP configuration is locked by the administrator, so chat cannot remove servers.", nil
+				return "MCP configuration is locked (MCP_CONFIG_LOCKED is set), so chat cannot remove servers.", nil
 			}
 
 			name, _ := args["name"].(string)

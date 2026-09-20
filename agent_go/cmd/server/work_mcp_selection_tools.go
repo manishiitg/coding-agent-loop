@@ -47,7 +47,7 @@ func (api *StreamingAPI) registerWorkMCPSelectionTool(registrar definitionToolRe
 			return "", err
 		}
 		if action == "select" && !api.isPlatformMCPServerConnected(catalog, canonical, config) {
-			return "", fmt.Errorf("MCP server %q is not connected platform-wide; a platform administrator must install and authorize it before this project can select it", canonical)
+			return "", fmt.Errorf("MCP server %q is not connected platform-wide; install and authorize it with install_mcp_server first (requires admin access; in single-user setups the user is the admin), then select it", canonical)
 		}
 
 		if err := updateProductSelectedServers(ctx, "work", workspacePath, func(current []string) []string {

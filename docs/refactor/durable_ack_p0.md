@@ -11,6 +11,10 @@ its server↔chat e2e remains pending. 2026-09-20 fix: durability receipts are
 now consumed on every ingestion path including durable restore
 (see "Restore-path receipt consumption" below).**
 
+**Current review disposition: changes required.** The follow-up code review
+below reproduced three remaining correctness bugs after the FIFO-receipt and
+append-then-apply fixes. Historical live passes do not cover those regressions.
+
 ## Problem
 
 A tmux `send-keys` exit 0 only proves tmux accepted the keystroke. Every
@@ -483,8 +487,8 @@ itself entered the timeline as an unknown row, and the rebuilt
 rows — synthesized from role/content-only durable carriers —
 lost the tick upgrade (no `message_id` to match).
 
-Fix (frontend, uncommitted — git frozen while a second agent
-works the tree):
+Fix (frontend, now committed; the implementation notes below describe the
+original restore-path change):
 
 * `splitLiveInputConfirmations` /
   `resolveLiveInputConfirmations` in `liveInputReceipt.ts`:
@@ -596,7 +600,7 @@ diff); muse's MCP exec-lane failure reproduces on the
 pristine tree (pre-existing). Frontend focused suites green,
 `tsc -b` + eslint clean.
 
-## Implementation review (2026-09-20)
+## Historical implementation review (2026-09-20, before the resolutions above)
 
 Reviewed against:
 
@@ -604,9 +608,10 @@ Reviewed against:
 * `mcpagent` `cb3f8c6`
 * `multi-llm-provider-go` `7bd2bc7`
 
-The provider/server/frontend integration and the focused durable-ack
-tests are present, but the implementation is not ready to treat as
-fully closed. Two correctness gaps remain.
+At this review revision, the provider/server/frontend integration and focused
+durable-ack tests were present, but two correctness gaps remained. The
+"Review P1/P2 resolutions" section records the subsequent fixes; the follow-up
+review below describes the remaining issues on the newer revisions.
 
 ### P1: repeated identical input can reuse an older receipt
 
@@ -676,6 +681,121 @@ focused checks: tmux sandbox/provider process tests and the mcpbridge
 readiness test timed out or failed in the local environment. Those
 failures do not exercise the two review findings above.
 
-Review disposition: **changes required**. Do not mark the durable-ack
-feature fully closed until both correctness gaps and their regression
-tests are addressed.
+Historical review disposition: **changes required**. The resolutions above
+addressed these findings, but the follow-up review below found additional cases
+that still prevent closure.
+
+## Follow-up code review (2026-09-20)
+
+Reviewed after pulling `main`:
+
+* `mcp-agent-builder-go`: `35ad24be3`
+* `multi-llm-provider-go`: `6ef98fb` (includes FIFO-take receipt fixes)
+
+Scope: the durable-ack contract in this document, adapter proof matching and
+timeout handling, server watcher routing, and frontend receipt ingestion.
+Disposition: **changes required**. All three findings below remain open; this
+documentation update does not fix production code. Source line references are
+for the reviewed revisions.
+
+### P1: identical queued sends can still share one durable proof
+
+Source: `multi-llm-provider-go/pkg/adapters/codexcli/codexcli_durable_ack.go`,
+`takeCodexDurableReceipt` (lines 165–188) and `AwaitCodexInputDurable`
+(lines 465–475).
+
+FIFO consumption removes the earlier non-consuming lookup bug, but it does not
+guarantee distinct evidence for each send. If two identical messages are sent
+before the first user row is flushed, both receipts can capture the same file
+offset. A later matching row can satisfy both receipts' timestamp/offset checks.
+The second message can receive a false double tick even though only one user
+row has been persisted.
+
+Reproduction: stash two `yes` receipts with the same offset and successive send
+times, then provide one user row timestamped after both sends. Consume both
+receipts FIFO and evaluate each with `codexRolloutUserMessageSince`. Both match
+the single row. `TestReviewIdenticalQueuedSendsNeedDistinctRows` reproduced the
+failure. The existing FIFO regression supplies distinct offsets, so it does not
+cover delayed persistence across multiple queued sends.
+
+Required fix:
+
+* Associate each send with distinct provider evidence, such as a claimed row
+  identity or ordered occurrence, rather than treating a lower-bound offset as
+  a unique receipt identity.
+* Preserve send identity across the watcher boundary; spawning goroutines in
+  order alone does not guarantee the order in which they acquire receipts.
+* Add coverage for identical messages queued before any durable row lands,
+  including out-of-order watcher scheduling. Audit analogous matchers in the
+  other adapters; this reproduction directly exercised Codex.
+
+### P1: expiry-time pane inspection receives an expired context
+
+Source: `multi-llm-provider-go/pkg/adapters/codexcli/codexcli_durable_ack.go`,
+lines 347–356. The same expired-context capture pattern is present in Pi, Muse,
+and Cursor's durable-ack pollers.
+
+After `<-deadline.Done()`, the arbiter calls `poll.capture(deadline, ...)`.
+That context is already expired. Production capture reaches
+`exec.CommandContext` through `tmuxexec`, so the final pane read cannot execute.
+A message still held in the native queue is reported as failed instead of
+`accepted_but_unflushed`, undermining the documented distinction and potentially
+encouraging a duplicate resend.
+
+Reproduction: use a capture callback that respects `ctx.Err()` and otherwise
+returns a valid queued-message pane. At budget expiry, the callback rejects the
+expired context and the poller returns a durable-ack failure.
+`TestReviewQueuedExpiryUsesLiveCaptureContext` reproduced this in Codex. Existing
+queue-expiry tests use capture stubs that ignore cancellation and therefore pass.
+
+Required fix:
+
+* Respect cancellation of the parent operation, but on an arbiter timeout use a
+  separate short, bounded capture context derived from a still-live parent.
+* Test queued expiry with cancellation-aware capture implementations in every
+  affected adapter.
+
+### P2: applying a receipt drops buffered timeline events
+
+Source: [sessionRestore.ts](../../frontend/src/utils/sessionRestore.ts),
+`appendTimelineAndApplyConfirmations` (lines 329–335), and
+[useChatStore.ts](../../frontend/src/stores/useChatStore.ts), `setTabEvents`
+(line 1282 onward).
+
+The append-then-apply helper reads committed rows and writes them back through
+`setTabEvents`. That setter clears pending micro-batch buffers. A tool event
+received just before a durability receipt may still be buffered, so applying
+the receipt discards it before the scheduled flush. The same concern applies
+to receipt-only store updates in the live ingestion path.
+
+Reproduction: with the real chat store, insert a user row, buffer a
+`tool_call_start` through `addTabEvents`, apply a matching receipt with
+`appendTimelineAndApplyConfirmations`, then advance timers. The user row remains
+but the tool event never appears. A temporary frontend regression reproduced
+the loss. Existing helper tests mock the store and do not model batch clearing.
+
+Required fix:
+
+* Flush or preserve pending timeline events before applying confirmations, or
+  provide an atomic metadata update that does not replace/clear the event queue.
+* Cover receipt-only and combined windows using the real store with fake timers,
+  asserting that pending tool/progress events survive alongside the tick upgrade.
+
+### Follow-up validation and remaining gates
+
+* Focused non-live durable/FIFO tests passed for all five adapters:
+  `go test ./pkg/adapters/codexcli ./pkg/adapters/picli ./pkg/adapters/musecli ./pkg/adapters/claudecode ./pkg/adapters/cursorcli -run 'Durable|FIFORepeat' -count=1`
+  from `multi-llm-provider-go`.
+* Server durable tests passed: `go test ./cmd/server -run 'Test.*Durable' -count=1`
+  from `mcp-agent-builder-go/agent_go`.
+* Existing frontend receipt and restore suites passed: 34 tests across
+  `liveInputReceipt.test.ts` and `sessionRestore.test.ts`.
+* Three temporary regression tests failed on the intended invariants, confirming
+  the findings above. They were removed after reproduction and are not committed
+  regression coverage. No production code was changed.
+* Live provider certification and live server↔chat delivery were not rerun.
+  Cursor's pending server↔chat gate and the unfinished P0/P1 runner split remain
+  separate outstanding work, as documented above.
+
+Passing the existing focused suites is not sufficient to close the feature.
+Fix the three reproduced cases and retain regression coverage before sign-off.

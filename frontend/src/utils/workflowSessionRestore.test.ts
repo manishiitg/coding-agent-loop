@@ -57,7 +57,11 @@ describe('workflow session restore classification', () => {
     expect(pickWorkflowActiveSession([child, parent], preset, {})?.session_id).toBe(parent.session_id)
   })
 
-  it('can select a completed turn whose retained terminal is still alive', () => {
+  it('skips a completed turn whose retained terminal is only idle', () => {
+    // Since the Sep 18 monitor clarification, a ready idle pane is not
+    // active work: restore follows the same visibility rule and does not
+    // select it. A live runtime (authoritative running state, needed input,
+    // live background agents) still selects.
     const retained = session({
       status: 'completed',
       preset_query_id: 'rtslatency',
@@ -71,7 +75,7 @@ describe('workflow session restore classification', () => {
       selectedFolder: { filepath: 'Workflow/rtslatency' },
     } as Parameters<typeof pickWorkflowActiveSession>[1]
 
-    expect(pickWorkflowActiveSession([retained], preset, {})?.session_id).toBe(retained.session_id)
+    expect(pickWorkflowActiveSession([retained], preset, {})).toBeUndefined()
   })
 
   it('uses authoritative running runtime state even when legacy status says completed', () => {

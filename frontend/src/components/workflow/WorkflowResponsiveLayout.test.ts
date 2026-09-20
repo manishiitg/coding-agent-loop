@@ -4,12 +4,18 @@ import { describe, expect, it } from 'vitest'
 describe('workflow responsive pane contract', () => {
   it('keeps the shared toolbar above a single focused pane on narrow screens', () => {
     const layout = readFileSync('src/components/workflow/WorkflowLayout.tsx', 'utf8')
+    // Split classes derive from the shared resolver; hidden panes restore
+    // with md:flex (md:block would collapse flex scroll regions).
+    const resolver = readFileSync('src/components/workflow/workspaceLayoutResolver.ts', 'utf8')
 
-    expect(layout).toContain('grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)]')
+    expect(layout).toContain('resolveWorkspaceLayout({')
+    expect(layout).toContain('paneClassName={layout.canvasPaneClassName}')
+    expect(layout).toContain('className={layout.chatPaneClassName}')
     expect(layout).toContain('sharedToolbar={showChatArea && workspacePaneVisible}')
-    expect(layout).toContain("workspacePaneVisible && focusedPane === 'preview'")
-    expect(layout).toContain("focusedPane === 'chat' ? 'hidden md:block' : ''")
-    expect(layout).toContain('col-start-1 row-start-2 min-h-0')
+    expect(resolver).toContain('grid grid-cols-1 grid-rows-[auto_minmax(0,1fr)]')
+    expect(resolver).toContain("workspacePaneVisible && focusedPane === 'preview'")
+    expect(resolver).toContain("focusedPane === 'chat' ? 'hidden md:flex' : ''")
+    expect(resolver).toContain('col-start-1 row-start-2 min-h-0')
   })
 
   it('uses the persistent toolbar controls to switch the focused narrow pane', () => {

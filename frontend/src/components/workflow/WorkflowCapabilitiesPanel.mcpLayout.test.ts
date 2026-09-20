@@ -38,7 +38,7 @@ describe('Workflow MCP panel layout', () => {
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
 
     expect(panel).toContain('<WorkspaceViewActions')
-    expect(panel).toContain('getIntegrationTabAskAIMessage(tab)')
+    expect(panel).toContain('getIntegrationTabAskAIMessage(activeMcpTab)')
     expect(panel).toContain('getWorkspaceAskAIMessage(section)')
     expect(panel).toContain("message={getWorkspaceAskAIMessage('browser')}")
     expect(panel).toContain('refreshLabel="Refresh Browser"')
@@ -46,9 +46,12 @@ describe('Workflow MCP panel layout', () => {
     for (const view of ['costs', 'execution-logs', 'schedules', 'pulse', 'backup', 'publish', 'notify']) {
       expect(host).toContain(`headerAction={askAI('${view}')}`)
     }
-    for (const view of ['access']) {
-      expect(host).toContain(`headerAction={refreshAndAskAI('${view}')}`)
-    }
+    // Access owns its Ask AI + refresh pair inside the view; the host mounts
+    // it without a header action.
+    const access = readFileSync('src/components/workflow/WorkflowAccessView.tsx', 'utf8')
+    expect(access).toContain('getAccessTabAskAIMessage(activeTab)')
+    expect(access).toContain('onRefresh')
+    expect(host).toContain('<WorkflowAccessView workspacePath={workspacePath} />')
     // Folders moved under the Identity tabs; it no longer has a host header.
     expect(host).not.toContain("headerAction={refreshAndAskAI('folders')}")
     // Knowledge is a self-served umbrella (like capabilities sections): the
@@ -113,7 +116,7 @@ describe('Workflow MCP panel layout', () => {
     expect(panel).toContain("{ value: 'apps', label: 'MCPs' }")
     expect(panel).toMatch(/MCP_TABS[^=]*=[\s\S]*?'apps'[\s\S]*?'skills'[\s\S]*?'slack'[\s\S]*?'whatsapp'[\s\S]*?'gmail'/)
     expect(panel).toContain('tabs={section ===')
-    expect(panel).toContain('options: MCP_TABS')
+    expect(panel).toContain('options: mcpTabs')
     expect(panel).toContain("ariaLabel: 'Integrations'")
     expect(panel).toContain('fixedChannel="slack"')
     expect(panel).toContain('fixedChannel="whatsapp"')

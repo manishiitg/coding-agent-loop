@@ -45,7 +45,12 @@ func TestOpenWorkspaceViewToolOpensAKnownViewAndRefusesOthers(t *testing.T) {
 	if out, err := open.exec(context.Background(), map[string]interface{}{"view": "dashboard", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
 		t.Fatalf("unknown view must reject: %s %v", out, err)
 	}
-	out, err = open.exec(context.Background(), map[string]interface{}{"view": "database", "action": "refresh"})
+	// database/learnings/knowledgebase consolidated into the knowledge view;
+	// the old standalone view id must reject, the section target must route.
+	if out, err := open.exec(context.Background(), map[string]interface{}{"view": "database", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
+		t.Fatalf("retired standalone view must reject: %s %v", out, err)
+	}
+	out, err = open.exec(context.Background(), map[string]interface{}{"view": "knowledge", "action": "refresh", "target": "database"})
 	if err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("refresh out=%s err=%v", out, err)
 	}

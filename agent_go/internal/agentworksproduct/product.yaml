@@ -216,7 +216,6 @@ chat:
       - list_ui_capabilities
       - manage_custom_commands
       - manage_global_secret
-      - manage_internet_share
       - manage_user_access
       - manage_workflow_webhook
       - mark_changelog_artifact_reviewed

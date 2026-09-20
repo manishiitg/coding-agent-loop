@@ -36,11 +36,10 @@ immutable run identity that producers don't guarantee (`RUN_FOLDER` reuses
 `iteration-0`), and described a metrics table no runtime code implements —
 Pulse and Goal Advisor consume `workflow_goal_metrics` /
 `pulse_goal_observations` through `get_goal_metrics`. That mandatory migration
-was deleted. Contract 1.0.43 is instead a conditional agentic retirement
-migration: it inventories legacy eval dependencies, reuses producer-owned
-measurements, makes no topology change when existing measurement is sufficient,
-and adds an ordinary producer only when a still-required measurement has no
-safe owner.
+was deleted. No replacement contract migration is required: producer-owned
+measurement is ordinary workflow design guidance, not an unattended pre-run
+rewrite. Legacy evaluation dependencies that genuinely need redesign are
+handled explicitly in Builder instead of blocking every workflow schedule.
 
 Replacement contract (flexible placement, no mandated topology):
 
@@ -102,8 +101,8 @@ Also hide eval mode in the frontend (`workflowMode: 'eval'`, eval canvas,
 
 ## Phase 1 — Write the Flexible Measurement Guidance
 
-Guidance plus a conditional agentic migration; no topology is mandated. Must
-complete before Phases 2–5 delete what it replaces.
+Guidance only; no topology or contract migration is mandated. Must complete
+before Phases 2–5 delete what it replaces.
 
 1. Per-legacy-eval placement follows the Direction rules: reuse a producer's
    DB output, add `record_goal_observations` only for Pulse history,
@@ -115,12 +114,11 @@ complete before Phases 2–5 delete what it replaces.
 3. Write the measurement guidance (replacement for `evaluation-plan.md`):
    `guidance/templates/system/measurement-plan.md` — placement rules, run
    scope and evidence, and legacy artifacts as read-only history.
-4. Add contract migration 1.0.43. It reads a legacy evaluation plan as a
-   read-only description, checks actual goal/report/schedule dependencies,
-   reuses existing producers where possible, adds measurement behavior only
-   when still required, and stamps a verified no-op when nothing depends on
-   eval. Ambiguous mappings block the stamp and create a precise human-input
-   request.
+4. Do not add a contract migration for this retirement. A universal pre-run
+   agent turn cannot safely infer whether legacy measurements remain relevant
+   and must not block unrelated workflow execution. Use Builder for an
+   explicit, operator-visible redesign when a workflow still depends on a
+   retired evaluation artifact.
 
 ## Phase 2 — Delete Eval-Only Backend Files
 

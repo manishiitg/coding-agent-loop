@@ -66,7 +66,13 @@ func TestDirectWebhookRequiresPreparedWorkflow(t *testing.T) {
 			t.Fatalf("unprepared workflow allowed: %v", err)
 		}
 	}
-	if err := directWebhookPreflight(&WorkflowManifest{Version: WorkflowContractCurrentVersion}); err != nil {
-		t.Fatal(err)
+	for _, version := range []string{
+		workflowContractExplicitSchedulePulseVersion,
+		workflowContractRunScopedRoutesVersion,
+		workflowContractEvalRetirementVersion,
+	} {
+		if err := directWebhookPreflight(&WorkflowManifest{Version: version}); err != nil {
+			t.Fatalf("execution-compatible contract %s rejected: %v", version, err)
+		}
 	}
 }

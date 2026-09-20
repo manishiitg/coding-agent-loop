@@ -3638,7 +3638,8 @@ func attachScheduledPendingDecisionNotice(turns []scheduledWorkshopTurn, pending
 func scheduledWorkshopTurns(manifest *WorkflowManifest, messages []string, workspacePath string) ([]scheduledWorkshopTurn, error) {
 	upgradePlan := workflowVersionUpgradePlan(manifest)
 	manifestVersion := workflowContractVersionForUpgrade(manifest)
-	if manifestVersion != WorkflowContractCurrentVersion && (len(upgradePlan) == 0 || upgradePlan[len(upgradePlan)-1].to != WorkflowContractCurrentVersion) {
+	if !workflowContractVersionIsExecutionCompatible(manifestVersion) &&
+		(len(upgradePlan) == 0 || !workflowContractVersionIsExecutionCompatible(upgradePlan[len(upgradePlan)-1].to)) {
 		return nil, fmt.Errorf(
 			"workflow upgrade preflight has no complete upgrade path from version %q to %q; normal schedule message was not started: %w",
 			manifestVersion,

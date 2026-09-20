@@ -39,7 +39,7 @@ func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.
 
 	for _, want := range []string{
 		"Current: `1.0.20`",
-		"Pending migrations (19)",
+		"Pending migrations (18)",
 		"upgrade-current-artifact-contract",
 		"upgrade-direct-html-reports",
 		"upgrade-schedule-execution-model",
@@ -52,7 +52,6 @@ func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.
 		"upgrade-pulse-actionable-backlog",
 		"upgrade-orchestrator-step-type",
 		"upgrade-explicit-schedule-pulse",
-		"upgrade-eval-retirement",
 		// The full instruction text, not a summary of it — an owner judging
 		// whether a stalled migration is safe needs the actual words.
 		"NOTHING IS DELETED IN THIS MIGRATION",
@@ -63,8 +62,8 @@ func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.
 			t.Errorf("status output missing %q", want)
 		}
 	}
-	if strings.Contains(out, "upgrade-run-scoped-routes") || strings.Contains(out, "migrate_run_scoped_routes") || strings.Contains(out, `set_workflow_contract_version(version="1.0.42")`) {
-		t.Errorf("status output still exposes the retired route migration:\n%s", out)
+	if strings.Contains(out, "upgrade-run-scoped-routes") || strings.Contains(out, "migrate_run_scoped_routes") || strings.Contains(out, "upgrade-eval-retirement") || strings.Contains(out, `set_workflow_contract_version(version="1.0.43")`) {
+		t.Errorf("status output still exposes a retired migration:\n%s", out)
 	}
 }
 

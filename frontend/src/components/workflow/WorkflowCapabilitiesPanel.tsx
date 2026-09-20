@@ -1,6 +1,6 @@
 import { capabilitiesEqual, mergeRemoteCapabilities } from './workflowCapabilitiesSync'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { LoaderCircle, Save } from 'lucide-react'
+import { LoaderCircle, Save, Search } from 'lucide-react'
 import { ToolSelectionSection } from '../ToolSelectionSection'
 import SkillsManagerPanel from '../skills/SkillsManagerPanel'
 import PlaybooksPanel from '../playbooks/PlaybooksPanel'
@@ -15,15 +15,43 @@ import { useMCPStore } from '../../stores/useMCPStore'
 import { useWorkflowManifestStore } from '../../stores/useWorkflowManifestStore'
 import { useWorkflowStore } from '../../stores/useWorkflowStore'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
+import { isSelectedServer } from '../../utils/mcpServerAlias'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
+import { useChatStore } from '../../stores/useChatStore'
+import { useAuthStore } from '../../stores/useAuthStore'
+import { AskAIButton } from './AskAIButton'
+import type { Skill } from '../../types/skills'
 import { getWorkspaceView, type CapabilityViewId } from './workspaceViews'
 import { BrowserWorkspacePanel } from './BrowserWorkspacePanel'
 import type { BrowserAutomationMode } from '../BrowserAutomationSettings'
 import { WorkspaceViewActions } from './WorkspaceViewActions'
-import { getWorkspaceAskAIMessage } from './workspaceAskAI'
+import { WorkspaceViewHeader } from './WorkspaceViewHeader'
+import { getIdentityTabAskAIMessage, getIntegrationTabAskAIMessage, getWorkspaceAskAIMessage, type IdentityTabId, type IntegrationTabId } from './workspaceAskAI'
+import WorkflowIdentityPanel from './WorkflowIdentityPanel'
+import WorkflowFolderAccessView from './WorkflowFolderAccessView'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
 // panel only carries the per-section copy.
 export type WorkflowCapabilitySection = CapabilityViewId
+
+type McpTab = IntegrationTabId
+
+const MCP_TABS: Array<{ value: McpTab; label: string }> = [
+  { value: 'apps', label: 'MCPs' },
+  { value: 'skills', label: 'Skills' },
+  { value: 'slack', label: 'Slack' },
+  { value: 'whatsapp', label: 'WhatsApp' },
+  { value: 'gmail', label: 'Gmail' },
+]
+
+type IdentityTab = IdentityTabId
+
+const IDENTITY_TABS: Array<{ value: IdentityTab; label: string }> = [
+  { value: 'general', label: 'General' },
+  { value: 'secrets', label: 'Secrets' },
+  { value: 'folders', label: 'File access' },
+  { value: 'llm', label: 'Models' },
+]
 
 interface WorkflowCapabilitiesPanelProps {
   section: WorkflowCapabilitySection
@@ -49,47 +77,22 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
     description: 'Apply proven AgentWorks setups to this workflow with the Builder.',
     savesViaManifest: false,
   },
-  skills: {
-    title: 'Workflow skills',
-    description: 'Select reusable skills for this workflow’s builder context.',
-    savesViaManifest: true,
-  },
   mcp: {
     title: 'Integrations',
-    description: 'Select the integrations and tools this workflow may use.',
+    description: 'Select the apps, skills, Slack, WhatsApp, and Gmail access this workflow may use.',
     // Selection changes persist immediately, so this long directory can use
     // one uninterrupted scroll surface without a fixed Save footer.
     savesViaManifest: false,
   },
-  secrets: {
-    title: 'Workflow secrets',
-    description: 'Choose which workflow and global secrets this workflow may access.',
-    // A tick is the whole action: it writes the manifest right away, like
-    // the LLM section, so there is nothing left for a footer Save to do.
+  identity: {
+    title: 'Identity',
+    description: 'Name, icon, purpose, secrets, file access, and LLMs for this workflow.',
     savesViaManifest: false,
   },
   browser: {
     title: 'Browser automation',
     description: 'Watch this workflow’s browser and configure its automation access.',
     savesViaManifest: true,
-  },
-  llm: {
-    title: 'Workflow LLM configuration',
-    description: 'Pick the provider this workflow runs on. Changes apply immediately.',
-    // Every change here (provider pick, "Use in this workflow", Advanced
-    // role pins) writes the manifest on its own, so the footer Save would
-    // only ever show "nothing to save".
-    savesViaManifest: false,
-  },
-  email: {
-    title: 'Gmail',
-    description: 'Gmail accounts, default recipients, and email access settings. Connections are shared across AgentWorks.',
-    savesViaManifest: false,
-  },
-  bots: {
-    title: 'Connectors',
-    description: 'Slack and WhatsApp channels this workflow answers on. Connections are shared by all workflows.',
-    savesViaManifest: false,
   },
 }
 
@@ -109,6 +112,9 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const toolList = useMCPStore(state => state.toolList)
   const refreshTools = useMCPStore(state => state.refreshTools)
   const [refreshingServers, setRefreshingServers] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [tab, setTab] = useState<McpTab>('apps')
+  const [identityTab, setIdentityTab] = useState<IdentityTab>('general')
   // "Available to select for this workflow" means connected -- you can't
   // meaningfully pick tools from a server nobody has authenticated yet. A
   // not-yet-connected server only belongs in the "Connect a new MCP server"
@@ -121,6 +127,11 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
       .map(tool => tool.server as string)
     return [...new Set([...connected, ...capabilities.selected_servers])]
   }, [toolList, capabilities.selected_servers])
+  const selectedAvailableServers = useMemo(() => availableServers.filter(serverName => isSelectedServer(capabilities.selected_servers, serverName)), [availableServers, capabilities.selected_servers])
+  const unselectedAvailableServers = useMemo(() => availableServers.filter(serverName => !isSelectedServer(capabilities.selected_servers, serverName)), [availableServers, capabilities.selected_servers])
+  const canManagePlatformMCP = useAuthStore(state =>
+    state.user?.is_admin === true || (state.isMultiUserModeChecked && !state.isMultiUserMode),
+  )
   const copy = SECTION_COPY[section]
   const view = getWorkspaceView(section)
 
@@ -166,6 +177,28 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
       setRefreshingServers(false)
     }
   }, [refreshTools, load])
+
+  // Refresh follows the active Integrations tab: Apps reloads servers and
+  // the manifest; every other tab reloads by remounting, since each tab's
+  // content loads on mount.
+  const [tabNonce, setTabNonce] = useState(0)
+  const handleMcpRefresh = useCallback(() => {
+    if (tab === 'apps') {
+      void handleRefreshServers()
+      return
+    }
+    setTabNonce(nonce => nonce + 1)
+  }, [tab, handleRefreshServers])
+  const mcpRefreshLabel = tab === 'apps'
+    ? 'Refresh connected integrations'
+    : `Refresh ${MCP_TABS.find(option => option.value === tab)?.label ?? 'view'}`
+
+  // Every Identity tab loads on mount, so Refresh always remounts.
+  const [identityTabNonce, setIdentityTabNonce] = useState(0)
+  const handleIdentityRefresh = useCallback(() => {
+    setIdentityTabNonce(nonce => nonce + 1)
+  }, [])
+  const identityRefreshLabel = `Refresh ${IDENTITY_TABS.find(option => option.value === identityTab)?.label ?? 'view'}`
 
   // Agent tools (and shell edits) can change this configuration while the panel
   // stays open. Refresh both sources, only for the visible MCP panel.
@@ -259,29 +292,34 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const save = useCallback(() => persist(capabilities), [capabilities, persist])
 
   return (
-    <section className={`flex h-full min-h-0 w-full max-w-none flex-col bg-background ${section === 'mcp' ? 'overflow-y-auto' : ''}`}>
-      {section !== 'browser' && <header className="flex shrink-0 items-start gap-3 border-b px-4 py-3">
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
-          <SectionIcon className="h-4 w-4" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <h2 className="text-sm font-semibold text-foreground">{copy.title}</h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">{copy.description}</p>
-        </div>
-        <div className="self-center">
-          <WorkspaceViewActions
-            workspacePath={workspacePath}
-            message={getWorkspaceAskAIMessage(section)}
-            onRefresh={section === 'mcp'
-              ? handleRefreshServers
-              : () => useWorkflowStore.getState().refreshWorkspaceView()}
-            refreshing={section === 'mcp' && refreshingServers}
-            refreshLabel={section === 'mcp' ? 'Refresh connected integrations' : `Refresh ${copy.title}`}
-          />
-        </div>
-      </header>}
+    <section className="flex h-full min-h-0 w-full max-w-none flex-col bg-background">
+      {section !== 'browser' && (
+        <WorkspaceViewHeader
+          icon={SectionIcon}
+          title={copy.title}
+          subtitle={copy.description}
+          actions={(
+            <WorkspaceViewActions
+              workspacePath={workspacePath}
+              message={section === 'mcp' ? getIntegrationTabAskAIMessage(tab) : section === 'identity' ? getIdentityTabAskAIMessage(identityTab) : getWorkspaceAskAIMessage(section)}
+              onRefresh={section === 'mcp'
+                ? handleMcpRefresh
+                : section === 'identity'
+                  ? handleIdentityRefresh
+                  : () => useWorkflowStore.getState().refreshWorkspaceView()}
+              refreshing={section === 'mcp' && tab === 'apps' && refreshingServers}
+              refreshLabel={section === 'mcp' ? mcpRefreshLabel : section === 'identity' ? identityRefreshLabel : `Refresh ${copy.title}`}
+            />
+          )}
+          tabs={section === 'mcp'
+            ? { value: tab, onChange: (value: string) => setTab(value as McpTab), options: MCP_TABS, ariaLabel: 'Integrations' }
+            : section === 'identity'
+              ? { value: identityTab, onChange: (value: string) => setIdentityTab(value as IdentityTab), options: IDENTITY_TABS, ariaLabel: 'Identity' }
+              : undefined}
+        />
+      )}
 
-      <div className={`p-4 ${section === 'browser' ? 'min-h-0 flex-1 !p-0 flex flex-col overflow-hidden relative' : section === 'mcp' ? 'shrink-0' : view.managesOwnScroll ? 'min-h-0 flex-1 flex flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto'}`}>
+      <div className={`p-4 ${section === 'browser' ? 'min-h-0 flex-1 !p-0 flex flex-col overflow-hidden relative' : (section === 'mcp' || section === 'identity') ? 'min-h-0 flex-1 overflow-y-auto' : view.managesOwnScroll ? 'min-h-0 flex-1 flex flex-col overflow-hidden' : 'min-h-0 flex-1 overflow-y-auto'}`}>
         {loading ? (
           <div className="flex items-center justify-center gap-2 py-12 text-sm text-muted-foreground">
             <LoaderCircle className="h-4 w-4 animate-spin" /> Loading workflow settings…
@@ -292,81 +330,244 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
             {section === 'playbooks' && (
               <PlaybooksPanel workspacePath={workspacePath} />
             )}
-            {section === 'skills' && (
-              <div className="flex min-h-0 flex-1 flex-col">
-                <SkillsManagerPanel
-                  compact
-                  workspacePath={workspacePath}
-                  selectedSkills={capabilities.selected_skills}
-                  onToggleSkill={(folderName) => setCapabilities(current => ({
-                    ...current,
-                    selected_skills: current.selected_skills.includes(folderName)
-                      ? current.selected_skills.filter(s => s !== folderName)
-                      : [...current.selected_skills, folderName],
-                  }))}
-                />
-              </div>
-            )}
             {section === 'mcp' && (
               <div>
-                <div>
-                  <ToolSelectionSection
-                    availableServers={availableServers}
-                    selectedServers={capabilities.selected_servers}
-                    selectedTools={capabilities.selected_tools}
-                    onServerChange={(selected_servers) => {
-                      const next = { ...capabilities, selected_servers }
-                      setCapabilities(next)
-                      void persist(next)
-                    }}
-                    onToolChange={(selected_tools) => {
-                      const next = { ...capabilities, selected_tools }
-                      setCapabilities(next)
-                      void persist(next)
-                    }}
-                    agentMode="workflow"
-                    hideHeader
-                    showSelectedOnly
-                    disabled={!canWriteWorkflow}
+                {(tab === 'apps' || tab === 'skills') && (
+                  <>
+                <div className="flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                  <div className="min-w-0 flex-1 basis-48">
+                    <p className="text-sm font-semibold text-foreground">{"Can't find what you need?"}</p>
+                    <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                      {canManagePlatformMCP
+                        ? 'The builder can connect an app or find a skill for you. New connections are shared with everyone.'
+                        : 'Only an admin can connect new apps. Everything below is ready to use.'}
+                    </p>
+                  </div>
+                  <AskAIButton
+                    workspacePath={!canWriteWorkflow || !canManagePlatformMCP ? null : workspacePath ?? null}
+                    label={canManagePlatformMCP ? 'Ask builder to help' : "Why can't I add one?"}
+                    message={canManagePlatformMCP
+                      ? searchQuery.trim()
+                        ? `Help me find ${JSON.stringify(searchQuery.trim())} for this workflow. Search both the app catalog and the skills library, on the web and in the local lists. If it is an app, help me connect it, reminding me before authorization that the account will be shared by every AgentWorks user and product; if it is a skill, add it to this workflow. Verify it works, then confirm briefly.`
+                        : `Help me add an app connection or a skill to this workflow. Ask what I want to connect or which capability I need, then search the app catalog and the skills library and help me set it up. Before authorizing any shared account, remind me that it will be shared by every AgentWorks user and product.`
+                      : `Explain how shared app connections work in AgentWorks, why only an administrator can connect a new one, and how I can use already-connected apps and skills in this workflow. Do not attempt to change configuration.`}
+                    className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg bg-primary px-3 py-2 text-sm font-medium text-primary-foreground shadow-sm transition-colors hover:bg-primary/90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
                   />
                 </div>
-                <div className="mt-3 border-t border-border pt-3">
-                  <div className="text-sm font-medium text-muted-foreground">
-                    Connect a new MCP server
-                  </div>
-                  <div className="mt-3">
-                    <ConnectorsBrowser
+                  </>
+                )}
+                <div key={tab === 'apps' ? 'apps' : `${tab}:${tabNonce}`}>
+                {tab === 'apps' && (
+                  <>
+                    {selectedAvailableServers.length > 0 && (
+                      <div className="mt-3 border-t border-border pt-3">
+                        <div className="mb-3 text-sm font-medium text-muted-foreground">
+                          This workflow
+                        </div>
+                        <ToolSelectionSection
+                          stepId="workflow-selected"
+                          availableServers={selectedAvailableServers}
+                          selectedServers={capabilities.selected_servers}
+                          selectedTools={capabilities.selected_tools}
+                          onServerChange={(selected_servers) => {
+                            const next = { ...capabilities, selected_servers }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
+                          onToolChange={(selected_tools) => {
+                            const next = { ...capabilities, selected_tools }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
+                          agentMode="workflow"
+                          hideHeader
+                          manageOwnScroll={false}
+                          disabled={!canWriteWorkflow}
+                        />
+                      </div>
+                    )}
+                    {unselectedAvailableServers.length > 0 && (
+                      <div className="mt-3 border-t border-border pt-3">
+                        <div className="mb-1 text-sm font-medium text-muted-foreground">
+                          Platform connected
+                        </div>
+                        <p className="mb-3 text-xs leading-5 text-muted-foreground">
+                          Shared with everyone. Tick one to let this workflow use it.
+                        </p>
+                        <ToolSelectionSection
+                          stepId="workflow-available"
+                          availableServers={unselectedAvailableServers}
+                          selectedServers={capabilities.selected_servers}
+                          selectedTools={capabilities.selected_tools}
+                          onServerChange={(selected_servers) => {
+                            const next = { ...capabilities, selected_servers }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
+                          onToolChange={(selected_tools) => {
+                            const next = { ...capabilities, selected_tools }
+                            setCapabilities(next)
+                            void persist(next)
+                          }}
+                          agentMode="workflow"
+                          hideHeader
+                          manageOwnScroll={false}
+                          disabled={!canWriteWorkflow}
+                        />
+                      </div>
+                    )}
+                    <div className="relative mt-3 shrink-0">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search apps"
+                        aria-label="Search apps"
+                        className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                      />
+                    </div>
+                    <div className="mt-3 border-t border-border pt-3">
+                      <div className="mb-3 text-sm font-medium text-muted-foreground">
+                        Connect a new app
+                      </div>
+                      <ConnectorsBrowser
+                        compact
+                        workspacePath={workspacePath}
+                        manageOwnScroll={false}
+                        query={searchQuery}
+                        hideSearch
+                        hideConnectedSection
+                        hideBanner
+                      />
+                    </div>
+                  </>
+                )}
+                {tab === 'skills' && (
+                  <div className="mt-3 border-t border-border pt-3">
+                    <div className="relative mb-3 shrink-0">
+                      <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder="Search skills"
+                        aria-label="Search skills"
+                        className="w-full rounded-lg border border-gray-300 bg-white py-2.5 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
+                      />
+                    </div>
+                    <SkillsManagerPanel
                       compact
-                      workspacePath={workspacePath}
                       manageOwnScroll={false}
+                      hideSearch
+                      hideSelectionChips
+                      hideRefresh
+                      splitSelectionGroups
+                      headerAction={(
+                        <AskAIButton
+                          workspacePath={canWriteWorkflow ? workspacePath ?? null : null}
+                          iconOnly
+                          label="Install a skill"
+                          message="Help me install a specific skill for this workflow. Ask which skill I want, then find it: search the local skills library first, then the web. Import it into the library, add it to this workflow, verify it works, and confirm briefly."
+                        />
+                      )}
+                      query={searchQuery}
+                      workspacePath={workspacePath}
+                      selectedSkills={capabilities.selected_skills}
+                      onToggleSkill={(folderName) => {
+                        const selected_skills = capabilities.selected_skills.includes(folderName)
+                          ? capabilities.selected_skills.filter(s => s !== folderName)
+                          : [...capabilities.selected_skills, folderName]
+                        const next = { ...capabilities, selected_skills }
+                        setCapabilities(next)
+                        void persist(next)
+                      }}
+                      onAddViaChat={(skill: Skill) => {
+                        if (!workspacePath) return
+                        void sendWorkspacePaneMessageToChat({
+                          workspacePath,
+                          message: `Add the ${JSON.stringify(skill.frontmatter.name)} skill to this workflow (skill folder ${JSON.stringify(skill.folder_name)}). Check that it exists in the skills library first; if it does, add it to this workflow's selected skills and briefly confirm what it gives the workflow. If anything needs my input, ask me.`,
+                        }).catch(err => {
+                          useChatStore.getState().addToast(err instanceof Error ? err.message : 'Failed to open chat.', 'error')
+                        })
+                      }}
                     />
                   </div>
+                )}
+                {tab === 'slack' && (
+                  <div className="mt-3">
+                    <WorkflowBotsPanel workspacePath={workspacePath} fixedChannel="slack" />
+                  </div>
+                )}
+                {tab === 'whatsapp' && (
+                  <div className="mt-3 border-t border-border pt-3">
+                    <WorkflowBotsPanel workspacePath={workspacePath} fixedChannel="whatsapp" />
+                  </div>
+                )}
+                {tab === 'gmail' && (
+                  <div className="mt-3 border-t border-border pt-3">
+                    <WorkflowEmailPanel workspacePath={workspacePath} />
+                  </div>
+                )}
                 </div>
               </div>
             )}
-            {section === 'secrets' && (
-              // Only the workflow's own checklist lives here: automation secrets
-              // (the folder-scoped box) and global secrets. Account-level "Your
-              // Secrets" are a different store that workflow runs never read
-              // (chat tools and bots use them), so the account-wide manager is
-              // not mounted in this pane; it stays in the Secrets modal. The
-              // pane scrolls as a whole and the list takes only its own height.
-              <div>
-                <SecretSelectionSection
-                  selectedSecrets={capabilities.selected_secrets}
-                  onSecretChange={(selected_secrets) => {
-                    const next = { ...capabilities, selected_secrets }
-                    setCapabilities(next)
-                    void persist(next)
-                  }}
-                  selectedGlobalSecrets={capabilities.selected_global_secret_names}
-                  onGlobalSecretChange={(selected_global_secret_names) => {
-                    const next = { ...capabilities, selected_global_secret_names }
-                    setCapabilities(next)
-                    void persist(next)
-                  }}
-                  workflowPath={workspacePath || ''}
-                />
+            {section === 'identity' && (
+              <div key={`${identityTab}:${identityTabNonce}`}>
+                {identityTab === 'general' && (
+                  <WorkflowIdentityPanel workspacePath={workspacePath} />
+                )}
+                {identityTab === 'secrets' && (
+                  // Only the workflow's own checklist lives here: the workflow
+                  // box plus globals. Values are managed through the rows below
+                  // or the builder; the pane scrolls as a whole and the list
+                  // takes only its own height.
+                  <div>
+                    <div className="mb-3 flex shrink-0 flex-wrap items-center gap-3 rounded-lg border border-border bg-muted/40 p-3">
+                      <div className="min-w-0 flex-1 basis-48">
+                        <p className="text-sm font-semibold text-foreground">Need a hand with secrets?</p>
+                        <p className="mt-0.5 text-xs leading-5 text-muted-foreground">
+                          The builder can save a secret for you or explain what is attached. Values stay hidden — never paste one in chat.
+                        </p>
+                      </div>
+                      <AskAIButton
+                        workspacePath={!canWriteWorkflow ? null : workspacePath ?? null}
+                        label="Ask AI to manage secrets"
+                        message={getIdentityTabAskAIMessage('secrets')}
+                        className="inline-flex shrink-0 items-center justify-center gap-2 rounded-lg border border-border px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                      />
+                    </div>
+                    <SecretSelectionSection
+                      selectedSecrets={capabilities.selected_secrets}
+                      onSecretChange={(selected_secrets) => {
+                        const next = { ...capabilities, selected_secrets }
+                        setCapabilities(next)
+                        void persist(next)
+                      }}
+                      selectedGlobalSecrets={capabilities.selected_global_secret_names}
+                      onGlobalSecretChange={(selected_global_secret_names) => {
+                        const next = { ...capabilities, selected_global_secret_names }
+                        setCapabilities(next)
+                        void persist(next)
+                      }}
+                      workflowPath={workspacePath || ''}
+                    />
+                  </div>
+                )}
+                {identityTab === 'folders' && (
+                  <WorkflowFolderAccessView workspacePath={workspacePath} hideHeader manageOwnScroll={false} />
+                )}
+                {identityTab === 'llm' && (
+                  <WorkflowLLMConfigurationPanel
+                    workspacePath={workspacePath}
+                    llmConfig={capabilities.llm_config}
+                    onChange={(llm_config) => {
+                      const next = { ...capabilities, llm_config }
+                      setCapabilities(next)
+                      void persist(next)
+                    }}
+                  />
+                )}
               </div>
             )}
             {section === 'browser' && (
@@ -397,22 +598,10 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                 }
               />
             )}
-            {section === 'llm' && (
-              <WorkflowLLMConfigurationPanel
-                workspacePath={workspacePath}
-                llmConfig={capabilities.llm_config}
-                onChange={(llm_config) => {
-                  const next = { ...capabilities, llm_config }
-                  setCapabilities(next)
-                  void persist(next)
-                }}
-              />
-            )}
             {/* Bots write straight to the shared connector config (routes
                 already carry workflow_id), so nothing here goes through the
                 manifest Save below. */}
-            {section === 'email' && <WorkflowEmailPanel workspacePath={workspacePath} />}
-            {section === 'bots' && <WorkflowBotsPanel workspacePath={workspacePath} />}
+            {/* Bots and Gmail live under the Integrations tabs above, not as sections. */}
           </>
         )}
       </div>

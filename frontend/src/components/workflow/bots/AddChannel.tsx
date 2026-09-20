@@ -47,15 +47,17 @@ export function ChannelRow({ bots, kind, manageRoutes = false, headerAction }: {
         </span>
         <span className="flex-1" />
         {headerAction}
-        <button
-          type="button"
-          onClick={() => setSetup(kind)}
-          className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
-          title={`Connect or configure ${name}`}
-        >
-          Open
-          <ChevronRight className="h-3.5 w-3.5" />
-        </button>
+        {kind !== 'slack' && (
+          <button
+            type="button"
+            onClick={() => setSetup(kind)}
+            className="inline-flex items-center gap-1 text-xs font-medium text-muted-foreground transition-colors hover:text-foreground"
+            title={`Connect or configure ${name}`}
+          >
+            Open
+            <ChevronRight className="h-3.5 w-3.5" />
+          </button>
+        )}
       </div>
       {manageRoutes && ready && workflowId && (
         <div className="mt-2 flex items-center gap-2">

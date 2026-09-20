@@ -21,6 +21,26 @@ interface SkillsManagerPanelProps {
   selectionLabel?: string
   emptySelectionText?: string
   selectionScopeLabel?: string
+  /** Let an embedding scroll the complete page instead of only this list. */
+  manageOwnScroll?: boolean
+  /** Filter the list by this query instead of the internal search box --
+   * for a host that renders one shared search box above several pickers. */
+  query?: string
+  /** Hide the internal search box (pairs with a host-provided `query`). */
+  hideSearch?: boolean
+  /** Hide the selected-skills chips (pairs with a host-level selection strip). */
+  hideSelectionChips?: boolean
+  /** Hide the toolbar refresh button (pairs with a host-level refresh that
+   * remounts or reloads the panel). */
+  hideRefresh?: boolean
+  /** When provided, the row + button asks chat to add the skill instead of
+   * toggling directly -- removal still toggles immediately. */
+  onAddViaChat?: (skill: Skill) => void
+  /** Optional action (Ask AI) rendered left of refresh in the toolbar row. */
+  headerAction?: React.ReactNode
+  /** Split the list into "This workflow" (selected) and "Platform connected"
+   * groups instead of one flat sorted list. Empty groups are hidden. */
+  splitSelectionGroups?: boolean
 }
 
 export default function SkillsManagerPanel({
@@ -31,9 +51,18 @@ export default function SkillsManagerPanel({
   selectionLabel = 'Skills for this workflow',
   emptySelectionText = 'No skills yet — pick one below.',
   selectionScopeLabel = 'workflow',
+  manageOwnScroll = true,
+  query: externalQuery,
+  hideSearch = false,
+  hideSelectionChips = false,
+  hideRefresh = false,
+  onAddViaChat,
+  headerAction,
+  splitSelectionGroups = false,
 }: SkillsManagerPanelProps) {
   const [skills, setSkills] = useState<Skill[]>([])
-  const [query, setQuery] = useState('')
+  const [internalQuery, setInternalQuery] = useState('')
+  const query = externalQuery ?? internalQuery
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [showImportDialog, setShowImportDialog] = useState(false)
@@ -108,9 +137,35 @@ export default function SkillsManagerPanel({
     })
   }, [skills, query, selectedSkills])
 
+  const splitGroups = useMemo(() => {
+    if (!splitSelectionGroups || !selectedSkills) return null
+    const rows = (wantSelected: boolean) => visibleSkills.filter(skill => selectedSkills.includes(skill.folder_name) === wantSelected)
+    return [
+      { key: 'selected', title: 'This workflow', helper: null as string | null, rows: rows(true) },
+      { key: 'available', title: 'Platform connected', helper: 'Shared with everyone. Tick one to let this workflow use it.', rows: rows(false) },
+    ].filter(group => group.rows.length > 0)
+  }, [splitSelectionGroups, selectedSkills, visibleSkills])
+
+  const renderSkillList = (rows: Skill[]) => (
+    <div className="rounded-md border border-gray-200 dark:border-gray-700">
+      {rows.map((skill) => (
+        <SkillRow
+          key={skill.file_path || skill.folder_name}
+          skill={skill}
+          onDelete={() => handleDelete(skill.folder_name)}
+          selected={onToggleSkill ? (selectedSkills || []).includes(skill.folder_name) : undefined}
+          onToggleSelect={onToggleSkill ? () => onToggleSkill(skill.folder_name) : undefined}
+          onRequestAdd={onToggleSkill && onAddViaChat ? () => onAddViaChat(skill) : undefined}
+          readOnly={readOnly}
+          selectionScopeLabel={selectionScopeLabel}
+        />
+      ))}
+    </div>
+  )
+
   return (
-    <div className={`flex min-h-0 flex-1 flex-col ${compact ? 'gap-2' : 'gap-3'}`}>
-      {onToggleSkill && (
+    <div className={`${manageOwnScroll ? 'flex min-h-0 flex-1 flex-col' : 'flex flex-col'} ${compact ? 'gap-2' : 'gap-3'}`}>
+      {onToggleSkill && !hideSelectionChips && (
         <div className="shrink-0">
           <div className="mb-1.5 text-sm font-medium text-muted-foreground">{selectionLabel}</div>
           {(selectedSkills || []).length === 0 ? (
@@ -148,20 +203,19 @@ export default function SkillsManagerPanel({
         </div>
       )}
 
-      <div className="flex shrink-0 items-center justify-between">
-        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">
-          {query.trim()
-            ? `${visibleSkills.length} of ${skills.length}`
-            : `${skills.length} ${skills.length === 1 ? 'Skill' : 'Skills'}`}
-        </span>
-        <div className="flex items-center gap-1">
-          <button
-            onClick={loadSkills}
-            className="p-1.5 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 transition-colors"
-            title="Refresh skills"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-          </button>
+      <div className="flex shrink-0 items-center justify-end">
+        <div className="flex items-center gap-2">
+          {headerAction}
+          {!hideRefresh && (
+            <button
+              onClick={loadSkills}
+              className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+              title="Refresh skills"
+              aria-label="Refresh skills"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isLoading ? 'animate-spin' : ''}`} />
+            </button>
+          )}
           <button
             onClick={() => setShowImportDialog(true)}
             disabled={readOnly}
@@ -174,13 +228,13 @@ export default function SkillsManagerPanel({
         </div>
       </div>
 
-      {skills.length > 0 && (
+      {!hideSearch && skills.length > 0 && (
         <div className="relative shrink-0">
           <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-gray-400" />
           <input
             type="text"
             value={query}
-            onChange={(e) => setQuery(e.target.value)}
+            onChange={(e) => setInternalQuery(e.target.value)}
             placeholder="Search skills"
             aria-label="Search skills"
             className="w-full rounded-lg border border-gray-300 bg-white py-2 pl-10 pr-3 text-sm text-gray-900 placeholder-gray-400 transition-colors focus:border-primary focus:outline-none focus:ring-1 focus:ring-primary dark:border-gray-700 dark:bg-gray-800 dark:text-gray-100"
@@ -195,7 +249,7 @@ export default function SkillsManagerPanel({
         </div>
       )}
 
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className={manageOwnScroll ? 'min-h-0 flex-1 overflow-y-auto' : ''}>
         {isLoading && skills.length === 0 ? (
           <div className="flex items-center gap-2 py-4 text-sm text-gray-500 dark:text-gray-400">
             <Loader2 className="w-4 h-4 animate-spin" />
@@ -222,20 +276,18 @@ export default function SkillsManagerPanel({
           <p className="py-8 text-center text-sm text-gray-500 dark:text-gray-400">
             No skills match "{query}".
           </p>
-        ) : (
-          <div className="rounded-md border border-gray-200 dark:border-gray-700">
-            {visibleSkills.map((skill) => (
-              <SkillRow
-                key={skill.file_path || skill.folder_name}
-                skill={skill}
-                onDelete={() => handleDelete(skill.folder_name)}
-                selected={onToggleSkill ? (selectedSkills || []).includes(skill.folder_name) : undefined}
-                onToggleSelect={onToggleSkill ? () => onToggleSkill(skill.folder_name) : undefined}
-                readOnly={readOnly}
-                selectionScopeLabel={selectionScopeLabel}
-              />
+        ) : splitGroups ? (
+          <div className="flex flex-col gap-4">
+            {splitGroups.map(group => (
+              <div key={group.key}>
+                <div className={`${group.helper ? 'mb-1' : 'mb-3'} text-sm font-medium text-muted-foreground`}>{group.title}</div>
+                {group.helper && <p className="mb-3 text-xs leading-5 text-muted-foreground">{group.helper}</p>}
+                {renderSkillList(group.rows)}
+              </div>
             ))}
           </div>
+        ) : (
+          renderSkillList(visibleSkills)
         )}
       </div>
 

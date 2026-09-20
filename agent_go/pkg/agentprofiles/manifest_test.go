@@ -120,38 +120,75 @@ func TestLoadProductManifestMultipleProfiles(t *testing.T) {
 }
 
 func TestLoadProductManifestRejectsBadShapes(t *testing.T) {
-	cases := map[string]string{
-		"duplicate id": `profiles:
+	cases := map[string]struct {
+		extra string
+		files map[string]string
+	}{
+		"duplicate id": {extra: `profiles:
   - id: family-parent
     name: Dup
     version: 1
     prompt: {file: prompts/child.md}
-`,
-		"missing prompt": `profiles:
+`},
+		"missing prompt": {extra: `profiles:
   - id: family-child
     name: Child
     version: 1
-`,
-		"unknown key": `profiles:
+`},
+		"unknown key": {extra: `profiles:
   - id: family-child
     name: Child
     version: 1
     prompt: {file: prompts/child.md}
     unknown_key: red
-`,
-		"missing prompt file": `profiles:
+`},
+		"missing prompt file": {extra: `profiles:
   - id: family-child
     name: Child
     version: 1
     prompt: {file: prompts/missing.md}
+`},
+		"chat duplicate external tools": {
+			extra: `chat:
+  run:
+    prompt: {file: prompts/chat.md}
+    skills: []
+    external_tools: [list_workflows, list_workflows]
 `,
+			files: map[string]string{"prompts/chat.md": "chat prompt"},
+		},
+		"chat empty external tool": {
+			extra: `chat:
+  run:
+    prompt: {file: prompts/chat.md}
+    skills: []
+    external_tools: [""]
+`,
+			files: map[string]string{"prompts/chat.md": "chat prompt"},
+		},
 	}
-	for name, extra := range cases {
+	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {
-			if _, err := LoadProductManifest(manifestFS(extra, nil), "product.yaml"); err == nil {
+			if _, err := LoadProductManifest(manifestFS(tc.extra, tc.files), "product.yaml"); err == nil {
 				t.Fatal("expected an error")
 			}
 		})
+	}
+}
+
+func TestLoadProductManifestChatExternalTools(t *testing.T) {
+	extra := `chat:
+  run:
+    prompt: {file: prompts/chat.md}
+    skills: []
+    external_tools: [list_workflows, read_file]
+`
+	m, err := LoadProductManifest(manifestFS(extra, map[string]string{"prompts/chat.md": "chat prompt"}), "product.yaml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Chat["run"].ExternalTools; len(got) != 2 || got[0] != "list_workflows" || got[1] != "read_file" {
+		t.Fatalf("external_tools = %v", got)
 	}
 }
 

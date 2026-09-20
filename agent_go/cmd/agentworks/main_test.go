@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	mcpclient "github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
@@ -291,6 +292,25 @@ func TestCLILoginRejectsPasswordAndSessionJWT(t *testing.T) {
 		code := run(context.Background(), append([]string{"--config", filepath.Join(t.TempDir(), "config"), "--server", "http://127.0.0.1:1"}, args...), strings.NewReader("session.jwt.token"), &out, &stderr, func(string) string { return "" })
 		if code == 0 {
 			t.Fatal("legacy CLI login accepted")
+		}
+	}
+}
+
+func TestCLIOperationsStayAdmitted(t *testing.T) {
+	admitted := map[string]bool{}
+	for _, name := range agentworksproduct.RunExternalTools() {
+		admitted[name] = true
+	}
+	mapped := map[string]string{}
+	for _, group := range cliOperationGroups {
+		for _, op := range group.operations {
+			mapped[op.tool] = group.name + " " + op.command
+		}
+	}
+	mapped["get_plan"] = "plan get"
+	for tool, command := range mapped {
+		if !admitted[tool] {
+			t.Fatalf("CLI %q calls %s, which product.yaml no longer admits", command, tool)
 		}
 	}
 }

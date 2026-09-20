@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Check, Copy, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
@@ -32,17 +32,72 @@ interface Connection {
   token: string
 }
 
+const CONNECT_TOKEN_NAME = 'Connect tab'
+
+function storageKey(server: string) {
+  return `agentworks.connectToken.${server}`
+}
+
+function loadStored(server: string): Connection | null {
+  try {
+    const raw = window.localStorage.getItem(storageKey(server))
+    if (!raw) return null
+    const parsed = JSON.parse(raw) as Partial<Connection>
+    if (typeof parsed.id !== 'string' || typeof parsed.token !== 'string' || !parsed.id || !parsed.token) return null
+    return { id: parsed.id, token: parsed.token }
+  } catch {
+    return null
+  }
+}
+
 /**
  * Shared Setup → Integrations tab for Crew projects and Builder automations.
  * Provisions its own read-only token and shows ready-to-paste commands — no
- * separate token dialog. The token reads every workflow the user can access
- * and expires after 30 days; revoke it here when done.
+ * separate token dialog. The token secret is kept in this browser and reused
+ * on every visit until it is revoked or expires; the server only ever confirms
+ * the token id is still valid. The token reads every workflow the user can
+ * access and expires after 30 days; revoke it here when done.
  */
 export function CliMcpSetupPanel() {
   const [connection, setConnection] = useState<Connection | null>(null)
   const [busy, setBusy] = useState(false)
+  const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const server = getApiBaseUrl() || window.location.origin
+
+  useEffect(() => {
+    let cancelled = false
+    const rehydrate = async () => {
+      const stored = loadStored(server)
+      if (!stored) {
+        if (!cancelled) setChecking(false)
+        return
+      }
+      try {
+        const { tokens } = await authApi.listAccessTokens()
+        const found = tokens.find((t) => t.id === stored.id)
+        const alive = found && found.revoked_at === null && new Date(found.expires_at).getTime() > Date.now()
+        if (!cancelled) {
+          if (alive) {
+            setConnection(stored)
+          } else {
+            try { window.localStorage.removeItem(storageKey(server)) } catch { /* keep going */ }
+          }
+          setChecking(false)
+        }
+      } catch {
+        // Unverified (offline?): still show the stored secret — it is only
+        // displayed, never auto-used, and a dead token fails loudly in the
+        // CLI where the user can rotate it with New token.
+        if (!cancelled) {
+          setConnection(stored)
+          setChecking(false)
+        }
+      }
+    }
+    void rehydrate()
+    return () => { cancelled = true }
+  }, [server])
 
   const generate = async () => {
     setBusy(true)
@@ -51,14 +106,26 @@ export function CliMcpSetupPanel() {
       if (connection) {
         try { await authApi.revokeAccessToken(connection.id) } catch { /* replaced below */ }
       }
+      // Drop orphaned same-name tokens (e.g. this browser's secret was
+      // cleared) so Generate never piles up connections.
+      try {
+        const { tokens } = await authApi.listAccessTokens()
+        for (const token of tokens) {
+          if (token.name === CONNECT_TOKEN_NAME && token.id !== connection?.id) {
+            try { await authApi.revokeAccessToken(token.id) } catch { /* best effort */ }
+          }
+        }
+      } catch { /* creation below still applies */ }
       const result = await authApi.createAccessToken({
-        name: 'Connect tab',
+        name: CONNECT_TOKEN_NAME,
         expires_in_days: 30,
         scopes: ['workflows:read', 'files:read'],
         all_workflows: true,
         workflow_ids: [],
       })
-      setConnection({ id: result.access_token.id, token: result.token })
+      const next = { id: result.access_token.id, token: result.token }
+      try { window.localStorage.setItem(storageKey(server), JSON.stringify(next)) } catch { /* reuse just won't persist */ }
+      setConnection(next)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -72,6 +139,7 @@ export function CliMcpSetupPanel() {
     setError(null)
     try {
       await authApi.revokeAccessToken(connection.id)
+      try { window.localStorage.removeItem(storageKey(server)) } catch { /* already gone */ }
       setConnection(null)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
@@ -82,7 +150,6 @@ export function CliMcpSetupPanel() {
 
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const login = connection ? `printf '%s' ${quoted(connection.token)} | agentworks login --server ${JSON.stringify(server)} --token-stdin` : ''
-  const envPrefix = connection ? `AGENTWORKS_TOKEN=${quoted(connection.token)}` : ''
 
   return (
     <div className="space-y-4">
@@ -106,7 +173,7 @@ export function CliMcpSetupPanel() {
               <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
             </div>
           ) : (
-            <Button size="sm" disabled={busy} onClick={() => void generate()}>
+            <Button size="sm" disabled={busy || checking} onClick={() => void generate()}>
               <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Generating…' : 'Generate connection'}
             </Button>
           )
@@ -115,13 +182,13 @@ export function CliMcpSetupPanel() {
         {error && (
           <div className="rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">{error}</div>
         )}
-        {!connection ? (
-          <p className="text-sm text-muted-foreground">Commands appear here with the token filled in. Nothing is created until you generate.</p>
+        {checking ? (
+          <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
+        ) : !connection ? (
+          <p className="text-sm text-muted-foreground">The command appears here with the token filled in. Nothing is created until you generate.</p>
         ) : (
           <div className="space-y-2">
             <CommandRow label="Log in command" command={login} />
-            <CommandRow label="List workflows command" command={`${envPrefix} agentworks workflows list --json`} />
-            <CommandRow label="Load guidance command" command={`${envPrefix} agentworks guidance context`} />
           </div>
         )}
       </SettingsCard>
@@ -135,7 +202,6 @@ export function CliMcpSetupPanel() {
         ) : (
           <div className="space-y-2">
             <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
-            <CommandRow label="Serve MCP command" command={`${envPrefix} agentworks mcp serve`} />
             <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
           </div>
         )}

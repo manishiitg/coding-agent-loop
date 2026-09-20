@@ -365,11 +365,20 @@ test build.
 - `agent_go/cmd/agentworks`: CLI argument handling.
 - `agent_go/cmd/server/external_tools.go`: authenticated discovery, permissions,
   schema validation, workflow resolution, and operation dispatch.
-- `step_based_workflow/external_plan_tools.go`: native plan schemas/executors and
-  extracted shared step-config implementation used by the internal builder too.
-- `external_builder.go`: existing query, event, human-input, and cancellation adapters.
-- `workspace/handlers/workflow_files.go`: workflow-confined file access and
-  revision-checked commit of staged plan changes.
+- `step_based_workflow/external_plan_tools.go`: native plan schemas, kept for
+  a future write-enabled API; unexposed in v1.
+- `external_builder.go`: existing query, event, human-input, and cancellation
+  adapters; unexposed in v1.
+- `workspace/handlers/workflow_files.go`: workflow-confined file access.
+
+The exposed tool set has one source of truth:
+`agent_go/internal/agentworksproduct/product.yaml`, `chat.run.external_tools`.
+The server exposes exactly those tools, in that order; Go defines the
+implementations (schemas, dispatch) while the yaml admits them. A yaml name
+without an implementation — or an implementation missing from the yaml —
+fails server startup, and the CLI subcommand mappings are test-pinned to the
+same list. Changing the surface means editing the yaml and the golden test
+together, deliberately.
 
 Public tool endpoints are `GET /api/external/v1/tools` and
 `POST /api/external/v1/call`. The CLI uses a PAT in the Bearer header; app sessions

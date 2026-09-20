@@ -49,6 +49,34 @@ func TestChatDefinitions(t *testing.T) {
 	}
 }
 
+func TestRunExternalToolsAdmission(t *testing.T) {
+	m := mustAgentWorksManifest()
+	admitted := RunExternalTools()
+	if len(admitted) == 0 {
+		t.Fatal("run mode admits no external tools")
+	}
+	admitted[0] = "changed"
+	if RunExternalTools()[0] == "changed" {
+		t.Fatal("caller changed admitted external tools")
+	}
+	badBuilder := m
+	badBuilder.Chat = map[string]agentprofiles.ChatModeDefinition{"builder": m.Chat["builder"], "run": m.Chat["run"]}
+	def := badBuilder.Chat["builder"]
+	def.ExternalTools = []string{"list_workflows"}
+	badBuilder.Chat["builder"] = def
+	if validateChatDefinitions(productConfigFiles, badBuilder) == nil {
+		t.Fatal("builder mode admitted external tools")
+	}
+	emptyRun := m
+	emptyRun.Chat = map[string]agentprofiles.ChatModeDefinition{"builder": m.Chat["builder"], "run": m.Chat["run"]}
+	run := emptyRun.Chat["run"]
+	run.ExternalTools = nil
+	emptyRun.Chat["run"] = run
+	if validateChatDefinitions(productConfigFiles, emptyRun) == nil {
+		t.Fatal("run mode admitted no external tools")
+	}
+}
+
 func containsChatSkill(skills []string, want string) bool {
 	for _, skill := range skills {
 		if skill == want {

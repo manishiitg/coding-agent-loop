@@ -16,6 +16,7 @@ import (
 	"sync"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	planops "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	wf "github.com/manishiitg/coding-agent-loop/workspace/workflowfiles"
@@ -43,6 +44,7 @@ func externalInteger(minimum, maximum int) map[string]any {
 }
 func externalTools() ([]externalTool, error) {
 	externalCatalogOnce.Do(func() {
+		var defined []externalTool
 		add := func(name, description string, write, scoped bool, props map[string]any, required ...string) {
 			if props == nil {
 				props = map[string]any{}
@@ -55,7 +57,7 @@ func externalTools() ([]externalTool, error) {
 			for i, r := range required {
 				req[i] = r
 			}
-			externalCatalog = append(externalCatalog, externalTool{Name: name, Description: description, mutates: write, InputSchema: map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false}})
+			defined = append(defined, externalTool{Name: name, Description: description, mutates: write, InputSchema: map[string]any{"type": "object", "properties": props, "required": req, "additionalProperties": false}})
 		}
 		page := func() map[string]any {
 			return map[string]any{"limit": externalInteger(1, 200), "offset": externalInteger(0, 10000)}
@@ -80,6 +82,8 @@ func externalTools() ([]externalTool, error) {
 		// v1 is read-only, like the Slack and WhatsApp run-mode channels:
 		// file writes, plan mutations, and Builder execution are not exposed.
 		// The dispatch paths stay for a future write-enabled API version.
+		// Catalog membership is admitted by product.yaml (chat.run
+		// external_tools); these definitions are implementations only.
 		add("get_plan", "Read the plan and configuration.", false, true, nil)
 		add("get_agent_context", "Describe this read-only connection for an external agent: token capabilities, available tools, and guidance version. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
 		add("list_guidance_topics", "List the server-owned external guidance topics and their descriptions.", false, false, nil)
@@ -91,6 +95,31 @@ func externalTools() ([]externalTool, error) {
 			p = page()
 			p["run_folder"] = externalString("Run directory relative to runs/, e.g. iteration-0/group-name.")
 			add(name, "Inspect a saved run's files or log files; use read_file to retrieve selected content.", false, true, p, "run_folder")
+		}
+		// Membership comes from product.yaml's run-mode external_tools — the
+		// single source of truth for this surface. Go defines implementations
+		// (schemas, dispatch); yaml admits them. Both mismatch directions fail
+		// here so drift between the two can never ship silently.
+		byName := make(map[string]externalTool, len(defined))
+		for _, tool := range defined {
+			byName[tool.Name] = tool
+		}
+		admitted := agentworksproduct.RunExternalTools()
+		seen := make(map[string]bool, len(admitted))
+		for _, name := range admitted {
+			tool, ok := byName[name]
+			if !ok {
+				externalCatalogErr = fmt.Errorf("product.yaml admits unknown external tool %q", name)
+				return
+			}
+			seen[name] = true
+			externalCatalog = append(externalCatalog, tool)
+		}
+		for _, tool := range defined {
+			if !seen[tool.Name] {
+				externalCatalogErr = fmt.Errorf("external tool %q is implemented but not admitted by product.yaml", tool.Name)
+				return
+			}
 		}
 		for i := range externalCatalog {
 			tool := &externalCatalog[i]

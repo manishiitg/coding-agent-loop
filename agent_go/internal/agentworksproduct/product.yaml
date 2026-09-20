@@ -195,6 +195,27 @@ chat:
       - stop_step
       - test_slack_bot_connection
       - trigger_schedule
+    # External API admission: the single source of truth for the v1 CLI/MCP
+    # catalog. The server exposes exactly these tools, in this order; a name
+    # without an implemented external tool fails server startup, as does an
+    # implemented tool missing from this list. v1 is read-only: admitting a
+    # mutating tool here is a deliberate API change, not a drive-by edit.
+    external_tools:
+      - list_workflows
+      - get_workflow
+      - list_files
+      - search_files
+      - get_file_link
+      - read_file
+      - get_plan
+      - get_agent_context
+      - list_guidance_topics
+      - get_guidance_topic
+      - list_workflow_knowledge
+      - read_workflow_knowledge
+      - list_runs
+      - get_run
+      - get_logs
     prompt:
       file: prompts/run.md
       includes: [prompts/workflow-shared.md]

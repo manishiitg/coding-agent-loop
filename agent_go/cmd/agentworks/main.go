@@ -27,6 +27,22 @@ type options struct {
 	getenv                func(string) string
 }
 
+// cliOperationGroups maps CLI subcommands to external tools. Every tool named
+// here must stay admitted by product.yaml's run-mode external_tools (see
+// TestCLIOperationsStayAdmitted); `plan get` maps to get_plan the same way,
+// while `tools call` and `mcp serve` resolve against the live server catalog
+// instead.
+var cliOperationGroups = []struct {
+	name, description string
+	operations        []struct{ command, tool string }
+}{
+	{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
+	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
+	{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
+	{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
+	{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
+}
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
@@ -88,17 +104,7 @@ func newCommand(o *options) *cobra.Command {
 	call.RunE = func(cmd *cobra.Command, args []string) error { return o.call(cmd, args[0]) }
 	toolsCmd.AddCommand(call)
 	root.AddCommand(toolsCmd)
-	groups := []struct {
-		name, description string
-		operations        []struct{ command, tool string }
-	}{
-		{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
-		{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
-		{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
-		{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
-		{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
-	}
-	for _, group := range groups {
+	for _, group := range cliOperationGroups {
 		groupCmd := &cobra.Command{Use: group.name, Short: group.description}
 		for _, op := range group.operations {
 			toolName := op.tool

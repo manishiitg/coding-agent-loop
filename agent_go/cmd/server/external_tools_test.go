@@ -16,6 +16,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	workspacehandlers "github.com/manishiitg/coding-agent-loop/workspace/handlers"
 	"github.com/spf13/viper"
@@ -171,7 +172,7 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 				t.Fatal("private implementation field leaked")
 			}
 		}
-		for _, name := range []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs"} {
+		for _, name := range agentworksproduct.RunExternalTools() {
 			if !names[name] {
 				t.Fatalf("missing tool %s", name)
 			}
@@ -182,6 +183,36 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 			if names[name] {
 				t.Fatalf("write tool exposed: %s", name)
 			}
+		}
+	}
+}
+
+func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
+	catalog, err := externalTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitted := agentworksproduct.RunExternalTools()
+	if len(catalog) != len(admitted) {
+		t.Fatalf("catalog has %d tools, product.yaml admits %d", len(catalog), len(admitted))
+	}
+	for i, tool := range catalog {
+		if tool.Name != admitted[i] {
+			t.Fatalf("catalog[%d] = %s, product.yaml admits %s", i, tool.Name, admitted[i])
+		}
+		if tool.mutates {
+			t.Fatalf("admitted tool %s mutates: v1 is read-only", tool.Name)
+		}
+	}
+	// Golden pin: changing the exposed surface means editing product.yaml and
+	// this list together, deliberately.
+	want := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs"}
+	if len(admitted) != len(want) {
+		t.Fatalf("admitted %d tools, want %d", len(admitted), len(want))
+	}
+	for i, name := range want {
+		if admitted[i] != name {
+			t.Fatalf("admitted[%d] = %s, want %s", i, admitted[i], name)
 		}
 	}
 }

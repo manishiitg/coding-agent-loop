@@ -70,7 +70,7 @@ func newCommand(o *options) *cobra.Command {
 	root.PersistentFlags().StringVar(&o.serverURL, "server", "", "Hosted AgentWorks HTTPS URL (or AGENTWORKS_SERVER)")
 	root.PersistentFlags().StringVar(&o.configPath, "config", "", "Private connection config path")
 	root.PersistentFlags().BoolVar(&o.jsonOutput, "json", false, "Emit compact JSON results and structured errors")
-	root.AddCommand(loginCommand(o), logoutCommand(o))
+	root.AddCommand(loginCommand(o), logoutCommand(o), skillsCommand(o))
 	toolsCmd := &cobra.Command{Use: "tools", Short: "Discover and call the server's current tools"}
 	toolsCmd.AddCommand(&cobra.Command{Use: "list", Args: cobra.NoArgs, Short: "List tools with authoritative JSON schemas", RunE: func(cmd *cobra.Command, _ []string) error {
 		client, err := o.client()
@@ -95,6 +95,8 @@ func newCommand(o *options) *cobra.Command {
 		{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
 		{"files", "Read and edit ordinary workspace files; plan files require plan tools", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}, {"write", "write_file"}, {"patch", "patch_file"}}},
 		{"runs", "Inspect workflow activity", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}}},
+		{"guidance", "Load server-owned external guidance", []struct{ command, tool string }{{"context", "get_agent_context"}, {"topics", "list_guidance_topics"}, {"topic", "get_guidance_topic"}}},
+		{"knowledge", "Inspect workflow learnings, notes, and skills", []struct{ command, tool string }{{"list", "list_workflow_knowledge"}, {"read", "read_workflow_knowledge"}}},
 		{"builder", "Send messages to existing Workflow Builder and follow its session", []struct{ command, tool string }{{"chat", "builder_chat"}, {"status", "builder_status"}, {"reply", "builder_reply_input"}, {"cancel", "builder_cancel"}}},
 	}
 	for _, group := range groups {
@@ -247,6 +249,26 @@ func loginCommand(o *options) *cobra.Command {
 	return cmd
 }
 
+func skillsCommand(o *options) *cobra.Command {
+	cmd := &cobra.Command{Use: "skills", Short: "Install the AgentWorks skill into a client skill directory"}
+	var dir string
+	var force bool
+	install := &cobra.Command{Use: "install", Args: cobra.NoArgs, Short: "Install skills/agentworks/SKILL.md for Claude Code, Codex, and other skill clients", Long: "Copies the bundled AgentWorks skill (an entry pointer to the server-served guidance tools) into <dir>/agentworks/SKILL.md. Point --dir at a client skill directory, e.g. ~/.claude/skills or a project .claude/skills.", RunE: func(cmd *cobra.Command, _ []string) error {
+		if dir == "" {
+			dir = filepath.Join(".agents", "skills")
+		}
+		target, err := agentworksclient.InstallSkill(dir, force)
+		if err != nil {
+			return err
+		}
+		return o.output(map[string]any{"installed": target})
+	}}
+	install.Flags().StringVar(&dir, "dir", "", "Client skill directory (default .agents/skills)")
+	install.Flags().BoolVar(&force, "force", false, "Overwrite an existing installed copy")
+	cmd.AddCommand(install)
+	return cmd
+}
+
 func logoutCommand(o *options) *cobra.Command {
 	return &cobra.Command{Use: "logout", Args: cobra.NoArgs, Short: "Remove saved credentials (does not revoke tokens or unset environment variables)", RunE: func(_ *cobra.Command, _ []string) error {
 		path, err := o.path()
@@ -270,15 +292,23 @@ func logoutCommand(o *options) *cobra.Command {
 func addOperationFlags(cmd *cobra.Command, tool string) {
 	f := cmd.Flags()
 	f.String("input", "", "Tool arguments as a JSON object from a file, or - for stdin")
-	if tool != "list_workflows" {
+	// Global guidance topics accept no workflow_id; offering the flag would
+	// only produce an avoidable invalid_arguments response.
+	if tool != "list_workflows" && tool != "list_guidance_topics" && tool != "get_guidance_topic" {
 		f.String("workflow", "", "Workflow ID (workflow_id)")
 	}
 	if tool == "" || tool == "plan" || tool == "write_file" || tool == "patch_file" {
 		f.String("expected-revision", "", "Revision from read_file/get_plan; use missing to create a file")
 	}
 	f.StringArray("set", nil, "Set a native argument as key=JSON; repeatable (quote string JSON values)")
-	if strings.Contains(tool, "file") {
+	if strings.Contains(tool, "file") || tool == "read_workflow_knowledge" {
 		f.String("path", "", "Workspace-relative file or directory path")
+	}
+	if tool == "get_agent_context" {
+		f.String("action", "", "Intended action: plan_change, file_edit, share_asset, builder_chat")
+	}
+	if tool == "get_guidance_topic" {
+		f.String("topic", "", "Guidance topic from guidance topics")
 	}
 	if tool == "list_workflows" || tool == "list_files" || tool == "search_files" || tool == "list_runs" || tool == "get_run" || tool == "get_logs" {
 		f.Int("limit", 0, "Maximum results")
@@ -362,7 +392,7 @@ func operationArguments(cmd *cobra.Command, stdin io.Reader) (map[string]any, er
 			return nil, errors.New("--input must contain exactly one JSON object")
 		}
 	}
-	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response"} {
+	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic"} {
 		if cmd.Flags().Changed(flagName) {
 			value, _ := cmd.Flags().GetString(flagName)
 			arguments[field] = value

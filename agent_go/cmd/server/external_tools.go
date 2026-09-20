@@ -87,6 +87,11 @@ func externalTools() ([]externalTool, error) {
 			add(name, "Edit an ordinary workflow file with revision checking. Plan/config, run state, ownership and private files are protected; use typed tools for plan changes.", true, true, p, "path", "expected_revision", field)
 		}
 		add("get_plan", "Read the plan and configuration with a combined revision required by typed plan mutations.", false, true, nil)
+		add("get_agent_context", "Describe this connection for an external agent: token capabilities, available tools, guidance version, and required preparation for an action. Call before plan changes. No workflow required; pass workflow_id for the caller's role on it.", false, false, map[string]any{"action": map[string]any{"type": "string", "description": "Intended action: plan_change, file_edit, share_asset, builder_chat.", "enum": []any{"plan_change", "file_edit", "share_asset", "builder_chat"}}, "workflow_id": map[string]any{"type": "string", "description": "Optional workflow ID to report the caller's role on."}})
+		add("list_guidance_topics", "List the server-owned external guidance topics and their descriptions.", false, false, nil)
+		add("get_guidance_topic", "Read one external guidance topic rendered from the canonical builder reference. Load only topics relevant to the task.", false, false, map[string]any{"topic": externalString("Topic name from list_guidance_topics.")}, "topic")
+		add("list_workflow_knowledge", "List a workflow's learnings, knowledgebase notes, workspace skills, and skill wiring (workflow-selected skills plus per-step enabled_skills).", false, true, nil)
+		add("read_workflow_knowledge", "Read one knowledge file: learnings/ or knowledgebase/ paths from the workflow, or skills/<folder>/<file> from the workspace skill catalog. Nothing else is addressable.", false, true, map[string]any{"path": externalString("Knowledge path: learnings/..., knowledgebase/..., or skills/<folder>/<file>.")}, "path")
 		add("list_runs", "List saved run folders and their metadata files. Use get_run for a chosen run.", false, true, page())
 		for _, name := range []string{"get_run", "get_logs"} {
 			p = page()
@@ -223,6 +228,19 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 		visible = filtered
 	}
 	args := call.Arguments
+	// Global tools need no workflow. They run before workflow resolution so a
+	// restricted token can still obtain guidance and context.
+	switch tool.Name {
+	case "get_agent_context":
+		api.externalAgentContext(w, r, args, visible)
+		return
+	case "list_guidance_topics":
+		api.externalGuidanceTopicList(w, r)
+		return
+	case "get_guidance_topic":
+		api.externalGuidanceTopicBody(w, r, args)
+		return
+	}
 	if tool.Name == "list_workflows" {
 		matches := make([]DiscoveredWorkflow, 0)
 		query := strings.ToLower(externalArg(args, "query"))
@@ -264,6 +282,14 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	}
 	if tool.Name == "get_file_link" {
 		api.externalAssetLink(w, r, *selected, externalArg(args, "path"))
+		return
+	}
+	if tool.Name == "list_workflow_knowledge" {
+		api.externalListKnowledge(w, r, *selected)
+		return
+	}
+	if tool.Name == "read_workflow_knowledge" {
+		api.externalReadKnowledge(w, r, *selected, args)
 		return
 	}
 	if tool.Name == "get_workflow" {
@@ -570,5 +596,18 @@ func (api *StreamingAPI) externalPlanCall(w http.ResponseWriter, r *http.Request
 		return
 	}
 	log.Printf("[EXTERNAL_API] user=%s tool=%s workflow=%s old_revision=%s revision=%s", GetUserIDFromContext(r.Context()), tool.Name, workflow.Manifest.ID, revision, newRevision)
-	externalJSON(w, map[string]any{"workflow_id": workflow.Manifest.ID, "message": result, "revision": newRevision, "changed_files": len(tx.writes)})
+	externalJSON(w, map[string]any{
+		"workflow_id":   workflow.Manifest.ID,
+		"message":       result,
+		"revision":      newRevision,
+		"changed_files": len(tx.writes),
+		// The blast-radius contract, returned with every mutation so it is as
+		// difficult to skip as revision correctness. Guidance alone is advisory;
+		// these followups are part of the mutation receipt.
+		"required_followups": []string{
+			"Confirm the returned revision with get_plan before further edits.",
+			"Trace the change surface (step id, output files/fields, db writes, behavior) across downstream steps, validation schemas, report queries, db contracts, learnings, and knowledgebase notes using search_files/read_file; reconcile or report each dependent.",
+			"Load topic plan-change-impact with get_guidance_topic before treating this change as done, unless already applied to this edit.",
+		},
+	})
 }

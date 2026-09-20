@@ -174,7 +174,6 @@ chat:
       - migrate_declared_execution_mode
       - migrate_message_sequence_code_items
       - migrate_orchestrator_step_type
-      - migrate_run_scoped_routes
       - strip_declared_execution_mode
       - configure_slack_bot
       - consolidate_knowledgebase

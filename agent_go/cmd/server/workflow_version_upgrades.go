@@ -335,14 +335,6 @@ Do not hand-edit plan.json or step_config.json, and do not run the workflow. The
 
 const workflowUpgradeWorkspacePathPlaceholder = "{{WORKSPACE_PATH}}"
 
-const upgradeRunScopedRoutes = `WORKFLOW CONTRACT UPGRADE: RUN-SCOPED ROUTE DECISIONS (PLAT-331).
-
-Do only this migration. Call migrate_run_scoped_routes once. It repairs the proven unsafe pattern where a prior step produces route_selection.json for the current run but a later routing/branch step and its destinations read the mutable workflow-shared db/assets/route_selection.json. The trusted migration binds those steps to the producer's run-scoped output and updates affected instructions. Deliberately shared route_source_file inputs remain supported and unchanged.
-
-If the result reports migrated producers, inspect each producer's scripted code. When it still writes a compatibility copy to db/assets/route_selection.json, update that scripted step to remove only the shared mirror write while preserving its STEP_OUTPUT_DIR/route_selection.json and any durable append-only database audit. Also inspect the migrated route destinations' scripted code for an old shared-path fallback and remove only that fallback now that route_selection.json is a declared dependency. Do not alter GitHub/API eligibility logic, route values, validation, or unrelated durable assets. A no-op result requires no code edits.
-
-Do not hand-edit plan.json and do not run the workflow. Re-read the migrated plan and affected scripted steps. Confirm every changed router and destination declares context_dependencies containing route_selection.json, no changed router or affected live code still reads or writes db/assets/route_selection.json, the producer still writes its run-scoped output, and unrelated shared route sources are unchanged. If the tool reports an error or validation fails, do not stamp. Otherwise call set_workflow_contract_version(version="1.0.42") and stop.`
-
 func bindWorkflowUpgradeWorkspacePath(query, workspacePath string) string {
 	workspacePath = strings.TrimSpace(workspacePath)
 	if workspacePath == "" {
@@ -439,9 +431,11 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 	if rank < 40 {
 		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractExplicitSchedulePulseVersion, label: "upgrade-explicit-schedule-pulse", query: upgradeExplicitSchedulePulse})
 	}
-	if rank < 41 {
-		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractRunScopedRoutesVersion, label: "upgrade-run-scoped-routes", query: upgradeRunScopedRoutes})
-	}
+	// Contract v1.0.42 is retained in the known-version ladder so workflows
+	// which already completed it remain readable, but its scheduled migration
+	// is retired. The runtime persists run-scoped route decisions and plan
+	// mutations reject the unsafe shared-mirror shape, so blocking every older
+	// workflow on an agent-authored cleanup turn is no longer justified.
 	if rank < 42 {
 		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractEvalRetirementVersion, label: "upgrade-eval-retirement", query: upgradeEvalRetirement})
 	}

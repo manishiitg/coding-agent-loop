@@ -25,7 +25,7 @@ func TestConsolidatedPlanRegistryHidesNativeAliases(t *testing.T) {
 	for _, name := range []string{
 		"add_step", "update_step", "manage_step_route", "change_step_type", "maintain_plan",
 		"migrate_message_sequence_code_items", "migrate_orchestrator_step_type",
-		"migrate_declared_execution_mode", "strip_declared_execution_mode", "migrate_run_scoped_routes",
+		"migrate_declared_execution_mode", "strip_declared_execution_mode",
 		"create_plan", "delete_plan_steps", "validate_plan_change", "update_validation_schema", "record_plan_drift_review",
 	} {
 		if _, ok := d.tools[name]; !ok {

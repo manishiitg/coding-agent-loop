@@ -4,7 +4,7 @@
 
 | Coordination | Value |
 |---|---|
-| State | Deployed; RTS workflow migrated to contract v1.0.42; overlapping-delivery live acceptance pending |
+| State | Runtime and plan guards deployed; the only identified unsafe workflow was repaired; the remaining v1.0.42 scheduled migration is retired |
 | Date | 2026-09-18 |
 | Owner | step execution / deterministic routing |
 | Related | [PLAT-328](plat-328.md) |
@@ -40,20 +40,19 @@ case where a prior step declares run-scoped `route_selection.json` but the
 router points at `db/assets/route_selection.json`. Legacy plans remain loadable
 so Builder can repair them.
 
-Contract v1.0.42 runs the trusted, idempotent
-`migrate_run_scoped_routes` migration for every workflow. It rewires each
-proven shared-mirror pattern to `context_dependencies`, gives every route
-destination the same run-scoped dependency, and removes the obsolete shared
-path from affected step instructions. Other `route_source_file` values remain
-unchanged, including deliberately shared operator-controlled routing inputs.
-The managed migration turn then removes obsolete compatibility writes and
-fallback reads from affected scripted steps while preserving the producer's
-run output and append-only database audit.
+Contract v1.0.42 originally scheduled a managed cleanup turn for every older
+workflow. That turn was retired after the only unsafe production plan found by
+the census was repaired: asking an unattended agent to rewrite plan and script
+artifacts blocked otherwise valid schedules and was disproportionate to the
+remaining risk. The runtime isolation and plan-mutation rejection remain the
+platform contract. Version 1.0.42 remains recognized as a historical marker so
+already-migrated workflows continue forward normally.
 
 A read-only production census on 2026-09-18 found one unsafe plan,
 `rtsprreviweer/pr-review-branch`. Three explicit route sources in
 `automationtesting` use the ordinary `route_selection.json` contract and are
-left unchanged. All other workflows take the idempotent no-op path.
+left unchanged. The identified unsafe plan was repaired before the scheduled
+migration was retired.
 
 ## RTS migration and acceptance
 

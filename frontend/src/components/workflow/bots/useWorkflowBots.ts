@@ -216,7 +216,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         try {
           const selection = await agentApi.getProjectSlackSelection(target.profileId, workspacePath)
           setProjectSlackSelectionId(selection.slack_connection_id || '')
-        } catch (err) {
+        } catch {
           setProjectSlackSelectionId('')
         }
       }

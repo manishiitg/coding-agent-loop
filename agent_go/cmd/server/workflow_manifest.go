@@ -125,6 +125,10 @@ type WorkflowManifest struct {
 	RunRetentionCount    *int                                        `json:"run_retention_count,omitempty"`
 	FolderAccess         []workflowtypes.WorkflowFolderGrant         `json:"folder_access,omitempty"`
 	FolderAccessRequests []workflowtypes.WorkflowFolderAccessRequest `json:"folder_access_requests,omitempty"`
+	// CrewAttachments exposes Crew project workspaces under stable aliases,
+	// read-only. Unlike FolderAccess (owner-approved host directories),
+	// attachments reference workspace paths resolved at attach time.
+	CrewAttachments []workflowtypes.CrewAttachment `json:"crew_attachments,omitempty"`
 	// WorkflowContextPaths are durable links to other workflows. They are
 	// resolved through the same authorization boundary as transient # references
 	// and are always mounted read-only.
@@ -516,6 +520,8 @@ type WorkflowSchedule struct {
 	// as data prevents a schedule from becoming a second, free-text workflow.
 	RouteSelections map[string]string      `json:"route_selections,omitempty"`
 	Webhook         *WorkflowWebhookConfig `json:"webhook,omitempty"`
+	Kind            string                 `json:"kind,omitempty"`
+	Caller          *triggerCaller         `json:"caller,omitempty"`
 	Mode            string                 `json:"mode,omitempty"`     // "workshop" for workflow schedules; legacy "workflow" is normalized at runtime
 	Messages        []string               `json:"messages,omitempty"` // Predefined message queue for workshop schedules (sent one-by-one)
 	// DirectMessagesReason records why a schedule-local conversation is preferable

@@ -15,6 +15,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/productschedule"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // Product schedules are the recurring jobs a product declares in its
@@ -188,6 +189,12 @@ type ProductScheduleService struct {
 
 	mu      sync.Mutex
 	running map[string]*productScheduleRun // key: userID + "\x1f" + job id
+	// conversations holds one claim per live automation conversation, so two
+	// turns never interleave in the same conversation. Key: userID + "\x1f" +
+	// conversation key. s.running stays per job for Running/Stop lookups.
+	conversations map[string]bool
+	// queued holds accepted deliveries waiting their turn, FIFO per conversation key.
+	queued map[string][]productScheduleQueuedRun
 	// deferred holds the quiet-rule reason for jobs currently held back, so
 	// the UI can say "waiting for a quiet moment" instead of showing nothing.
 	deferred map[string]string
@@ -206,7 +213,7 @@ type productScheduleRun struct {
 
 // NewProductScheduleService wires the service to the live profile registry.
 func NewProductScheduleService(api *StreamingAPI, registry *agentprofiles.Registry) *ProductScheduleService {
-	svc := &ProductScheduleService{api: api, registry: registry, running: map[string]*productScheduleRun{}, deferred: map[string]string{}}
+	svc := &ProductScheduleService{api: api, registry: registry, running: map[string]*productScheduleRun{}, deferred: map[string]string{}, conversations: map[string]bool{}, queued: map[string][]productScheduleQueuedRun{}}
 	svc.users = usersWithProduct
 	svc.readFile = readFileFromWorkspace
 	svc.writeFile = writeFileToWorkspace
@@ -816,27 +823,153 @@ func (s *ProductScheduleService) Run(ctx context.Context, job productScheduleJob
 type productScheduleRunOptions struct {
 	RunID   string
 	Webhook *WebhookRunMetadata
+	// Detach claims the conversation and runs the turn in the background,
+	// returning before it completes. Webhook deliveries use it; schedulers
+	// run inline.
+	Detach bool
+	// AllowQueue accepts the delivery behind a live turn instead of failing
+	// with ErrAlreadyRunning. The record stays queued until its turn starts.
+	AllowQueue bool
+}
+
+// ErrProductRunQueued reports that a delivery was accepted behind a live turn.
+var ErrProductRunQueued = errors.New("product schedules: conversation occupied, delivery queued")
+
+// ErrProductQueueFull reports that a conversation queue has no room left.
+var ErrProductQueueFull = errors.New("product schedules: conversation queue is full")
+
+// maxProductConversationQueue bounds queued webhook deliveries per conversation.
+const maxProductConversationQueue = 100
+
+// productScheduleQueuedRun is one delivery waiting its turn in a conversation.
+type productScheduleQueuedRun struct {
+	job           productScheduleJob
+	triggerSource string
+	scheduledFor  time.Time
+	options       productScheduleRunOptions
+	onStarted     []func(sessionID string)
+}
+
+// conversationKeyForJob is the mutual-exclusion identity of the conversation a
+// job runs in. Isolated automations own their conversation, so the job id is
+// already unique; main-chat jobs of one project share one conversation.
+func conversationKeyForJob(job productScheduleJob) string {
+	if job.ProjectID != "" && !job.Schedule.Isolated {
+		return "conversation:" + strings.TrimSpace(job.Profile.ID) + ":" + strings.TrimSpace(job.ProjectID)
+	}
+	return job.ID()
+}
+
+// popProductQueueLocked removes and returns the head of one conversation
+// queue. The caller must hold s.mu.
+func popProductQueueLocked(queued map[string][]productScheduleQueuedRun, convKey string) (productScheduleQueuedRun, bool) {
+	items := queued[convKey]
+	if len(items) == 0 {
+		return productScheduleQueuedRun{}, false
+	}
+	head := items[0]
+	if len(items) == 1 {
+		delete(queued, convKey)
+	} else {
+		queued[convKey] = append([]productScheduleQueuedRun(nil), items[1:]...)
+	}
+	return head, true
 }
 
 func (s *ProductScheduleService) runWithOptions(ctx context.Context, job productScheduleJob, triggerSource string, scheduledFor time.Time, options productScheduleRunOptions, onStarted ...func(sessionID string)) (string, error) {
 	if s.api == nil {
 		return "", fmt.Errorf("product schedules: server not ready")
 	}
-	key := job.UserID + "\x1f" + job.ID()
+	claim, err := s.claimAutomationRun(ctx, job, triggerSource, scheduledFor, options, onStarted)
+	if err != nil {
+		return "", err
+	}
+	if options.Detach {
+		go s.executeAutomationRun(claim.runCtx, claim.cancel, job, triggerSource, scheduledFor, options, claim.run, claim.jobKey, claim.convKey, onStarted)
+		return "", nil
+	}
+	return s.executeAutomationRun(claim.runCtx, claim.cancel, job, triggerSource, scheduledFor, options, claim.run, claim.jobKey, claim.convKey, onStarted)
+}
+
+// automationClaim is one reserved conversation turn.
+type automationClaim struct {
+	run     *productScheduleRun
+	runCtx  context.Context
+	cancel  context.CancelFunc
+	jobKey  string
+	convKey string
+}
+
+// claimAutomationRun reserves the conversation for one run, or queues the
+// delivery behind the live turn when options allow it.
+func (s *ProductScheduleService) claimAutomationRun(ctx context.Context, job productScheduleJob, triggerSource string, scheduledFor time.Time, options productScheduleRunOptions, onStarted []func(sessionID string)) (*automationClaim, error) {
+	jobKey := job.UserID + "\x1f" + job.ID()
+	convKey := job.UserID + "\x1f" + conversationKeyForJob(job)
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
-	if _, busy := s.running[key]; busy {
+	if s.conversations[convKey] {
+		if !options.AllowQueue {
+			s.mu.Unlock()
+			cancel()
+			return nil, productschedule.ErrAlreadyRunning
+		}
+		if len(s.queued[convKey]) >= maxProductConversationQueue {
+			s.mu.Unlock()
+			cancel()
+			return nil, ErrProductQueueFull
+		}
+		if s.queued == nil {
+			s.queued = map[string][]productScheduleQueuedRun{}
+		}
+		s.queued[convKey] = append(s.queued[convKey], productScheduleQueuedRun{job: job, triggerSource: triggerSource, scheduledFor: scheduledFor, options: options, onStarted: onStarted})
 		s.mu.Unlock()
 		cancel()
-		return "", productschedule.ErrAlreadyRunning
+		return nil, ErrProductRunQueued
 	}
 	run := &productScheduleRun{StartedAt: time.Now().UTC(), cancel: cancel}
-	s.running[key] = run
+	if s.conversations == nil {
+		s.conversations = map[string]bool{}
+	}
+	if s.running == nil {
+		s.running = map[string]*productScheduleRun{}
+	}
+	s.conversations[convKey] = true
+	s.running[jobKey] = run
 	s.mu.Unlock()
-	defer func() {
-		s.mu.Lock()
-		delete(s.running, key)
+	return &automationClaim{run: run, runCtx: runCtx, cancel: cancel, jobKey: jobKey, convKey: convKey}, nil
+}
+
+// finishAutomationRun releases one conversation turn and starts the next
+// queued delivery, if any.
+func (s *ProductScheduleService) finishAutomationRun(jobKey, convKey string) {
+	s.mu.Lock()
+	delete(s.running, jobKey)
+	delete(s.conversations, convKey)
+	next, ok := popProductQueueLocked(s.queued, convKey)
+	if !ok {
 		s.mu.Unlock()
+		return
+	}
+	if s.conversations == nil {
+		s.conversations = map[string]bool{}
+	}
+	if s.running == nil {
+		s.running = map[string]*productScheduleRun{}
+	}
+	s.conversations[convKey] = true
+	nextCtx, nextCancel := context.WithCancel(context.Background())
+	nextRun := &productScheduleRun{StartedAt: time.Now().UTC(), cancel: nextCancel}
+	nextJobKey := next.job.UserID + "\x1f" + next.job.ID()
+	s.running[nextJobKey] = nextRun
+	s.mu.Unlock()
+	go s.executeAutomationRun(nextCtx, nextCancel, next.job, next.triggerSource, next.scheduledFor, next.options, nextRun, nextJobKey, convKey, next.onStarted)
+}
+
+// executeAutomationRun runs one claimed automation turn to completion, then
+// releases the conversation and starts the next queued delivery, if any.
+func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, cancel context.CancelFunc, job productScheduleJob, triggerSource string, scheduledFor time.Time, options productScheduleRunOptions, run *productScheduleRun, jobKey, convKey string, onStarted []func(sessionID string)) (string, error) {
+	defer func() {
+		s.finishAutomationRun(jobKey, convKey)
 		cancel()
 	}()
 
@@ -884,7 +1017,15 @@ func (s *ProductScheduleService) runWithOptions(ctx context.Context, job product
 		sf := scheduledFor.UTC()
 		entry.ScheduledFor = &sf
 	}
-	if err := AppendScheduleRun(runCtx, runsWorkspace, entry); err != nil {
+	if strings.TrimSpace(options.RunID) != "" {
+		// Webhook deliveries pre-claim their record; move it to running.
+		// Recreate it when retention already trimmed the pre-claim.
+		if uerr := UpdateScheduleRun(runCtx, runsWorkspace, entry.ID, entry.Status, "", nil, "", sessionID); uerr != nil {
+			if aerr := AppendScheduleRun(runCtx, runsWorkspace, entry); aerr != nil {
+				scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record run for %s: %v", job.ID(), job.UserID, aerr)
+			}
+		}
+	} else if err := AppendScheduleRun(runCtx, runsWorkspace, entry); err != nil {
 		scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record run for %s: %v", job.ID(), job.UserID, err)
 	}
 	_ = s.updateStateByKey(runCtx, job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
@@ -897,6 +1038,7 @@ func (s *ProductScheduleService) runWithOptions(ctx context.Context, job product
 	scheduleLogf("[PRODUCT-SCHEDULE] 🚀 %s (%s) for user %s: %d message(s), session %s", job.ID(), job.Schedule.Name, job.UserID, len(job.Schedule.Messages), sessionID)
 	var runErr error
 	finalResponse := ""
+	tokenUsage := &workflowtypes.CrewRunTokenUsage{}
 	for i, message := range job.Schedule.Messages {
 		if err := runCtx.Err(); err != nil {
 			runErr = err
@@ -923,6 +1065,7 @@ func (s *ProductScheduleService) runWithOptions(ctx context.Context, job product
 		if strings.TrimSpace(turnResult.FinalResponse) != "" {
 			finalResponse = strings.TrimSpace(turnResult.FinalResponse)
 		}
+		accumulateAutomationTurnUsage(s.api.costLedger, tokenUsage, turnResult.QueryID)
 	}
 
 	status := "success"
@@ -938,6 +1081,11 @@ func (s *ProductScheduleService) runWithOptions(ctx context.Context, job product
 	_ = UpdateScheduleRun(context.Background(), runsWorkspace, entry.ID, status, errMsg, &duration, "", sessionID)
 	if finalResponse != "" {
 		_ = UpdateScheduleRunFinalResponse(context.Background(), runsWorkspace, entry.ID, finalResponse)
+	}
+	if !tokenUsage.Empty() {
+		if uerr := UpdateScheduleRunTokenUsage(context.Background(), runsWorkspace, entry.ID, tokenUsage); uerr != nil {
+			scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot record token usage: %v", job.ID(), uerr)
+		}
 	}
 	_ = s.updateStateByKey(context.Background(), job.UserID, scheduleStateKey(job), func(st *productScheduleUserState) {
 		st.LastStatus = status

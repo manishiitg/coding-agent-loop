@@ -75,6 +75,12 @@ type ExecutionOptions struct {
 	// RouteSelections overrides routing steps deterministically by step ID.
 	// Values may be route_id or a unique next_step_id for that routing step.
 	RouteSelections map[string]string `json:"route_selections,omitempty"`
+
+	// CrewRunner invokes Crew triggers for crew steps. Server-owned: the
+	// executor cannot reach the Crew services itself, so the server binds
+	// an implementation here. Nil means the current run path cannot
+	// execute crew steps. Never decoded from public tool/API JSON.
+	CrewRunner CrewStepRunner `json:"-"`
 }
 
 // BatchExecutionProgress tracks execution progress across multiple variable groups

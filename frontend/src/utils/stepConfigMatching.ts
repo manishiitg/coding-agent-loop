@@ -284,8 +284,23 @@ export interface BranchPlanStep extends CommonStepFields {
   selected_route_id?: string;         // runtime: stores selected route
 }
 
+// Crew step -- invokes one trigger of a persistent Crew project and waits
+// for its final response, saved as the step's context output. The trigger
+// owns its base instruction and conversation destination; the step supplies
+// the workflow-specific instruction and runtime input. Mirrors the backend
+// CrewPlanStep; crew steps run only as top-level steps.
+export interface CrewPlanStep extends CommonStepFields {
+  type: 'crew';
+  crew_profile_id: string;        // Product profile of the target Crew; initially "work"
+  crew_project_id: string;        // Stable target Crew project ID
+  trigger_id: string;             // Crew trigger to invoke
+  instruction: string;            // Workflow-specific instruction, rendered with variables at run time
+  timeout_seconds?: number;       // Maximum wait for the Crew run; defaults to 1800
+  next_step_id?: string;          // Optional explicit successor; empty preserves sequential execution
+}
+
 // Discriminated union type for all step types
-export type PlanStep = RegularPlanStep | HumanInputPlanStep | TodoTaskPlanStep | MessageSequencePlanStep | RoutingPlanStep | BranchPlanStep;
+export type PlanStep = RegularPlanStep | HumanInputPlanStep | TodoTaskPlanStep | MessageSequencePlanStep | RoutingPlanStep | BranchPlanStep | CrewPlanStep;
 
 // PlanRoutingRoute represents a possible route/sub-agent for planning
 export interface PlanRoutingRoute {
@@ -324,6 +339,10 @@ export function isMessageSequenceStep(step: PlanStep): step is MessageSequencePl
   return step.type === 'message_sequence';
 }
 
+export function isCrewStep(step: PlanStep): step is CrewPlanStep {
+  return step.type === 'crew';
+}
+
 export type EffectiveExecutionMode = 'scripted' | 'agentic';
 
 // Anything the canvas can hand us: a plan step.
@@ -349,7 +368,7 @@ function legacyDeclaredMode(step: ExecutionModeStepLike): string | undefined {
 // one transitional exception: a `regular` step whose config still carries the
 // legacy key with "agentic" (not yet stripped by the v1.0.39 migration) is a
 // legacy agentic step the runtime still normalises into a sequence.
-// Routing/branch/orchestrator/human-input steps have no execution mode.
+// Routing/branch/orchestrator/human-input/crew steps have no execution mode.
 export function effectiveExecutionMode(
   step: ExecutionModeStepLike | null | undefined,
 ): EffectiveExecutionMode | undefined {

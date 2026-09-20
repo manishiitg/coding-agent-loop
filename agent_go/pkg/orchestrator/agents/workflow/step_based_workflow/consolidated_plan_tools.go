@@ -38,7 +38,7 @@ func (r consolidatedWorkshopRegistrar) RegisterCustomToolWithTimeout(n, d string
 	return r.capture.RegisterCustomToolWithTimeout(n, consolidatedPlanToolText(d), s, e, t, g)
 }
 
-var consolidatedStepTypes = []string{"scripted", "message_sequence", "routing", "branch", "human_input", "orchestrator"}
+var consolidatedStepTypes = []string{"scripted", "message_sequence", "routing", "branch", "human_input", "orchestrator", "crew"}
 var consolidatedMaintenance = map[string]string{
 	"cleanup_orphan_configs": "cleanup_orphan_step_configs",
 }

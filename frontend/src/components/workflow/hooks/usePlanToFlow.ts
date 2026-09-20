@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, runsAsMessageSequence, effectiveMessageSequenceItems } from '../../../utils/stepConfigMatching'
+import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, isCrewStep, runsAsMessageSequence, effectiveMessageSequenceItems } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, ScheduledJob } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -101,6 +101,21 @@ export interface MessageSequenceNodeData extends Record<string, unknown> {
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
+export interface CrewStepNodeData extends Record<string, unknown> {
+  id: string
+  title: string
+  crew_profile_id?: string
+  crew_project_id?: string
+  trigger_id?: string
+  status: 'pending' | 'running' | 'completed' | 'failed'
+  stepIndex: number
+  step: PlanStep
+  changeType?: ChangeType
+  workspacePath?: string | null
+  selectedRunFolder?: string
+  isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
+}
+
 export interface ValidationNodeData extends Record<string, unknown> {
   id: string
   parentStepId: string
@@ -142,7 +157,7 @@ export interface WorkflowTriggerNodeData extends Record<string, unknown> {
   onRefresh?: () => void
 }
 
-export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | CrewStepNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -188,6 +203,7 @@ const NODE_DIMENSIONS = {
   message_sequence: { width: 320, height: 240 },
   todo_task: { width: 300, height: 120 },
   human_input: { width: 260, height: 120 },
+  crew: { width: 280, height: 160 },
   loop: { width: 300, height: 140 },
   start: { width: 96, height: 40 },
   end: { width: 96, height: 40 },
@@ -1134,6 +1150,21 @@ function stepToNode(
         options: step.options
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as HumanInputNodeData
+    }
+  }
+
+  if (isCrewStep(step)) {
+    return {
+      id: nodeId,
+      type: 'crew',
+      position: { x: 0, y: 0 },
+      data: {
+        ...baseData,
+        crew_profile_id: step.crew_profile_id,
+        crew_project_id: step.crew_project_id,
+        trigger_id: step.trigger_id
+        // Note: status is inherited from baseData (computed based on completedStepIndices)
+      } as CrewStepNodeData
     }
   }
 

@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
@@ -27,11 +28,69 @@ func (bo *BaseOrchestrator) resolveWorkspacePath(filePath string) string {
 	if workspacePath == "" || filepath.IsAbs(filePath) {
 		return filePath
 	}
+	// Crew attachments rewrite "<alias>/..." to the attached Crew workspace
+	// before the workflow prefix is applied.
+	if resolved, ok := bo.resolveCrewAttachmentPath(workspacePath, filePath); ok {
+		return resolved
+	}
 	if strings.HasPrefix(filePath, workspacePath+"/") || filePath == workspacePath {
 		bo.GetLogger().Warn(fmt.Sprintf("⚠️ resolveWorkspacePath: path '%s' already contains workspace path '%s' - using as-is to prevent double-prepend.", filePath, workspacePath))
 		return filePath
 	}
 	return filepath.Join(workspacePath, filePath)
+}
+
+// resolveCrewAttachmentPath maps an "<alias>/..." path to its attached Crew
+// workspace, or reports no match. Only workflow workspaces consult the
+// manifest, and reserved top-level names skip the lookup entirely so
+// ordinary paths pay nothing.
+func (bo *BaseOrchestrator) resolveCrewAttachmentPath(workspacePath, filePath string) (string, bool) {
+	if !strings.HasPrefix(filepath.ToSlash(strings.TrimSpace(workspacePath)), "Workflow/") {
+		return "", false
+	}
+	trimmed := strings.Trim(strings.TrimSpace(filePath), "/")
+	segment := trimmed
+	if idx := strings.IndexByte(trimmed, '/'); idx >= 0 {
+		segment = trimmed[:idx]
+	}
+	if segment == "" || workflowtypes.IsReservedCrewAttachmentAlias(segment) {
+		return "", false
+	}
+	for _, root := range workspaceDocsRootsForPathNormalization() {
+		attachments, found := workflowtypes.ReadCrewAttachments(root, workspacePath)
+		if !found {
+			continue
+		}
+		return workflowtypes.ResolveCrewAttachmentPath(attachments, trimmed)
+	}
+	return "", false
+}
+
+// crewAttachmentAliasForWrite reports whether a mutating path addresses a
+// crew attachment. Writes through aliases are always rejected.
+func (bo *BaseOrchestrator) crewAttachmentAliasForWrite(filePath string) (string, bool) {
+	workspacePath := bo.GetWorkspacePath()
+	if workspacePath == "" || filepath.IsAbs(filePath) {
+		return "", false
+	}
+	if normalized, ok := normalizeAbsoluteWorkspaceDocsPath(filePath); ok {
+		filePath = normalized
+		if filepath.IsAbs(filePath) {
+			return "", false
+		}
+	}
+	trimmed := strings.Trim(strings.TrimSpace(filePath), "/")
+	segment := trimmed
+	if idx := strings.IndexByte(trimmed, '/'); idx >= 0 {
+		segment = trimmed[:idx]
+	}
+	if segment == "" || workflowtypes.IsReservedCrewAttachmentAlias(segment) {
+		return "", false
+	}
+	if _, ok := bo.resolveCrewAttachmentPath(workspacePath, trimmed); ok {
+		return segment, true
+	}
+	return "", false
 }
 
 // ReadWorkspaceFile reads a file from the workspace and returns its content.
@@ -91,6 +150,9 @@ func (bo *BaseOrchestrator) CheckWorkspaceFileExists(ctx context.Context, filePa
 
 // WriteWorkspaceFile writes content to a file in the workspace.
 func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath string, content string) error {
+	if alias, blocked := bo.crewAttachmentAliasForWrite(filePath); blocked {
+		return fmt.Errorf("cannot write through crew attachment %q: attachments are read-only", alias)
+	}
 	filePath = bo.resolveWorkspacePath(filePath)
 	startTime := time.Now()
 	contentSize := len(content)
@@ -112,6 +174,9 @@ func (bo *BaseOrchestrator) WriteWorkspaceFile(ctx context.Context, filePath str
 
 // DeleteWorkspaceFile deletes a file or directory from the workspace.
 func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath string) error {
+	if alias, blocked := bo.crewAttachmentAliasForWrite(filePath); blocked {
+		return fmt.Errorf("cannot delete through crew attachment %q: attachments are read-only", alias)
+	}
 	filePath = bo.resolveWorkspacePath(filePath)
 	startTime := time.Now()
 
@@ -131,6 +196,12 @@ func (bo *BaseOrchestrator) DeleteWorkspaceFile(ctx context.Context, filePath st
 
 // MoveWorkspaceFile moves a file or directory from one location to another.
 func (bo *BaseOrchestrator) MoveWorkspaceFile(ctx context.Context, sourcePath string, destinationPath string) error {
+	if alias, blocked := bo.crewAttachmentAliasForWrite(sourcePath); blocked {
+		return fmt.Errorf("cannot move through crew attachment %q: attachments are read-only", alias)
+	}
+	if alias, blocked := bo.crewAttachmentAliasForWrite(destinationPath); blocked {
+		return fmt.Errorf("cannot move through crew attachment %q: attachments are read-only", alias)
+	}
 	startTime := time.Now()
 
 	_, err := bo.WorkspaceClient.MoveWorkspaceFile(ctx, workspace.MoveWorkspaceFileParams{

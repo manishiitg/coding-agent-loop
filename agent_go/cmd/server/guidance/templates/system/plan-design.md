@@ -79,6 +79,7 @@ enforced by the runtime; validation must check coverage against the expected set
 | Need to branch based on prior step output or context | **Routing** | Supported branch primitive — reads `route_selection.json` and picks a route |
 | A person must decide between a few fixed options mid-run (approve/hold, yes/no, pick one) | **Branch** with `route_source: "human"` | Routes are the options; schedules answer up front via `route_selections`, unattended runs use `default_route_id`, interactive runs ask. Successor to `yesno`/`multiple_choice` human input. |
 | Need a free-form value from the user before proceeding (an ID, a month, a note to format) | **Human Input** (`text`) | Blocks until the user responds; captures into `variable_name`. `yesno`/`multiple_choice` are no longer accepted for new steps — use the human branch above. |
+| Work belongs to a persistent specialist with its own memory, skills, and files (reviewer, researcher, operator) | **Crew** (`crew`) | Invokes one Crew trigger and waits for its final text response. The Crew keeps its context across runs; the step only carries the instruction and runtime input. Top-level steps only. |
 | User already told the builder which fixed branch to run | **Routing** / **Branch** | The builder/caller passes `route_selections` to `run_workflow` / `run_full_workflow`; do not add a step just to ask the same choice again. |
 | Utility/debug tool available but not auto-run | **Orphan** (is_orphan: true) | Not in main flow; manual execution from workshop only |
 

@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/productschedule"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // productWebhookTrigger is the message-only product counterpart of an
@@ -33,28 +35,39 @@ type productWebhookTrigger struct {
 	Message        string                 `json:"message"`
 	RunDestination string                 `json:"run_destination,omitempty"`
 	Webhook        *WorkflowWebhookConfig `json:"webhook,omitempty"`
+	Kind           string                 `json:"kind,omitempty"`
+	Caller         *triggerCaller         `json:"caller,omitempty"`
+}
+
+// IsInternal reports whether the trigger is invokable only through internal dispatch.
+func (t productWebhookTrigger) IsInternal() bool {
+	return isInternalTriggerKind(t.Kind)
 }
 
 type productWebhookRequest struct {
-	ProfileID      string `json:"profile_id"`
-	ProjectID      string `json:"project_id"`
-	Name           string `json:"name"`
-	Enabled        bool   `json:"enabled"`
-	Message        string `json:"message"`
-	AuthMode       string `json:"auth_mode"`
-	RotateSecret   bool   `json:"rotate_secret"`
-	RunDestination string `json:"run_destination,omitempty"`
+	ProfileID      string         `json:"profile_id"`
+	ProjectID      string         `json:"project_id"`
+	Name           string         `json:"name"`
+	Enabled        bool           `json:"enabled"`
+	Message        string         `json:"message"`
+	AuthMode       string         `json:"auth_mode"`
+	RotateSecret   bool           `json:"rotate_secret"`
+	RunDestination string         `json:"run_destination,omitempty"`
+	Kind           string         `json:"kind,omitempty"`
+	Caller         *triggerCaller `json:"caller,omitempty"`
 }
 
 type productWebhookResponse struct {
-	ID             string `json:"id"`
-	Name           string `json:"name"`
-	Enabled        bool   `json:"enabled"`
-	Message        string `json:"message"`
-	AuthMode       string `json:"auth_mode"`
-	Path           string `json:"path"`
-	Secret         string `json:"secret,omitempty"`
-	RunDestination string `json:"run_destination"`
+	ID             string         `json:"id"`
+	Name           string         `json:"name"`
+	Enabled        bool           `json:"enabled"`
+	Message        string         `json:"message"`
+	AuthMode       string         `json:"auth_mode"`
+	Path           string         `json:"path"`
+	Secret         string         `json:"secret,omitempty"`
+	RunDestination string         `json:"run_destination"`
+	Kind           string         `json:"kind,omitempty"`
+	Caller         *triggerCaller `json:"caller,omitempty"`
 }
 
 func productWebhookDTO(trigger productWebhookTrigger) productWebhookResponse {
@@ -62,11 +75,17 @@ func productWebhookDTO(trigger productWebhookTrigger) productWebhookResponse {
 	if trigger.Webhook != nil {
 		authMode = trigger.Webhook.AuthMode
 	}
+	path := "/api/hooks/product/" + trigger.ID
+	if trigger.IsInternal() {
+		path = ""
+	}
 	return productWebhookResponse{
 		ID: trigger.ID, Name: trigger.Name, Enabled: trigger.Enabled,
 		Message: trigger.Message, AuthMode: authMode,
-		Path:           "/api/hooks/product/" + trigger.ID,
+		Path:           path,
 		RunDestination: firstNonEmptyTrimmed(trigger.RunDestination, runDestinationCrewChat),
+		Kind:           normalizeTriggerKind(trigger.Kind),
+		Caller:         trigger.Caller,
 	}
 }
 
@@ -84,6 +103,18 @@ func validateProductWebhook(trigger productWebhookTrigger) error {
 	if strings.TrimSpace(trigger.Message) == "" {
 		return fmt.Errorf("trigger message is required")
 	}
+	if kind := strings.TrimSpace(trigger.Kind); kind != "" && !isInternalTriggerKind(kind) {
+		return fmt.Errorf("trigger kind must be %q", triggerKindInternal)
+	}
+	if trigger.IsInternal() {
+		if err := validateTriggerCaller(trigger.Caller, triggerCallerWorkflow); err != nil {
+			return err
+		}
+		if trigger.Webhook != nil && strings.TrimSpace(trigger.Webhook.EncryptedSecret) != "" {
+			return fmt.Errorf("internal triggers issue no secret")
+		}
+		return nil
+	}
 	if trigger.Webhook == nil || trigger.Webhook.EncryptedSecret == "" {
 		return fmt.Errorf("trigger secret is required")
 	}
@@ -94,7 +125,6 @@ func validateProductWebhook(trigger productWebhookTrigger) error {
 }
 
 var productWebhookConfigMu sync.Mutex
-var productWebhookDeliveries sync.Map
 
 func ProductWebhookRoutes(router *mux.Router, svc *ProductScheduleService) {
 	router.HandleFunc("/api/product-webhooks", svc.listProductWebhooks).Methods("GET")
@@ -104,6 +134,7 @@ func ProductWebhookRoutes(router *mux.Router, svc *ProductScheduleService) {
 	router.HandleFunc("/api/product-webhooks/{id}/runs", svc.listProductWebhookRuns).Methods("GET")
 	router.HandleFunc("/api/product-webhooks/{id}/runs/{run}/payload", svc.getProductWebhookPayload).Methods("GET")
 	router.HandleFunc("/api/hooks/product/{id}", svc.receiveProductWebhook).Methods("POST")
+	router.HandleFunc("/api/hooks/product/{id}/runs/{run}", svc.getProductWebhookRun).Methods("GET")
 }
 
 func (s *ProductScheduleService) getProductWebhookPayload(w http.ResponseWriter, r *http.Request) {
@@ -284,31 +315,51 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 	trigger := productWebhookTrigger{ID: id, Name: strings.TrimSpace(req.Name), Enabled: req.Enabled, Message: strings.TrimSpace(req.Message), RunDestination: runDestination(isolated)}
 	if index >= 0 {
 		trigger.Webhook = manifest.Triggers[index].Webhook
+		trigger.Kind = manifest.Triggers[index].Kind
+		trigger.Caller = manifest.Triggers[index].Caller
 		if strings.TrimSpace(req.RunDestination) == "" {
 			trigger.RunDestination = firstNonEmptyTrimmed(manifest.Triggers[index].RunDestination, runDestinationCrewChat)
 		}
 	}
-	if trigger.Webhook == nil {
-		trigger.Webhook = &WorkflowWebhookConfig{}
+	if strings.TrimSpace(req.Kind) != "" || index < 0 {
+		trigger.Kind = normalizeTriggerKind(req.Kind)
 	}
-	if req.AuthMode == "" {
-		req.AuthMode = trigger.Webhook.AuthMode
-	}
-	if req.AuthMode == "" {
-		req.AuthMode = "bearer"
+	if req.Caller != nil {
+		caller := *req.Caller
+		trigger.Caller = &caller
 	}
 	secret := ""
-	if index < 0 || req.RotateSecret || trigger.Webhook.AuthMode != req.AuthMode || trigger.Webhook.EncryptedSecret == "" {
-		random := make([]byte, 32)
-		if _, err = rand.Read(random); err == nil {
-			secret = hex.EncodeToString(random)
-			trigger.Webhook.EncryptedSecret, err = encryptSecretValueWithAAD(secret, productWebhookAAD(manifest.ID, id))
+	if trigger.IsInternal() {
+		if err := validateTriggerCaller(trigger.Caller, triggerCallerWorkflow); err != nil {
+			return productWebhookResponse{}, false, err
 		}
-		if err != nil {
-			return productWebhookResponse{}, false, fmt.Errorf("cannot generate trigger secret: %w", err)
+		if _, _, err := findWorkflowManifestByID(ctx, trigger.Caller.ID); err != nil {
+			return productWebhookResponse{}, false, fmt.Errorf("caller workflow not found")
 		}
+		trigger.Webhook = nil
+	} else {
+		trigger.Caller = nil
+		if trigger.Webhook == nil {
+			trigger.Webhook = &WorkflowWebhookConfig{}
+		}
+		if req.AuthMode == "" {
+			req.AuthMode = trigger.Webhook.AuthMode
+		}
+		if req.AuthMode == "" {
+			req.AuthMode = "bearer"
+		}
+		if index < 0 || req.RotateSecret || trigger.Webhook.AuthMode != req.AuthMode || trigger.Webhook.EncryptedSecret == "" {
+			random := make([]byte, 32)
+			if _, err = rand.Read(random); err == nil {
+				secret = hex.EncodeToString(random)
+				trigger.Webhook.EncryptedSecret, err = encryptSecretValueWithAAD(secret, productWebhookAAD(manifest.ID, id))
+			}
+			if err != nil {
+				return productWebhookResponse{}, false, fmt.Errorf("cannot generate trigger secret: %w", err)
+			}
+		}
+		trigger.Webhook.AuthMode = req.AuthMode
 	}
-	trigger.Webhook.AuthMode = req.AuthMode
 	if err := validateProductWebhook(trigger); err != nil {
 		return productWebhookResponse{}, false, err
 	}
@@ -445,7 +496,7 @@ func (s *ProductScheduleService) receiveProductWebhook(w http.ResponseWriter, r 
 		return
 	}
 	match, err := s.findProductWebhook(r.Context(), id)
-	if err != nil || match.Trigger.Webhook == nil {
+	if err != nil || match.Trigger.Webhook == nil || match.Trigger.IsInternal() {
 		http.Error(w, "trigger not found", http.StatusNotFound)
 		return
 	}
@@ -474,30 +525,158 @@ func (s *ProductScheduleService) receiveProductWebhook(w http.ResponseWriter, r 
 	if deliveryID == "" {
 		deliveryID = uuid.NewString()
 	}
-	runID := webhookDeliveryRunID(match.Manifest.ID, id, deliveryID)
-	if _, loaded := productWebhookDeliveries.LoadOrStore(runID, true); loaded {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": runID, "duplicate": true})
+	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
+	result, err := s.deliverProductTrigger(r.Context(), match, deliveryID, event, body, "This turn was started by an authenticated webhook.", nil)
+	if err != nil {
+		switch {
+		case errors.Is(err, ErrProductQueueFull):
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "conversation queue is full; retry the delivery", http.StatusServiceUnavailable)
+		case errors.Is(err, ErrProductTriggerNotRecord):
+			http.Error(w, ErrProductTriggerNotRecord.Error(), http.StatusInternalServerError)
+		case errors.Is(err, ErrProductTriggerNotPersist):
+			http.Error(w, ErrProductTriggerNotPersist.Error(), http.StatusInternalServerError)
+		default:
+			http.Error(w, "trigger run could not start", http.StatusInternalServerError)
+		}
 		return
+	}
+	statusURL := productWebhookStatusPath(id, result.RunID)
+	w.Header().Set("Content-Type", "application/json")
+	if result.Duplicate {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": result.Status, "run_id": result.RunID, "duplicate": true, "status_url": statusURL})
+		return
+	}
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": result.Status, "run_id": result.RunID, "delivery_id": result.DeliveryID, "status_url": statusURL})
+}
+
+// deliverProductTrigger runs the shared claim→persist→dispatch pipeline for
+// one Crew trigger delivery. The public HTTP endpoint and internal dispatch
+// both funnel through here so delivery, conversation, history, run status,
+// final response, and idempotency behave identically. caller stamps the
+// workflow step behind an internal delivery for cost attribution; it is nil
+// for public deliveries.
+func (s *ProductScheduleService) deliverProductTrigger(ctx context.Context, match *productWebhookMatch, deliveryID, event string, body []byte, sourceNote string, caller *workflowtypes.CrewRunCaller) (internalTriggerDeliveryResult, error) {
+	runID := webhookDeliveryRunID(match.Manifest.ID, match.Trigger.ID, deliveryID)
+	runsWorkspace := agentProfileRuntimeWorkspace(match.UserID, match.Binding.WorkspacePath)
+	jobID := projectScheduleJobID(match.Profile.ID, match.Manifest.ID, match.Trigger.ID)
+	receivedAt := time.Now().UTC()
+	metadata := &WebhookRunMetadata{TriggerName: match.Trigger.Name, DeliveryID: deliveryID, Event: event, ReceivedAt: receivedAt}
+	existing, claimed, err := ClaimScheduleRun(ctx, runsWorkspace, &ScheduleRunEntry{
+		ID: runID, ScheduleID: jobID, TriggerSource: "webhook", Webhook: metadata,
+		Status: "queued", StartedAt: receivedAt, Caller: caller,
+	})
+	if err != nil {
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotRecord, err)
+	}
+	if !claimed {
+		return internalTriggerDeliveryResult{RunID: runID, DeliveryID: deliveryID, Duplicate: true, Status: existing.Status}, nil
 	}
 	relativePayloadPath := "triggers/deliveries/" + runID + ".json"
 	payloadPath := filepath.ToSlash(filepath.Join(match.Binding.WorkspacePath, relativePayloadPath))
-	if err := s.writeFile(r.Context(), payloadPath, string(body)+"\n"); err != nil {
-		productWebhookDeliveries.Delete(runID)
-		http.Error(w, "cannot persist trigger payload", http.StatusInternalServerError)
-		return
+	if err := s.writeFile(ctx, payloadPath, string(body)+"\n"); err != nil {
+		_ = UpdateScheduleRun(context.Background(), runsWorkspace, runID, "error", "cannot persist trigger payload", nil, "", "")
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotPersist, err)
 	}
-	message := strings.TrimSpace(match.Trigger.Message) + "\n\nThis turn was started by an authenticated webhook. Read its JSON payload from `" + relativePayloadPath + "` and use it as input."
+	message := strings.TrimSpace(match.Trigger.Message) + "\n\n" + sourceNote + " Read its JSON payload from `" + relativePayloadPath + "` and use it as input."
 	job := productScheduleJob{UserID: match.UserID, Profile: match.Profile, ProjectID: match.Manifest.ID, ProjectTitle: match.Manifest.Title, WorkspacePath: match.Binding.WorkspacePath, ManifestPath: match.Binding.ManifestPath, AutomationKind: "trigger", Schedule: productschedule.Schedule{ID: match.Trigger.ID, Name: match.Trigger.Name, Enabled: true, Isolated: strings.EqualFold(match.Trigger.RunDestination, runDestinationIsolated), Messages: []string{message}}}
-	receivedAt := time.Now().UTC()
-	event := strings.TrimSpace(r.Header.Get("X-GitHub-Event"))
-	metadata := &WebhookRunMetadata{TriggerName: match.Trigger.Name, DeliveryID: deliveryID, Event: event, ReceivedAt: receivedAt}
-	go func() {
-		_, _ = s.runWithOptions(context.Background(), job, "webhook", time.Time{}, productScheduleRunOptions{RunID: runID, Webhook: metadata})
-	}()
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": runID})
+	_, dispatchErr := s.runWithOptions(context.Background(), job, "webhook", time.Time{}, productScheduleRunOptions{RunID: runID, Webhook: metadata, Detach: true, AllowQueue: true})
+	switch {
+	case dispatchErr == nil:
+		return internalTriggerDeliveryResult{RunID: runID, DeliveryID: deliveryID, Status: "accepted"}, nil
+	case errors.Is(dispatchErr, ErrProductRunQueued):
+		return internalTriggerDeliveryResult{RunID: runID, DeliveryID: deliveryID, Status: "queued"}, nil
+	case errors.Is(dispatchErr, ErrProductQueueFull):
+		_ = UpdateScheduleRun(context.Background(), runsWorkspace, runID, "error", "conversation queue is full", nil, "", "")
+		return internalTriggerDeliveryResult{}, dispatchErr
+	default:
+		_ = UpdateScheduleRun(context.Background(), runsWorkspace, runID, "error", dispatchErr.Error(), nil, "", "")
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrProductTriggerNotStart, dispatchErr)
+	}
+}
+
+// dispatchInternalProductTrigger invokes a Crew trigger from a workflow step
+// without a secret or loopback HTTP. The binding caller stamp authorizes the
+// call; public triggers are rejected here so this path can never bypass
+// secret auth.
+func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Context, call internalCrewTriggerCall) (internalTriggerDeliveryResult, error) {
+	if err := checkInternalPayload(call.Payload); err != nil {
+		return internalTriggerDeliveryResult{}, err
+	}
+	profile, binding, manifest, trigger, err := s.findInternalProductTrigger(ctx, call.UserID, call.ProfileID, call.ProjectID, call.TriggerID)
+	if err != nil {
+		return internalTriggerDeliveryResult{}, err
+	}
+	if !trigger.Caller.matchesPresented(triggerCallerWorkflow, call.Caller) {
+		return internalTriggerDeliveryResult{}, ErrInternalCallerMismatch
+	}
+	deliveryID := strings.TrimSpace(call.DeliveryID)
+	if deliveryID == "" {
+		deliveryID = uuid.NewString()
+	}
+	match := &productWebhookMatch{UserID: call.UserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
+	sourceNote := "This turn was started by workflow \"" + strings.TrimSpace(call.Caller.ID) + "\" through an internal trigger."
+	caller := &workflowtypes.CrewRunCaller{
+		WorkflowID: strings.TrimSpace(call.Caller.ID),
+		RunID:      strings.TrimSpace(call.WorkflowRunID),
+		StepID:     strings.TrimSpace(call.WorkflowStepID),
+	}
+	return s.deliverProductTrigger(ctx, match, deliveryID, strings.TrimSpace(call.Event), call.Payload, sourceNote, caller)
+}
+
+// getInternalProductTriggerRun serves one Crew trigger run to the bound
+// workflow caller so a plan step can poll a delivery to terminal state.
+// Disabling the trigger revokes reads, mirroring the public endpoint.
+func (s *ProductScheduleService) getInternalProductTriggerRun(ctx context.Context, userID, profileID, projectID, triggerID, runID string, caller triggerCaller) (productWebhookRunStatus, error) {
+	profile, binding, manifest, trigger, err := s.findInternalProductTrigger(ctx, userID, profileID, projectID, triggerID)
+	if err != nil {
+		return productWebhookRunStatus{}, err
+	}
+	if !trigger.Caller.matchesPresented(triggerCallerWorkflow, caller) {
+		return productWebhookRunStatus{}, ErrInternalCallerMismatch
+	}
+	runsWorkspace := agentProfileRuntimeWorkspace(userID, binding.WorkspacePath)
+	entry, err := FindScheduleRun(ctx, runsWorkspace, runID)
+	if err != nil || entry.ScheduleID != projectScheduleJobID(profile.ID, manifest.ID, triggerID) {
+		return productWebhookRunStatus{}, ErrInternalTriggerRunGone
+	}
+	return productWebhookRunStatusDTO(entry), nil
+}
+
+// findInternalProductTrigger resolves a user-scoped Crew trigger for internal
+// callers and enforces the binding facts: it must exist, be internal, and be
+// enabled. Caller authorization is left to the caller-facing method.
+func (s *ProductScheduleService) findInternalProductTrigger(ctx context.Context, userID, profileID, projectID, triggerID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, *productWebhookTrigger, error) {
+	profile, binding, manifest, err := s.projectManifest(ctx, userID, normalizeInternalProfileID(profileID), projectID)
+	if err != nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, nil, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
+	}
+	trigger, err := selectInternalProductTrigger(manifest.Triggers, triggerID)
+	if err != nil {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, nil, err
+	}
+	return profile, binding, manifest, trigger, nil
+}
+
+// selectInternalProductTrigger picks one internal trigger by ID from a Crew
+// manifest: it must exist, be internal, and be enabled.
+func selectInternalProductTrigger(triggers []productWebhookTrigger, triggerID string) (*productWebhookTrigger, error) {
+	want := strings.TrimSpace(triggerID)
+	for i := range triggers {
+		if strings.TrimSpace(triggers[i].ID) != want {
+			continue
+		}
+		trigger := &triggers[i]
+		if !trigger.IsInternal() {
+			return nil, ErrInternalTriggerNotBound
+		}
+		if !trigger.Enabled {
+			return nil, ErrInternalTriggerDisabled
+		}
+		return trigger, nil
+	}
+	return nil, ErrInternalTriggerNotFound
 }
 
 func readWebhookJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error) {
@@ -521,4 +700,67 @@ func readWebhookJSONBody(w http.ResponseWriter, r *http.Request) ([]byte, error)
 		return nil, fmt.Errorf("invalid JSON")
 	}
 	return body, nil
+}
+
+// productWebhookRunStatus is the pollable outcome of one Crew trigger delivery.
+type productWebhookRunStatus struct {
+	RunID         string                           `json:"run_id"`
+	Status        string                           `json:"status"`
+	Terminal      bool                             `json:"terminal"`
+	FinalResponse string                           `json:"final_response,omitempty"`
+	Error         string                           `json:"error,omitempty"`
+	SessionID     string                           `json:"session_id,omitempty"`
+	StartedAt     time.Time                        `json:"started_at"`
+	CompletedAt   *time.Time                       `json:"completed_at,omitempty"`
+	Usage         *workflowtypes.CrewRunTokenUsage `json:"usage,omitempty"`
+}
+
+func productWebhookStatusPath(triggerID, runID string) string {
+	return "/api/hooks/product/" + triggerID + "/runs/" + runID
+}
+
+func productWebhookRunStatusDTO(entry *ScheduleRunEntry) productWebhookRunStatus {
+	return productWebhookRunStatus{
+		RunID: entry.ID, Status: entry.Status,
+		Terminal:      isTerminalScheduleRunStatus(entry.Status),
+		FinalResponse: entry.FinalResponse, Error: entry.Error,
+		SessionID: entry.SessionID, StartedAt: entry.StartedAt, CompletedAt: entry.CompletedAt,
+		Usage: entry.Usage,
+	}
+}
+
+// getProductWebhookRun serves one trigger run to the trigger-secret holder, so
+// external callers and workflow steps can poll a delivery to terminal state.
+// Reads use the trigger secret for both modes; disabling
+// the trigger revokes reads.
+func (s *ProductScheduleService) getProductWebhookRun(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	vars := mux.Vars(r)
+	id, runID := vars["id"], vars["run"]
+	if _, err := uuid.Parse(id); err != nil {
+		http.Error(w, "trigger not found", http.StatusNotFound)
+		return
+	}
+	match, err := s.findProductWebhook(r.Context(), id)
+	if err != nil || match.Trigger.Webhook == nil || !match.Trigger.Enabled || match.Trigger.IsInternal() {
+		http.Error(w, "trigger not found", http.StatusNotFound)
+		return
+	}
+	presented := ""
+	if strings.HasPrefix(r.Header.Get("Authorization"), "Bearer ") {
+		presented = strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	}
+	secret, err := decryptSecretValueWithAAD(match.Trigger.Webhook.EncryptedSecret, productWebhookAAD(match.Manifest.ID, id))
+	if err != nil || subtle.ConstantTimeCompare([]byte(secret), []byte(presented)) != 1 {
+		http.Error(w, "invalid run credentials", http.StatusUnauthorized)
+		return
+	}
+	runsWorkspace := agentProfileRuntimeWorkspace(match.UserID, match.Binding.WorkspacePath)
+	entry, err := FindScheduleRun(r.Context(), runsWorkspace, runID)
+	if err != nil || entry.ScheduleID != projectScheduleJobID(match.Profile.ID, match.Manifest.ID, id) {
+		http.Error(w, "trigger run not found", http.StatusNotFound)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(productWebhookRunStatusDTO(entry))
 }

@@ -94,6 +94,8 @@ type workflowWebhookResponse struct {
 	GroupNames       []string                        `json:"group_names"`
 	MaxConcurrency   int                             `json:"max_concurrency"`
 	Secret           string                          `json:"secret,omitempty"`
+	Kind             string                          `json:"kind,omitempty"`
+	Caller           *triggerCaller                  `json:"caller,omitempty"`
 }
 
 type workflowWebhookRequest struct {
@@ -108,6 +110,13 @@ type workflowWebhookRequest struct {
 	RouteSelections  map[string]string               `json:"route_selections"`
 	GroupNames       []string                        `json:"group_names"`
 	RotateSecret     bool                            `json:"rotate_secret"`
+	Kind             string                          `json:"kind,omitempty"`
+	Caller           *triggerCaller                  `json:"caller,omitempty"`
+}
+
+// IsInternalTrigger reports whether the schedule is invokable only through internal dispatch.
+func (s WorkflowSchedule) IsInternalTrigger() bool {
+	return s.ScheduleType == "webhook" && isInternalTriggerKind(s.Kind)
 }
 
 func validateWebhookSchedule(s WorkflowSchedule) error {
@@ -117,11 +126,23 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 		}
 		return nil
 	}
-	if s.Webhook == nil || s.Webhook.EncryptedSecret == "" {
-		return errors.New("Create API triggers with manage_workflow_webhook in Builder chat to generate a secret")
+	if kind := strings.TrimSpace(s.Kind); kind != "" && !isInternalTriggerKind(kind) {
+		return errors.New("webhook kind must be \"internal\"")
 	}
-	if s.Webhook.AuthMode != "bearer" && s.Webhook.AuthMode != "github" {
-		return errors.New("webhook auth_mode must be bearer or github")
+	if isInternalTriggerKind(s.Kind) {
+		if err := validateTriggerCaller(s.Caller, triggerCallerCrew); err != nil {
+			return err
+		}
+		if s.Webhook != nil && strings.TrimSpace(s.Webhook.EncryptedSecret) != "" {
+			return errors.New("internal triggers issue no secret")
+		}
+	} else {
+		if s.Webhook == nil || s.Webhook.EncryptedSecret == "" {
+			return errors.New("Create API triggers with manage_workflow_webhook in Builder chat to generate a secret")
+		}
+		if s.Webhook.AuthMode != "bearer" && s.Webhook.AuthMode != "github" {
+			return errors.New("webhook auth_mode must be bearer or github")
+		}
 	}
 	if s.CronExpression != "" || len(s.CalendarItems) > 0 || len(s.TriggerPayload) > 0 || len(s.Messages) > 0 || s.Query != "" || s.PulseReviewOnly || s.ShouldResumePrevious() {
 		return errors.New("API triggers accept delivery input only; clock settings, request overrides, messages, and session resume are not supported")
@@ -150,7 +171,11 @@ func workflowWebhookDTO(s WorkflowSchedule) workflowWebhookResponse {
 	if s.Webhook != nil {
 		authMode = s.Webhook.AuthMode
 	}
-	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: "/api/hooks/workflow/" + s.ID, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames, MaxConcurrency: maxWebhookConcurrency}
+	path := "/api/hooks/workflow/" + s.ID
+	if s.IsInternalTrigger() {
+		path = ""
+	}
+	out := workflowWebhookResponse{ID: s.ID, Name: s.Name, Enabled: s.Enabled, AuthMode: authMode, Path: path, RouteSelections: s.RouteSelections, GroupNames: s.GroupNames, MaxConcurrency: maxWebhookConcurrency, Kind: normalizeTriggerKind(s.Kind), Caller: s.Caller}
 	if s.Webhook != nil {
 		out.StepID = s.Webhook.StepID
 		out.InputMode = s.Webhook.InputMode
@@ -415,7 +440,7 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		http.Error(w, "name is required", 400)
 		return
 	}
-	if req.AuthMode != "bearer" && req.AuthMode != "github" {
+	if !isInternalTriggerKind(req.Kind) && req.AuthMode != "bearer" && req.AuthMode != "github" {
 		http.Error(w, "auth_mode must be bearer or github", 400)
 		return
 	}
@@ -449,13 +474,28 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 	}
 	cfg := &WorkflowWebhookConfig{AuthMode: req.AuthMode}
 	secret := ""
-	if index >= 0 && manifest.Schedules[index].Webhook != nil {
-		*cfg = *manifest.Schedules[index].Webhook
+	effectiveKind := req.Kind
+	caller := req.Caller
+	if index >= 0 {
+		if manifest.Schedules[index].Webhook != nil {
+			*cfg = *manifest.Schedules[index].Webhook
+		}
+		if strings.TrimSpace(req.Kind) == "" {
+			effectiveKind = manifest.Schedules[index].Kind
+		}
+		if caller == nil {
+			caller = manifest.Schedules[index].Caller
+		}
+	}
+	internal := isInternalTriggerKind(effectiveKind)
+	if internal {
+		cfg.AuthMode = ""
+		cfg.EncryptedSecret = ""
 	}
 	if index < 0 {
 		id = uuid.NewString()
 	}
-	if index < 0 || req.RotateSecret || cfg.AuthMode != req.AuthMode || cfg.EncryptedSecret == "" {
+	if !internal && (index < 0 || req.RotateSecret || cfg.AuthMode != req.AuthMode || cfg.EncryptedSecret == "") {
 		random := make([]byte, 32)
 		if _, err = rand.Read(random); err == nil {
 			secret = hex.EncodeToString(random)
@@ -479,7 +519,9 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 			return
 		}
 	}
-	cfg.AuthMode = req.AuthMode
+	if !internal {
+		cfg.AuthMode = req.AuthMode
+	}
 	if req.InputMode != "" && req.InputMode != "raw" && req.InputMode != "envelope" {
 		http.Error(w, "input_mode must be raw or envelope", 400)
 		return
@@ -505,7 +547,19 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		http.Error(w, err.Error(), 400)
 		return
 	}
-	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish."}
+	if internal {
+		if err := validateTriggerCaller(caller, triggerCallerCrew); err != nil {
+			http.Error(w, err.Error(), 400)
+			return
+		}
+		if s.api == nil || s.api.productSchedules == nil || !s.api.productSchedules.crewProjectExists(r.Context(), productWorkspaceUserID(r.Context()), caller.ProfileID, caller.ID) {
+			http.Error(w, "caller crew project not found", 400)
+			return
+		}
+	} else {
+		caller = nil
+	}
+	sched := WorkflowSchedule{ID: id, Name: strings.TrimSpace(req.Name), ScheduleType: "webhook", Timezone: "UTC", Enabled: req.Enabled, RouteSelections: req.RouteSelections, GroupNames: groups, Mode: "workshop", WorkshopMode: "run", CollisionPolicy: "skip", Webhook: cfg, Kind: normalizeTriggerKind(effectiveKind), Caller: caller, PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish."}
 	if index >= 0 {
 		sched.Description = manifest.Schedules[index].Description
 		sched.ExecutionMode = manifest.Schedules[index].ExecutionMode
@@ -627,7 +681,7 @@ func (receiver webhookReceiver) receive(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	sched := result.Manifest.Schedules[result.Index]
-	if sched.ScheduleType != "webhook" || sched.Webhook == nil {
+	if sched.ScheduleType != "webhook" || sched.Webhook == nil || sched.IsInternalTrigger() {
 		http.Error(w, "API trigger not found", 404)
 		return
 	}
@@ -670,46 +724,127 @@ func (receiver webhookReceiver) receive(w http.ResponseWriter, r *http.Request) 
 		deliveryID = r.Header.Get("X-GitHub-Delivery")
 		event = r.Header.Get("X-GitHub-Event")
 	}
-	if len(deliveryID) > 256 || len(event) > 256 {
-		http.Error(w, "delivery ID and event must be at most 256 bytes", 400)
-		return
-	}
-	if deliveryID == "" {
-		deliveryID = uuid.NewString()
-	}
-	runID := webhookDeliveryRunID(result.Manifest.ID, id, deliveryID)
-	respondExisting := func() bool {
-		run, lookupErr := receiver.existing(r.Context(), runID)
-		if lookupErr == nil {
-			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": run.State, "run_id": run.RunID, "duplicate": true, "status_url": webhookStatusPath(id, run.RunID)})
-			return true
-		}
-		if !errors.Is(lookupErr, schedulerstate.ErrRunNotFound) {
-			http.Error(w, "run storage is unavailable", 503)
-			return true
-		}
-		return false
-	}
-	if respondExisting() {
-		return
-	}
-	input := &WorkflowWebhookDelivery{RunID: runID, DeliveryID: deliveryID, Event: event, ReceivedAt: time.Now().UTC(), Payload: append(json.RawMessage(nil), body...)}
-	if err := resolveWebhookDeliveryOptions(sched, input); err != nil {
-		http.Error(w, err.Error(), 400)
-		return
-	}
-	acceptedID, err := receiver.start(result.WorkspacePath, id, "", input)
+	delivery, err := receiver.deliver(r.Context(), result.Manifest.ID, result.WorkspacePath, sched, deliveryID, event, body)
 	if err != nil {
-		// A concurrent retry may have claimed this delivery since the first lookup.
-		if respondExisting() {
-			return
+		var invalid *invalidWebhookDeliveryError
+		switch {
+		case errors.As(err, &invalid):
+			http.Error(w, invalid.msg, 400)
+		case errors.Is(err, ErrWebhookRunStoreMissing):
+			http.Error(w, "run storage is unavailable", 503)
+		default:
+			w.Header().Set("Retry-After", "30")
+			http.Error(w, "workflow could not start; retry the delivery or check API trigger configuration", http.StatusServiceUnavailable)
 		}
-		w.Header().Set("Retry-After", "30")
-		http.Error(w, "workflow could not start; retry the delivery or check API trigger configuration", http.StatusServiceUnavailable)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	if delivery.Duplicate {
+		_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": delivery.Status, "run_id": delivery.RunID, "duplicate": true, "status_url": webhookStatusPath(id, delivery.RunID)})
+		return
+	}
 	w.WriteHeader(http.StatusAccepted)
-	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": acceptedID, "delivery_id": deliveryID, "status_url": webhookStatusPath(id, acceptedID)})
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{"status": "accepted", "run_id": delivery.RunID, "delivery_id": delivery.DeliveryID, "status_url": webhookStatusPath(id, delivery.RunID)})
+}
+
+// invalidWebhookDeliveryError carries a delivery validation failure with the
+// exact message the public endpoint has always returned.
+type invalidWebhookDeliveryError struct{ msg string }
+
+func (e *invalidWebhookDeliveryError) Error() string { return e.msg }
+
+// deliver runs the shared duplicate-check→validate→start pipeline for one
+// workflow trigger delivery, including the concurrent-retry recheck. Both the
+// public HTTP endpoint and internal dispatch funnel through here.
+func (receiver webhookReceiver) deliver(ctx context.Context, manifestID, workspacePath string, sched WorkflowSchedule, deliveryID, event string, body []byte) (internalTriggerDeliveryResult, error) {
+	if len(deliveryID) > 256 || len(event) > 256 {
+		return internalTriggerDeliveryResult{}, &invalidWebhookDeliveryError{"delivery ID and event must be at most 256 bytes"}
+	}
+	runID := webhookDeliveryRunID(manifestID, sched.ID, deliveryID)
+	lookupExisting := func() (internalTriggerDeliveryResult, bool, error) {
+		run, lookupErr := receiver.existing(ctx, runID)
+		if lookupErr == nil {
+			return internalTriggerDeliveryResult{RunID: run.RunID, DeliveryID: deliveryID, Duplicate: true, Status: string(run.State)}, true, nil
+		}
+		if !errors.Is(lookupErr, schedulerstate.ErrRunNotFound) {
+			return internalTriggerDeliveryResult{}, true, fmt.Errorf("%w: %v", ErrWebhookRunStoreMissing, lookupErr)
+		}
+		return internalTriggerDeliveryResult{}, false, nil
+	}
+	if result, done, err := lookupExisting(); done || err != nil {
+		return result, err
+	}
+	input := &WorkflowWebhookDelivery{RunID: runID, DeliveryID: deliveryID, Event: event, ReceivedAt: time.Now().UTC(), Payload: append(json.RawMessage(nil), body...)}
+	if err := resolveWebhookDeliveryOptions(sched, input); err != nil {
+		return internalTriggerDeliveryResult{}, &invalidWebhookDeliveryError{err.Error()}
+	}
+	acceptedID, err := receiver.start(workspacePath, sched.ID, "", input)
+	if err != nil {
+		// A concurrent retry may have claimed this delivery since the first lookup.
+		if result, done, lookupErr := lookupExisting(); done || lookupErr != nil {
+			return result, lookupErr
+		}
+		return internalTriggerDeliveryResult{}, err
+	}
+	return internalTriggerDeliveryResult{RunID: acceptedID, DeliveryID: deliveryID, Status: "accepted"}, nil
+}
+
+// dispatchInternal invokes a workflow trigger from a Crew run without a
+// secret or loopback HTTP. The manifest is passed in so the discovery step
+// stays injectable; public triggers are rejected so this path can never
+// bypass secret auth.
+func (receiver webhookReceiver) dispatchInternal(ctx context.Context, workspacePath string, manifest *WorkflowManifest, triggerID string, call internalWorkflowTriggerCall) (internalTriggerDeliveryResult, error) {
+	if err := checkInternalPayload(call.Payload); err != nil {
+		return internalTriggerDeliveryResult{}, err
+	}
+	sched, err := findInternalWorkflowTrigger(manifest, triggerID)
+	if err != nil {
+		return internalTriggerDeliveryResult{}, err
+	}
+	if !sched.Caller.matchesPresented(triggerCallerCrew, call.Caller) {
+		return internalTriggerDeliveryResult{}, ErrInternalCallerMismatch
+	}
+	deliveryID := strings.TrimSpace(call.DeliveryID)
+	if deliveryID == "" {
+		deliveryID = uuid.NewString()
+	}
+	return receiver.deliver(ctx, manifest.ID, workspacePath, *sched, deliveryID, strings.TrimSpace(call.Event), call.Payload)
+}
+
+// findInternalWorkflowTrigger resolves a workflow trigger for internal
+// callers: it must exist, be a webhook schedule, be internal, and be enabled.
+// Caller authorization is left to the caller-facing method.
+func findInternalWorkflowTrigger(manifest *WorkflowManifest, triggerID string) (*WorkflowSchedule, error) {
+	if manifest == nil {
+		return nil, ErrInternalTriggerNotFound
+	}
+	want := strings.TrimSpace(triggerID)
+	for i := range manifest.Schedules {
+		if strings.TrimSpace(manifest.Schedules[i].ID) != want {
+			continue
+		}
+		sched := &manifest.Schedules[i]
+		if sched.ScheduleType != "webhook" {
+			return nil, ErrInternalTriggerNotFound
+		}
+		if !sched.IsInternalTrigger() {
+			return nil, ErrInternalTriggerNotBound
+		}
+		if !sched.Enabled {
+			return nil, ErrInternalTriggerDisabled
+		}
+		return sched, nil
+	}
+	return nil, ErrInternalTriggerNotFound
+}
+
+// dispatchInternalWorkflowTrigger discovers the workflow manifest and
+// dispatches an internal trigger delivery from a Crew run.
+func (s *SchedulerService) dispatchInternalWorkflowTrigger(ctx context.Context, call internalWorkflowTriggerCall) (internalTriggerDeliveryResult, error) {
+	workspacePath, manifest, err := findWorkflowManifestByID(ctx, call.WorkflowID)
+	if err != nil {
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
+	}
+	receiver := webhookReceiver{start: s.triggerSavedSchedule, existing: s.existingWebhookRun}
+	return receiver.dispatchInternal(ctx, workspacePath, manifest, call.TriggerID, call)
 }

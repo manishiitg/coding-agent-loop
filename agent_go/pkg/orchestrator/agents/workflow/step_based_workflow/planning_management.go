@@ -201,6 +201,9 @@ func validateLoadedPlanStepWithOptions(typedStep PlanStepInterface, stepIndex in
 	case *MessageSequencePlanStep:
 		return validateMessageSequenceStepFieldsTypedWithOptions(step, allowLegacyMessageSequenceCode)
 
+	case *CrewPlanStep:
+		return validateCrewStepFieldsTyped(step)
+
 	case *RoutingPlanStep, *BranchPlanStep:
 		if err := validateRoutingStepTyped(step, stepIndex); err != nil {
 			return err
@@ -459,6 +462,8 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 				}
 			case *MessageSequencePlanStep:
 				ref(s.GetID(), "next_step_id", s.NextStepID)
+			case *CrewPlanStep:
+				ref(s.GetID(), "next_step_id", s.NextStepID)
 			case *HumanInputPlanStep:
 				ref(s.GetID(), "next_step_id", s.NextStepID)
 				ref(s.GetID(), "if_yes_next_step_id", s.IfYesNextStepID)
@@ -624,6 +629,14 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		}
 		return nil
 
+	case *CrewPlanStep:
+		// Crew steps run no local agent, so there are no AgentConfigs to
+		// populate; a step_config validation schema override still applies.
+		if validationSchemaOverride != nil {
+			step.ValidationSchema = validationSchemaOverride
+		}
+		return nil
+
 	case *OrchestratorPlanStep:
 		// Populate sub-agent steps in predefined routes recursively
 		for i := range step.PredefinedRoutes {
@@ -713,7 +726,7 @@ func getMetadataKeys(metadata map[string]interface{}) []string {
 
 // IsPlanModificationTool checks if a tool name is a plan modification tool
 func IsPlanModificationTool(name string) bool {
-	return name == "add_step" || name == "update_step" || name == "manage_step_route" || name == "manage_group" || name == "maintain_plan" || name == "update_scripted_step" || name == "update_routing_step" || name == "update_branch_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_orchestrator_step" || name == "update_message_sequence_step" || name == "delete_plan_steps" || name == "add_scripted_step" || name == "add_routing_step" || name == "add_branch_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_orchestrator_step" || name == "add_message_sequence_step" ||
+	return name == "add_step" || name == "update_step" || name == "manage_step_route" || name == "manage_group" || name == "maintain_plan" || name == "update_scripted_step" || name == "update_routing_step" || name == "update_branch_step" || name == "update_human_input_step" || name == "update_todo_task_step" || name == "update_orchestrator_step" || name == "update_message_sequence_step" || name == "update_crew_step" || name == "delete_plan_steps" || name == "add_scripted_step" || name == "add_routing_step" || name == "add_branch_step" || name == "add_human_input_step" || name == "add_todo_task_step" || name == "add_orchestrator_step" || name == "add_message_sequence_step" || name == "add_crew_step" ||
 		name == "update_validation_schema" ||
 		name == "add_todo_task_route" || name == "update_todo_task_route" || name == "delete_todo_task_route" ||
 		name == "add_orchestrator_route" || name == "update_orchestrator_route" || name == "delete_orchestrator_route" || name == "migrate_orchestrator_step_type" || name == "migrate_run_scoped_routes" ||

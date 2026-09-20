@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 )
 
 // generateScheduleID creates a new UUID for a schedule entry.
@@ -36,7 +37,7 @@ type ScheduleRunEntry struct {
 	ConcurrencyMode          string     `json:"concurrency_mode,omitempty"`
 	ParallelRiskAcknowledged bool       `json:"parallel_risk_acknowledged,omitempty"`
 	SessionID                string     `json:"session_id,omitempty"`
-	Status                   string     `json:"status"` // running, success, error, stopped, partial, interrupted
+	Status                   string     `json:"status"` // queued, running, success, error, stopped, partial, interrupted
 	Error                    string     `json:"error,omitempty"`
 	// FinalResponse is the exact assistant answer produced by this run. Keeping
 	// it on the run avoids guessing from a persistent chat that may have received
@@ -46,6 +47,13 @@ type ScheduleRunEntry struct {
 	GroupNames    []string   `json:"group_names,omitempty"`
 	StartedAt     time.Time  `json:"started_at"`
 	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	// Caller stamps the workflow step that invoked this run through a
+	// platform-internal trigger. It is nil for every other run, so
+	// Crew-side cost history can show what each caller spent.
+	Caller *workflowtypes.CrewRunCaller `json:"caller,omitempty"`
+	// Usage is the run's token spend summed from the cost ledger when the
+	// run completes. It is nil when cost recording is unavailable.
+	Usage *workflowtypes.CrewRunTokenUsage `json:"usage,omitempty"`
 }
 
 const maxScheduleRuns = 200
@@ -127,6 +135,57 @@ func AppendScheduleRun(ctx context.Context, workspacePath string, run *ScheduleR
 	return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
 }
 
+// ClaimScheduleRun inserts a run entry only when no entry with the same ID
+// exists yet, atomically under the run-file lock. It reports the existing
+// entry when the ID is already claimed, so redeliveries reattach to the live
+// run instead of forking history.
+func ClaimScheduleRun(ctx context.Context, workspacePath string, run *ScheduleRunEntry) (existing *ScheduleRunEntry, claimed bool, err error) {
+	if run == nil {
+		return nil, false, fmt.Errorf("schedule run is required")
+	}
+	if strings.TrimSpace(run.ID) == "" {
+		return nil, false, fmt.Errorf("schedule run id is required")
+	}
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return nil, false, err
+	}
+	for i := range runs {
+		if runs[i].ID == run.ID {
+			found := runs[i]
+			return &found, false, nil
+		}
+	}
+	runs = append([]ScheduleRunEntry{*run}, runs...)
+	if len(runs) > maxScheduleRuns {
+		runs = runs[:maxScheduleRuns]
+	}
+	if err := writeScheduleRunsUnlocked(ctx, workspacePath, runs); err != nil {
+		return nil, false, err
+	}
+	return nil, true, nil
+}
+
+// FindScheduleRun returns one run entry by ID.
+func FindScheduleRun(ctx context.Context, workspacePath, runID string) (*ScheduleRunEntry, error) {
+	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if err != nil {
+		return nil, err
+	}
+	for i := range runs {
+		if runs[i].ID == runID {
+			found := runs[i]
+			return &found, nil
+		}
+	}
+	return nil, fmt.Errorf("schedule run %q not found in %s", runID, scheduleRunsPath(workspacePath))
+}
+
 // UpdateScheduleRun finds a run by ID and updates its fields.
 func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, status string, errMsg string, durationMs *int64, runFolder string, sessionID string) error {
 	path := scheduleRunsPath(workspacePath)
@@ -158,6 +217,28 @@ func UpdateScheduleRun(ctx context.Context, workspacePath string, runID string, 
 		}
 	}
 
+	return fmt.Errorf("schedule run %q not found in %s", runID, path)
+}
+
+// UpdateScheduleRunTokenUsage durably associates one execution's token spend
+// with its history entry. It overwrites any previous value; callers
+// accumulate multi-turn runs before writing.
+func UpdateScheduleRunTokenUsage(ctx context.Context, workspacePath, runID string, usage *workflowtypes.CrewRunTokenUsage) error {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		if runs[i].ID == runID {
+			runs[i].Usage = usage
+			return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
+		}
+	}
 	return fmt.Errorf("schedule run %q not found in %s", runID, path)
 }
 

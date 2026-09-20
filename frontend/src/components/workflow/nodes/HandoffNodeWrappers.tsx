@@ -5,12 +5,14 @@ import { TodoTaskNode } from './TodoTaskNode'
 import { HumanInputNode } from './HumanInputNode'
 import { RoutingStepNode } from './RoutingStepNode'
 import { MessageSequenceNode } from './MessageSequenceNode'
+import { CrewNode } from './CrewNode'
 import type {
   StepNodeData,
   TodoTaskNodeData,
   HumanInputNodeData,
   RoutingStepNodeData,
   MessageSequenceNodeData,
+  CrewStepNodeData,
 } from '../hooks/usePlanToFlow'
 
 // Route-to-route branches are laid out as lateral handoffs. These invisible
@@ -54,6 +56,13 @@ export const HandoffMessageSequenceNode = memo((props: NodeProps) => (
   </>
 ))
 
+export const HandoffCrewNode = memo((props: NodeProps) => (
+  <>
+    <CrewNode data={props.data as CrewStepNodeData} selected={props.selected} />
+    <HandoffTarget />
+  </>
+))
+
 export const HandoffRoutingNode = memo((props: NodeProps) => {
   const data = props.data as RoutingStepNodeData
 
@@ -79,4 +88,5 @@ HandoffStepNode.displayName = 'HandoffStepNode'
 HandoffTodoTaskNode.displayName = 'HandoffTodoTaskNode'
 HandoffHumanInputNode.displayName = 'HandoffHumanInputNode'
 HandoffMessageSequenceNode.displayName = 'HandoffMessageSequenceNode'
+HandoffCrewNode.displayName = 'HandoffCrewNode'
 HandoffRoutingNode.displayName = 'HandoffRoutingNode'

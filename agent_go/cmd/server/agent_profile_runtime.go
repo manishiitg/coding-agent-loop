@@ -606,6 +606,9 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
+		if err := api.registerCrewWorkflowRunTools(registrar, userID, sessionID, workspacePath); err != nil {
+			return err
+		}
 	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
 		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {

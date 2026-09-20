@@ -8,6 +8,10 @@ describe('scripted step presentation', () => {
     expect(planStepTypeLabel('routing')).toBe('routing')
   })
 
+  it('labels crew plan steps as Crew', () => {
+    expect(planStepTypeLabel('crew')).toBe('Crew')
+  })
+
   it('resolves the canonical script path from the workflow code layout', () => {
     expect(scriptedStepFilePath('provider-lookup', 0)).toBe('learnings/provider-lookup/main.py')
     expect(scriptedStepFilePath('provider-lookup', 1)).toBe('code/provider-lookup/main.py')

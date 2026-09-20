@@ -17,6 +17,7 @@ import '@xyflow/react/dist/style.css'
 import { useModeStore } from '../../../stores/useModeStore'
 import { nodeTypes } from '../nodes'
 import {
+  HandoffCrewNode,
   HandoffHumanInputNode,
   HandoffMessageSequenceNode,
   HandoffRoutingNode,
@@ -46,7 +47,8 @@ import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { effectiveExecutionMode, effectiveExecutionModeReason } from '../../../utils/stepConfigMatching'
+import { effectiveExecutionMode, effectiveExecutionModeReason, isCrewStep } from '../../../utils/stepConfigMatching'
+import { CrewStepDetailSection } from './CrewStepDetailSection'
 import {
   WORKFLOW_PLAN_STEP_FOCUS_EVENT,
   type WorkflowPlanStepFocusDetail,
@@ -86,6 +88,7 @@ const canvasNodeTypes = {
   routing: HandoffRoutingNode,
   branch: HandoffRoutingNode,
   message_sequence: HandoffMessageSequenceNode,
+  crew: HandoffCrewNode,
 } as const
 
 function enforceWorkflowHeaderClearance(nodes: WorkflowNode[]): WorkflowNode[] {
@@ -840,6 +843,10 @@ function ReadOnlyStepDetailPanel({
               <MarkdownRenderer content={step.description} className="max-w-none" />
             </div>
           </DetailSection>
+        )}
+
+        {step && isCrewStep(step) && (
+          <CrewStepDetailSection step={step} workspacePath={workspacePath} />
         )}
 
         {declaredExecutionMode && (

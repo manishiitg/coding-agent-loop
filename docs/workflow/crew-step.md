@@ -135,16 +135,25 @@ Executing a Crew step consists of four core operations:
 3. Read the exact final assistant response recorded for that trigger run.
 4. Save the text response in the calling workflow's current iteration folder.
 
-For example:
+For example, with variable groups enabled:
 
 ```text
-Workflow/example/runs/iteration-12/execution/review-with-rts/response.md
+Workflow/example/runs/iteration-0/production/execution/review-with-rts/response.md
 ```
+
+Active runs execute in `iteration-0` (older numbered folders are archives);
+without groups the step folder sits directly under `runs/iteration-0/execution/`.
 
 The execution record should also retain operational metadata—Crew project ID,
 trigger ID, Crew run ID, session ID, status, timestamps, and error details—in
 the workflow's existing progress/run metadata. The Crew does not have to emit
 JSON for this metadata.
+
+Token spend is attributed to both sides: the Crew run records its caller
+(workflow ID, run ID, step ID) so Crew-side cost history shows what each
+caller spent, and the workflow run's cost breakdown includes the crew step's
+tokens so the run shows its true cost. It is one spend visible in two places,
+each side labeled with the other — never silently absorbed by either side.
 
 ### Trigger request
 
@@ -154,7 +163,7 @@ The delivery payload should include at least:
 {
   "source": "workflow_step",
   "workflow_id": "release-pipeline",
-  "workflow_run_id": "iteration-12",
+  "workflow_run_id": "iteration-0",
   "workflow_step_id": "review-with-rts",
   "group": "production",
   "instruction": "Rendered workflow-specific instruction",
@@ -167,6 +176,7 @@ The delivery payload should include at least:
 }
 ```
 
+`group` is the calling workflow's variable group, for correlation only.
 Payload data cannot override Crew permissions, tools, trigger ownership,
 conversation destination, or folder guards.
 
@@ -179,8 +189,8 @@ rather than sending an HTTP request to itself or placing trigger secrets in
 `plan.json`.
 
 Internal dispatch must produce the same trigger delivery, conversation,
-history, run status, final response, and idempotency behavior as the public
-endpoint.
+history, run status, final response, and idempotency behavior as the hardened
+public endpoint (see Crew trigger hardening).
 
 ### Platform-internal triggers
 
@@ -189,7 +199,13 @@ between a Workflow and a Crew on the same deployment. It has no public URL and
 issues no bearer or GitHub secret. Its authority comes from an explicit caller
 binding checked by the platform on every invocation.
 
-An illustrative binding is:
+A binding is not a separate object: it is `kind: "internal"` plus a caller on
+an ordinary trigger, stored in the same trigger list as public triggers. The
+target is implicit — whichever manifest or schedule list holds the trigger —
+so deleting or disabling the trigger automatically retires the binding and
+orphaned permissions are impossible.
+
+An illustrative Crew-side binding is:
 
 ```json
 {
@@ -197,36 +213,36 @@ An illustrative binding is:
   "id": "5f16e1fa-7ddd-4ee5-8311-63b34745ad46",
   "name": "Release workflow reviewer",
   "enabled": true,
+  "message": "Review the pull request supplied in the delivery payload.",
   "caller": {
     "type": "workflow",
     "id": "release-pipeline"
-  },
-  "target": {
-    "type": "crew",
-    "profile_id": "work",
-    "project_id": "rts-pr-reviewer"
   },
   "run_destination": "isolated"
 }
 ```
 
-The reverse binding uses `caller.type="crew"` and `target.type="workflow"`.
-Bindings are directional and grant invocation only. They do not grant write
-access to the target's files or management access to its configuration.
+The reverse binding is a workflow schedule entry with `kind: "internal"` and
+`caller.type="crew"`. Bindings are directional and grant invocation only. They
+do not grant write access to the target's files or management access to its
+configuration.
 
-Both sides must be able to create the appropriate binding through their native
-agent tools:
+Both sides manage bindings through their existing trigger tools, extended
+with `kind: "internal"` (no secret issued, no public path, caller required):
 
 - Workflow Builder creates an internal Crew trigger while adding a Crew step.
 - Crew creates an internal workflow trigger when asked to invoke an attached
   workflow.
 - Either side can list, disable, re-enable, or remove bindings it is authorized
-  to manage.
+  to manage; existing trigger UIs show internal triggers with an internal
+  badge and no URL.
 
-Creating a binding requires management permission on the target and access to
-the caller. Invocation rechecks both resources, their attachment relationship,
-and the binding's enabled state. Copying either resource never silently copies
-cross-project authority.
+Creating a binding requires trigger-edit rights on the target side plus read
+access on the caller side, reusing the ownership checks each side already
+enforces. Invocation rechecks both resources, their attachment relationship,
+and the binding's enabled state. The public HTTP trigger endpoints skip
+internal triggers entirely: they are invokable only through internal dispatch.
+Copying either resource never silently copies cross-project authority.
 
 ## Files and attached folders
 
@@ -235,8 +251,13 @@ folders, and this feature must not add them.
 
 Before a Crew step can run, the target Crew project must be attached to the
 workflow using the existing attached-folder mechanism. The attachment is
-read-only. The attachment is both the access grant and the stable namespace
-through which downstream steps read Crew files.
+read-only. The attachment is the stable namespace through which downstream
+steps read Crew files; it is not itself the permission. Folder grants store a
+fixed path and never recheck project access, so the workflow must verify Crew
+access before the run starts and again before each crew step executes, using
+the same permission check as trigger invocation. If access is gone — revoked,
+unshared, moved, or deleted — the run fails fast with an actionable error
+before any step reads through the stale grant.
 
 If the Crew returns:
 
@@ -351,26 +372,24 @@ The Builder should be able to:
 6. Validate that the Crew attachment and trigger still exist before saving the
    plan.
 
-Suggested Builder tools are:
+The Builder tools are:
 
-- `list_crews`
-- `list_crew_triggers`
-- `create_internal_crew_trigger`
-- `manage_internal_crew_trigger`
-- `attach_crew_to_workflow`
-- `add_crew_step`
-- `update_crew_step`
-- `delete_crew_step`
+- `list_accessible_workflows` (existing discovery: workflows and Crew
+  projects with identity)
+- `manage_crew_trigger` (create/list/update/delete Crew triggers, extended
+  with `kind: internal`; internal bindings default to the calling workflow)
+- `manage_crew_attachment` (attach/list/detach Crews read-only)
+- `add_step` / `update_step` / `delete_plan_steps` with `type: crew` (plan
+  editing, with crew field schemas)
 
-The Crew runtime should have the corresponding workflow tools:
+The Crew runtime has the corresponding workflow tools:
 
 - `list_attached_workflows`
 - `list_workflow_triggers`
-- `create_internal_workflow_trigger`
-- `manage_internal_workflow_trigger`
+- `manage_workflow_webhook` (the existing workflow trigger tool, extended
+  with `kind: internal`)
 - `run_workflow_trigger`
 - `get_workflow_trigger_run`
-- `stop_workflow_trigger_run`
 
 The Builder should help write instructions that state:
 
@@ -408,6 +427,12 @@ The configuration view should contain:
 
 The UI should not imply that Crew files are copied into the workflow run.
 
+Run-time observability lives in the execution views, not the plan. The crew
+step's run entry must link its recorded Crew run ID to the exact Crew turn —
+transcript and timing one click away. The execution logs gain a crew category
+with the polling timeline (queued, turn started, answer recorded) and the
+final response, like other step types have.
+
 ## Access and security
 
 - Never store a plaintext trigger secret in the workflow plan.
@@ -416,6 +441,9 @@ The UI should not imply that Crew files are copied into the workflow run.
 - Check Crew and trigger access when the step is configured and again when it
   executes.
 - Require the target Crew to be attached read-only before execution.
+- Re-verify Crew access before the run starts and before each crew step
+  executes; a revoked, moved, or deleted Crew fails the run fast, before any
+  step reads through its attachment.
 - Keep the workflow's write paths separate from the Crew attachment.
 - Reject deleted or disabled triggers with an actionable step error.
 - A copied workflow must not inherit authority to call a Crew its new owner
@@ -435,22 +463,24 @@ step attempt receives a new delivery identity.
 ### Concurrency
 
 A persistent Crew conversation must process one turn at a time. When the
-selected conversation is busy, the step should show a waiting state and retry
-until capacity is available or its timeout expires. It must not interleave two
-turns in the same conversation.
+selected conversation is occupied, the delivery is accepted and queued as the
+next turn; the step shows a queued state until the turn starts. It must not
+interleave two turns in the same conversation. Mid-turn steering is for
+corrections to the current job, not for new deliveries: every delivery gets
+its own turn and its own recorded final response.
 
 ### Cancellation
 
-Stopping the workflow should cancel its wait and request cancellation of the
-owned Crew delivery when possible. Cancellation must be scoped by Crew run ID;
-it must never stop an unrelated user or automation turn.
+Out of scope for the first version. Stopping the workflow ends the step's
+wait; the accepted Crew delivery runs to completion on its own. Crew-side
+cancellation may be added later.
 
 ### Failure
 
 The workflow step fails when the trigger is inaccessible, disabled, deleted,
-busy beyond the timeout, stopped, or completes with an execution error. The
-step error should include the Crew and trigger names plus the recorded run ID
-when one exists.
+or completes with an execution error, or when the delivery is still queued or
+running beyond the timeout. The step error should include the Crew and trigger
+names plus the recorded run ID when one exists.
 
 ## Trigger status API
 
@@ -476,26 +506,83 @@ GET  /api/hooks/product/{trigger_id}/runs/{run_id}
 The internal workflow dispatcher may await the same service directly, but the
 observable run contract should remain consistent with the public API.
 
+## Crew trigger hardening
+
+Crew triggers were built as fire-and-forget deliveries into a chat, while
+workflow triggers were built for programmatic callers (idempotent recovery,
+pollable status). A workflow stepper is a programmatic caller: it must
+distinguish *queued* from *running* from *lost*, and it must reattach after
+its own retries. The gaps below must be closed in the shared trigger layer,
+so both the public endpoint and internal dispatch offer the same
+accept → poll → terminal contract. Restart survival is explicitly out of
+scope: the system does not promise it anywhere else either.
+
+### Idempotent redelivery
+
+Delivery dedupe is currently a process-local map that returns no run status,
+and run appends have no duplicate check, so a repeat can fork history under
+one run ID. Dedupe must consult the run store (check-then-append under the
+existing run-file lock), and a duplicate delivery must return the existing run
+ID with its current status, as workflow triggers do. No restart promises: the
+guarantee holds while the server is alive.
+
+### Accept-and-queue instead of busy
+
+When the trigger conversation is occupied, the run is currently rejected
+before any run record is written, while the public endpoint has already
+returned 202 — a poller waits on a run ID that will never exist. There must
+be no busy rejection at all: the delivery is accepted, recorded with a
+`queued` status, and executed as the next turn in that conversation. The
+runtime's mid-turn steering is for corrections to the running job; queued
+deliveries each get their own turn and their own recorded final response.
+
+### Conversation-level mutual exclusion
+
+The run lock is keyed per trigger, but every `crew_chat` trigger of a project
+shares one main conversation with the other triggers and the user.
+One-turn-at-a-time holds for `isolated` triggers only. Main-chat dispatch
+needs a conversation-level lock so two turns can never interleave in the same
+conversation.
+
+### Status vocabulary
+
+Crew runs record `running`, `success`, `error`, and `stopped` (plus `partial`
+and `interrupted`); accept-and-queue adds a real `queued` state for accepted
+deliveries still waiting their turn. The step's displayed states map onto
+this vocabulary, with `timed-out` owned by the waiting stepper rather than
+the Crew run.
+
 ## Implementation outline
 
-1. Add the platform-internal trigger binding model, permission checks, and
-   lifecycle operations for both target types.
-2. Add the Crew trigger status response and durable final-response lookup.
-3. Extract internal Crew-trigger and workflow-trigger dispatch interfaces from
+Steps 1–10 are implemented. Stopping runs is out of scope: there is no
+stop tool, and an accepted Crew delivery runs to completion on its own.
+
+1. Harden the shared Crew trigger layer: idempotent redelivery that returns
+   the existing run with its current status, accept-and-queue with a real
+   `queued` run state, and conversation-level mutual exclusion for main-chat
+   triggers.
+2. Extend both sides' trigger models with `kind: internal` plus a caller,
+   reusing existing trigger storage, ownership checks, and management tools;
+   public HTTP trigger endpoints skip internal triggers.
+3. Add the Crew trigger status response and durable final-response lookup.
+4. Extract internal Crew-trigger and workflow-trigger dispatch interfaces from
    their HTTP handlers so callers can use them without secrets or loopback
-   HTTP.
-4. Add `CrewPlanStep` parsing, validation, marshaling, plan editing tools, and
+   HTTP. Internal dispatch must surface disabled and deleted outcomes
+   synchronously, with the same delivery, conversation, history, run status,
+   final response, and idempotency behavior as the hardened public endpoint.
+5. Add `CrewPlanStep` parsing, validation, marshaling, plan editing tools, and
    workflow execution dispatch.
-5. Save the final text to the step's current iteration execution directory and
+6. Save the final text to the step's current iteration execution directory and
    connect it to normal context-output handling.
-6. Add Builder discovery and mutation tools for Crews, triggers, and read-only
+7. Add Builder discovery and mutation tools for Crews, triggers, and read-only
    attachment setup.
-7. Add Crew tools to discover, create, invoke, poll, and stop internal workflow
+8. Add Crew tools to discover, create, invoke, and poll internal workflow
    trigger runs.
-8. Add the Crew canvas node and configuration UI.
-9. Update Builder and Crew reference material and product guidance so each side
-   understands internal triggers, and so the Builder can choose between a Crew
-   and an ordinary step and between the two retained conversation histories.
+9. Add the Crew canvas node and configuration UI.
+10. Update Builder and Crew reference material and product guidance so each
+    side understands internal triggers, and so the Builder can choose between
+    a Crew and an ordinary step and between the two retained conversation
+    histories.
 
 ## Acceptance criteria
 
@@ -504,12 +591,19 @@ observable run contract should remain consistent with the public API.
 - Workflow Builder can create and manage a Workflow-to-Crew internal trigger;
   no public URL or secret is created.
 - Crew can create and manage a Crew-to-Workflow internal trigger for an
-  attached workflow, invoke it, poll it, and stop its owned run.
+  attached workflow, invoke it, and poll it.
 - The Builder establishes or verifies a read-only Crew attachment.
 - A workflow run invokes the trigger exactly once for one step attempt and can
   recover safely after a retry.
-- The step displays queued, running, completed, failed, stopped, and timed-out
-  states.
+- A duplicate Crew delivery returns the existing run ID and its current
+  status; no second run is launched.
+- An occupied Crew conversation accepts the delivery and queues it as the
+  next turn; the step shows queued until the turn starts.
+- Two turns never interleave in one Crew conversation, including the shared
+  main chat.
+- The step displays queued, running, completed, failed, and timed-out
+  states, mapped onto the recorded Crew run statuses (a stopped run fails
+  the step; its status stays visible in the execution logs).
 - The Crew receives the rendered instruction and declared workflow input.
 - Main-chat triggers retain the main Crew conversation; isolated triggers
   retain their own prior trigger-run conversation.
@@ -521,4 +615,10 @@ observable run contract should remain consistent with the public API.
   outputs.
 - Internal trigger invocation is rejected when caller identity, target
   identity, attachment, permissions, or enabled state no longer matches.
+- A workflow run whose Crew access was lost after configuration fails fast
+  before any step executes; no step reads through the stale attachment.
+- Crew-step token spend appears in both the workflow run's cost breakdown and
+  the Crew project's cost history, each side labeled with the other.
+- A crew step's run entry links to its exact Crew turn, and the execution logs
+  include a crew category with the polling timeline and final response.
 - Crew projects remain persistent projects and do not gain iteration folders.

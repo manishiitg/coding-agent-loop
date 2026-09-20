@@ -1,8 +1,10 @@
 package server
 
 import (
+	"context"
 	"crypto/subtle"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -248,7 +250,7 @@ func (s *SchedulerService) authorizeWebhookRun(w http.ResponseWriter, r *http.Re
 		return nil, schedulerstate.Run{}, false
 	}
 	sched := found.Manifest.Schedules[found.Index]
-	if sched.Webhook == nil || !sched.Enabled {
+	if sched.Webhook == nil || !sched.Enabled || sched.IsInternalTrigger() {
 		http.NotFound(w, r)
 		return nil, schedulerstate.Run{}, false
 	}
@@ -270,12 +272,19 @@ func (s *SchedulerService) authorizeWebhookRun(w http.ResponseWriter, r *http.Re
 		return nil, schedulerstate.Run{}, false
 	}
 	run, e := s.existingWebhookRun(r.Context(), vars["run"])
-	scope, scopeID, _ := scheduleStateScope(buildScheduleContext(found.WorkspacePath, found.Manifest, sched))
-	if e != nil || run.ScheduleID != sched.ID || run.ScopeType != scope || run.ScopeID != scopeID || run.TriggerSource != "webhook" {
+	if e != nil || !webhookRunMatchesSchedule(run, found.WorkspacePath, found.Manifest, sched) {
 		http.NotFound(w, r)
 		return nil, run, false
 	}
 	return found, run, true
+}
+
+// webhookRunMatchesSchedule reports whether a stored run belongs to the given
+// trigger delivery scope. Both the public poll endpoint and internal dispatch
+// use it so runs can never leak across triggers.
+func webhookRunMatchesSchedule(run schedulerstate.Run, workspacePath string, manifest *WorkflowManifest, sched WorkflowSchedule) bool {
+	scope, scopeID, _ := scheduleStateScope(buildScheduleContext(workspacePath, manifest, sched))
+	return run.ScheduleID == sched.ID && run.ScopeType == scope && run.ScopeID == scopeID && run.TriggerSource == "webhook"
 }
 func openWebhookRunRoot(workspace string, run schedulerstate.Run) (*os.Root, error) {
 	if !webhookFolderPattern.MatchString(run.RunFolder) {
@@ -303,27 +312,55 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 	if !ok {
 		return
 	}
+	result, err := readWebhookRunResult(found.WorkspacePath, run)
+	if err != nil {
+		switch {
+		case errors.Is(err, errWebhookStoredResult):
+			http.Error(w, "stored result unavailable", 503)
+		case errors.Is(err, errWebhookPersistResult):
+			http.Error(w, "cannot persist result", 503)
+		default:
+			http.Error(w, "run outputs unavailable", 503)
+		}
+		return
+	}
+	if err := signWebhookRunArtifacts(&result, run); err != nil {
+		http.Error(w, "artifact signing unavailable", 503)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(result)
+}
+
+var (
+	errWebhookStoredResult  = errors.New("stored result unavailable")
+	errWebhookRunOutputs    = errors.New("run outputs unavailable")
+	errWebhookPersistResult = errors.New("cannot persist result")
+)
+
+// readWebhookRunResult assembles the pollable outcome of one workflow trigger
+// run. The public poll endpoint and internal dispatch share it so Crew
+// callers see the same steps, progress, and terminal snapshot.
+func readWebhookRunResult(workspacePath string, run schedulerstate.Run) (webhookRunResult, error) {
 	lock := scheduleRunFileLock("webhook-result:" + run.RunID)
 	lock.Lock()
 	defer lock.Unlock()
 	result := webhookRunResult{RunID: run.RunID, Status: string(run.State), Terminal: run.CompletedAt != nil, RunFolder: run.RunFolder, Error: run.ErrorMessage, FinishedAt: run.CompletedAt, Steps: []webhookStepOutput{}}
-	result.ArtifactsExpired = webhookArtifactsExpired(found.WorkspacePath, run.RunID)
+	result.ArtifactsExpired = webhookArtifactsExpired(workspacePath, run.RunID)
 	result.Progress = []webhookProgressEntry{}
-	root, e := openWebhookRunRoot(found.WorkspacePath, run)
+	root, e := openWebhookRunRoot(workspacePath, run)
 	if e == nil {
 		defer root.Close()
 		snapshot, readErr := root.ReadFile(".webhook-result.json")
 		if result.Terminal && readErr == nil {
-			if json.Unmarshal(snapshot, &result) != nil {
-				http.Error(w, "stored result unavailable", 503)
-				return
+			if uErr := json.Unmarshal(snapshot, &result); uErr != nil {
+				return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookStoredResult, uErr)
 			}
 		} else {
 			result.Progress = collectWebhookProgress(root)
 			result.Steps, result.Truncated, e = collectWebhookOutputs(root)
 			if e != nil {
-				http.Error(w, "run outputs unavailable", 503)
-				return
+				return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookRunOutputs, e)
 			}
 			if result.Terminal {
 				b, _ := json.Marshal(result)
@@ -339,30 +376,66 @@ func (s *SchedulerService) pollWebhookRun(w http.ResponseWriter, r *http.Request
 					}
 				}
 				if err != nil && !os.IsExist(err) {
-					http.Error(w, "cannot persist result", 503)
-					return
+					return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookPersistResult, err)
 				}
 			}
 		}
 	} else if run.RunFolder != "" && !result.ArtifactsExpired {
-		http.Error(w, "run outputs unavailable", 503)
-		return
+		return webhookRunResult{}, fmt.Errorf("%w: %v", errWebhookRunOutputs, e)
 	}
+	return result, nil
+}
+
+// signWebhookRunArtifacts attaches short-lived download URLs to run artifacts.
+func signWebhookRunArtifacts(result *webhookRunResult, run schedulerstate.Run) error {
 	for i := range result.Steps {
 		for j := range result.Steps[i].Artifacts {
 			a := &result.Steps[i].Artifacts[j]
 			token, err := webhookAccessToken(run.ScheduleID, run.RunID, a.Path, 30*time.Minute)
 			if err != nil {
-				http.Error(w, "artifact signing unavailable", 503)
-				return
+				return err
 			}
 			expires := time.Now().Add(30 * time.Minute).UTC()
 			a.ExpiresAt = &expires
 			a.DownloadURL = webhookStatusPath(run.ScheduleID, run.RunID) + "/artifact?path=" + url.QueryEscape(a.Path) + "&token=" + url.QueryEscape(token)
 		}
 	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(result)
+	return nil
+}
+
+// getInternalWorkflowTriggerRun serves one workflow trigger run to the bound
+// Crew caller so a Crew run can poll a delivery to terminal state. Disabling
+// the trigger revokes reads, mirroring the public endpoint.
+func (s *SchedulerService) getInternalWorkflowTriggerRun(ctx context.Context, workflowID, triggerID, runID string, caller triggerCaller) (webhookRunResult, error) {
+	workspacePath, manifest, err := findWorkflowManifestByID(ctx, workflowID)
+	if err != nil {
+		return webhookRunResult{}, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
+	}
+	return s.readInternalWorkflowTriggerRun(ctx, workspacePath, manifest, triggerID, runID, caller)
+}
+
+// readInternalWorkflowTriggerRun resolves the trigger from a known manifest
+// and reads one of its runs for internal callers.
+func (s *SchedulerService) readInternalWorkflowTriggerRun(ctx context.Context, workspacePath string, manifest *WorkflowManifest, triggerID, runID string, caller triggerCaller) (webhookRunResult, error) {
+	sched, err := findInternalWorkflowTrigger(manifest, triggerID)
+	if err != nil {
+		return webhookRunResult{}, err
+	}
+	if !sched.Caller.matchesPresented(triggerCallerCrew, caller) {
+		return webhookRunResult{}, ErrInternalCallerMismatch
+	}
+	run, err := s.existingWebhookRun(ctx, runID)
+	if err != nil || !webhookRunMatchesSchedule(run, workspacePath, manifest, *sched) {
+		return webhookRunResult{}, ErrInternalTriggerRunGone
+	}
+	result, err := readWebhookRunResult(workspacePath, run)
+	if err != nil {
+		return webhookRunResult{}, err
+	}
+	if err := signWebhookRunArtifacts(&result, run); err != nil {
+		return webhookRunResult{}, err
+	}
+	return result, nil
 }
 func (s *SchedulerService) downloadWebhookArtifact(w http.ResponseWriter, r *http.Request) {
 	found, run, ok := s.authorizeWebhookRun(w, r)

@@ -7,10 +7,12 @@ export interface ProductAPITrigger {
   name: string
   enabled: boolean
   message: string
-  auth_mode: 'bearer' | 'github'
+  auth_mode: 'bearer' | 'github' | ''
   path: string
   secret?: string
   run_destination: 'crew_chat' | 'isolated'
+  kind?: string
+  caller?: { type: string; id: string; profile_id?: string }
 }
 
 export type ProductTriggerScope = { profileId: string; projectId: string }

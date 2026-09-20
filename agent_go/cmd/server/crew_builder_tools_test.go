@@ -1,0 +1,171 @@
+package server
+
+import (
+	"context"
+	"encoding/json"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+func newCrewBuilderToolsTestEnv(t *testing.T) (map[string]recordedTool, *mockWorkspaceAPI, string) {
+	t.Helper()
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_create":true}]}`)
+
+	svc, files := newInternalTriggerTestCrew(t)
+	productJSON := `{"schema_version":1,"product":"crewx","id":"rts","title":"RTS","session_id":"sess-1","triggers":[]}`
+	files["_users/owner/Chats/Work/projects/rts/product.json"] = productJSON
+
+	manifest := NewWorkflowManifest("Builder test")
+	manifest.CreatedBy = "owner"
+	manifest.Access = &WorkflowAccess{Owners: []string{"owner"}}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mock := &mockWorkspaceAPI{files: map[string]string{
+		manifestPath("Workflow/test"):                       string(raw),
+		"Workflow/test/planning/plan.json":                  `{"steps":[{"type":"regular","id":"work","title":"Work","description":"Work"}]}`,
+		"Workflow/test/variables/variables.json":            `{"variables":[],"groups":[{"name":"default"}]}`,
+		"_users/owner/Chats/Work/projects/rts/product.json": productJSON,
+	}}
+	ws := httptest.NewServer(mock)
+	t.Cleanup(ws.Close)
+	t.Setenv("WORKSPACE_API_URL", ws.URL)
+
+	api := &StreamingAPI{productSchedules: svc}
+	reg := &recordingRegistrar{}
+	if err := api.registerCrewBuilderTools(reg, "owner", "Workflow/test"); err != nil {
+		t.Fatal(err)
+	}
+	return reg.tools, mock, manifest.ID
+}
+
+func TestManageCrewTriggerInternalDefaultsCaller(t *testing.T) {
+	tools, _, workflowID := newCrewBuilderToolsTestEnv(t)
+	tool := tools["manage_crew_trigger"]
+	ctx := context.Background()
+
+	createdRaw, err := tool.exec(ctx, map[string]interface{}{
+		"action": "create", "crew_project_id": "rts", "crew_profile_id": "crewx",
+		"name": "Release reviewer", "message": "Review the delivery",
+		"kind": "internal", "enabled": true,
+	})
+	if err != nil {
+		t.Fatalf("internal create failed: %v", err)
+	}
+	var created productWebhookResponse
+	if err := json.Unmarshal([]byte(createdRaw), &created); err != nil {
+		t.Fatal(err)
+	}
+	if created.Kind != triggerKindInternal || created.Caller == nil || created.Caller.ID != workflowID {
+		t.Fatalf("caller did not default to bound workflow: %+v", created)
+	}
+	if created.Secret != "" || created.Path != "" || created.AuthMode != "" {
+		t.Fatalf("internal trigger exposed endpoint material: %+v", created)
+	}
+
+	updatedRaw, err := tool.exec(ctx, map[string]interface{}{
+		"action": "update", "crew_project_id": "rts", "crew_profile_id": "crewx",
+		"id": created.ID, "enabled": false,
+	})
+	if err != nil {
+		t.Fatalf("update failed: %v", err)
+	}
+	var updated productWebhookResponse
+	if err := json.Unmarshal([]byte(updatedRaw), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Enabled {
+		t.Fatalf("update did not disable trigger: %+v", updated)
+	}
+	if updated.Kind != triggerKindInternal || updated.Caller == nil || updated.Caller.ID != workflowID {
+		t.Fatalf("update lost internal binding: %+v", updated)
+	}
+
+	if _, err := tool.exec(ctx, map[string]interface{}{
+		"action": "delete", "crew_project_id": "rts", "crew_profile_id": "crewx", "id": created.ID,
+	}); err != nil {
+		t.Fatalf("delete failed: %v", err)
+	}
+	listedRaw, err := tool.exec(ctx, map[string]interface{}{
+		"action": "list", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	})
+	if err != nil {
+		t.Fatalf("list failed: %v", err)
+	}
+	var listed struct {
+		Triggers []productWebhookResponse `json:"triggers"`
+	}
+	if err := json.Unmarshal([]byte(listedRaw), &listed); err != nil {
+		t.Fatal(err)
+	}
+	if len(listed.Triggers) != 0 {
+		t.Fatalf("expected no triggers after delete, got %+v", listed.Triggers)
+	}
+}
+
+func TestManageCrewTriggerRejectsUnknownCallerWorkflow(t *testing.T) {
+	tools, _, _ := newCrewBuilderToolsTestEnv(t)
+	tool := tools["manage_crew_trigger"]
+	if _, err := tool.exec(context.Background(), map[string]interface{}{
+		"action": "create", "crew_project_id": "rts", "crew_profile_id": "crewx",
+		"name": "Ghost", "message": "Review", "kind": "internal", "enabled": true,
+		"caller": map[string]interface{}{"type": "workflow", "id": "ghost-pipeline"},
+	}); err == nil {
+		t.Fatal("binding to an unknown caller workflow must fail")
+	}
+}
+
+func TestManageCrewAttachmentRoundTrip(t *testing.T) {
+	tools, mock, _ := newCrewBuilderToolsTestEnv(t)
+	tool := tools["manage_crew_attachment"]
+	ctx := context.Background()
+
+	if _, err := tool.exec(ctx, map[string]interface{}{
+		"action": "attach", "alias": "rts", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	}); err != nil {
+		t.Fatalf("attach failed: %v", err)
+	}
+	var manifest WorkflowManifest
+	if err := json.Unmarshal([]byte(mock.files[manifestPath("Workflow/test")]), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.CrewAttachments) != 1 || manifest.CrewAttachments[0].Alias != "rts" {
+		t.Fatalf("attachment not persisted: %+v", manifest.CrewAttachments)
+	}
+	if !strings.HasPrefix(manifest.CrewAttachments[0].CrewWorkspacePath, "_users/owner/") {
+		t.Fatalf("attachment workspace not resolved: %+v", manifest.CrewAttachments[0])
+	}
+
+	if _, err := tool.exec(ctx, map[string]interface{}{
+		"action": "attach", "alias": "rts", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	}); err == nil {
+		t.Fatal("duplicate alias must fail")
+	}
+	if _, err := tool.exec(ctx, map[string]interface{}{
+		"action": "attach", "alias": "rts-again", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	}); err == nil {
+		t.Fatal("duplicate crew project must fail")
+	}
+	if _, err := tool.exec(ctx, map[string]interface{}{
+		"action": "attach", "alias": "Bad Alias!", "crew_project_id": "rts", "crew_profile_id": "crewx",
+	}); err == nil {
+		t.Fatal("invalid alias must fail")
+	}
+
+	if _, err := tool.exec(ctx, map[string]interface{}{"action": "detach", "alias": "rts"}); err != nil {
+		t.Fatalf("detach failed: %v", err)
+	}
+	manifest = WorkflowManifest{}
+	if err := json.Unmarshal([]byte(mock.files[manifestPath("Workflow/test")]), &manifest); err != nil {
+		t.Fatal(err)
+	}
+	if len(manifest.CrewAttachments) != 0 {
+		t.Fatalf("detach did not persist: %+v", manifest.CrewAttachments)
+	}
+	if _, err := tool.exec(ctx, map[string]interface{}{"action": "detach", "alias": "rts"}); err == nil {
+		t.Fatal("detaching a missing alias must fail")
+	}
+}

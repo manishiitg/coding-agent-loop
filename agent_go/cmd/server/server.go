@@ -4582,6 +4582,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if directWebhookOptions != nil {
 					controllerOpts = directWebhookOptions
 				}
+				// Crew steps invoke Crew triggers through a server-owned runner.
+				// The run owner scopes crew lookups; without a user there is no
+				// runner and crew steps fail with a clear error at execution.
+				if claims := GetUserFromContext(r.Context()); claims != nil && api.productSchedules != nil {
+					controllerOpts.CrewRunner = newCrewStepRunner(api.productSchedules, claims.UserID)
+				}
 				log.Printf("[WORKFLOW EXECUTION] Setting strategy=%s folder=%s", controllerOpts.ExecutionStrategy, controllerOpts.SelectedRunFolder)
 				workflowOrchestrator.SetExecutionOptions(controllerOpts)
 				log.Printf("[EXECUTION_OPTIONS_DEBUG] [Backend] Execution options set on orchestrator successfully")
@@ -4596,6 +4602,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					[]string{workflowWorkspacePath},
 					[]string{workflowWorkspacePath},
 				)
+				// Crew attachments resolve through aliases at read time; grant
+				// the attached roots read-only for the run.
+				common.GrantSessionCrewAttachmentReads(sessionID, crewAttachmentReadRoots(workflowCtx, workflowWorkspacePath))
 				if hostDownloads := common.GrantSessionCDPHostDownloadsReadWrite(sessionID, workflowBrowserMode); hostDownloads != "" {
 					log.Printf("[WORKFLOW EXECUTION] Added read-write CDP host Downloads: %s", hostDownloads)
 				}
@@ -4633,12 +4642,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 			// Execute workflow with the preset objective (not the phase query)
 			log.Printf("[WORKFLOW DEBUG] Starting workflow execution for query %s with objective: %s, workspace: %s", queryID, workflowObjective, workflowWorkspacePath)
-			_, err := workflowOrchestrator.Execute(
-				workflowCtx,
-				workflowObjective, // Use preset objective instead of req.Query
-				workflowWorkspacePath,
-				workflowOptions,
-			)
+			var err error
+			if claims := GetUserFromContext(r.Context()); claims != nil {
+				// Fail fast before any step executes when a crew step lost
+				// access to its Crew; shares the execution error reporting below.
+				err = preflightCrewSteps(workflowCtx, api.productSchedules, claims.UserID, workflowWorkspacePath)
+			}
+			if err == nil {
+				_, err = workflowOrchestrator.Execute(
+					workflowCtx,
+					workflowObjective, // Use preset objective instead of req.Query
+					workflowWorkspacePath,
+					workflowOptions,
+				)
+			}
 			if err != nil {
 				// Check if this is a zombie execution: if our queryID is no longer registered
 				// for this session, the session was stopped/replaced by a newer execution.

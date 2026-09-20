@@ -169,22 +169,25 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	}); err != nil {
 		return err
 	}
-	if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this trigger's own persistent automation conversation. Return the one-time secret immediately.", map[string]interface{}{
+	if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this trigger's own persistent automation conversation. Return the one-time secret immediately. Use kind=internal with a workflow caller to bind a calling workflow without a public URL or secret.", map[string]interface{}{
 		"type": "object", "properties": map[string]interface{}{
 			"name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"},
 			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
+			"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
+			"caller":          triggerCallerToolSchema(triggerCallerWorkflow),
 		}, "required": []string{"name", "message"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		name, _ := args["name"].(string)
 		message, _ := args["message"].(string)
 		authMode, _ := args["auth_mode"].(string)
 		destination, _ := args["run_destination"].(string)
+		kind, _ := args["kind"].(string)
 		enabled, ok := args["enabled"].(bool)
 		if !ok {
 			enabled = true
 		}
-		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RunDestination: destination}, "")
+		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RunDestination: destination, Kind: kind, Caller: triggerCallerFromArgs(args)}, "")
 		if err != nil {
 			return "", err
 		}
@@ -193,11 +196,13 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	}); err != nil {
 		return err
 	}
-	if err := register("update_project_trigger", "Update, enable, disable, or rotate a Work project webhook trigger. Call list_project_triggers first. A rotated secret is returned only once.", map[string]interface{}{
+	if err := register("update_project_trigger", "Update, enable, disable, or rotate a Work project webhook trigger. Call list_project_triggers first. A rotated secret is returned only once. Internal triggers carry kind and caller instead of a secret.", map[string]interface{}{
 		"type": "object", "properties": map[string]interface{}{
 			"id": map[string]interface{}{"type": "string"}, "name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 			"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"}, "rotate_secret": map[string]interface{}{"type": "boolean"},
 			"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
+			"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
+			"caller":          triggerCallerToolSchema(triggerCallerWorkflow),
 		}, "required": []string{"id"},
 	}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 		id, _ := args["id"].(string)
@@ -215,7 +220,13 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		if current == nil {
 			return "", fmt.Errorf("trigger not found")
 		}
-		name, message, authMode, enabled, destination := current.Name, current.Message, current.Webhook.AuthMode, current.Enabled, firstNonEmptyTrimmed(current.RunDestination, runDestinationCrewChat)
+		name, message, enabled, destination := current.Name, current.Message, current.Enabled, firstNonEmptyTrimmed(current.RunDestination, runDestinationCrewChat)
+		authMode := ""
+		if current.Webhook != nil {
+			authMode = current.Webhook.AuthMode
+		}
+		kind := current.Kind
+		caller := current.Caller
 		if value, ok := args["name"].(string); ok && strings.TrimSpace(value) != "" {
 			name = value
 		}
@@ -231,8 +242,14 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		if value, ok := args["run_destination"].(string); ok && strings.TrimSpace(value) != "" {
 			destination = value
 		}
+		if value, ok := args["kind"].(string); ok && strings.TrimSpace(value) != "" {
+			kind = value
+		}
+		if updated := triggerCallerFromArgs(args); updated != nil {
+			caller = updated
+		}
 		rotate, _ := args["rotate_secret"].(bool)
-		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RotateSecret: rotate, RunDestination: destination}, current.ID)
+		response, _, err := api.productSchedules.saveProductWebhookConfig(ctx, userID, productWebhookRequest{ProfileID: "work", ProjectID: projectID, Name: name, Message: message, AuthMode: authMode, Enabled: enabled, RotateSecret: rotate, RunDestination: destination, Kind: kind, Caller: caller}, current.ID)
 		if err != nil {
 			return "", err
 		}

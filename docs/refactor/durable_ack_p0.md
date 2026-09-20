@@ -1,12 +1,13 @@
 # Durable submit acknowledgement: file-ack P0 + pane fast-confirm P1
 
-**Status: all five providers implemented 2026-09-19/20. P1
-demotion is OUT of scope by decision — pane fast-confirm stays
-where it is; only the durable-ack P0 rolls out per provider.
-Live P0 green for codex/pi/muse/Claude; live server↔chat e2e
-PASS for the same four (probe: /tmp/durable-e2e/probe.py).
-Cursor is implemented + unit-green, live P0/e2e blocked on login
-quota till 9/21/2026. 2026-09-20 fix: durability receipts are
+**Status: all five providers implemented 2026-09-19/20.
+Decision updated 2026-09-20: establish explicit P0 and P1
+contracts. Durable correctness and pane-only safety blockers are
+P0; secondary pane interpretation and terminal experience are P1.
+Live P0 green for all five providers; live server↔chat e2e PASS
+for codex/pi/muse/Claude (probe: /tmp/durable-e2e/probe.py).
+Cursor live P0 passed 2026-09-20 using the RTS deployment key;
+its server↔chat e2e remains pending. 2026-09-20 fix: durability receipts are
 now consumed on every ingestion path including durable restore
 (see "Restore-path receipt consumption" below).**
 
@@ -126,18 +127,76 @@ drops into observable drift without touching caller latency.
 
 ### Certification mapping
 
-* New P0: durable-ack (file-backed acceptance) per provider.
-* Dropped by decision 2026-09-19: no P1 demotion. The pane
-  fast-confirm (resubmit budgets, handoff latency) stays
-  exactly where it is; this rollout only ADDS the durable-ack
-  P0 per provider. Revisit only if a dedicated P1 gate
-  (`run-coding-cli-p1.sh` or equivalent) ever exists.
-* Stays P0 on the pane permanently: queue/modal/draft/
-  trust/compaction vetoes — no file signal exists. Folded
-  into the P0 tests as negative assertions.
-* Cursor exception: async `store.db` commit disqualifies
-  file-ack from the hot path; pane stays P0, file is
-  post-hoc/tiebreak only.
+Decision updated 2026-09-20: create two real certification
+levels. Classify behavior by user impact, not merely by whether
+the implementation touches tmux.
+
+#### P0: critical execution contract
+
+A provider cannot be production-ready unless every claimed P0
+contract passes:
+
+* Launch the CLI and bind it to the correct owner/session.
+* Send the exact message without truncation or interleaving.
+* Preserve ordering for rapid messages and concurrent input
+  sources through the per-session broker.
+* Detect pane-only trust, login, approval, blocking compaction,
+  and visibly stuck-draft states before input is lost; perform
+  only bounded recovery for the exact demonstrably stuck draft.
+* Durably confirm the exact send through the provider JSON,
+  marker stream, transcript, or DB.
+* Never confirm repeated identical text using an older send's
+  receipt.
+* Deliver mid-turn steering and bounded interrupt correctly.
+* Extract the correct final response from structured provider
+  data rather than hard-wrapped pane text.
+* Resume the correct native conversation, isolate concurrent
+  sessions, and clean up only the owning process/session.
+
+These remain P0 because failure can lose or duplicate work,
+cross session boundaries, or return the wrong result. Pane checks
+for blockers also remain P0 because no provider file exists yet
+at some trust/login gates and persisted output cannot prove that
+a draft is still trapped in the editor.
+
+#### P1: secondary tmux and terminal contract
+
+P1 covers behavior whose failure harms responsiveness,
+observability, or terminal presentation while the underlying
+conversation remains correct:
+
+* Fast pane acknowledgement and the first delivery tick.
+* Spinner/progress interpretation and queue-banner presentation.
+* Exact terminal colors, formatting, scrollback, resize, and
+  reconnect fidelity.
+* Inactive terminal previews and friendly pane diagnostics.
+* Continuous terminal recording and latency targets.
+* Supplemental pane diagnostics when durable confirmation is
+  delayed, without making broad spinner/activity guesses part
+  of the correctness verdict.
+
+For example, when `store.db` confirms that Cursor accepted the
+message, failure to recognize a changed Cursor spinner is P1.
+The work was not lost and the provider should remain available.
+
+#### Required gate structure
+
+Create and maintain two explicit runners:
+
+* `run-coding-cli-p0.sh`: correctness, isolation, durable
+  acceptance, final response, resume, interrupt, and blocker
+  safety. A claimed P0 failure blocks provider/release readiness.
+* `run-coding-cli-p1.sh`: terminal UX, fast indicators,
+  formatting, reconnect, diagnostics, and latency. A P1 failure
+  produces a compatibility report and may disable only the
+  affected UI enhancement.
+
+Provider contracts should expose P0 capabilities, P1
+capabilities, and known P1 gaps. This replaces the 2026-09-19
+decision not to create a P1 gate. The current implementation has
+not yet completed this split: normal send paths still use broad
+pane-based success polling, so moving secondary pane heuristics
+behind P1 remains follow-up work.
 
 ## Provider order
 
@@ -172,8 +231,9 @@ drops into observable drift without touching caller latency.
    idle `store.db` commit in ~9.5s with a stable WAL-safe
    reader, so the "async commit" fear did not hold for the
    measured path. Ref-identity scoping (no blob timestamps).
-   Implemented + unit-tested; live P0/e2e blocked on login
-   quota till 9/21/2026. See "Cursor durable-ack P0" below.
+   Implemented + unit-tested; live P0 passed 2026-09-20
+   (busy steer 37.5s, idle follow-up 8.4s). Server↔chat e2e
+   remains pending. See "Cursor durable-ack P0" below.
 
 ## Codex change list
 
@@ -330,7 +390,7 @@ long turn reports unflushed, truthfully).
   `sent_to_cli` → durable `confirmed` at 27.7s, proof =
   session transcript, SSE wire verified, mid matches.
 
-## Cursor durable-ack P0 (2026-09-19, live-unverified)
+## Cursor durable-ack P0 (2026-09-19, live-verified 2026-09-20)
 
 Proof is the session `store.db` (`~/.cursor/chats/<md5(cwd)>/
 <agentId>/store.db`): blobs carry no per-message
@@ -341,12 +401,15 @@ Unflushed = pane still shows our text in the native
 follow-ups queue at budget expiry (matcher shaped by
 helpers + fixtures, NOT yet by a live pane).
 
-Probe evidence (auto model, persistent tmux): idle steer
-committed its row in ~9.5s; reader stable. Busy path
-UNKNOWN — login free-quota exhausted mid-probe (resets
-9/21/2026, no CURSOR_API_KEY). Budget
+Initial probe evidence (auto model, persistent tmux): idle steer
+committed its row in ~9.5s; reader stable. The authenticated
+P0 contract was subsequently run with the RTS deployment-managed
+`CURSOR_API_KEY`: the busy steer committed to `store.db` in 37.5s,
+affected the active turn, and the idle follow-up committed in 8.4s.
+Budget
 `CURSOR_DURABLE_ACK_SECONDS` default 180 (generous:
-secondary + unknown busy path; revisit after live P0).
+secondary, while the live busy path observed 37.5s; revisit
+after the server↔chat e2e).
 
 * [x] `cursorcli_durable_ack.go`: arbiter + stash/peek +
   `AwaitCursorInputDurable` + `InteractiveSessionRegistered`.
@@ -355,14 +418,18 @@ secondary + unknown busy path; revisit after live P0).
   `TestCursorCLIRealDurableAckContract`, mcpagent wrapper,
   server watcher + steer-gate cases + routing test.
 * [x] Unit tests green (real-schema sqlite fixtures).
-* [ ] LIVE (blocked on quota till 9/21): SDK P0 then e2e:
-  `go test ./pkg/adapters/cursorcli/ -run
-  TestCursorCLIRealDurableAckContract -coding-cli-p0-live
-  -count=1 -v` from `multi-llm-provider-go`, then the
-  server↔chat probe (`/tmp/durable-e2e/probe.py` with a
-  `("cursor-cli", "auto")` entry) against a rebuilt
-  isolated stack. Also confirm the queued-followups pane
-  shape and tune the 180s default + 90s idle bound.
+* [x] Live SDK P0 (2026-09-20):
+  `go test ./pkg/adapters/cursorcli -run
+  '^TestCursorCLIRealDurableAckContract$' -coding-cli-p0-live
+  -count=1 -v` passed in 117.57s. Busy steer durably acked
+  in 37.5s and affected the turn; idle follow-up durably
+  acked in 8.4s, within the 90s assertion.
+* [ ] Live server↔chat e2e: recreate or check in the former
+  `/tmp/durable-e2e/probe.py`, add a `("cursor-cli", "auto")`
+  entry, and run it against a rebuilt isolated stack. The
+  temporary probe is no longer present, so this gate is not
+  currently reproducible from the repository. Also confirm
+  the queued-followups pane shape and revisit the 180s default.
 
 ## Restore-path receipt consumption (2026-09-20)
 

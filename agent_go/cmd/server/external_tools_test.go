@@ -260,9 +260,14 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 	if byName["run_status"].executes {
 		t.Fatal("run_status is marked executes")
 	}
+	for _, name := range []string{"chat", "run_reply_input"} {
+		if !byName[name].executes {
+			t.Fatalf("run tool %s is not marked executes", name)
+		}
+	}
 	// Golden pin: changing the exposed surface means editing product.yaml and
 	// these lists together, deliberately.
-	wantExternal := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs", "run_status"}
+	wantExternal := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs", "run_status", "chat", "run_reply_input"}
 	if len(admitted) != len(wantExternal) {
 		t.Fatalf("admitted %d tools, want %d", len(admitted), len(wantExternal))
 	}

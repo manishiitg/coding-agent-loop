@@ -97,6 +97,9 @@ func TestCLIRunAndScheduleArguments(t *testing.T) {
 		{[]string{"schedules", "list", "--workflow", "wf-1"}, "list_schedules", map[string]any{"workflow_id": "wf-1"}},
 		{[]string{"schedules", "runs", "--workflow", "wf-1", "--schedule-id", "daily"}, "get_schedule_runs", map[string]any{"workflow_id": "wf-1", "schedule_id": "daily"}},
 		{[]string{"schedules", "trigger", "--workflow", "wf-1", "--schedule-id", "daily"}, "trigger_schedule", map[string]any{"workflow_id": "wf-1", "schedule_id": "daily"}},
+		{[]string{"chat", "ask", "--workflow", "wf-1", "--message", "why did step 1 fail?"}, "chat", map[string]any{"workflow_id": "wf-1", "message": "why did step 1 fail?"}},
+		{[]string{"chat", "ask", "--workflow", "wf-1", "--session", "s1", "--message", "and then?"}, "chat", map[string]any{"workflow_id": "wf-1", "session_id": "s1", "message": "and then?"}},
+		{[]string{"runs", "reply", "--workflow", "wf-1", "--session", "s1", "--request-id", "r1", "--response", "yes"}, "run_reply_input", map[string]any{"workflow_id": "wf-1", "session_id": "s1", "request_id": "r1", "response": "yes"}},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			var called bool

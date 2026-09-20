@@ -15,6 +15,10 @@ resume/transcript registries, and cross-repository tests already exist. Keep the
 The missing piece is a complete, executable onboarding contract that connects a
 provider's declaration to every runtime operation and product surface it needs.
 
+The [cross-repository follow-up](#cross-repository-follow-up--2026-09-20) below
+adds a deeper builder/agent review, another reproduced resume defect, a latent
+lifecycle omission, and a responsibility matrix for both repositories.
+
 Today, adding a capability flag and its adapter test does not ensure that the
 application exposes, configures, invokes, restores, or certifies that capability.
 Several mappings must be maintained independently. This has already caused the
@@ -287,3 +291,170 @@ wiring completeness; real CLI P0/P1 remains necessary to prove actual behavior.
   upgrade run was performed. Passing the focused tests is not P0 release signoff.
 - No production code changed. Temporary probe files were removed. The server test
   link emitted the existing macOS ONNX-library deployment-target warning; tests passed.
+
+## Cross-repository follow-up — 2026-09-20
+
+Reviewed AgentWorks `d7d94ead4` and `mcpagent` `cb3f8c6`, with SDK `6ef98fb`.
+The earlier review mapped these repositories; this follow-up traces their actual
+construction, option propagation, restore, delivery, and cleanup boundaries.
+
+### R4 — P1: mcpagent can relabel another provider's native resume identity
+
+Location: `Agent/agent/session_handle.go`, `applyAgentSessionHandle`, lines
+94–133, especially the assignment to `codingProviderSessionHandle.Provider`.
+
+The method rejects different connection IDs, but does not first reject a
+different provider. With the legacy/default empty connection IDs, a Codex agent
+can apply a Claude handle. It first imports that handle's session ID and working
+directory, then restores the configured provider/model by relabeling the stored
+handle as Codex. The native ID remains the Claude ID. The downstream
+`codingProviderContinuationHandleForModel` provider check then accepts the
+already-relabeled handle.
+
+A temporary regression test constructed a configured Codex agent, applied a
+Claude handle with an empty connection ID, and asserted that no Codex
+continuation could be obtained. It failed:
+
+```text
+foreign native ID accepted for Codex: provider=codex-cli
+native=claude-native-id cwd=/old/workspace owner=previous-owner
+```
+
+This can give a resumed turn the wrong native conversation identity and working
+directory when a consumer switches engines while retaining an old handle. The
+probe establishes the wrong continuation options without launching either CLI;
+it does not demonstrate cross-provider access to another CLI's conversation.
+The method is reached by `NewAgentFromDefinition` with `RuntimeConfig.ResumeHandle`,
+`ApplyAgentResumeHandle`, and the store-backed conversation path.
+
+Existing tests separately verify account mismatch, model changes within one
+provider, and mismatch rejection for an already-stored handle. They do not
+exercise foreign-provider restore followed by continuation. Builder history
+code also has provider checks at some higher-level boundaries; those do not
+make the reusable agent-layer restore operation safe for every consumer.
+
+Required change: validate provider and connection compatibility before mutating
+any agent state. Preserve model changes within the same provider, but never
+relabel a native ID to another provider. Return an explicit accepted/rejected
+restore outcome so consumers only omit replay history after a successful restore.
+Test empty/global/named connections, same-provider model changes, cross-provider
+handles, and no partial mutation of owner/cwd on rejection.
+
+### R5 — P2: the builder's shared session helper omits Muse owner cleanup
+
+Location: [agentsession.go](../../agent_go/internal/agentsession/agentsession.go),
+`closeInteractiveOwner`, lines 617–627.
+
+The same helper enables `PersistentMuse` when constructing a resumable session,
+but its owner-scoped close switch handles only Claude, Codex, Cursor, and Pi.
+`CloseAllInteractiveSessions` and `closeOtherInteractiveSessions` remove their
+owner bookkeeping and then call that switch. For Muse, the dispatch performs no
+close, although the SDK exports `CloseMuseCLIInteractiveSessionForOwner`.
+
+Evidence is the direct source mismatch between the constructor and close paths;
+no real Muse process was launched. No production call sites of this shared
+helper's constructor/reset API were found in the checked-out repository, so this
+is a **latent integration defect**, not evidence that the main server's existing
+reset path leaks Muse. The main server has separate terminal/reaper machinery.
+
+Required change: either retire this unused alternate construction path or make
+it use the same generic lifecycle operations as the active path. If retained,
+require an owner-close binding for every persistent provider and test actual
+dispatch with an injectable closer. Do not remove bookkeeping while silently
+skipping an unsupported close operation.
+
+### What is already protected
+
+- `TestCodingAgentPersistentInteractiveFlagsCoverTmuxContracts` in the builder
+  iterates SDK tmux contracts and requires exactly one persistence flag. A new
+  provider omitted from that particular switch is caught. The five-boolean API
+  still creates maintenance work, but its current coverage should be preserved.
+- `TestNativeTranscriptSyncSupportedProvider` iterates persistent/live-input
+  contracts and requires transcript capability plus builder support. This catches
+  a missing support-list entry; actual transcript-reader dispatch and UI
+  reconciliation are additional boundaries needing their own proof.
+- The agent checks steering against actual structured/tmux transport, rather
+  than assuming a coding-provider ID always has a live pane. Existing steering
+  tests passed for both transport choices.
+- `AgentSessionHandle` and the immutable `AgentDefinition` / grouped
+  `RuntimeConfig` already provide useful shared types. Strengthen those types
+  instead of introducing another parallel configuration object.
+- Account mismatch protection and per-user provider connection authorization
+  have focused tests that passed. R4 concerns provider compatibility with equal
+  connection IDs, not a failure of the tested different-account rejection.
+
+### Required responsibilities in each repository
+
+| Boundary | mcp-agent-builder-go responsibility | mcpagent responsibility | Required acceptance proof |
+| --- | --- | --- | --- |
+| Discovery and setup | Publish install/auth/model metadata; authorize the chosen connection. | Accept provider/model/account configuration through `RuntimeConfig.Generation`; leave product setup to the builder. | Each published provider is constructible, configured with the selected account, and either supports each advertised setup action or rejects it explicitly. |
+| Runtime assembly | `server.go` → `pkg/agentwrapper/llm_agent.go` and workflow `agents/base_agent.go` construct the same definition/runtime contract. | `agent/definition.go` validates immutable instructions/skills/tools and binds runtime services. | Chat, workflow, background, and child agents preserve selected provider/model/account, skills, tools, bridge identity, cwd, and transport through the real constructor. |
+| Transport and lifecycle | `coding_agent_modes.go` selects the surface policy; wrapper/workflow configuration carries it. | `coding_session.go` and `coding_agent_options.go` implement actual steering/persistence semantics. | Requested transport equals adapter transport; structured execution cannot accidentally retain/steer a tmux session; persistent chat remains usable after a turn. |
+| MCP and native policy | Supply the session-scoped bridge and admitted tool policy. | `coding_agent_integrations.go` translates them to provider options. | Every bridge-required SDK provider has a binding; missing bridge fails before launch; unavailable native-tool containment is explicit. |
+| Resume | Persist the opaque handle and current account/provider selection; replay history when restore is rejected. | Validate handle provider/account and apply native identity without changing its ownership. | Same-provider model switch succeeds; provider/account switch rejects stale native identity without changing owner/cwd; cold restart can continue supported sessions. |
+| Input and receipts | Own HTTP request/message IDs and durable receipt events. | `Session.Send` / message delivery own turn routing; use SDK receipt operations. | Busy/idle boundary delivers once; identical texts have distinct receipts; late confirmation targets the right message; rejected/uncertain/queued outcomes remain distinct. |
+| History | Store product messages/events and render native transcript reconciliation. | Supply normalized current-turn/final/progress data with stable session identity. | Cold restoration and retained follow-ups neither duplicate history nor omit additional replies; each advertised reader is actually callable. |
+| Termination | Stop/reap the intended application session and update terminal metadata. | Cancel the active turn, finish its canonical lifecycle once, and release only owned resources via provider operations. | Cancel then reuse, bounded retention, reset, shutdown, and no effect on another session; helper paths must match the primary path or be retired. |
+| Certification | Run the generated cross-repo provider/surface matrix and record exact revisions. | Exercise generic constructor, lifecycle, and operation conformance for every declared provider. | Deliberately missing bindings fail deterministic checks; every selected live P0 executes; required P1 evidence is tracked. |
+
+### Additional onboarding gaps exposed by the deeper trace
+
+These are architectural/test gaps rather than claims that all existing provider
+routes are currently broken:
+
+1. **Registration in mcpagent is still multidimensional.** A provider can need
+   changes in `llm/providers.go`, `CodingRuntimeConfig` and its option conversion
+   in `agent/definition.go`, private fields/options in `agent/agent.go`, integration
+   appenders, the persistence map/enable switch, native session getters/setters,
+   and projected artifact cleanup. A new enum plus SDK contract is insufficient.
+   Use generic lifecycle and native-handle state and one operation binding, with
+   bidirectional validation. Keep provider-specific serialization at the SDK edge.
+2. **Builder has multiple assembly paths.** Main chat passes five persistence
+   booleans through `LLMAgentConfig`; workflow assembly constructs its own
+   `CodingRuntimeConfig`; the shared `internal/agentsession` helper has another
+   provider switch. Cover each supported entry point with one table-driven
+   propagation contract, and remove unused alternatives rather than maintaining
+   them indefinitely. R5 is a concrete example of divergence.
+3. **Durable receipt tests bypass production dispatch.** The current
+   `live_input_durable_test.go` cases inject `internalDurableAckHandler`. They
+   prove event mapping and outcomes, but would not detect an omitted branch in
+   `awaitLiveInputDurable`. Require the SDK capability-to-operation binding in
+   addition to these useful server tests; retain a live cross-stack receipt proof.
+4. **History support is declared independently at three levels.** SDK transcript
+   metadata, the builder's support/reader switches, and the frontend's
+   `CODING_CLI_PROVIDERS` set are separate. The existing backend guard does not
+   validate the frontend set. Carry a normalized reconciliation capability in the
+   manifest or completion event and test it through the UI.
+
+### Extension to the implementation plan
+
+First fix R4's provider-identity validation and add its failed regression case to
+the permanent suite. Treat a rejected restore as a distinct result rather than
+silently assuming prior context exists. Add the inverse registration checks from
+R3 and actual dispatch conformance for receipt/history/lifecycle operations.
+
+Then replace the repeated provider persistence flags with a shared lifecycle
+policy inside the existing `CodingRuntimeConfig`. Migrate main chat and workflow
+assembly together, with explicit propagation fixtures for both. Audit or retire
+`internal/agentsession` before using it for another product.
+
+The onboarding completion criterion applies across both repositories: adding a
+synthetic provider binding should exercise constructor → bridge/options →
+session restore → delivery → history → cleanup without adding provider-name
+branches to generic agent or builder code. Real adapter behavior still requires
+authenticated P0/P1 tests; a synthetic provider only certifies the plumbing.
+
+### Follow-up validation
+
+- Existing focused `mcpagent/agent` tests passed for session-ID extraction/resume,
+  typed handles, model-preserving restore, account isolation, continuation checks,
+  steering, persistence, integration/cwd coverage, and canonical P0 turn lifecycle.
+- Existing focused builder tests passed in `internal/agentsession`,
+  `pkg/agentwrapper`, and `cmd/server` for definition/bridge configuration,
+  additional bridge tools, persistence/transport, native transcript support,
+  provider connections, and durable receipt events.
+- The added temporary R4 regression failed as expected, then was removed. R5
+  is source-verified only; its potential process leak was not exercised live.
+- No authenticated CLI runs, full suites, or production code changes. The
+  mcpagent working tree remained clean. This follow-up is recorded here to keep
+  the onboarding review combined rather than duplicating it in both repositories.

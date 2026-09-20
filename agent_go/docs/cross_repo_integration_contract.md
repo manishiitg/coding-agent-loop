@@ -32,6 +32,10 @@ handling, cancellation.
 
 ---
 
+For the CLI onboarding file map, cross-repository code review, and proposed
+registration consolidation, see [Coding CLI onboarding review](../../docs/core/coding_cli_onboarding_contract_review.md).
+That review is a proposal and findings record; it does not mean the refactor is implemented.
+
 ## Boundaries
 
 ### Boundary 1: coding-agent-loop → mcpagent

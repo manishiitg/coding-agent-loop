@@ -35,8 +35,29 @@ export function makeRestoredEvent(
   index: number,
 ): PollingEvent {
   const timestamp = typeof data.timestamp === 'string' ? data.timestamp : new Date().toISOString()
+  // A bounded tail page moves forward as new turns land. `index` is only the
+  // row's position inside that moving projection, so reusing it as the whole
+  // React/Virtuoso identity can assign an old rendered reply to a different
+  // message after completion-time hydration. Keep the positional component
+  // (it distinguishes repeated identical messages) but also bind the id to
+  // the reader-visible carrier. The same message stays stable; different text
+  // at the same projected index necessarily remounts.
+  const identityText = [
+    type,
+    typeof data.content === 'string' ? data.content : '',
+    typeof data.final_result === 'string' ? data.final_result : '',
+    typeof data.result === 'string' ? data.result : '',
+    typeof data.question === 'string' ? data.question : '',
+    typeof data.restored_from === 'string' ? data.restored_from : '',
+  ].join('\u0000')
+  let identityHash = 0x811c9dc5
+  for (let offset = 0; offset < identityText.length; offset += 1) {
+    identityHash ^= identityText.charCodeAt(offset)
+    identityHash = Math.imul(identityHash, 0x01000193)
+  }
+  const identity = (identityHash >>> 0).toString(36)
   return {
-    id: `restored-${sessionId}-${index}-${type}`,
+    id: `restored-${sessionId}-${index}-${type}-${identity}`,
     type,
     timestamp,
     session_id: sessionId,

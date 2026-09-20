@@ -62,9 +62,18 @@ export class TranscriptScrollController {
   }
 }
 
-// Maintain Virtuoso's inverse-pagination index using the first surviving row.
-// This also handles a tool batch that coalesces at the pagination boundary.
+// Maintain Virtuoso's inverse-pagination index only for a real leading-page
+// change. Completion reconciliation can replace/reorder the bounded tail while
+// also appending a new reply. Treating the first coincidentally surviving row
+// as proof of a prepend corrupts Virtuoso's index mapping and can leave an old
+// reply rendered beside the new one. A pagination prepend/removal preserves
+// the existing tail; a live tail replacement does not.
+//
+// The first-survivor calculation still handles a tool batch that coalesces at
+// the pagination boundary once that preserved-tail invariant is established.
 export function prependedIndex(previous: string[], next: string[], index: number): number {
+  if (previous.length === 0 || next.length === 0) return index
+  if (previous.at(-1) !== next.at(-1)) return index
   const nextIndices = new Map(next.map((key, i) => [key, i]))
   for (let i = 0; i < previous.length; i++) {
     const nextIndex = nextIndices.get(previous[i])

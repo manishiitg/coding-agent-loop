@@ -24,6 +24,11 @@ describe('transcript scroll ownership', () => {
     expect(prependedIndex(['a', 'b'], ['older', 'a', 'b'], 100)).toBe(99)
     expect(prependedIndex(['old-batch', 'b'], ['older', 'merged-batch', 'b'], 100)).toBe(99)
     expect(prependedIndex(['a', 'b'], ['a', 'b', 'c'], 100)).toBe(100)
+    expect(prependedIndex(
+      ['old-progress', 'old-reply'],
+      ['replacement-progress', 'old-reply', 'new-user', 'new-reply'],
+      100,
+    )).toBe(100)
   })
   it('keeps reading positions and expanded tools scoped to the chat', () => {
     const first = transcriptReadingState('test-chat-a')

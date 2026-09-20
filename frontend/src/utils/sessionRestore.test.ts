@@ -44,6 +44,7 @@ vi.mock('../services/api', () => ({
 }))
 
 import { appendTimelineAndApplyConfirmations, conversationToRestoredEvents, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from './sessionRestore'
+import { makeRestoredEvent } from '../../shared/session/restore'
 import { readLiveInputConfirmation } from './liveInputReceipt'
 import { buildCleanConversationItems } from './cleanConversation'
 
@@ -78,6 +79,21 @@ describe('hydrateTabEvents restored chat fallback', () => {
       'large-workflow-chat',
       { hasMore: true, nextOffset: 1 },
     )
+  })
+
+  it('does not reuse a restored row identity for different reply text', () => {
+    const oldReply = makeRestoredEvent('moving-tail', 'unified_completion', {
+      final_result: 'Older answer that occupied this projected row.',
+    }, 42)
+    const newReply = makeRestoredEvent('moving-tail', 'unified_completion', {
+      final_result: 'New answer after the bounded tail advanced.',
+    }, 42)
+    const repeatedNewReply = makeRestoredEvent('moving-tail', 'unified_completion', {
+      final_result: 'New answer after the bounded tail advanced.',
+    }, 42)
+
+    expect(newReply.id).not.toBe(oldReply.id)
+    expect(repeatedNewReply.id).toBe(newReply.id)
   })
 
   it('reads a shared bot transcript without resuming its owner session', async () => {

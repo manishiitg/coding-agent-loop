@@ -832,3 +832,28 @@ func TestExecuteAutomationRunSetupFailureBecomesTerminal(t *testing.T) {
 		t.Fatalf("runs = %d, want 1 (no record for the unclaimed cron run)", len(runs))
 	}
 }
+
+func TestTriggerTurnMessageInlinesSmallPayloads(t *testing.T) {
+	small := []byte(`{"instruction":"check news"}`)
+	msg := triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", small)
+	if !strings.Contains(msg, `"instruction":"check news"`) || !strings.Contains(msg, "```json") {
+		t.Fatalf("small payload not inlined: %q", msg)
+	}
+	if strings.Contains(msg, "triggers/deliveries/r.json") {
+		t.Fatalf("small payload keeps the file reference: %q", msg)
+	}
+
+	big := bytes.Repeat([]byte("x"), inlineTriggerPayloadBytes+1)
+	msg = triggerTurnMessage("Brief me", "Started by webhook.", "triggers/deliveries/r.json", big)
+	if !strings.Contains(msg, "triggers/deliveries/r.json") {
+		t.Fatalf("large payload lost the file reference: %q", msg[:120])
+	}
+	if strings.Contains(msg, "```json") {
+		t.Fatal("large payload inlined despite the cap")
+	}
+
+	exact := bytes.Repeat([]byte("y"), inlineTriggerPayloadBytes)
+	if msg := triggerTurnMessage("B", "S.", "p", exact); !strings.Contains(msg, "```json") {
+		t.Fatal("payload at the cap should still inline")
+	}
+}

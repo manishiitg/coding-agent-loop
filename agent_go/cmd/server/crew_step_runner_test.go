@@ -31,7 +31,20 @@ func crewRunnerDeliveryBase(req stepworkflow.CrewStepRequest) string {
 	if scope == "" {
 		scope = req.WorkflowRunFolder
 	}
-	return crewStepDeliveryBase(req.WorkflowID, scope, req.Group, req.StepID)
+	return crewStepDeliveryBase(req.WorkflowID, scope, req.Group, req.StepID, req.TriggerID, runDestinationCrewChat)
+}
+
+func TestCrewStepDeliveryBaseVariesWithTrigger(t *testing.T) {
+	base := crewStepDeliveryBase("wf-1", "exec-1", "g", "crew-1", "trig-1", runDestinationCrewChat)
+	if other := crewStepDeliveryBase("wf-1", "exec-1", "g", "crew-1", "trig-2", runDestinationCrewChat); other == base {
+		t.Fatal("retargeted trigger reuses the delivery key")
+	}
+	if other := crewStepDeliveryBase("wf-1", "exec-1", "g", "crew-1", "trig-1", runDestinationIsolated); other == base {
+		t.Fatal("flipped destination reuses the delivery key")
+	}
+	if same := crewStepDeliveryBase("wf-1", "exec-1", "g", "crew-1", "trig-1", runDestinationCrewChat); same != base {
+		t.Fatal("identical step attempt changed the delivery key")
+	}
 }
 
 func TestRunCrewStepAdoptsSuccessfulDuplicate(t *testing.T) {

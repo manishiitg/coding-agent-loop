@@ -89,7 +89,14 @@ func (r *crewStepRunner) RunCrewStep(ctx context.Context, req stepworkflow.CrewS
 	// the live delivery instead of invoking the trigger twice. It keys on
 	// the immutable execution identity: run folders are reused between
 	// executions and would let a later execution adopt a stale success.
-	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.Group, req.StepID)
+	// The trigger and its destination join the key so retargeting a step
+	// (or flipping isolated/crew_chat) fires a new run instead of
+	// adopting the previous trigger's success.
+	destination := runDestinationCrewChat
+	if _, _, _, trigger, terr := r.crews.findInternalProductTrigger(ctx, r.userID, req.ProfileID, req.ProjectID, req.TriggerID); terr == nil && trigger != nil && strings.EqualFold(strings.TrimSpace(trigger.RunDestination), runDestinationIsolated) {
+		destination = runDestinationIsolated
+	}
+	base := crewStepDeliveryBase(req.WorkflowID, runScope, req.Group, req.StepID, req.TriggerID, destination)
 	runID := ""
 	for attempt := 0; ; attempt++ {
 		deliveryID := base
@@ -202,8 +209,8 @@ func crewStepResultFromStatus(status productWebhookRunStatus) stepworkflow.CrewS
 // runScope is the immutable execution identity (see RunCrewStep); group is
 // the variable group, which shares the execution but renders its own
 // instruction and inputs and must never adopt another group's delivery.
-func crewStepDeliveryBase(workflowID, runScope, group, stepID string) string {
-	return "crew-step:" + workflowID + ":" + runScope + ":" + group + ":" + stepID
+func crewStepDeliveryBase(workflowID, runScope, group, stepID, triggerID, destination string) string {
+	return "crew-step:" + workflowID + ":" + runScope + ":" + group + ":" + stepID + ":" + triggerID + ":" + destination
 }
 
 // appendCrewPollTransition records a newly observed Crew run status. Only

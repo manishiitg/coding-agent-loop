@@ -4,7 +4,7 @@ import { useCrewAttachmentAlias, useCrewTrigger } from './useCrewStepLookups'
 
 function destinationLabel(runDestination: string): string {
   return runDestination === 'isolated'
-    ? 'Trigger history — this trigger keeps its own conversation across runs'
+    ? 'Fresh chat — every run starts a new conversation for this trigger'
     : 'Main Crew chat — the turn joins the shared crew conversation'
 }
 

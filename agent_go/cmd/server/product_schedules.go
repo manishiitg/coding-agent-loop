@@ -1009,11 +1009,18 @@ func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, ca
 		cancel()
 	}()
 
+	// One identity for the run record and, for triggers, the chat key.
+	runID := firstNonEmptyTrimmed(options.RunID, uuid.NewString())
 	var binding productConversationBinding
 	var bindErr error
 	if job.ProjectID != "" && job.Schedule.Isolated {
 		kind := firstNonEmptyTrimmed(job.AutomationKind, "schedule")
-		binding, bindErr = resolveIsolatedProjectAutomationBinding(runCtx, job.UserID, job.Profile, job.ProjectID, kind, job.Schedule.ID, job.ProjectTitle+" · "+job.Schedule.Name)
+		automationID := isolatedAutomationID(kind, job.Schedule.ID, runID)
+		title := job.ProjectTitle + " · " + job.Schedule.Name
+		if strings.EqualFold(kind, "trigger") {
+			title += " · " + time.Now().Format("2006-01-02 15:04")
+		}
+		binding, bindErr = resolveIsolatedProjectAutomationBinding(runCtx, job.UserID, job.Profile, job.ProjectID, kind, automationID, title)
 	} else if job.ProjectID != "" {
 		binding, bindErr = resolveProductConversationBinding(runCtx, job.UserID, job.Profile, job.ProjectID)
 	} else if job.Schedule.Isolated {
@@ -1045,7 +1052,7 @@ func (s *ProductScheduleService) executeAutomationRun(runCtx context.Context, ca
 	runsWorkspace := agentProfileRuntimeWorkspace(job.UserID, conversation.WorkspacePath)
 	startedAt := time.Now().UTC()
 	entry := &ScheduleRunEntry{
-		ID:            firstNonEmptyTrimmed(options.RunID, uuid.NewString()),
+		ID:            runID,
 		ScheduleID:    job.ID(),
 		TriggerSource: triggerSource,
 		Webhook:       options.Webhook,

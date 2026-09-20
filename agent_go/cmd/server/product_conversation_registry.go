@@ -888,16 +888,30 @@ func resolveIsolatedScheduleBinding(ctx context.Context, userID string, profile 
 }
 
 // resolveIsolatedProjectAutomationBinding gives one project schedule or trigger
-// a durable conversation of its own. It inherits the Crew project's workspace
+// run a conversation of its own. It inherits the Crew project's workspace
 // and capability policy, but it is not authoritative for product.json's main
-// session id. Repeated runs of the same automation therefore keep their own
-// context without steering or writing into the Crew chat.
+// session id. Schedules keep one durable chat across runs; triggers open a
+// fresh chat per run (the run ID joins the key via isolatedAutomationID).
+// Neither steers nor writes into the Crew chat.
 func resolveIsolatedProjectAutomationBinding(ctx context.Context, userID string, profile agentprofiles.Profile, projectID, kind, automationID, title string) (productConversationBinding, error) {
 	base, err := resolveProductConversationBinding(ctx, userID, profile, projectID)
 	if err != nil {
 		return productConversationBinding{}, err
 	}
 	return isolateProjectAutomationBinding(base, projectID, kind, automationID, title)
+}
+
+// isolatedAutomationID keys one isolated automation conversation.
+// Schedules keep a durable chat across runs; triggers open a fresh
+// chat per run, so the run ID joins the trigger key.
+func isolatedAutomationID(kind, automationID, runID string) string {
+	if !strings.EqualFold(strings.TrimSpace(kind), "trigger") {
+		return automationID
+	}
+	if strings.TrimSpace(runID) == "" {
+		return automationID
+	}
+	return strings.TrimSpace(automationID) + ":" + strings.TrimSpace(runID)
 }
 
 func isolateProjectAutomationBinding(base productConversationBinding, projectID, kind, automationID, title string) (productConversationBinding, error) {

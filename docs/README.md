@@ -15,6 +15,16 @@ Start with the operator journey, then use the subsystem references when you need
 
 `docs/bugs/` is an incident archive — see [its index](bugs/README.md), which groups the 2026-08-01/02 investigations into how the agent-facing tool and permission contract actually behaves. `docs/refactor/` records implementation migrations — see [its index](refactor/README.md), where status distinguishes a shipped design from one still being built. Neither folder is the recommended entry point for operators, but the bugs index is the fastest way to understand why an agent is told one thing and the runtime does another.
 
+## Bot Connectors & Messaging
+
+- [Channel connectors overview](channel-connectors.md): Slack and WhatsApp at a glance.
+- [Slack connections](core/slack_connections.md): per-workflow Slack apps, ownership, and the multi-listener runtime.
+- [Bot connectors architecture](core/bot_connectors_combined.md): shared lifecycle, routing, and code-review findings.
+- [Bot connector system](core/bot_connector_system.md): sessions, channels, and event flow.
+- [Bot connectors QA checklist](core/bot_connectors_qa_checklist.md): manual sign-off plan for connector changes.
+
+This folder also mirrors to the [GitHub wiki](https://github.com/manishiitg/coding-agent-loop/wiki) on every push to `main` — edit here, never there.
+
 ## Placement Rules
 
 - Put a doc in `workflow/` when it is primarily about workflow authoring, workflow execution, step configuration, or workflow-only UX.

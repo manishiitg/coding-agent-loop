@@ -9,7 +9,7 @@
 #
 # Usage:
 #   deploy-dominion.sh              # clone/pull, build, stage a new release. Does NOT touch `current` or restart anything.
-#   deploy-dominion.sh --activate   # also flip `current` to the just-built release and restart dominion-agent, with a health-check and automatic rollback.
+#   deploy-dominion.sh --activate   # also flip `current` to the just-built release and restart the services, with a health-check and automatic rollback.
 #
 # Lessons baked in from a bad manual deploy this session:
 #   1. agent_go's actual `go build` target is the module root (agent_go/,
@@ -223,7 +223,7 @@ fi
 
 PREVIOUS_RELEASE="$(readlink -f "$CURRENT_LINK" 2>/dev/null || true)"
 echo ""
-echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent"
+echo "==> Activating: flipping $CURRENT_LINK -> $RELEASE_DIR and restarting dominion-workspace, dominion-agent, dominion-gateway"
 ln -sfn "$RELEASE_DIR" "$CURRENT_LINK"
 mkdir -p "$HOME/.config/systemd/user/dominion-agent.service.d"
 printf '%s\n' '[Service]' 'Environment=AGENTWORKS_MCP_STATE_DIR=/srv/dominion/state/mcp' > "$HOME/.config/systemd/user/dominion-agent.service.d/30-durable-mcp.conf"
@@ -250,6 +250,25 @@ if ! systemctl --user is-active --quiet dominion-workspace; then
 fi
 systemctl --user restart dominion-agent
 sleep 3
+# The gateway binary is rebuilt into every release but was never restarted
+# here, so it kept running the previous release indefinitely — gateway fixes
+# (e.g. PAT pass-through for CLI/MCP) staged on disk yet never took effect.
+systemctl --user restart dominion-gateway
+sleep 2
+if ! systemctl --user is-active --quiet dominion-gateway; then
+  echo "FATAL: dominion-gateway failed to start on the new release — rolling back to $PREVIOUS_RELEASE" >&2
+  if [[ -n "$PREVIOUS_RELEASE" ]]; then
+    ln -sfn "$PREVIOUS_RELEASE" "$CURRENT_LINK"
+    systemctl --user restart dominion-workspace
+    sleep 2
+    systemctl --user restart dominion-agent
+    sleep 3
+    systemctl --user restart dominion-gateway
+    sleep 2
+    systemctl --user is-active --quiet dominion-gateway && echo "    rollback successful, dominion-gateway active again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
+  fi
+  exit 1
+fi
 
 if curl -fsS -o /dev/null -w '' http://127.0.0.1:21000/api/health; then
   echo "==> Health check passed. Active release: $(readlink -f "$CURRENT_LINK")"
@@ -261,6 +280,8 @@ else
     sleep 2
     systemctl --user restart dominion-agent
     sleep 3
+    systemctl --user restart dominion-gateway
+    sleep 2
     curl -fsS -o /dev/null http://127.0.0.1:21000/api/health && echo "    rollback successful, service healthy again" || echo "    ROLLBACK ALSO FAILED — needs manual intervention" >&2
   fi
   exit 1

@@ -27,10 +27,10 @@ func TestCLIPlanAndFileArguments(t *testing.T) {
 		tool   string
 		fields map[string]any
 	}{
-		{[]string{"plan", "update-scripted-step", "--workflow", "wf-1", "--expected-revision", "rev", "--title", "New title", "--input", "-"}, `{"existing_step_id":"step-1","reason":"clarify","enabled":false}`, "update_scripted_step", map[string]any{"workflow_id": "wf-1", "expected_revision": "rev", "title": "New title", "existing_step_id": "step-1", "reason": "clarify", "enabled": false}},
-		{[]string{"files", "write", "--workflow", "wf-1", "--path", "notes.md", "--content-file", "-", "--expected-revision", "missing"}, "# Notes\nKeep this newline.\n", "write_file", map[string]any{"workflow_id": "wf-1", "path": "notes.md", "content": "# Notes\nKeep this newline.\n", "expected_revision": "missing"}},
-		{[]string{"builder", "status", "--workflow", "wf-1", "--session", "s-1", "--since-index", "-1", "--limit", "10"}, "", "builder_status", map[string]any{"workflow_id": "wf-1", "session_id": "s-1", "since_index": float64(-1), "limit": float64(10)}},
-		{[]string{"builder", "reply", "--workflow", "wf-1", "--session", "s-1", "--request-id", "input-1", "--response", "Use the existing invoice schema."}, "", "builder_reply_input", map[string]any{"workflow_id": "wf-1", "session_id": "s-1", "request_id": "input-1", "response": "Use the existing invoice schema."}},
+		{[]string{"plan", "get", "--workflow", "wf-1"}, "", "get_plan", map[string]any{"workflow_id": "wf-1"}},
+		{[]string{"files", "read", "--workflow", "wf-1", "--path", "notes.md"}, "", "read_file", map[string]any{"workflow_id": "wf-1", "path": "notes.md"}},
+		{[]string{"guidance", "topic", "--topic", "plan-change-impact"}, "", "get_guidance_topic", map[string]any{"topic": "plan-change-impact"}},
+		{[]string{"knowledge", "read", "--workflow", "wf-1", "--path", "learnings/_global/SKILL.md"}, "", "read_workflow_knowledge", map[string]any{"workflow_id": "wf-1", "path": "learnings/_global/SKILL.md"}},
 		{[]string{"tools", "call", "native_future_tool", "--set", `nested={"enabled":true}`, "--set", `count=9007199254740993`}, "", "native_future_tool", map[string]any{"nested": map[string]any{"enabled": true}}},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
@@ -72,6 +72,21 @@ func TestCLIPlanAndFileArguments(t *testing.T) {
 				t.Fatalf("code=%d called=%v out=%s err=%s", code, called, &stdout, &stderr)
 			}
 		})
+	}
+}
+
+func TestCLIWriteCommandsRejected(t *testing.T) {
+	for _, args := range [][]string{
+		{"plan", "update-scripted-step", "--workflow", "wf-1"},
+		{"files", "write", "--workflow", "wf-1", "--path", "notes.md"},
+		{"files", "patch", "--workflow", "wf-1", "--path", "notes.md"},
+		{"builder", "chat", "--workflow", "wf-1", "--message", "hi"},
+	} {
+		var stdout, stderr bytes.Buffer
+		full := append([]string{"--config", filepath.Join(t.TempDir(), "config.json"), "--server", "http://127.0.0.1:1", "--json"}, args...)
+		if code := run(context.Background(), full, strings.NewReader(""), &stdout, &stderr, func(string) string { return "jwt" }); code == 0 {
+			t.Fatalf("%v accepted", args)
+		}
 	}
 }
 

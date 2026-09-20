@@ -17,7 +17,6 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
-	planops "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	workspacehandlers "github.com/manishiitg/coding-agent-loop/workspace/handlers"
 	"github.com/spf13/viper"
 )
@@ -153,8 +152,8 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 		}
 		body := externalTestBody(t, w, 200)
 		definitions, ok := body["tools"].([]any)
-		if !ok || len(definitions) < 20 {
-			t.Fatalf("missing catalog: %s", w.Body.String())
+		if !ok || len(definitions) != 15 {
+			t.Fatalf("unexpected catalog size %d: %s", len(definitions), w.Body.String())
 		}
 		names := map[string]bool{}
 		for _, raw := range definitions {
@@ -172,72 +171,42 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 				t.Fatal("private implementation field leaked")
 			}
 		}
-		for _, name := range []string{"list_workflows", "get_plan", "update_scripted_step", "update_step_config", "read_file", "write_file", "patch_file", "builder_chat", "builder_status", "builder_cancel"} {
+		for _, name := range []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs"} {
 			if !names[name] {
 				t.Fatalf("missing tool %s", name)
 			}
 		}
-		for _, name := range []string{"run_full_workflow", "execute_step", "migrate_declared_execution_mode"} {
+		// v1 is read-only: mutations and Builder execution stay out of the
+		// catalog alongside the internal workshop tools.
+		for _, name := range []string{"run_full_workflow", "execute_step", "migrate_declared_execution_mode", "write_file", "patch_file", "update_scripted_step", "update_step_config", "builder_chat", "builder_status", "builder_reply_input", "builder_cancel"} {
 			if names[name] {
-				t.Fatalf("internal tool exposed: %s", name)
+				t.Fatalf("write tool exposed: %s", name)
 			}
 		}
 	}
 }
 
-func TestExternalToolsHTTPPlanMutationPersistsAndRejectsStaleRevision(t *testing.T) {
+func TestExternalToolsHTTPMutationsAreNotExposed(t *testing.T) {
 	f := newExternalToolsFixture(t)
+	before := f.read(t, "Workflow/invoices/planning/plan.json")
 	revision := f.planRevision(t, "owner")
-	args := map[string]any{"workflow_id": "invoices", "expected_revision": revision, "existing_step_id": "fetch-invoices", "title": "Fetch pending invoices", "reason": "Clarify pending invoice scope"}
-	body := externalTestBody(t, f.call(t, "owner", "update_scripted_step", args), 200)
-	changedRevision, _ := body["revision"].(string)
-	if changedRevision == "" || changedRevision == revision {
-		t.Fatalf("revision unchanged: %v", body)
+	calls := map[string]map[string]any{
+		"update_scripted_step": {"workflow_id": "invoices", "expected_revision": revision, "existing_step_id": "fetch-invoices", "title": "Denied", "reason": "Attempt change"},
+		"update_step_config":   {"workflow_id": "invoices", "expected_revision": revision, "step_id": "fetch-invoices", "reason": "Attempt change"},
+		"write_file":           {"workflow_id": "invoices", "path": "docs/new.md", "expected_revision": "missing", "content": "Denied"},
+		"patch_file":           {"workflow_id": "invoices", "path": "docs/process.md", "expected_revision": "anything", "diff": "@@ -1 +1 @@\n-old\n+new\n"},
+		"builder_chat":         {"workflow_id": "invoices", "message": "Denied"},
+		"builder_status":       {"workflow_id": "invoices", "session_id": "anything"},
+		"builder_cancel":       {"workflow_id": "invoices", "session_id": "anything"},
 	}
-	data := f.read(t, "Workflow/invoices/planning/plan.json")
-	var plan planops.PlanningResponse
-	if err := json.Unmarshal([]byte(data), &plan); err != nil {
-		t.Fatal(err)
+	for name, args := range calls {
+		body := externalTestBody(t, f.call(t, "owner", name, args), 404)
+		if body["error"].(map[string]any)["code"] != "unknown_tool" {
+			t.Fatalf("wrong error for %s: %v", name, body)
+		}
 	}
-	if len(plan.Steps) != 1 || plan.Steps[0].GetTitle() != "Fetch pending invoices" {
-		t.Fatalf("unexpected persisted plan %s", data)
-	}
-	matches, err := filepath.Glob(filepath.Join(f.docs, "Workflow/invoices/planning/changelog/*.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(matches) != 1 {
-		t.Fatalf("expected native changelog, found %v", matches)
-	}
-	raw, err := os.ReadFile(matches[0])
-	if err != nil {
-		t.Fatal(err)
-	}
-	var changelog planops.PlanChangelog
-	if err := json.Unmarshal(raw, &changelog); err != nil {
-		t.Fatal(err)
-	}
-	if len(changelog.Entries) != 1 {
-		t.Fatalf("unexpected changelog %s", raw)
-	}
-	entry := changelog.Entries[0]
-	if entry.Tool != "update_scripted_step" || entry.Reason != "Clarify pending invoice scope" || entry.Origin.AgentName != "agentworks-api" || !strings.HasPrefix(entry.Origin.SessionID, "external-owner-") {
-		t.Fatalf("missing native provenance %+v", entry)
-	}
-	if got := f.planRevision(t, "owner"); got != changedRevision {
-		t.Fatalf("returned revision %s does not match fresh %s", changedRevision, got)
-	}
-	args["title"] = "Stale overwrite"
-	stale := externalTestBody(t, f.call(t, "owner", "update_scripted_step", args), 409)
-	if stale["error"].(map[string]any)["code"] != "revision_conflict" {
-		t.Fatalf("wrong stale error %v", stale)
-	}
-	if got := f.read(t, "Workflow/invoices/planning/plan.json"); got != data {
-		t.Fatal("stale request changed plan")
-	}
-	after, _ := os.ReadFile(matches[0])
-	if string(after) != string(raw) {
-		t.Fatal("stale request changed changelog")
+	if f.read(t, "Workflow/invoices/planning/plan.json") != before {
+		t.Fatal("unexposed mutation changed plan")
 	}
 }
 
@@ -252,9 +221,8 @@ func TestExternalToolsHTTPWorkflowVisibilityAndReadonlyOwnerGuard(t *testing.T) 
 		externalTestBody(t, f.call(t, "owner", tool, map[string]any{"workflow_id": "secret"}), 404)
 	}
 	for _, user := range []string{"reader", "readonly-owner"} {
-		revision := f.planRevision(t, user)
-		externalTestBody(t, f.call(t, user, "update_scripted_step", map[string]any{"workflow_id": "invoices", "expected_revision": revision, "existing_step_id": "fetch-invoices", "title": "Denied", "reason": "Attempt change"}), 403)
-		externalTestBody(t, f.call(t, user, "write_file", map[string]any{"workflow_id": "invoices", "path": "docs/new.md", "expected_revision": "missing", "content": "Denied"}), 403)
+		externalTestBody(t, f.call(t, user, "get_plan", map[string]any{"workflow_id": "invoices"}), 200)
+		externalTestBody(t, f.call(t, user, "read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md"}), 200)
 	}
 	externalTestBody(t, f.call(t, "outsider", "get_plan", map[string]any{"workflow_id": "invoices"}), 404)
 	externalTestBody(t, f.call(t, "", "list_workflows", nil), 401)
@@ -263,28 +231,15 @@ func TestExternalToolsHTTPWorkflowVisibilityAndReadonlyOwnerGuard(t *testing.T) 
 	}
 }
 
-func TestExternalToolsHTTPRejectsUnknownArgumentsAndProtectsPlanFiles(t *testing.T) {
+func TestExternalToolsHTTPRejectsUnknownArguments(t *testing.T) {
 	f := newExternalToolsFixture(t)
-	revision := f.planRevision(t, "owner")
 	before := f.read(t, "Workflow/invoices/planning/plan.json")
-	externalTestBody(t, f.call(t, "owner", "update_scripted_step", map[string]any{"workflow_id": "invoices", "expected_revision": revision, "existing_step_id": "fetch-invoices", "reason": "Attempt unknown field", "titel": "Misspelled"}), 400)
+	externalTestBody(t, f.call(t, "owner", "get_plan", map[string]any{"workflow_id": "invoices", "titel": "Misspelled"}), 400)
 	externalTestBody(t, f.call(t, "owner", "read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md", "managed": true}), 400)
-	for _, tool := range []string{"write_file", "patch_file"} {
-		for _, p := range []string{"planning/plan.json", "planning/step_config.json", "evaluation/evaluation_plan.json", "workflow.json"} {
-			args := map[string]any{"workflow_id": "invoices", "path": p, "expected_revision": "missing"}
-			if tool == "write_file" {
-				args["content"] = "{}"
-			} else {
-				args["diff"] = "@@ -1 +1 @@\n-old\n+new\n"
-			}
-			body := externalTestBody(t, f.call(t, "owner", tool, args), 403)
-			if body["error"].(map[string]any)["code"] != "protected_path" {
-				t.Fatalf("wrong protected error: %v", body)
-			}
-		}
-	}
+	// Reads reach plan files; there is no write path to protect in v1.
+	externalTestBody(t, f.call(t, "owner", "read_file", map[string]any{"workflow_id": "invoices", "path": "planning/plan.json"}), 200)
 	if f.read(t, "Workflow/invoices/planning/plan.json") != before {
-		t.Fatal("invalid/protected request changed plan")
+		t.Fatal("invalid request changed plan")
 	}
 }
 
@@ -307,8 +262,8 @@ func TestExternalToolsInternalFileEndpointCannotBeProxied(t *testing.T) {
 }
 
 // This uses the same transport client consumed by CLI and MCP against real
-// authentication, external HTTP handlers, native plan tools, and disk-backed
-// workspace operations. Only workflow discovery is stubbed by the fixture.
+// authentication, external HTTP handlers, and disk-backed workspace
+// operations. Only workflow discovery is stubbed by the fixture.
 func TestExternalToolsClientTransportThroughJWTAndWorkspace(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	t.Setenv("AUTH_SECRET", "external-tools-transport-auth-secret-for-tests")
@@ -331,46 +286,39 @@ func TestExternalToolsClientTransportThroughJWTAndWorkspace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("authenticated catalog: %v", err)
 	}
-	found := false
+	found := map[string]bool{}
 	for _, tool := range catalog {
-		if tool.Name == "update_scripted_step" {
-			found = true
+		found[tool.Name] = true
+	}
+	for _, name := range []string{"get_plan", "read_file", "get_agent_context"} {
+		if !found[name] {
+			t.Fatalf("read tool %s missing from client catalog", name)
 		}
 	}
-	if !found {
-		t.Fatal("native plan mutation missing from client catalog")
+	for _, name := range []string{"update_scripted_step", "write_file", "builder_chat"} {
+		if found[name] {
+			t.Fatalf("write tool %s exposed in client catalog", name)
+		}
 	}
 	raw, err := client.Call(ctx, "get_plan", map[string]any{"workflow_id": "invoices"})
 	if err != nil {
 		t.Fatalf("get_plan: %v", err)
 	}
-	var before struct {
+	var plan struct {
 		Revision string `json:"revision"`
 	}
-	if err := json.Unmarshal(raw, &before); err != nil || before.Revision == "" {
+	if err := json.Unmarshal(raw, &plan); err != nil || plan.Revision == "" {
 		t.Fatalf("invalid get_plan result %s: %v", raw, err)
 	}
-	raw, err = client.Call(ctx, "update_scripted_step", map[string]any{
-		"workflow_id": "invoices", "expected_revision": before.Revision,
-		"existing_step_id": "fetch-invoices", "title": "Fetch invoices through authenticated client",
-		"reason": "Clarify invoice fetching through the external client",
-	})
+	raw, err = client.Call(ctx, "read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md"})
 	if err != nil {
-		t.Fatalf("native update through authenticated transport: %v", err)
+		t.Fatalf("read_file: %v", err)
 	}
-	var updated struct {
-		Revision string `json:"revision"`
+	var file struct {
+		Content string `json:"content"`
 	}
-	if err := json.Unmarshal(raw, &updated); err != nil || updated.Revision == "" || updated.Revision == before.Revision {
-		t.Fatalf("invalid mutation result %s: %v", raw, err)
-	}
-	var plan planops.PlanningResponse
-	data := f.read(t, "Workflow/invoices/planning/plan.json")
-	if err := json.Unmarshal([]byte(data), &plan); err != nil {
-		t.Fatal(err)
-	}
-	if len(plan.Steps) != 1 || plan.Steps[0].GetTitle() != "Fetch invoices through authenticated client" {
-		t.Fatalf("transport mutation did not persist: %s", data)
+	if err := json.Unmarshal(raw, &file); err != nil || file.Content == "" {
+		t.Fatalf("invalid read result %s: %v", raw, err)
 	}
 
 	// Missing and expired credentials must fail before workflow discovery or

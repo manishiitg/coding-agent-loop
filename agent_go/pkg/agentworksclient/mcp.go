@@ -18,11 +18,10 @@ type ToolCaller interface {
 // response. Skill loading is host-dependent and not guaranteed, so these
 // instructions — not an installable skill file — are the reliable channel
 // telling the agent how to obtain AgentWorks guidance.
-const MCPInstructions = `You are connected to an AgentWorks server. Discover workflow IDs with list_workflows first; IDs are never filesystem paths. ` +
-	`Before plan changes, call get_agent_context (with action plan_change) and load only the guidance topics relevant to the task via list_guidance_topics/get_guidance_topic. ` +
-	`Plan and file mutations are revision-checked: re-read on revision_conflict and never blind-retry. ` +
-	`Every plan mutation returns required_followups; complete them before treating the change as done. ` +
-	`For planning work that depends on AgentWorks conventions, prefer builder_chat; direct plan tools are structurally safe but carry no decision process.`
+const MCPInstructions = `You are connected to an AgentWorks server with a read-only connection: every tool reads; nothing creates, edits, or runs. ` +
+	`Discover workflow IDs with list_workflows first; IDs are never filesystem paths. ` +
+	`Call get_agent_context for token capabilities and the guidance version, and load only the guidance topics relevant to the task via list_guidance_topics/get_guidance_topic. ` +
+	`Answer from what you read; if the task needs a change, say so instead of attempting one.`
 
 // NewMCPServer discovers schemas from the hosted server. It contains no local
 // workflow logic or copied plan schemas. Restart the bridge to refresh tools

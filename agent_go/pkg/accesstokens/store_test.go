@@ -65,19 +65,21 @@ func TestLifecyclePersistenceAndRevocation(t *testing.T) {
 		t.Fatal("database permissions", info.Mode())
 	}
 }
-func TestRestrictedBuilderRejected(t *testing.T) {
+func TestWriteScopesRejected(t *testing.T) {
 	now := time.Now()
-	tkn := Token{Name: "test", UserID: "u", Scopes: append([]string{}, Scopes...), WorkflowIDs: []string{"wf"}, ExpiresAt: now.Add(time.Hour)}
-	if Validate(tkn, now) == nil {
-		t.Fatal("workflow-scoped shell access accepted")
+	for _, scopes := range [][]string{
+		append([]string{}, Scopes...),
+		{"workflows:read", "files:read", "files:write"},
+		{"workflows:read", "plan:write"},
+		{"builder:chat"},
+	} {
+		tkn := Token{Name: "test", UserID: "u", Scopes: scopes, AllWorkflows: true, ExpiresAt: now.Add(time.Hour)}
+		if Validate(tkn, now) == nil {
+			t.Fatalf("write scopes accepted: %v", scopes)
+		}
 	}
-	tkn.WorkflowIDs = nil
-	tkn.AllWorkflows = true
+	tkn := Token{Name: "test", UserID: "u", Scopes: []string{"workflows:read", "files:read"}, AllWorkflows: true, ExpiresAt: now.Add(time.Hour)}
 	if err := Validate(tkn, now); err != nil {
 		t.Fatal(err)
-	}
-	tkn.Scopes = []string{"builder:chat"}
-	if Validate(tkn, now) == nil {
-		t.Fatal("builder without full permissions accepted")
 	}
 }

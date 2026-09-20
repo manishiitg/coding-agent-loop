@@ -55,7 +55,7 @@ func TestExternalGuidanceTopicScopeSplit(t *testing.T) {
 func TestExternalAgentContextGlobalAndScoped(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	// No workflow required.
-	body := externalTestBody(t, f.call(t, "owner", "get_agent_context", map[string]any{"action": "plan_change"}), 200)
+	body := externalTestBody(t, f.call(t, "owner", "get_agent_context", map[string]any{}), 200)
 	if body["guidance_version"] != externalGuidanceVersion {
 		t.Fatalf("missing guidance version: %v", body)
 	}
@@ -68,8 +68,8 @@ func TestExternalAgentContextGlobalAndScoped(t *testing.T) {
 	if body["role"] != string(WorkflowAccessOwner) {
 		t.Fatalf("wrong role: %v", body)
 	}
-	// A reader sees the same token-level tools but an effective list without
-	// mutations the dispatch guard would deny.
+	// A reader sees the same token-level tools; with no mutations exposed,
+	// the effective list equals the available list.
 	body = externalTestBody(t, f.call(t, "reader", "get_agent_context", map[string]any{"workflow_id": "invoices"}), 200)
 	if body["role"] != string(WorkflowAccessRead) {
 		t.Fatalf("wrong role: %v", body)
@@ -78,7 +78,7 @@ func TestExternalAgentContextGlobalAndScoped(t *testing.T) {
 	for _, raw := range body["effective_tools"].([]any) {
 		effective[raw.(string)] = true
 	}
-	if !effective["get_plan"] || effective["update_scripted_step"] || effective["write_file"] {
+	if !effective["get_plan"] || !effective["read_file"] {
 		t.Fatalf("wrong effective tools: %v", effective)
 	}
 	unknown := f.call(t, "owner", "get_agent_context", map[string]any{"workflow_id": "nope"})
@@ -216,20 +216,15 @@ func TestExternalWorkflowKnowledgeRequiresFilesRead(t *testing.T) {
 	externalTestBody(t, w, 200)
 }
 
-func TestExternalPlanMutationReturnsRequiredFollowups(t *testing.T) {
+func TestExternalReadOnlyPreparationMentionsGuidance(t *testing.T) {
 	f := newExternalToolsFixture(t)
-	revision := f.planRevision(t, "owner")
-	args := map[string]any{"workflow_id": "invoices", "expected_revision": revision, "existing_step_id": "fetch-invoices", "title": "Fetch pending invoices", "reason": "Clarify pending invoice scope"}
-	body := externalTestBody(t, f.call(t, "owner", "update_scripted_step", args), 200)
-	followups, _ := body["required_followups"].([]any)
-	if len(followups) != 3 {
-		t.Fatalf("missing required_followups: %v", body)
-	}
+	body := externalTestBody(t, f.call(t, "owner", "get_agent_context", map[string]any{}), 200)
+	prep, _ := body["preparation"].([]any)
 	joined := ""
-	for _, item := range followups {
+	for _, item := range prep {
 		joined += item.(string) + "\n"
 	}
-	if !strings.Contains(joined, "plan-change-impact") {
-		t.Fatalf("followups do not point at guidance: %v", followups)
+	if !strings.Contains(joined, "read-only") || !strings.Contains(joined, "list_guidance_topics") {
+		t.Fatalf("preparation does not describe read-only guidance flow: %v", prep)
 	}
 }

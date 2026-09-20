@@ -71,6 +71,12 @@ func Validate(t Token, now time.Time) error {
 		if !slices.Contains(Scopes, s) || seen[s] {
 			return errors.New("invalid or duplicate permission")
 		}
+		// v1 is read-only, like the Slack and WhatsApp run-mode channels:
+		// write permissions are not issued. Existing stored tokens are
+		// unaffected; the external catalog exposes no mutations for them.
+		if s == "files:write" || s == "plan:write" || s == "builder:chat" {
+			return errors.New("v1 tokens are read-only: files:write, plan:write, and builder:chat are not issued")
+		}
 		seen[s] = true
 	}
 	if t.AllWorkflows && len(t.WorkflowIDs) > 0 || !t.AllWorkflows && len(t.WorkflowIDs) == 0 || len(t.WorkflowIDs) > 200 {

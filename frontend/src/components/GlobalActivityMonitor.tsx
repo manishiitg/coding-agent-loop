@@ -1,6 +1,6 @@
 import { useLLMStore } from '../stores/useLLMStore'
-import React, { useCallback, useEffect, useMemo } from 'react'
-import { AlertCircle, CalendarClock, Clock, Loader2, Pause, Webhook } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { AlertCircle, CalendarClock, ChevronDown, Clock, Loader2, Pause, Webhook } from 'lucide-react'
 import type { ActiveSessionInfo, RunningWorkflowInfo } from '../services/api-types'
 import { useChatStore, type ChatTab } from '../stores/useChatStore'
 import { useModeStore } from '../stores/useModeStore'
@@ -25,8 +25,6 @@ import { WorkflowIcon } from './workflow/WorkflowIcon'
 import type { CustomPreset } from '../types/preset'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 import { crewActivityTitle, showsActivityTypeIcon, type ActivityType } from '../utils/globalActivityPresentation'
-
-const MAX_INLINE_ACTIVITY_ITEMS = 2
 
 type ActivityMonitorItem =
   | { type: 'session'; id: string; session: ActiveSessionInfo }
@@ -124,8 +122,16 @@ function displaySessionTitle(
   return tab?.name || sessionTitle(session, workflow)
 }
 
-function shortText(value: string, limit = 72): string {
-  return value.length > limit ? `${value.slice(0, limit - 1)}…` : value
+function timeAgo(value?: string | number | null): string {
+  if (value === undefined || value === null || value === '') return ''
+  const ms = typeof value === 'number' ? value : new Date(value).getTime()
+  if (Number.isNaN(ms)) return ''
+  const minutes = Math.max(0, Math.floor((Date.now() - ms) / 60000))
+  if (minutes < 1) return 'just now'
+  if (minutes < 60) return `${minutes}m ago`
+  const hours = Math.floor(minutes / 60)
+  if (hours < 24) return `${hours}h ago`
+  return `${Math.floor(hours / 24)}d ago`
 }
 
 function normalizedActivityIdentity(value?: string | null): string {
@@ -336,116 +342,186 @@ export const GlobalActivityMonitor: React.FC = () => {
     })
   }, [workflowPresets])
 
+  const [open, setOpen] = useState(false)
+  const rootRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    const onPointerDown = (event: PointerEvent) => {
+      if (rootRef.current && !rootRef.current.contains(event.target as Node)) setOpen(false)
+    }
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('pointerdown', onPointerDown)
+    document.addEventListener('keydown', onKeyDown)
+    return () => {
+      document.removeEventListener('pointerdown', onPointerDown)
+      document.removeEventListener('keydown', onKeyDown)
+    }
+  }, [open ])
+
+  // Items can disappear (a run finishes) while the panel is open; never show
+  // a stale list, and close instead of stranding an empty panel.
+  useEffect(() => {
+    if (open && activityItems.length === 0) setOpen(false)
+  }, [open, activityItems.length])
+
+  const aggregate = useMemo(() => {
+    let needsInput = 0
+    let working = 0
+    for (const item of activityItems) {
+      if (item.type === 'builder-tab') {
+        if (item.tab.isStreaming || item.tab.isSyntheticTurn) working += 1
+        continue
+      }
+      const tone = statusTone(item.session)
+      if (tone === 'needs-input') needsInput += 1
+      else if (tone === 'running' || tone === 'background') working += 1
+    }
+    return { needsInput, working }
+  }, [activityItems])
+
+  const selectSession = useCallback((session: ActiveSessionInfo) => {
+    setOpen(false)
+    void handleOpenSession(session)
+  }, [handleOpenSession])
+
+  const selectBuilderTab = useCallback((tabId: string) => {
+    setOpen(false)
+    openGlobalTab(tabId)
+  }, [])
+
+  const showQuickSwitcher = useCallback(() => {
+    setOpen(false)
+    openActiveWorkInQuickSwitcher()
+  }, [openActiveWorkInQuickSwitcher])
+
   if (activityItems.length === 0) {
     return null
   }
 
-  const inlineActivityItems = activityItems.slice(0, MAX_INLINE_ACTIVITY_ITEMS)
-  const overflowActivityCount = Math.max(0, activityItems.length - inlineActivityItems.length)
-  // Keep the header compact: show one or two direct-jump pills, then send the
-  // rest to Ctrl+K's @active view.
-  const totalPillCount = inlineActivityItems.length + (overflowActivityCount > 0 ? 1 : 0)
-  const nameCharLimit = totalPillCount >= 3 ? 5 : totalPillCount === 2 ? 8 : 12
-  const pillClasses = 'flex items-center gap-1 px-2 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60'
+  const count = activityItems.length
+  // End user only cares about two states: is it working, or is it waiting for me?
+  const buttonLabel = aggregate.needsInput > 0
+    ? `${count} need${count === 1 ? 's' : ''} input`
+    : aggregate.working > 0
+      ? `${count} running`
+      : `${count} active`
+  const dotClasses = aggregate.needsInput > 0
+    ? 'bg-amber-500 dark:bg-amber-400'
+    : aggregate.working > 0
+      ? 'bg-blue-500 dark:bg-blue-400'
+      : 'bg-gray-400 dark:bg-gray-500'
 
   return (
-    <div className="relative flex items-center gap-1">
-      {inlineActivityItems.map((item, i) => {
-        if (item.type === 'builder-tab') {
-          const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
-          const isCrewBuilder = item.tab.metadata?.agentProfileId === 'work'
-          const builderPreset = isCrewBuilder ? undefined : workflowPresetForActivity(workflowPresets, undefined, item.tab) ?? currentWorkflowPreset ?? undefined
-          const builderWorkflowName = isCrewBuilder
-            ? item.tab.metadata?.agentProfileIdentityName || item.tab.metadata?.agentProfileProjectTitle || 'Crew'
-            : builderPreset?.label || ((item.tab.name && item.tab.name !== 'Automation Builder') ? item.tab.name : currentWorkflowPresetName)
+    <div ref={rootRef} className="relative">
+      <button
+        type="button"
+        data-tour="active-work-switcher"
+        data-testid="tour-active-work-switcher"
+        onClick={() => setOpen(current => !current)}
+        aria-expanded={open}
+        aria-label={`Active work: ${buttonLabel}. Activate to switch.`}
+        title="Active work — click to see everything running and switch to it"
+        className="flex items-center gap-1.5 px-2 py-1 rounded-md border text-xs font-medium transition-colors border-blue-200 bg-blue-50 text-blue-700 hover:bg-blue-100 dark:border-blue-800/60 dark:bg-blue-950/40 dark:text-blue-300 dark:hover:bg-blue-950/60"
+      >
+        <span className={`h-1.5 w-1.5 rounded-full motion-safe:animate-pulse ${dotClasses}`} />
+        <span className="whitespace-nowrap">{buttonLabel}</span>
+        <ChevronDown className={`w-3.5 h-3.5 opacity-70 transition-transform ${open ? 'rotate-180' : ''}`} />
+      </button>
 
-          return (
-            <React.Fragment key={item.id}>
-              {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
-              <button
-                type="button"
-                onClick={() => openGlobalTab(item.tab.tabId)}
-                className={pillClasses}
-                title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
-              >
-                {builderBusy
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                  : <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 dark:bg-emerald-300 animate-pulse" />}
-                {isCrewBuilder
-                  ? <EntityIdentityIcon icon={item.tab.metadata?.agentProfileProjectIcon} label={builderWorkflowName || 'Crew'} />
-                  : <WorkflowIcon icon={builderPreset?.icon} label={builderWorkflowName || 'Automation'} />}
-                <span className="hidden max-w-24 truncate sm:inline">
-                  {shortText(builderWorkflowName || 'Automation', nameCharLimit)}
-                </span>
-              </button>
-            </React.Fragment>
-          )
-        }
+      {open && (
+        <div
+          role="menu"
+          aria-label="Active work"
+          className="absolute right-0 top-full z-50 mt-2 w-80 max-w-[90vw] overflow-hidden rounded-lg border border-gray-200 bg-white shadow-xl dark:border-gray-700 dark:bg-gray-900"
+        >
+          <div className="px-3 py-2 text-xs font-semibold text-gray-700 dark:text-gray-300">
+            Active work · {count}
+          </div>
+          <div className="max-h-96 overflow-y-auto pb-1">
+            {activityItems.map(item => {
+              if (item.type === 'builder-tab') {
+                const builderBusy = item.tab.isStreaming || item.tab.isSyntheticTurn
+                const isCrewBuilder = item.tab.metadata?.agentProfileId === 'work'
+                const builderPreset = isCrewBuilder ? undefined : workflowPresetForActivity(workflowPresets, undefined, item.tab) ?? currentWorkflowPreset ?? undefined
+                const builderName = isCrewBuilder
+                  ? item.tab.metadata?.agentProfileIdentityName || item.tab.metadata?.agentProfileProjectTitle || 'Crew'
+                  : builderPreset?.label || ((item.tab.name && item.tab.name !== 'Automation Builder') ? item.tab.name : currentWorkflowPresetName)
+                const builderTitle = builderName || (isCrewBuilder ? 'Crew' : 'Automation')
+                return (
+                  <button
+                    key={item.id}
+                    type="button"
+                    role="menuitem"
+                    onClick={() => selectBuilderTab(item.tab.tabId)}
+                    title={builderBusy ? 'Builder is processing — wait before sending a message' : 'Builder is idle — ready for your next message'}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                  >
+                    {builderBusy
+                      ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500 dark:text-blue-400" />
+                      : <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500 dark:bg-emerald-400" />}
+                    {isCrewBuilder
+                      ? <EntityIdentityIcon icon={item.tab.metadata?.agentProfileProjectIcon} label={builderTitle} />
+                      : <WorkflowIcon icon={builderPreset?.icon} label={builderTitle} />}
+                    <span className="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200">{builderTitle}</span>
+                    <span className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">
+                      {timeAgo(item.tab.lastStreamingStartedAt ?? item.tab.lastAccessedAt)}
+                    </span>
+                  </button>
+                )
+              }
 
-        const session = item.session
-        const tab = Object.values(chatTabs).find(t => t.sessionId === session.session_id)
-        const workflowPreset = isWorkflowSession(session)
-          ? workflowPresetForActivity(workflowPresets, session, tab)
-          : undefined
-        const fallbackName = workflowPreset?.label || null
-        const tone = statusTone(session)
-        const title = displaySessionTitle(session, tab, undefined, fallbackName)
-        const type = activityType(session)
-        const crewSession = isWorkProductSession(session)
-        const statusLabel = headerStatusLabel(session)
-        // End user only cares about two states: is it working, or is it waiting for me?
-        // The icon alone conveys this — spinner = running, amber alert = waiting for input.
-        // No status text at all; full detail stays in the hover tooltip.
-        const isWorking = tone === 'running' || tone === 'background'
-        const name = shortText(title, nameCharLimit)
-        const waitingTitle = session.waiting_message ? ` · ${session.waiting_message}` : ''
-        return (
-          <React.Fragment key={item.id}>
-            {i > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
-            <button
-              type="button"
-              data-tour={i === 0 ? 'active-work-switcher' : undefined}
-              data-testid={i === 0 ? 'tour-active-work-switcher' : undefined}
-              onClick={() => void handleOpenSession(session)}
-              className={pillClasses}
-              title={`${title} · ${type} · ${statusLabel}${waitingTitle}`}
-            >
-              {tone === 'needs-input'
-                ? <AlertCircle className="w-3.5 h-3.5 text-amber-500 dark:text-amber-400" />
-                : isWorking
-                  ? <Loader2 className="w-3.5 h-3.5 animate-spin opacity-70" />
-                  : tone === 'paused'
-                    ? <Pause className="w-3.5 h-3.5 opacity-50" />
-                    : <Clock className="w-3.5 h-3.5 opacity-50" />}
-              {isWorkflowSession(session)
-                ? <WorkflowIcon icon={workflowPreset?.icon} label={title} />
-                : crewSession
-                  ? <EntityIdentityIcon icon={tab?.metadata?.agentProfileProjectIcon} label={tab?.metadata?.agentProfileIdentityName || title} />
-                  : <span className="whitespace-nowrap">{name}</span>}
-              {(isWorkflowSession(session) || crewSession) && (
-                <span className="hidden max-w-24 truncate sm:inline">{name}</span>
-              )}
-              <ActivityTypeIcon type={type} />
-            </button>
-          </React.Fragment>
-        )
-      })}
-
-      {overflowActivityCount > 0 && (
-        <>
-          {inlineActivityItems.length > 0 && <span className="text-gray-400 dark:text-gray-600 select-none text-xs">/</span>}
+              const session = item.session
+              const tab = Object.values(chatTabs).find(t => t.sessionId === session.session_id)
+              const workflowPreset = isWorkflowSession(session)
+                ? workflowPresetForActivity(workflowPresets, session, tab)
+                : undefined
+              const fallbackName = workflowPreset?.label || null
+              const tone = statusTone(session)
+              const title = displaySessionTitle(session, tab, undefined, fallbackName)
+              const type = activityType(session)
+              const crewSession = isWorkProductSession(session)
+              const statusLabel = headerStatusLabel(session)
+              const waitingTitle = session.waiting_message ? ` · ${session.waiting_message}` : ''
+              return (
+                <button
+                  key={item.id}
+                  type="button"
+                  role="menuitem"
+                  onClick={() => selectSession(session)}
+                  title={`${title} · ${type} · ${statusLabel}${waitingTitle}`}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-gray-100 dark:hover:bg-gray-800"
+                >
+                  {tone === 'needs-input'
+                    ? <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-500 dark:text-amber-400" />
+                    : tone === 'running' || tone === 'background'
+                      ? <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-blue-500 dark:text-blue-400 opacity-80" />
+                      : tone === 'paused'
+                        ? <Pause className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                        : <Clock className="h-3.5 w-3.5 shrink-0 opacity-50" />}
+                  {isWorkflowSession(session)
+                    ? <WorkflowIcon icon={workflowPreset?.icon} label={title} />
+                    : crewSession
+                      ? <EntityIdentityIcon icon={tab?.metadata?.agentProfileProjectIcon} label={tab?.metadata?.agentProfileIdentityName || title} />
+                      : null}
+                  <span className="min-w-0 flex-1 truncate text-gray-800 dark:text-gray-200">{title}</span>
+                  <ActivityTypeIcon type={type} />
+                  <span className="whitespace-nowrap text-xs text-gray-500 dark:text-gray-400">{timeAgo(session.last_activity)}</span>
+                </button>
+              )
+            })}
+          </div>
           <button
             type="button"
-            onClick={openActiveWorkInQuickSwitcher}
-            className={pillClasses}
-            title={`Open ${overflowActivityCount} more active item${overflowActivityCount === 1 ? '' : 's'} in Ctrl+K`}
-            aria-label={`Open ${overflowActivityCount} more active item${overflowActivityCount === 1 ? '' : 's'} in Ctrl+K`}
+            onClick={showQuickSwitcher}
+            className="w-full border-t border-gray-200 px-3 py-2 text-center text-xs font-medium text-gray-500 transition-colors hover:bg-gray-100 dark:border-gray-700 dark:text-gray-400 dark:hover:bg-gray-800"
           >
-            <span className="whitespace-nowrap">+{overflowActivityCount}</span>
+            Show all in Ctrl+K
           </button>
-        </>
+        </div>
       )}
-
     </div>
   )
 }

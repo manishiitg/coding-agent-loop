@@ -2724,7 +2724,6 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to listen on %s:%d: %v", config.Host, config.Port, err)
 	}
 	actualPort := listener.Addr().(*net.TCPAddr).Port
-	SetShareTunnelServerPort(actualPort)
 
 	// Dynamically serve runtime-config.js so the frontend learns the real ports.
 	// In packaged/desktop mode ports are dynamic (--port 0), so the static file's
@@ -2820,9 +2819,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	stopNativeTranscriptRecovery()
 	api.cancelActiveWorkForShutdown()
 	fmt.Printf("✅ Active agent work canceled (%s)\n", time.Since(cancelStart).Round(time.Millisecond))
-
-	// An internet share tunnel must not outlive the server it exposes.
-	StopShareTunnel()
 
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")

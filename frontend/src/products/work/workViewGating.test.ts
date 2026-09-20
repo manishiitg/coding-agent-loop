@@ -38,5 +38,7 @@ describe('isWorkIntegrationTabEnabled', () => {
     expect(isWorkIntegrationTabEnabled('whatsapp', new Set(['bots']))).toBe(true)
     expect(isWorkIntegrationTabEnabled('gmail', new Set(['bots']))).toBe(true)
     expect(isWorkIntegrationTabEnabled('gmail', new Set(['mcp', 'skills']))).toBe(false)
+    expect(isWorkIntegrationTabEnabled('cli', new Set(['bots']))).toBe(true)
+    expect(isWorkIntegrationTabEnabled('cli', new Set())).toBe(true)
   })
 })

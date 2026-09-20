@@ -38,7 +38,7 @@ const WORKSPACE_ASK_AI_INSTRUCTIONS: Partial<Record<WorkspaceViewId, string>> = 
 // The Integrations view holds five tabs, so its header Ask AI follows the
 // active tab instead of the view. Same marker-block shape as views: a
 // user-visible plain-words summary plus hidden builder instructions.
-export type IntegrationTabId = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail'
+export type IntegrationTabId = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail' | 'cli'
 
 const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<IntegrationTabId, { label: string; summary: string; instructions?: string }> = {
   apps: {
@@ -61,6 +61,10 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<IntegrationTabId, { label: string; 
   gmail: {
     label: 'Integrations · Gmail',
     summary: "Help me connect or configure Gmail, default recipients, and email access settings.",
+  },
+  cli: {
+    label: 'Integrations · Connect',
+    summary: "Help me connect the command line or an AI assistant to this installation. Explain access tokens, the login command, and the MCP bridge, and ask what I want to do first.",
   },
 }
 
@@ -148,6 +152,31 @@ export function getKnowledgeTabAskAIMessage(tab: KnowledgeTabId): string {
 
 export function getIdentityTabAskAIMessage(tab: IdentityTabId): string {
   const entry = IDENTITY_TAB_ASK_AI_MESSAGE[tab]
+  const instructions = `First read the workflow help guide with read_skill(skills=[{"name":"builder-reference","path":"references/workflow-guide.md"}]), then help me with the ${entry.label} tab. Use the current workflow evidence, explain what matters, and ask what I want to do before changing anything.`
+  return buildAskAIMessage({
+    view: entry.label,
+    summary: entry.summary,
+    instructions: entry.instructions ? `${instructions} ${entry.instructions}` : instructions,
+  })
+}
+
+// The Access view holds two tabs, so its header Ask AI follows the
+// active tab instead of the view.
+export type AccessTabId = 'workflow' | 'users'
+
+const ACCESS_TAB_ASK_AI_MESSAGE: Record<AccessTabId, { label: string; summary: string; instructions?: string }> = {
+  workflow: {
+    label: 'Access · This workflow',
+    summary: "Help me share this workflow. Explain who can see or edit it now, and ask who should be added, removed, or changed.",
+  },
+  users: {
+    label: 'Access · Users',
+    summary: "Help me manage this deployment's accounts and roles. Explain the current setup and ask what should change, without asking me to reveal passwords in chat.",
+  },
+}
+
+export function getAccessTabAskAIMessage(tab: AccessTabId): string {
+  const entry = ACCESS_TAB_ASK_AI_MESSAGE[tab]
   const instructions = `First read the workflow help guide with read_skill(skills=[{"name":"builder-reference","path":"references/workflow-guide.md"}]), then help me with the ${entry.label} tab. Use the current workflow evidence, explain what matters, and ask what I want to do before changing anything.`
   return buildAskAIMessage({
     view: entry.label,

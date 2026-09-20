@@ -37,7 +37,7 @@ func (api *StreamingAPI) watchLiveInputDurable(sessionID, provider, messageID, m
 		ctx, cancel := context.WithTimeout(context.Background(), liveInputDurableWatchTimeout)
 		defer cancel()
 		ack, err := api.awaitLiveInputDurable(ctx, llmproviders.Provider(provider), sessionID, message)
-		outcome := string(llmtypes.DurableAckConfirmed)
+		var outcome string
 		proof := ""
 		var latencyMs int64
 		if err != nil {

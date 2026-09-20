@@ -297,6 +297,37 @@ window.report.ready(async function(){
 	}
 }
 
+func TestValidateHTMLReportCompositionWidgets(t *testing.T) {
+	t.Parallel()
+	composed := `<!doctype html><html><head><title>Composed</title></head><body>` +
+		`<section id="leads"></section><section id="activity"></section><script>
+window.report.ready(async function(){
+  await window.report.renderTable('#leads', {query: 'SELECT 1'});
+  await window.report.renderActivity('#activity');
+});
+</script></body></html>`
+	result := validateReport(t, composed, ReportHTMLValidationHooks{})
+	if !strings.Contains(result, `"valid": true`) {
+		t.Fatalf("composition widgets must validate: %s", result)
+	}
+	stale := `<!doctype html><html><head><title>Stale</title></head><body><script>
+window.report.ready(async function(){
+  await window.report.renderEvaluations('#evals');
+  await window.report.getEvaluations();
+});
+</script></body></html>`
+	result = validateReport(t, stale, ReportHTMLValidationHooks{})
+	for _, want := range []string{
+		`"valid": false`,
+		`window.report.renderEvaluations does not exist`,
+		`window.report.getEvaluations does not exist`,
+	} {
+		if !strings.Contains(result, want) {
+			t.Fatalf("expected %q in result: %s", want, result)
+		}
+	}
+}
+
 func TestValidateHTMLReportChecksCallbackReferences(t *testing.T) {
 	t.Parallel()
 	html := `<!doctype html><html><head><title>Callbacks</title></head><body><script>

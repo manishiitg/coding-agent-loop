@@ -6,13 +6,15 @@ import ConnectorsBrowser from '../../components/connectors/ConnectorsBrowser'
 import SkillsManagerPanel from '../../components/skills/SkillsManagerPanel'
 import WorkflowBotsPanel from '../../components/workflow/WorkflowBotsPanel'
 import WorkflowEmailPanel from '../../components/workflow/WorkflowEmailPanel'
+import { CliMcpSetupPanel } from '../../components/integrations/CliMcpSetupPanel'
 import { WorkspaceViewActions } from '../../components/workflow/WorkspaceViewActions'
 import { WorkspaceViewHeader } from '../../components/workflow/WorkspaceViewHeader'
 import { useChatStore } from '../../stores/useChatStore'
 import { useMCPStore } from '../../stores/useMCPStore'
+import { useAuthStore } from '../../stores/useAuthStore'
 import { isWorkIntegrationTabEnabled } from './workViewGating'
 
-export type WorkIntegrationTab = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail'
+export type WorkIntegrationTab = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail' | 'cli'
 
 const INTEGRATION_TABS: Array<{ value: WorkIntegrationTab; label: string }> = [
   { value: 'apps', label: 'MCPs' },
@@ -20,6 +22,7 @@ const INTEGRATION_TABS: Array<{ value: WorkIntegrationTab; label: string }> = [
   { value: 'slack', label: 'Slack' },
   { value: 'whatsapp', label: 'WhatsApp' },
   { value: 'gmail', label: 'Gmail' },
+  { value: 'cli', label: 'Connect' },
 ]
 
 const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<WorkIntegrationTab, string> = {
@@ -28,6 +31,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<WorkIntegrationTab, string> = {
   slack: "Help me with this Crew project's Slack bot. Explain what's connected and ask what I want to change.",
   whatsapp: "Help me with this Crew project's WhatsApp bot. Explain what's connected and ask what I want to change.",
   gmail: "Help me with this Crew project's Gmail. Explain the setup and ask what I want to change.",
+  cli: "Help me connect the command line or an AI assistant to this installation. Explain access tokens, the login command, and the MCP bridge, and ask what I want to do first.",
 }
 
 function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServersChange }: {
@@ -96,7 +100,11 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
   onSelectedServersChange: (servers: string[]) => Promise<unknown>
   onSelectedSkillsChange: (skills: string[]) => Promise<unknown>
 }) {
-  const visibleTabs = INTEGRATION_TABS.filter(option => isWorkIntegrationTabEnabled(option.value, enabledPanels))
+  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
+  // The Connect tab points at this installation's hosted API origin, so it
+  // only exists on multi-user servers — never on local installs.
+  const visibleTabs = INTEGRATION_TABS.filter(option =>
+    isWorkIntegrationTabEnabled(option.value, enabledPanels) && (option.value !== 'cli' || isMultiUserMode))
   const [tab, setTab] = usePersistentTab<WorkIntegrationTab>('agentworks.tab.crew-integrations', 'apps', INTEGRATION_TABS.map(option => option.value))
   const activeTab = visibleTabs.some(option => option.value === tab) ? tab : visibleTabs[0].value
   // Every tab loads on mount, so Refresh always remounts.
@@ -171,6 +179,7 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
           target={{ profileId: 'work', conversationKey: projectId, label: projectTitle }}
         />}
         {activeTab === 'gmail' && <WorkflowEmailPanel workspacePath={workspacePath} scopeNoun="project" onAsk={onAsk} />}
+        {activeTab === 'cli' && <CliMcpSetupPanel />}
       </div>
     </div>
   )

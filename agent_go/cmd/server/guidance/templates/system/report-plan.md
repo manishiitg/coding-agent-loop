@@ -16,12 +16,14 @@ widget/layout plan.
   `getHtml`, `renderMarkdown`, `fileUrl`, and `openFile`. Write a plain field
   on an existing row (e.g. an inline Approve button) with
   `window.report.updateField`/`updateFields` — see `reporting-policy.md`.
-- Goal, evaluation and cost sections can use `getGoalMetrics`, `getEvaluations`,
-  and `getCosts({ days: 30 })`. Their optional `renderGoalProgress`,
-  `renderEvaluations`, and `renderCosts` widgets include responsive styling and
-  details; no custom chart design or duplicate measurement store is required.
-  Use only the sections relevant to the report. See `reporting-policy.md` for
-  examples, history limits, missing-data handling and cost window semantics.
+- Goal and cost sections can use `getGoalMetrics` and `getCosts({ days: 30 })`.
+  Their optional `renderGoalProgress` and `renderCosts` widgets include
+  responsive styling and details; no custom chart design or duplicate
+  measurement store is required. Tables and the activity section can use the
+  optional `renderTable` and `renderActivity` composition widgets instead of
+  hand-rolled markup. Use only the sections relevant to the report. See
+  `reporting-policy.md` for examples, history limits, missing-data handling
+  and cost window semantics.
 - A user click can call `window.report.sendChatMessage(message, { requestId })`
   to send directly to an existing workflow chat, creating one only if none exists.
   Save any report-owned approval first, scope the message to its exact item and

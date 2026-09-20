@@ -25,5 +25,6 @@ export function isWorkIntegrationTabEnabled(tab: WorkIntegrationTab, enabledPane
   if (!enabledPanels) return true
   if (tab === 'apps') return enabledPanels.has('mcp')
   if (tab === 'skills') return enabledPanels.has('skills')
+  if (tab === 'cli') return true
   return enabledPanels.has('bots')
 }

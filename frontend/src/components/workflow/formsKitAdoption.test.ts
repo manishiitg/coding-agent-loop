@@ -111,4 +111,39 @@ describe('settings form kit adoption', () => {
     expect(llm).not.toContain('<input')
     expect(llm).not.toContain('px-2 py-0.5 text-xs font-medium text-primary-foreground')
   })
+
+  it('builds access bodies from settings cards with selects left raw', () => {
+    const users = read('src/components/admin/UsersAdminPanel.tsx')
+    expect(users).toContain("from '../ui/SettingsCard'")
+    expect(users).toContain("from '../ui/Button'")
+    expect(users).toContain("from '../ui/checkbox'")
+    expect(users).toContain("from '../ui/badge'")
+    expect(users).toContain("from '../ui/SecretField'")
+    expect(users).toContain("from '../ui/ConfirmationDialog'")
+    expect(users).toContain('requireText')
+    expect(users).not.toContain('<input')
+    expect(users).not.toContain('<button')
+    expect(users).not.toContain('window.confirm')
+    // The role dropdown stays a native select: same behavior, themed classes.
+    expect(rawCount(users)).toBe(1)
+
+    const share = read('src/components/workflow/WorkflowSharePopup.tsx')
+    expect(share).toContain("from '../ui/SettingsCard'")
+    expect(share).toContain("from '../ui/Button'")
+    expect(share).not.toContain('<input')
+    expect(share).not.toContain('<button')
+    // The person and role dropdowns stay native selects.
+    expect(rawCount(share)).toBe(2)
+  })
+
+  it('puts access tabs in the shared header with standard actions', () => {
+    const shell = read('src/components/workflow/WorkflowAccessView.tsx')
+    expect(shell).toContain('tabs={')
+    expect(shell).toContain("ariaLabel: 'Access sections'")
+    expect(shell).toContain('<WorkspaceViewActions')
+    expect(shell).toContain('usePersistentTab')
+    expect(shell).toContain('getAccessTabAskAIMessage')
+    expect(shell).not.toContain('tabClass')
+    expect(shell).not.toContain('role="tablist"')
+  })
 })

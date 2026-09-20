@@ -3666,7 +3666,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				}
 			}
 
-			crewResult, updatedCrewContextFiles, err := hcpo.executeCrewStep(ctx, step, i, progress, previousContextFiles, execCtx, breakdownSteps)
+			crewResult, _, err := hcpo.executeCrewStep(ctx, step, i, progress, previousContextFiles, execCtx, breakdownSteps)
 			if err != nil {
 				if ctx != nil && ctx.Err() != nil {
 					hcpo.GetLogger().Info(fmt.Sprintf("[STOP] crew step %d (%q) interrupted: %v", i+1, step.GetTitle(), ctx.Err()))
@@ -3676,8 +3676,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 				hcpo.EmitOrchestratorAgentError(ctx, "workflow", "crew-step-execution", fmt.Sprintf("Execute crew step: %s", step.GetTitle()), err.Error(), i, iteration)
 				return fmt.Errorf("crew step %d execution failed: %w", i+1, err)
 			}
-			previousContextFiles = updatedCrewContextFiles
-
 			hcpo.GetLogger().Info(fmt.Sprintf("✅ Crew step %d completed successfully: %s", i+1, step.GetTitle()))
 
 			// Track execution result in memory for use by subsequent steps.

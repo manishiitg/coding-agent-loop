@@ -52,13 +52,14 @@ The Dashboard should help the user measure and track whether the workflow is ach
 
 SHARED DASHBOARD METRICS
 Dashboards may use `getGoalMetrics`/`renderGoalProgress`,
-`getEvaluations`/`renderEvaluations`, and `getCosts`/`renderCosts` on
-`window.report`. These use the platform's existing records and include optional
-styled widgets. Treat their use as valid live-data wiring; do not recommend
-replacing them with handwritten SQL, duplicate tables, or custom charts merely
-because their queries are hidden inside the host. Their promises belong inside
-`window.report.ready` so refresh and errors work correctly. The parent applying
-a fix can load `builder-reference/references/reporting-policy.md` for examples.
+`getCosts`/`renderCosts`, and the `renderTable`/`renderActivity` composition
+widgets on `window.report`. These use the platform's existing records and
+include optional styled widgets. Treat their use as valid live-data wiring;
+do not recommend replacing them with handwritten SQL, duplicate tables, or
+custom charts merely because their queries are hidden inside the host. Their
+promises belong inside `window.report.ready` so refresh and errors work
+correctly. The parent applying a fix can load
+`builder-reference/references/reporting-policy.md` for examples.
 
 Check meaning rather than just appearance: configured goal targets and freshness
 must be preserved; evaluations keep each criterion and distinguish captured zero,

@@ -767,7 +767,7 @@ func (receiver webhookReceiver) deliver(ctx context.Context, manifestID, workspa
 			return internalTriggerDeliveryResult{RunID: run.RunID, DeliveryID: deliveryID, Duplicate: true, Status: string(run.State)}, true, nil
 		}
 		if !errors.Is(lookupErr, schedulerstate.ErrRunNotFound) {
-			return internalTriggerDeliveryResult{}, true, fmt.Errorf("%w: %v", ErrWebhookRunStoreMissing, lookupErr)
+			return internalTriggerDeliveryResult{}, true, fmt.Errorf("%w: %w", ErrWebhookRunStoreMissing, lookupErr)
 		}
 		return internalTriggerDeliveryResult{}, false, nil
 	}
@@ -843,7 +843,7 @@ func findInternalWorkflowTrigger(manifest *WorkflowManifest, triggerID string) (
 func (s *SchedulerService) dispatchInternalWorkflowTrigger(ctx context.Context, call internalWorkflowTriggerCall) (internalTriggerDeliveryResult, error) {
 	workspacePath, manifest, err := findWorkflowManifestByID(ctx, call.WorkflowID)
 	if err != nil {
-		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %v", ErrInternalTriggerNotFound, err)
+		return internalTriggerDeliveryResult{}, fmt.Errorf("%w: %w", ErrInternalTriggerNotFound, err)
 	}
 	receiver := webhookReceiver{start: s.triggerSavedSchedule, existing: s.existingWebhookRun}
 	return receiver.dispatchInternal(ctx, workspacePath, manifest, call.TriggerID, call)

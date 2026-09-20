@@ -56,6 +56,7 @@ describe('Work Setup consolidation', () => {
     expect(integrations).toContain("{ value: 'slack', label: 'Slack' }")
     expect(integrations).toContain("{ value: 'whatsapp', label: 'WhatsApp' }")
     expect(integrations).toContain("{ value: 'gmail', label: 'Gmail' }")
+    expect(integrations).toContain("{ value: 'cli', label: 'Connect' }")
     expect(integrations).toContain('fixedChannel="slack"')
     expect(integrations).toContain('fixedChannel="whatsapp"')
     expect(integrations).toContain('<WorkflowEmailPanel workspacePath={workspacePath} />')

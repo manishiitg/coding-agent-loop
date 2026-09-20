@@ -191,13 +191,31 @@ mistake, not a harmless leftover.
     // Defined once here rather than left to each button's own onclick so
     // every generated page gets this for free, consistently, rather than
     // depending on it being hand-written correctly every time.
+    // SQ.answer / SQ.startTimers / SQ.cancelTimer ride the same bridge — see
+    // "Answer widgets" and "Timers" below.
     window.SQ = {
       choose: function (text, el) {
         if (el && el.disabled) return
         if (el) el.disabled = true
         parent.postMessage({ __sq: 1, op: 'choose', text: text }, '*')
+      },
+      answer: function (qid, value, el) {
+        if (el && el.disabled) return
+        if (el) el.disabled = true
+        parent.postMessage({ __sq: 1, op: 'answer', qid: qid, value: value }, '*')
+      },
+      startTimers: function (timers) {
+        parent.postMessage({ __sq: 1, op: 'timer-config', timers: timers }, '*')
+      },
+      cancelTimer: function (qid) {
+        parent.postMessage({ __sq: 1, op: 'timer-cancel', qid: qid }, '*')
       }
     }
+    // Page errors are invisible inside a sandboxed frame; report them out so
+    // a broken widget shows up in the app console instead of failing silently.
+    window.addEventListener('error', function (e) {
+      parent.postMessage({ __sq: 1, op: 'sq-error', message: String((e && e.message) || e) }, '*')
+    })
   </script>
 </body>
 </html>
@@ -364,3 +382,95 @@ figure teaches the wrong thing. So look at it:
 
 Never tell the child or the parent that you did this, and never mention
 screenshots or files — it is your own check, part of writing the page.
+
+## Answer widgets
+
+A question she answers ON the page — MCQ options, a blank, a matching pair —
+instead of typing in chat. Every widget submits through
+`SQ.answer(qid, value, submitEl)`, which sends her answer as her next turn
+(`q3: 3/5`) so Quill sees and responds to it exactly like a typed answer, and
+disables the submitter the instant it's tapped (the same duplicate-tap rule
+as SQ.choose). The qid is the question's id — match the `div.q` numbering
+(`q1`, `q2`, …). Never put correct answers in the page: view-source would
+show them, and marking happens in chat by Quill.
+
+- MCQ — one tap submits:
+  ```html
+  <div class="q" id="q3"><p>3. Which is largest?</p>
+    <button onclick="SQ.answer('q3','2/3',this)">2/3</button>
+    <button onclick="SQ.answer('q3','3/5',this)">3/5</button>
+    <button onclick="SQ.answer('q3','5/8',this)">5/8</button></div>
+  ```
+- Blank — type, then submit:
+  ```html
+  <div class="q" id="q4"><p>4. 2/5 + 1/5 = <input id="a-q4" inputmode="text" autocomplete="off">
+    <button onclick="SQ.answer('q4',document.getElementById('a-q4').value,this)">Done</button></p></div>
+  ```
+- Matching — tap one from each column, then submit the pairs:
+  ```html
+  <div class="q" id="q5"><p>5. Match each animal to its home.</p>
+    <div style="display:flex;gap:24px">
+      <div id="m-left"><button onclick="SQpick('m-left',this)">Owl</button> <button onclick="SQpick('m-left',this)">Frog</button></div>
+      <div id="m-right"><button onclick="SQpick('m-right',this)">Pond</button> <button onclick="SQpick('m-right',this)">Tree hole</button></div>
+    </div>
+    <button onclick="SQsubmitPairs('q5',this)">Done</button></div>
+  <script>
+    var SQpairs = {};
+    function SQpick(col, el) {
+      var other = document.querySelectorAll('#' + col + ' button');
+      for (var i = 0; i < other.length; i++) other[i].classList.remove('picked');
+      el.classList.add('picked');
+      var l = document.querySelector('#m-left .picked'), r = document.querySelector('#m-right .picked');
+      if (l && r) { SQpairs[l.textContent] = r.textContent; l.classList.remove('picked'); r.classList.remove('picked'); }
+    }
+    function SQsubmitPairs(qid, el) {
+      var parts = [];
+      for (var k in SQpairs) parts.push(k + ': ' + SQpairs[k]);
+      SQ.answer(qid, parts.join('; '), el);
+    }
+  </script>
+  ```
+  (`.picked` needs one CSS rule, e.g. `.picked{outline:2px solid var(--focus)}`.)
+  Empty submits send nothing — the host drops them — but still disable the
+  button, so check `value.trim()` first for blanks and do nothing when empty.
+
+## Timers
+
+A timed test embeds its limits; the countdown display ticks on the page, but
+expiry is owned by the app (this frame is recreated on every tutor re-open,
+so a page-side timeout would die constantly). Limits come from the goal —
+use whole minutes per question or one total, 5 seconds to 6 hours; the host
+drops anything outside that.
+
+- On load, post the config once: `SQ.startTimers([{qid:'q3',seconds:120}])`.
+  A whole-test clock uses an empty qid: `SQ.startTimers([{qid:'',seconds:1200}])`.
+- Re-opens resume, never reset: the host ignores a config for a clock that
+  is already running, so posting on every load is correct.
+- Answering stops that question's clock automatically; `SQ.cancelTimer('q3')`
+  stops one explicitly.
+- Display ticks locally from a wall-clock deadline (`Date.now() + ms`) —
+  never tick-counting, which dies in background tabs:
+  ```html
+  <p class="timer" id="t-q3"></p>
+  <script>
+    SQ.startTimers([{qid:'q3',seconds:120}]);
+    var SQdeadline = Date.now() + 120 * 1000, SQel = document.getElementById('t-q3');
+    var SQtick = setInterval(function () {
+      var left = Math.max(0, Math.round((SQdeadline - Date.now()) / 1000));
+      SQel.textContent = 'Time left: ' + Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+      if (left <= 0) clearInterval(SQtick);
+    }, 500);
+    window.addEventListener('message', function (e) {
+      if (e && e.data && e.data.__sq === 1 && e.data.op === 'timer-fired' && e.data.qid === 'q3') {
+        clearInterval(SQtick);
+        SQel.textContent = 'Time is up.';
+        var q = document.getElementById('q3');
+        if (q) q.querySelectorAll('button,input').forEach(function (el) { el.disabled = true; });
+      }
+    });
+  </script>
+  ```
+- On expiry the app submits a `[Timer]` system line to Quill as her next
+  turn and tells the page to lock its inputs (above). Quill handles it per
+  the goal's strictness — hard stop under exam conditions, a short bonus
+  under a practice test, advisory under gentle practice.

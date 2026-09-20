@@ -69,6 +69,7 @@ import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
 import { readVoiceAutoSendPref, persistVoiceAutoSendPref } from './voiceAutoSend'
+import { buildSqAnswerText, buildSqTimerText, sanitizeSqId, sanitizeSqTimerConfigs } from './sqOps'
 import { ChatMarkdown as SharedChatMarkdown } from '../../../shared/chat/ChatRenderer'
 import { ProductSurfaceSwitcher } from '../../components/ProductSurfaceSwitcher'
 import { isSingleProductDeployment } from '../productSurfaceConfig'
@@ -322,6 +323,10 @@ function withSceneResizeScript(html: string): string {
     if (el && el.disabled) return;
     if (el) el.disabled = true;
     parent.postMessage({ __sq: 1, op: 'choose', text: text }, '*');
+  }, answer: function (qid, value, el) {
+    if (el && el.disabled) return;
+    if (el) el.disabled = true;
+    parent.postMessage({ __sq: 1, op: 'answer', qid: qid, value: value }, '*');
   } };
 })();</script>`
 }
@@ -1919,11 +1924,31 @@ export default function LearningApp() {
   // the newer op a show_scene snippet's button posts to offer a real choice —
   // treated exactly like the child typing/tapping that text, so Quill actually
   // sees and responds to whichever one she picks (see scene_tool.go).
+  //
+  // Answer widgets and timers ride the same bridge. 'answer' submits a widget
+  // answer as her next turn (formatted `qid: value`). Timers are host-owned:
+  // the iframe is recreated on every tutor re-open, so page-side timeouts
+  // would die constantly — the page only posts 'timer-config' and renders its
+  // own countdown display, while the host arms the deadline and, on expiry,
+  // submits a [Timer] system line plus a 'timer-fired' post back so the page
+  // can lock its inputs. Timer ops arm from the child's own worksheet frame
+  // only: a parent previewing the same page must never start her clocks.
+  const sqTimerRef = useRef(new Map<string, { timeout: number; activity: string }>())
   useEffect(() => {
+    const timers = sqTimerRef.current
+    const activityOf = (path: string | null | undefined) => {
+      const parts = String(path ?? '').split('/').filter(Boolean)
+      return parts.length > 1 ? parts[parts.length - 2] : ''
+    }
+    const clearSqTimer = (key: string) => {
+      const entry = timers.get(key)
+      if (entry) window.clearTimeout(entry.timeout)
+      timers.delete(key)
+    }
     const onMsg = (e: MessageEvent) => {
       const m = e.data
       if (!m || typeof m !== 'object' || (m as { __sq?: unknown }).__sq !== 1) return
-      const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string }
+      const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string; qid?: unknown; value?: unknown; timers?: unknown; message?: unknown }
       if (msg.op === 'save' && typeof msg.key === 'string') {
         api.saveState(msg.key, msg.data).catch(() => {})
       } else if (msg.op === 'load' && typeof msg.key === 'string') {
@@ -1932,10 +1957,41 @@ export default function LearningApp() {
           .catch(() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: null }, '*'))
       } else if (msg.op === 'choose' && typeof msg.text === 'string') {
         submitToChildChat(msg.text)
+      } else if (msg.op === 'answer') {
+        const text = buildSqAnswerText(msg.qid, msg.value)
+        if (!text) return
+        // Answering stops that question's clock, if one was running.
+        clearSqTimer(`${activityOf(childViewerPathRef.current)}::${sanitizeSqId(msg.qid)}`)
+        submitToChildChat(text)
+      } else if (msg.op === 'timer-config') {
+        if (e.source !== childIframeRef.current?.contentWindow) return
+        const activity = activityOf(childViewerPathRef.current)
+        for (const t of sanitizeSqTimerConfigs(msg.timers)) {
+          const key = `${activity}::${t.qid}`
+          if (timers.has(key)) continue // re-open resumes; never resets
+          const timeout = window.setTimeout(() => {
+            timers.delete(key)
+            // She may have moved to another activity since arming; an expiry
+            // belongs to its own test, never to whatever is open now.
+            if (activityOf(childViewerPathRef.current) !== activity) return
+            submitToChildChat(buildSqTimerText(t.qid))
+            childIframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'timer-fired', qid: t.qid }, '*')
+          }, t.seconds * 1000)
+          timers.set(key, { timeout, activity })
+        }
+      } else if (msg.op === 'timer-cancel') {
+        if (e.source !== childIframeRef.current?.contentWindow) return
+        clearSqTimer(`${activityOf(childViewerPathRef.current)}::${sanitizeSqId(msg.qid)}`)
+      } else if (msg.op === 'sq-error' && typeof msg.message === 'string') {
+        console.error('[sq page]', msg.message.slice(0, 500))
       }
     }
     window.addEventListener('message', onMsg)
-    return () => window.removeEventListener('message', onMsg)
+    return () => {
+      window.removeEventListener('message', onMsg)
+      timers.forEach((entry) => window.clearTimeout(entry.timeout))
+      timers.clear()
+    }
   }, [])
 
   // On launch, ask the agent server where onboarding stands. If setup is complete

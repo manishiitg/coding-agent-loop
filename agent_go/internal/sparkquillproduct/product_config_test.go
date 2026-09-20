@@ -56,6 +56,28 @@ func TestManifestDeclaresParentAndChild(t *testing.T) {
 	}
 }
 
+func TestProfileCommandsAreCompleteAndUnique(t *testing.T) {
+	profiles := BuiltinAgentProfiles()
+	for i := range profiles {
+		profile := &profiles[i]
+		if profile.ID == ChildProfileID && len(profile.Commands) == 0 {
+			t.Fatal("the child profile declares no chat commands")
+		}
+		seen := map[string]bool{}
+		for _, command := range profile.Commands {
+			if strings.TrimSpace(command.Name) == "" || seen[command.Name] {
+				t.Fatalf("%s: duplicate or unnamed command: %+v", profile.ID, command)
+			}
+			seen[command.Name] = true
+			// The composer drops a command without a label or a message
+			// rather than offering a button that sends nothing.
+			if strings.TrimSpace(command.Description) == "" || strings.TrimSpace(command.Prompt) == "" {
+				t.Fatalf("%s: command %q has no label or prompt", profile.ID, command.Name)
+			}
+		}
+	}
+}
+
 func TestProfilesRegisterOnThePlatformRegistry(t *testing.T) {
 	registry := agentprofiles.NewRegistry()
 	for _, profile := range BuiltinAgentProfiles() {

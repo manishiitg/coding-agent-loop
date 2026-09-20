@@ -65,12 +65,30 @@ profile:
     - name: create-study-material
       description: "Create study material"
       prompt: "Create study material for my child on the topic she is working on \u2014 explain it properly first, then a short practice, and a summary she can reread."
+    - name: create-study-material-ib
+      description: "Study material (IB style)"
+      prompt: "Create study material for my child on the topic she is working on, in IB style - concept-based framing with IB command terms and inquiry-led explanation, then practice and a summary she can reread."
+    - name: create-study-material-cbse
+      description: "Study material (CBSE style)"
+      prompt: "Create study material for my child on the topic she is working on, in CBSE style - NCERT-aligned explanation, then competency and case-based practice, and a summary she can reread."
+    - name: create-study-material-icse
+      description: "Study material (ICSE style)"
+      prompt: "Create study material for my child on the topic she is working on, in ICSE style - thorough explanation with precise definitions, application-heavy practice, and a summary she can reread."
     - name: create-a-practice-test
       description: "Create a practice test"
       prompt: "Create a practice test for my child \u2014 a short refresher, then a proper check with real tiers, plus the answer key for me."
+    - name: surprise-her
+      description: "Surprise her with something new"
+      prompt: "Surprise her with something fun and off-syllabus - something new for her to discover this week."
     - name: update-progress-report
       description: "Update progress report"
       prompt: "Build an updated progress report \u2014 follow your create-progress-report skill, make it a designed HTML page, and give me a short coach-style read of the evidence here in chat too."
+    - name: run-check-in
+      description: "Run check-in now"
+      prompt: "Run the check-in now: review her recent learning and school subjects from real evidence, check the school websites I'm watching (log in with my saved secrets where needed), rebuild the progress page, and tell me the headline here in chat."
+    - name: check-school-websites
+      description: "Check school websites"
+      prompt: "Check my watched school websites now - log in with my saved secrets where needed - and tell me anything new or needing attention: homework, grades, notices, deadlines."
     - name: back-up-workspace
       description: "Back up workspace"
       prompt: "Back up my workspace now \u2014 follow your backup skill."
@@ -148,7 +166,7 @@ profile:
   schedules:
     - id: pulse
       name: Check-in
-      description: Quill reviews recent learning, watched sites and upcoming deadlines, then sends the parent a summary.
+      description: Quill reviews the child's progress, school subjects and watched school websites, rebuilds the holistic progress page, then notifies the parent with the headline.
       enabled: false
       # Its own conversation, session and coding-CLI process — never the
       # parent's live chat. Without this a scheduled run reused that exact
@@ -161,8 +179,8 @@ profile:
       quiet_minutes: 10
       max_deferral_hours: 4
       messages:
-        - "This is an automated check-in, in your own separate check-in history — not the parent's chat, which cannot see this. Review the learning activity of the last few days from real evidence in the workspace (activities, attempts, materials) and note what genuinely changed since your last check-in here. If nothing meaningfully changed, say so briefly and warmly. Write ONE short, warm message as your reply (the parent is not technical; no files, paths or JSON)."
-        - "This automated check-in is done. Decide what is ACTUALLY worth telling the parent, lead with what matters most, and call notify_user EXACTLY ONCE with a short title and a brief plain message (1-3 sentences). If truly nothing meaningful happened, still send one honest line so the parent knows the check-in ran."
+        - "This is an automated check-in, in your own separate check-in history — not the parent's chat, which cannot see this. Your main job: check the child's progress and school subjects from real evidence in the workspace (activities, attempts, materials, school papers), check the watched school website(s) with agent_browser - call agent_browser(command=\"status\") first, log in with saved secrets where needed, check memory/browser-notes.md before navigating and save what you learn there - and rebuild the holistic progress page at reports/progress.html by following your create-progress-report skill — full regeneration every time, with today's date inside. Cover every subject with evidence, what she can and cannot do yet, and what to work on next. Then write ONE short, warm message as your reply (the parent is not technical; no files, paths or JSON)."
+        - "This automated check-in is done and the progress page is rebuilt. Decide what is ACTUALLY worth telling the parent, lead with what matters most — what changed, the one gap to act on — and call notify_user EXACTLY ONCE with a short title and a brief plain message (1-3 sentences) pointing at the refreshed Progress tab. If truly nothing meaningful happened, still send one honest line so the parent knows the check-in ran."
   built_in: true
 
 profiles:
@@ -194,24 +212,18 @@ profiles:
       - name: score-by-answer
         description: "Score by answer"
         prompt: "Go through every question I've answered so far on this page and score me question by question: for each one, show the question, my answer, and whether it's right or wrong with the correct answer if it's wrong. Then give me a total score."
-      - name: no-more-hints
-        description: "No more hints"
-        prompt: "Don't give me any more hints \u2014 just tell me if I'm right or wrong."
-      - name: be-stricter
-        description: "Be stricter"
-        prompt: "Grade my answers more strictly from now on \u2014 don't count a partial or close answer as correct, and tell me exactly what's wrong."
-      - name: harder-question
-        description: "Harder question"
-        prompt: "Can you give me a harder question?"
-      - name: easier-question
-        description: "Easier question"
-        prompt: "Can you give me an easier question?"
-      - name: give-me-a-hint
-        description: "Give me a hint"
-        prompt: "Can you give me a hint?"
+      - name: recap
+        description: "Recap"
+        prompt: "Can you recap how I'm doing in this activity? Tell me what I've finished so far, what I'm getting right, where I still make mistakes, and what I should work on next."
+      - name: walk-me-through-my-mistakes
+        description: "Walk me through my mistakes"
+        prompt: "Can you walk me through the questions I got wrong, one at a time? For each one, show me the question and what I answered, help me spot my mistake with hints instead of just telling me, and only move to the next one once I've got it right. At the end, tell me the pattern in my mistakes."
+      - name: check-strictly
+        description: "Check strictly"
+        prompt: "Check my last answer strictly, like an examiner: mark it exact, name every error precisely, and don't count a partial or close answer as correct. But I answer by voice, so ignore spelling slips from transcription and judge what I meant - unless this is a spelling test, where spelling counts."
       - name: keep-quizzing-me-harder-each-time
-        description: "Keep quizzing me, harder each time"
-        prompt: "Keep asking me progressively harder questions on this until I fully understand it."
+        description: "Adaptive quiz"
+        prompt: "Quiz me adaptively like the GMAT: start at medium difficulty, one question at a time. If I get one right, make the next harder; if I get one wrong, make the next easier and quickly teach me what I missed before moving on. Tell me right or wrong with one short why each time, keep track of my level, and after about 8 questions (or when I say stop) tell me where I landed and what to practice."
       - name: give-me-a-real-example
         description: "Give me a real example"
         prompt: "Can you give me a real-world example of this, not just the definition?"

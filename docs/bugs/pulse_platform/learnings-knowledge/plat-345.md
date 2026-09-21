@@ -1,6 +1,6 @@
 [← Pulse platform index](../../pulse_platform_issue_register.md)
 
-# PLAT-344 — Crew project memory was durable but invisible as a first-class view
+# PLAT-345 — Crew project memory was durable but invisible as a first-class view
 
 | Coordination | Value |
 |---|---|

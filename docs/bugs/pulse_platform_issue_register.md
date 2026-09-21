@@ -179,9 +179,9 @@ canonical issues and genuine human decisions; Gate owns only scheduling,
 Activity reuses the result, and the separate impact tool is no longer exposed.
 UI/read cutover and removal of rollback-window compatibility tables remain.
 
-## Crew memory visibility — PLAT-344
+## Crew memory visibility — PLAT-345
 
-[PLAT-344](pulse_platform/learnings-knowledge/plat-344.md) tracks the first-class
+[PLAT-345](pulse_platform/learnings-knowledge/plat-345.md) tracks the first-class
 Crew Memory view. It renders the canonical project `MEMORY.md`, distinguishes
 durable context from reusable procedures, shows only project-local Crew skills
 and opens skill management directly from Memory. Dashboard remains the

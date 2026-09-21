@@ -54,13 +54,22 @@ only a completely missing pane receives the cleanup-race confirmation window.
 - Lifecycle coverage proves a settled provider/tool failure survives later tmux
   cleanup reconciliation.
 
-## Follow-up design
+## Lifecycle simplification (completed)
 
-Move persistent-session activity/expiry into one shared lifecycle primitive for
-Claude, Codex, Cursor, and Pi. Every accepted owner input, provider turn, and
-explicit close should update the same monotonic lease. Cleanup should publish a
-typed reason (`idle_expiry`, `explicit_close`, `provider_exit`, `session_loss`),
-while UI errors should come from the logical turn owner rather than inferred
-terminal state. Tmux remains the durable interactive process host and diagnostic
-surface; it must not be the authority that rewrites a completed turn outcome.
+Persistent-session activity/expiry now uses one shared, zero-value-safe lease
+primitive for Claude, Codex, Cursor, and Pi. It owns exactly four operations:
 
+- `Arm`: accepted activity replaces the deadline;
+- `Pause`: an ordinary provider turn temporarily owns the session;
+- `Stop`: teardown permanently rejects later activity;
+- expiry: one generation-checked callback invokes provider cleanup.
+
+Every accepted owner input and provider-turn release now touches this same
+lease. The four adapters no longer maintain private timer/generation/last-used
+state, and Pi's previously unsynchronized timer mutation is gone. Tmux remains
+the durable interactive process host and diagnostic surface; the lease only
+owns retention and never rewrites a completed turn outcome.
+
+Typed cleanup reasons (`idle_expiry`, `explicit_close`, `provider_exit`,
+`session_loss`) remain a useful observability follow-up, but they are no longer
+required to make session retention correct.

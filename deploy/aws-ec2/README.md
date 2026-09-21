@@ -31,7 +31,7 @@ From the repository root:
 ```
 
 The shared root command delegates to `deploy/aws-ec2/deploy-rootless.sh`, so
-the existing remote build, drain, activation, and health gates remain intact.
+the remote build, immediate activation, and health gates remain centralized.
 Its defaults use the `RTS` AWS profile, `us-west-2`, and
 `~/.ssh/id_ed25519`; set `AWS_PROFILE_NAME`, `AWS_REGION`, or `SSH_KEY_PATH`
 only when overriding those defaults.
@@ -45,9 +45,11 @@ server clones `main` from `mcp-agent-builder-go`, `mcpagent`, and
 `multi-llm-provider-go`, and records their exact SHAs in `SOURCE_REVISIONS`.
 `bootstrap-build.sh` installs Go 1.27.1 with checksum verification when needed.
 Builds run under a deployment lock, with a 6 GB memory ceiling and two CPU cores.
-Failed builds leave the current release active; an active agent is allowed to drain
-before activation (timeout aborts rather than interrupting it). Temporary checkouts
-are removed after the build. The host retains Go/npm dependency caches for reuse.
+Failed builds leave the current release active. Once a build and its release gates
+pass, activation is intentionally immediate and breaking: user services restart
+without waiting on the logical active-session count, and clients reconnect to the
+new runtime. Temporary checkouts are removed after the build. The host retains
+Go/npm dependency caches for reuse.
 The three configured GitHub repositories must be readable by the server.
 
 ## Per-user accounts (since 2026-09-02)

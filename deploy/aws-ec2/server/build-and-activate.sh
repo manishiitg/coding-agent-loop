@@ -240,13 +240,12 @@ REMOTE_PREFLIGHT
 # only missing files are copied (-n), mtimes are preserved (-p) and anything
 # carried for more than 14 days is dropped so the directory cannot grow forever.
 "${SSH[@]}" "set -e; prev='$REMOTE_APP/current/frontend/assets'; next='$REMOTE_RELEASE/frontend/assets'; if [ -d \"\$prev\" ] && [ -d \"\$next\" ]; then cp -pn \"\$prev\"/* \"\$next\"/ 2>/dev/null || true; find \"\$next\" -type f -mtime +14 -delete; fi"
-# Drain before the swap: restarting while a turn is running hands the user a
-# 502 mid-message (happened twice on 2026-09-03). Poll the agent's /health
-# "drain" block until it is idle, up to DRAIN_TIMEOUT_SECONDS (default 5 min);
-# new turns can still start during the wait, so this is best-effort, and an
-# agent without the field (older release) drains immediately.
-DRAIN_TIMEOUT_SECONDS="${DRAIN_TIMEOUT_SECONDS:-300}"
-"${SSH[@]}" "deadline=\$((\$(date +%s) + $DRAIN_TIMEOUT_SECONDS)); while :; do h=\$(curl -s --max-time 5 http://127.0.0.1:8000/api/health || true); idle=\$(printf '%s' \"\$h\" | jq -r 'if .drain.idle == false then \"false\" else \"true\" end' 2>/dev/null || true); [ \"\$idle\" = false ] || idle=true; if [ \"\$idle\" = true ]; then echo 'drain: agent idle, swapping'; break; fi; if [ \$(date +%s) -ge \$deadline ]; then echo \"drain: still busy after ${DRAIN_TIMEOUT_SECONDS}s (\$(printf '%s' \"\$h\" | jq -c .drain)); leaving current release active\"; exit 1; fi; echo \"drain: waiting for in-flight turns (\$(printf '%s' \"\$h\" | jq -c .drain))\"; sleep 5; done"
+# Production activation is intentionally breaking: swap immediately after a
+# complete, verified build. The logical active-session count includes retained
+# idle chats and cannot reliably distinguish user work from stale ownership, so
+# it must not hold a release indefinitely. Service restart is the explicit
+# deployment boundary; clients reconnect to the new runtime.
+echo "activation: immediate breaking deploy (logical-session drain disabled)"
 # Migrate a legacy release-local overlay before swapping current. Never replace
 # an existing durable overlay; only the base catalog is refreshed on startup.
 "${SSH[@]}" 'set -e; state="$HOME/.local/state/agentworks/mcp"; old="$HOME/video-studio/current/configs/mcp_servers_video_studio_user.json"; install -d -m 0700 "$state"; if [ -f "$old" ] && [ ! -e "$state/mcp_servers_video_studio_user.json" ]; then cp -n "$old" "$state/mcp_servers_video_studio_user.json"; chmod 600 "$state/mcp_servers_video_studio_user.json"; fi'

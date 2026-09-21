@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -119,12 +120,24 @@ func (s *SlackService) DiagnoseConnectionWithConfig(ctx context.Context, config 
 			}
 		}
 	}
+	if !result.Success {
+		// Server-side record of why a connection test failed. The messages
+		// carry Slack's own error codes (invalid_auth, missing scopes) and
+		// never credentials, so the next "why is this failing" starts here
+		// instead of in the browser.
+		for _, check := range result.Checks {
+			if check.Status == "failed" || check.Status == "missing" {
+				log.Printf("[SLACK] connection test %s: %s", check.Name, check.Message)
+			}
+		}
+	}
 	return result
 }
 
 // x-oauth-scopes describes the scopes actually granted to this installed token,
 // rather than the scopes requested in an app manifest before reinstallation.
 func testSlackBotScopes(ctx context.Context, token string) (map[string]bool, error) {
+	token = strings.TrimSpace(token)
 	if !strings.HasPrefix(token, "xoxb-") {
 		return nil, fmt.Errorf("Bot token must start with xoxb-")
 	}

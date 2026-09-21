@@ -180,6 +180,37 @@ func TestMergeSlackConfigForSave(t *testing.T) {
 	}
 }
 
+func TestMergeSlackConfigForSaveTrimsTokens(t *testing.T) {
+	stored := &SlackConfig{
+		Connections: []SlackConnection{
+			{ID: "d", DisplayName: "Default", BotToken: "xoxb-d", AppToken: "xapp-d", Enabled: true},
+		},
+		DefaultConnectionID: "d",
+	}
+
+	// Legacy shape: pasted whitespace must not be stored.
+	merged, err := mergeSlackConfigForSave(stored, &SlackConfig{Enabled: true, BotToken: "  xoxb-padded  ", AppToken: "\nxapp-padded\n"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def, _ := findSlackConnection(merged, "d"); def.BotToken != "xoxb-padded" || def.AppToken != "xapp-padded" {
+		t.Fatalf("legacy tokens not trimmed: %+v", def)
+	}
+
+	// Registry shape: same rule for connection entries.
+	merged, err = mergeSlackConfigForSave(stored, &SlackConfig{
+		Connections: []SlackConnection{
+			{ID: "d", BotToken: "xoxb-d ", AppToken: " xapp-d", Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if def, _ := findSlackConnection(merged, "d"); def.BotToken != "xoxb-d" || def.AppToken != "xapp-d" {
+		t.Fatalf("registry tokens not trimmed: %+v", def)
+	}
+}
+
 func TestSlackServiceForConnectionRouting(t *testing.T) {
 	cfg := &SlackConfig{
 		Connections: []SlackConnection{

@@ -1,9 +1,11 @@
 package services
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
+	"log"
 	"net/http"
 	"strings"
 	"testing"
@@ -103,5 +105,35 @@ func TestSlackConnectionDiagnostics(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestSlackConnectionDiagnosticsLogsFailedChecks(t *testing.T) {
+	oldClient := http.DefaultClient
+	defer func() { http.DefaultClient = oldClient }()
+	http.DefaultClient = &http.Client{Transport: slackDiagnosticTransport(func(r *http.Request) (*http.Response, error) {
+		raw, _ := json.Marshal(map[string]interface{}{"ok": false, "error": "invalid_auth"})
+		return &http.Response{StatusCode: 200, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(string(raw)))}, nil
+	})}
+
+	var logs bytes.Buffer
+	oldOutput := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(oldOutput)
+
+	result := (&SlackService{}).DiagnoseConnectionWithConfig(context.Background(), &SlackConfig{Enabled: true, BotToken: "xoxb-test-secret", AppToken: "xapp-test-secret"})
+	if result.Success {
+		t.Fatal("expected failed diagnostic")
+	}
+	out := logs.String()
+	for _, want := range []string{"Bot token", "Socket Mode token", "invalid_auth"} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("server log omitted %q: %q", want, out)
+		}
+	}
+	for _, secret := range []string{"xoxb-test-secret", "xapp-test-secret"} {
+		if strings.Contains(out, secret) {
+			t.Fatal("server log exposed credential")
+		}
 	}
 }

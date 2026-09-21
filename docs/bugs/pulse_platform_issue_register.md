@@ -1,3 +1,13 @@
+## Workflow Automation Chats schedule visibility — PLAT-336
+
+[PLAT-336](pulse_platform/frontend-chat/plat-336.md) records why
+`twitter-automation`'s fresh scheduled conversations existed on disk and in
+`chat-index.json` but were absent from Automation → Chats: the workflow caller
+enabled `recentOnly` without the `includeAutomationChats` opt-in already used by
+Crew, so the client requested only `kind=chat`. Commit `b812cdb48` wires the
+workflow hub to the unified conversation index; focused regressions are green,
+with deployment and live verification pending.
+
 ## Dashboard composition widgets — PLAT-335
 
 [PLAT-335](pulse_platform/frontend-chat/plat-335.md) proposes six optional `window.report` composition widgets (`renderTabs`, `renderKpis`, `renderTable`, `renderActivity`, `renderActions`, `renderCollapsible`, shared card CSS) so dashboards become ~100–200-line composition files instead of 500–3800-line hand-rolled single HTML. Grounded in a 9-dashboard survey (8 local + the 3827-line Confida server dashboard) showing zero usage of the shipped goal/cost widgets, universal hand-rolled tabs/KPIs/cards/tables/activity, and Confida's 13 hand-wired action buttons motivating `renderActions`. The guidance rewrite subsumes removing the stale `renderEvaluations`/`getEvaluations` promises left over from the PLAT-333 eval removal. Proposal only; not implemented.

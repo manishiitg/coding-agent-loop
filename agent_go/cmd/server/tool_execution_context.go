@@ -87,7 +87,7 @@ func (api *StreamingAPI) bindToolExecutionContextForSession(requestCtx context.C
 		} else if access := userAccessForClaims(&copy); access.Disabled || directoryUserIsUnknown(&copy) {
 			return nil, fmt.Errorf("%s account is unavailable", tool)
 		}
-		access, err := conversationTargetAccess(ctx, req)
+		access, err := api.conversationTargetAccess(ctx, req)
 		if err != nil {
 			return nil, err
 		}

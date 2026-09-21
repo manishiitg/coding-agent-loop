@@ -91,15 +91,33 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 	return context.WithValue(ctx, UserContextKey, &copy), nil
 }
 
-// conversationTargetAccess is shared by all adapters. The account tier is
-// narrowed by the concrete workflow/profile target before constructing tools.
-func conversationTargetAccess(ctx context.Context, req QueryRequest) (WorkflowAccessLevel, error) {
+// conversationTargetAccess is shared by all adapters. Resolve authority from
+// the concrete workflow or Crew, rechecking it for each tool invocation.
+func (api *StreamingAPI) conversationTargetAccess(ctx context.Context, req QueryRequest) (WorkflowAccessLevel, error) {
 	claims := GetUserFromContext(ctx)
 	if level, scoped := botRouteProfileAccessForRequest(claims, req); scoped {
 		if level == WorkflowAccessNone {
 			return level, fmt.Errorf("profile route access denied")
 		}
 		return level, nil
+	}
+	if strings.EqualFold(strings.TrimSpace(req.AgentProfileID), "work") {
+		if claims == nil || strings.TrimSpace(claims.UserID) == "" || api.agentProfiles == nil {
+			return WorkflowAccessNone, fmt.Errorf("Crew access denied")
+		}
+		profile, err := api.agentProfiles.Resolve(req.AgentProfileID, req.AgentProfileVersion, claims.UserID)
+		if err != nil || !userAllowedProduct(claims, profile.Product) {
+			return WorkflowAccessNone, fmt.Errorf("Crew access denied")
+		}
+		key := strings.TrimSpace(req.AgentProfileConversationKey)
+		if key == "" {
+			return WorkflowAccessNone, fmt.Errorf("Crew conversation is required")
+		}
+		binding, err := resolveProductConversationBinding(ctx, claims.UserID, profile, key)
+		if err != nil || !workspacePathsMatchForUser(claims.UserID, binding.WorkspacePath, req.SelectedFolder) {
+			return WorkflowAccessNone, fmt.Errorf("Crew access denied")
+		}
+		return WorkflowAccessOwner, nil
 	}
 	if strings.HasPrefix(req.SelectedFolder, "Workflow/") {
 		manifest, exists, err := ReadWorkflowManifest(ctx, req.SelectedFolder)

@@ -24,8 +24,6 @@ import { isChatCompatiblePhase } from '../utils/chatSubmitHelpers'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { useCanWriteWorkflow } from '../hooks/useCanWriteWorkflow'
-import { useAuthStore } from '../stores/useAuthStore'
-import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { chromeCdpInstallCommand, chromeCdpLaunchCommand, chromeCdpVerifyCommand, chromeCdpZipUrl } from '../utils/cdpSetup'
 import { CHAT_TOOL_COMMAND_EVENT, chatToolCommandFromEvent } from '../utils/chatToolEvents'
 import { buildAgentProfileEngineGroups, loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, loadAgentProfileRuntime, type AgentProfileProviderOption, type AgentProfileRuntime } from '../utils/agentProfileCapabilities'
@@ -428,7 +426,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   onNewChat,
 }) => {
   const isProductSurface = surfaceVariant === 'product'
-  const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   // Store subscriptions
   const {
     agentMode,
@@ -2883,7 +2880,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   // Scheduled runs share the compact actions beside the live-terminal toggle.
   // Bot runs still use the separate footer in ChatArea.
   const hasRunFooter = !!activeTab?.metadata?.isBotRun && !activeTab?.metadata?.isScheduledRun
-  const showStopButton = !!tabSessionId && !isReadOnlyUser && isTurnInFlight && !hasRunFooter
+  const showStopButton = !!tabSessionId && isTurnInFlight && !hasRunFooter
   const stopButton = activeTabId ? <SessionStopButton key={activeTabId} tabId={activeTabId} /> : null
 
   // Check if query is valid (view-only tabs cannot submit)

@@ -1,9 +1,7 @@
 import { useRef, useState } from 'react'
 import { Loader2, Square } from 'lucide-react'
 import { agentApi } from '../services/api'
-import { useAuthStore } from '../stores/useAuthStore'
 import { useChatStore } from '../stores/useChatStore'
-import { isWorkflowReadOnly } from '../utils/workflowPermissions'
 import { Button } from './ui/Button'
 
 interface SessionStopButtonProps {
@@ -15,12 +13,11 @@ interface SessionStopButtonProps {
 // and background work; Escape remains a separate foreground interrupt.
 export function SessionStopButton({ tabId, footer = false }: SessionStopButtonProps) {
   const tab = useChatStore(state => state.chatTabs[tabId])
-  const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   const [stopping, setStopping] = useState(false)
   const inFlight = useRef(false)
 
   const sessionId = tab?.sessionId
-  if (!sessionId || isReadOnlyUser || (!tab?.isStreaming && !tab?.hasRunningBgAgents && !stopping)) return null
+  if (!sessionId || (!tab?.isStreaming && !tab?.hasRunningBgAgents && !stopping)) return null
 
   const stopSession = async () => {
     if (inFlight.current) return

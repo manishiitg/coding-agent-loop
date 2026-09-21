@@ -3567,7 +3567,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
-	access, accessErr := conversationTargetAccess(r.Context(), req)
+	access, accessErr := api.conversationTargetAccess(r.Context(), req)
 	if accessErr != nil {
 		http.Error(w, accessErr.Error(), http.StatusForbidden)
 		return

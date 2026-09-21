@@ -27,7 +27,7 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 	if err != nil {
 		return false, err
 	}
-	access, err := conversationTargetAccess(validated, req)
+	access, err := api.conversationTargetAccess(validated, req)
 	if err != nil || access == WorkflowAccessNone {
 		if err == nil {
 			err = fmt.Errorf("workflow access denied")

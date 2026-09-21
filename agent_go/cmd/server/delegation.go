@@ -728,7 +728,7 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// same event cards every other execution kind gets.
 		ForceStructuredCodingAgent: common.IsCLIProvider(string(provider)),
 	}
-	delegatedAccess, accessErr := conversationTargetAccess(ctx, parentReq)
+	delegatedAccess, accessErr := api.conversationTargetAccess(ctx, parentReq)
 	if accessErr != nil {
 		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", accessErr.Error(), nil)
 		return "", fmt.Errorf("resolve delegated agent execution access: %w", accessErr)

@@ -3,14 +3,13 @@ import { useEffect, useState } from 'react'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Input } from '../../ui/Input'
-import { READ_ONLY_TITLE } from '../../../hooks/useCanWriteWorkflow'
 import type { WorkflowBots } from './useWorkflowBots'
 import { StatusBanner } from './StatusBanner'
 
 // ── Drill-in: WhatsApp setup ──────────────────────────────────────────────
 
 type WhatsAppSetupBots = Pick<WorkflowBots,
-  | 'readOnly'
+  | 'canManageOwnWhatsAppDevices'
   | 'waStatus' | 'waError'
   | 'qrImageURL' | 'qrLoading' | 'qrError'
   | 'waAddDeviceOpen' | 'openAddWhatsAppDevice' | 'closeAddWhatsAppDevice'
@@ -31,7 +30,7 @@ function formatQRExpiry(expiresAt: string | undefined, nowMs: number): string | 
 
 export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
   const {
-    readOnly,
+    canManageOwnWhatsAppDevices,
     waStatus, waError, qrImageURL, qrLoading, qrError,
     waAddDeviceOpen, openAddWhatsAppDevice, closeAddWhatsAppDevice,
     waUnpairConfirmSlot, waUnpairingSlot, handleUnpairWhatsAppDevice,
@@ -157,8 +156,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
             </div>
             <Button
               onClick={waAddDeviceOpen ? closeAddWhatsAppDevice : openAddWhatsAppDevice}
-              disabled={readOnly}
-              title={readOnly ? READ_ONLY_TITLE : undefined}
+              disabled={!canManageOwnWhatsAppDevices}
               variant="outline"
               size="sm"
               className="flex-shrink-0 whitespace-nowrap"
@@ -195,8 +193,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                       {device.label && !showLabelEditor && (
                         <Button
                           onClick={() => setEditingLabelSlot(device.slot)}
-                          disabled={readOnly}
-                          title={readOnly ? READ_ONLY_TITLE : undefined}
+                          disabled={!canManageOwnWhatsAppDevices}
                           variant="outline"
                           size="sm"
                           className="whitespace-nowrap"
@@ -206,8 +203,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                       )}
                       <Button
                         onClick={() => handleUnpairWhatsAppDevice(device.slot)}
-                        disabled={readOnly || !!waUnpairingSlot}
-                        title={readOnly ? READ_ONLY_TITLE : undefined}
+                        disabled={!canManageOwnWhatsAppDevices || !!waUnpairingSlot}
                         variant={confirming ? 'destructive' : 'outline'}
                         size="sm"
                         className="whitespace-nowrap"
@@ -228,7 +224,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                         <Input
                           value={draftLabel}
                           onChange={event => setWaDeviceLabelDraft(device.slot, event.target.value)}
-                          disabled={readOnly || labelSaving}
+                          disabled={!canManageOwnWhatsAppDevices || labelSaving}
                           placeholder="Person name"
                           maxLength={60}
                           className="h-8 text-xs"
@@ -240,8 +236,7 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
                             if (saved && draftLabel.trim()) setEditingLabelSlot(null)
                           })
                         }}
-                        disabled={readOnly || labelSaving || !labelDirty}
-                        title={readOnly ? READ_ONLY_TITLE : undefined}
+                        disabled={!canManageOwnWhatsAppDevices || labelSaving || !labelDirty}
                         variant="outline"
                         size="sm"
                         className="flex-shrink-0 whitespace-nowrap"
@@ -282,15 +277,14 @@ export function WhatsAppSetup({ bots }: { bots: WhatsAppSetupBots }) {
               <Input
                 value={waPairDeviceLabel}
                 onChange={event => setWaPairDeviceLabel(event.target.value)}
-                disabled={readOnly || waPairDeviceLabelSaving}
+                disabled={!canManageOwnWhatsAppDevices || waPairDeviceLabelSaving}
                 placeholder="Person name for this WhatsApp number"
                 maxLength={60}
                 className="h-8 text-xs"
               />
               <Button
                 onClick={handleSaveWhatsAppPairDeviceLabel}
-                disabled={readOnly || waPairDeviceLabelSaving || !pairNameSaveReady || waPairDeviceLabel.trim().length === 0}
-                title={readOnly ? READ_ONLY_TITLE : undefined}
+                disabled={!canManageOwnWhatsAppDevices || waPairDeviceLabelSaving || !pairNameSaveReady || waPairDeviceLabel.trim().length === 0}
                 variant="outline"
                 size="sm"
                 className="flex-shrink-0 whitespace-nowrap"

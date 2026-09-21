@@ -106,7 +106,8 @@ type Status struct {
 
 // Runner executes one schedule for a standalone product.
 type Runner struct {
-	host Host
+	host        Host
+	activatedAt time.Time
 
 	mu           sync.Mutex
 	running      bool
@@ -132,7 +133,7 @@ func NewRunner(host Host) (*Runner, error) {
 	if host.Tick <= 0 {
 		host.Tick = 5 * time.Minute
 	}
-	return &Runner{host: host}, nil
+	return &Runner{host: host, activatedAt: time.Now().UTC()}, nil
 }
 
 func (r *Runner) logf(format string, args ...interface{}) {
@@ -154,11 +155,16 @@ func (r *Runner) Start(ctx context.Context) {
 }
 
 func (r *Runner) tick(ctx context.Context, now time.Time) {
-	in := Inputs{Now: now, LastRun: r.host.LastRun(), SinceInteractive: 365 * 24 * time.Hour}
+	schedule := r.host.Schedule()
+	activatedAt := r.activatedAt
+	if createdAt, err := time.Parse(time.RFC3339, schedule.CreatedAt); err == nil {
+		activatedAt = createdAt
+	}
+	in := Inputs{Now: now, ActivatedAt: activatedAt, LastRun: r.host.LastRun(), SinceInteractive: 365 * 24 * time.Hour}
 	if r.host.SinceInteractive != nil {
 		in.SinceInteractive = r.host.SinceInteractive()
 	}
-	d := Decide(r.host.Schedule(), in)
+	d := Decide(schedule, in)
 	r.mu.Lock()
 	r.lastDecision = d.Reason
 	r.mu.Unlock()

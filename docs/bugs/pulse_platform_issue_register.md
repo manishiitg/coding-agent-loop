@@ -1,3 +1,16 @@
+## Retained-session workflow-open fan-out — PLAT-348
+
+[PLAT-348](pulse_platform/performance/plat-348.md) records the RTS regression
+where `/api/sessions/active` correctly retained 45 completed conversations for
+continuity, but workflow navigation treated 43 terminal workflow rows as live
+reconnect candidates. `rtsprreviweer` alone contributed 42 rows, multiplying a
+single switch into per-session resolution/hydration while chat briefly showed a
+false empty state. Live chat/dashboard/Pulse endpoint timings were only 1–55
+ms. The local fix filters reconnect and streaming projection through the
+canonical live-activity rule and masks stale/empty chat until workflow-keyed
+durable selection settles. Focused tests and TypeScript build pass; deployment
+and RTS acceptance remain pending.
+
 ## Workspace global write lock stalls all users — PLAT-344
 
 [PLAT-344](pulse_platform/performance/plat-344.md) records the confida

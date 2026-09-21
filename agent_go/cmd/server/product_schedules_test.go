@@ -42,6 +42,23 @@ func TestProjectScheduleJobIDRoundTrip(t *testing.T) {
 	}
 }
 
+func TestProductScheduleJobActivationBaselinePrecedence(t *testing.T) {
+	manifestTime := time.Date(2026, 9, 18, 10, 0, 0, 0, time.UTC)
+	createdTime := manifestTime.Add(time.Hour)
+	stateTime := createdTime.Add(time.Hour)
+	job := productScheduleJob{
+		Schedule:            productschedule.Schedule{CreatedAt: createdTime.Format(time.RFC3339)},
+		ManifestActivatedAt: manifestTime,
+	}
+	if got := job.activatedAt(); !got.Equal(createdTime) {
+		t.Fatalf("schedule creation should beat manifest fallback: got %s want %s", got, createdTime)
+	}
+	job.State.ActivatedAt = stateTime.Format(time.RFC3339)
+	if got := job.activatedAt(); !got.Equal(stateTime) {
+		t.Fatalf("persisted activation should be authoritative: got %s want %s", got, stateTime)
+	}
+}
+
 func TestRunDestinationDefaultsToCrewChatAndAcceptsIsolated(t *testing.T) {
 	for _, test := range []struct {
 		value    string

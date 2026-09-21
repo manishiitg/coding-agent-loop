@@ -64,8 +64,11 @@ func isolatedForRunDestination(value string) (bool, error) {
 // productScheduleUserState is one user's bookkeeping for one schedule.
 type productScheduleUserState struct {
 	// Enabled overrides the product's default when set.
-	Enabled   *bool  `json:"enabled,omitempty"`
-	LastRunAt string `json:"last_run_at,omitempty"`
+	Enabled *bool `json:"enabled,omitempty"`
+	// ActivatedAt is the persisted first-seen baseline for legacy/built-in
+	// cron definitions that predate Schedule.CreatedAt.
+	ActivatedAt string `json:"activated_at,omitempty"`
+	LastRunAt   string `json:"last_run_at,omitempty"`
 	// LastAttemptAt is when a run last started, successful or not; with
 	// ConsecutiveFailures it feeds the retry backoff (a failed check-in must
 	// not re-fire on every tick because only success moves LastRunAt).
@@ -89,6 +92,10 @@ type productScheduleJob struct {
 	WorkspacePath  string
 	ManifestPath   string
 	AutomationKind string
+	// ManifestActivatedAt migrates legacy project schedules that have no
+	// per-schedule CreatedAt without moving their first occurrence to each
+	// scheduler tick.
+	ManifestActivatedAt time.Time
 }
 
 // ID is the job id exposed through /api/scheduler/jobs.
@@ -110,6 +117,16 @@ func (j productScheduleJob) Effective() productschedule.Schedule {
 
 func (j productScheduleJob) lastRun() time.Time     { return parseRFC3339OrZero(j.State.LastRunAt) }
 func (j productScheduleJob) lastAttempt() time.Time { return parseRFC3339OrZero(j.State.LastAttemptAt) }
+
+func (j productScheduleJob) activatedAt() time.Time {
+	if activated := parseRFC3339OrZero(j.State.ActivatedAt); !activated.IsZero() {
+		return activated
+	}
+	if created := parseRFC3339OrZero(j.Schedule.CreatedAt); !created.IsZero() {
+		return created
+	}
+	return j.ManifestActivatedAt
+}
 
 func parseRFC3339OrZero(s string) time.Time {
 	if s == "" {
@@ -354,6 +371,10 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 		if err := json.Unmarshal([]byte(raw), &manifest); err != nil || manifest.Product != profile.ID || strings.TrimSpace(manifest.ID) == "" {
 			continue
 		}
+		manifestActivatedAt := parseRFC3339OrZero(manifest.UpdatedAt)
+		if manifestActivatedAt.IsZero() {
+			manifestActivatedAt = parseRFC3339OrZero(manifest.CreatedAt)
+		}
 		runtimePath := candidate
 		if strings.EqualFold(profile.ID, "work") {
 			runtimePath = projectRuntimeManifestPath(profile.ID, filepath.ToSlash(filepath.Dir(candidate)))
@@ -367,6 +388,11 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 				manifest.Schedules = runtimeManifest.Schedules
 				manifest.Triggers = runtimeManifest.Triggers
 				manifest.Capabilities = runtimeManifest.Capabilities
+				if runtimeUpdatedAt := parseRFC3339OrZero(runtimeManifest.UpdatedAt); !runtimeUpdatedAt.IsZero() {
+					manifestActivatedAt = runtimeUpdatedAt
+				} else if runtimeCreatedAt := parseRFC3339OrZero(runtimeManifest.CreatedAt); !runtimeCreatedAt.IsZero() {
+					manifestActivatedAt = runtimeCreatedAt
+				}
 			}
 		}
 		if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
@@ -377,6 +403,7 @@ func (s *ProductScheduleService) projectJobsForUser(ctx context.Context, userID 
 				UserID: userID, Profile: profile, Schedule: sched,
 				ProjectID: manifest.ID, ProjectTitle: manifest.Title,
 				WorkspacePath: filepath.ToSlash(filepath.Dir(candidate)), ManifestPath: runtimePath,
+				ManifestActivatedAt: manifestActivatedAt,
 			}
 			job.State = states[scheduleStateKey(job)]
 			jobs = append(jobs, job)
@@ -587,6 +614,9 @@ func (s *ProductScheduleService) CreateProjectSchedule(ctx context.Context, user
 	if strings.TrimSpace(schedule.ID) == "" {
 		schedule.ID = uuid.NewString()
 	}
+	if strings.TrimSpace(schedule.CreatedAt) == "" {
+		schedule.CreatedAt = time.Now().UTC().Format(time.RFC3339)
+	}
 	manifest.Schedules = append(manifest.Schedules, schedule)
 	if err := productschedule.ValidateAll(manifest.Schedules); err != nil {
 		return productScheduleJob{}, err
@@ -680,8 +710,8 @@ func (s *ProductScheduleService) updateStateByKey(ctx context.Context, userID, k
 
 // Start runs the tick loop until ctx is done.
 func (s *ProductScheduleService) Start(ctx context.Context) {
-	if len(s.profilesWithSchedules()) == 0 {
-		scheduleLogf("[PRODUCT-SCHEDULE] No product declares schedules; loop idle")
+	if len(s.profilesWithSchedules()) == 0 && len(s.profilesWithProjectSchedules()) == 0 {
+		scheduleLogf("[PRODUCT-SCHEDULE] No product declares or supports schedules; loop idle")
 	}
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
@@ -710,8 +740,26 @@ func (s *ProductScheduleService) tick(ctx context.Context, now time.Time) {
 			continue
 		}
 		for _, job := range jobs {
+			activatedAt := job.activatedAt()
+			if strings.TrimSpace(job.Schedule.CronExpression) != "" && job.lastRun().IsZero() && strings.TrimSpace(job.State.ActivatedAt) == "" {
+				// Persist the baseline once. Using this tick's Now without saving it
+				// would make a never-run cron schedule chase tomorrow forever.
+				if activatedAt.IsZero() {
+					activatedAt = now.UTC()
+				}
+				if err := s.updateStateByKey(ctx, userID, scheduleStateKey(job), func(st *productScheduleUserState) {
+					if strings.TrimSpace(st.ActivatedAt) == "" {
+						st.ActivatedAt = activatedAt.Format(time.RFC3339)
+					}
+				}); err != nil {
+					scheduleLogf("[PRODUCT-SCHEDULE] %s: cannot persist activation baseline for %s: %v", job.ID(), userID, err)
+					continue
+				}
+				job.State.ActivatedAt = activatedAt.Format(time.RFC3339)
+			}
 			in := productschedule.Inputs{
 				Now:                 now,
+				ActivatedAt:         activatedAt,
 				LastRun:             job.lastRun(),
 				LastAttempt:         job.lastAttempt(),
 				ConsecutiveFailures: job.State.ConsecutiveFailures,
@@ -1211,7 +1259,7 @@ func (s *ProductScheduleService) jobResponse(job productScheduleJob, runsWorkspa
 		resp.LastRunAt = &last
 	}
 	if sched.Enabled {
-		d := productschedule.Decide(sched, productschedule.Inputs{Now: time.Now(), LastRun: job.lastRun(), SinceInteractive: 365 * 24 * time.Hour})
+		d := productschedule.Decide(sched, productschedule.Inputs{Now: time.Now(), ActivatedAt: job.activatedAt(), LastRun: job.lastRun(), SinceInteractive: 365 * 24 * time.Hour})
 		if !d.ScheduledFor.IsZero() {
 			next := d.ScheduledFor.UTC()
 			resp.NextRunAt = &next

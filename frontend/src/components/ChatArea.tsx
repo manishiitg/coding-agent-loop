@@ -3477,7 +3477,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     isStreaming: activeTabStreaming,
     hasRestoredLiveContent,
     isReadOnlyRunView,
-  }, false)
+  }, false, !selectedWorkflowPreset || (
+    activeTab?.metadata?.mode === 'workflow' &&
+    activeTab.metadata.presetQueryId === selectedWorkflowPreset
+  ))
   const visibleWorkflowSurface = workflowSurface
 
   // Keep stale restore markers in sync with the surface (both modes).

@@ -29,7 +29,6 @@ aws_rts secretsmanager get-secret-value --secret-id "$GLOBAL_SECRETS_SECRET_ID" 
  | jq -er 'to_entries[] | select(.key | test("^[A-Z0-9_]+$")) | select(.value | type == "string" and length > 0) | if .key == "CLAUDE_CODE_OAUTH_TOKEN" or .key == "CURSOR_API_KEY" then "\(.key)=\(.value)" else "GLOBAL_SECRET_\(.key)=\(.value)" end' > "$STAGING/globals"
 chmod 600 "$STAGING/globals"
 cp "$SCRIPT_DIR/server/bootstrap-build.sh" "$STAGING/bootstrap-build.sh"
-printf '%s\n' "${DRAIN_TIMEOUT_SECONDS:-3600}" > "$STAGING/drain-timeout"
 "${SSH[@]}" "install -d -m 0700 '$REMOTE_JOB'"
 rsync -az -e "ssh -o BatchMode=yes -o StrictHostKeyChecking=accept-new -i $SSH_KEY_PATH" "$STAGING/" "video-studio@$HOST_IP:$REMOTE_JOB/"
 echo 'Server cloning main from all three repositories and building the release locally.'

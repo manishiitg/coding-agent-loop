@@ -29,6 +29,4 @@ for repo in mcp-agent-builder-go mcpagent multi-llm-provider-go; do
   echo "Cloning $repo/main on $(hostname)"
   GIT_TERMINAL_PROMPT=0 git clone --quiet --depth 1 --single-branch --branch main "$url" "$JOB/source/$repo"
 done
-export DRAIN_TIMEOUT_SECONDS="$(cat "$JOB/drain-timeout")"
-[[ "$DRAIN_TIMEOUT_SECONDS" =~ ^[0-9]+$ ]]
 bash "$JOB/source/mcp-agent-builder-go/deploy/aws-ec2/server/build-and-activate.sh" "$JOB/source" "$JOB/globals"

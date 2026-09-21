@@ -27,7 +27,7 @@ export function SessionStopButton({ tabId, footer = false }: SessionStopButtonPr
     inFlight.current = true
     setStopping(true)
     try {
-      await agentApi.stopSession(sessionId, true)
+      await agentApi.stopSession(sessionId, true, !footer)
       const store = useChatStore.getState()
       store.setTabStreaming(tabId, false)
       store.setTabHasRunningBgAgents(tabId, false)

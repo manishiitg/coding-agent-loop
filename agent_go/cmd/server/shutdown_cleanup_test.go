@@ -2,12 +2,15 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gorilla/mux"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -234,6 +237,155 @@ func TestHandleStopSessionCancelsActiveWorkAndPreventsPaneReuse(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "Session stopped") {
 		t.Fatalf("unexpected stop response body: %q", body)
+	}
+}
+
+func TestHandleStopSessionKeepsInteractiveConversationResumable(t *testing.T) {
+	const sessionID = "interactive-workflow-chat"
+	canceled := false
+	nextTurn := make(chan QueryRequest, 1)
+	api := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{
+			sessionID: func() { canceled = true },
+		},
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, AgentMode: "workflow_phase", Status: "running"},
+		},
+		stoppedSessions: map[string]bool{},
+		bgAgentRegistry: NewBackgroundAgentRegistry(),
+		lastQueryRequests: map[string]QueryRequest{
+			sessionID: {AgentMode: "workflow_phase", SelectedFolder: "Workflow/test", Query: "first message"},
+		},
+		sessionWorkspaceFolders: map[string]string{sessionID: "Workflow/test"},
+		internalQueryHandler: func(_ http.ResponseWriter, r *http.Request) {
+			var request QueryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode resumed query: %v", err)
+				return
+			}
+			nextTurn <- request
+		},
+	}
+
+	stop := httptest.NewRequest(http.MethodPost, "/api/session/stop?cancelAgents=true&preserveConversation=true", nil)
+	stop.Header.Set("X-Session-ID", sessionID)
+	response := httptest.NewRecorder()
+	api.handleStopSession(response, stop)
+	if response.Code != http.StatusOK || !canceled || !api.stoppedSessions[sessionID] {
+		t.Fatalf("stop = %d canceled=%v stopped=%v: %s", response.Code, canceled, api.stoppedSessions[sessionID], response.Body.String())
+	}
+	if got := api.lastQueryRequests[sessionID].SelectedFolder; got != "Workflow/test" {
+		t.Fatalf("resumable request workspace = %q", got)
+	}
+	if got := api.sessionWorkspaceFolders[sessionID]; got != "Workflow/test" {
+		t.Fatalf("resumable session workspace = %q", got)
+	}
+
+	message := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", nil)
+	message.Header.Set("X-Session-ID", sessionID)
+	resumed := httptest.NewRecorder()
+	if !api.startNextTurnFromLiveInput(resumed, message, sessionID, "next message", nil) || resumed.Code != http.StatusOK {
+		t.Fatalf("next turn = %d: %s", resumed.Code, resumed.Body.String())
+	}
+	select {
+	case request := <-nextTurn:
+		if request.Query != "next message" || request.SelectedFolder != "Workflow/test" {
+			t.Fatalf("resumed request = %+v", request)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("next user message did not start a turn")
+	}
+}
+
+func TestWorkflowChatAcceptsLiveInputAfterStop(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"owner","can_edit":true}]}`)
+	workspaceServer, docs := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
+	docs.files["Workflow/test/workflow.json"] = `{"id":"wf_test","access":{"owners":["owner"]}}`
+	const sessionID = "stop-then-send-workflow-chat"
+	query := QueryRequest{AgentMode: "workflow_phase", SelectedFolder: "Workflow/test", Query: "first message"}
+	nextTurn := make(chan QueryRequest, 1)
+	api := &StreamingAPI{
+		internalChatSubmissionStore: newTestChatSubmissionStore(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, UserID: "owner", AgentMode: "workflow_phase", Status: "running"},
+		},
+		stoppedSessions:         map[string]bool{},
+		bgAgentRegistry:         NewBackgroundAgentRegistry(),
+		lastQueryRequests:       map[string]QueryRequest{sessionID: query},
+		sessionWorkspaceFolders: map[string]string{sessionID: "Workflow/test"},
+		lastChatPolicyBySession: map[string]string{},
+		internalQueryHandler: func(_ http.ResponseWriter, r *http.Request) {
+			var request QueryRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Errorf("decode next turn: %v", err)
+				return
+			}
+			nextTurn <- request
+		},
+	}
+	api.lastChatPolicyBySession[sessionID] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", sessionID, query, nil, false))
+	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
+	stop := httptest.NewRequest(http.MethodPost, "/api/session/stop?cancelAgents=true&preserveConversation=true", nil).WithContext(ctx)
+	stop.Header.Set("X-Session-ID", sessionID)
+	stopResponse := httptest.NewRecorder()
+	api.handleStopSession(stopResponse, stop)
+	if stopResponse.Code != http.StatusOK {
+		t.Fatalf("stop status = %d: %s", stopResponse.Code, stopResponse.Body.String())
+	}
+
+	message := httptest.NewRequest(http.MethodPost, "/api/sessions/"+sessionID+"/live-input", strings.NewReader(`{"message":"next message"}`)).WithContext(ctx)
+	message = mux.SetURLVars(message, map[string]string{"session_id": sessionID})
+	messageResponse := httptest.NewRecorder()
+	api.handleLiveInputMessage(messageResponse, message)
+	if messageResponse.Code != http.StatusOK {
+		t.Fatalf("next message status = %d: %s", messageResponse.Code, messageResponse.Body.String())
+	}
+	select {
+	case request := <-nextTurn:
+		if request.Query != "next message" || request.SelectedFolder != "Workflow/test" {
+			t.Fatalf("next turn = %+v", request)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("live input did not start the next workflow turn")
+	}
+}
+
+func TestHandleStopSessionCannotPreserveTriggeredRun(t *testing.T) {
+	for _, tc := range []struct {
+		name, sessionID, triggeredBy, botPlatform string
+	}{
+		{name: "schedule", sessionID: "schedule-cron--test_1", triggeredBy: "cron"},
+		{name: "webhook", sessionID: "webhook-run", triggeredBy: "webhook"},
+		{name: "bot", sessionID: "bot-run", botPlatform: "whatsapp"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			api := &StreamingAPI{
+				activeSessions: map[string]*ActiveSessionInfo{
+					tc.sessionID: {SessionID: tc.sessionID, Status: "running", TriggeredBy: tc.triggeredBy, BotPlatform: tc.botPlatform},
+				},
+				stoppedSessions: map[string]bool{},
+				bgAgentRegistry: NewBackgroundAgentRegistry(),
+				lastQueryRequests: map[string]QueryRequest{
+					tc.sessionID: {SelectedFolder: "Workflow/test"},
+				},
+				sessionWorkspaceFolders: map[string]string{tc.sessionID: "Workflow/test"},
+			}
+			stop := httptest.NewRequest(http.MethodPost, "/api/session/stop?preserveConversation=true", nil)
+			stop.Header.Set("X-Session-ID", tc.sessionID)
+			response := httptest.NewRecorder()
+			api.handleStopSession(response, stop)
+			if response.Code != http.StatusOK || !api.stoppedSessions[tc.sessionID] {
+				t.Fatalf("stop = %d stopped=%v: %s", response.Code, api.stoppedSessions[tc.sessionID], response.Body.String())
+			}
+			if _, ok := api.lastQueryRequests[tc.sessionID]; ok {
+				t.Fatal("triggered run retained a resumable request")
+			}
+			if _, ok := api.sessionWorkspaceFolders[tc.sessionID]; ok {
+				t.Fatal("triggered run retained a workspace binding")
+			}
+		})
 	}
 }
 

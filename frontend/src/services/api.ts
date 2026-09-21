@@ -936,8 +936,11 @@ export const agentApi = {
   // Observer APIs removed - no longer needed
 
   // Stop session/agent execution (preserves conversation history)
-  stopSession: async (sessionId: string, cancelAgents: boolean = false): Promise<void> => {
-    await api.post(`/api/session/stop${cancelAgents ? '?cancelAgents=true' : ''}`, {}, {
+  stopSession: async (sessionId: string, cancelAgents: boolean = false, preserveConversation: boolean = false): Promise<void> => {
+    const params = new URLSearchParams()
+    if (cancelAgents) params.set('cancelAgents', 'true')
+    if (preserveConversation) params.set('preserveConversation', 'true')
+    await api.post(`/api/session/stop${params.size ? `?${params}` : ''}`, {}, {
       headers: { 'X-Session-ID': sessionId }
     })
   },

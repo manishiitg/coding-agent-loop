@@ -206,6 +206,20 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
+	// An interactive chat can stop its current work without losing the request
+	// template needed by /live-input to start the next user turn. Scheduled,
+	// triggered, and bot sessions remain terminal even if a caller supplies this
+	// option; their stop must not make an internal continuation resumable.
+	preserveConversation := r.URL.Query().Get("preserveConversation") == "true"
+	if preserveConversation {
+		api.activeSessionsMux.RLock()
+		session := api.activeSessions[sessionID]
+		preserveConversation = session != nil &&
+			!isScheduledSessionIdentity(sessionID, session.TriggeredBy) &&
+			strings.TrimSpace(session.BotPlatform) == ""
+		api.activeSessionsMux.RUnlock()
+	}
+
 	// Mark session as stopped FIRST, before any cancellation, so that in-flight
 	// goroutines that race with this stop handler will see the flag and bail out
 	// instead of re-creating workshop sessions or spawning new CLI processes.
@@ -251,13 +265,15 @@ func (api *StreamingAPI) handleStopSession(w http.ResponseWriter, r *http.Reques
 	delete(api.startNotificationRetryScheduled, sessionID)
 	api.pendingStartMu.Unlock()
 
-	api.lastQueryMu.Lock()
-	delete(api.lastQueryRequests, sessionID)
-	api.lastQueryMu.Unlock()
+	if !preserveConversation {
+		api.lastQueryMu.Lock()
+		delete(api.lastQueryRequests, sessionID)
+		api.lastQueryMu.Unlock()
 
-	api.sessionWorkspaceMu.Lock()
-	delete(api.sessionWorkspaceFolders, sessionID)
-	api.sessionWorkspaceMu.Unlock()
+		api.sessionWorkspaceMu.Lock()
+		delete(api.sessionWorkspaceFolders, sessionID)
+		api.sessionWorkspaceMu.Unlock()
+	}
 
 	api.removeSessionAgent(sessionID)
 

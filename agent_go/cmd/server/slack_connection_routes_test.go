@@ -441,6 +441,22 @@ func TestSlackChannelRouteFirstSaveWithoutConnectorConfig(t *testing.T) {
 	}
 }
 
+func TestSlackRouteSaveRegistersConnectorWhenSwitchOff(t *testing.T) {
+	api, _ := setupSlackConnectionWorld(t)
+	api.botManager = services.NewBotConversationManager(api.chatStore, "", "")
+
+	save := httptest.NewRequest("POST", "/api/human-feedback/slack/config", strings.NewReader(`{"enabled":false,"bot_mode":false,"bot_token":"","app_token":"","channel_routing":{"C1234567890":{"workflow_id":"wf_alpha","workspace_path":"Workflow/alpha","workshop_mode":"run","bot_grant":"run"}}}`))
+	save = save.WithContext(context.WithValue(save.Context(), UserContextKey, slackConnectionClaims("alice")))
+	w := httptest.NewRecorder()
+	updateSlackConfigHandler(api)(w, save)
+	if w.Code != http.StatusOK {
+		t.Fatalf("route save status %d: %s", w.Code, w.Body.String())
+	}
+	if api.botManager.GetConnector("slack") == nil {
+		t.Fatal("connector not registered after route save while switch off")
+	}
+}
+
 func TestSlackConfigureToolOwnerBranch(t *testing.T) {
 	api, _ := setupSlackConnectionTest(t)
 	reg := &recordingRegistrar{}

@@ -250,6 +250,60 @@ func TestSlackPrincipalRevalidationSeparatesResourceOwnerAndAuditActor(t *testin
 	}
 }
 
+func TestSlackRoutedTrafficAllowedWhenSwitchOff(t *testing.T) {
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{ProfileID: "work", ConversationKey: "acme", WorkspacePath: "Chats/Work/projects/acme", WorkspaceUserID: "alice", BotGrant: "run"}
+	encoded, _ := json.Marshal(map[string]ChannelRoute{"C123": route})
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: false, BotMode: false, AllowedChannels: string(encoded)}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{chatStore: store}
+	claims := botRouteUserClaims("synthetic", route)
+	req := QueryRequest{AgentProfileID: "work", AgentProfileConversationKey: "acme", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserID: "sender-a"}
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err != nil {
+		t.Fatalf("routed channel rejected while switch off: %v", err)
+	}
+	req.BotChannelID = "C999"
+	if _, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req); err == nil || !strings.Contains(err.Error(), "revoked") {
+		t.Fatalf("unrouted channel err = %v", err)
+	}
+}
+
+func TestSlackSendAllowedWhenSwitchOff(t *testing.T) {
+	server, _ := newFakeWorkspaceServer(t)
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{WorkflowID: "demo", WorkspacePath: "Workflow/demo", BotGrant: "run"}
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: false, BotMode: false, AllowedChannels: `{"C123":{"workflow_id":"demo","workspace_path":"Workflow/demo","bot_grant":"run"}}`}); err != nil {
+		t.Fatal(err)
+	}
+	claims := botRouteUserClaims("bot", route)
+	claims.ExecutionPrincipal = &ExecutionPrincipal{Kind: "bot_route", Target: route, ID: "bot", Access: WorkflowAccessRead}
+	api := &StreamingAPI{chatStore: store}
+	req := QueryRequest{PresetQueryID: "demo", SelectedFolder: "Workflow/demo", BotPlatform: "slack", BotChannelID: "C123", BotThreadTS: "source.1"}
+	api.botExecutionSessions.Store("root", botExecutionSession{Claims: claims, Request: req})
+	virtualtools.RegisterParentChat("script-switchoff", &virtualtools.ParentChatContext{SessionID: "root"})
+	defer virtualtools.UnregisterParentChat("script-switchoff")
+	posts := 0
+	api.postSlackMessage = func(_ context.Context, channel, thread, message string) (string, error) {
+		posts++
+		return "reply.1", nil
+	}
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, "script-switchoff")
+	if _, err := api.sendSlackMessageFromTool(ctx, map[string]interface{}{"route_id": "C123", "message": "hi", "idempotency_key": "k1"}); err != nil {
+		t.Fatalf("routed send rejected while switch off: %v", err)
+	}
+	if posts != 1 {
+		t.Fatalf("posts=%d", posts)
+	}
+}
+
 func TestSlackWorkflowTriggerUsesWorkflowOwnerResourceScope(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"workflow-owner","username":"owner","can_create":true}]}`)

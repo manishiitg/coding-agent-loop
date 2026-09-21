@@ -58,7 +58,7 @@ func (api *StreamingAPI) dispatchSlackTrigger(ctx context.Context, channel strin
 		return err
 	}
 	route, ok := routes[channel]
-	if cfg == nil || !cfg.Enabled || !cfg.BotMode || !ok || !services.SlackTriggerMatches(route.Trigger, event, "") {
+	if !services.SlackBotTrafficAllowed(cfg, ok) || !services.SlackTriggerMatches(route.Trigger, event, "") {
 		return fmt.Errorf("Slack trigger is inactive or no longer matches")
 	}
 	if event.BotID == "" && !services.SlackRouteAllowsEmail(route, slackTriggerActorEmail(slackConnectionIDForRoute(ctx, route), event.User)) {

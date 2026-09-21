@@ -4,7 +4,60 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
+
+func seedSlackBotConfig(t *testing.T, enabled, botMode bool, allowedChannels string) chathistory.Store {
+	t.Helper()
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: enabled, BotMode: botMode, AllowedChannels: allowedChannels}); err != nil {
+		t.Fatal(err)
+	}
+	return store
+}
+
+const routedElsewhereChannels = `{"COTHER":{"workflow_id":"demo","workspace_path":"Workflow/demo","bot_grant":"run"}}`
+
+func TestSlackRoutedMentionAuthorizedWhenSwitchOff(t *testing.T) {
+	store := seedSlackBotConfig(t, false, false, `{"C123":{"workflow_id":"demo","workspace_path":"Workflow/demo","bot_grant":"run"}}`)
+	m := NewBotConversationManager(store, "", "")
+	m.SetWorkflowAccessFunc(func(ctx context.Context, workspaceUserID, userEmail string, route ChannelRoute) (string, bool, error) {
+		return "owner", true, nil
+	})
+	msg := BotIncomingMessage{Platform: "slack", UserID: "U1", UserEmail: "person@example.com", ChannelID: "C123", ThreadTS: "thread", Text: "hi", IsMention: true}
+	if !m.authorizeWorkflowRouteForMessage(context.Background(), &msg, ThreadID{Platform: "slack", ChannelID: "C123"}, nil) {
+		t.Fatal("routed mention rejected while switch off")
+	}
+}
+
+func TestSlackDirectMessageSilencedWhenSwitchExplicitlyOff(t *testing.T) {
+	msg := BotIncomingMessage{Platform: "slack", UserID: "U1", ChannelID: "DUSER", ThreadTS: "thread", Text: "hi", IsMention: true}
+	off := NewBotConversationManager(seedSlackBotConfig(t, false, false, routedElsewhereChannels), "", "")
+	if off.authorizeWorkflowRouteForMessage(context.Background(), &msg, ThreadID{Platform: "slack", ChannelID: "DUSER"}, nil) {
+		t.Fatal("unrouted DM allowed while switch explicitly off")
+	}
+	on := NewBotConversationManager(seedSlackBotConfig(t, true, true, routedElsewhereChannels), "", "")
+	if !on.authorizeWorkflowRouteForMessage(context.Background(), &msg, ThreadID{Platform: "slack", ChannelID: "DUSER"}, nil) {
+		t.Fatal("unrouted DM rejected while switch on")
+	}
+}
+
+func TestUnroutedSlackMentionGuidanceWhenSwitchOff(t *testing.T) {
+	t.Setenv("BOT_ALLOWED_EMAILS", "person@example.com")
+	m := NewBotConversationManager(seedSlackBotConfig(t, false, false, routedElsewhereChannels), "", "")
+	c := &testBotConnector{name: "slack", supportsThreads: true}
+	m.RegisterConnector(c)
+	m.HandleIncomingMessage(BotIncomingMessage{Platform: "slack", UserID: "U1", UserEmail: "person@example.com", ChannelID: "CNEW", ThreadTS: "thread", Text: "hi", IsMention: true})
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.sent) != 1 || !strings.Contains(c.sent[0], "This channel isn't connected") {
+		t.Fatalf("unexpected channel guidance: %v", c.sent)
+	}
+}
 
 func TestUnroutedSlackAccessExplainsChannelSetup(t *testing.T) {
 	for _, email := range []string{"", "person@example.com"} {

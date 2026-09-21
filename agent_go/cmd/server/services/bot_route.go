@@ -3,6 +3,8 @@ package services
 import (
 	"encoding/json"
 	"strings"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 )
 
 // ResolveChannelRoute is the single route decoder for listeners and turns.
@@ -33,6 +35,33 @@ func ResolveChannelRoute(encoded, channelID string) *ChannelRoute {
 		return &route
 	}
 	return nil
+}
+
+// SlackBotTrafficAllowed reports whether Slack bot traffic is enabled for a
+// channel. The platform switch (enabled + bot_mode, admin-only) covers every
+// channel; otherwise an explicit channel route saved by the destination
+// workflow's owner enables that channel. Unrouted channels stay silent.
+func SlackBotTrafficAllowed(cfg *chathistory.BotConnectorConfig, hasExplicitRoute bool) bool {
+	if cfg == nil {
+		return false
+	}
+	if cfg.Enabled && cfg.BotMode {
+		return true
+	}
+	return hasExplicitRoute
+}
+
+// SlackBotConfigHasRoutes reports whether the connector config holds any
+// channel route. Malformed content counts as no routes.
+func SlackBotConfigHasRoutes(cfg *chathistory.BotConnectorConfig) bool {
+	if cfg == nil {
+		return false
+	}
+	var routes map[string]ChannelRoute
+	if json.Unmarshal([]byte(cfg.AllowedChannels), &routes) != nil {
+		return false
+	}
+	return len(routes) > 0
 }
 
 // Slack email exclusions narrow a deployed route without changing its grant.

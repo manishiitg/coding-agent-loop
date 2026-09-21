@@ -853,6 +853,20 @@ func (m *BotConversationManager) routeChangeKeepsSession(msg BotIncomingMessage,
 	return true
 }
 
+// slackBotSwitchExplicitlyOff reports whether a Slack connector config exists
+// with the platform switch off. Unknown state (no store, no config) counts
+// as on: the switch-off state must be explicit to silence traffic.
+func (m *BotConversationManager) slackBotSwitchExplicitlyOff() bool {
+	if m == nil || m.chatStore == nil {
+		return false
+	}
+	cfg, err := m.chatStore.GetBotConnectorConfig(context.Background(), "slack")
+	if err != nil || cfg == nil {
+		return false
+	}
+	return !(cfg.Enabled && cfg.BotMode)
+}
+
 func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Context, msg *BotIncomingMessage, threadID ThreadID, active *activeBotSession) bool {
 	if msg == nil {
 		return true
@@ -872,6 +886,11 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 			if msg.IsMention {
 				m.sendWorkflowAccessDenied(msg.Platform, threadID, unroutedBotAccessMessage(msg.Platform, ""))
 			}
+			return false
+		}
+		// Slack direct messages may use generic chat unless the platform
+		// switch is explicitly off. Other platforms keep their own enablement.
+		if strings.EqualFold(msg.Platform, "slack") && m.slackBotSwitchExplicitlyOff() {
 			return false
 		}
 		return true

@@ -92,7 +92,7 @@ export function SlackSetup({ bots }: { bots: SlackSetupBots }) {
           <Card className="p-4">
             <ToggleRow
               label="Enable Slack bot"
-              description={`Platform switch for @mentions, threads, and channel triggers${canManageSlackDefault ? '' : ' — a platform admin turns this on'}`}
+              description={`Platform switch for bot replies in channels without a route — channels with a saved route work regardless${canManageSlackDefault ? '' : ' — a platform admin turns this on'}`}
               checked={botEnabled}
               onCheckedChange={checked => setSlackConfig({ ...slackConfig, enabled: checked, bot_mode: checked })}
               disabled={!canManageSlackDefault}

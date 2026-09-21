@@ -438,14 +438,17 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		} else {
 		}
 
-		if req.Enabled && req.BotMode {
-			api.revokeChangedBotSessions(channelRouting)
-		} else {
-			api.revokeChangedBotSessions(nil)
-		}
-		// Dynamically register/unregister Slack bot connector
+		// Sessions follow their route, not the platform switch: revoke only
+		// sessions whose channel lost its route or changed destination.
+		// An empty routing map revokes everything, as before.
+		api.revokeChangedBotSessions(channelRouting)
+		// Dynamically register the Slack bot connector when the platform
+		// switch is on or any owner-saved channel route exists. Route
+		// removal takes effect immediately through the per-message and
+		// per-route checks; the connector object itself is never
+		// unregistered at runtime.
 		if api.botManager != nil {
-			if req.BotMode && req.Enabled {
+			if (req.BotMode && req.Enabled) || len(channelRouting) > 0 {
 				// Register if not already registered
 				if api.botManager.GetConnector("slack") == nil {
 					api.botManager.RegisterConnector(slackService)
@@ -455,7 +458,6 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 				}
 			} else {
 			}
-			// Note: unregistering at runtime is complex (active sessions) — disable takes effect on restart
 		} else {
 		}
 

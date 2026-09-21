@@ -90,7 +90,8 @@ workflow's transcript from remaining visible after a different workflow is
 selected. The workflow chat surface now verifies that the active tab belongs to
 the selected workflow and displays its loading state during asynchronous tab
 resolution. Focused resolver tests and the frontend build pass; deployment and
-live acceptance remain pending.
+service health are green in RTS release `6c47129-20260921082037`; interactive
+acceptance remains.
 
 ## Ctrl+K first-open latency — PLAT-342
 
@@ -98,7 +99,8 @@ live acceptance remain pending.
 first-use chunk fetch, renders its cached session list immediately, and stops
 forcing an active-session request or resetting the overlay when preset data
 changes. The focused performance contract and frontend build pass; deployment
-and production timing verification remain pending.
+and service health are green in RTS release `6c47129-20260921082037`;
+interactive timing verification remains.
 
 ## Native transcript recovery CPU saturation — PLAT-341
 
@@ -110,9 +112,10 @@ full message text inside every matrix comparison. Production pprof attributed
 historical retries use bounded backoff/age/attempt limits with one worker, and
 older attempts cannot overwrite newer recovery demands. Focused regressions
 pass. Production logging now also has bounded rotation, opt-in debug chatter,
-safe shell-command fingerprints, and deduplicated registry diagnostics.
-Deployment, post-deployment pprof verification, and one-time cleanup of the
-existing large logs remain pending.
+safe shell-command fingerprints, and deduplicated registry diagnostics. RTS
+release `6c47129-20260921082037` is healthy and completed its first rotation;
+the active agent/workspace logs are now small. Longer steady-state profiling
+remains pending.
 
 ## Scheduled scripted-tool child ownership — PLAT-338
 

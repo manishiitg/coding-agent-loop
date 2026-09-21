@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented; focused regression tests green; deployment pending` |
+| Ticket state | `deployed to RTS; focused regressions and service health green` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P0 chat correctness / navigation` |
 
@@ -39,4 +39,5 @@ the source workflow from being displayed under the destination workflow's UI.
 - Resolver regression coverage verifies that source content cannot override a
   workflow-ownership mismatch.
 - Existing workflow surface resolver coverage remains green.
-- Deployment and production navigation verification remain pending.
+- Deployed to RTS in release `6c47129-20260921082037`; public HTTP and service
+  health checks passed. Interactive workflow-switch verification remains.

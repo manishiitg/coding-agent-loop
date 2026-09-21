@@ -166,6 +166,27 @@ func botWorkflowAccessClaims(userID, userEmail string, route services.ChannelRou
 }
 
 func (api *StreamingAPI) checkWhatsAppWorkflowAccess(ctx context.Context, userID string, route services.ChannelRoute) (bool, error) {
+	if strings.TrimSpace(route.ProfileID) != "" {
+		// Crew slugs are product-conversation routes, not workflow manifests.
+		// Resolve the project under the paired owner's workspace on every use
+		// so a deleted project or a slug pointing at another user's folder
+		// cannot continue to authorize WhatsApp messages.
+		if !strings.EqualFold(strings.TrimSpace(route.ProfileID), "work") ||
+			strings.TrimSpace(route.WorkflowID) != "" ||
+			strings.TrimSpace(route.ConversationKey) == "" ||
+			strings.TrimSpace(route.WorkspacePath) == "" || api.agentProfiles == nil {
+			return false, nil
+		}
+		profile, err := api.agentProfiles.Resolve("work", 0, strings.TrimSpace(userID))
+		if err != nil {
+			return false, err
+		}
+		binding, err := resolveProductConversationBinding(ctx, strings.TrimSpace(userID), profile, route.ConversationKey)
+		if err != nil {
+			return false, nil
+		}
+		return workspacePathsMatchForUser(userID, route.WorkspacePath, binding.WorkspacePath), nil
+	}
 	_, allowed, err := api.checkBotWorkflowAccess(ctx, strings.TrimSpace(userID), "", route)
 	return allowed, err
 }

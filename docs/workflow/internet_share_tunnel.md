@@ -65,4 +65,8 @@ chat: manage_internet_share(action=stop|status) / expiry / shutdown
   recipients links are temporary.
 - If `cloudflared` prints no URL within 45s (slow edge assignment), start
   fails and the agent should retry; the supervisor kills the orphaned process.
+- A fresh tunnel URL needs ~20-30s of DNS propagation before it resolves
+  ("it may take some time to be reachable" in cloudflared's own words). If a
+  recipient reports the link not resolving immediately after sharing, have
+  them retry rather than re-sharing.
 - Logs carry the `[SHARE_TUNNEL]` prefix (start/stop/expiry).

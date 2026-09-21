@@ -140,7 +140,13 @@ import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chat
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
 import { appendRestoredLiveTail, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
 import { resolveLiveInputConfirmations } from '../../utils/liveInputReceipt'
-import { isReadOnlyWorkflowRunTab, workflowTabsNeedingHydration, hydrateWorkflowTabsPrioritized } from '../../utils/workflowTabHydration'
+import {
+  hydrateWorkflowTabsPrioritized,
+  isReadOnlyWorkflowRunTab,
+  liveWorkflowSessionsForReconnect,
+  workflowTabsNeedingHydration,
+} from '../../utils/workflowTabHydration'
+import { isVisibleActivitySession } from '../../utils/activitySessions'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
 // Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
 
@@ -889,7 +895,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           const activeSessions = await activeSessionsPromise
           if (!stillOwnsSession()) return
           if (activeSessions.some(session => session.session_id === sessionId &&
-            (session.agent_mode === 'workflow' || session.agent_mode === 'workflow_phase'))) {
+            (session.agent_mode === 'workflow' || session.agent_mode === 'workflow_phase') &&
+            isVisibleActivitySession(session))) {
             useChatStore.getState().setTabStreaming(tab.tabId, true)
           } else if (!isReadOnlyWorkflowRunTab(tab)) {
             const history = await getWorkflowHistoryBySession()
@@ -955,6 +962,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
+
+  // Never expose the previous workflow's messages or a false first-time chat
+  // while the durable conversation for a newly selected workflow is resolving.
+  // This key changes during render, before the reconnect effect runs.
+  const workflowConversationKey = `${activePresetId || ''}:${workspacePath || ''}`
+  const [resolvedWorkflowConversationKey, setResolvedWorkflowConversationKey] = useState('')
+  const resolvedWorkflowConversationKeyRef = useRef('')
+  const isWorkflowConversationResolving = Boolean(
+    activePresetId && resolvedWorkflowConversationKey !== workflowConversationKey,
+  )
 
   const [reportPreviewPreference, setReportPreviewPreference] = useState<ReportPreviewDevice>(
     () => readReportPreviewPreference(workspacePath),
@@ -1312,7 +1329,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     let cancelled = false
 
     const reconnectWorkflowTabs = async () => {
-      if (workflowReconnectKeyRef.current === reconnectKey) return
+      if (
+        workflowReconnectKeyRef.current === reconnectKey &&
+        resolvedWorkflowConversationKeyRef.current === reconnectKey
+      ) {
+        setResolvedWorkflowConversationKey(reconnectKey)
+        return
+      }
       workflowReconnectKeyRef.current = reconnectKey
       // Wait for zustand to rehydrate persisted tabs from localStorage.
       // Without this, chatTabs is empty and dedup fails → duplicate tabs.
@@ -1349,10 +1372,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           }
         }
 
-        const activeWorkflowSessions = activeSessions.filter(s =>
-          !internalChildSessionIds.has(s.session_id) &&
-          (s.agent_mode === 'workflow' || s.agent_mode === 'workflow_phase')
-        )
+        const activeWorkflowSessions = liveWorkflowSessionsForReconnect(activeSessions)
+          .filter(s => !internalChildSessionIds.has(s.session_id))
 
         // 2. Skip DB session restore — only interactive running sessions may
         // auto-create tabs. Background runs require an explicitly opened tab.
@@ -1848,6 +1869,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // early return above while preserving any explicit read-only selection.
         if (!cancelled) {
           void ensureWorkflowBuilderTab(activePresetId, { keepSelection: true })
+          resolvedWorkflowConversationKeyRef.current = reconnectKey
+          setResolvedWorkflowConversationKey(reconnectKey)
         }
       }
     }
@@ -2343,14 +2366,22 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               </div>
             )}
 
-            <div className="min-h-0 flex-1 overflow-hidden">
-              <ChatAreaWithObserverId
-                ref={chatAreaCallbackRef}
-                onNewChat={onNewChat}
-                hideHeader
-                compact
-                workflowLandingContent={<WorkflowNewChatGuide />}
-              />
+            <div className="relative min-h-0 flex-1 overflow-hidden">
+              {isWorkflowConversationResolving && (
+                <div className="absolute inset-0 z-10 flex items-center justify-center gap-2 bg-background text-sm text-muted-foreground">
+                  <div className="h-4 w-4 animate-spin rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground" />
+                  Loading conversation...
+                </div>
+              )}
+              <div className={isWorkflowConversationResolving ? 'invisible h-full pointer-events-none' : 'h-full'}>
+                <ChatAreaWithObserverId
+                  ref={chatAreaCallbackRef}
+                  onNewChat={onNewChat}
+                  hideHeader
+                  compact
+                  workflowLandingContent={<WorkflowNewChatGuide />}
+                />
+              </div>
             </div>
           </div>
         )}

@@ -4,11 +4,11 @@
 
 | Field | Value |
 |---|---|
-| Status | `open` — repeatedly reproduced in the live UI on 2026-08-15; no fix claimed |
+| Status | `root cause confirmed; PLAT-348 fix implemented locally, deployment pending` |
 | Priority | P1 |
 | Owner | frontend workflow switch, chat-index hydration, and tab selection |
 | Reported | 2026-08-15 |
-| Related | [PLAT-026](plat-026.md), [PLAT-095](../scheduler-runs/plat-095.md)), [PLAT-106](plat-106.md), [PLAT-107](plat-107.md) |
+| Related | [PLAT-026](plat-026.md), [PLAT-095](../scheduler-runs/plat-095.md)), [PLAT-106](plat-106.md), [PLAT-107](plat-107.md), [PLAT-348](../performance/plat-348.md) |
 
 ## Problem
 
@@ -101,3 +101,20 @@ rather than a synchronous happy path:
 5. `No chats yet` is truthful and never flashes while history is loading.
 6. The deferred-response integration test and a live multi-workflow switch both
    pass.
+
+## 2026-09-21 confirmed production cause and repair
+
+RTS live evidence replaced the earlier unverified race hypothesis with a
+specific fan-out. The server returned 45 retained sessions, all completed; 43
+were workflow sessions and 42 belonged to `rtsprreviweer`. Those rows are kept
+for 24-hour conversation/terminal continuity, but workflow open interpreted
+them as live runtime work and performed per-session resolution and hydration.
+The underlying chat, dashboard and Pulse endpoints completed in 1–55 ms.
+
+[PLAT-348](../performance/plat-348.md) records the performance incident and
+implementation. Reconnect now filters through the canonical live-activity rule
+before per-session work, terminal retained rows cannot set restored tabs back
+to streaming, and workflow-keyed loading state prevents the new-chat guide or
+the previous workflow transcript from rendering while durable selection is
+unresolved. Focused tests and the TypeScript build pass. Deployment and live
+rapid-switch acceptance remain pending.

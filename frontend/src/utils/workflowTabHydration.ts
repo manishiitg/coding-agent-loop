@@ -1,7 +1,22 @@
 import type { ChatTab } from '../stores/useChatStore'
-import type { PollingEvent } from '../services/api-types'
+import type { ActiveSessionInfo, PollingEvent } from '../services/api-types'
+import { isVisibleActivitySession } from './activitySessions'
 
 type HydratableTab = Pick<ChatTab, 'tabId' | 'sessionId' | 'metadata'>
+
+/**
+ * The runtime index intentionally retains completed coding sessions so a later
+ * message can reuse their terminal. Workflow opening must not interpret those
+ * retained conversation handles as work that needs reconnecting. Doing so
+ * creates one lookup/hydration per completed turn and can block navigation for
+ * minutes on a mature workflow.
+ */
+export function liveWorkflowSessionsForReconnect(sessions: ActiveSessionInfo[]): ActiveSessionInfo[] {
+  return sessions.filter(session =>
+    (session.agent_mode === 'workflow' || session.agent_mode === 'workflow_phase') &&
+    isVisibleActivitySession(session),
+  )
+}
 
 /**
  * A read-only view of one scheduled or bot run: a transcript to show, never a

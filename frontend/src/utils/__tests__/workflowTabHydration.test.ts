@@ -1,6 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
-import { isReadOnlyWorkflowRunTab, workflowTabsNeedingHydration, hydrateWorkflowTabsPrioritized } from '../workflowTabHydration'
-import type { PollingEvent } from '../../services/api-types'
+import {
+  hydrateWorkflowTabsPrioritized,
+  isReadOnlyWorkflowRunTab,
+  liveWorkflowSessionsForReconnect,
+  workflowTabsNeedingHydration,
+} from '../workflowTabHydration'
+import type { ActiveSessionInfo, PollingEvent } from '../../services/api-types'
 
 const tab = (tabId: string, sessionId: string | undefined, metadata: Record<string, unknown>) =>
   ({ tabId, sessionId, metadata } as unknown as Parameters<typeof workflowTabsNeedingHydration>[0][number])
@@ -36,6 +41,42 @@ describe('workflowTabsNeedingHydration', () => {
   it('ignores non-workflow tabs', () => {
     const multi = tab('t5', 'chat-interactive', { mode: 'multi-agent' })
     expect(workflowTabsNeedingHydration([multi], getTabEvents)).toEqual([])
+  })
+})
+
+describe('liveWorkflowSessionsForReconnect', () => {
+  const session = (overrides: Partial<ActiveSessionInfo>): ActiveSessionInfo => ({
+    session_id: overrides.session_id || 'session',
+    observer_id: '',
+    agent_mode: 'workflow',
+    status: 'completed',
+    created_at: '2026-09-21T00:00:00Z',
+    last_activity: '2026-09-21T00:00:00Z',
+    ...overrides,
+  })
+
+  it('does not fan out reconnect work across retained completed turns', () => {
+    const retained = Array.from({ length: 42 }, (_, index) => session({
+      session_id: `completed-${index}`,
+      has_retained_tmux_session: true,
+    }))
+
+    expect(liveWorkflowSessionsForReconnect(retained)).toEqual([])
+  })
+
+  it('keeps authoritative live workflow work and excludes other modes', () => {
+    const live = session({
+      session_id: 'live-workflow',
+      runtime_state: { phase: 'running' } as ActiveSessionInfo['runtime_state'],
+    })
+    const multiAgent = session({
+      session_id: 'other-mode',
+      agent_mode: 'multi-agent',
+      status: 'running',
+    })
+
+    expect(liveWorkflowSessionsForReconnect([live, multiAgent]).map(item => item.session_id))
+      .toEqual(['live-workflow'])
   })
 })
 

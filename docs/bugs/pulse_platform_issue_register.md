@@ -74,7 +74,11 @@ recorded access owner when available, while ownerless multi-user workflows
 remain safely blocked. Regression coverage is green; restart and live schedule
 identity verification are complete on `e21f799a7`. All 29 local schedules now
 register with the authenticated `default` principal; the next naturally due
-action run is the remaining acceptance check.
+action run is the remaining acceptance check. The follow-up also unifies saved
+trigger execution: API/internal triggers and configured Slack workflow triggers
+use the workflow owner's resource/secrets scope. Slack remains constrained to
+Run mode with its bot principal and external sender retained for authorization
+and audit; WhatsApp retains its paired-user identity model.
 
 ## Builder plan-tool consolidation — PLAT-329
 

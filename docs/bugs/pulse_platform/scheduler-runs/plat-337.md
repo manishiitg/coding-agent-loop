@@ -51,6 +51,18 @@ An ownerless multi-user workflow remains unresolved and blocked. The fix does
 not weaken the shared authentication boundary, fabricate a multi-user owner,
 or permit model-supplied identity.
 
+### Trigger owner-scope follow-up
+
+All saved workflow execution sources now use the same owner rule. Cron runs,
+manual schedule runs, API webhooks, internal workflow triggers, and configured
+Slack workflow triggers execute with the durable workflow owner identity.
+External credentials and bot routes still decide whether a delivery is
+accepted and constrain what it may invoke; the external caller remains audit
+metadata and never replaces the owner for secrets or tool-session identity.
+Slack remains forced to Run mode even when it uses the owner's resource scope.
+WhatsApp is unchanged: it continues to execute as its explicitly paired user
+and receives only that user's actual workflow access.
+
 ## Regression coverage
 
 `TestBuildScheduleContextThreadsOwnerUserID` now covers all four ownership
@@ -58,6 +70,11 @@ states: creator, access owner, ownerless single-user legacy workflow, and
 ownerless multi-user workflow. The single-user case explicitly verifies that
 the scheduler supplies a non-empty authenticated principal rather than relying
 on the retired empty-string fallback.
+
+`TestWorkflowTriggersUseOwnerExecutionScope` separately proves that a webhook
+trigger binds action tools to the workflow owner. The Slack workflow-trigger
+adapter now constructs its context through the same owner-resolving builder
+instead of substituting its bot principal as execution owner.
 
 ## Verification
 

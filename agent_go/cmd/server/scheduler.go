@@ -634,7 +634,7 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		WorkflowLabel: manifest.Label,
 		Schedule:      sched,
 		Capabilities:  lockedScheduleCapabilities(manifest.Capabilities),
-		OwnerUserID:   scheduledWorkflowOwnerUserID(manifest),
+		OwnerUserID:   workflowExecutionOwnerUserID(manifest),
 	}
 	if sched.PulseReviewOnly {
 		// PLAT-115: a workflow's own periodic Pulse-review schedule reuses the
@@ -651,13 +651,14 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 	return sctx
 }
 
-// scheduledWorkflowOwnerUserID converts durable workflow ownership into the
-// authenticated identity used by an internal scheduled turn. Before action
-// tools required bound session claims, ownerless legacy schedules could pass
-// an empty string and silently fall through to the local default user. Keep
-// that compatibility deliberately in single-user mode, where that user is the
-// installation owner, but never invent an owner for a multi-user workflow.
-func scheduledWorkflowOwnerUserID(manifest *WorkflowManifest) string {
+// workflowExecutionOwnerUserID converts durable workflow ownership into the
+// authenticated identity used by unattended schedule and trigger turns.
+// Before action tools required bound session claims, ownerless legacy runs
+// could pass an empty string and silently fall through to the local default
+// user. Keep that compatibility deliberately in single-user mode, where that
+// user is the installation owner, but never invent an owner for a multi-user
+// workflow.
+func workflowExecutionOwnerUserID(manifest *WorkflowManifest) string {
 	if manifest == nil {
 		return ""
 	}

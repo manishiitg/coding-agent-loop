@@ -276,6 +276,35 @@ func TestBuildScheduleContextThreadsOwnerUserID(t *testing.T) {
 	}
 }
 
+func TestWorkflowTriggersUseOwnerExecutionScope(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"workflow-owner","username":"owner","can_create":true}]}`)
+	manifest := &WorkflowManifest{
+		ID:        "triggered",
+		CreatedBy: "workflow-owner",
+		Access:    &WorkflowAccess{Owners: []string{"workflow-owner", "co-owner"}},
+	}
+	sctx := buildScheduleContext("Workflow/triggered", manifest, WorkflowSchedule{
+		ID:           "incoming",
+		ScheduleType: "webhook",
+	})
+	sctx.TriggerSource = "webhook"
+	sctx.WebhookInput = &WorkflowWebhookDelivery{DeliveryID: "delivery-1"}
+	if sctx.OwnerUserID != "workflow-owner" {
+		t.Fatalf("trigger OwnerUserID = %q, want workflow-owner", sctx.OwnerUserID)
+	}
+
+	requestCtx := internalBotRequestContext(context.Background(), sctx.OwnerUserID)
+	resolve := (&StreamingAPI{}).bindToolExecutionContext(requestCtx, "schedule-webhook--incoming_123", QueryRequest{}, false)
+	toolCtx, err := resolve(context.Background(), "execute_shell_command")
+	if err != nil {
+		t.Fatalf("owner-scoped trigger action tool rejected: %v", err)
+	}
+	if claims := GetUserFromContext(toolCtx); claims == nil || claims.UserID != "workflow-owner" {
+		t.Fatalf("trigger tool claims = %+v, want workflow-owner", claims)
+	}
+}
+
 // TestHandleCreateWorkflowManifestStampsCreatedBy proves the other half of
 // the same fix: a newly created workflow actually records who created it,
 // using the authenticated request's own user ID -- not a hardcoded or

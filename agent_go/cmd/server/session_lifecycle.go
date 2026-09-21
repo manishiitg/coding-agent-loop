@@ -22,6 +22,34 @@ import (
 
 var closeAllCodingCLISessionsForRuntimeCancel = closeAllCodingCLIInteractiveSessionsForOwner
 var closeCodingAgentTmuxForRuntimeCancel = closeCodingAgentTmuxSessionByName
+var deliverMuseTurnInterrupt = func(ctx context.Context, agent *mcpagent.Agent, sessionID string) error {
+	_, err := mcpagent.DeliverAgentControlKey(ctx, agent, mcpagent.ControlKeyDeliveryRequest{SessionID: sessionID, Key: "Escape"})
+	return err
+}
+
+// A conversational Stop is a CLI interrupt, not a terminal teardown. Deliver
+// Escape before canceling the Go turn: after cancellation the provider's tmux
+// command would inherit a dead context and never reach the running Muse TUI.
+func (api *StreamingAPI) interruptInteractiveMuseTurn(sessionID string) {
+	api.activeSessionsMux.RLock()
+	session := api.activeSessions[sessionID]
+	interactive := session != nil && !isScheduledSessionIdentity(sessionID, session.TriggeredBy) && strings.TrimSpace(session.BotPlatform) == ""
+	api.activeSessionsMux.RUnlock()
+	if !interactive {
+		return
+	}
+	api.runningAgentsMux.RLock()
+	agent := api.runningAgents[sessionID]
+	api.runningAgentsMux.RUnlock()
+	if agent == nil || !strings.EqualFold(string(mcpagent.ReadAgentRuntimeInfo(agent).Provider), "muse-cli") || !mcpagent.AgentSupportsSteering(agent) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	if err := deliverMuseTurnInterrupt(ctx, agent, sessionID); err != nil {
+		log.Printf("[SESSION DEBUG] Could not interrupt Muse turn in place for session %s: %v", sessionID, err)
+	}
+}
 
 // handleCancelCurrentTurn cancels only the currently running LLM turn for a session.
 // It must not mark the session stopped or tear down workshop/background state.
@@ -44,6 +72,12 @@ func (api *StreamingAPI) handleCancelCurrentTurn(w http.ResponseWriter, r *http.
 		api.markSessionTurnInterrupted(sessionID)
 	}
 
+	api.agentCancelMux.Lock()
+	_, hasTurn := api.agentCancelFuncs[sessionID]
+	api.agentCancelMux.Unlock()
+	if hasTurn {
+		api.interruptInteractiveMuseTurn(sessionID)
+	}
 	api.agentCancelMux.Lock()
 	cancelFunc, exists := api.agentCancelFuncs[sessionID]
 	if exists {

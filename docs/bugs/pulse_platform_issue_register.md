@@ -62,6 +62,18 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Legacy schedule action-tool identity — PLAT-337
+
+[PLAT-337](pulse_platform/scheduler-runs/plat-337.md) records why every action
+tool in `twitter-automation` schedule chats returned `requires an authenticated
+session` while read-only bridge discovery still worked. The workflow predates
+ownership metadata, so the scheduler passed no user identity into the stricter
+shared tool boundary introduced on 2026-09-17. The scheduler now explicitly
+uses the local owner for ownerless legacy workflows in single-user mode and a
+recorded access owner when available, while ownerless multi-user workflows
+remain safely blocked. Regression coverage is green; restart and live schedule
+verification are pending.
+
 ## Builder plan-tool consolidation — PLAT-329
 
 [PLAT-329](pulse_platform/plans-contracts/plat-329.md) tracks the locally implemented consolidation of typed step/route/group/conversion/maintenance tools and replacement of the dedicated plan-review launcher with existing skill-driven background review. Validation and deployment status are recorded in the ticket.

@@ -44,14 +44,14 @@ import {
 const WORK_SPLIT_PREFERENCE_KEY = 'work_workspace_split_ratio'
 const WORK_VIEW_PREFERENCE_KEY = 'work_workspace_view'
 const WORK_UI_PRESENTATION_VIEWS = {
-  report: 'dashboard', database: 'database', browser: 'browser', costs: 'costs', workshop: 'schedules', schedules: 'schedules', files: 'files',
+  report: 'dashboard', memory: 'memory', database: 'database', browser: 'browser', costs: 'costs', workshop: 'schedules', schedules: 'schedules', files: 'files',
   identity: 'identity', mcp: 'mcp',
   // Legacy agent + preference ids land on the consolidated Setup views.
   skills: 'mcp', secrets: 'identity', llm: 'identity', bots: 'mcp', email: 'mcp', folders: 'identity',
 } as const satisfies Record<string, WorkWorkspaceView>
 type WorkUIPresentationView = keyof typeof WORK_UI_PRESENTATION_VIEWS
 const WORK_UI_LABELS: Record<WorkUIPresentationView, string> = {
-  report: 'Dashboard', database: 'Database', browser: 'Browser', costs: 'Costs and usage', workshop: 'Automation', schedules: 'Automation', files: 'Files',
+  report: 'Dashboard', memory: 'Memory', database: 'Database', browser: 'Browser', costs: 'Costs and usage', workshop: 'Automation', schedules: 'Automation', files: 'Files',
   identity: 'Identity', mcp: 'Integrations',
   skills: 'Skills', secrets: 'Secrets', llm: 'Agent configuration', bots: 'Bots', email: 'Gmail', folders: 'Attached folders',
 }
@@ -613,6 +613,7 @@ export function WorkSurface() {
     setWorkspaceView(view)
     writeWorkWorkspaceView(selected?.id, view)
   }, [selected?.id])
+
   const openWorkPresentationView = useCallback((view: string, target?: string) => {
     if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
@@ -967,6 +968,7 @@ export function WorkSurface() {
                         projectIdentity={selected.identity}
                         tabId={tabId}
                         view={workspaceView}
+                        onViewChange={selectWorkspaceView}
                         enabledPanels={enabledWorkspacePanels}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}

@@ -1,5 +1,6 @@
 import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
 import {
+  Brain,
   Database,
   DollarSign,
   Files,
@@ -18,6 +19,7 @@ import { ReportDocumentSwitcher } from '../../components/workflow/ReportDocument
 import { agentApi } from '../../services/api'
 import type { PresetLLMConfig } from '../../services/api-types'
 import { useChatStore } from '../../stores/useChatStore'
+import { useWorkspaceStore } from '../../stores/useWorkspaceStore'
 import { BrowserWorkspacePanel } from '../../components/workflow/BrowserWorkspacePanel'
 import type { BrowserAutomationMode } from '../../components/BrowserAutomationSettings'
 import { isBrowserCDPEnabled } from '../../utils/runtimeCapabilities'
@@ -29,6 +31,7 @@ import { useResumePreviousChat } from '../../hooks/useResumePreviousChat'
 import { WorkIdentityPanel } from './WorkIdentityPanel'
 import { WorkIntegrationsPanel } from './WorkIntegrationsPanel'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
+import { WorkMemoryPanel } from './WorkMemoryPanel'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const AutomationHubPanel = lazy(() => import('../../components/automation/AutomationHubPanel').then(module => ({ default: module.AutomationHubPanel })))
@@ -36,7 +39,7 @@ const ReportView = lazy(() => import('../../components/workflow/ReportViewer').t
 const DatabaseView = lazy(() => import('../../components/workflow/DatabaseView'))
 const FileWorkspacePane = lazy(() => import('../../components/FileWorkspacePane').then(module => ({ default: module.FileWorkspacePane })))
 
-export type WorkWorkspaceView = 'dashboard' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'identity' | 'mcp'
+export type WorkWorkspaceView = 'dashboard' | 'memory' | 'database' | 'files' | 'browser' | 'costs' | 'schedules' | 'identity' | 'mcp'
 
 function sendWorkProjectPaneMessage(projectId: string, message: string) {
   return sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: projectId, message })
@@ -44,6 +47,7 @@ function sendWorkProjectPaneMessage(projectId: string, message: string) {
 
 const VIEW_BUTTONS: Array<{ id: WorkWorkspaceView; label: string; icon: LucideIcon }> = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'memory', label: 'Memory', icon: Brain },
   { id: 'browser', label: 'Browser', icon: Monitor },
   { id: 'schedules', label: 'Automation', icon: Zap },
 ]
@@ -192,7 +196,7 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectIdentity, tabId, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onViewChange, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: { workspacePath: string; projectId: string; projectTitle: string; projectIdentity?: ProductIdentity; tabId: string; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onViewChange: (view: WorkWorkspaceView) => void; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void }) {
   const openHistoryChat = useResumePreviousChat()
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
   const canonicalSessionId = useChatStore(state => Object.values(state.chatTabs).find(tab =>
@@ -207,6 +211,28 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
       await onSelectedSecretsChange(secrets)
     } catch (cause) {
       useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not save project secret selection.', 'error')
+    }
+  }
+
+  const openProjectFile = async (filePath: string) => {
+    const fileName = filePath.split('/').filter(Boolean).pop() || filePath
+    const workspace = useWorkspaceStore.getState()
+    workspace.setSelectedFile({ name: fileName, path: filePath })
+    workspace.setBinaryFileData(null)
+    workspace.setLoadingFileContent(true)
+    workspace.setShowFileContent(true)
+    workspace.expandFoldersForFile(filePath)
+    void workspace.highlightFile(filePath)
+    onViewChange('files')
+    try {
+      const response = await agentApi.getPlannerFileContent(filePath)
+      if (!response.success || !response.data) throw new Error(response.message || 'Could not open skill file.')
+      workspace.setFileContent(String(response.data.content ?? '').replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\r/g, '\r'))
+    } catch (cause) {
+      workspace.setShowFileContent(false)
+      useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not open skill file.', 'error')
+    } finally {
+      workspace.setLoadingFileContent(false)
     }
   }
 
@@ -250,6 +276,11 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           onSelectedServersChange={onSelectedServersChange}
           onSelectedSkillsChange={onSelectedSkillsChange}
+        />}
+        {view === 'memory' && <WorkMemoryPanel
+          workspacePath={workspacePath}
+          onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
+          onOpenFile={filePath => { void openProjectFile(filePath) }}
         />}
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView

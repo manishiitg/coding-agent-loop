@@ -2522,6 +2522,11 @@ export const agentApi = {
     return response.data
   },
 
+  getShareTunnelStatus: async (): Promise<import('./api-types').ShareTunnelStatusResponse> => {
+    const response = await api.get('/api/share-tunnel/status')
+    return response.data
+  },
+
   // --- Workflow Manifest API (file-backed workflow definitions) ---
 
   listWorkflowManifests: async (): Promise<ListWorkflowManifestsResponse> => {

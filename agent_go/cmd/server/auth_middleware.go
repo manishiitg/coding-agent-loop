@@ -292,6 +292,14 @@ func shouldSkipAuth(path string) bool {
 		}
 	}
 
+	// Profiling endpoints must never ride the static-file exemption below:
+	// heap, goroutine, and cmdline dumps can carry secrets, tokens, and
+	// workflow data. Local profilers authenticate like every other caller
+	// (Bearer JWT/access token, or ?token= for curl).
+	if strings.HasPrefix(path, "/debug/pprof/") {
+		return false
+	}
+
 	// Static files don't need auth
 	if !strings.HasPrefix(path, "/api/") {
 		return true

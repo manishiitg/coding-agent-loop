@@ -1,6 +1,7 @@
-import React, { useCallback } from 'react'
+import React, { useCallback, useEffect, useState } from 'react'
+import { Globe } from 'lucide-react'
 import { agentApi } from '../../services/api'
-import type { WorkflowPublishInfoResponse, WorkflowPublishStrategyInfo } from '../../services/api-types'
+import type { ShareTunnelStatusResponse, WorkflowPublishInfoResponse, WorkflowPublishStrategyInfo } from '../../services/api-types'
 import PublishPopupBody from '../backup-publish/PublishPopupBody'
 
 interface WorkflowPublishViewProps {
@@ -33,6 +34,53 @@ const getPublishSummary = (info: WorkflowPublishInfoResponse | null): string => 
   }
 }
 
+const formatTunnelExpiry = (value?: string): string => {
+  if (!value) return ''
+  const when = new Date(value)
+  if (Number.isNaN(when.getTime())) return value
+  return when.toLocaleString()
+}
+
+const InternetShareSection: React.FC = () => {
+  const [status, setStatus] = useState<ShareTunnelStatusResponse | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    agentApi.getShareTunnelStatus()
+      .then((resp) => { if (!cancelled) setStatus(resp) })
+      // Non-admins get 403 from this endpoint; the section stays hidden.
+      .catch(() => { if (!cancelled) setStatus(null) })
+    return () => { cancelled = true }
+  }, [])
+
+  if (status === null) return null
+  return (
+    <section className="overflow-hidden rounded-md border border-border">
+      <div className="flex items-start gap-3 px-4 py-4">
+        <Globe className="mt-0.5 h-4 w-4 flex-shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <div className="text-sm font-medium">Internet share</div>
+          {status.active ? (
+            <>
+              <a href={status.public_url} target="_blank" rel="noreferrer" className="block truncate text-sm text-blue-500 hover:underline">
+                {status.public_url}
+              </a>
+              <p className="mt-1 text-xs text-amber-600 dark:text-amber-500">
+                Temporary tunnel — exposes the whole server, not one report. Links die with it.
+                {status.expires_at ? ` Expires ${formatTunnelExpiry(status.expires_at)}.` : ''}
+              </p>
+            </>
+          ) : (
+            <p className="mt-1 text-xs text-muted-foreground">
+              No internet share active. Ask in chat to start a temporary one for off-machine report links.
+            </p>
+          )}
+        </div>
+      </div>
+    </section>
+  )
+}
+
 const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath, onStateLoaded, headerAction }) => {
   const loadInfo = useCallback(async () => {
     if (!workspacePath) throw new Error('No workflow is selected')
@@ -46,6 +94,7 @@ const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath
   }, [workspacePath])
 
   return (
+    <div className="space-y-4">
     <PublishPopupBody
       loadInfo={loadInfo}
       loadAccessSecret={loadAccessSecret}
@@ -60,6 +109,8 @@ const WorkflowPublishView: React.FC<WorkflowPublishViewProps> = ({ workspacePath
       getSummary={getPublishSummary}
       headerAction={headerAction}
     />
+    <InternetShareSection />
+    </div>
   )
 }
 

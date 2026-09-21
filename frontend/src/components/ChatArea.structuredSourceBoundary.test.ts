@@ -8,4 +8,13 @@ describe('formatted Chat structured-source boundary', () => {
     expect(source).not.toContain('codingCliTranscriptReconciliation')
     expect(source).not.toContain('reconciledCodingCliCompletionsRef')
   })
+
+  it('shows rapid retained-chat messages before serialized delivery begins', () => {
+    const source = readFileSync('src/components/ChatArea.tsx', 'utf8')
+    const stage = source.indexOf('captured.optimisticUserEventId = optimistic.id')
+    const enqueue = source.indexOf('return chatSubmissionLane.enqueue', stage)
+
+    expect(stage).toBeGreaterThan(-1)
+    expect(enqueue).toBeGreaterThan(stage)
+  })
 })

@@ -7,6 +7,7 @@ describe('Work Dashboard', () => {
     const identity = readFileSync('src/products/work/WorkIdentityPanel.tsx', 'utf8')
 
     expect(source).toContain("{ id: 'dashboard', label: 'Dashboard'")
+    expect(source).toContain("{ id: 'memory', label: 'Memory'")
     expect(source).toContain("{ id: 'database', label: 'Database'")
     expect(source).toContain('<ReportDocumentSwitcher workspacePath={workspacePath}')
     expect(source).not.toContain('documentPath="db/reports/index.html"')
@@ -17,6 +18,27 @@ describe('Work Dashboard', () => {
     expect(source).toContain('selectedGlobalSecrets={selectedGlobalSecrets}')
     expect(identity).toContain('persistExplicitGlobalSelection')
     expect(identity).toContain('allowGlobalPromotion')
+  })
+
+  it('shows durable project memory and links it to Crew skills', () => {
+    const pane = readFileSync('src/products/work/WorkWorkspacePane.tsx', 'utf8')
+    const memory = readFileSync('src/products/work/WorkMemoryPanel.tsx', 'utf8')
+
+    expect(pane).toContain("view === 'memory' && <WorkMemoryPanel")
+    expect(memory).toContain('`${workspacePath}/MEMORY.md`')
+    expect(memory).toContain('title="Memory"')
+    expect(memory).toContain('Custom skills')
+    expect(memory).toContain('`${workspacePath}/skills`')
+    expect(memory).toContain('loadCrewSkills(workspacePath)')
+    expect(memory).toContain('Crew has not created any custom skills yet.')
+    expect(memory).not.toContain('skillsApi.listSkills')
+    expect(memory).not.toContain('View and manage skills')
+    expect(memory).not.toContain('onOpenSkills')
+    expect(memory).toContain('const deduplicated = new Map<string, CrewSkill>()')
+    expect(memory).toContain('if (!deduplicated.has(identity))')
+    expect(memory).toContain('onClick={() => onOpenFile(skill.filePath)}')
+    expect(pane).toContain("onViewChange('files')")
+    expect(pane).toContain('agentApi.getPlannerFileContent(filePath)')
   })
 })
 

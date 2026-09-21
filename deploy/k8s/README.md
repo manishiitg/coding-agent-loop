@@ -239,14 +239,16 @@ The agent spawns MCP server subprocesses (Python/Node). Each uses 70-350MB RAM. 
 `[AUTH] WARNING: Using default AUTH_SECRET` on every request means `AUTH_SECRET` is not set in the k8s secret. See [AUTH_SECRET](#auth_secret) section above.
 
 ### pprof (memory/CPU profiling)
-pprof is available at `/debug/pprof/` on the agent pod:
+pprof is available at `/debug/pprof/` on the agent pod. Profiles can carry
+secrets and workflow data, so these endpoints require authentication like any
+other API route — pass a JWT or API token as `?token=`:
 ```bash
 # Heap profile
-kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/heap?debug=1'
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/heap?debug=1&token=$TOKEN'
 
 # Goroutine dump
-kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/goroutine?debug=1'
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/goroutine?debug=1&token=$TOKEN'
 
 # CPU profile (30s)
-kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/profile?seconds=30' > cpu.prof
+kubectl exec <pod> -n prod-mcpagent -- curl -s 'http://localhost:8000/debug/pprof/profile?seconds=30&token=$TOKEN' > cpu.prof
 ```

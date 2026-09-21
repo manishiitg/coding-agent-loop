@@ -80,6 +80,13 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	if err := api.registerShareLinkTools(definitionAgent, userID, phaseWorkspacePath); err != nil {
 		return err
 	}
+	// Internet sharing is admin-gated server control, not a read-only run
+	// operation — same capability gate as user management.
+	if policy.allows("user_management") {
+		if err := api.registerShareTunnelTools(definitionAgent, userID); err != nil {
+			return err
+		}
+	}
 	log.Printf("[CHAT_POLICY] session=%s mode=%s origin=%s capabilities=%v", sessionID, policy.Mode, policy.Origin, policy.Capabilities)
 	mcpManagement := policy.allows("mcp_management") && workflowPhaseID == workflowtypes.WorkflowStatusWorkflowBuilder && syntheticReq.AgentProfileID == ""
 	if mcpManagement {

@@ -5,6 +5,22 @@ description: Discover, install, import, create, select, and remove reusable skil
 
 # Crew skills
 
+## Decide whether this belongs in memory or a skill
+
+- Use root `MEMORY.md` for project-specific truths: verified facts,
+  preferences, decisions, constraints, corrections, and durable context. Test
+  the content with “Crew should remember that…”.
+- Use `skills/<skill-name>/SKILL.md` for a reusable procedure: when it applies,
+  ordered actions, checks, tools, expected output, and failure handling. Test
+  it with “When asked to do X, Crew should…”.
+- If both are relevant, keep the fact in memory and the procedure in the skill,
+  then link them rather than duplicating instructions.
+- Put temporary status, raw chat, guesses, secrets, and reliably retrievable
+  live information in neither.
+- Memory may be updated proactively after stable verification. A skill changes
+  only when the user explicitly asks to preserve, create, or improve a reusable
+  procedure.
+
 - Use `list_skills` to inspect what is already installed before searching or
   creating another skill. Use `search_skills` to discover an existing skill.
 - Use `install_skill` for a discovered skill and `import_skill` for a supplied
@@ -14,9 +30,12 @@ description: Discover, install, import, create, select, and remove reusable skil
   Use `action="deselect"` to remove only this project's selection. The same
   selection remains editable in **Setup > Skills**.
 - When the user explicitly asks to preserve or improve a repeatable procedure,
-  create or update a focused custom skill under
-  `skills/custom/<skill-name>/SKILL.md`. Inspect the names and descriptions of
-  every existing custom skill before choosing a destination.
+  create or update a focused custom skill inside this Crew project at
+  `skills/<skill-name>/SKILL.md`. This is project-local durable knowledge, like
+  the root `MEMORY.md`; never write it into the account-wide `skills/custom/`
+  library. Inspect the names and descriptions of every existing project skill
+  before choosing a destination, then select the skill for this project with
+  `update_project_skill_selection` so the runtime can load it.
 - Update an existing skill only when the new knowledge has the same topic and
   would be loaded for the same kind of future request. Create a separate,
   clearly named skill when the topic, external system, audience, trigger, or

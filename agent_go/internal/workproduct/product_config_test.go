@@ -209,7 +209,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		"work-mcp":                {"list_mcp_servers", "Setup > MCP", "platform-level", "trigger_mcp_discovery", "update_project_mcp_server_selection", "next user message"},
 		"work-integrations":       {"set_workflow_secret", "available to shell", "do not ask the user to start", "manage_global_secret", "update_project_global_secret_selection", "selected_global_secret_names", "list_work_folders", "Setup > Models"},
 		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Crew account", "list_attached_workflows", "list_workflow_triggers", "run_workflow_trigger", "get_workflow_trigger_run", "delivery_id", "public webhook"},
-		"work-skills":             {"list_skills", "search_skills", "update_project_skill_selection", "skills/custom/<skill-name>/SKILL.md", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
+		"work-skills":             {"list_skills", "search_skills", "update_project_skill_selection", "skills/<skill-name>/SKILL.md", "account-wide `skills/custom/`", "Crew should remember that", "When asked to do X, Crew should", "link them rather than duplicating", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html", "get_report_link"},
 		"background-work":         {"run_in_background", "[AUTO-NOTIFICATION]", "query_agent"},
@@ -251,8 +251,8 @@ func TestBuiltinAgentProfilesReturnsExactlyOneVersion(t *testing.T) {
 	if len(profiles) != 1 {
 		t.Fatalf("expected exactly one built-in profile, got %d", len(profiles))
 	}
-	if profiles[0].Version != 2 {
-		t.Fatalf("expected version 2, got %d", profiles[0].Version)
+	if profiles[0].Version != 3 {
+		t.Fatalf("expected version 3, got %d", profiles[0].Version)
 	}
 }
 
@@ -284,6 +284,10 @@ func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 		"## How to talk to the user",
 		"runs a small business and is not technical",
 		"Use business words, never platform words alone",
+		"## Memory versus skills",
+		"Crew should remember that",
+		"When asked to do X, Crew should",
+		"same instructions into both files",
 	} {
 		if !strings.Contains(rendered, required) {
 			t.Fatalf("rendered Crew prompt is missing %q", required)

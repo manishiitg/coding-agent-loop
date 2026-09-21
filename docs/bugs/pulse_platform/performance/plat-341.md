@@ -71,6 +71,84 @@ The policy remains fail-safe for chat durability: newly completed turns still
 receive the existing immediate bounded reconciliation window, and durable
 fallback survives restarts. The change bounds only repeated historical work.
 
+## Remaining architectural problem
+
+The deployed fix bounds the production cost, but it does not make native
+transcript recovery a simple or authoritative protocol. The recovery path still
+has to coordinate all of the following concerns:
+
+- an immediate post-completion retry window and a separate restart-safe
+  periodic scanner;
+- a filesystem journal plus process-local `pending` and `inFlight` state;
+- provider-specific native transcript discovery and parsing;
+- ownership, session and workspace validation before recovered content can be
+  published;
+- concurrent canonical-history writes and protection against an older attempt
+  overwriting a newer recovery demand; and
+- an ordered LCS merge based on normalized role and message text because the
+  native adapters do not expose an application turn ID.
+
+That last constraint is the fundamental source of fragility. Normalized text is
+useful recovery evidence, but it is not a delivery identity. Legitimately
+repeated messages, provider rewrites, partial streaming content and structured
+tool rows all make text-based reconciliation heuristic. A durable demand
+therefore cannot be marked `resolved` from an exact provider receipt; after the
+bounded fix it eventually becomes `exhausted` instead. The implementation is
+now operationally safe, but it remains a medium-to-high maintenance-risk
+fallback and should not become another routine source of Formatted Chat truth.
+
+## Long-term design
+
+Formatted Chat should have one canonical ingestion path:
+
+```text
+provider/CLI adapter
+  -> structured bridge event with stable owner, session and turn/message IDs
+  -> append-only canonical AgentWorks chat history
+  -> Formatted Chat projection
+```
+
+Tmux remains the required CLI process host and raw Terminal surface, but its
+screen transcript does not feed the frontend directly. Provider adapters own
+the conversion of native activity into structured events. The structured
+bridge must persist an acceptance checkpoint and a completion checkpoint with
+stable identities, so an interrupted or restarted server can determine exactly
+which turn is missing without comparing whole conversations.
+
+Native transcript recovery remains available only as an emergency repair path:
+
+```text
+missing structured completion checkpoint
+  -> read the bounded native transcript tail for that provider turn
+  -> normalize it once into structured events
+  -> append idempotently using the stable turn/message IDs
+  -> persist `resolved` and stop retrying
+```
+
+The recovery worker should consume explicit durable jobs rather than rescan a
+directory of unresolved history markers. A job has a terminal state
+(`resolved`, `unsupported`, `exhausted` or `corrupt`), an attempt lease, bounded
+backoff and a recorded reason for every transition. Only one worker may own a
+job at a time, including across processes. Reconciliation should operate on the
+missing turn or bounded transcript tail, not perform an O(n*m) whole-history
+merge during routine recovery.
+
+The cutover is complete when:
+
+1. every supported retained CLI emits stable acceptance and completion IDs;
+2. Formatted Chat reads only canonical structured history;
+3. a native recovery job can prove and persist `resolved` for an exact turn;
+4. repeated user text and structured tool rows are recovered idempotently;
+5. restart, disconnect and late-transcript-flush tests require no whole-history
+   polling or frontend-native transcript merge; and
+6. production telemetry distinguishes normal structured delivery from rare
+   native repair, including queue depth, attempt count, terminal reason and
+   repair duration.
+
+Until those conditions hold, the bounded implementation remains necessary and
+must not be removed: it protects completed replies from disappearing after a
+missed completion, disconnect or restart.
+
 ## Verification and operational follow-up
 
 - Focused native transcript, builder conversation, and recovery concurrency

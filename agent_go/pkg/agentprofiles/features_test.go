@@ -109,6 +109,22 @@ func TestTriggersReuseSchedulesAndAddProductTools(t *testing.T) {
 	}
 }
 
+func TestMemoryFeatureExposesProjectMemoryPanel(t *testing.T) {
+	profile := Profile{Features: []FeatureBinding{{ID: "memory"}}}
+	if err := ResolveFeatures(&profile); err != nil {
+		t.Fatal(err)
+	}
+	if len(profile.ResolvedFeatures) != 1 || profile.ResolvedFeatures[0].ID != "memory" {
+		t.Fatalf("resolved features = %+v", profile.ResolvedFeatures)
+	}
+	if !containsString(profile.ResolvedFeatures[0].UIPanels, "memory") {
+		t.Fatalf("memory panel missing from %+v", profile.ResolvedFeatures[0].UIPanels)
+	}
+	if got := strings.Join(FeaturePromptExtensions(profile), "\n"); !strings.Contains(got, "project-root `MEMORY.md`") || !strings.Contains(got, "dated-entry template") || !strings.Contains(got, "custom skills") {
+		t.Fatalf("memory prompt extension = %q", got)
+	}
+}
+
 func TestWorkflowReferencesProjectScopedCrewInvocationTools(t *testing.T) {
 	profile := Profile{ToolPolicy: ToolPolicy{Mode: ToolPolicyModeAllowlist}, Features: []FeatureBinding{{ID: "workflow-references"}}}
 	if err := ResolveFeatures(&profile); err != nil {

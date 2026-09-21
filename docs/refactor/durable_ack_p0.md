@@ -18,6 +18,26 @@ correctness bugs after the FIFO-receipt and append-then-apply fixes; the
 regression coverage. Historical live passes do not cover those cases, and the
 reviewer has not yet re-verified.
 
+### RTS rapid-input follow-up (2026-09-21)
+
+Production session `c7d58080-0058-4f6f-a394-feea651f405b` clarified a UI
+latency case that must not be misclassified as slow durable acknowledgement.
+Four busy Cursor `/api/query` submissions completed in 15.0–19.6 seconds. The
+delay occurred before `sent_to_cli`, while Cursor's adapter waited for a safe
+idle or “Add a follow-up” composer; the asynchronous `store.db` durability
+watch was not blocking HTTP. The frontend then compounded that legitimate
+pending-delivery interval by creating later optimistic rows inside its own
+serialized request lane, making rapid messages appear lost.
+
+The frontend fix stages each local user row before that lane, while preserving
+the existing meanings of the receipts: no tick before provider acceptance,
+single tick after `sent_to_cli`, double tick after exact durable proof. An
+accept-now/deliver-later server prototype was rejected and removed because it
+would violate this document's attempt-once/report-truth decision. Cursor's
+pending server↔chat e2e must now include rapid identical and distinct sends,
+assert immediate pending-row visibility, FIFO provider delivery, no premature
+single tick, and one distinct durable confirmation per accepted send.
+
 ## Problem
 
 A tmux `send-keys` exit 0 only proves tmux accepted the keystroke. Every

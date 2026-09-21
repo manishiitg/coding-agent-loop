@@ -148,7 +148,7 @@ func createSecureReportLink(ctx context.Context, metadataRoot, linkRoot, reportP
 	if kind, _ := metadata["type"].(string); kind != "file" {
 		return "", fmt.Errorf("project report is not a file")
 	}
-	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_URL")), "/")
+	publicURL := effectiveShareBaseURL()
 	if publicURL == "" {
 		return "", fmt.Errorf("PUBLIC_URL is not configured on this server; cannot create a report link")
 	}
@@ -187,7 +187,7 @@ func createSecureShareLink(ctx context.Context, metadataRoot, linkRoot, relative
 	if kind != "file" && kind != "folder" {
 		return "", fmt.Errorf("asset service returned an unsupported target type")
 	}
-	publicURL := strings.TrimRight(strings.TrimSpace(os.Getenv("PUBLIC_URL")), "/")
+	publicURL := effectiveShareBaseURL()
 	if publicURL == "" {
 		return "", fmt.Errorf("PUBLIC_URL is not configured on this server; cannot create a share link")
 	}

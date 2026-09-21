@@ -6,6 +6,7 @@ describe('isWorkWorkspaceViewEnabled', () => {
     expect(isWorkWorkspaceViewEnabled('identity')).toBe(true)
     expect(isWorkWorkspaceViewEnabled('mcp')).toBe(true)
     expect(isWorkWorkspaceViewEnabled('files')).toBe(true)
+    expect(isWorkWorkspaceViewEnabled('memory')).toBe(true)
   })
 
   it('always enables Identity and gates Integrations on any constituent panel', () => {
@@ -15,6 +16,7 @@ describe('isWorkWorkspaceViewEnabled', () => {
     expect(isWorkWorkspaceViewEnabled('mcp', new Set(['skills']))).toBe(true)
     expect(isWorkWorkspaceViewEnabled('mcp', new Set(['bots']))).toBe(true)
     expect(isWorkWorkspaceViewEnabled('files', new Set(['files']))).toBe(true)
+    expect(isWorkWorkspaceViewEnabled('memory', new Set(['memory']))).toBe(true)
     expect(isWorkWorkspaceViewEnabled('files', new Set(['mcp']))).toBe(false)
   })
 })

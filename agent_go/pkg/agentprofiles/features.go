@@ -129,7 +129,7 @@ var featureCatalog = map[string]featureDefinition{
 		Skills:          []string{"work-skills"},
 		UIPanels:        []string{"skills"},
 		Capabilities:    map[string]CapabilityRequirement{"skill_selection": CapabilityPreferred},
-		PromptExtension: "Reusable skills are enabled. Read the attached `work-skills` skill before managing skills. Discover and select an existing skill when possible. When the user explicitly asks to preserve or improve a repeated procedure, the normal Work agent may create or update a focused skill under `skills/custom/`; do not switch its identity to Skill Builder.",
+		PromptExtension: "Reusable skills are enabled. Read the attached `work-skills` skill before managing skills. Discover and select an existing skill when possible. When the user explicitly asks to preserve or improve a repeated procedure, the normal Work agent may create or update a focused project-local skill under `skills/<skill-name>/SKILL.md`; never write Crew-authored skills into the account-wide `skills/custom/` library, and do not switch its identity to Skill Builder.",
 	},
 	"attached-folders": {
 		Dependencies:    []string{"files"},
@@ -188,6 +188,10 @@ var featureCatalog = map[string]featureDefinition{
 		Skills:          []string{"work-dashboard", "ui-ux-pro-max"},
 		UIPanels:        []string{"dashboard"},
 		PromptExtension: "A visual Dashboard is enabled. Read the attached `work-dashboard` skill before creating or changing it. Use the optional attached `ui-ux-pro-max` skill for design intelligence when it helps; it does not choose the framework or override the dashboard runtime contract. The dashboard may contain multiple HTML views under db/reports/ with optional views.json metadata; the shared toolbar handles navigation. Reports may opt into the pinned daisyUI CDN stylesheet. Use the managed data contract and validate every changed view.",
+	},
+	"memory": {
+		UIPanels:        []string{"memory"},
+		PromptExtension: "Project Memory is enabled. Keep durable decisions, preferences, and learned context in the project-root `MEMORY.md`, following the concise dated-entry template in the shared project-memory instructions. Keep reusable procedures in focused custom skills and link the two when that helps the user understand which guidance applies. Do not copy live facts into memory when they can be fetched again.",
 	},
 	"costs": {
 		UIPanels: []string{"costs"},

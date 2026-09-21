@@ -55,6 +55,14 @@ recipient must sign in to AgentWorks and already have access to the workflow.
 Removing that access also removes their ability to open the link. Never claim
 that creating the link shared the workflow with a recipient.
 
+When the links are local-only and the user explicitly asks to share one over
+the internet, `manage_internet_share` (action `start`) can put this server on
+the internet through a temporary Cloudflare quick tunnel, after which these
+tools return reachable URLs. That exposes the WHOLE server, not one report —
+admin-only, default 1h expiry, links die with the tunnel, and tunnel traffic
+transits Cloudflare. Never start one without the user's explicit request, and
+use the publish flow instead when the user wants durable public distribution.
+
 Use the workflow access tool separately only when the user explicitly asks to
 change who can access the workflow. Use the publish flow instead when the user
 wants anonymous, externally hosted, or password-gated public distribution.

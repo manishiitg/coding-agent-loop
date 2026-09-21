@@ -2844,6 +2844,14 @@ export interface WorkflowPublishSecretResponse {
   value: string
 }
 
+export interface ShareTunnelStatusResponse {
+  active: boolean
+  public_url?: string
+  started_at?: string
+  expires_at?: string
+  started_by?: string
+}
+
 export type WorkflowNotificationState = 'not_configured' | 'missing_secret' | 'invalid_secret' | 'ready'
 
 export interface WorkflowNotificationDestinationInfo {

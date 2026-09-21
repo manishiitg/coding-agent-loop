@@ -123,7 +123,12 @@ full message text inside every matrix comparison. Production pprof attributed
 historical retries use bounded backoff/age/attempt limits with one worker, and
 older attempts cannot overwrite newer recovery demands. Focused regressions
 pass. Production logging now also has bounded rotation, opt-in debug chatter,
-safe shell-command fingerprints, and deduplicated registry diagnostics. RTS
+safe shell-command fingerprints, and deduplicated registry diagnostics. The
+runtime is protected by these bounds, but the ticket now records the remaining
+architectural risk and long-term cutover: stable structured turn/message IDs as
+the sole Formatted Chat source, with native transcripts retained only as an
+idempotent, terminal-state emergency repair path rather than a whole-history
+polling and text-matching mechanism. RTS
 release `6c47129-20260921082037` is healthy and completed its first rotation;
 the active agent/workspace logs are now small. Longer steady-state profiling
 remains pending.
@@ -174,11 +179,25 @@ canonical issues and genuine human decisions; Gate owns only scheduling,
 Activity reuses the result, and the separate impact tool is no longer exposed.
 UI/read cutover and removal of rollback-window compatibility tables remain.
 
+## Crew memory visibility — PLAT-345
+
+[PLAT-345](pulse_platform/learnings-knowledge/plat-345.md) tracks the first-class
+Crew Memory view. It renders the canonical project `MEMORY.md`, distinguishes
+durable context from reusable procedures, shows only project-local Crew skills
+and opens skill management directly from Memory. Dashboard remains the
+initial default view.
+
 ## Chat reliability — PLAT-178, PLAT-323 and PLAT-324
 
 [PLAT-178](pulse_platform/chat-reliability/plat-178.md) owns durable live-input
 message persistence and native-transcript recovery when the chat UI falls behind
-the coding terminal. [PLAT-323](pulse_platform/chat-reliability/plat-323.md) owns
+the coding terminal. Its 2026-09-21 follow-up also covers rapid-message
+visibility: RTS proved that busy Cursor submissions may spend 15–19 seconds
+waiting for a safe composer before truthful `sent_to_cli` acceptance. Formatted
+Chat now stages every pending user row before its serialized delivery lane,
+while the single and double delivery ticks remain governed by the durable-ack
+contract; no premature server success is reported. Deployment and live Cursor
+multi-send verification remain pending. [PLAT-323](pulse_platform/chat-reliability/plat-323.md) owns
 workflow-local, per-user Builder chat storage, access isolation and the one-time
 legacy migration. Together they define the Chat Reliability category; purely
 visual chat defects remain under frontend-chat.

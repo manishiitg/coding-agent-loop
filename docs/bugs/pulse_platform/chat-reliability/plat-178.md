@@ -21,6 +21,33 @@
   data loss; investigated together, filed separately since the root causes
   are unrelated).
 
+## 2026-09-21 recurrence — rapid messages were accepted but appeared late
+
+RTS session `c7d58080-0058-4f6f-a394-feea651f405b` showed that several
+messages sent while a retained Cursor/tmux turn was active did not appear in
+Formatted Chat immediately. Server logs confirmed that delivery was ordered
+and lossless, but each `/api/query` occupied the frontend's per-session promise
+lane for 15–19 seconds while Cursor waited for a safe live-input boundary. The
+frontend created its optimistic user row *inside* that lane, so the second and
+later messages were invisible until every preceding request completed.
+
+The frontend now stages each established session's optimistic user row before
+entering the serialized delivery lane. The lane still owns network mutation
+order and duplicate coalescing; a rejected submission removes its unstamped
+optimistic row, while an accepted row continues through the existing durable
+message-ID and delivery-receipt reconciliation. Focused regression tests cover
+the visibility-before-enqueue invariant, promise-lane ordering, and duplicate
+live-input coalescing. TypeScript production build passes; targeted ESLint has
+no errors (two pre-existing `ChatArea.tsx` hook warnings remain). Deployment
+and live rapid-multi-send verification are pending.
+
+This is intentionally a visibility fix, not a fabricated fast delivery
+receipt. The [durable acknowledgement contract](../../../refactor/durable_ack_p0.md)
+requires Cursor's safe-composer transport acceptance before the single tick and
+`store.db` evidence before the double tick. The observed 15–19 second interval
+was before transport acceptance, not the asynchronous durable-ack watcher; the
+contract explicitly rejects returning success before that attempted delivery.
+
 ## Symptom
 
 On workflow "substack" (session `b5e39872-4e4e-4645-8059-6d6e7a1231db`), the

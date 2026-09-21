@@ -100,6 +100,23 @@ function getEventTimestampMs(event: PollingEvent): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
+function createNextOptimisticUserMessage(sessionId: string, content: string, existing: PollingEvent[]): PollingEvent {
+  const indexed = existing.filter(event => typeof event.event_index === 'number')
+  const eventIndex = indexed.length > 0
+    ? indexed.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
+    : undefined
+  const latestTimestamp = existing.reduce((latest, event) => {
+    const timestamp = getEventTimestampMs(event)
+    return timestamp === null ? latest : Math.max(latest, timestamp)
+  }, 0)
+  return createUserMessageEvent(
+    content,
+    eventIndex,
+    new Date(Math.max(Date.now(), latestTimestamp + 1)).toISOString(),
+    sessionId,
+  )
+}
+
 function formatAutoNotificationTime(event: PollingEvent): string {
   const ts = getEventTimestampMs(event)
   return new Date(ts ?? Date.now()).toLocaleTimeString([], {
@@ -2925,24 +2942,16 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Only seed an optimistic event_index when the restored history already has backend
     // indices. Mixing "history without indices" and "optimistic message with index 0"
     // creates inconsistent ordering metadata and can make the first follow-up jump around.
-    const existingSessionEvents = chatStore.getTabEvents(tabSessionId)
-    const indexedEvents = existingSessionEvents.filter((event) => typeof event.event_index === 'number')
-    const nextEventIndex = indexedEvents.length > 0
-      ? indexedEvents.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
-      : undefined
-    const latestExistingTimestampMs = existingSessionEvents.reduce((latest, event) => {
-      const ts = getEventTimestampMs(event)
-      return ts === null ? latest : Math.max(latest, ts)
-    }, 0)
-    const optimisticTimestampMs = Math.max(Date.now(), latestExistingTimestampMs + 1)
-    const optimisticUserMessage = createUserMessageEvent(
-      displayQueryWithContext,
-      nextEventIndex,
-      new Date(optimisticTimestampMs).toISOString(),
-      tabSessionId,
-    )
-    const optimisticUserEventID = optimisticUserMessage.id
-    chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
+    let optimisticUserEventID = options?.optimisticUserEventId
+    if (!optimisticUserEventID) {
+      const optimisticUserMessage = createNextOptimisticUserMessage(
+        tabSessionId,
+        displayQueryWithContext,
+        chatStore.getTabEvents(tabSessionId),
+      )
+      optimisticUserEventID = optimisticUserMessage.id
+      chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
+    }
 
     // Consume only this request's context after acceptance. Failed sends keep
     // files/resume bindings; files added during delivery remain attached.
@@ -3279,8 +3288,41 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       submissionId: options?.submissionId ?? retry?.id ?? crypto.randomUUID(),
       builderHandoff: retry ? { tabId: retry.targetTabId, sessionId: retry.sessionId } : builder?.target,
     }
-    const submit = () => chatSubmissionLane.enqueue(`${identity}:${laneKey}`, () =>
-      isChatIdentityCurrent(identity) ? submitQueryImmediately(query, executionOptions, captured) : Promise.resolve(false))
+    const submit = () => {
+      // A retained CLI can take many seconds to durably acknowledge input, and
+      // the lane intentionally serializes those requests to preserve terminal
+      // order. Stage the visible user row before entering that lane so rapid
+      // messages all appear immediately instead of surfacing one-by-one as the
+      // preceding HTTP requests finish.
+      const currentSource = sourceTab?.tabId
+        ? useChatStore.getState().getTab(sourceTab.tabId)
+        : undefined
+      if (
+        !captured.optimisticUserEventId &&
+        sourceTab?.sessionId &&
+        currentSource?.sessionId === sourceTab.sessionId &&
+        isChatIdentityCurrent(identity)
+      ) {
+        const store = useChatStore.getState()
+        const optimistic = createNextOptimisticUserMessage(
+          sourceTab.sessionId,
+          query.trim(),
+          store.getTabEvents(sourceTab.sessionId),
+        )
+        captured.optimisticUserEventId = optimistic.id
+        store.addTabEvents(sourceTab.sessionId, [optimistic])
+      }
+
+      return chatSubmissionLane.enqueue(`${identity}:${laneKey}`, () =>
+        isChatIdentityCurrent(identity) ? submitQueryImmediately(query, executionOptions, captured) : Promise.resolve(false))
+        .then(accepted => {
+          if (!accepted && captured.optimisticUserEventId && sourceTab?.sessionId) {
+            useChatStore.getState().patchTabEvents(sourceTab.sessionId!, events =>
+              withoutOptimisticUserMessage(events, captured.optimisticUserEventId!))
+          }
+          return accepted
+        })
+    }
     // Every send funnels through one coordinator: a rapid Enter/double-click
     // shares one HTTP mutation per session + message instead of dispatching
     // the same text twice. The backend still owns live-vs-new-turn routing.

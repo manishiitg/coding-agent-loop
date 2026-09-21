@@ -111,6 +111,46 @@ func TestSingleUserPublicWorkspaceMapsGatewayIdentityToDefaultOwner(t *testing.T
 	}
 }
 
+func TestAuthMiddlewareRequiresAuthForPprof(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	t.Setenv("AUTH_SECRET", "test-auth-secret-with-enough-entropy")
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	for _, path := range []string{"/debug/pprof/", "/debug/pprof/heap?debug=1", "/debug/pprof/goroutine?debug=2"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusUnauthorized {
+			t.Fatalf("GET %s status = %d, want %d", path, rr.Code, http.StatusUnauthorized)
+		}
+	}
+}
+
+func TestAuthMiddlewareAcceptsJWTForPprof(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	t.Setenv("AUTH_SECRET", "test-auth-secret-with-enough-entropy")
+
+	token, err := GenerateJWT("default", "user", "")
+	if err != nil {
+		t.Fatalf("GenerateJWT failed: %v", err)
+	}
+
+	handler := AuthMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/debug/pprof/heap?debug=1", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rr.Code, http.StatusNoContent)
+	}
+}
+
 func TestAuthSecretMustBeExplicitAndNonDefault(t *testing.T) {
 	if err := ValidateAuthSecretValue(""); err == nil {
 		t.Fatal("ValidateAuthSecretValue accepted an empty secret")

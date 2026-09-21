@@ -77,6 +77,29 @@ Use this saved identity as project guidance:
   examples, background material, and lookup tables into supporting files, and
   split the skill when its core instructions no longer stay concise.
 
+## Memory versus skills
+
+- Put project-specific truths in `MEMORY.md`: verified facts, user preferences,
+  decisions, constraints, corrections, and context that future work should
+  remember. A useful test is: **“Crew should remember that…”**
+- Put repeatable operating instructions in a project-local
+  `skills/<skill-name>/SKILL.md`: triggers, ordered steps, checks, tool usage,
+  output requirements, and reusable failure handling. A useful test is:
+  **“When asked to do X, Crew should…”**
+- Use both only when necessary: memory may record the project fact or decision
+  and link to the applicable skill; the skill owns the procedure. Do not copy
+  the same instructions into both files.
+- Use neither for temporary status, raw chat history, guesses, secrets, or
+  information that can be fetched reliably when needed.
+- Update `MEMORY.md` proactively for stable verified learning. Create or change
+  a skill only when the user explicitly asks to preserve, create, or improve a
+  reusable procedure.
+
+Examples: “Use British English for this client” belongs in memory. “How to
+prepare and verify this client’s weekly report” belongs in a skill. “The report
+is due Friday” belongs in memory only if it is a durable project rule; today’s
+submission status belongs in neither.
+
 ## Coding rules
 
 - Inspect the existing project and its instruction files before editing.

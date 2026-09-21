@@ -2171,6 +2171,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/workflow/access", api.handleGetWorkflowAccess).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/access", api.handleSetWorkflowAccess).Methods("PUT", "POST")
 	apiRouter.HandleFunc("/users/directory", api.handleUserDirectory).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/share-tunnel/status", requireAdmin(api.handleGetShareTunnelStatus)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/admin/users", requireAdmin(api.handleAdminListUsers)).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/admin/users", requireAdmin(api.handleAdminCreateUser)).Methods("POST")
 	apiRouter.HandleFunc("/admin/users/{id}", requireAdmin(api.handleAdminUpdateUser)).Methods("PUT", "OPTIONS")
@@ -2541,7 +2542,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// parent's Slack thread — no per-tool hooks required.
 	virtualtools.SetSpawnListener(botManager)
 
-
 	// Wire bot session checker for human feedback (skip 2-min delay for bot sessions)
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
 	if feedbackStore != nil {
@@ -2771,6 +2771,7 @@ func runServer(cmd *cobra.Command, args []string) {
 		log.Fatalf("Failed to listen on %s:%d: %v", config.Host, config.Port, err)
 	}
 	actualPort := listener.Addr().(*net.TCPAddr).Port
+	SetShareTunnelServerPort(actualPort)
 
 	// Dynamically serve runtime-config.js so the frontend learns the real ports.
 	// In packaged/desktop mode ports are dynamic (--port 0), so the static file's
@@ -2866,6 +2867,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	stopNativeTranscriptRecovery()
 	api.cancelActiveWorkForShutdown()
 	fmt.Printf("✅ Active agent work canceled (%s)\n", time.Since(cancelStart).Round(time.Millisecond))
+
+	// An internet share tunnel must not outlive the server it exposes.
+	StopShareTunnel()
 
 	// Stop background discovery
 	fmt.Println("⏹️ Stopping background tool discovery...")

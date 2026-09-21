@@ -190,15 +190,19 @@ func TestCrewWorkflowTriggerBindingReuseAndCreate(t *testing.T) {
 	}
 
 	plain := NewWorkflowManifest("Binding target")
-	plain.CreatedBy = "owner"
-	plain.Access = &WorkflowAccess{Owners: []string{"owner"}}
+	plain.CreatedBy = "stranger"
+	plain.Access = &WorkflowAccess{Owners: []string{"stranger"}, Readers: []string{"owner"}}
 	plainRaw, _ := json.Marshal(plain)
 	mock.files[manifestPath("Workflow/plain")] = string(plainRaw)
 	mock.files["Workflow/plain/planning/plan.json"] = `{"steps":[{"type":"regular","id":"work","title":"Work","description":"Work"}]}`
 	mock.files["Workflow/plain/variables/variables.json"] = `{"variables":[],"groups":[{"name":"default"}]}`
-	createdManifest, exists, err := ReadWorkflowManifest(ctx, "Workflow/plain")
-	if err != nil || !exists {
+	mock.files[crewWorkflowTestCrewPath+"/workflow.json"] = `{"schema_version":1,"product":"work","id":"rts","workflow_context_paths":["Workflow/test","Workflow/plain"]}`
+	createdManifest, err := crewAttachedWorkflowManifest(ctx, crewWorkflowTestCrewPath, "Workflow/plain")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if access := workflowAccessForManifest(&UserClaims{UserID: "owner"}, createdManifest); access != WorkflowAccessRead {
+		t.Fatalf("test setup access = %q, want read-only", access)
 	}
 	created, err := crewWorkflowTriggerBinding(ctx, api, "Workflow/plain", createdManifest, crew)
 	if err != nil {
@@ -215,10 +219,9 @@ func TestCrewWorkflowTriggerBindingReuseAndCreate(t *testing.T) {
 	if !isInternalTriggerKind(binding.Kind) || binding.Caller == nil || binding.Caller.ID != "rts" || binding.Webhook == nil || binding.Webhook.EncryptedSecret != "" {
 		t.Fatalf("binding is not secretless internal: %+v", binding)
 	}
-
-	readerCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "reader"})
-	if _, err := crewWorkflowTriggerBinding(readerCtx, api, "Workflow/plain", createdManifest, crew); err == nil || !strings.Contains(err.Error(), "owner or write access") {
-		t.Fatalf("reader create err = %v, want permission failure", err)
+	deniedCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "reader"})
+	if _, err := crewWorkflowTriggerBinding(deniedCtx, api, "Workflow/plain", createdManifest, crew); err == nil || !strings.Contains(err.Error(), "access denied") {
+		t.Fatalf("unshared workflow binding err = %v, want access denial", err)
 	}
 }
 

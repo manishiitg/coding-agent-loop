@@ -1,9 +1,9 @@
 ---
 name: work-workflow-files
-description: Read and interpret files from attached folders or read-only AgentWorks workflow references in Crew, and securely link files from the active Crew project. Use when the user asks what an attached workflow contains, requests data or Dashboards from it, wants files compared across workflows, or asks for a share link to a Crew project file or folder.
+description: Read and interpret attached folders or read-only AgentWorks workflow references in Crew, invoke an attached workflow through its Crew-scoped internal trigger, and securely link files from the active Crew project. Use when the user asks what an attached workflow contains, wants it run, requests data or Dashboards from it, compares files across workflows, or asks for a share link to a Crew project file or folder.
 ---
 
-# Read attached workflow files
+# Use attached workflows
 
 ## Share an active Crew project file or folder
 
@@ -44,7 +44,8 @@ Resolve the authorized root before reading:
 - For a host folder, call `list_work_folders` and use its
   `$WORK_FOLDER_<ALIAS>` variable. Do not inspect the parent directory.
 - Both kinds are read-only unless a host-folder grant explicitly says
-  `read_write`. Never edit or execute a referenced workflow.
+  `read_write`. Never edit a referenced workflow. Execution is allowed only
+  through the attached-workflow trigger procedure below.
 
 A `#` workflow selection applies only to that message. For durable access to a
 workflow or another same-account Crew, use
@@ -52,6 +53,34 @@ workflow or another same-account Crew, use
 `attach_workflow_reference` only when the user asks to keep it attached. Use
 the exact saved path for `detach_workflow_reference`. Durable references live
 in the Crew project's `workflow.json` and are re-authorized on every turn.
+
+## Invoke an attached workflow
+
+Run a workflow only when the user's request requires that workflow to execute;
+attaching or inspecting it alone is not permission to start a job.
+
+1. Call `list_attached_workflows` and use its exact `workspace_path`. A `#`
+   selection is temporary context and is not an invokable durable attachment.
+2. Call `list_workflow_triggers` when trigger discovery or selection matters.
+   Public triggers may be visible for context, but this Crew path never exposes
+   their secrets and cannot invoke them.
+3. Call `run_workflow_trigger` with the exact path and the smallest required
+   JSON payload. Normally omit `trigger_id`: the server reuses or creates the
+   secretless internal trigger bound to this exact Crew. Pass an ID only when
+   it is an enabled internal trigger clearly bound to this Crew.
+4. Preserve the returned `delivery_id` and reuse it for retries of the same
+   request so a retry cannot duplicate work. Poll `get_workflow_trigger_run`
+   with the returned workflow path, trigger ID, and run ID until terminal;
+   avoid rapid polling.
+5. Report the actual terminal status and inspect returned step outputs and
+   artifact references before claiming success. Download time-limited artifacts
+   promptly when the user's task needs them.
+
+The read-only attachment authorizes only creation or reuse of that narrowly
+scoped internal binding. It does not permit workflow edits, public webhook
+invocation, or management of unrelated triggers. Detachment, lost workflow
+access, a disabled or rebound trigger, or a missing run must fail closed; do not
+work around those checks with shell access or constructed HTTP requests.
 
 ## Inspect progressively
 

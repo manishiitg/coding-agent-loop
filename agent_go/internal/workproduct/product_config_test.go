@@ -79,7 +79,8 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		t.Fatal("work must declare tool_policy.mode: allowlist -- fail-open would silently reach workflow/schedule/pulse tools")
 	}
 	// Crew reuses platform coding tools plus its deliberately small,
-	// project-scoped schedule surface. Workflow routes and execution remain out.
+	// project-scoped schedule surface. General workflow authoring stays out;
+	// attached workflows have only the scoped internal-trigger run surface.
 	wantEnabled := map[string]bool{
 		"get_file_link":                          false,
 		"get_report_link":                        false,
@@ -113,6 +114,10 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 		"list_accessible_workflows":              false,
 		"attach_workflow_reference":              false,
 		"detach_workflow_reference":              false,
+		"list_attached_workflows":                false,
+		"list_workflow_triggers":                 false,
+		"run_workflow_trigger":                   false,
+		"get_workflow_trigger_run":               false,
 		"list_project_schedules":                 false,
 		"create_project_schedule":                false,
 		"update_project_schedule":                false,
@@ -203,7 +208,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 	checks := map[string][]string{
 		"work-mcp":                {"list_mcp_servers", "Setup > MCP", "platform-level", "trigger_mcp_discovery", "update_project_mcp_server_selection", "next user message"},
 		"work-integrations":       {"set_workflow_secret", "available to shell", "do not ask the user to start", "manage_global_secret", "update_project_global_secret_selection", "selected_global_secret_names", "list_work_folders", "Setup > Models"},
-		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Crew account"},
+		"work-workflow-files":     {"list_accessible_workflows", "WORK_FOLDER_<ALIAS>", "workflow.json", "knowledgebase/", "learnings/", "db/db.sqlite", "db/reports/", "runs/run_index.json", "sqlite3 -readonly", "get_file_link", "get_report_link", "same signed-in Crew account", "list_attached_workflows", "list_workflow_triggers", "run_workflow_trigger", "get_workflow_trigger_run", "delivery_id", "public webhook"},
 		"work-skills":             {"list_skills", "search_skills", "update_project_skill_selection", "skills/custom/<skill-name>/SKILL.md", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html", "get_report_link"},

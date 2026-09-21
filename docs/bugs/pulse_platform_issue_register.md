@@ -1,3 +1,15 @@
+## Read-only Crew workflow invocation — PLAT-339
+
+[PLAT-339](pulse_platform/security-sandbox/plat-339.md) makes the bidirectional
+Workflow ↔ Crew integration symmetric. A Crew with an authorized read-only
+workflow attachment can discover triggers and create or reuse one secretless
+internal trigger bound to that exact Crew, then invoke and poll it through the
+existing internal dispatcher. This is a narrow authorization exception, not
+general workflow write access: public webhooks and unrelated trigger management
+remain protected, and attachment/access/caller checks fail closed. The change
+and focused regressions are complete locally; deployment and live acceptance
+remain pending.
+
 ## Workflow Automation Chats schedule visibility — PLAT-336
 
 [PLAT-336](pulse_platform/frontend-chat/plat-336.md) records why

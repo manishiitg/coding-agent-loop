@@ -236,16 +236,19 @@ with `kind: "internal"` (no secret issued, no public path, caller required):
 - Workflow Builder creates an internal Crew trigger while adding a Crew step.
 - Crew creates an internal workflow trigger when asked to invoke an attached
   workflow.
-- Either side can list, disable, re-enable, or remove bindings it is authorized
-  to manage; existing trigger UIs show internal triggers with an internal
-  badge and no URL.
+- Either side can list bindings; owners can disable, re-enable, or remove them.
+  Existing trigger UIs show internal triggers with an internal badge and no
+  URL.
 
-Creating a binding requires trigger-edit rights on the target side plus read
-access on the caller side, reusing the ownership checks each side already
-enforces. Invocation rechecks both resources, their attachment relationship,
-and the binding's enabled state. The public HTTP trigger endpoints skip
-internal triggers entirely: they are invokable only through internal dispatch.
-Copying either resource never silently copies cross-project authority.
+Normally, creating a binding requires trigger-edit rights on the target side
+plus read access on the caller side. Crew-to-Workflow has one narrow exception:
+an authorized read-only workflow attachment may create the secretless internal
+binding scoped to that exact Crew when it first invokes the workflow. It cannot
+create public triggers or manage unrelated triggers. Invocation rechecks both
+resources, their attachment relationship, and the binding's enabled state. The
+public HTTP trigger endpoints skip internal triggers entirely: they are
+invokable only through internal dispatch. Copying either resource never
+silently copies cross-project authority.
 
 ## Files and attached folders
 
@@ -296,7 +299,7 @@ rendering, deployment, extraction, or another bounded operation.
 
 The runtime flow is:
 
-1. The Crew selects an attached workflow and an enabled trigger.
+1. The Crew selects an attached workflow and an enabled internal trigger.
 2. It creates or uses a platform-internal trigger binding scoped to that Crew.
 3. It sends a JSON payload with a stable idempotency key.
 4. The workflow executes in its own `iteration-<n>-hook` folder.
@@ -309,6 +312,11 @@ The runtime flow is:
 The workflow trigger already defines its route selections, optional single-step
 target, variable groups, input mode, and execution contract. The Crew payload
 cannot override configuration that the trigger did not explicitly expose.
+The read-only attachment is sufficient to discover triggers and to create or
+reuse one secretless internal binding for the exact Crew, matching the inverse
+Workflow-to-Crew mechanism. Public trigger secrets remain protected, public
+triggers cannot be invoked through this path, and the attachment grants no
+general workflow editing or trigger-management access.
 
 An illustrative invocation is:
 

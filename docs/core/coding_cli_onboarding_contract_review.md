@@ -144,7 +144,7 @@ implementation map, not a claim that every provider needs every optional feature
 | Delivery receipt and history projection | `agent_go/cmd/server/live_input_durable.go`, `claude_native_transcript_sync.go` | ACK dispatch defaults to failed for an unhandled provider; native transcript projection has another provider switch. |
 | Catalog, install, setup, credentials | `agent_go/cmd/server/llm_provider_manifest.go`, `provider_setup.go`, `provider_connections.go`, `llm_config_handlers.go` | A runnable SDK adapter may be invisible or have incomplete product setup. |
 | UI setup and provider typing | `frontend/src/services/api-types.ts`, `components/providers/CodingProvidersPanel.tsx`, `codingProviderGuides.ts`, `GuidedProviderTerminal.tsx`, `stores/useLLMStore.ts` | Manifest-driven behavior coexists with local lists, guides, and fallback metadata. |
-| UI runtime semantics | `frontend/src/utils/codingCliTranscriptReconciliation.ts` | A new provider's completion does not trigger reconciliation until added to the frontend set. This is behavioral, not merely branding. |
+| UI runtime semantics | structured `user_message`, progress/tool, and canonical `unified_completion` events | Formatted Chat is provider-neutral and must not read or merge provider-native transcripts. Native transcript readers belong behind the backend adapter/recovery boundary and publish normalized structured events. |
 | Live test selection | `SDK/cmd/coding-agent-p0-tests/main.go`, `SDK/scripts/agentic-p0.sh`, `scripts/run-coding-cli-p0.sh`, `.github/workflows/coding-cli-p0.yml` | Test names are registry-derived, but packages and provider selection are still separately enumerated. |
 
 After using this map, search the existing provider added most recently (Muse in

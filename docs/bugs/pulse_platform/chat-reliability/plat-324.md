@@ -247,6 +247,26 @@ The formatted chat also suppresses the `conversation_resumed` lifecycle marker;
 older pages remain available through the transcript's existing top pagination
 control, without a misleading divider below the newest restored answer.
 
+## 2026-09-21 — formatted Chat no longer merges provider-native transcripts
+
+The retained-turn bridge now owns stable `turn_id` assignment, exactly-one
+canonical completion, ordered pending executions, structured progress/tool
+events, and publication of any backend-recovered assistant reply into the live
+EventStore. The frontend completion-time transcript hydration therefore became
+a second, competing presentation source. It could replace current structured
+rows with a differently timed history snapshot and made every new CLI provider
+an implicit frontend behavior change.
+
+Formatted Chat now consumes only structured live events and persisted AgentWorks
+conversation history. Provider-native transcript readers remain inside the
+backend adapter/recovery boundary, where they normalize recovered output into
+structured events; tmux remains the persistent CLI process host and raw Terminal
+view. The frontend provider list and completion-triggered native-history merge
+were removed. A source-boundary regression prevents `ChatArea` from restoring
+that coupling. The existing retained-turn P0 continues to require stable turn
+identity, exactly one canonical completion, persisted final response/history,
+and reuse of the same tmux session.
+
 ## 2026-09-16 Cursor live-publication regression
 
 The `rts-pr-reviweer` Cursor session produced the complete “Here are the

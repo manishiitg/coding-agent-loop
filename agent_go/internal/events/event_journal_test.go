@@ -18,7 +18,15 @@ func (failingEventJournal) LoadTail(string, int) ([]Event, error) { return []Eve
 func (failingEventJournal) Close() error                          { return nil }
 
 func journalTestEvent(id, content string) Event {
-	chunk := &agentevents.StreamingChunkEvent{Content: content, Source: agentevents.StreamingChunkSourceTranscript}
+	message := agentevents.NewUserMessageEvent(1, content, "user")
+	return Event{
+		ID: id, Type: string(agentevents.UserMessage), Timestamp: time.Now(),
+		Data: agentevents.NewAgentEvent(message),
+	}
+}
+
+func streamingTestEvent(id, content string) Event {
+	chunk := &agentevents.StreamingChunkEvent{Content: content, Source: "llm"}
 	return Event{
 		ID: id, Type: string(agentevents.StreamingChunk), Timestamp: time.Now(),
 		Data: agentevents.NewAgentEvent(chunk),
@@ -46,6 +54,46 @@ func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
 	loaded, err := journal.LoadTail("session-1", 10)
 	if err != nil || len(loaded) != 2 || loaded[0].ID != "event-1" || loaded[1].ID != "event-2" {
 		t.Fatalf("loaded events = %+v err=%v", loaded, err)
+	}
+}
+
+func TestStreamingChunksStayLiveOnlyAndBoundaryPreservesSequenceGap(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+	for _, id := range []string{"chunk-1", "chunk-2", "chunk-3"} {
+		if err := store.AddEventChecked("session-1", streamingTestEvent(id, id)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := store.AddEventChecked("session-1", journalTestEvent("message-1", "boundary")); err != nil {
+		t.Fatal(err)
+	}
+	if got := store.GetAllEventsRaw("session-1"); len(got) != 4 || got[3].Sequence != 4 {
+		t.Fatalf("live sequence = %+v", got)
+	}
+	persisted, err := journal.LoadTail("session-1", 10)
+	if err != nil || len(persisted) != 1 || persisted[0].ID != "message-1" || persisted[0].Sequence != 4 {
+		t.Fatalf("durable boundaries = %+v err=%v", persisted, err)
+	}
+}
+
+func TestSQLiteEventJournalReportsSizeAndCount(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, _, err := journal.Append("session-1", journalTestEvent("event-1", "one")); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := journal.Stats()
+	if err != nil || stats.Events != 1 || stats.SizeBytes <= 0 || stats.Path == "" {
+		t.Fatalf("stats = %+v err=%v", stats, err)
 	}
 }
 
@@ -138,5 +186,40 @@ func TestEventStoreDoesNotPublishBeforeDurableAppend(t *testing.T) {
 	case event := <-subscriber.Ch:
 		t.Fatalf("non-durable event was published over SSE: %+v", event)
 	default:
+	}
+}
+
+func TestSessionStatusDoesNotHydrateAndRemovalDoesNotResurrect(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.sqlite")
+	journal, err := OpenSQLiteEventJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := NewEventStore(100)
+	first.SetDurableJournal(journal)
+	first.AddEvent("session-1", journalTestEvent("event-1", "one"))
+	first.Stop()
+
+	reopened, err := OpenSQLiteEventJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.SetDurableJournal(reopened)
+	if count, exists := store.GetSessionStatus("session-1"); exists || count != 0 {
+		t.Fatalf("status unexpectedly hydrated durable history: count=%d exists=%v", count, exists)
+	}
+	if got := store.GetEvents("session-1", GetEventsOptions{SinceIndex: -1}).Events; len(got) != 1 {
+		t.Fatalf("explicit event restore = %+v", got)
+	}
+	store.RemoveSession("session-1")
+	result := store.GetEvents("session-1", GetEventsOptions{SinceIndex: -1})
+	if result.Exists || len(result.Events) != 0 {
+		t.Fatalf("removed session resurrected: %+v", result)
+	}
+	store.AddEvent("session-1", journalTestEvent("event-2", "two"))
+	if got := store.GetAllEventsRaw("session-1"); len(got) != 1 || got[0].ID != "event-2" {
+		t.Fatalf("new activity resurrected old tail: %+v", got)
 	}
 }

@@ -78,6 +78,11 @@ const MaxPollingLimit = 1000 // Match frontend MAX_EVENTS limit
 // (orchestrator_agent_start, delegation_start) may be far back in the event stream
 const InitialEventsLimit = 300
 
+const (
+	durableAppendSlowThreshold = 50 * time.Millisecond
+	journalSizeWarningBytes    = 512 * 1024 * 1024
+)
+
 // STRUCTURAL_EVENTS are required to preserve hierarchy and important terminal
 // state even when the initial event window is capped.
 var STRUCTURAL_EVENTS = map[string]bool{
@@ -816,8 +821,19 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	if event.TerminalID == "" {
 		event.TerminalID = TerminalIDForOwner(sessionID, event.TerminalOwnerID)
 	}
-	if es.durableJournal != nil {
+	if event.Sequence <= 0 {
+		es.nextSequence[sessionID]++
+		event.Sequence = es.nextSequence[sessionID]
+	} else if event.Sequence > es.nextSequence[sessionID] {
+		es.nextSequence[sessionID] = event.Sequence
+	}
+	if es.durableJournal != nil && shouldJournalStructuredEvent(event) {
+		started := time.Now()
 		persisted, inserted, err := es.durableJournal.Append(sessionID, event)
+		elapsed := time.Since(started)
+		if elapsed >= durableAppendSlowThreshold {
+			log.Printf("[EventStore] slow durable append session=%s type=%s id=%s duration=%s", sessionID, event.Type, event.ID, elapsed.Round(time.Millisecond))
+		}
 		if err != nil {
 			es.mu.Unlock()
 			log.Printf("[EventStore] durable append failed; event not published session=%s type=%s id=%s: %v", sessionID, event.Type, event.ID, err)
@@ -829,10 +845,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 		}
 		event = persisted
 	}
-	if event.Sequence <= 0 {
-		es.nextSequence[sessionID]++
-		event.Sequence = es.nextSequence[sessionID]
-	} else if event.Sequence > es.nextSequence[sessionID] {
+	if event.Sequence > es.nextSequence[sessionID] {
 		es.nextSequence[sessionID] = event.Sequence
 	}
 
@@ -898,6 +911,15 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	}
 	es.subscribersMu.RUnlock()
 	return nil
+}
+
+func shouldJournalStructuredEvent(event Event) bool {
+	switch event.Type {
+	case "streaming_start", "streaming_chunk", "streaming_end":
+		return false
+	default:
+		return true
+	}
 }
 
 func (es *EventStore) rebuildTerminalEventsLocked(sessionID string) {
@@ -1337,7 +1359,6 @@ func (es *EventStore) GetTerminalEvents(sessionID, terminalID string, opts GetTe
 
 // GetSessionStatus returns the status of a session
 func (es *EventStore) GetSessionStatus(sessionID string) (int, bool) {
-	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
@@ -1359,7 +1380,9 @@ func (es *EventStore) RemoveSession(sessionID string) {
 	delete(es.nextSequence, sessionID)
 	delete(es.sessionStartIndices, sessionID)
 	delete(es.sessionOwners, sessionID)
-	delete(es.hydratedSessions, sessionID)
+	// Explicit removal is an in-process tombstone. A later read or new event
+	// must not resurrect the old durable tail; a new process may restore it.
+	es.hydratedSessions[sessionID] = true
 }
 
 // GetActiveSessions returns all active session IDs
@@ -1381,11 +1404,31 @@ func (es *EventStore) cleanupRoutine() {
 		select {
 		case <-es.cleanupTicker.C:
 			es.cleanupInactiveSessions()
+			es.logDurableJournalStats()
 		case <-es.stopCh:
 			es.cleanupTicker.Stop()
 			return
 		}
 	}
+}
+
+func (es *EventStore) logDurableJournalStats() {
+	es.mu.RLock()
+	journal, ok := es.durableJournal.(DurableEventJournalStats)
+	es.mu.RUnlock()
+	if !ok {
+		return
+	}
+	stats, err := journal.Stats()
+	if err != nil {
+		log.Printf("[EventStore] structured journal stats failed: %v", err)
+		return
+	}
+	level := "info"
+	if stats.SizeBytes >= journalSizeWarningBytes {
+		level = "warning"
+	}
+	log.Printf("[EventStore] structured journal stats level=%s bytes=%d events=%d path=%s", level, stats.SizeBytes, stats.Events, stats.Path)
 }
 
 // cleanupInactiveSessions removes sessions that haven't been active recently

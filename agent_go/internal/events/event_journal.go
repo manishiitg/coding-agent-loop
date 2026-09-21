@@ -22,7 +22,18 @@ type DurableEventJournal interface {
 }
 
 type SQLiteEventJournal struct {
-	db *sql.DB
+	db   *sql.DB
+	path string
+}
+
+type EventJournalStats struct {
+	Path      string
+	SizeBytes int64
+	Events    int64
+}
+
+type DurableEventJournalStats interface {
+	Stats() (EventJournalStats, error)
 }
 
 func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
@@ -61,7 +72,7 @@ func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
 		}
 	}
 	_ = os.Chmod(path, 0o600)
-	return &SQLiteEventJournal{db: db}, nil
+	return &SQLiteEventJournal{db: db, path: path}, nil
 }
 
 func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool, error) {
@@ -89,6 +100,12 @@ func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool,
 		return Event{}, false, err
 	}
 	next := last + 1
+	// Live-only streaming events consume in-memory sequence numbers without
+	// paying a durable transaction. Preserve their gap in the next semantic
+	// boundary so restart cursors remain monotonic across the full live stream.
+	if event.Sequence > next {
+		next = event.Sequence
+	}
 	event.Sequence = next
 	event.SessionID = sessionID
 	payload, err := json.Marshal(event)
@@ -107,6 +124,25 @@ func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool,
 		return Event{}, false, err
 	}
 	return event, true, nil
+}
+
+func (j *SQLiteEventJournal) Stats() (EventJournalStats, error) {
+	if j == nil || j.db == nil {
+		return EventJournalStats{}, fmt.Errorf("structured event journal is closed")
+	}
+	stats := EventJournalStats{Path: j.path}
+	for _, suffix := range []string{"", "-wal", "-shm"} {
+		info, err := os.Stat(j.path + suffix)
+		if err == nil {
+			stats.SizeBytes += info.Size()
+		} else if !os.IsNotExist(err) {
+			return EventJournalStats{}, err
+		}
+	}
+	if err := j.db.QueryRow(`SELECT COUNT(*) FROM structured_chat_events`).Scan(&stats.Events); err != nil {
+		return EventJournalStats{}, err
+	}
+	return stats, nil
 }
 
 func (j *SQLiteEventJournal) LoadTail(sessionID string, limit int) ([]Event, error) {

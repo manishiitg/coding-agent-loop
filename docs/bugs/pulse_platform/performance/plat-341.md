@@ -154,12 +154,15 @@ missed completion, disconnect or restart.
 The first cutover slice now replaces two important pieces of the routine
 reconciliation path:
 
-- Every accepted structured event is appended to
+- Every accepted semantic structured event is appended to
   `structured-chat-events.sqlite` before it is published to the in-memory store
-  or SSE subscribers. SQLite assigns a monotonic sequence per session and a
-  unique `(session_id, event_id)` constraint makes replay idempotent. A new
-  server process hydrates the bounded live tail from that journal and continues
-  the sequence instead of starting an unrelated in-memory stream at one.
+  or SSE subscribers. Live-only `streaming_start`, `streaming_chunk` and
+  `streaming_end` events retain ordered in-memory sequences without paying a
+  synchronous SQLite transaction per token; the next durable boundary
+  preserves the resulting sequence gap. A unique `(session_id, event_id)`
+  constraint makes durable replay idempotent. A new server process hydrates the
+  bounded durable tail and continues the sequence instead of starting an
+  unrelated stream at one.
 - A retained turn whose canonical `unified_completion` contains a final reply
   now appends that reply directly to the AgentWorks conversation, records an
   exact `structured_turn_checkpoints[turn_id]`, and persists the completion in
@@ -170,13 +173,31 @@ reconciliation path:
 
 Focused tests cover journal sequencing, restart hydration, duplicate event
 replay, bounded chronological tail loading, exact-turn completion idempotency,
-and legitimate repeated replies across different turns.
+legitimate repeated replies across different turns, live-only chunk bypass,
+sequence gaps across transient events, status reads without disk hydration,
+explicit removal without resurrection, and journal size/count telemetry.
 
-The bridge keeps an upstream `event_id` when a producer supplies one and uses a
-stable hash of the structured envelope for older producers. An event is never
-published to SSE when its journal append fails. Tmux remains unchanged as the
-CLI process host and raw Terminal source; this cutover only removes it from the
-normal Formatted Chat persistence path.
+The bridge keeps an upstream `event_id` when a producer supplies one, otherwise
+uses stable turn/correlation/span identities where their semantics are safe,
+and only then falls back to a hash of the structured envelope. That hash is
+best-effort for byte-identical legacy replay, not a guarantee for a producer
+that reconstructs an event with a new timestamp. Current `mcpagent` constructors
+do not all assign `BaseEventData.EventID`; universal upstream IDs remain a
+follow-up. An event is never published to SSE when its required journal append
+fails. Tmux remains unchanged as the CLI process host and raw Terminal source;
+this cutover only removes it from the normal Formatted Chat persistence path.
+
+Durable append latency at or above 50 ms is logged with session and event type.
+Every five minutes the server logs journal bytes (including WAL/SHM) and event
+count, elevating the record to `warning` at 512 MiB. Token chunks no longer
+drive journal growth. Destructive compaction remains deferred until canonical
+conversation projection exposes a safe checkpoint watermark; arbitrary age or
+size deletion would weaken the durability guarantee.
+
+Lazy hydration is limited to explicit history/terminal restoration and active
+event paths. `GetSessionStatus` is memory-only. `RemoveSession` now leaves an
+in-process tombstone so a subsequent poll or new event cannot resurrect the old
+tail; cleanup follows the same non-resurrection behavior.
 
 This is not yet the entire cutover. Some retained CLI adapters still obtain the
 final response used by `unified_completion` from a provider-native sidecar, and

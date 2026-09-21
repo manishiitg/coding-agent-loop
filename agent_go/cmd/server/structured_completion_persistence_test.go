@@ -15,10 +15,11 @@ func retainedCompletionEvent(sessionID, turnID, eventID, final string) storeeven
 	completion := agentevents.NewUnifiedCompletionEvent("coding_agent", "retained", "", final, "completed", time.Second, 1)
 	completion.SessionID = sessionID
 	completion.Metadata["source"] = "mcpagent_session"
+	completion.Metadata["turn_id"] = turnID
 	return storeevents.Event{
 		ID: eventID, Type: string(agentevents.EventTypeUnifiedCompletion), Timestamp: completedAt,
-		SessionID: sessionID, ExecutionID: turnID, Sequence: 12,
-		Data: &agentevents.AgentEvent{Type: agentevents.EventTypeUnifiedCompletion, Timestamp: completedAt, SessionID: sessionID, Data: completion},
+		SessionID: sessionID, ExecutionID: "main:" + sessionID, Sequence: 12,
+		Data: &agentevents.AgentEvent{Type: agentevents.EventTypeUnifiedCompletion, Timestamp: completedAt, SessionID: sessionID, TurnID: turnID, Data: completion},
 	}
 }
 
@@ -27,6 +28,10 @@ func TestRetainedStructuredFinalRequiresCompletedReply(t *testing.T) {
 	final, turnID, ok := retainedStructuredFinal(event)
 	if !ok || final != "done" || turnID != "turn-1" {
 		t.Fatalf("structured final = %q/%q/%v", final, turnID, ok)
+	}
+	event.Data.TurnID = ""
+	if _, turnID, ok := retainedStructuredFinal(event); !ok || turnID != "turn-1" {
+		t.Fatalf("completion metadata turn ID was not preferred over execution ownership: %q/%v", turnID, ok)
 	}
 	event.Data.Data.(*agentevents.UnifiedCompletionEvent).FinalResult = ""
 	if _, _, ok := retainedStructuredFinal(event); ok {

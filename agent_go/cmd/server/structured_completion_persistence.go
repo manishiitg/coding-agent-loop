@@ -29,7 +29,7 @@ func retainedStructuredFinal(event storeevents.Event) (string, string, bool) {
 	if final == "" {
 		return "", "", false
 	}
-	turnID := strings.TrimSpace(event.ExecutionID)
+	turnID := strings.TrimSpace(event.Data.TurnID)
 	if turnID == "" && completion.Metadata != nil {
 		turnID = strings.TrimSpace(structuredStringValue(completion.Metadata["turn_id"]))
 	}

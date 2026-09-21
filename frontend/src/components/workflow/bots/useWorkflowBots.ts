@@ -403,6 +403,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
     email: string,
     clientSecretJson: unknown,
     allowReadAccess = false,
+    allowAgentWriteAccess = false,
     services: GoogleServiceGrant[] = [],
   ) => {
     const trimmedEmail = email.trim()
@@ -419,6 +420,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
         display_name: trimmedEmail,
         client_name: client.name,
         allow_read_access: allowReadAccess,
+        allow_agent_write_access: allowAgentWriteAccess,
         services,
       })
       await Promise.all([loadGmailOAuthClients(), loadGmailConnections()])

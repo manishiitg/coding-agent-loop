@@ -12,8 +12,9 @@ import (
 )
 
 // google_workspace_cli gives the agent direct, general-purpose access to
-// gogcli for Gmail reads and the Google Workspace services a connection was
-// explicitly authorized for (Drive, Sheets, Docs, Slides, Calendar) — see
+// gogcli for explicitly authorized Gmail reads/drafts/sends/replies and the
+// Google Workspace services a connection was authorized for (Drive, Sheets,
+// Docs, Slides, Calendar) — see
 // services/google_services.go. Unlike notify_user (a fixed send operation),
 // there is no single obvious operation for these services, so the agent
 // drives the CLI itself rather than calling a bespoke tool per operation.
@@ -28,13 +29,13 @@ func createGoogleCLITool() llmtypes.Tool {
 	serviceNames := "gmail, " + strings.Join(sortedGoogleServiceCatalogKeys(), ", ")
 	description := fmt.Sprintf(
 		"Run a gogcli (`gog`) command against a Google account connection the user has authorized for a specific service. "+
-			"Use this for read-only Gmail search/message retrieval and for Google Drive, Sheets, Docs, Slides, and Calendar. Gmail send goes through notify_user, not this tool. "+
+			"Use this for Gmail search/message retrieval and, when the connection explicitly enables agent writes, Gmail drafts and send/reply; also use it for Google Drive, Sheets, Docs, Slides, and Calendar. notify_user remains the fixed notification-send path. "+
 			"Before calling this tool, check installed skills; if necessary install `https://github.com/openclaw/gogcli` with `install_skill`, then load `gog` and the relevant `gog-*` service skill with `read_skill`. Those versioned skills, not this description, define current command syntax. "+
 			"args is the argument list to pass to `gog`, EXCLUDING the `gog` binary name and any account or authentication flags. "+
 			"The FIRST element must be one of: %s — whichever the connection was authorized for. "+
 			"Never pass --access-token, --account, --client, or --home: the server injects the authorized connection's credential automatically, and passing "+
 			"any of those is rejected. Prefer --json or --plain for parseable output. If the connection was only granted read access to a service, "+
-			"gogcli itself blocks any mutating call against it (via --readonly) — a rejection there means the user must explicitly enable write access "+
+			"gogcli itself blocks any mutating call against it (via --readonly, plus --gmail-no-send for Gmail) — a rejection there means the user must explicitly enable write access "+
 			"for that service, not that the command was malformed. If no connection is authorized for the requested service at all, the tool returns a "+
 			"clear error naming which service is missing; tell the user which service to connect rather than retrying blindly. "+
 			"Optionally pass connection_id to target a specific account; omitted, the account's default connection is used.",

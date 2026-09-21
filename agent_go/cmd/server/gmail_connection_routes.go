@@ -39,6 +39,9 @@ type GmailConnectionResponse struct {
 	// AllowReadAccess is whether this connection was authorized with
 	// gmail.readonly in addition to gmail.send. Send-only is the default.
 	AllowReadAccess bool `json:"allow_read_access"`
+	// AllowAgentWriteAccess permits project agents to create Gmail drafts and
+	// send/reply after a reconnect grants gmail.compose. Off by default.
+	AllowAgentWriteAccess bool `json:"allow_agent_write_access"`
 	// Services lists the additional Google Workspace services (Drive,
 	// Sheets, Docs, Slides, Calendar...) this connection is authorized for,
 	// beyond Gmail. Empty means Gmail-only.
@@ -85,6 +88,9 @@ type GmailConnectionRequest struct {
 	// an update request can tell "leave unchanged" (omitted) apart from
 	// "explicitly turn off" (false).
 	AllowReadAccess *bool `json:"allow_read_access,omitempty"`
+	// AllowAgentWriteAccess opts agents into draft/send/reply commands. A
+	// pointer preserves omitted (unchanged) versus explicit false on update.
+	AllowAgentWriteAccess *bool `json:"allow_agent_write_access,omitempty"`
 	// Services requests additional Google Workspace service scopes (Drive,
 	// Sheets, Docs, Slides, Calendar...) — see services.GmailConnection.Services.
 	// On update, ServicesSet must also be true for this to take effect (see
@@ -145,19 +151,20 @@ func projectGmailConnection(svc *services.GmailService, conn services.GmailConne
 	}
 
 	out := GmailConnectionResponse{
-		ID:                 conn.ID,
-		DisplayName:        conn.DisplayName,
-		Email:              email,
-		ConfigHome:         conn.ConfigHome,
-		ClientName:         conn.ClientName,
-		AllowReadAccess:    conn.AllowReadAccess,
-		Services:           conn.Services,
-		HasCredentialsFile: strings.TrimSpace(conn.CredentialsFile) != "",
-		Status:             status,
-		Enabled:            conn.Enabled,
-		IsDefault:          conn.ID == defaultID,
-		Auth:               auth,
-		Ready:              conn.Enabled && auth.Authenticated && auth.HasGmailScope,
+		ID:                    conn.ID,
+		DisplayName:           conn.DisplayName,
+		Email:                 email,
+		ConfigHome:            conn.ConfigHome,
+		ClientName:            conn.ClientName,
+		AllowReadAccess:       conn.AllowReadAccess,
+		AllowAgentWriteAccess: conn.AllowAgentWriteAccess,
+		Services:              conn.Services,
+		HasCredentialsFile:    strings.TrimSpace(conn.CredentialsFile) != "",
+		Status:                status,
+		Enabled:               conn.Enabled,
+		IsDefault:             conn.ID == defaultID,
+		Auth:                  auth,
+		Ready:                 conn.Enabled && auth.Authenticated && auth.HasGmailScope,
 	}
 	if !conn.CreatedAt.IsZero() {
 		out.CreatedAt = conn.CreatedAt.UTC().Format("2006-01-02T15:04:05Z")
@@ -245,14 +252,15 @@ func createGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		conn, err := svc.CreateConnection(r.Context(), services.GmailConnectionInput{
-			DisplayName:     req.DisplayName,
-			ConfigHome:      req.ConfigHome,
-			CredentialsFile: req.CredentialsFile,
-			ClientName:      req.ClientName,
-			AllowReadAccess: req.AllowReadAccess,
-			Services:        req.Services,
-			ServicesSet:     true,
-			Enabled:         req.Enabled,
+			DisplayName:           req.DisplayName,
+			ConfigHome:            req.ConfigHome,
+			CredentialsFile:       req.CredentialsFile,
+			ClientName:            req.ClientName,
+			AllowReadAccess:       req.AllowReadAccess,
+			AllowAgentWriteAccess: req.AllowAgentWriteAccess,
+			Services:              req.Services,
+			ServicesSet:           true,
+			Enabled:               req.Enabled,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
@@ -280,14 +288,15 @@ func updateGmailConnectionHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 		conn, err := svc.UpdateConnection(r.Context(), id, services.GmailConnectionInput{
-			DisplayName:     req.DisplayName,
-			ConfigHome:      req.ConfigHome,
-			CredentialsFile: req.CredentialsFile,
-			ClientName:      req.ClientName,
-			AllowReadAccess: req.AllowReadAccess,
-			Services:        req.Services,
-			ServicesSet:     req.ServicesSet,
-			Enabled:         req.Enabled,
+			DisplayName:           req.DisplayName,
+			ConfigHome:            req.ConfigHome,
+			CredentialsFile:       req.CredentialsFile,
+			ClientName:            req.ClientName,
+			AllowReadAccess:       req.AllowReadAccess,
+			AllowAgentWriteAccess: req.AllowAgentWriteAccess,
+			Services:              req.Services,
+			ServicesSet:           req.ServicesSet,
+			Enabled:               req.Enabled,
 		})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusNotFound)

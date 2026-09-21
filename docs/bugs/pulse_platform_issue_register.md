@@ -142,7 +142,12 @@ continuity across browser reloads, backend restarts and deployments: an
 already-open tab must rebind its saved application session before its next
 message can reach a provider conversation. Its latest deployed correction also
 prevents a stale second hydration from removing a Cursor final that was already
-visible in the live chat timeline.
+visible in the live chat timeline. The 2026-09-21 follow-up `15ec6141a` removes
+the frontend's completion-time provider-native transcript merge: formatted Chat
+now consumes only structured events and persisted AgentWorks history, while
+tmux remains the CLI process host/raw Terminal and backend adapters alone may
+normalize native recovery into structured events. Focused frontend and retained
+turn contract tests pass; deployment and live acceptance remain pending.
 Additional 2026-09-17 multi-user/tab isolation, durable acceptance and recovery
 hardening, cold-workflow recovery, duplicate snapshot/notification fixes and
 shared queue ownership for decision/report buttons are deployed to RTS in

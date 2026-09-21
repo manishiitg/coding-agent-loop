@@ -5,9 +5,9 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `Crew single-chat simplification locally verified; deployment pending explicit approval` |
-| Last synchronized | `2026-09-18` |
-| Latest regression fix | `624d4a8a1` deployed — retain Work chat names before the first transcript save |
+| Ticket state | `structured-only formatted Chat implemented on main; deployment and live acceptance pending` |
+| Last synchronized | `2026-09-21` |
+| Latest regression fix | `15ec6141a` on main — remove frontend provider-native transcript merging; tmux unchanged |
 | Previous deployed regression fix | `1e87e0186` — retain live CLI finals across stale hydration |
 
 ## Post-incident assessment — 2026-09-17
@@ -266,6 +266,21 @@ were removed. A source-boundary regression prevents `ChatArea` from restoring
 that coupling. The existing retained-turn P0 continues to require stable turn
 identity, exactly one canonical completion, persisted final response/history,
 and reuse of the same tmux session.
+
+Implementation commit: `15ec6141a` (`fix(chat): keep formatted view on
+structured events`). Verification completed before push:
+
+- 73 focused frontend chat, queue, restore and session-isolation tests passed;
+- frontend TypeScript compilation and the production frontend/Electron builds
+  passed;
+- the `mcpagent` retained-turn tests passed;
+- the application coding-agent canonical turn/identity contract tests passed;
+- `git diff --check` and pre-commit lint/build gates passed.
+
+Deployment and live verification remain open. Acceptance must confirm that a
+normal turn, two consecutive retained turns, Stop then continue, and an app
+reload all render from structured history while the raw Terminal remains
+independently backed by the same retained tmux process.
 
 ## 2026-09-16 Cursor live-publication regression
 

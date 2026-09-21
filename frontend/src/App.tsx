@@ -35,10 +35,10 @@ declare global {
 import LazyModalFallback from './components/ui/LazyModalFallback'
 import { apiLogEntries, summarizeApiTimings } from './utils/apiTiming'
 import ToastHost from './components/ui/ToastHost'
+import QuickSwitcher from './components/QuickSwitcher'
 
 const queryClient = new QueryClient();
 
-const QuickSwitcher = lazy(() => import('./components/QuickSwitcher'))
 const WorkflowsOverviewPage = lazy(() => import('./components/ActivityPage'))
 const SchedulesPage = lazy(() => import('./components/SchedulesPage'))
 const VideoStudioSurface = lazy(() => import('./products/video-studio/VideoStudioSurface').then(module => ({ default: module.VideoStudioSurface })))
@@ -930,13 +930,11 @@ function App() {
             render on every surface, not only the ones that mount a chat. */}
         <ToastHost />
         {showQuickSwitcher && (
-          <Suspense fallback={<LazyModalFallback label="Loading switcher..." />}>
-            <QuickSwitcher
-              isOpen
-              onClose={() => setShowQuickSwitcher(false)}
-              initialQuery={quickSwitcherInitialQuery}
-            />
-          </Suspense>
+          <QuickSwitcher
+            isOpen
+            onClose={() => setShowQuickSwitcher(false)}
+            initialQuery={quickSwitcherInitialQuery}
+          />
         )}
         {productSurface === 'video-studio' ? (
           <Suspense fallback={<FileSurfaceFallback />}><VideoStudioSurface /></Suspense>

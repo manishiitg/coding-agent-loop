@@ -286,12 +286,13 @@ func whatsappGetRoutingHandler(manager *services.WhatsAppServiceManager) http.Ha
 			http.Error(w, "whatsapp service unavailable: "+err.Error(), http.StatusServiceUnavailable)
 			return
 		}
-		// Ensure every workflow has a default @<automation-name> route so the
-		// UI can show usable slugs immediately after pairing. Throttled
+		// Ensure every workflow and Crew has a default @<name> route so the UI
+		// and an unrouted WhatsApp chat can show usable slugs immediately after
+		// pairing. Throttled
 		// internally.
 		unlockRouting := manager.LockAccountRouting(user.UserID)
 		before := svc.GetRouting()
-		svc.EnsureDefaultWorkflowRoutes(r.Context())
+		svc.EnsureDefaultWhatsAppRoutes(r.Context())
 		after := svc.GetRouting()
 		if !reflect.DeepEqual(before, after) {
 			// Keep every linked phone's routing in sync with the primary, so
@@ -407,7 +408,7 @@ func whatsappStatusHandler(manager *services.WhatsAppServiceManager) http.Handle
 		// the operator having to open the routing screen first. Throttled
 		// internally.
 		beforeRouting := svc.GetRouting()
-		svc.EnsureDefaultWorkflowRoutes(r.Context())
+		svc.EnsureDefaultWhatsAppRoutes(r.Context())
 		afterRouting := svc.GetRouting()
 		// Every phone of the account.
 		var devices []services.WhatsAppDevice

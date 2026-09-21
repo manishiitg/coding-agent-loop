@@ -188,6 +188,31 @@ func (w *WhatsAppService) accessibleRouting(ctx context.Context) WhatsAppRouting
 	return routing
 }
 
+// destinationCandidateAllowed reports whether the paired owner may use a
+// discovered workflow or Crew. Discovery must only surface runnable
+// destinations: @list, @switch matching, and default-route provisioning all
+// consume these candidates. A nil access func allows everything
+// (compatibility for standalone connector users; the server always wires
+// the real check). Use-time checks at Resolve and delivery remain the
+// backstop.
+func (w *WhatsAppService) destinationCandidateAllowed(ctx context.Context, owner *WhatsAppOwner, candidate whatsappDestinationCandidate) bool {
+	if owner == nil || strings.TrimSpace(owner.UserID) == "" {
+		return false
+	}
+	w.mu.RLock()
+	check := w.workflowAccess
+	w.mu.RUnlock()
+	if check == nil {
+		return true
+	}
+	allowed, err := check(ctx, owner.UserID, candidate.route(candidate.WorkshopMode))
+	if err != nil {
+		log.Printf("[WHATSAPP] Destination access check failed for user=%s kind=%s id=%s: %v", owner.UserID, candidate.Kind, candidate.ID, err)
+		return false
+	}
+	return allowed
+}
+
 // Name returns the connector name used in routing and logs.
 func (w *WhatsAppService) Name() string { return "whatsapp" }
 
@@ -1626,6 +1651,20 @@ func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, own
 			}
 		}
 	}
+
+	allowed := candidates[:0]
+	hidden := 0
+	for _, candidate := range candidates {
+		if w.destinationCandidateAllowed(ctx, owner, candidate) {
+			allowed = append(allowed, candidate)
+		} else {
+			hidden++
+		}
+	}
+	if hidden > 0 {
+		log.Printf("[WHATSAPP] Hiding %d destination(s) user %s cannot access from @list/provisioning", hidden, owner.UserID)
+	}
+	candidates = allowed
 
 	sort.Slice(candidates, func(i, j int) bool {
 		left := strings.ToLower(candidates[i].Label + "\x00" + candidates[i].Kind)

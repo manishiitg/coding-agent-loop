@@ -47,6 +47,40 @@ func TestDiscoverWhatsAppDestinationsIncludesOwnedCrewProjects(t *testing.T) {
 	}
 }
 
+func TestDiscoverWhatsAppDestinationsHidesInaccessible(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.URL.Path == "/api/documents" && r.URL.Query().Get("folder") == "Workflow":
+			fmt.Fprint(w, `{"success":true,"data":[{"filepath":"Workflow/invoices/workflow.json","type":"file"},{"filepath":"Workflow/secret/workflow.json","type":"file"}]}`)
+		case r.URL.Path == "/api/documents" && r.URL.Query().Get("folder") == "Chats/Work/projects":
+			fmt.Fprint(w, `{"success":true,"data":[]}`)
+		case r.URL.Path == "/api/documents/Workflow/invoices/workflow.json":
+			fmt.Fprint(w, `{"success":true,"data":{"filepath":"Workflow/invoices/workflow.json","content":"{\"id\":\"wf-invoices\",\"label\":\"Invoice Processing\"}"}}`)
+		case r.URL.Path == "/api/documents/Workflow/secret/workflow.json":
+			fmt.Fprint(w, `{"success":true,"data":{"filepath":"Workflow/secret/workflow.json","content":"{\"id\":\"wf-secret\",\"label\":\"Secret\"}"}}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	svc := &WhatsAppService{}
+	svc.SetWorkflowAccessFunc(func(ctx context.Context, userID string, route ChannelRoute) (bool, error) {
+		if userID != "owner-1" {
+			t.Errorf("access check userID = %q, want owner-1", userID)
+		}
+		return route.WorkflowID != "wf-secret", nil
+	})
+	candidates, err := svc.discoverDestinationCandidates(context.Background(), &WhatsAppOwner{UserID: "owner-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(candidates) != 1 || candidates[0].ID != "wf-invoices" || candidates[0].Number != 1 {
+		t.Fatalf("destinations = %+v, want only accessible wf-invoices numbered 1", candidates)
+	}
+}
+
 func TestWhatsAppDestinationListIncludesWorkflowsAndCrews(t *testing.T) {
 	candidates := []whatsappDestinationCandidate{
 		{Number: 1, Kind: "crew", ID: "company-ca", Label: "Company CA"},

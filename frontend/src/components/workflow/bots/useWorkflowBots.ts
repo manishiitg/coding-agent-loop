@@ -64,6 +64,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   // Slack apps are owner-managed (writers get a 403 server-side); readers see
   // everything disabled through readOnly as usual.
   const canManageWorkflowSlack = !readOnly && (workflow?.my_access || 'owner') === 'owner'
+  // Pairing, unpairing, and naming your own WhatsApp numbers is
+  // account-level: the backend keys the WhatsApp service by user ID and
+  // requires no workflow write access, so read-only users can manage their
+  // own devices. Shared state (routing slugs) stays behind readOnly.
+  const canManageOwnWhatsAppDevices: boolean = true
 
   const routeMatchesTarget = useCallback((route: ChannelRoute | WaRoute) => {
     if (target) {
@@ -1176,7 +1181,7 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
 
   return {
     // identity / access
-    workflowId, readOnly,
+    workflowId, readOnly, canManageOwnWhatsAppDevices,
     // navigation
     setup, setSetup, expandedChip, setExpandedChip,
     routeSaving, routeError, newSlackChannel, setNewSlackChannel, newWaSlug, setNewWaSlug, addError, setAddError,

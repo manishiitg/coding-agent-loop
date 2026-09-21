@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `follow-up reconciliation refactor deployed to Confida; fresh-client turn verification pending` |
-| Last synchronized | `2026-09-16` |
+| Ticket state | `two additional recurrence fixes pushed to main; deployment and fresh-client verification pending` |
+| Last synchronized | `2026-09-21` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
   confusing (the agent appears to "forget" recent work and asks the user to
@@ -351,6 +351,45 @@ pipeline passed release-asset and bundle-budget checks; `confida-agent`,
 and the public endpoint returned 200; workspace health was `healthy` with the
 Landlock sandbox available. A hard-refreshed fresh retained turn remains the
 final user-visible verification.
+
+## 2026-09-21 queued-turn recurrence
+
+A Sheets Analysis chat showed the terminal and Formatted Chat disagreeing about
+the same retained Claude session. In project chat session
+`work:project:be2a4cf4-0f3b-49f7-a3fb-084f5f8028c4` (Claude native session
+`ce286440-2463-442d-84f6-fbce00e88e2a`, terminal
+`mcp-agent-20260921-001313`), the terminal chronology correctly showed the user
+asking "si sheet111 tab used for anything?" between two assistant turns. The
+durable conversation omitted that user prompt: its final eight
+`conversation_history` entries were all assistant messages, while the capped
+UI-event tail ended before the prompt. Formatted Chat therefore grouped stale
+assistant updates around the newest reply and made old content appear current.
+
+The native Claude JSONL retained the missing boundary, but represented it as a
+human `queued_command` attachment rather than a normal `user` entry: a
+`queue-operation` enqueue was followed by an attachment with
+`type: "queued_command"`, `humanTurn: true`, and `origin.kind: "human"`, then
+the final assistant response. The backend transcript reader accepted only
+normal `user`/`assistant` entries, so it silently discarded the queued user
+turn and merged consecutive assistant updates across the lost boundary.
+
+Two complementary fixes are now on `main`:
+
+- `44c727fc3` makes restored event identities content-bound and only applies
+  the `prependedIndex` shift when the old tail was actually preserved. This
+  prevents React/Virtuoso row reuse from displaying stale content when a
+  bounded history page moves during hydration.
+- `eb92d4570` recovers only genuinely human `queued_command` attachments,
+  unwraps their `<pasted_content>` payload, ignores non-human attachments, and
+  inserts the recovered user message into sequence merging so the turn
+  boundary cannot disappear.
+
+Regression coverage includes the parser and sequence merge for the missing
+human boundary, restored-event identity changes, and bounded-history scroll
+reconciliation. Focused Go tests pass; all 31 frontend
+`sessionRestore`/`useTranscriptScroll` tests pass; lint, Go build, workspace
+build, and Electron build pass. Both commits are pushed to `main`; deployment
+and a fresh-client retained-turn check remain pending.
 
 ## Out of scope
 

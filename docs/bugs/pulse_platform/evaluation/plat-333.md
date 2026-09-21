@@ -47,6 +47,8 @@ artifacts stay read-only history.
 
 ## Implemented
 
+Commit `f13173f80` is pushed to `main`.
+
 - Deleted the 1.0.43 migration and its prompt; the upgrade chain ends at
   1.0.41, with 1.0.42 retained as the current historical marker. Versions
   1.0.41, 1.0.42, and an already-stamped 1.0.43 are execution-compatible, so
@@ -68,3 +70,6 @@ artifacts stay read-only history.
   tests cover the retired-version compatibility window.
 - The full-chain guard rejects any return of the 1.0.43 turn or the rejected
   mandatory measurement topology.
+- `go test ./cmd/server -run 'Test.*(Upgrade|Contract|Webhook)' -count=1`
+  passes, along with the focused schedule/manual/webhook suite, pre-commit
+  lint, the Go build, workspace build, and Electron build.

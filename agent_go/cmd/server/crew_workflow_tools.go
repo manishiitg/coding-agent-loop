@@ -1,7 +1,6 @@
 package server
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -97,7 +96,7 @@ func (api *StreamingAPI) registerCrewWorkflowRunTools(registrar definitionToolRe
 		return err
 	}
 
-	if err := register("run_workflow_trigger", "Run one attached workflow through a platform-internal trigger binding scoped to this Crew. Omit trigger_id to reuse this Crew's binding or create one (creating requires workflow owner or write access); pass trigger_id to use a specific internal trigger already bound to this Crew. Payloads must be JSON within 1 MiB. Returns the run ID; poll it with get_workflow_trigger_run. Reuse delivery_id when retrying the same delivery.", map[string]interface{}{
+	if err := register("run_workflow_trigger", "Run one attached workflow through a secretless internal trigger binding scoped to this exact Crew. Omit trigger_id to reuse or create the binding; the read-only workflow attachment authorizes this narrow binding creation without granting general workflow write access. Payloads must be JSON within 1 MiB. Returns the run ID; poll it with get_workflow_trigger_run. Reuse delivery_id when retrying the same delivery.", map[string]interface{}{
 		"type": "object", "required": []string{"workspace_path"}, "properties": map[string]interface{}{
 			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact attached workflow workspace_path from list_attached_workflows."},
 			"trigger_id":     map[string]interface{}{"type": "string", "description": "Internal trigger ID bound to this Crew; omit to reuse or create it."},
@@ -164,7 +163,7 @@ func (api *StreamingAPI) registerCrewWorkflowRunTools(registrar definitionToolRe
 		return err
 	}
 
-	return register("get_workflow_trigger_run", "Poll one workflow run started by run_workflow_trigger. Returns its status, terminal flag, step outputs, progress, and signed artifact links. The binding must still exist and still name this Crew; revoked or rebound triggers fail fast.", map[string]interface{}{
+	return register("get_workflow_trigger_run", "Poll one workflow run started by run_workflow_trigger. Returns its status, terminal flag, step outputs, progress, and signed artifact links. The binding and read-only attachment must still exist and the binding must still name this Crew.", map[string]interface{}{
 		"type": "object", "required": []string{"workspace_path", "trigger_id", "run_id"}, "properties": map[string]interface{}{
 			"workspace_path": map[string]interface{}{"type": "string", "description": "Exact attached workflow workspace_path from list_attached_workflows."},
 			"trigger_id":     map[string]interface{}{"type": "string", "description": "Internal trigger ID from run_workflow_trigger."},
@@ -248,9 +247,19 @@ func crewAttachedWorkflowManifest(ctx context.Context, crewWorkspacePath, target
 
 // crewWorkflowTriggerBinding reuses this Crew's internal binding on the
 // workflow or creates one with the same full-workflow defaults Builder uses.
-// Creation goes through the trigger handler, so group, route, and caller
-// validation plus owner-or-write permission match every other writer.
+// The already-authorized read-only attachment is the grant for this one narrow
+// mutation: a secretless internal trigger callable only by this exact Crew.
+// It does not grant general workflow write or trigger-management access.
 func crewWorkflowTriggerBinding(ctx context.Context, api *StreamingAPI, workspacePath string, manifest *WorkflowManifest, crew triggerCaller) (string, error) {
+	if _, err := authorizeWorkflowContextPaths(ctx, []string{workspacePath}); err != nil {
+		return "", fmt.Errorf("workflow is unavailable or access denied")
+	}
+	if err := validateTriggerCaller(&crew, triggerCallerCrew); err != nil {
+		return "", err
+	}
+	if api == nil || api.scheduler == nil || api.productSchedules == nil || !api.productSchedules.crewProjectExists(ctx, productWorkspaceUserID(ctx), crew.ProfileID, crew.ID) {
+		return "", fmt.Errorf("caller Crew project not found")
+	}
 	for _, sched := range manifest.Schedules {
 		if sched.ScheduleType != "webhook" || !isInternalTriggerKind(sched.Kind) {
 			continue
@@ -259,33 +268,46 @@ func crewWorkflowTriggerBinding(ctx context.Context, api *StreamingAPI, workspac
 			return sched.ID, nil
 		}
 	}
-	payload := map[string]interface{}{
-		"workspace_path": workspacePath, "name": "Crew invocation",
-		"enabled": true, "route_selections": map[string]string{}, "group_names": []string{"default"},
-		"kind":   triggerKindInternal,
-		"caller": map[string]interface{}{"type": crew.Type, "id": crew.ID, "profile_id": crew.ProfileID},
-	}
-	data, err := json.Marshal(payload)
+	groups, err := validateScheduleGroupNamesForWorkspace(ctx, workspacePath, []string{"default"})
 	if err != nil {
-		return "", fmt.Errorf("cannot create the Crew binding")
+		return "", fmt.Errorf("cannot create the Crew binding: %w", err)
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/workflow-webhooks?workspace_path="+url.QueryEscape(workspacePath), bytes.NewReader(data))
-	if err != nil {
-		return "", err
+	if err := validateWebhookTarget(ctx, workspacePath, "", map[string]string{}); err != nil {
+		return "", fmt.Errorf("cannot create the Crew binding: %w", err)
 	}
-	rec := &accessToolResponse{header: make(http.Header)}
-	api.scheduler.saveWorkflowWebhook(rec, req)
-	if rec.status == http.StatusForbidden {
-		return "", fmt.Errorf("creating the Crew binding needs workflow owner or write access; ask the workflow owner to create an internal trigger bound to this Crew")
+
+	workflowWebhookConfigMu.Lock()
+	defer workflowWebhookConfigMu.Unlock()
+	latest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found || latest == nil {
+		return "", fmt.Errorf("workflow is unavailable")
 	}
-	if rec.status >= 400 {
-		return "", fmt.Errorf("cannot create the Crew binding (%d): %s", rec.status, strings.TrimSpace(rec.String()))
+	// Close the race between the initial lookup and the locked write.
+	for _, sched := range latest.Schedules {
+		if sched.ScheduleType == "webhook" && sched.IsInternalTrigger() && sched.Caller.matchesPresented(triggerCallerCrew, crew) {
+			return sched.ID, nil
+		}
 	}
-	var created workflowWebhookResponse
-	if err := json.Unmarshal(rec.Bytes(), &created); err != nil || strings.TrimSpace(created.ID) == "" {
-		return "", fmt.Errorf("cannot create the Crew binding")
+	id := uuid.NewString()
+	caller := crew
+	sched := WorkflowSchedule{
+		ID: id, Name: "Crew invocation", ScheduleType: "webhook", Timezone: "UTC", Enabled: true,
+		RouteSelections: map[string]string{}, GroupNames: groups, Mode: "workshop", WorkshopMode: "run",
+		CollisionPolicy: "skip", Webhook: &WorkflowWebhookConfig{}, Kind: triggerKindInternal, Caller: &caller,
+		PulseMode: "off", PulseModeReason: "Webhook deliveries skip Pulse, backup and publish.",
 	}
-	return created.ID, nil
+	latest.Schedules = append(latest.Schedules, sched)
+	if err := ValidateManifest(latest); err != nil {
+		return "", fmt.Errorf("cannot create the Crew binding: %w", err)
+	}
+	if err := WriteWorkflowManifest(ctx, workspacePath, latest); err != nil {
+		return "", fmt.Errorf("cannot save the Crew binding")
+	}
+	api.scheduler.InvalidateWorkflowManifestCache()
+	if err := api.scheduler.LoadSchedule(buildScheduleContext(workspacePath, latest, sched)); err != nil {
+		scheduleLogf("[WEBHOOK] Failed to register Crew binding %s: %v", id, err)
+	}
+	return id, nil
 }
 
 // crewWorkflowRunError translates internal dispatch failures into the

@@ -38,8 +38,23 @@ func TestRequireCurrentWorkflowContractForManualRunAllowsCurrent(t *testing.T) {
 	}
 }
 
+func TestRequireCurrentWorkflowContractForManualRunAllowsRetiredMarkers(t *testing.T) {
+	for _, version := range []string{
+		workflowContractExplicitSchedulePulseVersion,
+		workflowContractRunScopedRoutesVersion,
+		workflowContractEvalRetirementVersion,
+	} {
+		t.Run(version, func(t *testing.T) {
+			workspacePath := serveContractGuardManifest(t, version)
+			if err := requireCurrentWorkflowContractForManualRun(context.Background(), workspacePath); err != nil {
+				t.Fatalf("execution-compatible retired marker %s was blocked: %v", version, err)
+			}
+		})
+	}
+}
+
 func TestRequireCurrentWorkflowContractForManualRunAsksBeforeMigration(t *testing.T) {
-	workspacePath := serveContractGuardManifest(t, workflowContractExplicitSchedulePulseVersion)
+	workspacePath := serveContractGuardManifest(t, workflowContractRouteSummariesVersion)
 	err := requireCurrentWorkflowContractForManualRun(context.Background(), workspacePath)
 	if err == nil {
 		t.Fatal("stale contract was allowed")
@@ -67,7 +82,7 @@ func TestRequireCurrentWorkflowContractForManualRunRejectsUnknownVersion(t *test
 }
 
 func TestWorkflowContractExecutionGuardWrapsBothManualRunTools(t *testing.T) {
-	workspacePath := serveContractGuardManifest(t, workflowContractExplicitSchedulePulseVersion)
+	workspacePath := serveContractGuardManifest(t, workflowContractRouteSummariesVersion)
 	draft := &productSurfaceDraft{}
 	guard := workflowContractExecutionGuardRegistrar{
 		definitionRegistrar: draft,

@@ -4,17 +4,19 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
-	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 )
@@ -247,6 +249,42 @@ func TestSlackPrincipalRevalidationSeparatesResourceOwnerAndAuditActor(t *testin
 		t.Fatal("cross-project request admitted")
 	}
 }
+
+func TestSlackWorkflowTriggerUsesWorkflowOwnerResourceScope(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"workflow-owner","username":"owner","can_create":true}]}`)
+	manifest := NewWorkflowManifest("Triggered workflow")
+	manifest.ID = "wf-triggered"
+	manifest.CreatedBy = "workflow-owner"
+	manifest.Access = &WorkflowAccess{Owners: []string{"workflow-owner"}}
+	raw, _ := json.Marshal(manifest)
+	workspace := &mockWorkspaceAPI{files: map[string]string{manifestPath("Workflow/triggered"): string(raw)}}
+	server := httptest.NewServer(workspace)
+	t.Cleanup(server.Close)
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	store, err := chathistory.NewFilesystemStore(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := ChannelRoute{WorkflowID: manifest.ID, WorkspacePath: "Workflow/triggered", BotGrant: "run", Trigger: &services.SlackTrigger{Type: "human_message"}}
+	encoded, _ := json.Marshal(map[string]ChannelRoute{"C123": route})
+	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: true, BotMode: true, AllowedChannels: string(encoded)}); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{chatStore: store}
+	claims := botRouteUserClaims("bot-principal", route)
+	req := QueryRequest{PresetQueryID: manifest.ID, SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserID: "external-sender", TriggeredBy: "bot:slack"}
+	resolved, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := GetUserFromContext(resolved)
+	if got.UserID != "workflow-owner" || got.ExecutionPrincipal == nil || got.ExecutionPrincipal.ResourceOwnerID != "workflow-owner" || got.ExecutionPrincipal.ID == "workflow-owner" || got.ExecutionPrincipal.AuditActor != "external-sender" {
+		t.Fatalf("trigger principal = %+v", got)
+	}
+}
+
 func TestSlackDistinctFullRunsAndRestartBinding(t *testing.T) {
 	server, _ := newFakeWorkspaceServer(t)
 	t.Setenv("WORKSPACE_API_URL", server.URL)

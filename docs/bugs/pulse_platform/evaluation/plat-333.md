@@ -4,8 +4,8 @@
 
 | Coordination | Value |
 |---|---|
-| Ticket state | `implemented locally; not committed, not deployed` |
-| Last synchronized | `2026-09-19` |
+| Ticket state | `implemented; deployment pending` |
+| Last synchronized | `2026-09-21` |
 | Priority | `P0 direction` |
 
 ## Background
@@ -47,26 +47,29 @@ artifacts stay read-only history.
 
 ## Implemented
 
-- Deleted the 1.0.43 migration, its test, and the version const; the upgrade
-  chain ends at 1.0.42. Added `TestNoUpgradeMandatesMeasurementTopology`, a
-  full-chain guard against the rejected topology returning.
+Commit `f13173f80` is pushed to `main`.
+
+- Deleted the 1.0.43 migration and its prompt; the upgrade chain ends at
+  1.0.41, with 1.0.42 retained as the current historical marker. Versions
+  1.0.41, 1.0.42, and an already-stamped 1.0.43 are execution-compatible, so
+  no workflow is blocked merely to advance through either retired checkpoint.
+  Added `TestNoUpgradeMandatesMeasurementTopology`, a full-chain guard against
+  the rejected topology or evaluation-retirement turn returning.
 - Rewrote `measurement-plan.md`, the Goal Advisor/optimizer prompts,
   eight guidance templates, and the `MetricSource` schema to the flexible
   contract (producer outputs + goal observations).
 - Scrubbed live eval path/endpoint references from active docs and schemas
   (e.g. `workflow_monitoring.md` claimed the removed
   `/api/workflow/evaluation-reports` endpoint was current).
-- Rebuilt the frontend and synced `agent_go/static/`; deleted the orphaned
-  `PulseEvalSummary` bundles.
+- Deleted the orphaned `PulseEvalSummary` bundles as part of the evaluation
+  subsystem removal.
 
 ## Verification
 
-- `go build ./...`, `go vet ./...`, `go test ./... -count=1`: green.
-  (`TestSlackAllocatorAcrossProcesses` flaked once under full-suite load,
-  then passed solo and in-package with no code change.)
-- `tsc -b`: clean; prompt-size ceiling holds (23935/24000).
-- `vitest`: 1422 passed; the 9 failures fail identically on a clean HEAD
-  worktree (pre-existing, unrelated).
-- Grep gate (see the plan): zero unmarked hits; remaining matches are
-  documented retired-table guards, historical classifiers, legacy-marked
-  doc lines, and tests pinning retired behavior.
+- Focused workflow-contract, schedule, manual-run, and webhook regression
+  tests cover the retired-version compatibility window.
+- The full-chain guard rejects any return of the 1.0.43 turn or the rejected
+  mandatory measurement topology.
+- `go test ./cmd/server -run 'Test.*(Upgrade|Contract|Webhook)' -count=1`
+  passes, along with the focused schedule/manual/webhook suite, pre-commit
+  lint, the Go build, workspace build, and Electron build.

@@ -728,6 +728,18 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 		// same event cards every other execution kind gets.
 		ForceStructuredCodingAgent: common.IsCLIProvider(string(provider)),
 	}
+	delegatedAccess, accessErr := conversationTargetAccess(ctx, parentReq)
+	if accessErr != nil {
+		api.emitDelegationEndEvent(sessionID, delegationID, currentDepth, "", accessErr.Error(), nil)
+		return "", fmt.Errorf("resolve delegated agent execution access: %w", accessErr)
+	}
+	subAgentConfig.ToolExecutionContext = api.bindToolExecutionContextForSession(
+		ctx,
+		sessionID,
+		subAgentSessionID,
+		parentReq,
+		delegatedAccess == WorkflowAccessRead,
+	)
 	// Tool timeout, context summarization/editing, large-output offloading, and
 	// parallel tool execution inherit from the parent request the same way the
 	// root chat agent resolves them (no preset at delegation time).

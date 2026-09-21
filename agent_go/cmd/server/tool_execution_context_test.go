@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T) {
@@ -53,6 +54,35 @@ func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T
 	api.eventStore.SetSessionOwner("builder", "bob")
 	if _, err := resolve(context.Background(), "tool"); err == nil {
 		t.Fatal("session ownership change was ignored")
+	}
+}
+
+func TestToolExecutionContextAdmitsRegisteredWorkflowChildSession(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	const parentSession = "schedule-cron--daily-tool-context-test"
+	const childSession = "session-group-default-tool-context-test"
+	registry := mcpclient.GetSessionRegistry()
+	registry.RegisterHTTPSession(parentSession, childSession)
+	t.Cleanup(func() { registry.CloseHTTPSession(parentSession) })
+
+	api := &StreamingAPI{eventStore: events.NewEventStore(10)}
+	api.eventStore.SetSessionOwner(parentSession, "alice")
+	requestCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice", Provider: "local"})
+	resolve := api.bindToolExecutionContext(requestCtx, parentSession, QueryRequest{}, false)
+
+	ctx, err := resolve(executor.WithSessionID(context.Background(), childSession), "agent_browser")
+	if err != nil {
+		t.Fatalf("registered workflow child was rejected: %v", err)
+	}
+	if got := executor.SessionIDFromContext(ctx); got != parentSession {
+		t.Fatalf("bound execution session = %q, want authenticated parent %q", got, parentSession)
+	}
+	if got := GetUserFromContext(ctx); got == nil || got.UserID != "alice" {
+		t.Fatalf("registered child lost owner identity: %+v", got)
+	}
+
+	if _, err := resolve(executor.WithSessionID(context.Background(), childSession+"-forged"), "agent_browser"); err == nil {
+		t.Fatal("unregistered lookalike child session was accepted")
 	}
 }
 
@@ -129,4 +159,87 @@ func TestToolExecutionContextAdmitsTheWhatsAppOwnerPrincipal(t *testing.T) {
 	if _, err := plain(incoming, "read_image"); err == nil {
 		t.Fatal("non-bot principal executed tools in a bot-marked session")
 	}
+}
+
+// TestToolExecutionContextTopologyMatrix is the CI contract for every place a
+// tool call can originate. Keep the topology names explicit: adding a new
+// execution origin, transport, or privileged tool surface must add a row here
+// rather than relying on an interactive-chat test to stand in for it.
+func TestToolExecutionContextTopologyMatrix(t *testing.T) {
+	t.Run("interactive owner and conflicting reader/direct tool invocation", TestToolExecutionContextUsesAuthenticatedQueryForAllTransports)
+	t.Run("cron manual API and internal triggers/workflow owner/action surfaces", func(t *testing.T) {
+		t.Setenv("MULTI_USER_MODE", "false")
+		t.Setenv("DEFAULT_USER_ID", "legacy-owner")
+		origins := []struct {
+			name    string
+			session string
+			tool    string
+			owner   string
+			caller  func(string) context.Context
+		}{
+			{"cron schedule", "schedule-cron--daily", "agent_browser", "owner", func(session string) context.Context { return executor.WithSessionID(context.Background(), session) }},
+			{"manual schedule", "schedule-manual--daily", "execute_shell_command", "owner", func(session string) context.Context { return executor.WithSessionID(context.Background(), session) }},
+			{"API trigger", "schedule-api--incoming", "diff_patch_workspace_file", "owner", func(session string) context.Context {
+				return context.WithValue(context.Background(), common.ChatSessionIDKey, session)
+			}},
+			{"internal trigger", "schedule-internal--incoming", "get_workflow_config", "owner", func(session string) context.Context {
+				return context.WithValue(context.Background(), common.ChatSessionIDKey, session)
+			}},
+			{"legacy single-user schedule", "schedule-cron--legacy", "get_workflow_config", workflowExecutionOwnerUserID(&WorkflowManifest{ID: "legacy"}), func(session string) context.Context { return executor.WithSessionID(context.Background(), session) }},
+		}
+		for _, origin := range origins {
+			t.Run(origin.name, func(t *testing.T) {
+				api := &StreamingAPI{eventStore: events.NewEventStore(10)}
+				api.eventStore.SetSessionOwner(origin.session, origin.owner)
+				requestCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: origin.owner, Provider: "local"})
+				ctx, err := api.bindToolExecutionContext(requestCtx, origin.session, QueryRequest{}, false)(origin.caller(origin.session), origin.tool)
+				if err != nil {
+					t.Fatalf("%s rejected: %v", origin.tool, err)
+				}
+				if got := GetUserFromContext(ctx); got == nil || got.UserID != origin.owner {
+					t.Fatalf("bound claims = %+v, want owner %q", got, origin.owner)
+				}
+			})
+		}
+	})
+	t.Run("registered and forged workflow children/MCP custom HTTP invocation", TestToolExecutionContextAdmitsRegisteredWorkflowChildSession)
+	t.Run("real MCP stdio bridge and HTTP custom-tool transport", TestWorkflowStepDatabaseToolsThroughMCPBridge)
+	t.Run("interactive reader remains read-only", func(t *testing.T) {
+		t.Setenv("MULTI_USER_MODE", "true")
+		withMemoryUserDirectory(t, `{"users":[{"id":"reader","username":"reader","can_create":false}]}`)
+		requestCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "reader", Username: "reader", Provider: "local"})
+		api := &StreamingAPI{}
+		read := api.bindToolExecutionContext(requestCtx, "reader-session", QueryRequest{}, true)
+		if _, err := read(executor.WithSessionID(context.Background(), "reader-session"), "get_workflow_config"); err != nil {
+			t.Fatalf("reader read tool rejected: %v", err)
+		}
+		write := api.bindToolExecutionContext(requestCtx, "reader-session", QueryRequest{}, false)
+		if _, err := write(executor.WithSessionID(context.Background(), "reader-session"), "execute_shell_command"); err == nil {
+			t.Fatal("reader was widened to builder authority")
+		}
+	})
+	t.Run("Slack Run principal/read-only custom tool", TestToolExecutionContextRetainsBotIdentityAndRevalidatesRoute)
+	t.Run("WhatsApp paired owner", TestToolExecutionContextAdmitsTheWhatsAppOwnerPrincipal)
+	t.Run("missing authenticated principal fails closed", TestToolExecutionContextNeverInventsLocalOwner)
+	t.Run("delegated and background agent isolated session", func(t *testing.T) {
+		t.Setenv("MULTI_USER_MODE", "false")
+		api := &StreamingAPI{eventStore: events.NewEventStore(10)}
+		api.eventStore.SetSessionOwner("parent", "owner")
+		requestCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner", Provider: "local"})
+		resolve := api.bindToolExecutionContextForSession(requestCtx, "parent", "delegated-isolated", QueryRequest{}, false)
+		ctx, err := resolve(executor.WithSessionID(context.Background(), "delegated-isolated"), "execute_shell_command")
+		if err != nil {
+			t.Fatalf("delegated action tool rejected: %v", err)
+		}
+		if got := executor.SessionIDFromContext(ctx); got != "delegated-isolated" {
+			t.Fatalf("delegated execution session = %q", got)
+		}
+		if got := GetUserFromContext(ctx); got == nil || got.UserID != "owner" {
+			t.Fatalf("delegated claims = %+v", got)
+		}
+		api.eventStore.SetSessionOwner("parent", "different-owner")
+		if _, err := resolve(executor.WithSessionID(context.Background(), "delegated-isolated"), "agent_browser"); err == nil {
+			t.Fatal("background child ignored parent ownership revocation")
+		}
+	})
 }

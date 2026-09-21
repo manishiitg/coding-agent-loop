@@ -139,10 +139,10 @@ var featureCatalog = map[string]featureDefinition{
 		PromptExtension: "Administrator-authorized attached folders are enabled. Read `work-integrations` before managing grants and `work-workflow-files` before reading attached content. Use the least access required and inspect the current grants before changing them.",
 	},
 	"workflow-references": {
-		Tools:           []string{"list_accessible_workflows", "attach_workflow_reference", "detach_workflow_reference"},
+		Tools:           []string{"list_accessible_workflows", "attach_workflow_reference", "detach_workflow_reference", "list_attached_workflows", "list_workflow_triggers", "run_workflow_trigger", "get_workflow_trigger_run"},
 		Skills:          []string{"work-workflow-files"},
 		Capabilities:    map[string]CapabilityRequirement{"workflow_references": CapabilityPreferred},
-		PromptExtension: "Read-only AgentWorks workflow references are enabled. Read the attached `work-workflow-files` skill before discovering, managing, or reading them. A # selection applies to one message; a workflow linked under Attached folders is durable for the project. Treat both as context only, and never edit or execute the referenced workflow from this product.",
+		PromptExtension: "Read-only AgentWorks workflow references are enabled. Read the attached `work-workflow-files` skill before discovering, managing, reading, or invoking them. A # selection applies to one message and is context only; a workflow linked under Attached folders is durable and may be invoked only through its Crew-scoped secretless internal trigger. Never edit the referenced workflow or use public webhook triggers from this product.",
 	},
 	"terminal": {
 		Capabilities:    map[string]CapabilityRequirement{"raw_terminal": CapabilityPreferred},

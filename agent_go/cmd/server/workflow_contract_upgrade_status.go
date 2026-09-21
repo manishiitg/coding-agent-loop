@@ -50,7 +50,7 @@ func describeWorkflowContractUpgrades(ctx context.Context, workspacePath string)
 
 	pending := workflowVersionUpgradePlan(manifest)
 	if len(pending) == 0 {
-		sb.WriteString("No pending migrations — this workflow is at the current contract.\n")
+		sb.WriteString("No pending migrations — this workflow is execution-compatible with the current contract. Retired no-op checkpoints do not block it.\n")
 		return sb.String(), nil
 	}
 

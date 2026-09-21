@@ -242,12 +242,66 @@ func TestBuildScheduleContextThreadsOwnerUserID(t *testing.T) {
 		t.Fatalf("OwnerUserID = %q, want the manifest's CreatedBy", sctx.OwnerUserID)
 	}
 
-	// A workflow created before CreatedBy existed must not regress into an
-	// error -- it keeps today's already-broken "default" fallback via
-	// startSessionInternal's own empty-string handling, not a new failure.
+	// A single-user workflow created before ownership fields existed executes
+	// as the authenticated local owner. This must be explicit: an empty user ID
+	// is rejected by the shared action-tool authorization boundary.
+	t.Setenv("MULTI_USER_MODE", "false")
+	t.Setenv("DEFAULT_USER_ID", "local-owner")
 	legacy := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
-	if legacy.OwnerUserID != "" {
-		t.Fatalf("OwnerUserID = %q, want empty for a manifest with no CreatedBy", legacy.OwnerUserID)
+	if legacy.OwnerUserID != "local-owner" {
+		t.Fatalf("OwnerUserID = %q, want the single-user legacy owner", legacy.OwnerUserID)
+	}
+	requestCtx := internalBotRequestContext(context.Background(), legacy.OwnerUserID)
+	resolve := (&StreamingAPI{}).bindToolExecutionContext(requestCtx, "schedule-cron--daily_123", QueryRequest{}, false)
+	toolCtx, err := resolve(context.Background(), "execute_shell_command")
+	if err != nil {
+		t.Fatalf("legacy scheduled action tool rejected: %v", err)
+	}
+	if claims := GetUserFromContext(toolCtx); claims == nil || claims.UserID != "local-owner" {
+		t.Fatalf("legacy scheduled tool claims = %+v, want local-owner", claims)
+	}
+
+	// An access owner is a durable authenticated principal even if an older
+	// manifest has not been backfilled with CreatedBy.
+	owned := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo", Access: &WorkflowAccess{Owners: []string{"access-owner"}}}, WorkflowSchedule{ID: "daily"})
+	if owned.OwnerUserID != "access-owner" {
+		t.Fatalf("OwnerUserID = %q, want the first recorded access owner", owned.OwnerUserID)
+	}
+
+	// There is no safe account to invent for an ownerless multi-user workflow.
+	t.Setenv("MULTI_USER_MODE", "true")
+	ambiguous := buildScheduleContext("Workflow/demo", &WorkflowManifest{ID: "demo"}, WorkflowSchedule{ID: "daily"})
+	if ambiguous.OwnerUserID != "" {
+		t.Fatalf("OwnerUserID = %q, want empty for an ownerless multi-user workflow", ambiguous.OwnerUserID)
+	}
+}
+
+func TestWorkflowTriggersUseOwnerExecutionScope(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"workflow-owner","username":"owner","can_create":true}]}`)
+	manifest := &WorkflowManifest{
+		ID:        "triggered",
+		CreatedBy: "workflow-owner",
+		Access:    &WorkflowAccess{Owners: []string{"workflow-owner", "co-owner"}},
+	}
+	sctx := buildScheduleContext("Workflow/triggered", manifest, WorkflowSchedule{
+		ID:           "incoming",
+		ScheduleType: "webhook",
+	})
+	sctx.TriggerSource = "webhook"
+	sctx.WebhookInput = &WorkflowWebhookDelivery{DeliveryID: "delivery-1"}
+	if sctx.OwnerUserID != "workflow-owner" {
+		t.Fatalf("trigger OwnerUserID = %q, want workflow-owner", sctx.OwnerUserID)
+	}
+
+	requestCtx := internalBotRequestContext(context.Background(), sctx.OwnerUserID)
+	resolve := (&StreamingAPI{}).bindToolExecutionContext(requestCtx, "schedule-webhook--incoming_123", QueryRequest{}, false)
+	toolCtx, err := resolve(context.Background(), "execute_shell_command")
+	if err != nil {
+		t.Fatalf("owner-scoped trigger action tool rejected: %v", err)
+	}
+	if claims := GetUserFromContext(toolCtx); claims == nil || claims.UserID != "workflow-owner" {
+		t.Fatalf("trigger tool claims = %+v, want workflow-owner", claims)
 	}
 }
 

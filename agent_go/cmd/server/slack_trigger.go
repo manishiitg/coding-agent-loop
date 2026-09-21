@@ -184,7 +184,14 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 	if api.scheduler == nil {
 		return fmt.Errorf("shared workflow executor unavailable")
 	}
-	sctx := &ScheduleContext{WorkspacePath: route.WorkspacePath, WorkflowID: route.WorkflowID, OwnerUserID: userID, Capabilities: manifest.Capabilities, Schedule: schedule, WebhookInput: input, TriggerSource: "slack"}
+	// The Slack principal and sender remain authorization/audit context below,
+	// but unattended workflow execution belongs to the workflow owner. This is
+	// the same identity rule used by cron, manual schedule, and API webhook
+	// runs, and ensures owner-scoped secrets never depend on who caused the
+	// delivery.
+	sctx := buildScheduleContext(route.WorkspacePath, manifest, schedule)
+	sctx.WebhookInput = input
+	sctx.TriggerSource = "slack"
 	req := api.scheduler.buildWorkshopRequest(ctx, sctx)
 	opts, err := configureDirectWebhookRequest(req, sctx, folder)
 	if err != nil {
@@ -210,7 +217,7 @@ func (api *StreamingAPI) executeSlackTrigger(ctx context.Context, route ChannelR
 	req["bot_user_email"] = slackTriggerActorEmail(connID, event.User)
 	req["_trusted_slack_app"] = event.BotID != ""
 	req["triggered_by"] = "bot:slack"
-	return api.startSessionInternal(context.WithValue(ctx, directWebhookExecutionKey{}, opts), req, sessionID, userID, nil)
+	return api.startSessionInternal(context.WithValue(ctx, directWebhookExecutionKey{}, opts), req, sessionID, sctx.OwnerUserID, nil)
 }
 
 func slackTriggerActorEmail(connID, user string) string {

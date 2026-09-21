@@ -14,7 +14,7 @@ import (
 type directWebhookExecutionKey struct{}
 
 func directWebhookPreflight(manifest *WorkflowManifest) error {
-	if manifest == nil || workflowContractVersionForUpgrade(manifest) != WorkflowContractCurrentVersion {
+	if manifest == nil || !workflowContractVersionIsExecutionCompatible(workflowContractVersionForUpgrade(manifest)) {
 		return fmt.Errorf("update the workflow contract in Builder before invoking its webhook: %w", errWorkflowUpgradePreflightBlocked)
 	}
 	return nil

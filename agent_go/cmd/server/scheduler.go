@@ -36,12 +36,11 @@ type ScheduleContext struct {
 	Schedule      WorkflowSchedule
 	WebhookInput  *WorkflowWebhookDelivery
 	Capabilities  WorkflowCapabilities
-	// OwnerUserID is the workflow's WorkflowManifest.CreatedBy, threaded
-	// through so startSessionInternal resolves secrets against the account
-	// that actually configured them instead of the "default" placeholder
-	// user, who never has any stored. Empty for a workflow created before
-	// CreatedBy existed -- startSessionInternal's own empty-string handling
-	// (falling through to GetDefaultUserID()) is unchanged for that case.
+	// OwnerUserID is the workflow's authenticated execution identity. It is
+	// normally WorkflowManifest.CreatedBy (or the first recorded owner), and
+	// is the explicit local owner for an ownerless legacy workflow only in
+	// single-user mode. Ambiguous ownerless multi-user workflows stay empty
+	// and cannot cross the action-tool authorization boundary.
 	OwnerUserID   string
 	TriggerSource string // "cron" (default) or "manual"; encoded into the session ID
 	// OriginSessionID is the chat session that triggered this run, when one did.
@@ -635,7 +634,7 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		WorkflowLabel: manifest.Label,
 		Schedule:      sched,
 		Capabilities:  lockedScheduleCapabilities(manifest.Capabilities),
-		OwnerUserID:   manifest.CreatedBy,
+		OwnerUserID:   workflowExecutionOwnerUserID(manifest),
 	}
 	if sched.PulseReviewOnly {
 		// PLAT-115: a workflow's own periodic Pulse-review schedule reuses the
@@ -650,6 +649,29 @@ func buildScheduleContext(workspacePath string, manifest *WorkflowManifest, sche
 		sctx.ForcePulseReview = true
 	}
 	return sctx
+}
+
+// workflowExecutionOwnerUserID converts durable workflow ownership into the
+// authenticated identity used by unattended schedule and trigger turns.
+// Before action tools required bound session claims, ownerless legacy runs
+// could pass an empty string and silently fall through to the local default
+// user. Keep that compatibility deliberately in single-user mode, where that
+// user is the installation owner, but never invent an owner for a multi-user
+// workflow.
+func workflowExecutionOwnerUserID(manifest *WorkflowManifest) string {
+	if manifest == nil {
+		return ""
+	}
+	if createdBy := strings.TrimSpace(manifest.CreatedBy); createdBy != "" {
+		return createdBy
+	}
+	if owners := manifest.effectiveOwners(); len(owners) > 0 {
+		return strings.TrimSpace(owners[0])
+	}
+	if !IsMultiUserMode() {
+		return GetDefaultUserID()
+	}
+	return ""
 }
 
 func shouldRunPulseLifecycle(sctx *ScheduleContext, manifest *WorkflowManifest) bool {
@@ -3638,7 +3660,8 @@ func attachScheduledPendingDecisionNotice(turns []scheduledWorkshopTurn, pending
 func scheduledWorkshopTurns(manifest *WorkflowManifest, messages []string, workspacePath string) ([]scheduledWorkshopTurn, error) {
 	upgradePlan := workflowVersionUpgradePlan(manifest)
 	manifestVersion := workflowContractVersionForUpgrade(manifest)
-	if manifestVersion != WorkflowContractCurrentVersion && (len(upgradePlan) == 0 || upgradePlan[len(upgradePlan)-1].to != WorkflowContractCurrentVersion) {
+	if !workflowContractVersionIsExecutionCompatible(manifestVersion) &&
+		(len(upgradePlan) == 0 || !workflowContractVersionIsExecutionCompatible(upgradePlan[len(upgradePlan)-1].to)) {
 		return nil, fmt.Errorf(
 			"workflow upgrade preflight has no complete upgrade path from version %q to %q; normal schedule message was not started: %w",
 			manifestVersion,

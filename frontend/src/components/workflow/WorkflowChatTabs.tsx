@@ -11,6 +11,7 @@ import {
 import { shouldDisplayWorkflowTab, workflowTabDisplayName } from './workflowRuntimeTabProjection'
 import { isBlankWorkflowBuilderTab } from '../../utils/workflowTabResolution'
 import { AgentWorksChatTabItem } from '../chat/AgentWorksChatTabItem'
+import { selectWorkflowTabsForStrip } from './workflowTabStripSelection'
 
 // ---------------------------------------------------------------------------
 // WorkflowChatTabs — parent component
@@ -89,26 +90,11 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
           tab.metadata?.phaseId === 'workflow-builder' &&
           !tab.metadata?.presetQueryId
         )
-    const candidates = visible
-    const interactive = candidates
-      .filter(tab => tab.metadata?.isViewOnly !== true && tab.metadata?.phaseId === 'workflow-builder')
-      .sort((a, b) => {
-        const aBlank = isBlankWorkflowBuilderTab(a, activePresetId || '', tabEvents)
-        const bBlank = isBlankWorkflowBuilderTab(b, activePresetId || '', tabEvents)
-        if (aBlank !== bBlank) return aBlank ? 1 : -1
-        if (a.tabId === activeTabId) return -1
-        if (b.tabId === activeTabId) return 1
-        return (b.lastAccessedAt ?? b.createdAt) - (a.lastAccessedAt ?? a.createdAt)
-      })[0]
-    const activeReadOnly = activeWorkflowTab?.metadata?.isViewOnly ? activeWorkflowTab : undefined
-
     // AgentWorks owns one persistent interactive Chat. Old duplicate tabs may
     // remain in persisted browser state, but they are no longer presented as
-    // separate conversations. A read-only run appears only when explicitly
-    // opened and never accumulates in the strip.
-    return [interactive, activeReadOnly]
-      .filter((tab): tab is ChatTab => Boolean(tab))
-      .filter((tab, index, tabs) => tabs.findIndex(item => item.tabId === tab.tabId) === index)
+    // separate conversations. Opened read-only run lanes remain beside it
+    // until explicitly closed; selecting Chat changes focus, not visibility.
+    return selectWorkflowTabsForStrip(visible, activeTabId, activePresetId, tabEvents)
   }, [chatTabs, activePresetId, activeTabId, tabEvents])
 
   // Migrate a browser that persisted the old Workshop + Chat pair: if its

@@ -109,6 +109,21 @@ func TestTriggersReuseSchedulesAndAddProductTools(t *testing.T) {
 	}
 }
 
+func TestWorkflowReferencesProjectScopedCrewInvocationTools(t *testing.T) {
+	profile := Profile{ToolPolicy: ToolPolicy{Mode: ToolPolicyModeAllowlist}, Features: []FeatureBinding{{ID: "workflow-references"}}}
+	if err := ResolveFeatures(&profile); err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range []string{"list_accessible_workflows", "attach_workflow_reference", "list_attached_workflows", "list_workflow_triggers", "run_workflow_trigger", "get_workflow_trigger_run"} {
+		if !containsString(profile.ToolPolicy.Enabled, tool) {
+			t.Fatalf("workflow-references feature omitted %s: %v", tool, profile.ToolPolicy.Enabled)
+		}
+	}
+	if got := strings.Join(FeaturePromptExtensions(profile), "\n"); !strings.Contains(got, "Crew-scoped secretless internal trigger") || !strings.Contains(got, "public webhook triggers") {
+		t.Fatalf("workflow-reference guidance does not preserve the invocation boundary: %q", got)
+	}
+}
+
 func TestBotsProjectSharedGmailTools(t *testing.T) {
 	profile := Profile{ToolPolicy: ToolPolicy{Mode: ToolPolicyModeAllowlist}, Features: []FeatureBinding{{ID: "bots"}}}
 	if err := ResolveFeatures(&profile); err != nil {

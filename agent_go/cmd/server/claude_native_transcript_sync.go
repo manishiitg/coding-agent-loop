@@ -37,9 +37,10 @@ type claudeNativeTranscriptRuntime struct {
 }
 
 type claudeTranscriptEntry struct {
-	Type      string          `json:"type"`
-	Timestamp string          `json:"timestamp"`
-	Message   json.RawMessage `json:"message"`
+	Type       string          `json:"type"`
+	Timestamp  string          `json:"timestamp"`
+	Message    json.RawMessage `json:"message"`
+	Attachment json.RawMessage `json:"attachment"`
 }
 
 type claudeTranscriptMessage struct {
@@ -50,6 +51,15 @@ type claudeTranscriptMessage struct {
 type claudeTranscriptContentBlock struct {
 	Type string `json:"type"`
 	Text string `json:"text"`
+}
+
+type claudeTranscriptAttachment struct {
+	Type      string `json:"type"`
+	Prompt    string `json:"prompt"`
+	HumanTurn bool   `json:"humanTurn"`
+	Origin    *struct {
+		Kind string `json:"kind"`
+	} `json:"origin"`
 }
 
 // scheduleWorkflowBuilderNativeTranscriptSync closes the persistence gap for
@@ -932,7 +942,7 @@ func readNewClaudeTranscriptMessages(path string, since time.Time) ([]builderCon
 		if err := json.Unmarshal([]byte(line), &entry); err != nil {
 			continue
 		}
-		if entry.Type != "user" && entry.Type != "assistant" {
+		if entry.Type != "user" && entry.Type != "assistant" && entry.Type != "attachment" {
 			continue
 		}
 		ts, err := time.Parse(time.RFC3339Nano, entry.Timestamp)
@@ -942,23 +952,34 @@ func readNewClaudeTranscriptMessages(path string, since time.Time) ([]builderCon
 		if !ts.After(since) {
 			continue
 		}
-		if len(entry.Message) == 0 {
-			continue
-		}
-		var msg claudeTranscriptMessage
-		if err := json.Unmarshal(entry.Message, &msg); err != nil {
-			continue
-		}
-
-		text := extractClaudeTranscriptText(msg.Content)
-		if text == "" || isClaudeLocalCommandMessage(entry.Type, text) {
-			continue
-		}
-
 		role := "ai"
 		if entry.Type == "user" {
 			role = "human"
 		}
+		text := ""
+		if entry.Type == "attachment" {
+			var attachment claudeTranscriptAttachment
+			if len(entry.Attachment) == 0 || json.Unmarshal(entry.Attachment, &attachment) != nil ||
+				attachment.Type != "queued_command" || !attachment.HumanTurn || attachment.Origin == nil ||
+				!strings.EqualFold(strings.TrimSpace(attachment.Origin.Kind), "human") {
+				continue
+			}
+			role = "human"
+			text = unwrapClaudeQueuedCommandPrompt(attachment.Prompt)
+		} else {
+			if len(entry.Message) == 0 {
+				continue
+			}
+			var msg claudeTranscriptMessage
+			if err := json.Unmarshal(entry.Message, &msg); err != nil {
+				continue
+			}
+			text = extractClaudeTranscriptText(msg.Content)
+		}
+		if text == "" || isClaudeLocalCommandMessage(role, text) {
+			continue
+		}
+
 		messages = append(messages, builderConversationMessage{
 			Role:  role,
 			Parts: []builderConversationPart{{Text: text}},
@@ -968,6 +989,23 @@ func readNewClaudeTranscriptMessages(path string, since time.Time) ([]builderCon
 		}
 	}
 	return messages, maxTimestamp, nil
+}
+
+// Claude Code records a prompt typed while the agent is busy as a
+// queued_command attachment instead of a normal user message. The prompt is
+// commonly wrapped in a provider-only pasted_content envelope; the terminal
+// shows only its body, so persist that same reader-visible text.
+func unwrapClaudeQueuedCommandPrompt(prompt string) string {
+	prompt = strings.TrimSpace(prompt)
+	if !strings.HasPrefix(prompt, "<pasted_content") {
+		return prompt
+	}
+	openEnd := strings.Index(prompt, ">")
+	closeStart := strings.LastIndex(prompt, "</pasted_content")
+	if openEnd < 0 || closeStart <= openEnd {
+		return prompt
+	}
+	return strings.TrimSpace(prompt[openEnd+1 : closeStart])
 }
 
 // extractClaudeTranscriptText pulls the human-visible text out of a

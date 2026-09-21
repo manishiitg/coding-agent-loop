@@ -121,7 +121,9 @@ describe('global activity monitor dropdown', () => {
 
       click(rows[0])
       expect(openGlobalActivitySession).toHaveBeenCalledTimes(1)
-      expect(openGlobalActivitySession.mock.calls[0][0].session_id).toBe('wf-session')
+      expect(openGlobalActivitySession).toHaveBeenCalledWith(
+        expect.objectContaining({ session_id: 'wf-session' }),
+      )
       expect(host.querySelector('[role="menu"]')).toBeNull()
     } finally {
       await act(async () => root.unmount())

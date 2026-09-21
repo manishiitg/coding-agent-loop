@@ -24,6 +24,22 @@ func workflowContractVersionForUpgrade(manifest *WorkflowManifest) string {
 	return version
 }
 
+// workflowContractVersionIsExecutionCompatible treats retired, no-op contract
+// rungs as equivalent for execution. v1.0.42 and v1.0.43 were briefly stamped
+// by deployed servers, while v1.0.41 workflows never needed either retired
+// agent-authored migration. None should be blocked or rewritten solely to move
+// among these historical markers.
+func workflowContractVersionIsExecutionCompatible(version string) bool {
+	switch strings.TrimSpace(version) {
+	case workflowContractExplicitSchedulePulseVersion,
+		workflowContractRunScopedRoutesVersion,
+		workflowContractEvalRetirementVersion:
+		return true
+	default:
+		return false
+	}
+}
+
 // workflowContractVersionRank is intentionally a closed set. A workflow made
 // by a newer server must never be silently "upgraded" backwards by an older
 // server: scheduledWorkshopTurns treats an unknown version as having no path.
@@ -87,7 +103,7 @@ This workflow predates inline knowledgebase writes. Do only this migration. Insp
 
 const upgradeEvalVerdictSchema = `WORKFLOW CONTRACT UPGRADE: EVALUATION VERDICTS.
 
-The evaluation subsystem this migration once normalized is retired; the later 1.0.43 contract migration handles conditional retirement and producer-owned measurement. Do only this historical migration: verify planning/plan.json and workflow.json parse, change nothing, and call set_workflow_contract_version(version="1.0.16") and stop. Do not create, edit, or score any evaluation plan.`
+The evaluation subsystem this migration once normalized is retired, and no replacement evaluation migration is required. Do only this historical migration: verify planning/plan.json and workflow.json parse, change nothing, and call set_workflow_contract_version(version="1.0.16") and stop. Do not create, edit, or score any evaluation plan.`
 
 const upgradeCurrentArtifactContract = `WORKFLOW CONTRACT UPGRADE: CURRENT ARTIFACT CONTRACT.
 
@@ -350,7 +366,7 @@ func bindWorkflowUpgradeWorkspacePath(query, workspacePath string) string {
 func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpgrade {
 	version := workflowContractVersionForUpgrade(manifest)
 	rank, known := workflowContractVersionRank(version)
-	if !known || version == WorkflowContractCurrentVersion {
+	if !known || workflowContractVersionIsExecutionCompatible(version) {
 		return nil
 	}
 
@@ -431,14 +447,9 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 	if rank < 40 {
 		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractExplicitSchedulePulseVersion, label: "upgrade-explicit-schedule-pulse", query: upgradeExplicitSchedulePulse})
 	}
-	// Contract v1.0.42 is retained in the known-version ladder so workflows
-	// which already completed it remain readable, but its scheduled migration
-	// is retired. The runtime persists run-scoped route decisions and plan
-	// mutations reject the unsafe shared-mirror shape, so blocking every older
-	// workflow on an agent-authored cleanup turn is no longer justified.
-	if rank < 42 {
-		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractEvalRetirementVersion, label: "upgrade-eval-retirement", query: upgradeEvalRetirement})
-	}
+	// Contracts v1.0.42 and v1.0.43 remain known historical markers, but both
+	// scheduled migrations are retired. v1.0.41 is execution-compatible with
+	// them, so no unattended agent turn is emitted just to advance a stamp.
 	// Attached here rather than at the call site so the turn text is identical
 	// wherever it is built. The version pair used to be added only on the Pulse
 	// delivery path, which meant the blocking preflight — the one that actually

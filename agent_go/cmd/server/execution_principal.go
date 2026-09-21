@@ -66,6 +66,24 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 		}
 		principal.ResourceOwnerID = route.WorkspaceUserID
 		copy.UserID = route.WorkspaceUserID
+	} else if req.TriggeredBy == "bot:slack" && route.Trigger != nil {
+		// A configured Slack workflow trigger is an unattended workflow run,
+		// just like an API webhook or clock schedule. The bot principal still
+		// constrains authorization and identifies the external actor, but the
+		// workflow owner supplies the resource/secrets namespace.
+		manifest, exists, err := ReadWorkflowManifest(ctx, route.WorkspacePath)
+		if err != nil {
+			return ctx, fmt.Errorf("load workflow trigger owner: %w", err)
+		}
+		if !exists || !strings.EqualFold(strings.TrimSpace(manifest.ID), strings.TrimSpace(route.WorkflowID)) {
+			return ctx, fmt.Errorf("workflow trigger target is unavailable")
+		}
+		ownerID := workflowExecutionOwnerUserID(manifest)
+		if ownerID == "" {
+			return ctx, fmt.Errorf("workflow trigger has no execution owner")
+		}
+		principal.ResourceOwnerID = ownerID
+		copy.UserID = ownerID
 	} else {
 		copy.UserID = principal.ID
 	}

@@ -212,6 +212,35 @@ it('identifies trigger, schedule, and bot origins in the Crew chat index', async
   expect(host.textContent).toContain('Bot · Slack')
 })
 
+it('keeps scheduled transcripts in the unified workflow Chats index', async () => {
+  vi.mocked(agentApi.listChatHistorySessions).mockImplementation(async (_limit, _offset, _workspacePath, kind) => ({
+    sessions: kind === 'chat' ? [{
+      session_id: 'builder-chat',
+      title: 'Builder discussion',
+      created_at: '2026-09-21T08:00:00Z',
+    }] : [{
+      session_id: 'schedule-cron--daily_123',
+      title: 'Latest scheduled conversation',
+      created_at: '2026-09-21T09:00:00Z',
+    }],
+  }))
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(<PreviousChatHistoryPanel
+    workspacePath="Workflow/test"
+    recentOnly
+    includeAutomationChats
+    readOnly
+    onSelectSession={vi.fn()}
+  />))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+
+  expect(agentApi.listChatHistorySessions).toHaveBeenCalledWith(expect.any(Number), 0, 'Workflow/test')
+  expect(agentApi.listChatHistorySessions).toHaveBeenCalledWith(expect.any(Number), 0, 'Workflow/test', 'chat')
+  expect(host.textContent).toContain('Latest scheduled conversation')
+  expect(host.textContent).toContain('Builder discussion')
+})
+
 it('identifies the open persistent chat even before it appears in history', async () => {
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)

@@ -46,6 +46,7 @@ describe('workflow responsive pane contract', () => {
     expect(layout).toContain('workshopPanel={workspacePath ? (')
     expect(layout).toContain('<AutomationHubPanel')
     expect(layout).toContain('chatOnly')
+    expect(layout).toContain('includeAutomationChats={chatOnly}')
     expect(layout).not.toContain('botContent=')
     expect(viewHost).toContain("effectiveView === 'workshop' ? 'flex overflow-hidden' : ''")
     expect(layout).toContain("listChatHistorySessions(5, 0, workspacePath, 'chat')")

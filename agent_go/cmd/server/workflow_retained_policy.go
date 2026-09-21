@@ -68,7 +68,7 @@ func (api *StreamingAPI) workflowRetainedPolicyCompatible(ctx context.Context, s
 		}
 	}
 	active, _ := api.getActiveSession(session)
-	key := api.chatPolicySessionKey(resolveWorkflowChatPolicy("", session, req, active, access == WorkflowAccessRead))
+	key := api.chatPolicySessionKey(resolveWorkflowChatPolicy(session, req, active, access == WorkflowAccessRead))
 	api.conversationMux.RLock()
 	previous, known := api.lastChatPolicyBySession[session]
 	api.conversationMux.RUnlock()

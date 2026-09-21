@@ -66,13 +66,16 @@ Two places a permission can live, nothing else.
   shell writes. Added either by an owner (sharing) or by an admin (assigning
   a specific workflow to a user).
 
-Builder and Run are conversational modes, not account roles. In the
-workflow-builder chat, current effective workflow access determines the mode:
-writable owners use Builder (stored as `workshop`), readers use Run (stored as
-`run`). A restored request's old mode cannot override current access. Direct
-headless workflow execution remains Run. Native-session admission is refreshed
-when its existing ChatPolicyKey changes, while preserving the durable chat ID
-and conversation history. See [PLAT-262](../bugs/pulse_platform/security-sandbox/plat-262.md).
+Builder and Run are the presentation of workflow access, not a second authority
+control. In workflow chat there is one rule: effective owner/write access means
+Builder (stored as `workshop`), and read-only access means Run (stored as
+`run`). Clients, saved routes, and restored requests cannot choose a different
+authority mode. Origin (interactive, schedule, trigger, bot, child, Pulse) is
+tracked separately only to narrow capabilities and label/audit the conversation.
+Direct headless workflow execution remains Run because it is not a conversation.
+Native-session admission is refreshed when its existing ChatPolicyKey changes,
+while preserving the durable chat ID and conversation history. See
+[PLAT-262](../bugs/pulse_platform/security-sandbox/plat-262.md).
 
 Products have no account roles of their own. Crew (`work` in the product
 allowlist) projects are scoped to the authenticated user's private project

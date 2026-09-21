@@ -15,11 +15,7 @@ func workflowUICallerAllowed(phase, session string, req QueryRequest, active *Ac
 	if phase != workflowtypes.WorkflowStatusWorkflowBuilder || strings.TrimSpace(req.AgentProfileID) != "" {
 		return false
 	}
-	mode := "workshop"
-	if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
-		mode = req.ExecutionOptions.WorkshopMode
-	}
-	policy := resolveWorkflowChatPolicy(mode, session, req, active, false)
+	policy := resolveWorkflowChatPolicy(session, req, active, false)
 	// Builder authority is broader than control of the user's live workspace UI.
 	// Headless callers can author and maintain workflow state, but only an
 	// interactive human turn may receive a UI-control lease.
@@ -32,11 +28,7 @@ func workflowUICallerAllowed(phase, session string, req QueryRequest, active *Ac
 func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolRegistrar, phase, session, workspace string, req QueryRequest, readOnly bool) error {
 	active, _ := api.getActiveSession(session)
 	if phase == workflowtypes.WorkflowStatusWorkflowBuilder && req.AgentProfileID == "" {
-		mode := "workshop"
-		if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
-			mode = req.ExecutionOptions.WorkshopMode
-		}
-		policy := resolveWorkflowChatPolicy(mode, session, req, active, readOnly)
+		policy := resolveWorkflowChatPolicy(session, req, active, readOnly)
 		if policy.allows("workflow_suggestions") {
 			if err := api.registerWorkflowSuggestionTool(registrar, session, workspace); err != nil {
 				return err
@@ -59,11 +51,7 @@ func (api *StreamingAPI) registerWorkflowUIForCaller(registrar definitionToolReg
 		return err
 	}
 	// Viewing the workspace does not grant connection-editing authority.
-	mode := "workshop"
-	if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
-		mode = req.ExecutionOptions.WorkshopMode
-	}
-	policy := resolveWorkflowChatPolicy(mode, session, req, active, readOnly)
+	policy := resolveWorkflowChatPolicy(session, req, active, readOnly)
 	if !policy.allows("secret_management") {
 		return nil
 	}

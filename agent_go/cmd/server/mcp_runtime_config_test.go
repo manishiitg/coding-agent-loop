@@ -29,7 +29,7 @@ func TestMCPRuntimeConfigSurvivesReleaseReplacement(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := &StreamingAPI{mcpConfigPath: runtime, logger: loggerv2.NewNoop()}
-	policy := resolveWorkflowChatPolicy("workshop", "chat", QueryRequest{}, nil, false)
+	policy := resolveWorkflowChatPolicy("chat", QueryRequest{}, nil, false)
 	before := api.chatPolicySessionKey(policy)
 	if err := api.persistOAuthConfig("custom", mcpclient.MCPServerConfig{URL: "https://custom.test/mcp"}); err != nil {
 		t.Fatal(err)

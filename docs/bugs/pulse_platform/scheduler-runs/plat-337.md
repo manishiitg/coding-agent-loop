@@ -63,6 +63,23 @@ Slack remains forced to Run mode even when it uses the owner's resource scope.
 WhatsApp is unchanged: it continues to execute as its explicitly paired user
 and receives only that user's actual workflow access.
 
+### Simplified access/mode boundary
+
+Workflow chat no longer accepts a separate requested mode as an authority
+input. The effective access decision is the single source of truth:
+
+- owner/write access derives Builder;
+- read-only access derives Run;
+- an explicit `PinRunMode` is downgrade-only;
+- direct headless execution remains Run because it is not workflow chat.
+
+Origin remains provenance, not permission. Consequently cron, manual, API and
+internal triggers use their durable workflow-owner identity and receive the
+owner/Builder workflow-chat surface needed for migrations and approved repair.
+Slack still enters through a read-only principal and therefore derives Run.
+WhatsApp derives the paired user's real access. Legacy route/session mode fields
+remain parseable for compatibility but cannot override this decision.
+
 ## Regression coverage
 
 `TestBuildScheduleContextThreadsOwnerUserID` now covers all four ownership
@@ -75,6 +92,13 @@ on the retired empty-string fallback.
 trigger binds action tools to the workflow owner. The Slack workflow-trigger
 adapter now constructs its context through the same owner-resolving builder
 instead of substituting its bot principal as execution owner.
+
+`TestWorkflowAccessModeMatrix` is the matching authority contract. It covers
+interactive owner/write/read users, stale client mode input, explicit downgrade,
+cron/manual/API/internal owner triggers, restored schedules, Slack read-only,
+paired WhatsApp owner, and direct headless execution. CI runs it beside the
+execution-principal topology matrix so identity and chat authority cannot drift
+independently again.
 
 ## Verification
 

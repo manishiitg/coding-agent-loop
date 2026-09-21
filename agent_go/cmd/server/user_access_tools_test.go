@@ -63,31 +63,29 @@ func TestUserAccessToolsPermissionsAndRevocation(t *testing.T) {
 
 func TestUserAccessToolsAbsentOutsideBuilder(t *testing.T) {
 	api := &StreamingAPI{}
-	for _, mode := range []string{"workshop", "run"} {
-		for _, origin := range []string{"interactive", "scheduled", "bot", "child", "pulse"} {
-			req := QueryRequest{}
-			switch origin {
-			case "scheduled":
-				req.TriggeredBy = "cron"
-			case "bot":
-				req.BotPlatform = "slack"
-			case "child":
-				req.ParentSessionID = "parent"
-			case "pulse":
-				req.PulseLifecycleTurn = true
-			}
-			policy := resolveWorkflowChatPolicy(mode, "session", req, nil, false)
-			reg := &recordingRegistrar{}
-			if err := api.registerUserAccessTools(reg, "user", "Workflow/example", policy); err != nil {
-				t.Fatal(err)
-			}
-			_, exists := reg.tools["manage_user_access"]
-			// Writable workflow users receive Builder authority even when a
-			// legacy client still requests Run. Origin restrictions still apply.
-			want := origin == "interactive" || origin == "scheduled" || origin == "bot"
-			if exists != want {
-				t.Fatalf("admission %s/%s=%v", mode, origin, exists)
-			}
+	for _, origin := range []string{"interactive", "scheduled", "bot", "child", "pulse"} {
+		req := QueryRequest{}
+		switch origin {
+		case "scheduled":
+			req.TriggeredBy = "cron"
+		case "bot":
+			req.BotPlatform = "slack"
+		case "child":
+			req.ParentSessionID = "parent"
+		case "pulse":
+			req.PulseLifecycleTurn = true
+		}
+		policy := resolveWorkflowChatPolicy("session", req, nil, false)
+		reg := &recordingRegistrar{}
+		if err := api.registerUserAccessTools(reg, "user", "Workflow/example", policy); err != nil {
+			t.Fatal(err)
+		}
+		_, exists := reg.tools["manage_user_access"]
+		// Writable workflow users receive Builder authority even when a
+		// legacy client still requests Run. Origin restrictions still apply.
+		want := origin == "interactive" || origin == "scheduled" || origin == "bot"
+		if exists != want {
+			t.Fatalf("admission %s=%v", origin, exists)
 		}
 	}
 }

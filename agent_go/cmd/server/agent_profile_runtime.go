@@ -641,7 +641,7 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			input = req[0]
 		}
 		active, _ := api.getActiveSession(sessionID)
-		policy := resolveWorkflowChatPolicy("workshop", sessionID, input, active, false)
+		policy := resolveWorkflowChatPolicy(sessionID, input, active, false)
 		if err := api.registerSlackBotTools(registrar, sessionID, workspacePath, "work", policy.Origin == "interactive" && registerWorkUIAllowed(input) && workflowAccessForIdentity(userID, "", "") != WorkflowAccessRead); err != nil {
 			return err
 		}

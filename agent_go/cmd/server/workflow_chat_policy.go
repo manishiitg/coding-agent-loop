@@ -26,9 +26,12 @@ func readOnlyForRequest(access WorkflowAccessLevel, req QueryRequest) bool {
 	return access == WorkflowAccessRead || req.PinRunMode
 }
 
-// Resolve origin from server-maintained session provenance as well as the
-// request. A missing field on a resumed turn must never promote a schedule/child.
-func resolveWorkflowChatPolicy(mode, session string, req QueryRequest, active *ActiveSessionInfo, readOnly bool) workflowChatPolicy {
+// Resolve the complete execution profile from access and server-maintained
+// provenance. There is deliberately no caller-supplied mode input: workflow
+// access is the authority boundary (writable => Builder, read-only => Run),
+// while origin can only narrow the resulting capability set. A missing field
+// on a resumed turn must never promote a schedule/child.
+func resolveWorkflowChatPolicy(session string, req QueryRequest, active *ActiveSessionInfo, readOnly bool) workflowChatPolicy {
 	origin := "interactive"
 	switch {
 	case req.ParentSessionID != "" || req.SessionKind != "" || active != nil && (active.ParentSessionID != "" || active.SessionKind != ""):
@@ -42,10 +45,9 @@ func resolveWorkflowChatPolicy(mode, session string, req QueryRequest, active *A
 	case !req.UserInteractiveContinuation && (isScheduledSessionIdentity(session, req.TriggeredBy) || active != nil && isScheduledSessionIdentity(session, active.TriggeredBy)):
 		origin = "scheduled"
 	}
-	// Conversational workflow authority is access-derived. A legacy/client
-	// request for Run cannot reduce a writable user's scheduled, bot, or human
-	// Builder session; Run is reserved for read-only workflow access. The direct
-	// headless workflow executor is separate and intentionally remains Run.
+	// Conversational workflow authority is access-derived. Legacy/client mode
+	// fields cannot widen or reduce the authenticated principal. The direct
+	// headless workflow executor is not a conversation and remains Run.
 	normalized := "builder"
 	if readOnly || strings.TrimSpace(req.AgentMode) == "workflow" {
 		normalized = "run"
@@ -118,7 +120,7 @@ func normalizeWorkflowConversationMode(req *QueryRequest, readOnly bool) {
 		req.ExecutionOptions = &options
 	}
 	req.ExecutionOptions.WorkshopMode = "workshop"
-	if resolveWorkflowChatPolicy("", "", *req, nil, readOnly).Mode == "run" {
+	if resolveWorkflowChatPolicy("", *req, nil, readOnly).Mode == "run" {
 		req.ExecutionOptions.WorkshopMode = "run"
 	}
 }

@@ -90,9 +90,17 @@ func TestDecideCron(t *testing.T) {
 	eightToday := time.Date(2026, 9, 3, 8, 0, 0, 0, loc)
 
 	if d := Decide(s, Inputs{Now: eightToday.Add(time.Hour), SinceInteractive: time.Hour}); d.Run {
-		t.Fatalf("a schedule that never ran must wait for its next occurrence: %+v", d)
+		t.Fatalf("a schedule without an activation anchor must wait for its next occurrence: %+v", d)
 	}
-	d := Decide(s, Inputs{Now: eightToday.Add(time.Hour), LastRun: eightToday.Add(-20 * time.Hour), SinceInteractive: time.Hour})
+	activatedYesterday := eightToday.Add(-20 * time.Hour)
+	if d := Decide(s, Inputs{Now: eightToday.Add(-time.Hour), ActivatedAt: activatedYesterday, SinceInteractive: time.Hour}); d.Run {
+		t.Fatalf("a newly activated schedule must wait until its first occurrence: %+v", d)
+	}
+	d := Decide(s, Inputs{Now: eightToday.Add(time.Hour), ActivatedAt: activatedYesterday, SinceInteractive: time.Hour})
+	if !d.Run || !d.ScheduledFor.Equal(eightToday) {
+		t.Fatalf("first 08:00 occurrence after activation should be due: %+v", d)
+	}
+	d = Decide(s, Inputs{Now: eightToday.Add(time.Hour), LastRun: eightToday.Add(-20 * time.Hour), SinceInteractive: time.Hour})
 	if !d.Run || !d.ScheduledFor.Equal(eightToday) {
 		t.Fatalf("08:00 occurrence should be due: %+v", d)
 	}

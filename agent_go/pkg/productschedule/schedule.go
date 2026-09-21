@@ -26,6 +26,10 @@ type Schedule struct {
 	Name        string `json:"name" yaml:"name"`
 	Description string `json:"description,omitempty" yaml:"description,omitempty"`
 	Enabled     bool   `json:"enabled" yaml:"enabled"`
+	// CreatedAt anchors the first cron occurrence. Without a stable anchor, a
+	// never-run cron schedule would recompute "next" from every scheduler tick
+	// and could therefore never become due.
+	CreatedAt string `json:"created_at,omitempty" yaml:"created_at,omitempty"`
 
 	// CronExpression is a standard five-field cron line, evaluated in Timezone
 	// (local time when empty).
@@ -142,6 +146,10 @@ func (s Schedule) Quiet() (quiet, maxDeferral time.Duration) {
 // Inputs are the facts a scheduled tick is judged by.
 type Inputs struct {
 	Now time.Time
+	// ActivatedAt is the stable instant from which a never-run cron schedule
+	// computes its first occurrence. Callers should persist it; zero preserves
+	// the safe behavior of waiting for an occurrence after Now.
+	ActivatedAt time.Time
 	// LastRun is when the schedule last ran successfully (zero = never).
 	LastRun time.Time
 	// SinceInteractive is how long ago the user last used the product.
@@ -205,9 +213,12 @@ func Decide(s Schedule, in Inputs) Decision {
 		}
 		after := in.LastRun
 		if after.IsZero() {
-			// Never ran: only occurrences from now on count, so a fresh
-			// install does not fire immediately.
-			return Decision{Reason: fmt.Sprintf("next at %s", cs.Next(in.Now).Format(time.RFC3339))}
+			// A never-run schedule must use a stable activation point. Computing
+			// Next from Now on every tick perpetually moves the target forward.
+			after = in.ActivatedAt
+			if after.IsZero() {
+				return Decision{Reason: fmt.Sprintf("next at %s", cs.Next(in.Now).Format(time.RFC3339))}
+			}
 		}
 		next := cs.Next(after)
 		if next.After(in.Now) {

@@ -1,0 +1,11 @@
+[Unit]
+Description=Keep Video Studio service logs bounded
+
+[Timer]
+OnBootSec=5m
+OnUnitActiveSec=10m
+AccuracySec=1m
+Persistent=true
+
+[Install]
+WantedBy=timers.target

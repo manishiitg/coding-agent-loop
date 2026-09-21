@@ -778,13 +778,20 @@ type builderConversationMergeRef struct {
 // and therefore preserves real repeats without manufacturing replay copies.
 func builderConversationMergeRefs(persisted, native []builderConversationMessage) []builderConversationMergeRef {
 	n, m := len(persisted), len(native)
+	// Normalizing a message walks all of its text. This merge is an O(n*m)
+	// dynamic-programming pass, so computing keys inside the matrix turned a
+	// long transcript into O(n*m*message-size) work and allocation. Recovery
+	// replays amplified that enough to saturate production CPUs. Materialize
+	// each key once and keep the matrix comparisons constant-time.
+	persistedKeys := builderConversationMessageKeys(persisted)
+	nativeKeys := builderConversationMessageKeys(native)
 	dp := make([][]int, n+1)
 	for i := range dp {
 		dp[i] = make([]int, m+1)
 	}
 	for i := n - 1; i >= 0; i-- {
 		for j := m - 1; j >= 0; j-- {
-			if builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]) {
+			if persistedKeys[i] == nativeKeys[j] {
 				dp[i][j] = 1 + dp[i+1][j+1]
 			} else if dp[i+1][j] >= dp[i][j+1] {
 				dp[i][j] = dp[i+1][j]
@@ -802,7 +809,7 @@ func builderConversationMergeRefs(persisted, native []builderConversationMessage
 		case j == m:
 			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
 			i++
-		case builderConversationMessageKey(persisted[i]) == builderConversationMessageKey(native[j]):
+		case persistedKeys[i] == nativeKeys[j]:
 			refs = append(refs, builderConversationMergeRef{persisted: true, index: i})
 			i++
 			j++
@@ -854,12 +861,22 @@ func builderConversationMessageKey(message builderConversationMessage) string {
 	return strings.ToLower(strings.TrimSpace(message.Role)) + "\x00" + strings.Join(texts, "\n")
 }
 
+func builderConversationMessageKeys(messages []builderConversationMessage) []string {
+	keys := make([]string, len(messages))
+	for index := range messages {
+		keys[index] = builderConversationMessageKey(messages[index])
+	}
+	return keys
+}
+
 func builderConversationHistoriesEqual(left, right []builderConversationMessage) bool {
 	if len(left) != len(right) {
 		return false
 	}
-	for index := range left {
-		if builderConversationMessageKey(left[index]) != builderConversationMessageKey(right[index]) {
+	leftKeys := builderConversationMessageKeys(left)
+	rightKeys := builderConversationMessageKeys(right)
+	for index := range leftKeys {
+		if leftKeys[index] != rightKeys[index] {
 			return false
 		}
 	}

@@ -1,0 +1,11 @@
+[Unit]
+Description=Rotate Video Studio service logs
+
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/logrotate --state %h/video-studio/state/logrotate.status %h/.config/video-studio/logrotate.conf
+Nice=19
+IOSchedulingClass=idle
+IOSchedulingPriority=7
+CPUQuota=20%
+MemoryMax=256M

@@ -200,10 +200,12 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
     if (isOpen) {
       setQuery(initialQuery)
       setSelectedIndex(0)
-      void useChatStore.getState().getActiveSessions(true)
+      // Paint from the subscribed cache immediately. The normal TTL still
+      // refreshes stale data without forcing a request into the open path.
+      void useChatStore.getState().getActiveSessions()
       setTimeout(() => searchInputRef.current?.focus(), 50)
     }
-  }, [isOpen, initialQuery, workflowPresets])
+  }, [isOpen, initialQuery])
 
   // AgentWorks and Crew share one switcher while other product surfaces stay
   // isolated. Stable product metadata, rather than workspace strings, owns

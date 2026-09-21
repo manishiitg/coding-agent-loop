@@ -186,4 +186,8 @@ describe('resolveWorkflowChatSurface', () => {
   it('keeps an actually empty workflow on Previous Chats', () => {
     expect(resolveWorkflowChatSurface(base, false)).toBe('landing')
   })
+
+  it('hides the previous workflow while the selected workflow tab is resolving', () => {
+    expect(resolveWorkflowChatSurface({ ...base, hasContent: true }, false, false)).toBe('restoring')
+  })
 })

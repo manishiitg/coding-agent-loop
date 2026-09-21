@@ -99,7 +99,13 @@ export function resolveChatSurface(inputs: ChatSurfaceInputs): ChatSurface {
 export function resolveWorkflowChatSurface(
   inputs: ChatSurfaceInputs,
   hasTerminalSurface: boolean,
+  selectionMatchesActiveTab = true,
 ): ChatSurface {
+  // Workflow selection changes synchronously, while resolving/restoring its
+  // tab is asynchronous. Never render the previous workflow's transcript in
+  // that gap; the selected workflow owns the pane immediately.
+  if (!selectionMatchesActiveTab) return 'restoring'
+
   return resolveChatSurface({
     ...inputs,
     hasRestoredLiveContent: inputs.hasRestoredLiveContent || hasTerminalSurface,

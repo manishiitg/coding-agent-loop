@@ -1,3 +1,14 @@
+## Workspace global write lock stalls all users — PLAT-344
+
+[PLAT-344](pulse_platform/performance/plat-344.md) records the confida
+2026-09-21 incident where one slow `POST /api/upload` held the workspace
+service's single global write mutex for 3m10s, queueing every document PUT
+behind it — including chat journal saves, which timed out at the agent's
+15s budget, landed late, and orphaned a `delivery_uncertain` submission
+that replays 409 forever. Long-term fix only (proposed, not implemented):
+ingest-before-locking, per-path locks, lock-free append shapes, bounded
+upload streaming. One live wedged submission remains on confida.
+
 ## Interactive workflow Stop/resume — PLAT-340
 
 [PLAT-340](pulse_platform/chat-reliability/plat-340.md) records the Confida

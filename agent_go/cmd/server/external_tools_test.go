@@ -57,13 +57,6 @@ func newExternalToolsFixture(t *testing.T) *externalToolsFixture {
 		}
 		workspacehandlers.SharedAssets(c)
 	})
-	router.POST("/api/workflow-files", func(c *gin.Context) {
-		if c.GetHeader("X-Workspace-Token") != workspaceToken {
-			c.AbortWithStatusJSON(http.StatusUnauthorized, gin.H{"error": "missing server-only workspace token"})
-			return
-		}
-		workspacehandlers.WorkflowFiles(c)
-	})
 	router.GET("/api/documents", func(c *gin.Context) {
 		c.JSON(200, gin.H{"success": true, "data": []any{gin.H{"filepath": "Workflow", "type": "folder", "children": []any{gin.H{"filepath": "Workflow/invoices", "type": "folder"}, gin.H{"filepath": "Workflow/secret", "type": "folder"}}}}})
 	})

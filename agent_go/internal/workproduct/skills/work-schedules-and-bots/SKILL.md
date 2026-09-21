@@ -66,9 +66,13 @@ servers, and available secrets.
   `gmail.readonly` grant. If requested and granted state differ, use
   `update_gmail_connection_grants` and tell the user to complete the returned
   reconnect flow. Do not install a Gmail MCP server as a workaround.
-- Gmail sends are outbound notifications, not inbound bot routing. Slack and
-  WhatsApp routes target this project; Gmail connection configuration remains
-  account-wide and shared with AgentWorks.
+- Agent draft creation and send/reply require both
+  `allow_agent_write_access` and an observed Google `gmail.compose` grant.
+  This is off by default and separate from `notify_user`; never remove the
+  Gmail send guard or treat `gmail.send` alone as agent-write permission.
+- Gmail notifications and agent-authored sends are outbound operations, not
+  inbound bot routing. Slack and WhatsApp routes target this project; Gmail
+  connection configuration remains account-wide and shared with AgentWorks.
 
 
 ## Slack bot routes and threaded messages

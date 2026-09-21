@@ -36,7 +36,7 @@ const gmailGrantMismatchNote = "granted_scopes reflects the last SUCCESSFUL conn
 // instead of opening the panel and clicking checkboxes themselves.
 //
 // This only ever changes STORED intent (GmailConnection.AllowReadAccess /
-// Services) and returns a reconnect link -- it never talks to Google or
+// AllowAgentWriteAccess / Services) and returns a reconnect link -- it never talks to Google or
 // changes what the account can actually do. Google fixes a token's scope at
 // consent time; there is no API to widen it after the fact. The agent must
 // tell the user to open the link and reconnect, and should also open the
@@ -50,7 +50,7 @@ func (api *StreamingAPI) registerGmailConnectionManagementTools(registrar defini
 	}
 	if err := registrar.RegisterCustomTool(
 		"list_gmail_connections",
-		"List Gmail/Google-Workspace connections and, for each, both the STORED request (allow_read_access, services) and what Google has ACTUALLY granted (granted_scopes, from the last live check) -- plus a stored_but_not_granted diff that tells you exactly what to say when a user reports something isn't working ('why can't it write to Drive', 'is this connected'). Always check this before answering a scope/permission question or before calling update_gmail_connection_grants blind -- passing services without first reading the current list silently drops every service not repeated. "+gmailGrantMismatchNote,
+		"List Gmail/Google-Workspace connections and, for each, both the STORED request (allow_read_access, allow_agent_write_access, services) and what Google has ACTUALLY granted (granted_scopes, from the last live check) -- plus a stored_but_not_granted diff that tells you exactly what to say when a user reports something isn't working ('why can't it write to Drive', 'is this connected'). Always check this before answering a scope/permission question or before calling update_gmail_connection_grants blind -- passing services without first reading the current list silently drops every service not repeated. "+gmailGrantMismatchNote,
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -65,12 +65,12 @@ func (api *StreamingAPI) registerGmailConnectionManagementTools(registrar defini
 		return err
 	}
 	description := fmt.Sprintf(
-		"Change what a Gmail connection is authorized for -- Gmail read access and/or Google Workspace services (%s) -- and get back a reconnect link for the user. "+
+		"Change what a Gmail connection is authorized for -- Gmail read access, agent draft/send/reply access, and/or Google Workspace services (%s) -- and get back a reconnect link for the user. "+
 			"This only updates the STORED request; it does NOT change what Google has already granted. Google fixes a token's scope at the moment the user consents, "+
 			"so after this call succeeds you MUST tell the user to open the returned reconnect_url and complete Google's consent screen -- the change has no effect until they do. "+
 			"Also call perform_ui_action(action=\"open\", view=\"bots\") right after this so the Sending accounts panel is visible with the updated request. "+
 			"Pass connection_id to target a specific account; omitted, the account's default connection is used. services replaces the full existing service list for this connection "+
-			"(pass every service that should remain authorized, not just the one being added) -- omit it entirely to leave services unchanged and only touch allow_read_access.",
+			"(pass every service that should remain authorized, not just the one being added) -- omit it entirely to leave services unchanged.",
 		strings.Join(serviceKeys, ", "),
 	)
 	params := map[string]interface{}{
@@ -80,6 +80,10 @@ func (api *StreamingAPI) registerGmailConnectionManagementTools(registrar defini
 			"allow_read_access": map[string]interface{}{
 				"type":        "boolean",
 				"description": "Whether this connection may read/search the mailbox (gmail.readonly), in addition to the always-granted send. Omit to leave unchanged.",
+			},
+			"allow_agent_write_access": map[string]interface{}{
+				"type":        "boolean",
+				"description": "Whether agents may create Gmail drafts and send/reply (gmail.compose). Off by default. Omit to leave unchanged.",
 			},
 			"services": map[string]interface{}{
 				"type": "array",
@@ -130,6 +134,13 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 		}
 		input.AllowReadAccess = &v
 	}
+	if raw, ok := args["allow_agent_write_access"]; ok {
+		v, ok := raw.(bool)
+		if !ok {
+			return "", fmt.Errorf("allow_agent_write_access must be a boolean")
+		}
+		input.AllowAgentWriteAccess = &v
+	}
 	if raw, ok := args["services"]; ok {
 		list, ok := raw.([]interface{})
 		if !ok {
@@ -152,8 +163,8 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 		input.Services = grants
 		input.ServicesSet = true
 	}
-	if input.AllowReadAccess == nil && !input.ServicesSet {
-		return "", fmt.Errorf("pass allow_read_access and/or services -- nothing to change")
+	if input.AllowReadAccess == nil && input.AllowAgentWriteAccess == nil && !input.ServicesSet {
+		return "", fmt.Errorf("pass allow_read_access, allow_agent_write_access, and/or services -- nothing to change")
 	}
 
 	updated, err := svc.UpdateConnection(ctx, conn.ID, input)
@@ -170,7 +181,7 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 		return "", fmt.Errorf("saved the new request, but could not build a reconnect link: %w. Tell the user to open the Sending accounts panel and click Reconnect themselves", err)
 	}
 	extraScopes := services.GoogleServiceScopeURIs(updated.Services)
-	authURL, err := services.BeginGmailOAuth(updated.ID, updated.ClientName, redirectURI, updated.AllowReadAccess, extraScopes)
+	authURL, err := services.BeginGmailOAuth(updated.ID, updated.ClientName, redirectURI, updated.AllowReadAccess, updated.AllowAgentWriteAccess, extraScopes)
 	if err != nil {
 		return "", fmt.Errorf("saved the new request, but could not start the reconnect flow: %w. Tell the user to open the Sending accounts panel and click Reconnect themselves", err)
 	}
@@ -180,12 +191,13 @@ func (api *StreamingAPI) updateGmailConnectionGrantsFromTool(ctx context.Context
 	}
 
 	response := map[string]interface{}{
-		"connection_id":     updated.ID,
-		"display_name":      updated.DisplayName,
-		"allow_read_access": updated.AllowReadAccess,
-		"services":          updated.Services,
-		"reconnect_url":     authURL,
-		"note":              "The stored request is saved, but Google has not granted anything new yet. The user must open reconnect_url and complete Google's consent screen for this to take effect.",
+		"connection_id":            updated.ID,
+		"display_name":             updated.DisplayName,
+		"allow_read_access":        updated.AllowReadAccess,
+		"allow_agent_write_access": updated.AllowAgentWriteAccess,
+		"services":                 updated.Services,
+		"reconnect_url":            authURL,
+		"note":                     "The stored request is saved, but Google has not granted anything new yet. The user must open reconnect_url and complete Google's consent screen for this to take effect.",
 	}
 	encoded, encodeErr := json.Marshal(response)
 	if encodeErr != nil {
@@ -202,16 +214,18 @@ type gmailServiceGrantStatus struct {
 }
 
 type gmailConnectionStatusReport struct {
-	ID                  string                    `json:"id"`
-	DisplayName         string                    `json:"display_name"`
-	Email               string                    `json:"email,omitempty"`
-	Status              string                    `json:"status,omitempty"`
-	Enabled             bool                      `json:"enabled"`
-	GmailReadRequested  bool                      `json:"gmail_read_requested"`
-	GmailReadGranted    bool                      `json:"gmail_read_granted_by_google"`
-	Services            []gmailServiceGrantStatus `json:"services,omitempty"`
-	GrantedScopes       []string                  `json:"granted_scopes,omitempty"`
-	StoredButNotGranted []string                  `json:"stored_but_not_granted,omitempty"`
+	ID                       string                    `json:"id"`
+	DisplayName              string                    `json:"display_name"`
+	Email                    string                    `json:"email,omitempty"`
+	Status                   string                    `json:"status,omitempty"`
+	Enabled                  bool                      `json:"enabled"`
+	GmailReadRequested       bool                      `json:"gmail_read_requested"`
+	GmailReadGranted         bool                      `json:"gmail_read_granted_by_google"`
+	GmailAgentWriteRequested bool                      `json:"gmail_agent_write_requested"`
+	GmailAgentWriteGranted   bool                      `json:"gmail_agent_write_granted_by_google"`
+	Services                 []gmailServiceGrantStatus `json:"services,omitempty"`
+	GrantedScopes            []string                  `json:"granted_scopes,omitempty"`
+	StoredButNotGranted      []string                  `json:"stored_but_not_granted,omitempty"`
 }
 
 func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args map[string]interface{}) (string, error) {
@@ -237,18 +251,24 @@ func (api *StreamingAPI) listGmailConnectionsFromTool(_ context.Context, args ma
 	reports := make([]gmailConnectionStatusReport, 0, len(conns))
 	for _, conn := range conns {
 		report := gmailConnectionStatusReport{
-			ID:                 conn.ID,
-			DisplayName:        conn.DisplayName,
-			Email:              conn.Email,
-			Status:             string(conn.Status),
-			Enabled:            conn.Enabled,
-			GmailReadRequested: conn.AllowReadAccess,
-			GmailReadGranted:   services.GoogleScopesGrant(conn.Scopes, services.GmailReadonlyScope),
-			GrantedScopes:      conn.Scopes,
+			ID:                       conn.ID,
+			DisplayName:              conn.DisplayName,
+			Email:                    conn.Email,
+			Status:                   string(conn.Status),
+			Enabled:                  conn.Enabled,
+			GmailReadRequested:       conn.AllowReadAccess,
+			GmailReadGranted:         services.GoogleScopesGrant(conn.Scopes, services.GmailReadonlyScope),
+			GmailAgentWriteRequested: conn.AllowAgentWriteAccess,
+			GmailAgentWriteGranted:   services.GoogleScopesGrant(conn.Scopes, services.GmailComposeScope),
+			GrantedScopes:            conn.Scopes,
 		}
 		if conn.AllowReadAccess && !report.GmailReadGranted {
 			report.StoredButNotGranted = append(report.StoredButNotGranted,
 				"Gmail: read access requested but Google has not granted gmail.readonly yet")
+		}
+		if conn.AllowAgentWriteAccess && !report.GmailAgentWriteGranted {
+			report.StoredButNotGranted = append(report.StoredButNotGranted,
+				"Gmail: agent draft/send/reply access requested but Google has not granted gmail.compose yet")
 		}
 		for _, g := range conn.Services {
 			scope, display, ok := services.GoogleServiceScopeURI(g.Service, g.Write)

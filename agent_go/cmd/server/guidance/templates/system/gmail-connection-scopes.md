@@ -23,8 +23,9 @@ an otherwise working account merely because both binaries exist.
 
 ### The two things that determine what an account can actually do
 
-1. **The stored request** — `GmailConnection.AllowReadAccess` (Gmail read,
-   on top of the always-granted send) and `GmailConnection.Services` (which
+1. **The stored request** — `GmailConnection.AllowReadAccess` (Gmail read),
+   `GmailConnection.AllowAgentWriteAccess` (agent draft/send/reply), and
+   `GmailConnection.Services` (which
    Google Workspace services beyond Gmail — Drive, Sheets, Docs, Slides,
    Calendar — and whether each is read-only or read+write). This is what
    the connection is *configured* to ask for.
@@ -40,7 +41,7 @@ full Gmail + Drive + Sheets + Docs + Slides + Calendar access, because the
 badge reads the *stored request*, not the live grant. Never assume the
 badge is the truth. If you need to know what an account can currently
 actually do, read `auth.scopes` from its status (the raw granted OAuth
-scopes), not `allow_read_access`/`services`.
+scopes), not `allow_read_access`/`allow_agent_write_access`/`services`.
 
 ### Always check current state first, from chat
 
@@ -50,7 +51,7 @@ call — `services` is a full replacement list, so acting without first reading
 the current one silently drops every service not repeated.
 
 It returns, per connection, both the stored request (`allow_read_access`,
-`services`) and what Google has **actually** granted (`granted_scopes`, from
+`allow_agent_write_access`, `services`) and what Google has **actually** granted (`granted_scopes`, from
 the live token — this is the one that's true, not the stored fields), plus a
 `stored_but_not_granted` list that already tells you what's wrong. Use it
 directly instead of asking the user to describe screenshots:
@@ -78,6 +79,9 @@ Call `update_gmail_connection_grants`:
 
 - `connection_id` — omit to target the account's default connection.
 - `allow_read_access` — omit to leave Gmail read access unchanged.
+- `allow_agent_write_access` — permit agents to create drafts and send/reply.
+  It is off by default and requests `gmail.compose`; omit it to leave the
+  setting unchanged. Notification delivery through `notify_user` is separate.
 - `services` — the **complete replacement list** of Workspace services this
   connection should be authorized for. Omit entirely to leave services
   unchanged. Pass `[]` to strip every service grant back to Gmail-only.

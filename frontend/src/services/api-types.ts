@@ -2887,6 +2887,10 @@ export interface GmailConnection {
   /** Whether this connection was authorized with gmail.readonly on top of the
    *  always-requested gmail.send. Send-only is the default. */
   allow_read_access?: boolean
+  /** Whether project agents may create drafts and send/reply. Off by default;
+   *  requires gmail.compose to be granted on reconnect. Notification sending
+   *  is separate and remains available without this permission. */
+  allow_agent_write_access?: boolean
   /** Additional Google Workspace services (Drive, Sheets, Docs, Slides,
    *  Calendar...) this connection is authorized for, beyond Gmail. Empty
    *  means Gmail-only. Fixed at consent time, like allow_read_access. */
@@ -2918,6 +2922,9 @@ export interface GmailConnectionRequest {
    *  STORED request — Google fixes a token's scope at consent time, so this
    *  has no effect until the connection is reconnected afterward. */
   allow_read_access?: boolean
+  /** Opt agents into Gmail draft/send/reply commands via gmail.compose.
+   *  Omitted on update leaves the setting unchanged; create defaults off. */
+  allow_agent_write_access?: boolean
   /** Complete replacement list of additional Google Workspace service scopes
    *  (Drive, Sheets, Docs, Slides, Calendar...) — see GmailConnection.services.
    *  On update, services_set must also be true for this to take effect (an

@@ -18,6 +18,29 @@ import (
 	"github.com/spf13/viper"
 )
 
+// noSymlinks rejects links before opening a scoped asset. os.Root prevents
+// escaping the root; this also keeps private symlink targets undiscoverable.
+func noSymlinks(root *os.Root, p string) error {
+	prefix := ""
+	for _, part := range strings.Split(p, "/") {
+		if part == "." || part == "" {
+			continue
+		}
+		prefix = path.Join(prefix, part)
+		st, err := root.Lstat(prefix)
+		if errors.Is(err, fs.ErrNotExist) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if st.Mode()&os.ModeSymlink != 0 {
+			return fs.ErrPermission
+		}
+	}
+	return nil
+}
+
 // SharedAssets is service-token-only. The agent server authorizes the scope
 // root. OpenRoot confines subsequent reads even while files are being changed.
 func SharedAssets(c *gin.Context) {
@@ -175,6 +198,7 @@ func SharedAssets(c *gin.Context) {
 type sharedAssetEntry struct {
 	Path     string    `json:"filepath"`
 	Type     string    `json:"type"`
+	Size     int64     `json:"size"`
 	Modified time.Time `json:"last_modified"`
 }
 
@@ -217,7 +241,7 @@ func sharedAssetEntries(done <-chan struct{}, root *os.Root, p string) ([]shared
 		} else if !info.Mode().IsRegular() {
 			return nil
 		}
-		result = append(result, sharedAssetEntry{name, kind, info.ModTime()})
+		result = append(result, sharedAssetEntry{name, kind, info.Size(), info.ModTime()})
 		return nil
 	})
 	return result, err

@@ -1,13 +1,10 @@
 package server
 
 import (
-	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path"
@@ -15,10 +12,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/google/uuid"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
-	planops "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	wf "github.com/manishiitg/coding-agent-loop/workspace/workflowfiles"
 	"github.com/santhosh-tekuri/jsonschema/v6"
 )
@@ -82,7 +76,6 @@ func externalTools() ([]externalTool, error) {
 		add("read_file", "Read a workflow file up to 2 MiB. Binary content is base64.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
 		// Tokens read and run, like the Slack and WhatsApp run-mode channels:
 		// file writes, plan mutations, and Builder execution are not exposed.
-		// The dispatch paths stay for a future write-enabled API version.
 		// Catalog membership is admitted by product.yaml (chat.run
 		// external_tools plus the run.tools proxy surface); these definitions
 		// are implementations only.
@@ -355,46 +348,11 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 		api.externalRunProxy(w, r, tool.Name, args, *selected)
 		return
 	}
-	lock := externalWorkflowLock(selected.WorkspacePath)
-	lock.Lock()
-	defer lock.Unlock()
-	if tool.mutates && api.externalWorkflowBusy(selected.WorkspacePath) {
-		externalError(w, 409, "workflow_busy", "A workflow run or builder turn is active; retry after it finishes.")
-		return
-	}
-	if tool.Name == "get_plan" || tool.plan {
-		api.externalPlanCall(w, r, *tool, args, *selected)
+	if tool.Name == "get_plan" {
+		api.externalPlanCall(w, r, *selected)
 		return
 	}
 	api.externalFileCall(w, r, tool.Name, args, *selected)
-}
-
-var externalWorkflowLocks [64]sync.Mutex
-
-func externalWorkflowLock(root string) *sync.Mutex {
-	sum := 0
-	for _, c := range root {
-		sum = (sum*31 + int(c)) % len(externalWorkflowLocks)
-	}
-	return &externalWorkflowLocks[sum]
-}
-func (api *StreamingAPI) externalWorkflowBusy(root string) bool {
-	api.activeSessionsMux.RLock()
-	for _, s := range api.activeSessions {
-		if s != nil && s.WorkspacePath == root && (s.Status == "running" || s.Status == "paused") {
-			api.activeSessionsMux.RUnlock()
-			return true
-		}
-	}
-	api.activeSessionsMux.RUnlock()
-	api.trackedWorkflowExecutionsMux.RLock()
-	defer api.trackedWorkflowExecutionsMux.RUnlock()
-	for _, e := range api.trackedWorkflowExecutions {
-		if e != nil && e.WorkspacePath == root && e.Status == trackedExecutionStatusRunning {
-			return true
-		}
-	}
-	return false
 }
 func externalArg(args map[string]any, name string) string { s, _ := args[name].(string); return s }
 func externalInt(args map[string]any, name string, fallback int) int {
@@ -402,40 +360,6 @@ func externalInt(args map[string]any, name string, fallback int) int {
 		return int(n)
 	}
 	return fallback
-}
-func externalFileRequest(ctx context.Context, req wf.Request) (wf.Result, error) {
-	data, err := json.Marshal(req)
-	if err != nil {
-		return wf.Result{}, err
-	}
-	request, err := http.NewRequestWithContext(ctx, http.MethodPost, getWorkspaceAPIURL()+"/api/workflow-files", bytes.NewReader(data))
-	if err != nil {
-		return wf.Result{}, err
-	}
-	request.Header.Set("Content-Type", "application/json")
-	request.Header.Set("X-Workspace-Token", os.Getenv("WORKSPACE_API_TOKEN"))
-	response, err := workspaceHTTPClient.Do(request)
-	if err != nil {
-		return wf.Result{}, err
-	}
-	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
-	if err != nil {
-		return wf.Result{}, err
-	}
-	if response.StatusCode != 200 {
-		var e struct {
-			Error string `json:"error"`
-		}
-		_ = json.Unmarshal(raw, &e)
-		if e.Error == "" {
-			e.Error = "Workspace service request failed"
-		}
-		return wf.Result{}, &externalUpstreamError{response.StatusCode, e.Error}
-	}
-	var result wf.Result
-	err = json.Unmarshal(raw, &result)
-	return result, err
 }
 
 type externalUpstreamError struct {
@@ -462,11 +386,14 @@ func externalFailure(w http.ResponseWriter, err error) {
 		case 413:
 			code = "too_large"
 		}
+	} else if errors.Is(err, os.ErrNotExist) {
+		status = http.StatusNotFound
+		code = "not_found"
 	}
 	externalError(w, status, code, err.Error())
 }
 func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request, name string, args map[string]any, workflow DiscoveredWorkflow) {
-	req := wf.Request{Root: workflow.WorkspacePath, Path: externalArg(args, "path"), Query: externalArg(args, "query"), Content: externalArg(args, "content"), Diff: externalArg(args, "diff"), ExpectedRevision: externalArg(args, "expected_revision"), Offset: externalInt(args, "offset", 0), Limit: externalInt(args, "limit", 100), Depth: externalInt(args, "depth", 4)}
+	req := wf.Request{Root: workflow.WorkspacePath, Path: externalArg(args, "path"), Query: externalArg(args, "query"), Offset: externalInt(args, "offset", 0), Limit: externalInt(args, "limit", 100), Depth: externalInt(args, "depth", 4)}
 	switch name {
 	case "read_file":
 		req.Operation = "read"
@@ -474,10 +401,6 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 		req.Operation = "list"
 	case "search_files":
 		req.Operation = "search"
-	case "write_file":
-		req.Operation = "write"
-	case "patch_file":
-		req.Operation = "patch"
 	case "list_runs":
 		req.Operation = "list"
 		req.Path = "runs"
@@ -500,9 +423,6 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 		externalFailure(w, err)
 		return
 	}
-	if name == "write_file" || name == "patch_file" {
-		log.Printf("[EXTERNAL_API] user=%s tool=%s workflow=%s path=%s revision=%s", GetUserIDFromContext(r.Context()), name, workflow.Manifest.ID, req.Path, result.Revision)
-	}
 	// File responses include the existing Share file viewer URL.
 	if result.Exists {
 		raw, _ := json.Marshal(result)
@@ -518,155 +438,24 @@ func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request
 
 var externalPlanPaths = []string{"planning/plan.json", "planning/step_config.json"}
 
-type externalPlanTransaction struct {
-	ctx    context.Context
-	root   string
-	checks map[string]string
-	files  map[string]wf.File
-	writes map[string]string
-	err    error
-}
-
-func newExternalPlanTransaction(ctx context.Context, root string) *externalPlanTransaction {
-	return &externalPlanTransaction{ctx: ctx, root: root, checks: map[string]string{}, files: map[string]wf.File{}, writes: map[string]string{}}
-}
-func (tx *externalPlanTransaction) relative(p string) (string, error) {
-	p = strings.TrimPrefix(p, tx.root+"/")
-	clean, e := wf.CleanRelative(p)
-	if e != nil || clean == "." || strings.HasPrefix(clean, "Workflow/") {
-		return "", fmt.Errorf("plan tool requested a path outside its workflow")
-	}
-	if wf.Private(clean) {
-		return "", fmt.Errorf("plan tool requested a private path")
-	}
-	return clean, nil
-}
-func (tx *externalPlanTransaction) load(p string) (wf.File, error) {
-	p, e := tx.relative(p)
-	if e != nil {
-		return wf.File{}, e
-	}
-	if f, ok := tx.files[p]; ok {
-		return f, nil
-	}
-	result, e := externalFileRequest(tx.ctx, wf.Request{Root: tx.root, Operation: "read", Path: p, Managed: true})
-	if e != nil {
-		return wf.File{}, e
-	}
-	tx.files[p] = result.File
-	tx.checks[p] = result.Revision
-	return result.File, nil
-}
-func (tx *externalPlanTransaction) read(ctx context.Context, p string) (string, error) {
-	p, e := tx.relative(p)
-	if e != nil {
-		return "", e
-	}
-	if content, ok := tx.writes[p]; ok {
-		return content, nil
-	}
-	f, e := tx.load(p)
-	if e != nil {
-		return "", e
-	}
-	if !f.Exists {
-		return "", fmt.Errorf("%w: %s", os.ErrNotExist, p)
-	}
-	if f.Encoding == "base64" {
-		return "", fmt.Errorf("plan tool requested a binary file")
-	}
-	return f.Content, nil
-}
-func (tx *externalPlanTransaction) write(ctx context.Context, p, content string) error {
-	p, e := tx.relative(p)
-	if e == nil {
-		_, e = tx.load(p)
-	}
-	if e != nil {
-		tx.err = errors.Join(tx.err, e)
-		return e
-	}
-	tx.writes[p] = content
-	return nil
-}
-func (tx *externalPlanTransaction) snapshot() (map[string]any, string, error) {
-	out := map[string]any{}
+func (api *StreamingAPI) externalPlanCall(w http.ResponseWriter, r *http.Request, workflow DiscoveredWorkflow) {
+	artifacts := map[string]any{}
 	var revisions strings.Builder
 	for _, p := range externalPlanPaths {
-		f, e := tx.load(p)
-		if e != nil {
-			return nil, "", e
+		result, err := externalFileRequest(r.Context(), wf.Request{Root: workflow.WorkspacePath, Operation: "read", Path: p})
+		if err != nil {
+			externalFailure(w, err)
+			return
 		}
-		revisions.WriteString(p + ":" + f.Revision + "\n")
+		revisions.WriteString(p + ":" + result.Revision + "\n")
 		var value any
-		if f.Exists {
-			if e = json.Unmarshal([]byte(f.Content), &value); e != nil {
-				return nil, "", fmt.Errorf("invalid JSON in %s: %w", p, e)
+		if result.Exists {
+			if err := json.Unmarshal([]byte(result.Content), &value); err != nil {
+				externalFailure(w, fmt.Errorf("invalid JSON in %s: %w", p, err))
+				return
 			}
 		}
-		out[p] = value
+		artifacts[p] = value
 	}
-	return out, wf.Revision([]byte(revisions.String())), nil
-}
-func (api *StreamingAPI) externalPlanCall(w http.ResponseWriter, r *http.Request, tool externalTool, args map[string]any, workflow DiscoveredWorkflow) {
-	ctx := context.WithValue(r.Context(), common.ChatSessionIDKey, "external-"+GetUserIDFromContext(r.Context())+"-"+uuid.NewString())
-	tx := newExternalPlanTransaction(ctx, workflow.WorkspacePath)
-	artifacts, revision, err := tx.snapshot()
-	if err != nil {
-		externalFailure(w, err)
-		return
-	}
-	if tool.Name == "get_plan" {
-		externalJSON(w, map[string]any{"workflow_id": workflow.Manifest.ID, "revision": revision, "plan": artifacts["planning/plan.json"], "artifacts": artifacts})
-		return
-	}
-	if revision != externalArg(args, "expected_revision") {
-		externalError(w, 409, "revision_conflict", "Plan/configuration changed. Call get_plan and review the current state before retrying.")
-		return
-	}
-	native := map[string]any{}
-	for k, v := range args {
-		if k != "workflow_id" && k != "expected_revision" {
-			native[k] = v
-		}
-	}
-	ctx = planops.WithExternalPlanSelectedServers(ctx, workflow.Manifest.Capabilities.SelectedServers)
-	result, err := planops.ExecuteExternalPlanTool(ctx, tool.Name, native, workflow.WorkspacePath, createServerLogger(), tx.read, tx.write, func(context.Context, string, string) error {
-		return fmt.Errorf("file moves are not supported by this plan transaction")
-	})
-	if err != nil {
-		externalError(w, 400, "plan_validation_failed", err.Error())
-		return
-	}
-	if tx.err != nil {
-		externalFailure(w, tx.err)
-		return
-	}
-	if _, err = externalFileRequest(ctx, wf.Request{Root: workflow.WorkspacePath, Operation: "commit", Managed: true, Checks: tx.checks, Writes: tx.writes}); err != nil {
-		externalFailure(w, err)
-		return
-	}
-	for p, content := range tx.writes {
-		tx.files[p] = wf.File{Path: p, Exists: true, Content: content, Encoding: "utf-8", Revision: wf.Revision([]byte(content))}
-	}
-	_, newRevision, err := tx.snapshot()
-	if err != nil {
-		externalFailure(w, err)
-		return
-	}
-	log.Printf("[EXTERNAL_API] user=%s tool=%s workflow=%s old_revision=%s revision=%s", GetUserIDFromContext(r.Context()), tool.Name, workflow.Manifest.ID, revision, newRevision)
-	externalJSON(w, map[string]any{
-		"workflow_id":   workflow.Manifest.ID,
-		"message":       result,
-		"revision":      newRevision,
-		"changed_files": len(tx.writes),
-		// The blast-radius contract, returned with every mutation so it is as
-		// difficult to skip as revision correctness. Guidance alone is advisory;
-		// these followups are part of the mutation receipt.
-		"required_followups": []string{
-			"Confirm the returned revision with get_plan before further edits.",
-			"Trace the change surface (step id, output files/fields, db writes, behavior) across downstream steps, validation schemas, report queries, db contracts, learnings, and knowledgebase notes using search_files/read_file; reconcile or report each dependent.",
-			"Load topic plan-change-impact with get_guidance_topic before treating this change as done, unless already applied to this edit.",
-		},
-	})
+	externalJSON(w, map[string]any{"workflow_id": workflow.Manifest.ID, "revision": wf.Revision([]byte(revisions.String())), "plan": artifacts["planning/plan.json"], "artifacts": artifacts})
 }

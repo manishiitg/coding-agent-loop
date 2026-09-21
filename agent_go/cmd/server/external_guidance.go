@@ -281,13 +281,12 @@ func externalAllowedSkillFolders(workflow DiscoveredWorkflow, stepSkills map[str
 // step config without mutating anything.
 func externalStepSkills(ctx context.Context, workflow DiscoveredWorkflow) map[string][]string {
 	out := map[string][]string{}
-	tx := newExternalPlanTransaction(ctx, workflow.WorkspacePath)
-	f, err := tx.load("planning/step_config.json")
-	if err != nil || !f.Exists {
+	result, err := externalFileRequest(ctx, wf.Request{Root: workflow.WorkspacePath, Operation: "read", Path: "planning/step_config.json"})
+	if err != nil || !result.Exists {
 		return out
 	}
 	var configs []map[string]any
-	if err := json.Unmarshal([]byte(f.Content), &configs); err != nil {
+	if err := json.Unmarshal([]byte(result.Content), &configs); err != nil {
 		return out
 	}
 	for _, c := range configs {

@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -181,6 +182,9 @@ func TestCORSMiddlewareAllowsLoopbackOrigin(t *testing.T) {
 	}
 	if got := rr.Header().Get("Access-Control-Allow-Credentials"); got != "true" {
 		t.Fatalf("Access-Control-Allow-Credentials = %q, want true", got)
+	}
+	if got := rr.Header().Get("Access-Control-Allow-Methods"); !strings.Contains(got, http.MethodPatch) {
+		t.Fatalf("Access-Control-Allow-Methods = %q, want PATCH", got)
 	}
 }
 

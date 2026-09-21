@@ -934,6 +934,7 @@ func (s *SlackService) GetUniqueIDFromThread(
 // testAppToken validates a Slack app-level token by calling apps.connections.open.
 // This is the same endpoint Socket Mode uses to establish a WebSocket connection.
 func testAppToken(ctx context.Context, appToken string) error {
+	appToken = strings.TrimSpace(appToken)
 	if !strings.HasPrefix(appToken, "xapp-") {
 		return fmt.Errorf("App Token invalid: must start with 'xapp-'. Go to Slack App settings → Basic Information → App-Level Tokens to get the correct token")
 	}
@@ -1095,6 +1096,10 @@ func mergeSlackConfigForSave(current, incoming *SlackConfig) (*SlackConfig, erro
 					return nil, fmt.Errorf("slack connection %q carries masked tokens for an unknown connection", conn.ID)
 				}
 			}
+			// Pasted tokens often carry whitespace; trim before validating so a
+			// trailing space never becomes a stored credential Slack rejects.
+			conn.BotToken = strings.TrimSpace(conn.BotToken)
+			conn.AppToken = strings.TrimSpace(conn.AppToken)
 			if err := validateSlackConnectionTokens(conn.BotToken, conn.AppToken); err != nil {
 				return nil, fmt.Errorf("slack connection %q: %w", conn.ID, err)
 			}
@@ -1135,10 +1140,10 @@ func mergeSlackConfigForSave(current, incoming *SlackConfig) (*SlackConfig, erro
 		}
 		conn.Enabled = incoming.Enabled
 		if !isMaskedToken(incoming.BotToken) && incoming.BotToken != "" {
-			conn.BotToken = incoming.BotToken
+			conn.BotToken = strings.TrimSpace(incoming.BotToken)
 		}
 		if !isMaskedToken(incoming.AppToken) && incoming.AppToken != "" {
-			conn.AppToken = incoming.AppToken
+			conn.AppToken = strings.TrimSpace(incoming.AppToken)
 		}
 		if err := validateSlackConnectionTokens(conn.BotToken, conn.AppToken); err != nil {
 			return nil, fmt.Errorf("slack default connection: %w", err)

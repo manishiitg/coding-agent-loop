@@ -26,6 +26,18 @@ const slackConnectionTestDirectory = `{"users":[
 // test opts in, so no Socket Mode listener starts.
 func setupSlackConnectionTest(t *testing.T) (*StreamingAPI, *fakeWorkspaceDocumentStore) {
 	t.Helper()
+	api, workspace := setupSlackConnectionWorld(t)
+	if _, err := api.chatStore.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: true, BotMode: true, AllowedChannels: "{}"}); err != nil {
+		t.Fatal(err)
+	}
+	return api, workspace
+}
+
+// setupSlackConnectionWorld builds the same world without seeding the
+// "slack" bot connector config: a server where channel routing was never
+// saved. Use it to cover first-time saves.
+func setupSlackConnectionWorld(t *testing.T) (*StreamingAPI, *fakeWorkspaceDocumentStore) {
+	t.Helper()
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, slackConnectionTestDirectory)
 	server, workspace := newSlackListableWorkspaceServer(t)
@@ -36,9 +48,6 @@ func setupSlackConnectionTest(t *testing.T) (*StreamingAPI, *fakeWorkspaceDocume
 	resetSlackServiceForTest(t)
 	store, err := chathistory.NewFilesystemStore(t.TempDir())
 	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.UpsertBotConnectorConfig(context.Background(), &chathistory.CreateBotConnectorConfigRequest{ID: "slack", Enabled: true, BotMode: true, AllowedChannels: "{}"}); err != nil {
 		t.Fatal(err)
 	}
 	return &StreamingAPI{chatStore: store}, workspace
@@ -402,6 +411,33 @@ func TestSlackLegacyConfigMapsToDefault(t *testing.T) {
 	}
 	if !gotAdmin.ManageDefaultAllowed {
 		t.Fatalf("admin GET missing manage flag: %+v", gotAdmin)
+	}
+}
+
+func TestSlackChannelRouteFirstSaveWithoutConnectorConfig(t *testing.T) {
+	api, _ := setupSlackConnectionWorld(t)
+
+	// No "slack" connector config exists yet: saving the first channel
+	// route must create it instead of failing with
+	// "bot connector config not found: slack".
+	save := httptest.NewRequest("POST", "/api/human-feedback/slack/config", strings.NewReader(`{"enabled":false,"bot_mode":false,"bot_token":"","app_token":"","channel_routing":{"C1234567890":{"workflow_id":"wf_alpha","workspace_path":"Workflow/alpha","workshop_mode":"run","bot_grant":"run","send_full_details":true}}}`))
+	save = save.WithContext(context.WithValue(save.Context(), UserContextKey, slackConnectionClaims("alice")))
+	w := httptest.NewRecorder()
+	updateSlackConfigHandler(api)(w, save)
+	if w.Code != http.StatusOK {
+		t.Fatalf("first route save status %d: %s", w.Code, w.Body.String())
+	}
+	var saved SlackConfigResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	route, ok := saved.ChannelRouting["C1234567890"]
+	if !ok || route.WorkflowID != "wf_alpha" || route.WorkspacePath != "Workflow/alpha" {
+		t.Fatalf("first route save response = %+v", saved.ChannelRouting)
+	}
+	stored, err := api.chatStore.GetBotConnectorConfig(context.Background(), "slack")
+	if err != nil || stored == nil {
+		t.Fatalf("connector config after first save: %+v, err=%v", stored, err)
 	}
 }
 

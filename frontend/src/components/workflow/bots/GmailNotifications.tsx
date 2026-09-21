@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react'
-import { AlertTriangle, Loader2, Mail, RotateCcw } from 'lucide-react'
+import { AlertTriangle, Loader2, Mail } from 'lucide-react'
 import { agentApi } from '../../../services/api'
 import type { GmailConnection, GoogleServiceGrant } from '../../../services/api-types'
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Checkbox } from '../../ui/checkbox'
-import { FormSection } from '../../ui/FormSection'
 import { Input } from '../../ui/Input'
 import { Label } from '../../ui/label'
 import { Textarea } from '../../ui/Textarea'
@@ -41,6 +40,7 @@ const GMAIL_SCOPE_LABELS: Record<string, { label: string; detail: string }> = {
   'https://www.googleapis.com/auth/userinfo.email': { label: 'Email address', detail: 'Read the account’s email address (identity only, not mailbox content)' },
   'https://www.googleapis.com/auth/userinfo.profile': { label: 'Basic profile', detail: 'Read the account’s basic Google profile (name, picture)' },
   'https://www.googleapis.com/auth/gmail.send': { label: 'Gmail: send', detail: 'Send email as this account. Cannot read or search the mailbox.' },
+  'https://www.googleapis.com/auth/gmail.compose': { label: 'Gmail: drafts + send', detail: 'Create drafts and send or reply to email. Does not grant mailbox-wide editing.' },
   'https://www.googleapis.com/auth/gmail.readonly': { label: 'Gmail: read', detail: 'Read and search this mailbox. Cannot send.' },
   'https://www.googleapis.com/auth/gmail.modify': { label: 'Gmail: full (legacy)', detail: 'Full mailbox access — read, send, and organize. Broader than this connector currently requests; carried over from an older connection.' },
   'https://www.googleapis.com/auth/drive.readonly': { label: 'Drive: read', detail: 'Read files in Google Drive. Cannot create or modify them.' },
@@ -104,6 +104,11 @@ function gmailCapabilityMatrix(scopes: string[]): GmailCapabilityRow[] {
       detail: 'Read and search this mailbox.',
     },
     {
+      label: 'Gmail: Agent drafts/send',
+      state: has('https://www.googleapis.com/auth/gmail.compose', 'https://www.googleapis.com/auth/gmail.modify') ? 'write' : 'none',
+      detail: 'Let agents create drafts and send or reply. Separate from notification delivery.',
+    },
+    {
       label: 'Drive',
       state: has('https://www.googleapis.com/auth/drive') ? 'write' : has('https://www.googleapis.com/auth/drive.readonly') ? 'read' : 'none',
       detail: 'Google Drive files.',
@@ -165,8 +170,8 @@ function gmailBackendLabel(backend: string | undefined): { name: string; install
 type GmailNotificationsBots = Pick<WorkflowBots,
   | 'readOnly'
   | 'gmailConfig' | 'setGmailConfig' | 'gmailBlockedText' | 'setGmailBlockedText'
-  | 'gmailLoading' | 'gmailChecking' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
-  | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'loadGmail' | 'saveGmail' | 'testGmail'
+  | 'gmailLoading' | 'gmailSaving' | 'gmailTesting' | 'gmailError' | 'gmailSuccess' | 'gmailTestResult'
+  | 'gmailBlockedDefaults' | 'gmailDefaultIsBlocked' | 'gmailCanEnable' | 'gmailHasChanges' | 'saveGmail' | 'testGmail'
   | 'gmailConnections' | 'gmailConnectionsBusy' | 'gmailAuthPending' | 'gmailAuthUrl'
   | 'runGmailConnectionAction' | 'connectGmailAccount'
   | 'gmailOAuthClientsBusy' | 'gmailOAuthClientError'
@@ -224,8 +229,8 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
   const {
     readOnly,
     gmailConfig, setGmailConfig, gmailBlockedText, setGmailBlockedText,
-    gmailLoading, gmailChecking, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
-    gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, loadGmail, saveGmail, testGmail,
+    gmailLoading, gmailSaving, gmailTesting, gmailError, gmailSuccess, gmailTestResult,
+    gmailBlockedDefaults, gmailDefaultIsBlocked, gmailCanEnable, gmailHasChanges, saveGmail, testGmail,
     gmailConnections, gmailConnectionsBusy, gmailAuthPending, gmailAuthUrl,
     runGmailConnectionAction, connectGmailAccount,
     gmailOAuthClientsBusy, gmailOAuthClientError,
@@ -242,6 +247,9 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
   // Off by default: notifications only ever send, so the consent screen asks
   // for gmail.send alone unless the operator deliberately widens it here.
   const [newClientAllowRead, setNewClientAllowRead] = useState(false)
+  // Independent and off by default: notification delivery may always send,
+  // but project agents may draft/send/reply only after this opt-in is granted.
+  const [newClientAllowAgentWrite, setNewClientAllowAgentWrite] = useState(false)
   // Additional Google Workspace services (Drive, Sheets, Docs, Slides,
   // Calendar...) the new mailbox may also be authorized for, beyond Gmail.
   // Keyed by service id; { write: false } means "selected, read-only" —
@@ -253,19 +261,18 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
   // Edit-access panel for an EXISTING connection — same shape as the
   // newClient* state above (reused deliberately, same checkbox UI), but this
   // only ever edits one connection at a time and seeds from that
-  // connection's current stored values when opened. Saving only changes the
-  // STORED request (see gmail_connections.go's UpdateConnection comment) —
-  // it never talks to Google, so the panel always ends with a prompt to
-  // reconnect rather than claiming the new access is already live.
+  // connection's current stored values when opened. Applying the selection
+  // persists it and immediately starts a fresh Google consent flow; scope
+  // changes cannot take effect without reconnecting.
   const [editingGrantsConnId, setEditingGrantsConnId] = useState<string | null>(null)
   const [editAllowRead, setEditAllowRead] = useState(false)
+  const [editAllowAgentWrite, setEditAllowAgentWrite] = useState(false)
   const [editServices, setEditServices] = useState<Record<string, { write: boolean }>>({})
-  const [editGrantsSavedConnId, setEditGrantsSavedConnId] = useState<string | null>(null)
 
   const openEditGrants = (conn: GmailConnection) => {
     setEditingGrantsConnId(conn.id)
-    setEditGrantsSavedConnId(null)
     setEditAllowRead(conn.allow_read_access ?? false)
+    setEditAllowAgentWrite(conn.allow_agent_write_access ?? false)
     const seeded: Record<string, { write: boolean }> = {}
     for (const grant of conn.services || []) {
       seeded[grant.service] = { write: grant.write ?? false }
@@ -273,16 +280,17 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
     setEditServices(seeded)
   }
 
-  const saveEditGrants = async (conn: GmailConnection) => {
+  const reconnectWithEditedGrants = async (conn: GmailConnection) => {
     const services: GoogleServiceGrant[] = Object.entries(editServices).map(([service, grant]) => ({ service, write: grant.write }))
     const ok = await runGmailConnectionAction(conn.id, () => agentApi.updateGmailConnection(conn.id, {
       allow_read_access: editAllowRead,
+      allow_agent_write_access: editAllowAgentWrite,
       services,
       services_set: true,
     }))
     if (ok) {
       setEditingGrantsConnId(null)
-      setEditGrantsSavedConnId(conn.id)
+      await connectGmailAccount(conn.id)
     }
   }
   useEffect(() => {
@@ -312,10 +320,11 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
     // createGmailOAuthClient derives the internal client name from this
     // email — asking for the mailbox directly is what an operator actually
     // thinks in terms of, not an arbitrary label for the Google Cloud app.
-    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed, newClientAllowRead, services)
+    const ok = await createGmailOAuthClient(gmailNewClientEmail.trim(), parsed, newClientAllowRead, newClientAllowAgentWrite, services)
     if (ok) {
       setNewClientFile(null)
       setNewClientAllowRead(false)
+      setNewClientAllowAgentWrite(false)
       setNewClientServices({})
     }
     return ok
@@ -376,6 +385,14 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                           >
                             {conn.allow_read_access ? 'Send + read' : 'Send only'}
                           </span>
+                          {conn.allow_agent_write_access && (
+                            <span
+                              className="rounded bg-muted px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-muted-foreground"
+                              title="Agents may create Gmail drafts and send or reply after Google grants gmail.compose"
+                            >
+                              Agent drafts + send
+                            </span>
+                          )}
                           {(conn.services || []).map(grant => (
                             <span
                               key={grant.service}
@@ -486,12 +503,6 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                           </Button>
                         </div>
 
-                        {editGrantsSavedConnId === conn.id && (
-                          <StatusBanner tone="success">
-                            Saved. This only changed the stored request — click <strong>Reconnect</strong> above and complete Google's consent screen for it to actually take effect.
-                          </StatusBanner>
-                        )}
-
                         {editingGrantsConnId === conn.id && (
                           <div className="mt-2 space-y-1.5 rounded-md border border-border bg-muted/20 p-2">
                             <div className="flex items-start gap-2 text-xs text-muted-foreground">
@@ -503,6 +514,19 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                                 className="mt-0.5"
                               />
                               <label htmlFor={`edit-allow-read-${conn.id}`}>Also allow <strong>reading</strong> this mailbox</label>
+                            </div>
+                            <div className="flex items-start gap-2 text-xs text-muted-foreground">
+                              <Checkbox
+                                id={`edit-allow-agent-write-${conn.id}`}
+                                checked={editAllowAgentWrite}
+                                disabled={readOnly}
+                                onCheckedChange={value => setEditAllowAgentWrite(value === true)}
+                                className="mt-0.5"
+                              />
+                              <label htmlFor={`edit-allow-agent-write-${conn.id}`}>
+                                <strong>Allow agents to create drafts and send/reply</strong>
+                                <span className="block text-[11px] text-muted-foreground/80">Off by default. Notification emails are separate and do not require this.</span>
+                              </label>
                             </div>
                             {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
                               <div className="space-y-1.5 border-t border-border pt-1.5">
@@ -547,11 +571,13 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                             )}
                             <div className="flex gap-2 pt-1">
                               <Button
-                                onClick={() => saveEditGrants(conn)}
-                                disabled={readOnly || gmailConnectionsBusy === conn.id}
+                                onClick={() => reconnectWithEditedGrants(conn)}
+                                disabled={readOnly || gmailConnectionsBusy === conn.id || gmailAuthPending !== null}
                                 title={readOnly ? READ_ONLY_TITLE : undefined}
                               >
-                                {gmailConnectionsBusy === conn.id ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Saving…</> : 'Save request'}
+                                {gmailConnectionsBusy === conn.id
+                                  ? <><Loader2 className="mr-2 h-3.5 w-3.5 animate-spin" />Preparing…</>
+                                  : 'Reconnect with selected access'}
                               </Button>
                               <Button
                                 variant="outline"
@@ -618,6 +644,22 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                         <span className="block text-[11px] text-muted-foreground/80">Off by default: sending is all notifications need. Turn on only if a workflow must read or search mail.</span>
                       </label>
                     </div>
+                    <div
+                      className="flex basis-full items-start gap-2 text-xs text-muted-foreground"
+                      title="Off by default. When enabled, reconnect requests gmail.compose and agents may create drafts and send or reply."
+                    >
+                      <Checkbox
+                        id="new-client-allow-agent-write"
+                        checked={newClientAllowAgentWrite}
+                        disabled={readOnly}
+                        onCheckedChange={value => setNewClientAllowAgentWrite(value === true)}
+                        className="mt-0.5"
+                      />
+                      <label htmlFor="new-client-allow-agent-write">
+                        <strong>Allow agents to create drafts and send/reply</strong>
+                        <span className="block text-[11px] text-muted-foreground/80">Off by default. Notification emails can still send without giving agents this permission.</span>
+                      </label>
+                    </div>
                     {serviceCatalog && Object.keys(serviceCatalog).length > 0 && (
                       <div className="basis-full space-y-1.5 border-t border-border pt-2">
                         <p className="text-xs text-muted-foreground">Also connect other Google Workspace services for this mailbox — a workflow can then use them directly. Read-only by default; fixed at sign-in like above.</p>
@@ -672,7 +714,7 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
             </div>
           </section>
           <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground">Settings</h3>
+            <h3 className="text-xs font-medium text-muted-foreground">Delivery settings</h3>
             <p className="text-xs leading-5 text-muted-foreground">Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and product chat. Turn this off to stop all outbound email. Email replies do not resume an agent.</p>
             {gmailError && <StatusBanner tone="error">{gmailError}</StatusBanner>}
             {gmailSuccess && <StatusBanner tone="success">{gmailSuccess}</StatusBanner>}
@@ -687,17 +729,6 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
               />
               {!gmailConfig.enabled && !gmailCanEnable && <p className="mt-2 text-xs text-amber-600 dark:text-amber-400">Sign in a Gmail account above to enable; it switches on automatically once one is connected.</p>}
             </Card>
-            <FormSection
-              title="Connection"
-              description={`${gmailBackendLabel(gmailConfig.auth.backend).name} CLI on the server host.`}
-              actions={(
-                <div className="flex items-center gap-2 text-xs">
-                  {gmailChecking ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <span className={`h-2 w-2 rounded-full ${gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope ? 'bg-green-500' : 'bg-amber-500'}`} />}
-                  <span>{!gmailConfig.auth.gws_installed ? `${gmailBackendLabel(gmailConfig.auth.backend).name} not installed` : !gmailConfig.auth.authenticated ? 'Not connected' : !gmailConfig.auth.has_gmail_scope ? 'Missing Gmail scope' : 'Connected'}</span>
-                  <Button variant="ghost" size="icon" onClick={() => loadGmail(true)} disabled={gmailChecking} className="h-7 w-7" aria-label="Refresh Gmail connection"><RotateCcw className="h-3.5 w-3.5" /></Button>
-                </div>
-              )}
-            />
             <Card className="space-y-3 p-4">
                 <div>
                   <Label className="mb-2 block">Default recipients</Label>

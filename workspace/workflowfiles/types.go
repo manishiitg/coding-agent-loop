@@ -1,5 +1,5 @@
-// Package workflowfiles defines the internal, workflow-confined file API shared
-// by the agent server and workspace service. It is not a public client API.
+// Package workflowfiles defines workflow-relative path and read-result types
+// shared by the agent server and workspace service.
 package workflowfiles
 
 import (
@@ -13,20 +13,13 @@ const MaxFileBytes = 2 << 20
 const MissingRevision = "missing"
 
 type Request struct {
-	Root             string `json:"root"`
-	Operation        string `json:"operation"`
-	Path             string `json:"path,omitempty"`
-	Query            string `json:"query,omitempty"`
-	Content          string `json:"content,omitempty"`
-	Diff             string `json:"diff,omitempty"`
-	ExpectedRevision string `json:"expected_revision,omitempty"`
-	Offset           int    `json:"offset,omitempty"`
-	Limit            int    `json:"limit,omitempty"`
-	Depth            int    `json:"depth,omitempty"`
-	// Managed is set only by the authenticated agent server for typed tools.
-	Managed bool              `json:"managed,omitempty"`
-	Checks  map[string]string `json:"checks,omitempty"`
-	Writes  map[string]string `json:"writes,omitempty"`
+	Root      string `json:"root"`
+	Operation string `json:"operation"`
+	Path      string `json:"path,omitempty"`
+	Query     string `json:"query,omitempty"`
+	Offset    int    `json:"offset,omitempty"`
+	Limit     int    `json:"limit,omitempty"`
+	Depth     int    `json:"depth,omitempty"`
 }
 type File struct {
 	Path     string `json:"path"`
@@ -45,10 +38,9 @@ type Entry struct {
 }
 type Result struct {
 	File
-	Entries    []Entry           `json:"entries,omitempty"`
-	NextOffset int               `json:"next_offset,omitempty"`
-	Truncated  bool              `json:"truncated,omitempty"`
-	Revisions  map[string]string `json:"revisions,omitempty"`
+	Entries    []Entry `json:"entries,omitempty"`
+	NextOffset int     `json:"next_offset,omitempty"`
+	Truncated  bool    `json:"truncated,omitempty"`
 }
 
 func Revision(data []byte) string { return fmt.Sprintf("%x", sha256.Sum256(data)) }
@@ -85,9 +77,4 @@ func Private(p string) bool {
 		}
 	}
 	return false
-}
-func Protected(p string) bool {
-	p = strings.ToLower(p)
-	first := strings.Split(p, "/")[0]
-	return Private(p) || first == "planning" || first == "evaluation" || first == "runs" || p == "workflow.json"
 }

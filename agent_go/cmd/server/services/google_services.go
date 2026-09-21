@@ -73,6 +73,11 @@ var googleServiceCatalog = map[string]googleServiceDef{
 // as GmailConnection.AllowReadAccess rather than as an additional service.
 const GmailReadonlyScope = "https://www.googleapis.com/auth/gmail.readonly"
 
+// GmailComposeScope is the least-privilege Gmail mutation grant that covers
+// draft creation plus sending and replying. It deliberately does not grant
+// label management, deletion, or other mailbox-wide mutations.
+const GmailComposeScope = "https://www.googleapis.com/auth/gmail.compose"
+
 // GoogleServiceCatalog lists the services the connect UI may offer, keyed by
 // the identifier a GoogleServiceGrant.Service names, to display name.
 func GoogleServiceCatalog() map[string]string {
@@ -146,6 +151,10 @@ func GoogleScopesGrant(scopes []string, required string) bool {
 			}
 		}
 		if required == "https://www.googleapis.com/auth/gmail.readonly" &&
+			(granted == "https://www.googleapis.com/auth/gmail.modify" || granted == "https://mail.google.com/") {
+			return true
+		}
+		if required == GmailComposeScope &&
 			(granted == "https://www.googleapis.com/auth/gmail.modify" || granted == "https://mail.google.com/") {
 			return true
 		}
@@ -257,8 +266,13 @@ func (g *GmailService) GoogleCLIAccessForConnection(ctx context.Context, connect
 			grants[grant.Service] = false
 		}
 	}
-	// Mailbox reads are always forced through gog's --readonly runtime mode.
-	if conn.AllowReadAccess && GoogleScopesGrant(liveScopes, GmailReadonlyScope) {
+	// Agent Gmail writes require both the explicit stored opt-in and Google's
+	// live compose grant. A broader legacy grant can satisfy the latter, but
+	// never bypasses the per-connection opt-in.
+	if conn.AllowAgentWriteAccess && GoogleScopesGrant(liveScopes, GmailComposeScope) {
+		grants["gmail"] = true
+	} else if conn.AllowReadAccess && GoogleScopesGrant(liveScopes, GmailReadonlyScope) {
+		// Mailbox reads are forced through gog's --readonly runtime mode.
 		grants["gmail"] = false
 	}
 	if len(grants) == 0 {
@@ -351,10 +365,9 @@ func RunGoogleCLI(ctx context.Context, connectionID string, args []string) (stri
 	if !writeAllowed {
 		finalArgs = append(finalArgs, "--readonly")
 	}
-	if service == "gmail" {
-		// Gmail is exposed to project agents for mailbox search/read only. Keep
-		// gog's Gmail-specific send guard on as defense in depth in addition to
-		// the general read-only mode above.
+	if service == "gmail" && !writeAllowed {
+		// Keep gog's Gmail-specific send guard as defense in depth unless the
+		// connection explicitly resolved to live, opted-in agent write access.
 		finalArgs = append(finalArgs, "--gmail-no-send")
 	}
 

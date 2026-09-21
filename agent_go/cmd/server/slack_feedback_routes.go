@@ -377,11 +377,10 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 			}
 		}
 		currentConfig := slackService.GetConfig()
-		currentBotConfig, configErr := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
-		if configErr != nil {
-			http.Error(w, configErr.Error(), http.StatusInternalServerError)
-			return
-		}
+		// Absence is a first-time save, not a failure: the upsert below
+		// creates the connector config. Every other lookup in this
+		// handler already treats a missing config as nil.
+		currentBotConfig, _ := api.chatStore.GetBotConnectorConfig(r.Context(), "slack")
 		botMode := currentBotConfig != nil && currentBotConfig.BotMode
 		connectorChanged := req.Enabled != currentConfig.Enabled || req.BotMode != botMode || req.BotToken != currentConfig.BotToken || req.AppToken != currentConfig.AppToken
 		if connectorChanged {

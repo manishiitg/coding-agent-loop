@@ -72,7 +72,9 @@ shared tool boundary introduced on 2026-09-17. The scheduler now explicitly
 uses the local owner for ownerless legacy workflows in single-user mode and a
 recorded access owner when available, while ownerless multi-user workflows
 remain safely blocked. Regression coverage is green; restart and live schedule
-verification are pending.
+identity verification are complete on `e21f799a7`. All 29 local schedules now
+register with the authenticated `default` principal; the next naturally due
+action run is the remaining acceptance check.
 
 ## Builder plan-tool consolidation — PLAT-329
 

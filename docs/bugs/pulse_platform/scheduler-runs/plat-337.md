@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented on main; live restart verification pending` |
+| Ticket state | `implemented on main; local identity verified; real scheduled action pending` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P0 execution` |
 
@@ -68,6 +68,9 @@ on the retired empty-string fallback.
   and one cross-process allocator test was flaky in the full run but passed on
   its immediate focused rerun;
 - `git diff --check` passes;
-- live schedule verification requires restarting the currently running Go
-  server on the fixed commit, then triggering the smallest
-  `twitter-automation` schedule action.
+- the local server was restarted on `e21f799a7`; all 29 schedules, including
+  every `twitter-automation` schedule, now register with
+  `username=default user_id=default` instead of the prior empty identity;
+- a real scheduled action remains the final acceptance check. It was not fired
+  manually because the available Twitter/LinkedIn schedules can perform real
+  external actions.

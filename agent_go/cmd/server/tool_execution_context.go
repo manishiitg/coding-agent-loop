@@ -7,6 +7,7 @@ import (
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 // bindToolExecutionContext captures the authenticated query's identity, not
@@ -31,7 +32,14 @@ func (api *StreamingAPI) bindToolExecutionContext(requestCtx context.Context, se
 		if callerSession == "" {
 			callerSession, _ = ctx.Value(common.ChatSessionIDKey).(string)
 		}
-		if callerSession != "" && callerSession != session {
+		// Workflow steps use registered child/group MCP sessions for their
+		// session-scoped HTTP bridge. They are owned by the authenticated parent
+		// HTTP run and must retain that run's bound identity. Do not admit a
+		// merely similar-looking session ID: only the live registry relationship
+		// established by RegisterHTTPSession is authoritative.
+		callerOwnedBySession := callerSession != "" &&
+			mcpclient.GetSessionRegistry().HTTPSessionForMCPSession(callerSession) == session
+		if callerSession != "" && callerSession != session && !callerOwnedBySession {
 			return nil, fmt.Errorf("%s caller does not own this tool session", tool)
 		}
 		if claims := GetUserFromContext(ctx); claims != nil && (claims.UserID != bound.UserID || claims.Provider != bound.Provider || claims.BotRouteGrant != bound.BotRouteGrant) {

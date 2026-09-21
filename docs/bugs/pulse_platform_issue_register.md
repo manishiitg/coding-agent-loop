@@ -62,6 +62,18 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Scheduled scripted-tool child ownership — PLAT-338
+
+[PLAT-338](pulse_platform/scheduler-runs/plat-338.md) records why a scheduled
+Twitter workflow's direct `agent_browser` probe succeeded while its scripted
+CDP preflight repeatedly received `caller does not own this tool session`.
+The authenticated-tool boundary admitted only the parent schedule session and
+mistook the workflow's registered `session-group-*` bridge child for an
+unrelated caller. The boundary now accepts only live, registry-proven children
+of that exact parent; forged and unrelated sessions remain blocked. Focused
+tool-context, scheduler, and browser tests are green; live external-action
+acceptance remains owner-triggered.
+
 ## Legacy schedule action-tool identity — PLAT-337
 
 [PLAT-337](pulse_platform/scheduler-runs/plat-337.md) records why every action

@@ -9,6 +9,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/mcpagent/executor"
+	"github.com/manishiitg/mcpagent/mcpclient"
 )
 
 func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T) {
@@ -53,6 +54,35 @@ func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T
 	api.eventStore.SetSessionOwner("builder", "bob")
 	if _, err := resolve(context.Background(), "tool"); err == nil {
 		t.Fatal("session ownership change was ignored")
+	}
+}
+
+func TestToolExecutionContextAdmitsRegisteredWorkflowChildSession(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "false")
+	const parentSession = "schedule-cron--daily-tool-context-test"
+	const childSession = "session-group-default-tool-context-test"
+	registry := mcpclient.GetSessionRegistry()
+	registry.RegisterHTTPSession(parentSession, childSession)
+	t.Cleanup(func() { registry.CloseHTTPSession(parentSession) })
+
+	api := &StreamingAPI{eventStore: events.NewEventStore(10)}
+	api.eventStore.SetSessionOwner(parentSession, "alice")
+	requestCtx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice", Provider: "local"})
+	resolve := api.bindToolExecutionContext(requestCtx, parentSession, QueryRequest{}, false)
+
+	ctx, err := resolve(executor.WithSessionID(context.Background(), childSession), "agent_browser")
+	if err != nil {
+		t.Fatalf("registered workflow child was rejected: %v", err)
+	}
+	if got := executor.SessionIDFromContext(ctx); got != parentSession {
+		t.Fatalf("bound execution session = %q, want authenticated parent %q", got, parentSession)
+	}
+	if got := GetUserFromContext(ctx); got == nil || got.UserID != "alice" {
+		t.Fatalf("registered child lost owner identity: %+v", got)
+	}
+
+	if _, err := resolve(executor.WithSessionID(context.Background(), childSession+"-forged"), "agent_browser"); err == nil {
+		t.Fatal("unregistered lookalike child session was accepted")
 	}
 }
 

@@ -85,7 +85,7 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 ## Native transcript recovery CPU saturation — PLAT-341
 
-[PLAT-341](pulse_platform/chat-reliability/plat-341.md) records the RTS
+[PLAT-341](pulse_platform/performance/plat-341.md) records the RTS
 performance regression where 13 durable transcript-recovery markers were
 reconciled every 30 seconds forever and the LCS merge repeatedly normalized
 full message text inside every matrix comparison. Production pprof attributed

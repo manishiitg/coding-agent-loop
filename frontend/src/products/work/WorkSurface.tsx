@@ -14,7 +14,9 @@ import { useModeStore } from '../../stores/useModeStore'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { hydrateTabEvents } from '../../utils/sessionRestore'
 import { activateTab } from '../../utils/activateTab'
-import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
+import { WORK_PROFILE_ID, WORK_PROFILE_VERSION, loadWorkProductCommands } from './workData'
+import { setProductCommands } from '../../commands/registry'
+import { toProductCommandDefinitions } from './productCommands'
 import { createWorkSession, deleteWorkSession, loadWorkSessions, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
@@ -565,6 +567,16 @@ export function WorkSurface() {
       setProjectRefreshInteractionKinds(kinds)
     })
     return () => { cancelled = true }
+  }, [])
+  // Product slash commands come from the same profile the provider options do,
+  // and are cleared on unmount so leaving Crew does not leave its commands
+  // offered in another product's chat.
+  useEffect(() => {
+    let cancelled = false
+    void loadWorkProductCommands()
+      .then((commands) => { if (!cancelled) setProductCommands(toProductCommandDefinitions(commands)) })
+      .catch(() => { if (!cancelled) setProductCommands([]) })
+    return () => { cancelled = true; setProductCommands([]) }
   }, [])
   const projectConfigRefreshToken = useChatStore(state => {
     const sessionId = tabId ? state.chatTabs[tabId]?.sessionId : undefined

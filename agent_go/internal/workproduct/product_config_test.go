@@ -256,6 +256,38 @@ func TestBuiltinAgentProfilesReturnsExactlyOneVersion(t *testing.T) {
 	}
 }
 
+func TestWorkManifestShipsUpdateMemoryCommand(t *testing.T) {
+	manifest, err := WorkManifest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	prompt := ""
+	for _, command := range manifest.Profile.Commands {
+		if command.Name == "update-memory" {
+			prompt = command.Prompt
+		}
+	}
+	if strings.TrimSpace(prompt) == "" {
+		t.Fatal("Crew product manifest must ship an update-memory slash command with a resolved prompt")
+	}
+	if !strings.Contains(prompt, "{{context}}") {
+		t.Fatal("update-memory prompt must carry the {{context}} placeholder for slash-prefixed text")
+	}
+	if !strings.Contains(prompt, "MEMORY.md") || !strings.Contains(prompt, "skills/") {
+		t.Fatal("update-memory prompt must cover both project memory and project skills")
+	}
+	profile := BuiltinAgentProfile()
+	served := false
+	for _, command := range profile.Commands {
+		if command.Name == "update-memory" && strings.TrimSpace(command.Prompt) != "" {
+			served = true
+		}
+	}
+	if !served {
+		t.Fatal("update-memory command must reach the served agent profile")
+	}
+}
+
 func TestRenderPromptSucceedsAgainstAPromptContext(t *testing.T) {
 	profile := BuiltinAgentProfile()
 	rendered, err := agentprofiles.RenderPrompt(profile, agentprofiles.PromptContext{

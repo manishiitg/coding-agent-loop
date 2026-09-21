@@ -13,6 +13,8 @@ import (
 	"github.com/gorilla/mux"
 	agent "github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentwrapper"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
+	mcpagent "github.com/manishiitg/mcpagent/agent"
+	"github.com/manishiitg/mcpagent/llm"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -465,6 +467,49 @@ func TestHandleCancelCurrentTurnRecordsInterruptionBetweenTurns(t *testing.T) {
 	}
 	if !api.consumeSessionTurnInterrupted(sessionID) {
 		t.Fatalf("cancel between turns did not preserve the user's sequence-stop intent")
+	}
+}
+
+func TestHandleCancelCurrentTurnInterruptsMuseBeforeCancelWithoutClosingConversation(t *testing.T) {
+	const sessionID = "muse-conversation-stop"
+	agent := testCodingAgent(llm.ProviderMuseCLI, "muse-spark-1.3-contributor")
+	if !mcpagent.AgentSupportsSteering(agent) {
+		t.Fatal("test Muse agent must use the interactive transport")
+	}
+	oldDeliver := deliverMuseTurnInterrupt
+	t.Cleanup(func() { deliverMuseTurnInterrupt = oldDeliver })
+	var order []string
+	deliverMuseTurnInterrupt = func(_ context.Context, got *mcpagent.Agent, owner string) error {
+		if got != agent || owner != sessionID {
+			t.Fatalf("Escape targeted wrong session %q", owner)
+		}
+		order = append(order, "Escape")
+		return nil
+	}
+	api := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{sessionID: func() { order = append(order, "cancel") }},
+		activeSessions:   map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "running"}},
+		runningAgents:    map[string]*mcpagent.Agent{sessionID: agent},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/session/cancel-turn", nil)
+	req.Header.Set("X-Session-ID", sessionID)
+	rec := httptest.NewRecorder()
+	api.handleCancelCurrentTurn(rec, req)
+	if rec.Code != http.StatusNoContent || len(order) != 2 || order[0] != "Escape" || order[1] != "cancel" {
+		t.Fatalf("Stop response=%d, operations=%v", rec.Code, order)
+	}
+	const scheduledID = "schedule-cron--muse-stop"
+	scheduled := &StreamingAPI{
+		agentCancelFuncs: map[string]context.CancelFunc{scheduledID: func() { order = append(order, "scheduled cancel") }},
+		activeSessions:   map[string]*ActiveSessionInfo{scheduledID: {SessionID: scheduledID, Status: "running"}},
+		runningAgents:    map[string]*mcpagent.Agent{scheduledID: agent},
+	}
+	req = httptest.NewRequest(http.MethodPost, "/api/session/cancel-turn", nil)
+	req.Header.Set("X-Session-ID", scheduledID)
+	rec = httptest.NewRecorder()
+	scheduled.handleCancelCurrentTurn(rec, req)
+	if rec.Code != http.StatusNoContent || len(order) != 3 || order[2] != "scheduled cancel" {
+		t.Fatalf("scheduled Stop response=%d, operations=%v; must not send Escape", rec.Code, order)
 	}
 }
 

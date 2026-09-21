@@ -276,7 +276,7 @@ func (w *WhatsAppService) StopListening() {
 }
 
 // removeSessionFiles drops the session DB and WAL/SHM sidecars after the
-// remote WhatsApp logout has succeeded.
+// (best-effort) remote WhatsApp logout.
 func (w *WhatsAppService) removeSessionFiles() error {
 	for _, suffix := range []string{"", "-wal", "-shm"} {
 		path := w.dbPath + suffix
@@ -288,9 +288,9 @@ func (w *WhatsAppService) removeSessionFiles() error {
 }
 
 // LogoutAndRemove logs the linked device out of WhatsApp, then deletes local
-// session state. It intentionally fails before local deletion when the remote
-// logout fails, so the user can retry instead of leaving a linked device
-// stranded in WhatsApp.
+// session state. The remote logout is best-effort inside Connector.Unpair (a
+// device whose remote session is already dead must still be unpairable
+// locally), so an error return here means local cleanup itself failed.
 func (w *WhatsAppService) LogoutAndRemove(ctx context.Context) error {
 	if conn := w.connector(); conn != nil {
 		if err := conn.UnpairAll(ctx); err != nil {

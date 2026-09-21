@@ -465,6 +465,18 @@ func (c *Connector) GetQRImagePNG(size int) ([]byte, error) {
 	return qrcode.Encode(code, qrcode.Medium, size)
 }
 
+// deleteWhatsAppDeviceIfPresent removes the device row unless whatsmeow
+// already deleted it. Client.Logout deletes the device from the store on
+// success (Store.Delete nils the device ID and marks it Deleted), so an
+// unconditional second delete fails with ErrDeviceIDMustBeSet and would fail
+// the whole unpair even though the logout succeeded.
+func deleteWhatsAppDeviceIfPresent(ctx context.Context, st *whatsapptransport.Store, device *store.Device) error {
+	if st == nil || device == nil || device.Deleted || device.ID == nil {
+		return nil
+	}
+	return st.DeleteDevice(ctx, device)
+}
+
 // Unpair logs out and forgets one linked phone. The remote logout is
 // best-effort: a device whose remote session is already dead (removed from
 // the phone, or otherwise invalidated) must still be unpairable locally, or
@@ -510,10 +522,8 @@ func (c *Connector) Unpair(ctx context.Context, phone string) error {
 		c.single = nil
 	}
 	c.mu.Unlock()
-	if st != nil && acct.Device() != nil {
-		if err := st.DeleteDevice(ctx, acct.Device()); err != nil {
-			return fmt.Errorf("whatsapp: delete device: %w", err)
-		}
+	if err := deleteWhatsAppDeviceIfPresent(ctx, st, acct.Device()); err != nil {
+		return fmt.Errorf("whatsapp: delete device: %w", err)
 	}
 	return nil
 }

@@ -83,6 +83,18 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Native transcript recovery CPU saturation — PLAT-341
+
+[PLAT-341](pulse_platform/chat-reliability/plat-341.md) records the RTS
+performance regression where 13 durable transcript-recovery markers were
+reconciled every 30 seconds forever and the LCS merge repeatedly normalized
+full message text inside every matrix comparison. Production pprof attributed
+55% of agent CPU to that recovery path. Message keys are now precomputed,
+historical retries use bounded backoff/age/attempt limits with one worker, and
+older attempts cannot overwrite newer recovery demands. Focused regressions
+pass; deployment, post-deployment pprof verification, and log-rotation cleanup
+remain pending.
+
 ## Scheduled scripted-tool child ownership — PLAT-338
 
 [PLAT-338](pulse_platform/scheduler-runs/plat-338.md) records why a scheduled

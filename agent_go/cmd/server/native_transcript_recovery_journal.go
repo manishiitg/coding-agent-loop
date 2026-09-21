@@ -22,23 +22,45 @@ type nativeTranscriptRecoveryDemand struct {
 	SessionID     string    `json:"session_id"`
 	WorkspacePath string    `json:"workspace_path"`
 	RequestedAt   time.Time `json:"requested_at"`
+	LastAttemptAt time.Time `json:"last_attempt_at,omitempty"`
+	NextAttemptAt time.Time `json:"next_attempt_at,omitempty"`
+	AttemptCount  int       `json:"attempt_count,omitempty"`
 	State         string    `json:"state"`
+}
+
+const (
+	nativeTranscriptRecoveryMaxAge      = 24 * time.Hour
+	nativeTranscriptRecoveryMaxAttempts = 7
+	nativeTranscriptRecoveryWorkers     = 1
+)
+
+var nativeTranscriptRecoveryBackoff = [...]time.Duration{
+	time.Minute,
+	5 * time.Minute,
+	30 * time.Minute,
+	2 * time.Hour,
+	6 * time.Hour,
+	12 * time.Hour,
 }
 
 func persistNativeTranscriptRecoveryDemand(d nativeTranscriptRecoveryDemand) error {
 	if strings.TrimSpace(d.UserID) == "" || strings.TrimSpace(d.SessionID) == "" || strings.TrimSpace(d.WorkspacePath) == "" {
 		return fmt.Errorf("missing native recovery identity")
 	}
-	root, err := workflowCLIStateRoot()
+	if d.RequestedAt.IsZero() {
+		d.RequestedAt = time.Now().UTC()
+	}
+	if strings.TrimSpace(d.State) == "" {
+		d.State = "unresolved"
+	}
+	path, err := nativeTranscriptRecoveryDemandPath(d)
 	if err != nil {
 		return err
 	}
-	dir := filepath.Join(root, "chat-native-recovery")
+	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
-	sum := sha256.Sum256([]byte(d.UserID + "\x00" + d.SessionID + "\x00" + d.WorkspacePath))
-	path := filepath.Join(dir, hex.EncodeToString(sum[:])+".json")
 	data, err := json.Marshal(d)
 	if err != nil {
 		return err
@@ -68,6 +90,64 @@ func persistNativeTranscriptRecoveryDemand(d nativeTranscriptRecoveryDemand) err
 		return directory.Sync()
 	}
 	return nil
+}
+
+func nativeTranscriptRecoveryDemandPath(d nativeTranscriptRecoveryDemand) (string, error) {
+	root, err := workflowCLIStateRoot()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(d.UserID + "\x00" + d.SessionID + "\x00" + d.WorkspacePath))
+	return filepath.Join(root, "chat-native-recovery", hex.EncodeToString(sum[:])+".json"), nil
+}
+
+// A completion can create a fresh demand while an older periodic attempt is
+// still reconciling. Never let that older attempt replace the newer request's
+// retry clock when it records its result.
+func persistNativeTranscriptRecoveryAttempt(original, advanced nativeTranscriptRecoveryDemand) error {
+	path, err := nativeTranscriptRecoveryDemandPath(original)
+	if err != nil {
+		return err
+	}
+	if raw, readErr := os.ReadFile(path); readErr == nil {
+		var current nativeTranscriptRecoveryDemand
+		if json.Unmarshal(raw, &current) == nil && current.RequestedAt.After(original.RequestedAt) {
+			return nil
+		}
+	}
+	return persistNativeTranscriptRecoveryDemand(advanced)
+}
+
+func nativeTranscriptRecoveryDue(d nativeTranscriptRecoveryDemand, now time.Time) bool {
+	if d.State != "unresolved" || d.AttemptCount >= nativeTranscriptRecoveryMaxAttempts {
+		return false
+	}
+	if d.RequestedAt.IsZero() || now.Sub(d.RequestedAt) >= nativeTranscriptRecoveryMaxAge {
+		return false
+	}
+	return d.NextAttemptAt.IsZero() || !now.Before(d.NextAttemptAt)
+}
+
+func advanceNativeTranscriptRecoveryDemand(d nativeTranscriptRecoveryDemand, now time.Time, supported bool) nativeTranscriptRecoveryDemand {
+	now = now.UTC()
+	d.LastAttemptAt = now
+	d.AttemptCount++
+	if !supported {
+		d.State = "unsupported"
+		d.NextAttemptAt = time.Time{}
+		return d
+	}
+	if d.AttemptCount >= nativeTranscriptRecoveryMaxAttempts || now.Sub(d.RequestedAt) >= nativeTranscriptRecoveryMaxAge {
+		d.State = "exhausted"
+		d.NextAttemptAt = time.Time{}
+		return d
+	}
+	delayIndex := d.AttemptCount - 1
+	if delayIndex >= len(nativeTranscriptRecoveryBackoff) {
+		delayIndex = len(nativeTranscriptRecoveryBackoff) - 1
+	}
+	d.NextAttemptAt = now.Add(nativeTranscriptRecoveryBackoff[delayIndex])
+	return d
 }
 
 // One scanner retries late native flushes throughout the server lifetime. A
@@ -104,6 +184,7 @@ func (api *StreamingAPI) replayPendingNativeTranscriptRecovery(ctx context.Conte
 	if err != nil {
 		return
 	}
+	now := time.Now().UTC()
 	demands := make([]nativeTranscriptRecoveryDemand, 0, len(paths))
 	for _, path := range paths {
 		if ctx.Err() != nil {
@@ -115,6 +196,14 @@ func (api *StreamingAPI) replayPendingNativeTranscriptRecovery(ctx context.Conte
 		}
 		var demand nativeTranscriptRecoveryDemand
 		if json.Unmarshal(raw, &demand) != nil || demand.UserID == "" || demand.SessionID == "" || demand.WorkspacePath == "" || demand.State != "unresolved" {
+			continue
+		}
+		if !nativeTranscriptRecoveryDue(demand, now) {
+			if demand.AttemptCount >= nativeTranscriptRecoveryMaxAttempts || (!demand.RequestedAt.IsZero() && now.Sub(demand.RequestedAt) >= nativeTranscriptRecoveryMaxAge) {
+				demand.State = "exhausted"
+				demand.NextAttemptAt = time.Time{}
+				_ = persistNativeTranscriptRecoveryDemand(demand)
+			}
 			continue
 		}
 		demands = append(demands, demand)
@@ -140,7 +229,10 @@ func (api *StreamingAPI) replayPendingNativeTranscriptRecovery(ctx context.Conte
 			}
 			attemptCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			api.syncWorkflowBuilderConversationFromNativeTranscript(attemptCtx, d.UserID, d.SessionID, d.WorkspacePath)
+			_, supported := api.syncWorkflowBuilderConversationFromNativeTranscript(attemptCtx, d.UserID, d.SessionID, d.WorkspacePath)
+			if err := persistNativeTranscriptRecoveryAttempt(d, advanceNativeTranscriptRecoveryDemand(d, time.Now(), supported)); err != nil {
+				log.Printf("[CHAT_HISTORY] Native recovery retry state could not be persisted session=%s: %v", d.SessionID, err)
+			}
 		})
 	})
 }
@@ -148,7 +240,7 @@ func (api *StreamingAPI) replayPendingNativeTranscriptRecovery(ctx context.Conte
 func runNativeRecoveryBatch(ctx context.Context, demands []nativeTranscriptRecoveryDemand, reconcile func(context.Context, nativeTranscriptRecoveryDemand)) {
 	jobs := make(chan nativeTranscriptRecoveryDemand)
 	var workers sync.WaitGroup
-	for i := 0; i < 4; i++ {
+	for i := 0; i < nativeTranscriptRecoveryWorkers; i++ {
 		workers.Add(1)
 		go func() {
 			defer workers.Done()

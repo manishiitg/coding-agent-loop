@@ -107,6 +107,82 @@ func TestNativeRecoveryDemandDurableAndOwnerScoped(t *testing.T) {
 	}
 }
 
+func TestNativeRecoveryDemandUsesBoundedBackoffAndExpires(t *testing.T) {
+	now := time.Date(2026, 9, 21, 7, 0, 0, 0, time.UTC)
+	demand := nativeTranscriptRecoveryDemand{
+		UserID: "alice", SessionID: "chat", WorkspacePath: "Workflow/test",
+		RequestedAt: now.Add(-time.Minute), State: "unresolved",
+	}
+	if !nativeTranscriptRecoveryDue(demand, now) {
+		t.Fatal("fresh demand should be due")
+	}
+	demand = advanceNativeTranscriptRecoveryDemand(demand, now, true)
+	if demand.AttemptCount != 1 || demand.NextAttemptAt.Sub(now) != time.Minute || demand.State != "unresolved" {
+		t.Fatalf("unexpected first retry state: %+v", demand)
+	}
+	if nativeTranscriptRecoveryDue(demand, now.Add(30*time.Second)) {
+		t.Fatal("demand ignored its retry backoff")
+	}
+	if !nativeTranscriptRecoveryDue(demand, now.Add(time.Minute)) {
+		t.Fatal("demand did not become due after backoff")
+	}
+
+	old := nativeTranscriptRecoveryDemand{
+		UserID: "alice", SessionID: "old", WorkspacePath: "Workflow/test",
+		RequestedAt: now.Add(-nativeTranscriptRecoveryMaxAge), State: "unresolved",
+	}
+	if nativeTranscriptRecoveryDue(old, now) {
+		t.Fatal("expired demand must not replay")
+	}
+
+	unsupported := advanceNativeTranscriptRecoveryDemand(demand, now, false)
+	if unsupported.State != "unsupported" || nativeTranscriptRecoveryDue(unsupported, now.Add(24*time.Hour)) {
+		t.Fatalf("unsupported provider remained replayable: %+v", unsupported)
+	}
+
+	capped := nativeTranscriptRecoveryDemand{
+		UserID: "alice", SessionID: "capped", WorkspacePath: "Workflow/test",
+		RequestedAt: now, State: "unresolved",
+	}
+	for capped.State == "unresolved" {
+		capped = advanceNativeTranscriptRecoveryDemand(capped, now.Add(time.Duration(capped.AttemptCount)*time.Hour), true)
+	}
+	if capped.State != "exhausted" || capped.AttemptCount != nativeTranscriptRecoveryMaxAttempts {
+		t.Fatalf("recovery did not stop at attempt cap: %+v", capped)
+	}
+}
+
+func TestNativeRecoveryAttemptDoesNotOverwriteNewerDemand(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("AGENTWORKS_STATE_ROOT", root)
+	requestedAt := time.Date(2026, 9, 21, 7, 0, 0, 0, time.UTC)
+	original := nativeTranscriptRecoveryDemand{
+		UserID: "alice", SessionID: "chat", WorkspacePath: "Workflow/test",
+		RequestedAt: requestedAt, State: "unresolved",
+	}
+	newer := original
+	newer.RequestedAt = requestedAt.Add(time.Minute)
+	if err := persistNativeTranscriptRecoveryDemand(newer); err != nil {
+		t.Fatal(err)
+	}
+	advanced := advanceNativeTranscriptRecoveryDemand(original, requestedAt.Add(2*time.Minute), true)
+	if err := persistNativeTranscriptRecoveryAttempt(original, advanced); err != nil {
+		t.Fatal(err)
+	}
+	path, err := nativeTranscriptRecoveryDemandPath(original)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got nativeTranscriptRecoveryDemand
+	if json.Unmarshal(raw, &got) != nil || !got.RequestedAt.Equal(newer.RequestedAt) || got.AttemptCount != 0 {
+		t.Fatalf("older attempt overwrote newer demand: %+v", got)
+	}
+}
+
 func TestRawConversationSnapshotPreservesRecoveredStructuredRows(t *testing.T) {
 	const path = "Workflow/test/builder/conversation/raw.json"
 	workspace := &mockWorkspaceAPI{files: map[string]string{path: `{"session_id":"chat","user_id":"alice","revision":8,"conversation_history":[{"Role":"human","Parts":[{"Text":"first"}]},{"Role":"ai","Parts":[{"Text":"answer","ToolCall":{"ID":"keep"}}]}]}`}}
@@ -202,15 +278,15 @@ func TestNativeRecoveryBatchBoundsConcurrencyAndCancels(t *testing.T) {
 			<-ctx.Done()
 		})
 	}()
-	for i := 0; i < 4; i++ {
+	for i := 0; i < nativeTranscriptRecoveryWorkers; i++ {
 		select {
 		case <-started:
 		case <-time.After(time.Second):
 			t.Fatal("worker did not start")
 		}
 	}
-	if total.Load() != 4 {
-		t.Fatal("recovery exceeded four concurrent workers")
+	if total.Load() != nativeTranscriptRecoveryWorkers {
+		t.Fatal("recovery exceeded its bounded worker count")
 	}
 	cancel()
 	select {
@@ -218,7 +294,7 @@ func TestNativeRecoveryBatchBoundsConcurrencyAndCancels(t *testing.T) {
 	case <-time.After(time.Second):
 		t.Fatal("recovery workers did not stop")
 	}
-	if total.Load() != 4 {
+	if total.Load() != nativeTranscriptRecoveryWorkers {
 		t.Fatal("cancellation dispatched historical recovery work")
 	}
 }

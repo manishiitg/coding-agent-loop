@@ -60,7 +60,7 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
   },
 }
 
-export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
+export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli', 'agy-cli'])
 const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 // Pi CLI routes to several different model backends via a `<backend>/<model>`
@@ -204,6 +204,7 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'cursor-cli',
   'pi-cli',
   'muse-cli',
+  'agy-cli',
   'claude-code',
   'bedrock',
   'openai',

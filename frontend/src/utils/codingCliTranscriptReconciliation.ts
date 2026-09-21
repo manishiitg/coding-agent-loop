@@ -6,6 +6,7 @@ const CODING_CLI_PROVIDERS = new Set([
   'cursor-cli',
   'pi-cli',
   'muse-cli',
+  'agy-cli',
 ])
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {

@@ -5,8 +5,9 @@
 `chat-index.json` but were absent from Automation → Chats: the workflow caller
 enabled `recentOnly` without the `includeAutomationChats` opt-in already used by
 Crew, so the client requested only `kind=chat`. Commit `b812cdb48` wires the
-workflow hub to the unified conversation index; focused regressions are green,
-with deployment and live verification pending.
+workflow hub to the unified conversation index, and `69fd91776` labels every
+row as Chat, Schedule, Trigger, or Bot (with richer names/platforms when known);
+focused regressions are green, with deployment and live verification pending.
 
 ## Dashboard composition widgets — PLAT-335
 

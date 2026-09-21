@@ -44,11 +44,24 @@ unified Chats index. It still keeps the Schedules and Triggers sections as the
 run-centric views with status and delivery metadata; Chats now supplies the
 chronological conversation index the label promises.
 
+Follow-up commit `69fd91776` gives every row an explicit source badge instead
+of falling back to ambiguous ownership text such as `System / legacy`:
+
+- `Chat` (plus the actor when one is meaningful)
+- `Schedule`
+- `Trigger`
+- `Bot` (plus the platform when known)
+
+Crew rows retain richer joined labels such as `Schedule · Daily audit` and
+`Trigger · PR opened` when run metadata supplies the automation name.
+
 ## Verification
 
 - Added a regression that returns a newer `schedule-cron--…` transcript from
   the unfiltered history request and an ordinary Builder conversation from the
   `kind=chat` request, then verifies both appear in the unified Chats list.
+- Expanded that regression across chat, cron schedule, webhook trigger, and
+  Slack bot sessions and verifies all four source labels.
 - Added a workflow-layout wiring assertion for
   `includeAutomationChats={chatOnly}`.
 - Focused frontend suite: 17/17 tests pass.

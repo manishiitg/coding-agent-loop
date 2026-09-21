@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented; focused regression tests green; deployment pending` |
+| Ticket state | `deployed to RTS; focused regressions and service health green` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P0 production performance / chat durability` |
 
@@ -78,12 +78,17 @@ fallback survives restarts. The change bounds only repeated historical work.
 - Regression coverage verifies backoff, expiry, unsupported-provider terminal
   state, bounded worker concurrency, and preservation of newer demands.
 - `git diff --check` passes.
-- Deployment and a post-deployment RTS CPU profile remain pending.
+- Deployed to RTS in release `6c47129-20260921082037`. All three services and
+  the public HTTP endpoint passed health checks. The newly restarted agent was
+  at 18.4% CPU in the initial process sample, versus the prior sustained
+  saturation; a longer steady-state profile remains useful follow-up evidence.
 - Rootless Video Studio now installs a low-priority user timer that checks logs
   every ten minutes, rotates at 100 MB with `copytruncate`, and retains seven
   compressed generations. Production-debug workspace messages are opt-in, shell
   diagnostics persist only command length plus a short SHA-256 fingerprint, and
   the unused agent `--log-file` flag is removed so systemd owns one clear log
   path. The registry-side hot-path suppression shipped in `mcpagent` commit
-  `22ff53a` (included on `main` by merge `ee12433`). Deployment and one-time
-  cleanup of the existing files remain pending.
+  `22ff53a` (included on `main` by merge `ee12433`).
+- The first production rotation completed successfully during deployment. The
+  active logs dropped to approximately 21 KB (agent) and 94 KB (workspace);
+  the two original generations are retained intact for delayed compression.

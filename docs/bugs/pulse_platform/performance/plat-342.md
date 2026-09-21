@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented; regression test green; deployment pending` |
+| Ticket state | `deployed to RTS; regression test and service health green` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P1 performance / navigation` |
 
@@ -35,4 +35,5 @@ effect to rerun when presets changed while the overlay was open.
 
 - A focused performance contract test prevents reintroducing lazy loading,
   force-refresh-on-open, or the unstable preset dependency.
-- Deployment and production timing verification remain pending.
+- Deployed to RTS in release `6c47129-20260921082037`; public HTTP and service
+  health checks passed. Interactive production timing verification remains.

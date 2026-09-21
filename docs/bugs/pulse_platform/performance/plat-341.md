@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `deployed to RTS; focused regressions and service health green` |
+| Ticket state | `CPU containment deployed; first structured-stream cutover slice verified locally, deployment pending` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P0 production performance / chat durability` |
 
@@ -149,10 +149,51 @@ Until those conditions hold, the bounded implementation remains necessary and
 must not be removed: it protects completed replies from disappearing after a
 missed completion, disconnect or restart.
 
+## 2026-09-21 structured-stream cutover implementation
+
+The first cutover slice now replaces two important pieces of the routine
+reconciliation path:
+
+- Every accepted structured event is appended to
+  `structured-chat-events.sqlite` before it is published to the in-memory store
+  or SSE subscribers. SQLite assigns a monotonic sequence per session and a
+  unique `(session_id, event_id)` constraint makes replay idempotent. A new
+  server process hydrates the bounded live tail from that journal and continues
+  the sequence instead of starting an unrelated in-memory stream at one.
+- A retained turn whose canonical `unified_completion` contains a final reply
+  now appends that reply directly to the AgentWorks conversation, records an
+  exact `structured_turn_checkpoints[turn_id]`, and persists the completion in
+  `ui_events`. Replaying the same turn is a no-op; an identical reply produced
+  by a different turn is preserved. Whole-history native reconciliation runs
+  only if the structured completion has no final response or this direct append
+  fails.
+
+Focused tests cover journal sequencing, restart hydration, duplicate event
+replay, bounded chronological tail loading, exact-turn completion idempotency,
+and legitimate repeated replies across different turns.
+
+The bridge keeps an upstream `event_id` when a producer supplies one and uses a
+stable hash of the structured envelope for older producers. An event is never
+published to SSE when its journal append fails. Tmux remains unchanged as the
+CLI process host and raw Terminal source; this cutover only removes it from the
+normal Formatted Chat persistence path.
+
+This is not yet the entire cutover. Some retained CLI adapters still obtain the
+final response used by `unified_completion` from a provider-native sidecar, and
+legacy/read-time transcript catch-up remains for conversations created before
+structured checkpoints. Follow-up work must propagate one stable turn ID into
+each provider-native record, convert emergency recovery into an exact-turn job
+with a terminal `resolved` state, and define journal compaction after canonical
+conversation projection. Until then, the bounded native fallback stays enabled.
+
 ## Verification and operational follow-up
 
 - Focused native transcript, builder conversation, and recovery concurrency
   tests pass.
+- Structured-journal, event-bridge, retained-completion, restart replay and
+  publish-after-persist tests pass. The broader server suite still has one
+  unrelated existing prompt-budget failure: the assembled interactive workshop
+  prompt is 24,412 bytes against a 24,000-byte ceiling.
 - Regression coverage verifies backoff, expiry, unsupported-provider terminal
   state, bounded worker concurrency, and preservation of newer demands.
 - `git diff --check` passes.

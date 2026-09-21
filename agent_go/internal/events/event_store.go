@@ -626,6 +626,9 @@ type EventStore struct {
 	stopCh              chan struct{}
 	activityCallback    ActivityCallback // Optional callback to update session activity
 	eventAddedCallback  EventAddedCallback
+	durableJournal      DurableEventJournal
+	hydratedSessions    map[string]bool
+	hydrateMu           sync.Mutex
 
 	// SSE subscriber registry: sessionID -> list of subscribers
 	subscribers   map[string][]*Subscriber
@@ -649,6 +652,7 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 		cleanupTicker:       time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
 		stopCh:              make(chan struct{}),
 		activityCallback:    activityCallback,
+		hydratedSessions:    make(map[string]bool),
 		subscribers:         make(map[string][]*Subscriber),
 	}
 
@@ -656,6 +660,58 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 	go store.cleanupRoutine()
 
 	return store
+}
+
+// SetDurableJournal makes structured-event persistence part of AddEvent's
+// acceptance boundary. Configure it before producers start adding events.
+func (es *EventStore) SetDurableJournal(journal DurableEventJournal) {
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	es.durableJournal = journal
+}
+
+func (es *EventStore) hydrateSession(sessionID string) {
+	if es == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	es.hydrateMu.Lock()
+	defer es.hydrateMu.Unlock()
+	es.mu.RLock()
+	journal := es.durableJournal
+	alreadyHydrated := es.hydratedSessions[sessionID]
+	es.mu.RUnlock()
+	if journal == nil || alreadyHydrated {
+		return
+	}
+	persisted, err := journal.LoadTail(sessionID, es.maxEvents)
+	if err != nil {
+		log.Printf("[EventStore] durable replay failed for session %s: %v", sessionID, err)
+		return
+	}
+	es.mu.Lock()
+	defer es.mu.Unlock()
+	if es.hydratedSessions[sessionID] {
+		return
+	}
+	if len(persisted) > 0 {
+		es.events[sessionID] = append([]Event(nil), persisted...)
+		// Sequence is one-based and gap-free within the durable journal. When
+		// only the bounded tail is hydrated, preserve its absolute zero-based
+		// polling position so a reconnect cursor is not compared with tail-local
+		// slice indexes.
+		if persisted[0].Sequence > 1 {
+			es.sessionStartIndices[sessionID] = int(persisted[0].Sequence - 1)
+		}
+		for _, event := range persisted {
+			if event.Sequence > es.nextSequence[sessionID] {
+				es.nextSequence[sessionID] = event.Sequence
+			}
+		}
+		es.rebuildTerminalEventsLocked(sessionID)
+	} else if _, exists := es.events[sessionID]; !exists {
+		es.events[sessionID] = make([]Event, 0)
+	}
+	es.hydratedSessions[sessionID] = true
 }
 
 // SetSessionOwner records the user that owns a session's in-memory events.
@@ -726,13 +782,26 @@ func (es *EventStore) Unsubscribe(sessionID string, sub *Subscriber) {
 	}
 }
 
-// AddEvent adds an event for a specific session
+// AddEvent adds an event for a specific session. Legacy callers that cannot
+// propagate an observer error retain this compatibility entry point; durable
+// failures are logged and the event is not published.
 func (es *EventStore) AddEvent(sessionID string, event Event) {
+	_ = es.AddEventChecked(sessionID, event)
+}
+
+// AddEventChecked adds an event and reports whether it crossed the durable
+// acceptance boundary. Canonical producer bridges use this method so a failed
+// append can stop or retry upstream delivery.
+func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
+	es.hydrateSession(sessionID)
 	es.mu.Lock()
 	if event.Data != nil {
 		if cloned := events.CloneAgentEvent(event.Data); cloned != nil {
 			event.Data = cloned
 		}
+	}
+	if strings.TrimSpace(event.ID) == "" {
+		event.ID = StableAgentEventID("event-store:"+sessionID, event.Data)
 	}
 
 	// Initialize session if not exists
@@ -741,17 +810,30 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 		es.sessionStartIndices[sessionID] = 0
 	}
 	event.ensureExecutionOwnership(sessionID, es.events[sessionID])
-	if event.Sequence <= 0 {
-		es.nextSequence[sessionID]++
-		event.Sequence = es.nextSequence[sessionID]
-	} else if event.Sequence > es.nextSequence[sessionID] {
-		es.nextSequence[sessionID] = event.Sequence
-	}
 	if event.TerminalOwnerID == "" {
 		event.TerminalOwnerID = ResolveTerminalOwnerID(sessionID, event, nil)
 	}
 	if event.TerminalID == "" {
 		event.TerminalID = TerminalIDForOwner(sessionID, event.TerminalOwnerID)
+	}
+	if es.durableJournal != nil {
+		persisted, inserted, err := es.durableJournal.Append(sessionID, event)
+		if err != nil {
+			es.mu.Unlock()
+			log.Printf("[EventStore] durable append failed; event not published session=%s type=%s id=%s: %v", sessionID, event.Type, event.ID, err)
+			return err
+		}
+		if !inserted {
+			es.mu.Unlock()
+			return nil
+		}
+		event = persisted
+	}
+	if event.Sequence <= 0 {
+		es.nextSequence[sessionID]++
+		event.Sequence = es.nextSequence[sessionID]
+	} else if event.Sequence > es.nextSequence[sessionID] {
+		es.nextSequence[sessionID] = event.Sequence
 	}
 
 	// Add event
@@ -815,6 +897,7 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 		}
 	}
 	es.subscribersMu.RUnlock()
+	return nil
 }
 
 func (es *EventStore) rebuildTerminalEventsLocked(sessionID string) {
@@ -842,6 +925,7 @@ type ToolCallSummary struct {
 // GetToolCallsByCorrelation returns tool call summaries for events matching the given correlationID.
 // Used by query_step to show which tools a running step is calling.
 func (es *EventStore) GetToolCallsByCorrelation(sessionID, correlationID string) []ToolCallSummary {
+	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
@@ -915,6 +999,7 @@ func (es *EventStore) GetToolCallsByCorrelation(sessionID, correlationID string)
 // GetAllEventsRaw returns a copy of all in-memory events for a session with no
 // filtering and no limit. Used for persistence on session completion.
 func (es *EventStore) GetAllEventsRaw(sessionID string) []Event {
+	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 	src, ok := es.events[sessionID]
@@ -928,6 +1013,7 @@ func (es *EventStore) GetAllEventsRaw(sessionID string) []Event {
 
 // InitializeSession creates an empty event list for a session
 func (es *EventStore) InitializeSession(sessionID string, baseIndex int) {
+	es.hydrateSession(sessionID)
 	es.mu.Lock()
 	defer es.mu.Unlock()
 
@@ -977,6 +1063,7 @@ type GetTerminalEventsResult struct {
 // GetEvents retrieves events for a session with various options
 // Supports both forward polling (sinceIndex) and backward pagination (limit/offset)
 func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEventsResult {
+	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
@@ -1156,6 +1243,7 @@ func (es *EventStore) GetEvents(sessionID string, opts GetEventsOptions) GetEven
 // use the write-time terminal index; the fallback scan keeps restored legacy
 // events readable while old history ages out.
 func (es *EventStore) GetTerminalEvents(sessionID, terminalID string, opts GetTerminalEventsOptions) GetTerminalEventsResult {
+	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
@@ -1249,6 +1337,7 @@ func (es *EventStore) GetTerminalEvents(sessionID, terminalID string, opts GetTe
 
 // GetSessionStatus returns the status of a session
 func (es *EventStore) GetSessionStatus(sessionID string) (int, bool) {
+	es.hydrateSession(sessionID)
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 
@@ -1270,6 +1359,7 @@ func (es *EventStore) RemoveSession(sessionID string) {
 	delete(es.nextSequence, sessionID)
 	delete(es.sessionStartIndices, sessionID)
 	delete(es.sessionOwners, sessionID)
+	delete(es.hydratedSessions, sessionID)
 }
 
 // GetActiveSessions returns all active session IDs
@@ -1318,6 +1408,15 @@ func (es *EventStore) cleanupInactiveSessions() {
 // Stop stops the event store and cleanup routine
 func (es *EventStore) Stop() {
 	close(es.stopCh)
+	es.hydrateMu.Lock()
+	defer es.hydrateMu.Unlock()
+	es.mu.Lock()
+	journal := es.durableJournal
+	es.durableJournal = nil
+	es.mu.Unlock()
+	if journal != nil {
+		_ = journal.Close()
+	}
 }
 
 // GetStats returns statistics about the event store

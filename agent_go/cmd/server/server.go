@@ -1790,6 +1790,15 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
+	eventStateRoot, err := workflowCLIStateRoot()
+	if err != nil {
+		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
+	}
+	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events.sqlite"))
+	if err != nil {
+		log.Fatalf("Failed to initialize durable structured-event journal: %v", err)
+	}
+	eventStore.SetDurableJournal(eventJournal)
 	terminalStore := terminals.NewStore()
 	serverStartedAt := time.Now()
 	if processStart, ok := processStartedAt(os.Getpid()); ok {
@@ -8451,10 +8460,12 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 		}
 	}
 	// A live retained CLI turn bypasses handleQuery's normal final-save block.
-	// Its provider transcript is now complete, so reconcile it asynchronously
-	// into the durable workflow conversation before a later restart can expose
-	// a user-only snapshot.
-	api.scheduleWorkflowBuilderNativeTranscriptSync(sessionID)
+	// Persist an exact structured completion directly whenever it carries the
+	// final reply. Native transcript reconciliation is only the emergency path
+	// for missing structured output or a failed canonical append.
+	if !api.persistRetainedStructuredCompletion(sessionID, event) {
+		api.scheduleWorkflowBuilderNativeTranscriptSync(sessionID)
+	}
 	log.Printf("[RETAINED_TURN] Settled retained main-agent turn from structured %s event session=%s terminal=%s state=%s next_execution=%s",
 		eventType, sessionID, snapshot.TerminalID, snapshot.State, promotedExecutionID)
 }

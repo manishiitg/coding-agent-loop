@@ -2,7 +2,6 @@ package eventbridge
 
 import (
 	"context"
-	"fmt"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
@@ -37,8 +36,7 @@ var SKIP_EVENTS = map[string]bool{
 }
 
 // BaseEventBridge contains the common functionality for all event bridges.
-// Events are pushed to the in-memory EventStore only — there is no durable
-// per-session event log.
+// EventStore durably accepts each event before exposing it to polling or SSE.
 type BaseEventBridge struct {
 	EventStore *events.EventStore
 	SessionID  string
@@ -54,7 +52,7 @@ func (b *BaseEventBridge) HandleEvent(_ context.Context, event *pkgevents.AgentE
 	}
 
 	serverEvent := events.Event{
-		ID:        fmt.Sprintf("%s_%s_%d", b.BridgeName, event.Type, time.Now().UnixNano()),
+		ID:        events.StableAgentEventID(b.BridgeName, event),
 		Type:      string(event.Type),
 		Timestamp: time.Now(),
 		Data:      event,
@@ -64,8 +62,7 @@ func (b *BaseEventBridge) HandleEvent(_ context.Context, event *pkgevents.AgentE
 	if b.SessionID == "" {
 		b.Logger.Warn("⚠️ [BaseEventBridge] SessionID is empty! Event will not be stored correctly.")
 	}
-	b.EventStore.AddEvent(b.SessionID, serverEvent)
-	return nil
+	return b.EventStore.AddEventChecked(b.SessionID, serverEvent)
 }
 
 // errorEventText surfaces the flat error string a handful of typed events

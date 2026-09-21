@@ -1,0 +1,133 @@
+package server
+
+import (
+	"encoding/json"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	agentevents "github.com/manishiitg/mcpagent/events"
+)
+
+func retainedCompletionEvent(sessionID, turnID, eventID, final string) storeevents.Event {
+	completedAt := time.Date(2026, 9, 21, 11, 0, 0, 0, time.UTC)
+	completion := agentevents.NewUnifiedCompletionEvent("coding_agent", "retained", "", final, "completed", time.Second, 1)
+	completion.SessionID = sessionID
+	completion.Metadata["source"] = "mcpagent_session"
+	return storeevents.Event{
+		ID: eventID, Type: string(agentevents.EventTypeUnifiedCompletion), Timestamp: completedAt,
+		SessionID: sessionID, ExecutionID: turnID, Sequence: 12,
+		Data: &agentevents.AgentEvent{Type: agentevents.EventTypeUnifiedCompletion, Timestamp: completedAt, SessionID: sessionID, Data: completion},
+	}
+}
+
+func TestRetainedStructuredFinalRequiresCompletedReply(t *testing.T) {
+	event := retainedCompletionEvent("session-1", "turn-1", "completion-1", "done")
+	final, turnID, ok := retainedStructuredFinal(event)
+	if !ok || final != "done" || turnID != "turn-1" {
+		t.Fatalf("structured final = %q/%q/%v", final, turnID, ok)
+	}
+	event.Data.Data.(*agentevents.UnifiedCompletionEvent).FinalResult = ""
+	if _, _, ok := retainedStructuredFinal(event); ok {
+		t.Fatal("completion without final response was accepted as durable reply")
+	}
+	event.Type = "streaming_end"
+	event.Data.Data.(*agentevents.UnifiedCompletionEvent).FinalResult = "done"
+	if _, _, ok := retainedStructuredFinal(event); ok {
+		t.Fatal("streaming lifecycle event was accepted as durable reply")
+	}
+}
+
+func TestStructuredCompletionPersistsExactlyOnceByTurn(t *testing.T) {
+	const (
+		userID        = "alice"
+		sessionID     = "retained-chat"
+		workspacePath = "Workflow/project"
+		conversation  = "Workflow/project/builder/conversation/2026-09-21/session-retained-chat-conversation.json"
+	)
+	record := map[string]interface{}{
+		"session_id": sessionID,
+		"user_id":    userID,
+		"agent_mode": "workflow_phase",
+		"conversation_history": []map[string]interface{}{
+			{"Role": "human", "Parts": []map[string]string{{"Text": "run it"}}},
+		},
+	}
+	raw, err := json.Marshal(record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	workspace := &mockWorkspaceAPI{files: map[string]string{conversation: string(raw)}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	event := retainedCompletionEvent(sessionID, "turn-1", "completion-1", "finished")
+	api := &StreamingAPI{}
+	if !api.appendStructuredAssistantReply(userID, sessionID, workspacePath, "turn-1", "finished", event) {
+		t.Fatal("structured completion was not persisted")
+	}
+	if !api.appendStructuredAssistantReply(userID, sessionID, workspacePath, "turn-1", "finished", event) {
+		t.Fatal("idempotent replay did not adopt the durable checkpoint")
+	}
+
+	var persisted struct {
+		History     []builderConversationMessage `json:"conversation_history"`
+		Checkpoints map[string]interface{}       `json:"structured_turn_checkpoints"`
+		UIEvents    []storeevents.Event          `json:"ui_events"`
+	}
+	if err := json.Unmarshal([]byte(workspace.files[conversation]), &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if len(persisted.History) != 2 || persisted.History[1].Role != "ai" || persisted.History[1].Parts[0].Text != "finished" {
+		t.Fatalf("history = %+v, want one structured assistant reply", persisted.History)
+	}
+	if _, ok := persisted.Checkpoints["turn-1"]; !ok {
+		t.Fatalf("missing exact turn checkpoint: %+v", persisted.Checkpoints)
+	}
+	if len(persisted.UIEvents) != 1 || persisted.UIEvents[0].ID != "completion-1" || persisted.UIEvents[0].Sequence != 12 {
+		t.Fatalf("durable structured events = %+v", persisted.UIEvents)
+	}
+}
+
+func TestStructuredCompletionPreservesLegitimateRepeatedRepliesAcrossTurns(t *testing.T) {
+	const (
+		userID        = "alice"
+		sessionID     = "repeat-chat"
+		workspacePath = "Workflow/project"
+		conversation  = "Workflow/project/builder/conversation/2026-09-21/session-repeat-chat-conversation.json"
+	)
+	record := map[string]interface{}{
+		"session_id": sessionID,
+		"user_id":    userID,
+		"conversation_history": []map[string]interface{}{
+			{"Role": "human", "Parts": []map[string]string{{"Text": "first"}}},
+		},
+	}
+	raw, _ := json.Marshal(record)
+	workspace := &mockWorkspaceAPI{files: map[string]string{conversation: string(raw)}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+	api := &StreamingAPI{}
+	if !api.appendStructuredAssistantReply(userID, sessionID, workspacePath, "turn-1", "same answer", retainedCompletionEvent(sessionID, "turn-1", "completion-1", "same answer")) {
+		t.Fatal("first reply was not persisted")
+	}
+
+	var current map[string]interface{}
+	if json.Unmarshal([]byte(workspace.files[conversation]), &current) != nil {
+		t.Fatal("cannot decode first append")
+	}
+	history := current["conversation_history"].([]interface{})
+	current["conversation_history"] = append(history, map[string]interface{}{"Role": "human", "Parts": []map[string]string{{"Text": "second"}}})
+	updated, _ := json.Marshal(current)
+	workspace.files[conversation] = string(updated)
+	if !api.appendStructuredAssistantReply(userID, sessionID, workspacePath, "turn-2", "same answer", retainedCompletionEvent(sessionID, "turn-2", "completion-2", "same answer")) {
+		t.Fatal("second reply was not persisted")
+	}
+	var persisted builderConversationLog
+	if json.Unmarshal([]byte(workspace.files[conversation]), &persisted) != nil || len(persisted.ConversationHistory) != 4 {
+		t.Fatalf("legitimate repeated reply was collapsed: %+v", persisted.ConversationHistory)
+	}
+}

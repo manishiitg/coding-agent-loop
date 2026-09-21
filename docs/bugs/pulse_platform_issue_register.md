@@ -131,7 +131,11 @@ idempotent, terminal-state emergency repair path rather than a whole-history
 polling and text-matching mechanism. RTS
 release `6c47129-20260921082037` is healthy and completed its first rotation;
 the active agent/workspace logs are now small. Longer steady-state profiling
-remains pending.
+remains pending. The first local cutover slice now durably journals structured
+events before SSE publication and persists retained structured completions by
+exact turn checkpoint; native whole-history recovery is skipped when that
+structured append succeeds. Provider turn-ID propagation, exact-turn emergency
+jobs, compaction, deployment and live acceptance remain pending.
 
 ## Scheduled scripted-tool child ownership — PLAT-338
 

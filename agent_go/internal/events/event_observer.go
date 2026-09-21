@@ -38,10 +38,8 @@ func NewEventObserverWithLogger(store *EventStore, sessionID string, logger logg
 // HandleEvent processes agent events and stores them in the event store
 func (eo *EventObserver) HandleEvent(ctx context.Context, event *events.AgentEvent) error {
 	// Create the store event with only the original AgentEvent data
-	// Add a random suffix to ensure uniqueness even when multiple tracers send the same event
-	randomSuffix := fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
 	storeEvent := Event{
-		ID:        fmt.Sprintf("%s_%s_%d_%s", eo.sessionID, event.Type, event.Timestamp.UnixNano(), randomSuffix),
+		ID:        StableAgentEventID("observer:"+eo.sessionID, event),
 		Type:      string(event.Type),
 		Timestamp: event.Timestamp,
 		SessionID: eo.sessionID,
@@ -55,9 +53,7 @@ func (eo *EventObserver) HandleEvent(ctx context.Context, event *events.AgentEve
 	// Content and error are already set on storeEvent if needed
 
 	// Store the event by sessionID
-	eo.store.AddEvent(eo.sessionID, storeEvent)
-
-	return nil
+	return eo.store.AddEventChecked(eo.sessionID, storeEvent)
 }
 
 // Name returns the observer name
@@ -131,10 +127,10 @@ func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *even
 	taggedEvent.CorrelationID = deo.delegationID      // Links all events in this delegation
 	taggedEvent.ParentID = deo.delegationStartEventID // Makes events children of delegation_start
 
-	// Create the store event with the tagged data
-	randomSuffix := fmt.Sprintf("%d", time.Now().UnixNano()%1000000)
+	// Create the store event with the tagged data. Keep the provider identity so
+	// replay does not manufacture a second structured event.
 	storeEvent := Event{
-		ID:        fmt.Sprintf("%s_%s_%s_%d_%s", deo.sessionID, deo.delegationID, taggedEvent.Type, taggedEvent.Timestamp.UnixNano(), randomSuffix),
+		ID:        StableAgentEventID("delegation:"+deo.delegationID, &taggedEvent),
 		Type:      string(taggedEvent.Type),
 		Timestamp: taggedEvent.Timestamp,
 		SessionID: deo.sessionID,
@@ -142,7 +138,9 @@ func (deo *DelegationEventObserver) HandleEvent(ctx context.Context, event *even
 	}
 
 	// Store the event by sessionID
-	deo.store.AddEvent(deo.sessionID, storeEvent)
+	if err := deo.store.AddEventChecked(deo.sessionID, storeEvent); err != nil {
+		return err
+	}
 
 	// Also persist tagged event to database (for shared sessions / session restore)
 	// Apply filter to avoid storing high-volume events

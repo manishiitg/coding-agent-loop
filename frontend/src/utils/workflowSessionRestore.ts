@@ -29,8 +29,8 @@ type OpenWorkflowPresetPageOptions = {
   scrollToBottom?: boolean
 }
 
-function isPresetStillActive(presetId?: string | null): boolean {
-  return !presetId || useGlobalPresetStore.getState().activePresetIds.workflow === presetId
+function isPresetStillActive(workflowId?: string | null): boolean {
+  return !workflowId || useGlobalPresetStore.getState().activePresetIds.workflow === workflowId
 }
 
 function isActiveWorkflowSession(session: ActiveSessionInfo): boolean {
@@ -59,7 +59,7 @@ function isWorkflowSession(session: ActiveSessionInfo): boolean {
     !!session.workflow_name ||
     !!session.workflow_label ||
     !!session.workspace_path ||
-    !!session.preset_query_id
+    !!session.workflow_id
 }
 
 function workflowSessionMatchesPreset(
@@ -68,13 +68,13 @@ function workflowSessionMatchesPreset(
   tabs: Record<string, ChatTab>,
 ): boolean {
   if (!isWorkflowSession(session)) return false
-  if (session.preset_query_id === preset.id) return true
+  if (session.workflow_id === preset.id) return true
   if (
     normalizeWorkspacePath(session.workspace_path) &&
     normalizeWorkspacePath(session.workspace_path) === normalizeWorkspacePath(preset.selectedFolder?.filepath)
   ) return true
   const tab = findTabForSession(tabs, session.session_id)
-  return tab?.metadata?.presetQueryId === preset.id
+  return tab?.metadata?.workflowId === preset.id
 }
 
 function workflowSessionPriority(session: ActiveSessionInfo): number {
@@ -134,7 +134,7 @@ function sessionFromRunningWorkflow(workflow: RunningWorkflowInfo): ActiveSessio
     workflow_label: label,
     workspace_path: workflow.workspace_path,
     preset_name: workflow.preset_name,
-    preset_query_id: workflow.preset_query_id,
+    workflow_id: workflow.workflow_id,
     triggered_by: workflow.triggered_by,
     current_execution_name: workflow.current_step_title || workflow.phase_name || workflow.title,
     needs_user_input: workflow.needs_user_input,
@@ -159,7 +159,7 @@ function runningWorkflowMatchesPreset(
   workflow: RunningWorkflowInfo,
   preset: CustomPreset | PredefinedPreset,
 ): boolean {
-  if (workflow.preset_query_id && workflow.preset_query_id === preset.id) return true
+  if (workflow.workflow_id && workflow.workflow_id === preset.id) return true
   const workflowPath = normalizeWorkspacePath(workflow.workspace_path)
   const presetPath = normalizeWorkspacePath(preset.selectedFolder?.filepath)
   return !!workflowPath && !!presetPath && workflowPath === presetPath
@@ -215,9 +215,9 @@ function findWorkflowPresetForSession(
   runningWorkflow?: RunningWorkflowInfo,
 ): CustomPreset | PredefinedPreset | undefined {
   const presetStore = useGlobalPresetStore.getState()
-  const presetId = session.preset_query_id || runningWorkflow?.preset_query_id
-  if (presetId) {
-    const byId = presetStore.workflowPresets.find(preset => preset.id === presetId)
+  const workflowId = session.workflow_id || runningWorkflow?.workflow_id
+  if (workflowId) {
+    const byId = presetStore.workflowPresets.find(preset => preset.id === workflowId)
     if (byId) return byId
   }
 
@@ -249,15 +249,15 @@ async function restoreWorkflowSessionChat(
   options: RestoreWorkflowSessionOptions = {},
 ): Promise<string> {
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
-  const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
+  const workflowId = resolvedPreset?.id || session.workflow_id || options.runningWorkflow?.workflow_id
   const isActive = isActiveWorkflowSession(session)
 
   useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
   try {
     if (resolvedPreset) {
       selectWorkflowPreset(resolvedPreset)
-    } else if (presetId) {
-      selectWorkflowPreset(presetId)
+    } else if (workflowId) {
+      selectWorkflowPreset(workflowId)
     }
 
     // One Chat tab per workflow: a tab already on this session, else the
@@ -269,14 +269,14 @@ async function restoreWorkflowSessionChat(
     const { tabId, via } = await resolveWorkflowTabForSession({
       getTabs: () => useChatStore.getState().chatTabs,
       getTabEvents: () => useChatStore.getState().tabEvents,
-      presetQueryId: presetId ?? '',
+      workflowId: workflowId ?? '',
       sessionId: session.session_id,
       name: 'Automation Builder',
       metadata: {
         mode: 'workflow',
         phaseId: 'workflow-builder',
         phaseName: 'Automation Builder',
-        presetQueryId: presetId,
+        workflowId: workflowId,
       },
       createChatTab: latestChatStore.createChatTab,
       updateTabSessionId: latestChatStore.updateTabSessionId,
@@ -285,7 +285,7 @@ async function restoreWorkflowSessionChat(
     // Tab creation can yield while the user selects another workflow. Keep the
     // cached tab, but never let the stale restore activate it over the newer
     // report/workspace selection.
-    if (!isPresetStillActive(presetId)) return tabId
+    if (!isPresetStillActive(workflowId)) return tabId
 
     const hasExistingEvents = latestChatStore.getTabEvents(session.session_id).length > 0
     // Fast path for switching back to an already-open running workflow:
@@ -411,9 +411,9 @@ export async function openWorkflowPresetPage(
   const tabId = (await resolveWorkflowTabForSession({
     getTabs: () => useChatStore.getState().chatTabs,
     getTabEvents: () => useChatStore.getState().tabEvents,
-    presetQueryId: preset.id,
+    workflowId: preset.id,
     name: 'Automation Builder',
-    metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', presetQueryId: preset.id },
+    metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', workflowId: preset.id },
     createChatTab: latestStore.createChatTab,
     updateTabSessionId: latestStore.updateTabSessionId,
   })).tabId
@@ -435,15 +435,15 @@ async function restoreReadOnlyWorkflowRunChat(
   options: ReadOnlyWorkflowRunOptions,
 ): Promise<string> {
   const resolvedPreset = options.preset || findWorkflowPresetForSession(session, options.runningWorkflow)
-  const presetId = resolvedPreset?.id || session.preset_query_id || options.runningWorkflow?.preset_query_id
+  const workflowId = resolvedPreset?.id || session.workflow_id || options.runningWorkflow?.workflow_id
   const workspacePath = resolvedPreset?.selectedFolder?.filepath || options.runningWorkflow?.workspace_path || session.workspace_path || null
 
   useRunningWorkflowsStore.getState().setIsRestoringWorkflow(true)
   try {
   if (resolvedPreset) {
     selectWorkflowPreset(resolvedPreset)
-  } else if (presetId) {
-    selectWorkflowPreset(presetId)
+  } else if (workflowId) {
+    selectWorkflowPreset(workflowId)
   }
 
   const chatStore = useChatStore.getState()
@@ -451,7 +451,7 @@ async function restoreReadOnlyWorkflowRunChat(
     mode: 'workflow' as const,
     phaseId: undefined,
     phaseName: undefined,
-    ...(presetId ? { presetQueryId: presetId } : {}),
+    ...(workflowId ? { workflowId: workflowId } : {}),
     isViewOnly: true,
     ...options.metadata,
     readOnlyRestoredAt: Date.now(),
@@ -478,14 +478,14 @@ async function restoreReadOnlyWorkflowRunChat(
   // schedule's existing tab rather than opening one beside it.
   const { tabId, via } = await resolveWorkflowTabForSession({
     getTabs: () => useChatStore.getState().chatTabs,
-    presetQueryId: metadata.presetQueryId ?? presetId ?? '',
+    workflowId: metadata.workflowId ?? workflowId ?? '',
     sessionId: session.session_id,
     name: desiredName,
     metadata,
     createChatTab: chatStore.createChatTab,
     updateTabSessionId: chatStore.updateTabSessionId,
   })
-  if (!isPresetStillActive(presetId)) return tabId
+  if (!isPresetStillActive(workflowId)) return tabId
   chatStore.setTabMetadata(tabId, metadata)
   if (via !== 'created' && useChatStore.getState().chatTabs[tabId]?.name !== desiredName) {
     useChatStore.setState((state) => {
@@ -507,7 +507,7 @@ async function restoreReadOnlyWorkflowRunChat(
   })
   revealWorkflowChat()
   window.dispatchEvent(new CustomEvent('workflow-readonly-run-restored', {
-    detail: { presetId, tabId, workspacePath }
+    detail: { workflowId, tabId, workspacePath }
   }))
   if (options.scrollToBottom !== false) requestChatScrollToBottom()
 

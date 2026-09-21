@@ -16,7 +16,7 @@ func TestRunningWorkflowListIncludesWorkflowBuilderTask(t *testing.T) {
 				Kind:          "workflow_builder_task",
 				Name:          "Review plan drift",
 				Title:         "Review plan drift",
-				PresetQueryID: "preset-1",
+				WorkflowID:    "preset-1",
 				WorkspacePath: "Workflow/rts-video",
 				PhaseID:       "workflow-builder",
 				PhaseName:     "Workflow Builder",

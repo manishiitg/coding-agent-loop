@@ -18,7 +18,7 @@ interface ModeState {
   // Actions
   setModeCategory: (category: ModeCategory) => void
   completeInitialSetup: () => void
-  setLastPreset: (category: 'workflow', presetId: string | null) => void
+  setLastPreset: (category: 'workflow', workflowId: string | null) => void
   resetModeSelection: () => void
 
   // Helpers
@@ -102,11 +102,11 @@ export const useModeStore = create<ModeState>()(
             set({ hasCompletedInitialSetup: true })
           },
 
-          setLastPreset: (category, presetId) => {
+          setLastPreset: (category, workflowId) => {
             set((state) => ({
               lastSelectedPreset: {
                 ...state.lastSelectedPreset,
-                [category]: presetId
+                [category]: workflowId
               }
             }))
           },

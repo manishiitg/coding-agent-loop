@@ -85,7 +85,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
   const refreshPresets = useGlobalPresetStore(state => state.refreshPresets)
 
-  // Build presetId → {label, workspacePath} map
+  // Build workflowId → {label, workspacePath} map
   const presetMap = useMemo<PresetMap>(() => {
     const map: PresetMap = new Map()
     workflowPresets.forEach((p) => {
@@ -101,14 +101,13 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   // it directly would re-run every memo below (including the 3-month cron
   // expansion) on each parent render. Depend on its primitives instead.
   const scopeWorkflowId = workflowScope?.workflowId ?? null
-  const scopePresetId = workflowScope?.presetQueryId ?? null
   const scopePath = workflowScope?.workspacePath ?? null
   const scopeLabel = workflowScope?.label ?? null
   const canWriteWorkflow = useCanWriteWorkflow(scopePath)
   const isReadOnlyUser = canManage === undefined ? !canWriteWorkflow : !canManage
   const stableScope = useMemo<WorkflowScope | undefined>(
-    () => (isWorkflowScoped ? { workflowId: scopeWorkflowId, presetQueryId: scopePresetId, workspacePath: scopePath, label: scopeLabel } : undefined),
-    [isWorkflowScoped, scopeWorkflowId, scopePresetId, scopePath, scopeLabel],
+    () => (isWorkflowScoped ? { workflowId: scopeWorkflowId, workspacePath: scopePath, label: scopeLabel } : undefined),
+    [isWorkflowScoped, scopeWorkflowId, scopePath, scopeLabel],
   )
 
   const panelJobs = useMemo(() => {
@@ -285,7 +284,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
             break
         }
 
-        const preset = presetMap.get(job.preset_query_id ?? '')
+        const preset = presetMap.get(job.workflow_id ?? '')
         const workflowMeta = getWorkflowFilterMeta(job, presetMap)
         const workflowLabel = workflowMeta.workflowLabel
 
@@ -321,7 +320,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     const groups = new Map<string, WorkflowScheduleGroup>()
 
     filteredJobs.forEach((job) => {
-      const preset = presetMap.get(job.preset_query_id ?? '')
+      const preset = presetMap.get(job.workflow_id ?? '')
       const workflowMeta = getWorkflowFilterMeta(job, presetMap)
       const existing = groups.get(workflowMeta.value)
       const group = existing ?? {
@@ -608,11 +607,11 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       return
     }
 
-    let effectivePresetQueryId = job.preset_query_id || existingTab?.metadata?.presetQueryId
+    let effectivePresetQueryId = job.workflow_id || existingTab?.metadata?.workflowId
     if (!effectivePresetQueryId) {
       try {
         const running = await agentApi.getRunningWorkflow(sessionId)
-        effectivePresetQueryId = running.preset_query_id || undefined
+        effectivePresetQueryId = running.workflow_id || undefined
       } catch {
         // Leave undefined rather than rebinding the scheduled run to whichever
         // workflow is currently open.
@@ -630,7 +629,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       mode: 'workflow' as const,
       phaseId: undefined,
       phaseName: undefined,
-      ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
+      ...(effectivePresetQueryId ? { workflowId: effectivePresetQueryId } : {}),
       isViewOnly: true,
       isScheduledRun: true,
       scheduledJobName: job.name,
@@ -640,7 +639,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     // else this schedule's finished lane rebound to it, else a new tab.
     const { tabId, via } = await resolveWorkflowTabForSession({
       getTabs: () => useChatStore.getState().chatTabs,
-      presetQueryId: effectivePresetQueryId ?? '',
+      workflowId: effectivePresetQueryId ?? '',
       sessionId,
       name: desiredName,
       metadata,

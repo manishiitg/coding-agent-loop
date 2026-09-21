@@ -31,7 +31,7 @@ describe('workflowRuntimeTabProjection', () => {
       name: 'Daily execution',
       metadata: {
         mode: 'workflow',
-        presetQueryId: 'workflow-social',
+        workflowId: 'workflow-social',
         isViewOnly: true,
         isScheduledRun: true,
         scheduledJobName: 'Daily execution',
@@ -107,7 +107,7 @@ describe('workflowRuntimeTabProjection', () => {
       lastViewedEventCounts: { micro: 0 },
       metadata: {
         mode: 'workflow' as const,
-        presetQueryId: 'workflow-social',
+        workflowId: 'workflow-social',
         isViewOnly: true,
         isScheduledRun: true,
         scheduledJobName: 'Daily execution',
@@ -142,7 +142,7 @@ describe('workflowRuntimeTabProjection', () => {
       tabId: 'schedule-tab',
       name: 'Old name',
       sessionId: 'schedule-manual--daily_123',
-      metadata: { mode: 'workflow' as const, presetQueryId: 'old-preset' },
+      metadata: { mode: 'workflow' as const, workflowId: 'old-preset' },
     } as ChatTab
     const projection = workflowRuntimeTabProjection(runtime({
       session_id: 'schedule-manual--daily_123',
@@ -154,7 +154,7 @@ describe('workflowRuntimeTabProjection', () => {
 
     expect(reconciled.name).toBe('Daily execution')
     expect(reconciled.metadata).toMatchObject({
-      presetQueryId: 'workflow-social',
+      workflowId: 'workflow-social',
       isViewOnly: true,
       isScheduledRun: true,
       scheduledJobName: 'Daily execution',
@@ -170,7 +170,7 @@ describe('workflowRuntimeTabProjection', () => {
         mode: 'workflow' as const,
         phaseId: 'workflow-builder',
         phaseName: 'Automation Builder',
-        presetQueryId: 'workflow-social',
+        workflowId: 'workflow-social',
       },
     } as ChatTab
     const projection = workflowRuntimeTabProjection(runtime({
@@ -187,7 +187,7 @@ describe('workflowRuntimeTabProjection', () => {
       mode: 'workflow',
       phaseId: 'workflow-builder',
       phaseName: 'Automation Builder',
-      presetQueryId: 'workflow-social',
+      workflowId: 'workflow-social',
     })
   })
 })
@@ -245,7 +245,7 @@ describe('shouldDisplayWorkflowTab', () => {
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: 1, lastAccessedAt: 1, lastViewedEventCount: 0, lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-1', isViewOnly: true, isScheduledRun: true },
+    metadata: { mode: 'workflow', workflowId: 'workflow-1', isViewOnly: true, isScheduledRun: true },
     ...overrides,
   })
 
@@ -281,7 +281,7 @@ describe('staleWorkflowTabIds', () => {
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: hoursAgo(8), lastAccessedAt: hoursAgo(8), lastViewedEventCount: 0,
     lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-1' },
+    metadata: { mode: 'workflow', workflowId: 'workflow-1' },
     ...overrides,
   })
 

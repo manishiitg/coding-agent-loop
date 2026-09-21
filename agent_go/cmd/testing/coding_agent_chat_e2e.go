@@ -27,7 +27,7 @@ var codingAgentChatE2EFlags struct {
 	sessionID           string
 	selectedFolder      string
 	agentMode           string
-	presetQueryID       string
+	workflowID          string
 	phaseID             string
 	workshopMode        string
 	enabledServers      string
@@ -77,7 +77,7 @@ Example:
 			http:           &http.Client{Timeout: 30 * time.Second},
 			agentMode:      codingAgentChatE2EFlags.agentMode,
 			selectedFolder: codingAgentChatE2EFlags.selectedFolder,
-			presetQueryID:  codingAgentChatE2EFlags.presetQueryID,
+			workflowID:     codingAgentChatE2EFlags.workflowID,
 			phaseID:        codingAgentChatE2EFlags.phaseID,
 			workshopMode:   codingAgentChatE2EFlags.workshopMode,
 			enabledServers: codingAgentChatE2EFlags.enabledServers,
@@ -97,7 +97,7 @@ Example:
 		}
 		// Cursor's retained UI is the Workflow Builder. Ordinary direct chat
 		// intentionally uses structured transport and cannot certify tmux Send.
-		if provider == "cursor-cli" && client.presetQueryID == "" && client.agentMode == "simple" {
+		if provider == "cursor-cli" && client.workflowID == "" && client.agentMode == "simple" {
 			docs := strings.TrimSpace(codingAgentChatE2EFlags.workspaceDocs)
 			if docs == "" {
 				docs = strings.TrimSpace(os.Getenv("WORKSPACE_DOCS_PATH"))
@@ -113,7 +113,7 @@ Example:
 			client.agentMode = "workflow_phase"
 			client.phaseID = "workflow-builder"
 			client.selectedFolder = fixture.relWorkflow
-			client.presetQueryID = fixture.presetID
+			client.workflowID = fixture.workflowID
 			client.workshopMode = "run"
 		}
 		if codingAgentChatE2EFlags.vertexFinalJudge {
@@ -284,7 +284,7 @@ func init() {
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.selectedFolder, "selected-folder", "_users/default/Chats", "workspace-relative folder for the chat session")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.workspaceDocs, "workspace-docs", "", "workspace-docs root of the test server for the Cursor Workflow Builder fixture")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.agentMode, "agent-mode", "simple", "agent mode to send to /api/query")
-	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.presetQueryID, "preset-query-id", "", "workflow preset ID for workflow_phase chat")
+	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.workflowID, "workflow-id", "", "workflow manifest ID for workflow_phase chat")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.phaseID, "phase-id", "", "workflow phase ID for workflow_phase chat")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.workshopMode, "workshop-mode", "", "optional workflow workshop mode, for example builder or run")
 	codingAgentChatE2ECmd.Flags().StringVar(&codingAgentChatE2EFlags.enabledServers, "enabled-servers", "api-bridge", "comma-separated MCP servers to expose during the E2E")
@@ -303,7 +303,7 @@ type codingAgentChatE2EClient struct {
 	http           *http.Client
 	agentMode      string
 	selectedFolder string
-	presetQueryID  string
+	workflowID     string
 	phaseID        string
 	workshopMode   string
 	enabledServers string
@@ -420,8 +420,8 @@ func (c *codingAgentChatE2EClient) startQueryWithResponse(ctx context.Context, s
 		"selected_folder": coalesceE2EString(c.selectedFolder, "_users/default/Chats"),
 		"max_turns":       -1,
 	}
-	if c.presetQueryID != "" {
-		payload["preset_query_id"] = c.presetQueryID
+	if c.workflowID != "" {
+		payload["workflow_id"] = c.workflowID
 	}
 	if c.phaseID != "" {
 		payload["phase_id"] = c.phaseID

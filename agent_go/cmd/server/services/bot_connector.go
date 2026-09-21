@@ -472,7 +472,7 @@ type BotResumeTarget struct {
 	Status        string
 	Query         string
 	WorkspacePath string
-	PresetQueryID string
+	WorkflowID    string
 	PhaseID       string
 	WorkshopMode  string
 	// Display-only fields for the resume picker / ack. WorkflowName is the
@@ -489,7 +489,7 @@ type BotResumeFilter struct {
 	WorkspaceUserID string
 
 	WorkspacePath string
-	PresetQueryID string
+	WorkflowID    string
 }
 
 type BotResumeTargetFunc func(ctx context.Context, userID, selector string, filter BotResumeFilter) (*BotResumeTarget, error)
@@ -574,7 +574,7 @@ type activeBotSession struct {
 	profileRoute  *ProfileRoute
 	BotRouteGrant string
 	AgentMode     string
-	PresetQueryID string
+	WorkflowID    string
 	WorkspacePath string
 	PhaseID       string
 	WorkshopMode  string
@@ -809,7 +809,7 @@ func (m *BotConversationManager) workflowRouteForMessage(msg BotIncomingMessage,
 			return route
 		}
 		active.mu.Lock()
-		wasRouted := strings.TrimSpace(active.RouteKey) != "" || strings.TrimSpace(active.PresetQueryID) != "" || active.profileRoute != nil
+		wasRouted := strings.TrimSpace(active.RouteKey) != "" || strings.TrimSpace(active.WorkflowID) != "" || active.profileRoute != nil
 		active.mu.Unlock()
 		if wasRouted {
 			return &ChannelRoute{BotGrant: "__revoked__"}
@@ -952,7 +952,7 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		if active != nil && !m.routeChangeKeepsSession(*msg, active) {
 			active.mu.Lock()
 			active.UserID = strings.TrimSpace(msg.WorkspaceUserID)
-			active.PresetQueryID = strings.TrimSpace(route.WorkflowID)
+			active.WorkflowID = strings.TrimSpace(route.WorkflowID)
 			active.WorkspacePath = strings.TrimSpace(route.WorkspacePath)
 			active.WorkshopMode = WorkshopModeForBotGrant(route.BotGrant)
 			active.BotRouteGrant = NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
@@ -1523,7 +1523,7 @@ func (m *BotConversationManager) handleBotResumeCommand(msg BotIncomingMessage, 
 		Metadata:      botMetaFromMsg(msg, threadID),
 		LastActivity:  time.Now(),
 		AgentMode:     strings.TrimSpace(target.AgentMode),
-		PresetQueryID: strings.TrimSpace(target.PresetQueryID),
+		WorkflowID:    strings.TrimSpace(target.WorkflowID),
 		WorkspacePath: strings.TrimSpace(target.WorkspacePath),
 		PhaseID:       strings.TrimSpace(target.PhaseID),
 		WorkshopMode:  strings.TrimSpace(target.WorkshopMode),
@@ -2003,7 +2003,7 @@ func (m *BotConversationManager) formatResumeList(userID string, filter BotResum
 		return ""
 	}
 	var sb strings.Builder
-	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.PresetQueryID) != "" {
+	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.WorkflowID) != "" {
 		sb.WriteString("\n\nResumable chats for this workflow:")
 	} else {
 		sb.WriteString("\n\nResumable chats:")
@@ -2088,7 +2088,7 @@ func (m *BotConversationManager) formatBotResumePicker(userID string, filter Bot
 		return "No active sessions to connect to right now. Start a workflow or open a chat in the dashboard, then send `@resume`."
 	}
 	var sb strings.Builder
-	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.PresetQueryID) != "" {
+	if strings.TrimSpace(filter.WorkspacePath) != "" || strings.TrimSpace(filter.WorkflowID) != "" {
 		sb.WriteString("Sessions you can connect to for this workflow:")
 	} else {
 		sb.WriteString("Sessions you can connect to:")
@@ -3118,7 +3118,7 @@ func (m *BotConversationManager) buildQueryRequest(query string, userID string, 
 		route = m.resolveChannelWorkflow(platform, channelID)
 	}
 	if route != nil {
-		req["preset_query_id"] = route.WorkflowID
+		req["workflow_id"] = route.WorkflowID
 		grant := NormalizeBotRouteGrant(route.BotGrant, route.WorkshopMode)
 		req["bot_route_grant"] = grant
 		if strings.TrimSpace(route.WorkspacePath) != "" {
@@ -3268,7 +3268,7 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	}
 	active.mu.Lock()
 	agentMode := strings.TrimSpace(active.AgentMode)
-	presetQueryID := strings.TrimSpace(active.PresetQueryID)
+	workflowID := strings.TrimSpace(active.WorkflowID)
 	workspacePath := strings.TrimSpace(active.WorkspacePath)
 	phaseID := strings.TrimSpace(active.PhaseID)
 	workshopMode := strings.TrimSpace(active.WorkshopMode)
@@ -3303,8 +3303,8 @@ func (m *BotConversationManager) buildQueryRequestForActive(active *activeBotSes
 	if agentMode != "" {
 		req["agent_mode"] = agentMode
 	}
-	if presetQueryID != "" {
-		req["preset_query_id"] = presetQueryID
+	if workflowID != "" {
+		req["workflow_id"] = workflowID
 	}
 	if workspacePath != "" {
 		req["selected_folder"] = workspacePath
@@ -3371,7 +3371,7 @@ func applyBotRequestMetadata(active *activeBotSession, req map[string]interface{
 		return
 	}
 	active.AgentMode = stringValue(req["agent_mode"])
-	active.PresetQueryID = stringValue(req["preset_query_id"])
+	active.WorkflowID = stringValue(req["workflow_id"])
 	active.WorkspacePath = stringValue(req["selected_folder"])
 	active.PhaseID = stringValue(req["phase_id"])
 	active.WorkshopMode = stringValue(req["workshop_mode"])
@@ -3445,7 +3445,7 @@ func botResumeFilterFromRoute(route *ChannelRoute) BotResumeFilter {
 	return BotResumeFilter{
 		ProfileID: route.ProfileID, ConversationKey: route.ConversationKey, WorkspaceUserID: route.WorkspaceUserID,
 		WorkspacePath: strings.TrimSpace(route.WorkspacePath),
-		PresetQueryID: strings.TrimSpace(route.WorkflowID),
+		WorkflowID:    strings.TrimSpace(route.WorkflowID),
 	}
 }
 
@@ -3458,7 +3458,7 @@ func botResumeFilterFromActive(active *activeBotSession) BotResumeFilter {
 	profile := active.profileRoute
 	filter := BotResumeFilter{
 		WorkspacePath: strings.TrimSpace(active.WorkspacePath),
-		PresetQueryID: strings.TrimSpace(active.PresetQueryID),
+		WorkflowID:    strings.TrimSpace(active.WorkflowID),
 	}
 	if profile != nil {
 		filter.ProfileID = profile.ProfileID
@@ -3474,7 +3474,7 @@ func botRouteFromActive(active *activeBotSession) *ChannelRoute {
 	}
 	active.mu.Lock()
 	defer active.mu.Unlock()
-	workflowID := strings.TrimSpace(active.PresetQueryID)
+	workflowID := strings.TrimSpace(active.WorkflowID)
 	workspacePath := strings.TrimSpace(active.WorkspacePath)
 	workshopMode := NormalizeBotWorkshopMode(active.WorkshopMode)
 	botGrant := NormalizeBotRouteGrant(active.BotRouteGrant, workshopMode)

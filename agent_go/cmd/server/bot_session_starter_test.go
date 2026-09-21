@@ -24,7 +24,7 @@ func TestApplyBotRouteClaimsStampsTheTurnPrincipal(t *testing.T) {
 
 	// Slack keeps the grant principal, and only when a grant is present.
 	slack := &UserClaims{UserID: "bot"}
-	applyBotRouteClaims(slack, map[string]interface{}{"bot_platform": "slack", "bot_route_grant": "run", "preset_query_id": "wf"})
+	applyBotRouteClaims(slack, map[string]interface{}{"bot_platform": "slack", "bot_route_grant": "run", "workflow_id": "wf"})
 	if slack.Provider != "bot_route" || slack.BotRouteGrant != "run" || slack.BotRouteWorkflowID != "wf" {
 		t.Fatalf("slack claims = %+v, want the bot_route grant principal", slack)
 	}

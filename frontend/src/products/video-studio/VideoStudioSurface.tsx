@@ -680,7 +680,7 @@ function FilesPanel({ project }: { project: VideoProject }) {
 function WorkflowPanel({ project }: { project: VideoProject }) {
   return (
     <div className="h-full min-h-0 overflow-hidden" data-testid="video-studio-workflow-panel">
-      <WorkflowCanvas workspacePath={project.workspacePath} presetQueryId={null} readOnly hideToolbar embeddedPlanOnly />
+      <WorkflowCanvas workspacePath={project.workspacePath} workflowId={null} readOnly hideToolbar embeddedPlanOnly />
     </div>
   )
 }

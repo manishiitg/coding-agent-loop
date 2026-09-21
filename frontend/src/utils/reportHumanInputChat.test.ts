@@ -33,7 +33,7 @@ function tab(tabId: string, overrides: Partial<ChatTab> = {}): ChatTab {
     createdAt: 1,
     lastViewedEventCount: 0,
     lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-one' },
+    metadata: { mode: 'workflow', workflowId: 'workflow-one' },
     ...overrides,
   }
 }
@@ -44,13 +44,13 @@ describe('Pulse decision chat routing', () => {
       isStreaming: true,
       metadata: {
         mode: 'workflow',
-        presetQueryId: 'workflow-one',
+        workflowId: 'workflow-one',
         isViewOnly: true,
         isScheduledRun: true,
       },
     })
     const chat = tab('chat', {
-      metadata: { mode: 'workflow', presetQueryId: 'workflow-one', phaseId: 'workflow-builder' },
+      metadata: { mode: 'workflow', workflowId: 'workflow-one', phaseId: 'workflow-builder' },
     })
 
     expect(selectWorkspacePaneWorkflowTab(

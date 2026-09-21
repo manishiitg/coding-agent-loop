@@ -19,13 +19,13 @@ import (
 // catalog. Display-only: membership comes from product.yaml run.tools, and a
 // tool without a hint here still proxies with the generic description.
 var externalRunToolHints = map[string]string{
-	"execute_step":       "Start one workflow step in the background. Arguments: step_id (required; plan step ID or positional like '1'), group_name, human_input, script_parameters (object), tier (high|medium|low).",
-	"run_full_workflow":  "Run all steps end-to-end for one variable group. Arguments: group_name (required), human_inputs (object keyed by step ID), route_selections (object keyed by routing step ID).",
-	"run_in_background":  "Start a background agent task. Arguments: name (required), instruction (required), access_mode, agent_type, completion_mode.",
-	"send_step_message":  "Steer a live execution. Arguments: execution_id (required), message (required).",
-	"stop_step":          "Stop one execution. Arguments: execution_id (required).",
+	"execute_step":        "Start one workflow step in the background. Arguments: step_id (required; plan step ID or positional like '1'), group_name, human_input, script_parameters (object), tier (high|medium|low).",
+	"run_full_workflow":   "Run all steps end-to-end for one variable group. Arguments: group_name (required), human_inputs (object keyed by step ID), route_selections (object keyed by routing step ID).",
+	"run_in_background":   "Start a background agent task. Arguments: name (required), instruction (required), access_mode, agent_type, completion_mode.",
+	"send_step_message":   "Steer a live execution. Arguments: execution_id (required), message (required).",
+	"stop_step":           "Stop one execution. Arguments: execution_id (required).",
 	"stop_all_executions": "Stop all running executions in the run session. No arguments.",
-	"query_step":         "One-off live status check for a tracked execution. Arguments: step_id or execution_id.",
+	"query_step":          "One-off live status check for a tracked execution. Arguments: step_id or execution_id.",
 }
 
 // externalRunProxyTool builds the catalog entry for a run.tools name with no
@@ -102,7 +102,7 @@ func (api *StreamingAPI) externalRunProxy(w http.ResponseWriter, r *http.Request
 	}
 	query := QueryRequest{
 		Query: externalRunInstruction(name, args), AgentMode: "workflow_phase", PhaseID: "workflow-builder",
-		PresetQueryID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
+		WorkflowID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
 		PinRunMode: true, TriggeredBy: "external", SessionTitle: "External run: " + name,
 		ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"},
 	}
@@ -128,7 +128,7 @@ func (api *StreamingAPI) externalChat(w http.ResponseWriter, r *http.Request, ar
 	}
 	query := QueryRequest{
 		Query: message, AgentMode: "workflow_phase", PhaseID: "workflow-builder",
-		PresetQueryID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
+		WorkflowID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
 		PinRunMode: true, TriggeredBy: "external", SessionTitle: "External chat",
 		ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"},
 	}

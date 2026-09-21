@@ -36,7 +36,7 @@ func TestResolveBotResumeTargetLatestDashboardSession(t *testing.T) {
 				LastActivity:  now.Add(-time.Second),
 				Query:         "workflow chat",
 				WorkspacePath: "Workflow/report",
-				PresetQueryID: "preset-report",
+				WorkflowID:    "preset-report",
 				PhaseID:       "workflow-builder",
 				WorkshopMode:  "run",
 			},
@@ -53,7 +53,7 @@ func TestResolveBotResumeTargetLatestDashboardSession(t *testing.T) {
 	if target.SessionID != "workflow" {
 		t.Fatalf("SessionID = %q, want workflow", target.SessionID)
 	}
-	if target.AgentMode != "workflow_phase" || target.WorkspacePath != "Workflow/report" || target.PresetQueryID != "preset-report" || target.WorkshopMode != "run" {
+	if target.AgentMode != "workflow_phase" || target.WorkspacePath != "Workflow/report" || target.WorkflowID != "preset-report" || target.WorkshopMode != "run" {
 		t.Fatalf("target metadata = %+v", target)
 	}
 }
@@ -91,7 +91,7 @@ func TestResolveBotResumeTargetByOrdinalWithWorkflowFilter(t *testing.T) {
 				UserID:        "user-1",
 				LastActivity:  now,
 				WorkspacePath: "Workflow/report",
-				PresetQueryID: "preset-report",
+				WorkflowID:    "preset-report",
 			},
 			"old-report": {
 				SessionID:     "old-report",
@@ -100,7 +100,7 @@ func TestResolveBotResumeTargetByOrdinalWithWorkflowFilter(t *testing.T) {
 				UserID:        "user-1",
 				LastActivity:  now.Add(-time.Minute),
 				WorkspacePath: "Workflow/report",
-				PresetQueryID: "preset-report",
+				WorkflowID:    "preset-report",
 			},
 			"other": {
 				SessionID:     "other",
@@ -109,12 +109,12 @@ func TestResolveBotResumeTargetByOrdinalWithWorkflowFilter(t *testing.T) {
 				UserID:        "user-1",
 				LastActivity:  now.Add(time.Minute),
 				WorkspacePath: "Workflow/other",
-				PresetQueryID: "preset-other",
+				WorkflowID:    "preset-other",
 			},
 		},
 	}
 
-	filter := services.BotResumeFilter{WorkspacePath: "Workflow/report", PresetQueryID: "preset-report"}
+	filter := services.BotResumeFilter{WorkspacePath: "Workflow/report", WorkflowID: "preset-report"}
 	target, err := api.resolveBotResumeTarget(context.Background(), "user-1", "2", filter)
 	if err != nil {
 		t.Fatalf("resolveBotResumeTarget returned error: %v", err)

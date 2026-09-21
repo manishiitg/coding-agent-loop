@@ -73,7 +73,7 @@ func (api *StreamingAPI) trackConversationTurnStart(queryID, sessionID string, r
 		Kind:          kind,
 		Name:          strings.TrimSpace(req.Query),
 		Query:         strings.TrimSpace(req.Query),
-		PresetQueryID: strings.TrimSpace(req.PresetQueryID),
+		WorkflowID:    strings.TrimSpace(req.WorkflowID),
 		WorkspacePath: strings.TrimSpace(req.SelectedFolder),
 		PhaseID:       phaseID,
 		PhaseName:     phaseName,

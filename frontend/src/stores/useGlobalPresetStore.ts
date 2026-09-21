@@ -68,14 +68,14 @@ interface GlobalPresetState {
   selectedPresetFolder: string | null
   currentQuery: string
 
-  // Recently accessed preset IDs (most recent first) for quick switcher ordering
+  // Recently accessed workflow IDs (most recent first) for quick switcher ordering
   recentPresetOrder: string[]
   recentPresetAccessedAt: Record<string, number>
 
   // Actions for manifest management
   refreshPresets: () => Promise<void>
   savePreset: (label: string, query?: string, selectedServers?: string[], selectedTools?: string[], selectedSkills?: string[], agentMode?: 'multi-agent' | 'workflow', selectedFolder?: PlannerFile, llmConfig?: PresetLLMConfig, useCodeExecutionMode?: boolean, id?: string, selectedSecrets?: string[], selectedGlobalSecretNames?: string[] | null, browserMode?: 'none' | 'auto' | 'headless' | 'cdp', cdpPorts?: number[], icon?: string) => Promise<CustomPreset | null>
-  duplicatePreset: (presetId: string) => Promise<CustomPreset | null>
+  duplicatePreset: (workflowId: string) => Promise<CustomPreset | null>
 
   // Actions for preset application
   applyPreset: (presetOrId: CustomPreset | PredefinedPreset | string, modeCategory: Exclude<ModeCategory, null>) => PresetApplicationResult
@@ -88,11 +88,11 @@ interface GlobalPresetState {
   setSelectedPresetFolder: (folderPath: string | null) => void
   setCurrentQuery: (query: string) => void
   clearPresetState: () => void
-  setActivePreset: (modeCategory: Exclude<ModeCategory, null>, presetId: string | null) => void
+  setActivePreset: (modeCategory: Exclude<ModeCategory, null>, workflowId: string | null) => void
   
   // Helper actions
   getPresetsForMode: (modeCategory: Exclude<ModeCategory, null>) => (CustomPreset | PredefinedPreset)[]
-  isPresetActive: (presetId: string, modeCategory: Exclude<ModeCategory, null>) => boolean
+  isPresetActive: (workflowId: string, modeCategory: Exclude<ModeCategory, null>) => boolean
 }
 
 export const useGlobalPresetStore = create<GlobalPresetState>()(
@@ -277,10 +277,10 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
 
-      duplicatePreset: async (presetId) => {
+      duplicatePreset: async (workflowId) => {
         try {
           const state = get()
-          const originalPreset = state.workflowPresets.find(p => p.id === presetId)
+          const originalPreset = state.workflowPresets.find(p => p.id === workflowId)
           
           if (!originalPreset) {
             throw new Error('Preset not found')
@@ -432,7 +432,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
           // If original preset had a workflow, create a new workflow for the duplicated preset
           if (originalPreset.agentMode === 'workflow' && newPreset) {
             try {
-              const workflowStatus = await agentApi.getWorkflowStatus(presetId)
+              const workflowStatus = await agentApi.getWorkflowStatus(workflowId)
               if (workflowStatus.success && workflowStatus.workflow) {
                 // Create new workflow with same status and selected options
                 await agentApi.createWorkflow(newPreset.id, false) // humanVerificationRequired = false
@@ -458,14 +458,14 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         }
       },
       
-      // Unified preset application function - handles both preset objects and preset IDs
+      // Unified preset application function - handles both preset objects and workflow IDs
       applyPreset: (presetOrId, modeCategory) => {
         try {
           let preset: CustomPreset | PredefinedPreset | null = null
           
           // Handle different input types
           if (typeof presetOrId === 'string') {
-            // If string, treat as preset ID and find in workflow presets
+            // If string, treat as workflow ID and find in workflow presets
             const state = get()
             preset = state.workflowPresets.find(p => p.id === presetOrId) || null
             
@@ -600,7 +600,7 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
             useWorkspaceStore.getState().setSelectedFile(null)
           }
           
-          // Set active preset ID and update recent access order
+          // Set active workflow ID and update recent access order
           set(state => ({
             activePresetIds: {
               ...state.activePresetIds,
@@ -641,9 +641,9 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
       
       getActivePreset: (modeCategory) => {
         const state = get()
-        const presetId = state.activePresetIds[modeCategory]
-        if (!presetId) return null
-        return state.workflowPresets.find(p => p.id === presetId) ?? null
+        const workflowId = state.activePresetIds[modeCategory]
+        if (!workflowId) return null
+        return state.workflowPresets.find(p => p.id === workflowId) ?? null
       },
       
       // Current state management
@@ -676,11 +676,11 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         })
       },
 
-      setActivePreset: (modeCategory: Exclude<ModeCategory, null>, presetId: string | null) => {
+      setActivePreset: (modeCategory: Exclude<ModeCategory, null>, workflowId: string | null) => {
         set(state => ({
           activePresetIds: {
             ...state.activePresetIds,
-            [modeCategory]: presetId
+            [modeCategory]: workflowId
           }
         }))
       },
@@ -694,8 +694,8 @@ export const useGlobalPresetStore = create<GlobalPresetState>()(
         return []
       },
       
-      isPresetActive: (presetId, modeCategory) => {
-        return get().activePresetIds[modeCategory] === presetId
+      isPresetActive: (workflowId, modeCategory) => {
+        return get().activePresetIds[modeCategory] === workflowId
       }
     }),
     {

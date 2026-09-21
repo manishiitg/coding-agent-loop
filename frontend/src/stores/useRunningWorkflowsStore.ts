@@ -17,7 +17,7 @@ import { getWorkspaceScopedStorageKey } from './useWorkspaceConnectionStore'
 // Running workflow interface for tracking active workflows
 export interface RunningWorkflow {
   id: string                    // Unique ID for this running workflow
-  presetId: string              // For context restoration
+  workflowId: string              // For context restoration
   presetName: string            // Display name
   workspacePath: string         // Workspace context
   sessionId: string             // Backend session ID (for reconnection)
@@ -86,7 +86,7 @@ interface RunningWorkflowsStore {
 
   // Actions
   minimizeWorkflow: (params: {
-    presetId: string
+    workflowId: string
     presetName: string
     workspacePath: string
     sessionId: string
@@ -153,7 +153,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
           // Create new running workflow entry
           const runningWorkflow: RunningWorkflow = {
             id: crypto.randomUUID(),
-            presetId: params.presetId,
+            workflowId: params.workflowId,
             presetName: params.presetName,
             workspacePath: params.workspacePath,
             sessionId: params.sessionId,

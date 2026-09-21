@@ -134,7 +134,7 @@ export function activeSessionFromWorkflowTerminal(
     workflow_label: terminal.workflow_label || title,
     workspace_path: terminal.workflow_path || options.preset?.selectedFolder?.filepath,
     preset_name: options.preset?.label,
-    preset_query_id: options.preset?.id,
+    workflow_id: options.preset?.id,
     has_retained_tmux_session: Boolean(terminal.tmux_session?.trim()),
     current_execution_name: terminal.step_name || terminal.display_title || terminal.label,
   }

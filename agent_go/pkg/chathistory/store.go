@@ -15,6 +15,7 @@ package chathistory
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 )
 
@@ -30,26 +31,66 @@ const (
 
 // BotConnectorConfig represents configuration for a bot connector platform.
 type BotConnectorConfig struct {
-	ID              string    `json:"id"`
-	Enabled         bool      `json:"enabled"`
-	BotMode         bool      `json:"bot_mode"`
-	ConfigJSON      string    `json:"config_json"`
-	DefaultPresetID string    `json:"default_preset_id"`
-	AutoConfirm     bool      `json:"auto_confirm"`
-	AllowedChannels string    `json:"allowed_channels"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID                string    `json:"id"`
+	Enabled           bool      `json:"enabled"`
+	BotMode           bool      `json:"bot_mode"`
+	ConfigJSON        string    `json:"config_json"`
+	DefaultWorkflowID string    `json:"default_workflow_id"`
+	AutoConfirm       bool      `json:"auto_confirm"`
+	AllowedChannels   string    `json:"allowed_channels"`
+	CreatedAt         time.Time `json:"created_at"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+// Connector configuration is durable; accept its old workflow selector when
+// loading an existing installation, but only write the canonical key.
+func (cfg *BotConnectorConfig) UnmarshalJSON(data []byte) error {
+	type plain BotConnectorConfig
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*cfg = BotConnectorConfig(decoded)
+	if cfg.DefaultWorkflowID == "" {
+		var old struct {
+			WorkflowID string `json:"default_preset_id"`
+		}
+		if err := json.Unmarshal(data, &old); err != nil {
+			return err
+		}
+		cfg.DefaultWorkflowID = old.WorkflowID
+	}
+	return nil
 }
 
 // CreateBotConnectorConfigRequest for creating/updating a bot connector config.
 type CreateBotConnectorConfigRequest struct {
-	ID              string `json:"id"`
-	Enabled         bool   `json:"enabled"`
-	BotMode         bool   `json:"bot_mode"`
-	ConfigJSON      string `json:"config_json,omitempty"`
-	DefaultPresetID string `json:"default_preset_id,omitempty"`
-	AutoConfirm     bool   `json:"auto_confirm"`
-	AllowedChannels string `json:"allowed_channels,omitempty"`
+	ID                string `json:"id"`
+	Enabled           bool   `json:"enabled"`
+	BotMode           bool   `json:"bot_mode"`
+	ConfigJSON        string `json:"config_json,omitempty"`
+	DefaultWorkflowID string `json:"default_workflow_id,omitempty"`
+	AutoConfirm       bool   `json:"auto_confirm"`
+	AllowedChannels   string `json:"allowed_channels,omitempty"`
+}
+
+func (req *CreateBotConnectorConfigRequest) UnmarshalJSON(data []byte) error {
+	type plain CreateBotConnectorConfigRequest
+	var decoded plain
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		return err
+	}
+	*req = CreateBotConnectorConfigRequest(decoded)
+	if req.DefaultWorkflowID == "" {
+		var old struct {
+			WorkflowID string `json:"default_preset_id"`
+		}
+		if err := json.Unmarshal(data, &old); err != nil {
+			return err
+		}
+		req.DefaultWorkflowID = old.WorkflowID
+	}
+	return nil
 }
 
 // UserSecret represents a user-owned secret blob. The EncryptedValue is

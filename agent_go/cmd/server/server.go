@@ -312,7 +312,7 @@ type ActiveSessionInfo struct {
 	WorkflowLabel               string           `json:"workflow_label,omitempty"`
 	WorkspacePath               string           `json:"workspace_path,omitempty"`
 	PresetName                  string           `json:"preset_name,omitempty"`
-	PresetQueryID               string           `json:"preset_query_id,omitempty"`
+	WorkflowID                  string           `json:"workflow_id,omitempty"`
 	PhaseID                     string           `json:"phase_id,omitempty"`
 	PhaseName                   string           `json:"phase_name,omitempty"`
 	WorkshopMode                string           `json:"workshop_mode,omitempty"`
@@ -415,7 +415,7 @@ type StreamingAPI struct {
 	workflowObjectives   map[string]string
 	workflowObjectiveMux sync.RWMutex
 
-	// Workflow step IDs: presetQueryID -> stepID (temporary storage for step-specific phase execution)
+	// Workflow step IDs: workflowID -> stepID (temporary storage for step-specific phase execution)
 	workflowStepIDs   map[string]string
 	workflowStepIDMux sync.RWMutex
 
@@ -714,7 +714,7 @@ type QueryRequest struct {
 	AgentMode       string                  `json:"agent_mode,omitempty"`
 	LLMConfig       *orchestrator.LLMConfig `json:"llm_config,omitempty"`
 	LLMConfigSource string                  `json:"llm_config_source,omitempty"`
-	PresetQueryID   string                  `json:"preset_query_id,omitempty"`
+	WorkflowID      string                  `json:"workflow_id,omitempty"`
 	LLMGuidance     string                  `json:"llm_guidance,omitempty"` // LLM guidance message
 	// AgentProfileID selects a registered, versioned main-agent definition.
 	// The normal AgentWorks chat leaves this empty. Product workspaces pass a
@@ -2541,7 +2541,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	// parent's Slack thread — no per-tool hooks required.
 	virtualtools.SetSpawnListener(botManager)
 
-
 	// Wire bot session checker for human feedback (skip 2-min delay for bot sessions)
 	feedbackStore := virtualtools.GetHumanFeedbackStore()
 	if feedbackStore != nil {
@@ -3595,8 +3594,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// projects retain one browser per authenticated owner and project. Other
 	// product chats keep the existing user boundary; guests remain chat-scoped.
 	selected := strings.Trim(strings.TrimSpace(req.SelectedFolder), "/")
-	if selected == "" && strings.TrimSpace(req.PresetQueryID) != "" {
-		if resolved, resolveErr := api.resolveWorkspacePathFromPreset(r.Context(), req.PresetQueryID); resolveErr == nil {
+	if selected == "" && strings.TrimSpace(req.WorkflowID) != "" {
+		if resolved, resolveErr := api.resolveWorkspacePathFromWorkflowID(r.Context(), req.WorkflowID); resolveErr == nil {
 			selected = strings.Trim(strings.TrimSpace(resolved), "/")
 		}
 	}
@@ -3823,8 +3822,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	api.activeSessionsMux.Lock()
 	if sess, ok := api.activeSessions[sessionID]; ok {
 		sess.Username = queryLogCtx.Username
-		if strings.TrimSpace(req.PresetQueryID) != "" {
-			sess.PresetQueryID = strings.TrimSpace(req.PresetQueryID)
+		if strings.TrimSpace(req.WorkflowID) != "" {
+			sess.WorkflowID = strings.TrimSpace(req.WorkflowID)
 		}
 		if strings.TrimSpace(req.SelectedFolder) != "" {
 			sess.WorkspacePath = strings.TrimSpace(req.SelectedFolder)
@@ -3971,23 +3970,23 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// branch) — see frontend/src/utils/agentModeDescriptions.ts.
 	isWorkflowPhase := req.AgentMode == "workflow_phase"
 	workflowPhaseID := req.PhaseID
-	workflowPhaseFolder := "" // The preset's SelectedFolder — used to auto-grant write access in FolderGuard
+	workflowPhaseFolder := "" // The workflow's SelectedFolder — used to auto-grant write access in FolderGuard
 	workflowPhaseRunFolder := ""
 	var workflowPhasePrimaryOptions map[string]interface{}
 	_ = workflowPhaseFolder // used later in the function
 	if isWorkflowPhase {
-		logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] Phase chat mode detected: phase=%s preset=%s session=%s", workflowPhaseID, req.PresetQueryID, sessionID)
-		if req.PresetQueryID == "" {
-			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] ERROR: workflow_phase mode requires a preset_query_id")
-			http.Error(w, `{"error":"workflow_phase mode requires a preset_query_id (workflow preset)"}`, http.StatusBadRequest)
+		logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] Phase chat mode detected: phase=%s workflow=%s session=%s", workflowPhaseID, req.WorkflowID, sessionID)
+		if req.WorkflowID == "" {
+			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] ERROR: workflow_phase mode requires a workflow_id")
+			http.Error(w, `{"error":"workflow_phase mode requires a workflow_id"}`, http.StatusBadRequest)
 			return
 		}
 
 		// Try manifest-first resolution for workflow_phase
-		// Priority: resolve from preset DB → fallback to req.SelectedFolder (scheduler sets this directly)
+		// Priority: resolve from workflow manifest → fallback to req.SelectedFolder (scheduler sets this directly)
 		phaseManifestLoaded := false
 		resolvedWPath := ""
-		if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+		if wPath, wErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); wErr == nil && wPath != "" {
 			resolvedWPath = wPath
 		} else if req.SelectedFolder != "" {
 			// Scheduler/cron sets selected_folder directly — no DB lookup needed
@@ -4013,7 +4012,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				// Monitor pill, in particular) — see workflowDisplayLabel.
 				workflowName := workflowNameFromWorkspacePath(resolvedWPath)
 				displayLabel := workflowDisplayLabel(resolvedWPath, resolvedManifest)
-				sess.PresetQueryID = req.PresetQueryID
+				sess.WorkflowID = req.WorkflowID
 				sess.WorkspacePath = resolvedWPath
 				sess.WorkflowName = workflowName
 				sess.WorkflowLabel = displayLabel
@@ -4095,10 +4094,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 
 		if !phaseManifestLoaded {
 			// Manifest-only mode: workflow.json is the source of truth.
-			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] WARNING: No workflow.json found for preset %s - phase will use request defaults only", req.PresetQueryID)
+			logfWithContext(queryLogCtx, "[WORKFLOW_PHASE] WARNING: No workflow.json found for workflow %s - phase will use request defaults only", req.WorkflowID)
 			// Still need to resolve workspace folder for FolderGuard write access
 			if workflowPhaseFolder == "" {
-				if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+				if wPath, wErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); wErr == nil && wPath != "" {
 					workflowPhaseFolder = wPath
 				} else if req.SelectedFolder != "" {
 					workflowPhaseFolder = req.SelectedFolder
@@ -4116,9 +4115,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if req.AgentMode == "workflow" {
 		directWebhookOptions, _ := r.Context().Value(directWebhookExecutionKey{}).(*todo_creation_human.ExecutionOptions)
 
-		// Check if preset_id is provided and workflow is approved (in-memory runtime state)
-		if req.PresetQueryID != "" {
-			if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
+		// Check if workflow_id is provided and workflow is approved (in-memory runtime state)
+		if req.WorkflowID != "" {
+			if wfState := getWorkflowRuntime(req.WorkflowID); wfState != nil {
 				log.Printf("[WORKFLOW CHECK] Found workflow runtime: workflowStatus=%s", wfState.WorkflowStatus)
 				if wfState.WorkflowStatus == workflowtypes.WorkflowStatusPostVerification {
 					log.Printf("[WORKFLOW CHECK] Workflow is approved - proceeding with execution")
@@ -4126,7 +4125,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[WORKFLOW CHECK] Workflow is not approved yet - proceeding with planning phase")
 				}
 			} else {
-				log.Printf("[WORKFLOW CHECK] No workflow runtime state for preset_id %s - will proceed with defaults", req.PresetQueryID)
+				log.Printf("[WORKFLOW CHECK] No workflow runtime state for workflow_id %s - will proceed with defaults", req.WorkflowID)
 			}
 		}
 
@@ -4154,13 +4153,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var presetLLMConfig *workflowtypes.PresetLLMConfig
 
 		// Try manifest-first resolution: resolve workspace path, then load from workflow.json
-		// Priority: req.SelectedFolder (direct) > resolveWorkspacePathFromPreset (preset-based)
+		// Priority: req.SelectedFolder (direct) > resolveWorkspacePathFromWorkflowID (manifest-based)
 		manifestLoaded := false
 		manifestWorkspacePath := ""
 		if req.SelectedFolder != "" {
 			manifestWorkspacePath = req.SelectedFolder
-		} else if req.PresetQueryID != "" {
-			if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+		} else if req.WorkflowID != "" {
+			if wPath, wErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); wErr == nil && wPath != "" {
 				manifestWorkspacePath = wPath
 			}
 		}
@@ -4221,10 +4220,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		if !manifestLoaded && req.PresetQueryID != "" {
+		if !manifestLoaded && req.WorkflowID != "" {
 			// Manifest-only mode: workflow.json is the source of truth for workflow config.
 			// If no manifest was found, log a warning. The workflow will run with request defaults only.
-			log.Printf("[MANIFEST] WARNING: No workflow.json found for preset %s - workflow will run with request defaults only. Run migration: POST /api/workflows/migrate", req.PresetQueryID)
+			log.Printf("[MANIFEST] WARNING: No workflow.json found for workflow %s - workflow will run with request defaults only. Run migration: POST /api/workflows/migrate", req.WorkflowID)
 		}
 
 		// --- Post-load processing: browser configuration ---
@@ -4511,7 +4510,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				api.registerRunningWorkflow(&ActiveWorkflowExecution{
 					QueryID:       queryID,
 					SessionID:     sessionID,
-					PresetQueryID: req.PresetQueryID,
+					WorkflowID:    req.WorkflowID,
 					WorkspacePath: workflowPhaseFolder,
 					RunFolder:     runFolder,
 					PhaseID:       workflowPhaseID,
@@ -4528,28 +4527,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			workflowStatus := workflowtypes.WorkflowStatusPreVerification // Default status
 			var selectedOptions *workflowtypes.WorkflowSelectedOptions
 			var stepID string
-			if req.PresetQueryID != "" && directWebhookOptions == nil {
-				if wfState := getWorkflowRuntime(req.PresetQueryID); wfState != nil {
+			if req.WorkflowID != "" && directWebhookOptions == nil {
+				if wfState := getWorkflowRuntime(req.WorkflowID); wfState != nil {
 					workflowStatus = wfState.WorkflowStatus
 					selectedOptions = wfState.SelectedOptions
 					log.Printf("[WORKFLOW CHECK] Runtime state: workflowStatus=%s", workflowStatus)
 				} else {
-					log.Printf("[WORKFLOW CHECK] No runtime state for preset_id %s", req.PresetQueryID)
+					log.Printf("[WORKFLOW CHECK] No runtime state for workflow_id %s", req.WorkflowID)
 				}
 
 				// Retrieve step_id if it was stored for this preset
 				api.workflowStepIDMux.RLock()
 				if api.workflowStepIDs != nil {
-					if storedStepID, exists := api.workflowStepIDs[req.PresetQueryID]; exists {
+					if storedStepID, exists := api.workflowStepIDs[req.WorkflowID]; exists {
 						stepID = storedStepID
 						log.Printf("[WORKFLOW CHECK] Found step_id for preset: %s", stepID)
 						// Clear it after retrieval (one-time use)
-						delete(api.workflowStepIDs, req.PresetQueryID)
+						delete(api.workflowStepIDs, req.WorkflowID)
 					}
 				}
 				api.workflowStepIDMux.RUnlock()
 			} else {
-				log.Printf("[WORKFLOW CHECK] No preset_query_id provided, using default workflowStatus: %s", workflowStatus)
+				log.Printf("[WORKFLOW CHECK] No workflow_id provided, using default workflowStatus: %s", workflowStatus)
 			}
 
 			// Chat-only phases should not go through the orchestrator path.
@@ -4587,8 +4586,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			execWorkspacePath := ""
 			if req.SelectedFolder != "" {
 				execWorkspacePath = req.SelectedFolder
-			} else if req.PresetQueryID != "" {
-				if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+			} else if req.WorkflowID != "" {
+				if wPath, wErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); wErr == nil && wPath != "" {
 					execWorkspacePath = wPath
 				}
 			}
@@ -4620,7 +4619,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			activeExec := &ActiveWorkflowExecution{
 				QueryID:       queryID,
 				SessionID:     sessionID,
-				PresetQueryID: req.PresetQueryID,
+				WorkflowID:    req.WorkflowID,
 				WorkspacePath: workflowWorkspacePath,
 				RunFolder:     "iteration-0",
 				Status:        "running",
@@ -4863,8 +4862,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	var presetLLMConfig *workflowtypes.PresetLLMConfig
 	{
 		wsPath := req.SelectedFolder
-		if wsPath == "" && req.PresetQueryID != "" {
-			if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+		if wsPath == "" && req.WorkflowID != "" {
+			if p, e := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); e == nil && p != "" {
 				wsPath = p
 			}
 		}
@@ -5058,8 +5057,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// Load selected tools from manifest (no DB dependency)
 		{
 			wsPath := req.SelectedFolder
-			if wsPath == "" && req.PresetQueryID != "" {
-				if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+			if wsPath == "" && req.WorkflowID != "" {
+				if p, e := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); e == nil && p != "" {
 					wsPath = p
 				}
 			}
@@ -5490,7 +5489,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// workflow_layout.json must go through typed plan-mod tools that serialize
 			// full structs, not raw writes.
 			var fileContextBlockedWriteFolders []string
-			if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+			if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.WorkflowID != "" {
 				fileContextBlockedWriteFolders = append(fileContextBlockedWriteFolders, workflowPhaseFolder+"/runs/iteration-0/")
 			}
 			// PLAT-262: a read-only identity gets none of the whole-workflow write
@@ -6169,7 +6168,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// --- Workflow Phase Chat Mode ---
 			// Override system prompt and register plan modification tools for conversational phase editing
 			if isWorkflowPhase && workflowPhaseID != "" {
-				log.Printf("[WORKFLOW_PHASE] Setting up phase chat mode: phase=%s preset=%s", workflowPhaseID, req.PresetQueryID)
+				log.Printf("[WORKFLOW_PHASE] Setting up phase chat mode: phase=%s preset=%s", workflowPhaseID, req.WorkflowID)
 
 				// Get workspace path and objective from preset or request
 				phaseWorkspacePath := ""
@@ -6180,8 +6179,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseWorkspacePath = req.SelectedFolder
 				}
 				// Resolve workspace path from manifest if not already set
-				if phaseWorkspacePath == "" && req.PresetQueryID != "" {
-					if p, e := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); e == nil && p != "" {
+				if phaseWorkspacePath == "" && req.WorkflowID != "" {
+					if p, e := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); e == nil && p != "" {
 						phaseWorkspacePath = p
 					}
 				}
@@ -6196,7 +6195,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseWorkspacePath = extractWorkspacePathFromObjective(req.Query)
 				}
 				if phaseWorkspacePath == "" {
-					log.Printf("[WORKFLOW_PHASE] WARNING: No workspace path found for phase=%s preset=%s - using default_workspace", workflowPhaseID, req.PresetQueryID)
+					log.Printf("[WORKFLOW_PHASE] WARNING: No workspace path found for phase=%s preset=%s - using default_workspace", workflowPhaseID, req.WorkflowID)
 					phaseWorkspacePath = "default_workspace"
 				}
 				// Set default shell working directory for this session.
@@ -6545,7 +6544,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					ExecutionOptions:            req.ExecutionOptions,
 					SelectedGlobalSecrets:       req.SelectedGlobalSecrets,
 					DecryptedSecrets:            req.DecryptedSecrets,
-					PresetQueryID:               req.PresetQueryID,
+					WorkflowID:                  req.WorkflowID,
 				}
 				if err := api.installWorkflowPhaseTools(
 					setupCtx, llmAgent, sessionID, currentUserID,
@@ -10352,8 +10351,8 @@ func (api *StreamingAPI) buildWorkshopConfig(
 	// Set workspace path for schedule management — prefer SelectedFolder, fall back to resolving from preset
 	if req.SelectedFolder != "" {
 		cfg.SchedulerWorkspacePath = req.SelectedFolder
-	} else if req.PresetQueryID != "" {
-		if wPath, wErr := api.resolveWorkspacePathFromPreset(context.Background(), req.PresetQueryID); wErr == nil && wPath != "" {
+	} else if req.WorkflowID != "" {
+		if wPath, wErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), req.WorkflowID); wErr == nil && wPath != "" {
 			cfg.SchedulerWorkspacePath = wPath
 		}
 	}

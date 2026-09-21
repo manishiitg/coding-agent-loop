@@ -89,7 +89,7 @@ interface WorkflowToolbarProps {
   plan?: PlanningResponse | null  // Plan data used by toolbar actions
   currentPhase?: string
   workspacePath?: string | null
-  presetQueryId?: string | null  // Used to persist settings per workflow
+  workflowId?: string | null  // Used to persist settings per workflow
   // API data passed as props (avoids store subscription issues)
   runFolders: RunFolder[]
   variablesManifest: VariablesManifest | null
@@ -112,7 +112,7 @@ interface WorkflowToolbarProps {
 export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
   status,
   workspacePath,
-  presetQueryId,
+  workflowId,
   variablesManifest,
   isLoadingWorkspaceState = false,
   chatTabsSlot,
@@ -263,7 +263,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
       const executionTabs = allTabs.filter(tab =>
         tab.metadata?.mode === 'workflow' &&
         tab.metadata?.phaseId === targetExecutionPhaseId &&
-        tab.metadata?.presetQueryId === presetQueryId
+        tab.metadata?.workflowId === workflowId
       )
 
       // Check if any execution tab is streaming
@@ -293,10 +293,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // Load saved settings when preset changes
   useEffect(() => {
-    if (presetQueryId) {
-      loadSavedSettings(presetQueryId)
+    if (workflowId) {
+      loadSavedSettings(workflowId)
     }
-  }, [presetQueryId, loadSavedSettings])
+  }, [workflowId, loadSavedSettings])
 
   // Restore selection from localStorage after workspace state finishes loading
   // This ensures localStorage values are restored AFTER all API data is loaded

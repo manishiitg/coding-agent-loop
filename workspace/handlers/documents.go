@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -1959,8 +1960,21 @@ func DeleteAllFilesInFolder(c *gin.Context, folderPathParam string, confirm bool
 
 // UploadFile handles POST /api/upload
 func UploadFile(c *gin.Context) {
+	const maxFileSize int64 = 10 * 1024 * 1024
+	// Allow multipart framing and form fields in addition to the file itself,
+	// but stop oversized requests before Gin buffers or spools the upload.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxFileSize+(1<<20))
 	var req models.FileUploadRequest
 	if err := c.ShouldBind(&req); err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
+			c.JSON(http.StatusRequestEntityTooLarge, models.APIResponse[any]{
+				Success: false,
+				Message: "File too large",
+				Error:   "Files must be 10 MB or smaller",
+			})
+			return
+		}
 		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
 			Success: false,
 			Message: "Invalid request parameters",
@@ -1981,13 +1995,12 @@ func UploadFile(c *gin.Context) {
 	}
 	defer file.Close()
 
-	// Validate file size (max 10MB)
-	const maxFileSize = 10 * 1024 * 1024 // 10MB
+	// Validate the actual parsed file size, not just the total request size.
 	if header.Size > maxFileSize {
-		c.JSON(http.StatusBadRequest, models.APIResponse[any]{
+		c.JSON(http.StatusRequestEntityTooLarge, models.APIResponse[any]{
 			Success: false,
 			Message: "File too large",
-			Error:   fmt.Sprintf("File size exceeds maximum allowed size of %d bytes", maxFileSize),
+			Error:   "Files must be 10 MB or smaller",
 		})
 		return
 	}

@@ -91,7 +91,7 @@ type workshopExecutionBgNotifier struct {
 	api           *StreamingAPI
 	sessionID     string
 	workspacePath string
-	presetQueryID string
+	workflowID    string
 	userID        string
 }
 
@@ -123,7 +123,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 	}
 	metadata := map[string]string{
 		"workflow_path":    n.workspacePath,
-		"preset_query_id":  n.presetQueryID,
+		"workflow_id":      n.workflowID,
 		"execution_source": trackedExecutionSourceWorkshopBackground,
 	}
 	for k, v := range start.Metadata {
@@ -144,7 +144,7 @@ func (n *workshopExecutionBgNotifier) OnExecutionStart(start todo_creation_human
 		Metadata:          metadata,
 	}
 	n.api.bgAgentRegistry.Register(n.sessionID, bgAgent)
-	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.presetQueryID, n.userID, start.ID, start.Name, parentExecutionID, metadata)
+	n.api.trackWorkshopExecutionStart(n.sessionID, n.workspacePath, n.workflowID, n.userID, start.ID, start.Name, parentExecutionID, metadata)
 	if bgAgent.GetStatus() == BGAgentCanceled {
 		n.api.completeTrackedExecution(start.ID, trackedExecutionStatusCanceled, "parent execution canceled", metadata)
 		if bgAgent.MarkTerminalNotified() {
@@ -660,8 +660,8 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	workflowOwnedDelegation := parentReq.AgentMode == "workflow" || parentReq.AgentMode == "workflow_phase" || strings.TrimSpace(parentReq.PhaseID) != ""
 	workflowDecisionScope := strings.TrimSpace(parentReq.SelectedFolder)
 	if workflowOwnedDelegation {
-		if workflowDecisionScope == "" && parentReq.PresetQueryID != "" {
-			if resolved, resolveErr := api.resolveWorkspacePathFromPreset(context.Background(), parentReq.PresetQueryID); resolveErr == nil {
+		if workflowDecisionScope == "" && parentReq.WorkflowID != "" {
+			if resolved, resolveErr := api.resolveWorkspacePathFromWorkflowID(context.Background(), parentReq.WorkflowID); resolveErr == nil {
 				workflowDecisionScope = resolved
 			}
 		}

@@ -56,7 +56,7 @@ export function scheduleLaneKey(sessionId?: string | null): string | null {
  */
 export function reusableScheduleTabId(
   tabs: Record<string, Pick<ChatTab, 'tabId' | 'sessionId' | 'isStreaming' | 'metadata'>>,
-  presetQueryId: string,
+  workflowId: string,
   incomingSessionId: string,
 ): string | null {
   const lane = scheduleLaneKey(incomingSessionId)
@@ -67,7 +67,7 @@ export function reusableScheduleTabId(
     if (!meta || meta.mode !== 'workflow') continue
     if (!meta.isScheduledRun || !meta.isViewOnly) continue
     if (meta.userInteractiveContinuation) continue
-    if (meta.presetQueryId !== presetQueryId) continue
+    if (meta.workflowId !== workflowId) continue
     if (tab.isStreaming) continue
     if (scheduleLaneKey(tab.sessionId) !== lane) continue
     return tab.tabId
@@ -96,7 +96,7 @@ export const WORKFLOW_BUILDER_TAB_NAME = 'Automation Builder'
  */
 export function isBlankWorkflowBuilderTab(
   tab: Pick<ChatTab, 'name' | 'sessionId' | 'isStreaming' | 'metadata' | 'config'>,
-  presetQueryId: string,
+  workflowId: string,
   tabEvents: TabEvents,
 ): boolean {
   const meta = tab.metadata
@@ -104,7 +104,7 @@ export function isBlankWorkflowBuilderTab(
   if (meta.phaseId !== 'workflow-builder') return false
   if (meta.workshopMode === 'run') return false
   if (meta.isViewOnly === true) return false
-  if (meta.presetQueryId !== presetQueryId) return false
+  if (meta.workflowId !== workflowId) return false
   if (tab.name !== WORKFLOW_BUILDER_TAB_NAME && tab.name !== 'Workflow Builder') return false
   if (tab.isStreaming) return false
   if (tab.config?.restoredConversationPath) return false
@@ -115,11 +115,11 @@ export function isBlankWorkflowBuilderTab(
 /** The workflow's legacy blank Builder tab, if one is persisted. */
 export function blankWorkflowBuilderTabId(
   tabs: Record<string, ChatTab>,
-  presetQueryId: string,
+  workflowId: string,
   tabEvents: TabEvents,
 ): string | null {
   return Object.values(tabs)
-    .filter(tab => isBlankWorkflowBuilderTab(tab, presetQueryId, tabEvents))
+    .filter(tab => isBlankWorkflowBuilderTab(tab, workflowId, tabEvents))
     .sort((a, b) => (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0))[0]?.tabId ?? null
 }
 
@@ -130,7 +130,7 @@ export function blankWorkflowBuilderTabId(
  */
 function idleWorkflowBuilderTabId(
   tabs: Record<string, ChatTab>,
-  presetQueryId: string,
+  workflowId: string,
   tabEvents: TabEvents,
 ): string | null {
   return Object.values(tabs)
@@ -139,12 +139,12 @@ function idleWorkflowBuilderTabId(
       return meta?.mode === 'workflow' &&
         meta.phaseId === 'workflow-builder' &&
         meta.isViewOnly !== true &&
-        meta.presetQueryId === presetQueryId &&
+        meta.workflowId === workflowId &&
         !tab.isStreaming
     })
     .sort((a, b) => {
-      const aBlank = isBlankWorkflowBuilderTab(a, presetQueryId, tabEvents)
-      const bBlank = isBlankWorkflowBuilderTab(b, presetQueryId, tabEvents)
+      const aBlank = isBlankWorkflowBuilderTab(a, workflowId, tabEvents)
+      const bBlank = isBlankWorkflowBuilderTab(b, workflowId, tabEvents)
       if (aBlank !== bBlank) return aBlank ? 1 : -1
       return (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0)
     })[0]?.tabId ?? null
@@ -153,23 +153,23 @@ function idleWorkflowBuilderTabId(
 /** The workflow's one persistent interactive Chat, whether idle or running. */
 function persistentWorkflowBuilderTabId(
   tabs: Record<string, ChatTab>,
-  presetQueryId: string,
+  workflowId: string,
   tabEvents: TabEvents,
 ): string | null {
   return Object.values(tabs)
     .filter(tab => tab.metadata?.mode === 'workflow' &&
       tab.metadata.phaseId === 'workflow-builder' &&
       tab.metadata.isViewOnly !== true &&
-      tab.metadata.presetQueryId === presetQueryId)
+      tab.metadata.workflowId === workflowId)
     .sort((a, b) => {
-      const aBlank = isBlankWorkflowBuilderTab(a, presetQueryId, tabEvents)
-      const bBlank = isBlankWorkflowBuilderTab(b, presetQueryId, tabEvents)
+      const aBlank = isBlankWorkflowBuilderTab(a, workflowId, tabEvents)
+      const bBlank = isBlankWorkflowBuilderTab(b, workflowId, tabEvents)
       if (aBlank !== bBlank) return aBlank ? 1 : -1
       return (b.lastAccessedAt ?? b.createdAt ?? 0) - (a.lastAccessedAt ?? a.createdAt ?? 0)
     })[0]?.tabId ?? null
 }
 
-// Keyed by presetQueryId, only for the no-sessionId case below (ensuring the
+// Keyed by workflowId, only for the no-sessionId case below (ensuring the
 // persistent Chat exists). Two independent callers discovering "this
 // workflow has no interactive tab yet" in the same window (a cold-boot race
 // between the preset-restore retry and the reconnect fallback, seen live:
@@ -215,7 +215,7 @@ export interface ResolveWorkflowTabArgs {
    * Without it a builder session never takes over an existing tab, and the
    * no-sessionId case (below) can't tell blank from in-use at all. */
   getTabEvents?: () => TabEvents
-  presetQueryId: string
+  workflowId: string
   /** Omit when there is no specific session yet -- "+New chat", the
    * cold-boot/preset-switch fallback, any caller that just needs *a* blank
    * builder tab rather than a particular conversation. The store mints a
@@ -239,15 +239,15 @@ export async function resolveWorkflowTabForSession(args: ResolveWorkflowTabArgs)
   const tabs = args.getTabs()
 
   if (args.sessionId === undefined) {
-    const existing = persistentWorkflowBuilderTabId(tabs, args.presetQueryId, args.getTabEvents?.() ?? {})
+    const existing = persistentWorkflowBuilderTabId(tabs, args.workflowId, args.getTabEvents?.() ?? {})
     if (existing) return { tabId: existing, via: 'existing' }
 
-    const pending = pendingBuilderTabCreation.get(args.presetQueryId)
+    const pending = pendingBuilderTabCreation.get(args.workflowId)
     if (pending) return { tabId: await pending, via: 'lane' }
 
     const creation = (async () => args.createChatTab(args.name, args.metadata))()
-      .finally(() => pendingBuilderTabCreation.delete(args.presetQueryId))
-    pendingBuilderTabCreation.set(args.presetQueryId, creation)
+      .finally(() => pendingBuilderTabCreation.delete(args.workflowId))
+    pendingBuilderTabCreation.set(args.workflowId, creation)
     return { tabId: await creation, via: 'created' }
   }
 
@@ -259,13 +259,13 @@ export async function resolveWorkflowTabForSession(args: ResolveWorkflowTabArgs)
   if (existing) return { tabId: existing.tabId, via: 'existing' }
 
   if (args.metadata.isScheduledRun) {
-    const laneTabId = reusableScheduleTabId(tabs, args.presetQueryId, sessionId)
+    const laneTabId = reusableScheduleTabId(tabs, args.workflowId, sessionId)
     if (laneTabId) {
       args.updateTabSessionId(laneTabId, sessionId)
       return { tabId: laneTabId, via: 'lane' }
     }
   } else if (isBuilderSession(args.metadata) && args.getTabEvents) {
-    const chatTabId = idleWorkflowBuilderTabId(tabs, args.presetQueryId, args.getTabEvents())
+    const chatTabId = idleWorkflowBuilderTabId(tabs, args.workflowId, args.getTabEvents())
     if (chatTabId) {
       args.updateTabSessionId(chatTabId, sessionId)
       return { tabId: chatTabId, via: 'lane' }

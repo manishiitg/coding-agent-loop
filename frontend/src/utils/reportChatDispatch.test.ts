@@ -16,7 +16,7 @@ import { sendReportHumanInputQuestionToChat } from './reportHumanInputChat'
 import { sendWorkspacePaneMessageToChat } from './workspacePaneChat'
 
 function chat(tabId: string, extra = {}) {
-  return { tabId, isStreaming: false, metadata: { mode: 'workflow', presetQueryId: 'one' }, ...extra }
+  return { tabId, isStreaming: false, metadata: { mode: 'workflow', workflowId: 'one' }, ...extra }
 }
 
 beforeEach(() => {
@@ -42,8 +42,8 @@ describe('shared Ask in chat dispatch for reports', () => {
   it('appends to the running interactive chat queue without taking over a scheduled run', async () => {
     mocks.chat.chatTabs = {
       running: chat('running', { isStreaming: true }),
-      scheduled: chat('scheduled', { isStreaming: true, metadata: { mode: 'workflow', presetQueryId: 'one', isScheduledRun: true } }),
-      other: chat('other', { metadata: { mode: 'workflow', presetQueryId: 'other' } }),
+      scheduled: chat('scheduled', { isStreaming: true, metadata: { mode: 'workflow', workflowId: 'one', isScheduledRun: true } }),
+      other: chat('other', { metadata: { mode: 'workflow', workflowId: 'other' } }),
     }
     const result = await sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })
     expect(result).toEqual({ tabId: 'running', reused: true, queuedBehindRunningTurn: true })
@@ -68,11 +68,11 @@ describe('shared Ask in chat dispatch for reports', () => {
   it('creates a chat when this automation has none', async () => {
     const result = await sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Run visual QA' })
     expect(result).toEqual({ tabId: 'fresh', reused: false, queuedBehindRunningTurn: false })
-    expect(mocks.chat.createChatTab).toHaveBeenCalledExactlyOnceWith('Automation Builder', expect.objectContaining({ presetQueryId: 'one', phaseId: 'workflow-builder' }))
+    expect(mocks.chat.createChatTab).toHaveBeenCalledExactlyOnceWith('Automation Builder', expect.objectContaining({ workflowId: 'one', phaseId: 'workflow-builder' }))
   })
 
   it('creates a chat when only a view-only schedule exists', async () => {
-    mocks.chat.chatTabs.scheduled = chat('scheduled', { metadata: { mode: 'workflow', presetQueryId: 'one', isViewOnly: true } })
+    mocks.chat.chatTabs.scheduled = chat('scheduled', { metadata: { mode: 'workflow', workflowId: 'one', isViewOnly: true } })
     await expect(sendWorkspacePaneMessageToChat({ workspacePath: 'Workflow/one', message: 'Apply finding 42' })).resolves.toMatchObject({ tabId: 'fresh', reused: false })
   })
 

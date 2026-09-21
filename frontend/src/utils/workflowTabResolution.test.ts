@@ -36,7 +36,7 @@ describe('reusableScheduleTabId', () => {
     tabId: 'daily-tab',
     sessionId: 'schedule-cron--daily123_1',
     isStreaming: false,
-    metadata: { mode: 'workflow' as const, isScheduledRun: true, isViewOnly: true, presetQueryId: 'workflow-upwork' },
+    metadata: { mode: 'workflow' as const, isScheduledRun: true, isViewOnly: true, workflowId: 'workflow-upwork' },
   }
 
   it('reuses the finished tab of the same schedule instead of opening another per run', () => {
@@ -94,18 +94,18 @@ describe('resolveWorkflowTabForSession', () => {
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: 1, lastAccessedAt: 1, lastViewedEventCount: 0, lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', isScheduledRun: true, isViewOnly: true },
+    metadata: { mode: 'workflow', workflowId: 'workflow-upwork', isScheduledRun: true, isViewOnly: true },
     ...overrides,
   })
-  const scheduled = { mode: 'workflow' as const, presetQueryId: 'workflow-upwork', isScheduledRun: true, isViewOnly: true }
-  const builder = { mode: 'workflow' as const, presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder' }
+  const scheduled = { mode: 'workflow' as const, workflowId: 'workflow-upwork', isScheduledRun: true, isViewOnly: true }
+  const builder = { mode: 'workflow' as const, workflowId: 'workflow-upwork', phaseId: 'workflow-builder' }
 
   const run = (tabs: ChatTab[], sessionId: string, metadata: NonNullable<ChatTab['metadata']>) => {
     const createChatTab = vi.fn(async () => 'new-tab')
     const updateTabSessionId = vi.fn()
     const byId = Object.fromEntries(tabs.map(t => [t.tabId, t]))
     const result = resolveWorkflowTabForSession({
-      getTabs: () => byId, presetQueryId: 'workflow-upwork', sessionId, name: 'n', metadata,
+      getTabs: () => byId, workflowId: 'workflow-upwork', sessionId, name: 'n', metadata,
       createChatTab, updateTabSessionId,
     })
     return { result, createChatTab, updateTabSessionId }
@@ -150,12 +150,12 @@ describe('resolveWorkflowTabForSession', () => {
     const byId: Record<string, ChatTab> = {}
     const createChatTab = vi.fn(async () => 'new-tab')
     const first = await resolveWorkflowTabForSession({
-      getTabs: () => byId, presetQueryId: 'workflow-upwork', sessionId: 'schedule-cron--daily123_1',
+      getTabs: () => byId, workflowId: 'workflow-upwork', sessionId: 'schedule-cron--daily123_1',
       name: 'n', metadata: scheduled, createChatTab, updateTabSessionId: vi.fn(),
     })
     byId['new-tab'] = tab({ tabId: 'new-tab' })
     const second = await resolveWorkflowTabForSession({
-      getTabs: () => byId, presetQueryId: 'workflow-upwork', sessionId: 'schedule-cron--daily123_1',
+      getTabs: () => byId, workflowId: 'workflow-upwork', sessionId: 'schedule-cron--daily123_1',
       name: 'n', metadata: scheduled, createChatTab, updateTabSessionId: vi.fn(),
     })
     expect(first.via).toBe('created')
@@ -170,7 +170,7 @@ describe('isBlankWorkflowBuilderTab', () => {
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: 1, lastAccessedAt: 1, lastViewedEventCount: 0, lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder' },
+    metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'workflow-builder' },
     ...overrides,
   })
   const noEvents = {}
@@ -190,10 +190,10 @@ describe('isBlankWorkflowBuilderTab', () => {
   it('never counts a live, restored, view-only, other-workflow or phase tab', () => {
     expect(isBlankWorkflowBuilderTab(chat({ isStreaming: true }), 'workflow-upwork', noEvents)).toBe(false)
     expect(isBlankWorkflowBuilderTab(chat({ config: { restoredConversationPath: 'p' } as ChatTab['config'] }), 'workflow-upwork', noEvents)).toBe(false)
-    expect(isBlankWorkflowBuilderTab(chat({ metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder', isViewOnly: true } }), 'workflow-upwork', noEvents)).toBe(false)
+    expect(isBlankWorkflowBuilderTab(chat({ metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'workflow-builder', isViewOnly: true } }), 'workflow-upwork', noEvents)).toBe(false)
     expect(isBlankWorkflowBuilderTab(chat({}), 'workflow-social', noEvents)).toBe(false)
-    expect(isBlankWorkflowBuilderTab(chat({ metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'planning' } }), 'workflow-upwork', noEvents)).toBe(false)
-    expect(isBlankWorkflowBuilderTab(chat({ name: 'Run chat', metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder', workshopMode: 'run' } }), 'workflow-upwork', noEvents)).toBe(false)
+    expect(isBlankWorkflowBuilderTab(chat({ metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'planning' } }), 'workflow-upwork', noEvents)).toBe(false)
+    expect(isBlankWorkflowBuilderTab(chat({ name: 'Run chat', metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'workflow-builder', workshopMode: 'run' } }), 'workflow-upwork', noEvents)).toBe(false)
   })
 
   it('is not the Builder once named from a first message, even before its events arrive', () => {
@@ -214,17 +214,17 @@ describe("resolveWorkflowTabForSession -- one Chat tab per workflow", () => {
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: 1, lastAccessedAt: 1, lastViewedEventCount: 0, lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder' },
+    metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'workflow-builder' },
     ...overrides,
   })
-  const builder = { mode: 'workflow' as const, presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder' }
+  const builder = { mode: 'workflow' as const, workflowId: 'workflow-upwork', phaseId: 'workflow-builder' }
 
   const open = (tabs: ChatTab[], tabEvents: Record<string, never[]>) => {
     const createChatTab = vi.fn(async () => 'new-tab')
     const updateTabSessionId = vi.fn()
     const byId = Object.fromEntries(tabs.map(t => [t.tabId, t]))
     const result = resolveWorkflowTabForSession({
-      getTabs: () => byId, getTabEvents: () => tabEvents, presetQueryId: 'workflow-upwork',
+      getTabs: () => byId, getTabEvents: () => tabEvents, workflowId: 'workflow-upwork',
       sessionId: 'new-session', name: 'Automation Builder', metadata: builder,
       createChatTab, updateTabSessionId,
     })
@@ -260,7 +260,7 @@ describe("resolveWorkflowTabForSession -- one Chat tab per workflow", () => {
   it('without tab events it cannot judge blankness and opens a new tab (old behaviour)', async () => {
     const createChatTab = vi.fn(async () => 'new-tab')
     const result = await resolveWorkflowTabForSession({
-      getTabs: () => ({ chat: chat({}) }), presetQueryId: 'workflow-upwork',
+      getTabs: () => ({ chat: chat({}) }), workflowId: 'workflow-upwork',
       sessionId: 'new-session', name: 'Automation Builder', metadata: builder,
       createChatTab, updateTabSessionId: vi.fn(),
     })
@@ -274,16 +274,16 @@ describe('resolveWorkflowTabForSession -- no sessionId (ensure the persistent Ch
     isStreaming: false, isCompleted: false, hasRunningBgAgents: false, isSyntheticTurn: false,
     canSteer: false, hideToolCalls: true, viewMode: 'terminal', config: {} as ChatTab['config'],
     createdAt: 1, lastAccessedAt: 1, lastViewedEventCount: 0, lastViewedEventCounts: { micro: 0 },
-    metadata: { mode: 'workflow', presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder' },
+    metadata: { mode: 'workflow', workflowId: 'workflow-upwork', phaseId: 'workflow-builder' },
     ...overrides,
   })
-  const builder = { mode: 'workflow' as const, presetQueryId: 'workflow-upwork', phaseId: 'workflow-builder', phaseName: 'Automation Builder' }
+  const builder = { mode: 'workflow' as const, workflowId: 'workflow-upwork', phaseId: 'workflow-builder', phaseName: 'Automation Builder' }
 
-  const ensure = (tabs: ChatTab[], tabEvents: Record<string, never[]> = {}, presetQueryId = 'workflow-upwork') => {
+  const ensure = (tabs: ChatTab[], tabEvents: Record<string, never[]> = {}, workflowId = 'workflow-upwork') => {
     const createChatTab = vi.fn(async () => 'new-tab')
     const byId = Object.fromEntries(tabs.map(t => [t.tabId, t]))
     const result = resolveWorkflowTabForSession({
-      getTabs: () => byId, getTabEvents: () => tabEvents, presetQueryId,
+      getTabs: () => byId, getTabEvents: () => tabEvents, workflowId,
       name: 'Automation Builder', metadata: builder,
       createChatTab, updateTabSessionId: vi.fn(),
     })
@@ -303,7 +303,7 @@ describe('resolveWorkflowTabForSession -- no sessionId (ensure the persistent Ch
   })
 
   it('never mistakes a different workflow\'s blank tab for this one\'s', async () => {
-    const { result, createChatTab } = ensure([chat({ metadata: { ...builder, presetQueryId: 'workflow-social' } })])
+    const { result, createChatTab } = ensure([chat({ metadata: { ...builder, workflowId: 'workflow-social' } })])
     expect((await result).via).toBe('created')
     expect(createChatTab).toHaveBeenCalledTimes(1)
   })
@@ -313,7 +313,7 @@ describe('resolveWorkflowTabForSession -- no sessionId (ensure the persistent Ch
     const createChatTab = vi.fn(() => new Promise<string>(resolve => { resolveCreate = resolve }))
     const byId: Record<string, ChatTab> = {}
     const args = {
-      getTabs: () => byId, getTabEvents: () => ({}), presetQueryId: 'workflow-upwork',
+      getTabs: () => byId, getTabEvents: () => ({}), workflowId: 'workflow-upwork',
       name: 'Automation Builder', metadata: builder, createChatTab, updateTabSessionId: vi.fn(),
     }
 
@@ -335,7 +335,7 @@ describe('resolveWorkflowTabForSession -- no sessionId (ensure the persistent Ch
     const byId: Record<string, ChatTab> = {}
     const createChatTab = vi.fn(async () => 'new-tab')
     const args = {
-      getTabs: () => byId, getTabEvents: () => ({}), presetQueryId: 'workflow-upwork',
+      getTabs: () => byId, getTabEvents: () => ({}), workflowId: 'workflow-upwork',
       name: 'Automation Builder', metadata: builder, createChatTab, updateTabSessionId: vi.fn(),
     }
     await resolveWorkflowTabForSession(args)

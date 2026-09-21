@@ -1784,18 +1784,18 @@ func TestStartNextTurnFromLiveInputDoesNotBlockScheduledMessageSequence(t *testi
 
 func TestQueryRequestForContinuationRestoresWorkflowPhaseContext(t *testing.T) {
 	req := QueryRequest{
-		AgentMode:     "multi-agent", // adapted engine mode inside handleQuery
-		PhaseID:       "workflow-builder",
-		PresetQueryID: "wf-marketing",
-		Query:         "continue the workflow",
+		AgentMode:  "multi-agent", // adapted engine mode inside handleQuery
+		PhaseID:    "workflow-builder",
+		WorkflowID: "wf-marketing",
+		Query:      "continue the workflow",
 	}
 
 	got := queryRequestForContinuation(req, true, "Workflow/llmprovideropensourcemarketing")
 	if got.AgentMode != "workflow_phase" {
 		t.Fatalf("agent mode = %q, want workflow_phase", got.AgentMode)
 	}
-	if got.PhaseID != req.PhaseID || got.PresetQueryID != req.PresetQueryID {
-		t.Fatalf("workflow identity changed: phase=%q preset=%q", got.PhaseID, got.PresetQueryID)
+	if got.PhaseID != req.PhaseID || got.WorkflowID != req.WorkflowID {
+		t.Fatalf("workflow identity changed: phase=%q preset=%q", got.PhaseID, got.WorkflowID)
 	}
 	if got.SelectedFolder != "Workflow/llmprovideropensourcemarketing" {
 		t.Fatalf("selected folder = %q, want workflow folder", got.SelectedFolder)

@@ -13,7 +13,6 @@ export function defaultSchedulePanelView(isWorkflowScoped: boolean): SchedulePan
 
 export type WorkflowScope = {
   workflowId?: string | null
-  presetQueryId?: string | null
   workspacePath?: string | null
   label?: string | null
 }
@@ -268,8 +267,8 @@ export function getWorkflowFilterMeta(
   job: ScheduledJob,
   presetMap: PresetMap
 ): { value: string; label: string; workflowLabel: string } {
-  const workflowLabel = presetMap.get(job.preset_query_id ?? '')?.label || job.workflow_label || job.name
-  const value = job.workflow_id || job.preset_query_id || job.workspace_path || workflowLabel
+  const workflowLabel = presetMap.get(job.workflow_id ?? '')?.label || job.workflow_label || job.name
+  const value = job.workflow_id || job.workspace_path || workflowLabel
 
   return {
     value,
@@ -284,8 +283,8 @@ export function getWorkflowScopeLabel(
 ): string {
   if (!workflowScope) return 'Automation Schedules'
   if (workflowScope.label) return workflowScope.label
-  if (workflowScope.presetQueryId) {
-    const presetLabel = presetMap.get(workflowScope.presetQueryId)?.label
+  if (workflowScope.workflowId) {
+    const presetLabel = presetMap.get(workflowScope.workflowId)?.label
     if (presetLabel) return presetLabel
   }
   const path = normalizeWorkspacePath(workflowScope.workspacePath)
@@ -303,15 +302,11 @@ export function jobMatchesWorkflowScope(
     return true
   }
 
-  if (workflowScope.presetQueryId && job.preset_query_id === workflowScope.presetQueryId) {
-    return true
-  }
-
   const scopePath = normalizeWorkspacePath(workflowScope.workspacePath)
   if (!scopePath) return false
 
-  const presetPath = job.preset_query_id
-    ? presetMap.get(job.preset_query_id)?.workspacePath
+  const presetPath = job.workflow_id
+    ? presetMap.get(job.workflow_id)?.workspacePath
     : null
   return normalizeWorkspacePath(job.workspace_path) === scopePath ||
     normalizeWorkspacePath(presetPath) === scopePath

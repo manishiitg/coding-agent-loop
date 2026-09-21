@@ -44,7 +44,7 @@ type TrackedWorkflowExecution struct {
 	Kind          string            `json:"kind"`
 	Name          string            `json:"name,omitempty"`
 	Query         string            `json:"query,omitempty"`
-	PresetQueryID string            `json:"preset_query_id,omitempty"`
+	WorkflowID    string            `json:"workflow_id,omitempty"`
 	PresetName    string            `json:"preset_name,omitempty"`
 	WorkspacePath string            `json:"workspace_path"`
 	RunFolder     string            `json:"run_folder,omitempty"`
@@ -191,7 +191,7 @@ func trackedExecutionToActive(exec *TrackedWorkflowExecution) ActiveWorkflowExec
 		QueryID:          exec.ExecutionID,
 		SessionID:        exec.SessionID,
 		Kind:             kind,
-		PresetQueryID:    exec.PresetQueryID,
+		WorkflowID:       exec.WorkflowID,
 		PresetName:       exec.PresetName,
 		WorkspacePath:    exec.WorkspacePath,
 		RunFolder:        exec.RunFolder,
@@ -275,7 +275,7 @@ func (api *StreamingAPI) trackWorkflowRunStart(exec *ActiveWorkflowExecution) {
 		Source:           trackedExecutionSourceWorkflowRun,
 		Name:             exec.Title,
 		Query:            exec.Query,
-		PresetQueryID:    exec.PresetQueryID,
+		WorkflowID:       exec.WorkflowID,
 		PresetName:       exec.PresetName,
 		WorkspacePath:    exec.WorkspacePath,
 		RunFolder:        exec.RunFolder,
@@ -293,7 +293,7 @@ func (api *StreamingAPI) trackWorkflowRunStart(exec *ActiveWorkflowExecution) {
 	})
 }
 
-func (api *StreamingAPI) trackWorkshopExecutionStart(sessionID, workspacePath, presetQueryID, userID string, executionID, name, parentExecutionID string, startMetadata map[string]string) {
+func (api *StreamingAPI) trackWorkshopExecutionStart(sessionID, workspacePath, workflowID, userID string, executionID, name, parentExecutionID string, startMetadata map[string]string) {
 	metadata := cloneTrackedMetadata(startMetadata)
 	if metadata == nil {
 		metadata = map[string]string{}
@@ -308,7 +308,7 @@ func (api *StreamingAPI) trackWorkshopExecutionStart(sessionID, workspacePath, p
 		Source:        trackedExecutionSourceWorkshopBackground,
 		Name:          name,
 		Title:         name,
-		PresetQueryID: presetQueryID,
+		WorkflowID:    workflowID,
 		WorkspacePath: workspacePath,
 		RunFolder:     runFolder,
 		PhaseID:       "workflow-builder",

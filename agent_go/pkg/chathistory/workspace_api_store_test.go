@@ -80,13 +80,13 @@ func TestWorkspaceAPIStoreBotConnectorConfigRoundTrip(t *testing.T) {
 	}
 
 	_, err = store.UpsertBotConnectorConfig(context.Background(), &CreateBotConnectorConfigRequest{
-		ID:              "slack",
-		Enabled:         true,
-		BotMode:         true,
-		ConfigJSON:      `{"token":"abc"}`,
-		DefaultPresetID: "preset-1",
-		AutoConfirm:     true,
-		AllowedChannels: `["ops"]`,
+		ID:                "slack",
+		Enabled:           true,
+		BotMode:           true,
+		ConfigJSON:        `{"token":"abc"}`,
+		DefaultWorkflowID: "preset-1",
+		AutoConfirm:       true,
+		AllowedChannels:   `["ops"]`,
 	})
 	if err != nil {
 		t.Fatalf("UpsertBotConnectorConfig() error = %v", err)

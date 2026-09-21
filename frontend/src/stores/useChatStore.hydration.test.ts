@@ -80,13 +80,13 @@ describe('useChatStore hydration bootstrap', () => {
     const firstTab = await chatStore.useChatStore.getState().createChatTab('First workflow', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: 'workflow-one',
+      workflowId: 'workflow-one',
     })
     vi.setSystemTime(new Date('2026-07-13T00:00:00.001Z'))
     const secondTab = await chatStore.useChatStore.getState().createChatTab('Second workflow', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: 'workflow-two',
+      workflowId: 'workflow-two',
     })
     vi.advanceTimersByTime(250)
     setItem.mockClear()
@@ -107,12 +107,12 @@ describe('useChatStore hydration bootstrap', () => {
     const firstTab = await chatStore.useChatStore.getState().createChatTab('Current', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: 'current-workflow',
+      workflowId: 'current-workflow',
     })
     const backgroundTab = await chatStore.useChatStore.getState().createChatTab('Background', {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: 'background-workflow',
+      workflowId: 'background-workflow',
     })
     chatStore.useChatStore.getState().switchTab(firstTab)
 
@@ -299,22 +299,23 @@ describe('useChatStore hydration bootstrap', () => {
     expect(chatStore.useChatStore.getState().chatTabs['legacy-tab']).toMatchObject({
       name: 'Existing workflow chat',
       sessionId: 'legacy-session',
-      metadata: { mode: 'workflow', presetQueryId: 'existing-workflow' },
+      metadata: { mode: 'workflow', workflowId: 'existing-workflow' },
     })
+    expect(chatStore.useChatStore.getState().chatTabs['legacy-tab'].metadata).not.toHaveProperty('presetQueryId')
   })
   it('retains separate layouts and drafts for two users with multiple tabs', async () => {
     const { useChatStore, switchChatAccount } = await import('./useChatStore')
     const { captureChatIdentity, isChatIdentityCurrent } = await import('../utils/chatIdentity')
     switchChatAccount('alice')
-    const aliceOne = await useChatStore.getState().createChatTab('Alice one', { mode: 'workflow', presetQueryId: 'alice-one' }, 'alice-one')
-    const aliceTwo = await useChatStore.getState().createChatTab('Alice two', { mode: 'workflow', presetQueryId: 'alice-two' }, 'alice-two')
+    const aliceOne = await useChatStore.getState().createChatTab('Alice one', { mode: 'workflow', workflowId: 'alice-one' }, 'alice-one')
+    const aliceTwo = await useChatStore.getState().createChatTab('Alice two', { mode: 'workflow', workflowId: 'alice-two' }, 'alice-two')
     useChatStore.getState().setTabConfig(aliceOne, { inputText: 'Alice private draft', isQueueProcessing: true, queuedSubmission: { id: 'retry-1', messages: ['queued'], sessionId: 'alice-one' } })
     const identity = captureChatIdentity()
     switchChatAccount('bob')
     expect(isChatIdentityCurrent(identity)).toBe(false)
     expect(Object.keys(useChatStore.getState().chatTabs)).toHaveLength(0)
-    const bobOne = await useChatStore.getState().createChatTab('Bob one', { mode: 'workflow', presetQueryId: 'bob-one' }, 'bob-one')
-    await useChatStore.getState().createChatTab('Bob two', { mode: 'workflow', presetQueryId: 'bob-two' }, 'bob-two')
+    const bobOne = await useChatStore.getState().createChatTab('Bob one', { mode: 'workflow', workflowId: 'bob-one' }, 'bob-one')
+    await useChatStore.getState().createChatTab('Bob two', { mode: 'workflow', workflowId: 'bob-two' }, 'bob-two')
     useChatStore.getState().setTabConfig(bobOne, { inputText: 'Bob private draft' })
     switchChatAccount('alice')
     expect(Object.keys(useChatStore.getState().chatTabs).sort()).toEqual([aliceOne, aliceTwo].sort())
@@ -379,10 +380,10 @@ describe('useChatStore hydration bootstrap', () => {
     let resolveStop!: () => void
     vi.spyOn(agentApi, 'stopSession').mockImplementation(() => new Promise(resolve => { resolveStop = () => resolve({} as never) }))
     switchChatAccount('alice')
-    const closing = await useChatStore.getState().createChatTab('Closing', { mode: 'workflow', presetQueryId: 'closing' }, 'closing-session')
+    const closing = await useChatStore.getState().createChatTab('Closing', { mode: 'workflow', workflowId: 'closing' }, 'closing-session')
     useChatStore.getState().setTabStreaming(closing, true)
     const pending = useChatStore.getState().closeTab(closing)
-    const newTab = await useChatStore.getState().createChatTab('New', { mode: 'workflow', presetQueryId: 'new' }, 'new-session')
+    const newTab = await useChatStore.getState().createChatTab('New', { mode: 'workflow', workflowId: 'new' }, 'new-session')
     resolveStop()
     await pending
     expect(useChatStore.getState().chatTabs[newTab]).toBeDefined()

@@ -80,7 +80,7 @@ the private session-scoped custom-tool HTTP endpoint.`,
 			http:           &http.Client{Timeout: 90 * time.Second},
 			agentMode:      "workflow_phase",
 			selectedFolder: fixture.relWorkflow,
-			presetQueryID:  fixture.presetID,
+			workflowID:     fixture.workflowID,
 			phaseID:        "workflow-builder",
 			workshopMode:   "run",
 			enabledServers: "api-bridge",
@@ -160,7 +160,7 @@ func resolveWorkflowAutoNotificationWorkspaceDocs() (string, error) {
 
 type workflowAutoNotificationFixture struct {
 	relWorkflow     string
-	presetID        string
+	workflowID      string
 	completionToken string
 	bridgeProofPath string
 }
@@ -170,14 +170,14 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	relWorkflow := "Workflow/_e2e_auto_notification_" + shortID
 	absWorkflow := filepath.Join(workspaceDocs, filepath.FromSlash(relWorkflow))
 	completionToken := "WORKFLOW_AUTO_NOTIFICATION_STEP_OK_" + shortID
-	presetID := "wf_auto_notification_" + shortID
+	workflowID := "wf_auto_notification_" + shortID
 	// A real workflow step may write only inside its execution folder (plus its
 	// workflow DB). Keeping the proof there exercises the production folder
 	// guard instead of asking the agent to bypass it.
 	bridgeProofPath := filepath.Join(absWorkflow, "runs", "iteration-0", "default", "execution", "step-auto-notification", "mcp-bridge-proof.txt")
 	fixture := workflowAutoNotificationFixture{
 		relWorkflow:     relWorkflow,
-		presetID:        presetID,
+		workflowID:      workflowID,
 		completionToken: completionToken,
 		bridgeProofPath: bridgeProofPath,
 	}
@@ -203,7 +203,7 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	}
 	manifest := map[string]interface{}{
 		"schema_version": 1,
-		"id":             presetID,
+		"id":             workflowID,
 		"label":          "E2E Auto Notification Workflow",
 		"objective":      "Exercise workflow start auto-notification wiring.",
 		"capabilities": map[string]interface{}{

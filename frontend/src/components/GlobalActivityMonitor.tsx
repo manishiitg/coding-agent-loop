@@ -146,7 +146,7 @@ function pushActivityKey(keys: string[], prefix: string, value?: string | null):
 function activityKeysForSession(session: ActiveSessionInfo, workflow?: RunningWorkflowInfo): string[] {
   const keys: string[] = []
   pushActivityKey(keys, 'session', session.session_id)
-  pushActivityKey(keys, 'preset', session.preset_query_id || workflow?.preset_query_id)
+  pushActivityKey(keys, 'preset', session.workflow_id || workflow?.workflow_id)
   pushActivityKey(keys, 'workspace', workflow?.workspace_path || session.workspace_path)
   return keys
 }
@@ -154,7 +154,7 @@ function activityKeysForSession(session: ActiveSessionInfo, workflow?: RunningWo
 function activityKeysForTab(tab: ChatTab): string[] {
   const keys: string[] = []
   pushActivityKey(keys, 'session', tab.sessionId)
-  pushActivityKey(keys, 'preset', tab.metadata?.presetQueryId)
+  pushActivityKey(keys, 'preset', tab.metadata?.workflowId)
   return keys
 }
 
@@ -163,9 +163,9 @@ function workflowPresetForActivity(
   session?: ActiveSessionInfo,
   tab?: ChatTab,
 ): CustomPreset | undefined {
-  const presetID = normalizedActivityIdentity(session?.preset_query_id || tab?.metadata?.presetQueryId)
-  if (presetID) {
-    const byID = presets.find(preset => normalizedActivityIdentity(preset.id) === presetID)
+  const workflowID = normalizedActivityIdentity(session?.workflow_id || tab?.metadata?.workflowId)
+  if (workflowID) {
+    const byID = presets.find(preset => normalizedActivityIdentity(preset.id) === workflowID)
     if (byID) return byID
   }
 
@@ -191,8 +191,8 @@ export const GlobalActivityMonitor: React.FC = () => {
   const showWorkflowsOverview = useAppStore(state => state.showWorkflowsOverview)
   const workflowPresets = useGlobalPresetStore(state => state.workflowPresets)
   const currentWorkflowPreset = useGlobalPresetStore(state => {
-    const presetId = state.activePresetIds.workflow
-    return state.workflowPresets.find(preset => preset.id === presetId) ?? null
+    const workflowId = state.activePresetIds.workflow
+    return state.workflowPresets.find(preset => preset.id === workflowId) ?? null
   })
   const currentWorkflowPresetName = currentWorkflowPreset?.label ?? null
 

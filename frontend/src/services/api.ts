@@ -1,6 +1,7 @@
 console.log('Cache bust: 2026-02-08-150000');
 import axios from 'axios'
 import { assertChatIdentityCurrent, captureChatIdentity } from '../utils/chatIdentity'
+import { workspaceUploadSizeError } from '../utils/workspaceUploadLimit'
 import { createRequestCoalescer } from './requestCoalescer'
 import type { AxiosInstance, InternalAxiosRequestConfig } from 'axios'
 
@@ -1060,14 +1061,14 @@ export const agentApi = {
   },
 
   getWorkflowBuilderSession: async (
-    presetQueryId?: string,
+    workflowId?: string,
     workspacePath?: string
   ): Promise<WorkflowBuilderSessionResponse> => {
     const params: Record<string, string> = {}
-    if (presetQueryId) params.preset_query_id = presetQueryId
+    if (workflowId) params.workflow_id = workflowId
     if (workspacePath) params.workspace_path = workspacePath
     return dedupedGet(
-      `workflow-builder-session:${presetQueryId || ''}:${workspacePath || ''}`,
+      `workflow-builder-session:${workflowId || ''}:${workspacePath || ''}`,
       async () => {
         const response = await api.get('/api/workflow/builder-session', { params })
         return response.data
@@ -1991,6 +1992,9 @@ export const agentApi = {
   },
 
   uploadPlannerFile: async (file: File, folderPath: string, commitMessage?: string) => {
+    const sizeError = workspaceUploadSizeError(file)
+    if (sizeError) throw new Error(sizeError)
+
     const formData = new FormData()
     formData.append('file', file)
     formData.append('folder_path', folderPath)
@@ -2108,9 +2112,9 @@ export const agentApi = {
   },
 
   // Workflow API
-  createWorkflow: async (presetQueryId: string, humanVerificationRequired: boolean = true) => {
+  createWorkflow: async (workflowId: string, humanVerificationRequired: boolean = true) => {
     const response = await api.post('/api/workflow/create', {
-      preset_query_id: presetQueryId,
+      workflow_id: workflowId,
       human_verification_required: humanVerificationRequired
     })
     return response.data
@@ -2118,16 +2122,16 @@ export const agentApi = {
 
   // executeWorkflow removed - now using normal agent execution flow
 
-  getWorkflowStatus: async (presetQueryId: string): Promise<WorkflowStatusResponse> => {
-    return dedupedGet(`workflow-status:${presetQueryId}`, async () => {
-      const response = await api.get(`/api/workflow/status?preset_query_id=${encodeURIComponent(presetQueryId)}`)
+  getWorkflowStatus: async (workflowId: string): Promise<WorkflowStatusResponse> => {
+    return dedupedGet(`workflow-status:${workflowId}`, async () => {
+      const response = await api.get(`/api/workflow/status?workflow_id=${encodeURIComponent(workflowId)}`)
       return response.data
     })
   },
 
-  updateWorkflow: async (presetQueryId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null, stepId?: string) => {
-    const body: { preset_query_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null; step_id?: string } = {
-      preset_query_id: presetQueryId
+  updateWorkflow: async (workflowId: string, workflowStatus?: string, selectedOptions?: WorkflowSelectedOptions | null, stepId?: string) => {
+    const body: { workflow_id: string; workflow_status?: string; selected_options?: WorkflowSelectedOptions | null; step_id?: string } = {
+      workflow_id: workflowId
     }
 
     if (workflowStatus !== undefined) {

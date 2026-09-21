@@ -164,7 +164,7 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 		if selector != "1" {
 			t.Fatalf("resume selector = %q, want 1", selector)
 		}
-		if filter.WorkspacePath != "" || filter.PresetQueryID != "" {
+		if filter.WorkspacePath != "" || filter.WorkflowID != "" {
 			t.Fatalf("resume filter = %+v, want empty", filter)
 		}
 		return &BotResumeTarget{
@@ -174,7 +174,7 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 			Status:        "running",
 			Query:         "Build the report workflow",
 			WorkspacePath: "Workflow/report",
-			PresetQueryID: "preset-report",
+			WorkflowID:    "preset-report",
 			PhaseID:       "workflow-builder",
 			WorkshopMode:  "run",
 			WorkflowName:  "report",
@@ -201,7 +201,7 @@ func TestWhatsAppResumeCommandBindsExistingSession(t *testing.T) {
 	if active == nil {
 		t.Fatal("expected resumed session to be bound to WhatsApp thread")
 	}
-	if active.SessionID != "chat-1" || active.AgentMode != "workflow_phase" || active.PresetQueryID != "preset-report" || active.WorkspacePath != "Workflow/report" {
+	if active.SessionID != "chat-1" || active.AgentMode != "workflow_phase" || active.WorkflowID != "preset-report" || active.WorkspacePath != "Workflow/report" {
 		t.Fatalf("active metadata = %+v", active)
 	}
 	// Resuming a live (running) session auto-enables full detail so workflow
@@ -268,7 +268,7 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 		SessionID:     "chat-1",
 		UserID:        "user-1",
 		AgentMode:     "workflow_phase",
-		PresetQueryID: "preset-report",
+		WorkflowID:    "preset-report",
 		WorkspacePath: "Workflow/report",
 		PhaseID:       "workflow-builder",
 		WorkshopMode:  "run",
@@ -280,7 +280,7 @@ func TestBuildQueryRequestForActivePreservesWorkflowMetadata(t *testing.T) {
 		ThreadTS:  "dm",
 	})
 
-	if req["agent_mode"] != "workflow_phase" || req["preset_query_id"] != "preset-report" || req["selected_folder"] != "Workflow/report" || req["phase_id"] != "workflow-builder" {
+	if req["agent_mode"] != "workflow_phase" || req["workflow_id"] != "preset-report" || req["selected_folder"] != "Workflow/report" || req["phase_id"] != "workflow-builder" {
 		t.Fatalf("request did not preserve workflow metadata: %#v", req)
 	}
 	execOpts, ok := req["execution_options"].(map[string]interface{})
@@ -295,7 +295,7 @@ func TestStatusShowsNumberedResumableChats(t *testing.T) {
 		if userID != "user-1" {
 			t.Fatalf("resume list userID = %q, want user-1", userID)
 		}
-		if filter.WorkspacePath != "Workflow/report" || filter.PresetQueryID != "preset-report" {
+		if filter.WorkspacePath != "Workflow/report" || filter.WorkflowID != "preset-report" {
 			t.Fatalf("resume list filter = %+v, want report filter", filter)
 		}
 		return []BotResumeTarget{
@@ -306,7 +306,7 @@ func TestStatusShowsNumberedResumableChats(t *testing.T) {
 
 	reply := manager.formatBotStatusReply("user-1", "", false, "", false, BotResumeFilter{
 		WorkspacePath: "Workflow/report",
-		PresetQueryID: "preset-report",
+		WorkflowID:    "preset-report",
 	})
 
 	if !strings.Contains(reply, "Resumable chats for this workflow:") || !strings.Contains(reply, "1. newer report chat - running") || !strings.Contains(reply, "Use `@resume 1`") {
@@ -825,8 +825,8 @@ func TestThreadlessCompletedRouteChangeStartsFreshWithoutRestoreSessionID(t *tes
 		if _, ok := got.req["restored_conversation_session_id"]; ok {
 			t.Fatalf("route change should not restore previous route, got req %#v", got.req)
 		}
-		if got.req["preset_query_id"] != "wf-new" {
-			t.Fatalf("preset_query_id = %#v, want wf-new", got.req["preset_query_id"])
+		if got.req["workflow_id"] != "wf-new" {
+			t.Fatalf("workflow_id = %#v, want wf-new", got.req["workflow_id"])
 		}
 	case <-time.After(time.Second):
 		t.Fatal("expected threadless route-change session to start")
@@ -861,7 +861,7 @@ func TestThreadlessRouteSwitchViaIncomingMessageStartsFresh(t *testing.T) {
 		Status:        chathistory.BotSessionStatusCompleted,
 		Platform:      "whatsapp",
 		ThreadID:      threadID,
-		PresetQueryID: "wf-old",
+		WorkflowID:    "wf-old",
 		WorkspacePath: "Workflow/old",
 		RouteKey:      botRouteKey(oldRoute),
 		LastActivity:  time.Now(),
@@ -887,8 +887,8 @@ func TestThreadlessRouteSwitchViaIncomingMessageStartsFresh(t *testing.T) {
 		if _, ok := got.req["restored_conversation_session_id"]; ok {
 			t.Fatalf("route switch should not restore the previous route, got req %#v", got.req)
 		}
-		if got.req["preset_query_id"] != "wf-new" {
-			t.Fatalf("preset_query_id = %#v, want wf-new", got.req["preset_query_id"])
+		if got.req["workflow_id"] != "wf-new" {
+			t.Fatalf("workflow_id = %#v, want wf-new", got.req["workflow_id"])
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected threadless route-switch session to start")
@@ -918,7 +918,7 @@ func TestThreadlessSameRouteViaIncomingMessageReusesSession(t *testing.T) {
 		Status:        chathistory.BotSessionStatusCompleted,
 		Platform:      "whatsapp",
 		ThreadID:      threadID,
-		PresetQueryID: "wf-old",
+		WorkflowID:    "wf-old",
 		WorkspacePath: "Workflow/old",
 		RouteKey:      botRouteKey(route),
 		LastActivity:  time.Now(),

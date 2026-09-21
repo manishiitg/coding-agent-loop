@@ -103,8 +103,8 @@ function loadLegacyWorkspaceViewByPreset(): Record<string, WorkflowWorkspaceView
       const parsed = JSON.parse(saved)
       if (parsed && typeof parsed === 'object') {
         const out: Record<string, WorkflowWorkspaceView> = {}
-        for (const [presetId, rawView] of Object.entries(parsed as Record<string, unknown>)) {
-          out[presetId] = normalizeWorkflowWorkspaceView(rawView)
+        for (const [workflowId, rawView] of Object.entries(parsed as Record<string, unknown>)) {
+          out[workflowId] = normalizeWorkflowWorkspaceView(rawView)
         }
         return out
       }
@@ -122,10 +122,10 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
     const parsed = JSON.parse(saved)
     if (!parsed || typeof parsed !== 'object') return {}
     const out: Record<string, PersistedWorkflowUIState> = {}
-    for (const [presetId, raw] of Object.entries(parsed as Record<string, unknown>)) {
+    for (const [workflowId, raw] of Object.entries(parsed as Record<string, unknown>)) {
       if (!raw || typeof raw !== 'object') continue
       const candidate = raw as Record<string, unknown>
-      out[presetId] = {
+      out[workflowId] = {
         showChatArea: typeof candidate.showChatArea === 'boolean' ? candidate.showChatArea : undefined,
         showWorkspacePane: typeof candidate.showWorkspacePane === 'boolean' ? candidate.showWorkspacePane : undefined,
         workflowWorkspaceView: normalizeWorkflowWorkspaceView(candidate.workflowWorkspaceView) ?? undefined,
@@ -146,21 +146,21 @@ function loadWorkflowUIStateByPreset(): Record<string, PersistedWorkflowUIState>
 }
 
 function persistWorkflowUIStateForPreset(
-  presetId: string | null,
+  workflowId: string | null,
   patch: PersistedWorkflowUIState,
 ) {
-  if (!presetId) return
+  if (!workflowId) return
   try {
     const current = loadWorkflowUIStateByPreset()
     const next = {
-      ...current[presetId],
+      ...current[workflowId],
       ...patch,
       workflowWorkspaceView:
         patch.workflowWorkspaceView === undefined
-          ? current[presetId]?.workflowWorkspaceView
+          ? current[workflowId]?.workflowWorkspaceView
           : normalizeWorkflowWorkspaceView(patch.workflowWorkspaceView),
     }
-    current[presetId] = next
+    current[workflowId] = next
     setWorkflowStorageItem(WORKFLOW_UI_STATE_BY_PRESET_KEY, JSON.stringify(current))
   } catch (error) {
     console.error('[WorkflowStore] Failed to save workflowUIStateByPreset:', error)
@@ -277,7 +277,7 @@ interface WorkflowStore {
   // Variables manifest (for batch execution with multiple groups)
   variablesManifest: VariablesManifest | null
 
-  // Track current preset ID to detect page reload vs preset switch
+  // Track current workflow ID to detect page reload vs preset switch
   _currentPresetId: string | null
   // Per-preset state map — saves/restores state when switching between workflows
   _presetStates: Record<string, PresetWorkflowState>
@@ -422,10 +422,10 @@ interface WorkflowStore {
   setWorkflowMode: (mode: 'plan') => void
 
   // Persistence (localStorage)
-  loadSavedSettings: (presetId: string) => void
+  loadSavedSettings: (workflowId: string) => void
   saveSettings: () => void
   // Switch to a new preset - resets context and loads settings in one update
-  switchToPreset: (presetId: string) => void
+  switchToPreset: (workflowId: string) => void
 
   // Reset
   resetExecutionState: () => void
@@ -479,7 +479,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Variables manifest
       variablesManifest: null,
 
-      // Track current preset ID to detect page reload vs preset switch
+      // Track current workflow ID to detect page reload vs preset switch
       _currentPresetId: null as string | null,
       _presetStates: {} as Record<string, PresetWorkflowState>,
 
@@ -579,12 +579,12 @@ export const useWorkflowStore = create<WorkflowStore>()(
       })(),
       setWorkshopMode: (mode: WorkshopMode) => {
         const normalizedMode = migrateWorkshopMode(mode)
-        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+        const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow
         set((state) => {
-          const updated = presetId
-            ? { ...state.workshopModeByPreset, [presetId]: normalizedMode }
+          const updated = workflowId
+            ? { ...state.workshopModeByPreset, [workflowId]: normalizedMode }
             : state.workshopModeByPreset
-          if (presetId) {
+          if (workflowId) {
             try {
               setWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
             } catch (error) {
@@ -781,7 +781,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               groupIds: state.selectedGroupIds,
               runFolder: normalized,
               // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              presetId: (state as any)._currentPresetId
+              workflowId: (state as any)._currentPresetId
             }
             setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
           }
@@ -816,8 +816,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           selected_run_folder: resolvedRunFolder,
           execution_strategy: executionStrategy,
           workshop_mode: (() => {
-            const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
-            return (presetId && state.workshopModeByPreset[presetId]) || state.workshopMode
+            const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow
+            return (workflowId && state.workshopModeByPreset[workflowId]) || state.workshopMode
           })(),
         }
 
@@ -885,14 +885,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
         set({ selectedGroupIds: newIds })
 
-        // Persist to localStorage - save groupIds, runFolder, AND presetId
+        // Persist to localStorage - save groupIds, runFolder, AND workflowId
         // Note: startPoint is NOT persisted - it's calculated from progress
         try {
           const persistData = {
             groupIds: newIds,
             runFolder: state.selectedRunFolder,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            presetId: (state as any)._currentPresetId
+            workflowId: (state as any)._currentPresetId
           }
           setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
         } catch (error) {
@@ -905,14 +905,14 @@ export const useWorkflowStore = create<WorkflowStore>()(
         const state = get()
         set({ selectedGroupIds: groupNames })
 
-        // Persist to localStorage - save groupIds, runFolder, AND presetId
+        // Persist to localStorage - save groupIds, runFolder, AND workflowId
         // Note: startPoint is NOT persisted - it's calculated from progress
         try {
           const persistData = {
             groupIds: groupNames,
             runFolder: state.selectedRunFolder,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
-            presetId: (state as any)._currentPresetId
+            workflowId: (state as any)._currentPresetId
           }
           setWorkflowStorageItem(SELECTED_GROUP_IDS_KEY, JSON.stringify(persistData))
         } catch (error) {
@@ -947,7 +947,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             const parsed = JSON.parse(savedGroupData)
             // Handle new format: { groupIds: [...], runFolder: "..." }
             if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-              const storedPresetId = typeof parsed.presetId === 'string' ? parsed.presetId : null
+              const storedPresetId = typeof parsed.workflowId === 'string' ? parsed.workflowId : null
               const presetMatches = !currentPresetId || !storedPresetId || storedPresetId === currentPresetId
               canRestoreLegacyKeys = !storedPresetId
 
@@ -1172,9 +1172,9 @@ export const useWorkflowStore = create<WorkflowStore>()(
       },
 
       setShowChatArea: (show: boolean) => {
-        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
+        const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
         const currentWorkspacePane = get().showWorkspacePane
-        persistWorkflowUIStateForPreset(presetId ?? null, {
+        persistWorkflowUIStateForPreset(workflowId ?? null, {
           showChatArea: show,
           showWorkspacePane: currentWorkspacePane,
         })
@@ -1187,8 +1187,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setShowWorkspacePane: (show: boolean) => {
         const effectiveShow = get().showChatArea ? show : true
-        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-        persistWorkflowUIStateForPreset(presetId ?? null, { showWorkspacePane: effectiveShow })
+        const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
+        persistWorkflowUIStateForPreset(workflowId ?? null, { showWorkspacePane: effectiveShow })
         set(state => ({
           showWorkspacePane: state.showChatArea ? show : true
         }))
@@ -1207,8 +1207,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       setWorkflowWorkspaceView: (view: WorkflowWorkspaceView) => {
         const normalizedView = normalizeWorkflowWorkspaceView(view)
-        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-        persistWorkflowUIStateForPreset(presetId ?? null, { workflowWorkspaceView: normalizedView })
+        const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
+        persistWorkflowUIStateForPreset(workflowId ?? null, { workflowWorkspaceView: normalizedView })
         set({ workflowWorkspaceView: normalizedView })
       },
 
@@ -1225,8 +1225,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
           set(state => ({ workspaceViewTarget: { view: resolvedView, target: resolvedTarget, token: (state.workspaceViewTarget?.token ?? 0) + 1 } }))
         }
         if ((kind === 'canvas' || kind === 'preview') && isCanvasView(resolvedView)) {
-          const presetId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
-          persistWorkflowUIStateForPreset(presetId ?? null, { lastCanvasView: resolvedView })
+          const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow ?? get()._currentPresetId
+          persistWorkflowUIStateForPreset(workflowId ?? null, { lastCanvasView: resolvedView })
           set({ lastCanvasView: resolvedView })
         }
         get().setWorkflowWorkspaceView(resolvedView)
@@ -1488,19 +1488,19 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Workflow Mode Actions
       // workflowMode='plan' is the only value; all workshop modes live under it.
       setWorkflowMode: (_mode: 'plan') => {
-        const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+        const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow
         set(state => {
           const normalizedMode = 'plan' as const
-          const rememberedForPreset = presetId ? state.workshopModeByPreset[presetId] : undefined
+          const rememberedForPreset = workflowId ? state.workshopModeByPreset[workflowId] : undefined
           const resolvedWorkshopMode: WorkshopMode =
             migrateWorkshopMode(rememberedForPreset ?? state.workshopMode)
-          const updated = presetId
+          const updated = workflowId
             ? {
                 ...state.workshopModeByPreset,
-                [presetId]: resolvedWorkshopMode,
+                [workflowId]: resolvedWorkshopMode,
               }
             : state.workshopModeByPreset
-          if (presetId) {
+          if (workflowId) {
             try {
               setWorkflowStorageItem(WORKSHOP_MODE_BY_PRESET_KEY, JSON.stringify(updated))
             } catch (error) {
@@ -1518,8 +1518,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
       // Load saved settings from localStorage for a preset
       // Uses a single set() call to avoid multiple re-renders
       // Restores selectedRunFolder, selectedGroupIds, currentRunningGroupId from localStorage
-      loadSavedSettings: (presetId: string) => {
-        if (!presetId) return
+      loadSavedSettings: (workflowId: string) => {
+        if (!workflowId) return
 
         try {
           // Load persisted values from localStorage
@@ -1535,8 +1535,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
               const parsed = JSON.parse(groupDataStr)
               // Handle new format: { groupIds: [...], runFolder: "..." }
               if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-                const storedPresetId = typeof parsed.presetId === 'string' ? parsed.presetId : null
-                const presetMatches = !storedPresetId || storedPresetId === presetId
+                const storedPresetId = typeof parsed.workflowId === 'string' ? parsed.workflowId : null
+                const presetMatches = !storedPresetId || storedPresetId === workflowId
                 canRestoreLegacyKeys = !storedPresetId
 
                 if (presetMatches) {
@@ -1597,8 +1597,8 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
       // Switch to a new preset - combines reset and load into a single set() call
       // This avoids multiple re-renders that would occur with separate reset + load calls
-      switchToPreset: (presetId: string) => {
-        if (!presetId) return
+      switchToPreset: (workflowId: string) => {
+        if (!workflowId) return
 
         // Check if localStorage has data for the same preset (page reload scenario)
         let storedPresetId: string | null = null
@@ -1606,16 +1606,16 @@ export const useWorkflowStore = create<WorkflowStore>()(
           const groupDataStr = getWorkflowStorageItem(SELECTED_GROUP_IDS_KEY)
           if (groupDataStr) {
             const parsed = JSON.parse(groupDataStr)
-            if (parsed && typeof parsed === 'object' && parsed.presetId) {
-              storedPresetId = parsed.presetId
+            if (parsed && typeof parsed === 'object' && parsed.workflowId) {
+              storedPresetId = parsed.workflowId
             }
           }
         } catch {
           // Ignore parse errors
         }
 
-        const isSamePreset = storedPresetId === presetId
-        const persistedUIState = loadWorkflowUIStateByPreset()[presetId] ?? {}
+        const isSamePreset = storedPresetId === workflowId
+        const persistedUIState = loadWorkflowUIStateByPreset()[workflowId] ?? {}
 
         try {
           const currentState = get()
@@ -1623,20 +1623,20 @@ export const useWorkflowStore = create<WorkflowStore>()(
 
           // If already on this preset, skip — avoids resetting state when
           // WorkflowModeHandler re-applies the same preset on mount/effect
-          if (oldPresetId === presetId) {
+          if (oldPresetId === workflowId) {
             return
           }
 
-          console.log(`%c[WorkflowStore] switchToPreset: ${oldPresetId?.slice(0,8)} → ${presetId?.slice(0,8)}`, 'color: #2196F3; font-weight: bold')
-          console.time(`[WorkflowStore] switchToPreset-${presetId?.slice(0,8)}`)
+          console.log(`%c[WorkflowStore] switchToPreset: ${oldPresetId?.slice(0,8)} → ${workflowId?.slice(0,8)}`, 'color: #2196F3; font-weight: bold')
+          console.time(`[WorkflowStore] switchToPreset-${workflowId?.slice(0,8)}`)
           const restoredWorkshopMode = migrateWorkshopMode(
-            currentState.workshopModeByPreset[presetId] ?? currentState.workshopMode
+            currentState.workshopModeByPreset[workflowId] ?? currentState.workshopMode
           )
 
           // Save current flat state into the old preset's slot before switching
           // This preserves all execution state (progress, groups, phase, etc.) so it's
           // restored when the user switches back to this workflow.
-          if (oldPresetId && oldPresetId !== presetId) {
+          if (oldPresetId && oldPresetId !== workflowId) {
             const snapshot = snapshotPresetState(currentState)
             set((state) => ({
               _presetStates: { ...state._presetStates, [oldPresetId]: snapshot }
@@ -1658,18 +1658,18 @@ export const useWorkflowStore = create<WorkflowStore>()(
               showWorkspacePane: true,
               workflowWorkspaceView:
                 persistedUIState.workflowWorkspaceView ??
-                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'),
+                (loadLegacyWorkspaceViewByPreset()[workflowId] ?? 'report'),
               focusedPane: 'preview',
               ...(persistedUIState.lastCanvasView ? { lastCanvasView: persistedUIState.lastCanvasView } : {}),
               workshopMode: restoredWorkshopMode,
               workflowMode: 'plan',
-              _currentPresetId: presetId
+              _currentPresetId: workflowId
             } as Partial<WorkflowStore>)
             return
           }
 
           // Restore saved state for the new preset, or use defaults
-          const savedState = currentState._presetStates[presetId]
+          const savedState = currentState._presetStates[workflowId]
           const restored = savedState ?? createDefaultPresetState()
 
           // Apply restored per-preset state to flat fields + reset API-loaded context.
@@ -1680,7 +1680,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             restored.workflowWorkspaceView !== null
               ? restored.workflowWorkspaceView
               : (persistedUIState.workflowWorkspaceView ??
-                (loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'))
+                (loadLegacyWorkspaceViewByPreset()[workflowId] ?? 'report'))
           // New adaptive layout: workflows always open with BOTH the chat rail
           // and the preview canvas visible (focus-follows-click sizes them).
           // Force them on so a stale persisted showChatArea:false from the
@@ -1719,7 +1719,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
             batchProgress: restored.batchProgress,
             workshopMode: restoredWorkshopMode,
             workflowMode: 'plan',
-            _currentPresetId: presetId
+            _currentPresetId: workflowId
           } as Partial<WorkflowStore>)
 
           // Only clear localStorage when there's no saved state (first time visiting this preset)
@@ -1732,7 +1732,7 @@ export const useWorkflowStore = create<WorkflowStore>()(
               console.error('[WorkflowStore] Failed to clear group localStorage on preset switch:', error)
             }
           }
-          console.timeEnd(`[WorkflowStore] switchToPreset-${presetId?.slice(0,8)}`)
+          console.timeEnd(`[WorkflowStore] switchToPreset-${workflowId?.slice(0,8)}`)
         } catch (error) {
           console.error('[WorkflowStore] Failed to switch preset:', error)
         }

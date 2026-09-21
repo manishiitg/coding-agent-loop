@@ -85,8 +85,8 @@ func TestRoutedMessageBypassesTheDefaultProfile(t *testing.T) {
 	})
 	started := make(chan string, 1)
 	manager.SetStartSessionFunc(func(_ context.Context, req map[string]interface{}, sessionID, _ string, _ func(*events.AgentEvent)) error {
-		if req["preset_query_id"] != "wf-report" {
-			t.Errorf("request preset = %v, want wf-report", req["preset_query_id"])
+		if req["workflow_id"] != "wf-report" {
+			t.Errorf("request preset = %v, want wf-report", req["workflow_id"])
 		}
 		started <- sessionID
 		return nil

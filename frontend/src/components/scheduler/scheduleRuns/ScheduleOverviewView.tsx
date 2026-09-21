@@ -110,7 +110,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
 
           <div className="grid gap-2 md:grid-cols-2">
             {missedJobs.map((job) => {
-              const preset = presetMap.get(job.preset_query_id ?? '')
+              const preset = presetMap.get(job.workflow_id ?? '')
               const label = localizeTimezoneLabel(
                 preset?.label || job.workflow_label || job.name,
                 job.next_run_at
@@ -164,7 +164,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
         ) : (
           <div className="grid gap-2 md:grid-cols-2">
             {upcomingJobs.map((job) => {
-              const preset = presetMap.get(job.preset_query_id ?? '')
+              const preset = presetMap.get(job.workflow_id ?? '')
               const label = localizeTimezoneLabel(
                 preset?.label || job.workflow_label || job.name,
                 job.next_run_at

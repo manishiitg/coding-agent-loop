@@ -21,7 +21,7 @@ function tab(overrides: Partial<ChatTab> = {}): ChatTab {
     metadata: {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: 'workflow-a',
+      workflowId: 'workflow-a',
     },
     ...overrides,
   }
@@ -32,7 +32,7 @@ describe('workflow tab ownership', () => {
     const workflowB = tab({
       tabId: 'tab-b',
       sessionId: 'session-b',
-      metadata: { mode: 'workflow', phaseId: 'workflow-builder', presetQueryId: 'workflow-b' },
+      metadata: { mode: 'workflow', phaseId: 'workflow-builder', workflowId: 'workflow-b' },
     })
     const tabs = { [workflowB.tabId]: workflowB }
 
@@ -65,7 +65,7 @@ describe('workflow tab ownership', () => {
       sessionId: 'schedule-run',
       metadata: {
         mode: 'workflow',
-        presetQueryId: 'workflow-a',
+        workflowId: 'workflow-a',
         isViewOnly: true,
         isScheduledRun: true,
         // Old timestamps must not give a background reconcile permission to

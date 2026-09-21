@@ -35,7 +35,7 @@ describe('workflow session restore classification', () => {
   it('keeps the Pulse parent selected instead of its newer internal reviewer', () => {
     const parent = session({
       session_id: 'pulse-root-1',
-      preset_query_id: 'rtslatency',
+      workflow_id: 'rtslatency',
       workspace_path: 'Workflow/rtslatency',
       last_activity: '2026-08-03T09:00:00Z',
     })
@@ -43,7 +43,7 @@ describe('workflow session restore classification', () => {
       session_id: 'pulse-reviewer-1',
       parent_session_id: parent.session_id,
       session_kind: 'pulse_reviewer',
-      preset_query_id: 'rtslatency',
+      workflow_id: 'rtslatency',
       workspace_path: 'Workflow/rtslatency',
       has_retained_tmux_session: true,
       last_activity: '2026-08-03T09:05:00Z',
@@ -64,7 +64,7 @@ describe('workflow session restore classification', () => {
     // live background agents) still selects.
     const retained = session({
       status: 'completed',
-      preset_query_id: 'rtslatency',
+      workflow_id: 'rtslatency',
       workspace_path: 'Workflow/rtslatency',
       has_retained_tmux_session: true,
       last_activity: new Date().toISOString(),
@@ -81,7 +81,7 @@ describe('workflow session restore classification', () => {
   it('uses authoritative running runtime state even when legacy status says completed', () => {
     const running = session({
       status: 'completed',
-      preset_query_id: 'build-in-public',
+      workflow_id: 'build-in-public',
       workspace_path: 'Workflow/build-in-public',
       runtime_state: { phase: 'running' } as ActiveSessionInfo['runtime_state'],
     })

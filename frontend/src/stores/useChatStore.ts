@@ -364,7 +364,7 @@ export interface ChatTabConfig {
   cdpPort?: number  // CDP port (default 9222)
   delegationTierConfig?: DelegationTierConfig  // Per-tab delegation tier config (multi-agent mode)
   workflowContext: Array<{
-    presetId: string
+    workflowId: string
     label: string
     workspacePath: string
   }>  // Workflow presets selected via # in chat input
@@ -431,7 +431,7 @@ export interface ChatTab {
     phaseName?: string  // For workflow mode: phase name
     workshopMode?: 'workshop' | 'run' // Prompt/tool policy pinned to this workflow chat
     mode?: 'workflow' | 'multi-agent'  // Which mode this tab belongs to
-    presetQueryId?: string  // For workflow mode: preset query ID (workflow identifier)
+    workflowId?: string  // Stable workflow manifest ID
     isOrganizationAssistant?: boolean // True when tab is reserved for Organization panel
     isRestored?: boolean  // True when restored from history (inline history panel or page refresh)
     isRestoringSession?: boolean  // True while session events are being loaded from backend
@@ -609,7 +609,7 @@ export interface ChatState extends StoreActions {
   
   // Workflow execution state (not preset management)
   currentWorkflowPhase: WorkflowPhase
-  currentWorkflowQueryId: string | null
+  currentWorkflowId: string | null
   
   // Toast notifications
   toasts: Array<{ id: string; message: string; type: 'success' | 'info' | 'error' | 'warning' }>
@@ -708,7 +708,7 @@ export interface ChatState extends StoreActions {
   
   // Workflow execution actions
   setCurrentWorkflowPhase: (phase: WorkflowPhase) => void
-  setCurrentWorkflowQueryId: (id: string | null) => void
+  setCurrentWorkflowId: (id: string | null) => void
   
   // Toast actions
   addToast: (message: string, type: 'success' | 'info' | 'error' | 'warning') => void
@@ -722,7 +722,7 @@ export interface ChatState extends StoreActions {
   getTab: (tabId: string) => ChatTab | undefined
   getActiveTab: () => ChatTab | undefined
   getTabsByMode: (mode: 'multi-agent' | 'workflow') => ChatTab[]
-  getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
+  getTabsByPhaseId: (phaseId: string, workflowId?: string) => ChatTab[]  // Find workflow tabs by phaseId (optionally scoped to preset)
   setTabStreaming: (tabId: string, isStreaming: boolean) => void
   setTabCompleted: (tabId: string, isCompleted: boolean) => void
   setTabHasRunningBgAgents: (tabId: string, hasRunningBgAgents: boolean) => void
@@ -980,7 +980,7 @@ export const useChatStore = create<ChatState>()(
       sessionState: 'loading',
       isCheckingActiveSessions: false,
       currentWorkflowPhase: 'planning' as WorkflowPhase,
-      currentWorkflowQueryId: null,
+      currentWorkflowId: null,
       toasts: [],
       chatTabs: {},
       activeTabId: null,
@@ -1620,8 +1620,8 @@ export const useChatStore = create<ChatState>()(
         set({ currentWorkflowPhase: phase })
       },
 
-      setCurrentWorkflowQueryId: (id) => {
-        set({ currentWorkflowQueryId: id })
+      setCurrentWorkflowId: (id) => {
+        set({ currentWorkflowId: id })
       },
 
       // Toast actions
@@ -2147,7 +2147,7 @@ export const useChatStore = create<ChatState>()(
           sessionState: 'loading',
           isCheckingActiveSessions: false,
           currentWorkflowPhase: 'planning' as WorkflowPhase,
-          currentWorkflowQueryId: null,
+          currentWorkflowId: null,
           toasts: [],
           chatTabs: {},
           activeTabId: null,
@@ -2208,7 +2208,7 @@ export const useChatStore = create<ChatState>()(
           sessionState: 'loading',
           isCheckingActiveSessions: false,
           currentWorkflowPhase: 'planning' as WorkflowPhase,
-          currentWorkflowQueryId: null,
+          currentWorkflowId: null,
           toasts: [],
           chatTabs: {},
           activeTabId: null,
@@ -2665,12 +2665,12 @@ export const useChatStore = create<ChatState>()(
         return Object.values(state.chatTabs).filter(tab => tab.metadata?.mode === mode)
       },
       
-      getTabsByPhaseId: (phaseId: string, presetQueryId?: string) => {
+      getTabsByPhaseId: (phaseId: string, workflowId?: string) => {
         const state = get()
         return Object.values(state.chatTabs).filter(
           tab => tab.metadata?.mode === 'workflow' &&
             tab.metadata?.phaseId === phaseId &&
-            (!presetQueryId || tab.metadata?.presetQueryId === presetQueryId)
+            (!workflowId || tab.metadata?.workflowId === workflowId)
         )
       },
       
@@ -3303,6 +3303,14 @@ function normalizeHydratedChatStore(): void {
 
   for (const [tabId, tab] of Object.entries(state.chatTabs)) {
     let nextTab = tab
+    // Saved tabs created by older builds used a different metadata key. Read it
+    // once during hydration; the next persistence write uses only workflowId.
+    const savedMetadata = tab.metadata as (typeof tab.metadata & { presetQueryId?: string }) | undefined
+    if (savedMetadata?.presetQueryId && !savedMetadata.workflowId) {
+      const { presetQueryId, ...metadata } = savedMetadata
+      nextTab = { ...nextTab, metadata: { ...metadata, workflowId: presetQueryId } }
+      migratedTabConfig = true
+    }
     if (tab.config && tab.config.browserMode === undefined) {
       nextTab = {
         ...tab,

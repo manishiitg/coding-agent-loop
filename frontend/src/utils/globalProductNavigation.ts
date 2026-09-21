@@ -25,12 +25,12 @@ export function workProjectIdForTab(tab?: Pick<ChatTab, 'metadata'> | null): str
 }
 
 export function workProjectIdForSession(
-  session: Pick<ActiveSessionInfo, 'session_id' | 'preset_query_id'>,
+  session: Pick<ActiveSessionInfo, 'session_id' | 'workflow_id'>,
   tab?: Pick<ChatTab, 'metadata'> | null,
 ): string | null {
   const fromTab = workProjectIdForTab(tab)
   if (fromTab) return fromTab
-  const preset = session.preset_query_id?.trim()
+  const preset = session.workflow_id?.trim()
   if (preset) return preset
   return session.session_id.startsWith('work:project:')
     ? session.session_id.slice('work:project:'.length).split(':')[0]?.trim() || null

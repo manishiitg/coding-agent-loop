@@ -66,7 +66,7 @@ const ChatAreaWithObserverId = forwardRef<ChatAreaRef, {
   // Prefer the active workflow tab when one is selected. The tab strip keeps
   // active workflow tabs visible even while preset metadata is catching up
   // after reload; ChatArea must use the same rule or the input area disappears.
-  // Legacy/restored builder tabs may not have presetQueryId, so allow those
+  // Legacy/restored builder tabs may not have workflowId, so allow those
   // when there is no exact tab for the active preset.
   const currentPresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const workflowTabId = useChatStore(state =>
@@ -212,11 +212,11 @@ function isRunningWorkflowEntry(entry: RunningWorkflowInfo): boolean {
 
 function runningWorkflowBelongsToPreset(
   entry: RunningWorkflowInfo,
-  presetId: string,
+  workflowId: string,
   workspacePath?: string | null,
 ): boolean {
-  if (entry.preset_query_id) {
-    return entry.preset_query_id === presetId
+  if (entry.workflow_id) {
+    return entry.workflow_id === workflowId
   }
   return Boolean(
     workspacePath &&
@@ -233,7 +233,7 @@ function activeSessionToRunningWorkflowInfo(session: ActiveSessionInfo): Running
   return {
     query_id: session.session_id,
     session_id: session.session_id,
-    preset_query_id: session.preset_query_id,
+    workflow_id: session.workflow_id,
     preset_name: session.preset_name,
     workspace_path: session.workspace_path || '',
     phase_id: session.phase_id,
@@ -285,7 +285,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
     const chatStore = useChatStore.getState()
     const restoredWorkshopMode = chatHistoryWorkshopMode(session)
     let targetTab = chatStore.chatTabs[targetTabId]
-    const targetPresetId = targetTab?.metadata?.presetQueryId
+    const targetPresetId = targetTab?.metadata?.workflowId
 
     if (
       !targetTab ||
@@ -300,10 +300,10 @@ const WorkflowPreviousChatsPanel: React.FC<{
       targetTabId = (await resolveWorkflowTabForSession({
         getTabs: () => useChatStore.getState().chatTabs,
         getTabEvents: () => useChatStore.getState().tabEvents,
-        presetQueryId: activePresetId || '',
+        workflowId: activePresetId || '',
         sessionId: session.session_id,
         name: 'Automation Builder',
-        metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', presetQueryId: activePresetId || undefined, workshopMode: restoredWorkshopMode },
+        metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', workflowId: activePresetId || undefined, workshopMode: restoredWorkshopMode },
         createChatTab: latestStore.createChatTab,
         updateTabSessionId: latestStore.updateTabSessionId,
       })).tabId
@@ -315,11 +315,11 @@ const WorkflowPreviousChatsPanel: React.FC<{
       return
     }
 
-    if (activePresetId && targetTab.metadata?.presetQueryId !== activePresetId) {
+    if (activePresetId && targetTab.metadata?.workflowId !== activePresetId) {
       chatStore.setTabMetadata(targetTabId, {
         phaseId: targetTab.metadata?.phaseId || 'workflow-builder',
         phaseName: targetTab.metadata?.phaseName || 'Automation Builder',
-        presetQueryId: activePresetId,
+        workflowId: activePresetId,
       })
     }
     chatStore.setTabMetadata(targetTabId, { workshopMode: restoredWorkshopMode })
@@ -371,7 +371,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       const chatStore = useChatStore.getState()
       const scheduleMetadata: NonNullable<ChatTab['metadata']> = {
         mode: 'workflow',
-        presetQueryId: activePresetId || undefined,
+        workflowId: activePresetId || undefined,
         isViewOnly: true,
         isScheduledRun: isSchedule,
         isBotRun: Boolean(session.bot_platform),
@@ -386,7 +386,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
       // and re-pointed afterwards).
       const { tabId: targetTabId, via } = await resolveWorkflowTabForSession({
         getTabs: () => useChatStore.getState().chatTabs,
-        presetQueryId: activePresetId || '',
+        workflowId: activePresetId || '',
         sessionId: session.session_id,
         name: transcriptLabel,
         metadata: scheduleMetadata,
@@ -460,17 +460,17 @@ const WorkflowPreviousChatsPanel: React.FC<{
   )
 }
 
-function workflowSessionMatchesPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
+function workflowSessionMatchesPreset(session: ActiveSessionInfo, workflowId: string, workspacePath?: string | null): boolean {
   if (session.agent_mode !== 'workflow' && session.agent_mode !== 'workflow_phase') return false
 
-  if (session.preset_query_id && session.preset_query_id === presetId) return true
+  if (session.workflow_id && session.workflow_id === workflowId) return true
 
   const targetWorkspace = normalizeWorkflowPath(workspacePath)
   return !!targetWorkspace && normalizeWorkflowPath(session.workspace_path) === targetWorkspace
 }
 
-function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: string, workspacePath?: string | null): boolean {
-  if (!workflowSessionMatchesPreset(session, presetId, workspacePath)) return false
+function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, workflowId: string, workspacePath?: string | null): boolean {
+  if (!workflowSessionMatchesPreset(session, workflowId, workspacePath)) return false
 
   const status = (session.status || '').toLowerCase().trim()
   return (
@@ -491,15 +491,15 @@ function isLiveWorkflowSessionForPreset(session: ActiveSessionInfo, presetId: st
  * or create the first-time empty Chat. Creating activates it, so callers that
  * already chose another read-only run can preserve that selection.
  */
-async function ensureWorkflowBuilderTab(presetId: string, options?: { keepSelection?: boolean }): Promise<string> {
+async function ensureWorkflowBuilderTab(workflowId: string, options?: { keepSelection?: boolean }): Promise<string> {
   const store = useChatStore.getState()
   const previousActiveTabId = store.activeTabId
   const { tabId, via } = await resolveWorkflowTabForSession({
     getTabs: () => useChatStore.getState().chatTabs,
     getTabEvents: () => useChatStore.getState().tabEvents,
-    presetQueryId: presetId,
+    workflowId: workflowId,
     name: 'Automation Builder',
-    metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', presetQueryId: presetId },
+    metadata: { mode: 'workflow', phaseId: 'workflow-builder', phaseName: 'Automation Builder', workflowId: workflowId },
     createChatTab: store.createChatTab,
     updateTabSessionId: store.updateTabSessionId,
   })
@@ -779,15 +779,15 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     setShowWorkspacePane(true)
     setFocusedPane('chat')
   }, [setFocusedPane, setShowChatArea, setShowWorkspacePane])
-  // Track the previous preset ID for auto-minimize on preset switch
+  // Track the previous workflow ID for auto-minimize on preset switch
   const previousPresetIdRef = useRef<string | null>(null)
-  const pendingReadOnlyRestoreRef = useRef<{ presetId: string | null; tabId: string } | null>(null)
+  const pendingReadOnlyRestoreRef = useRef<{ workflowId: string | null; tabId: string } | null>(null)
   useEffect(() => {
     const handleReadOnlyRestore = (event: Event) => {
-      const detail = (event as CustomEvent<{ presetId?: string | null; tabId?: string }>).detail
+      const detail = (event as CustomEvent<{ workflowId?: string | null; tabId?: string }>).detail
       if (!detail?.tabId) return
       pendingReadOnlyRestoreRef.current = {
-        presetId: detail.presetId ?? null,
+        workflowId: detail.workflowId ?? null,
         tabId: detail.tabId,
       }
       revealWorkflowChat(detail.tabId)
@@ -915,8 +915,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Get active workflow preset (file-backed manifests, not DB presets)
   const activePresetId = useGlobalPresetStore(state => state.activePresetIds.workflow)
   const activeWorkflowPreset = useGlobalPresetStore(state => {
-    const presetId = state.activePresetIds.workflow
-    return presetId ? state.workflowPresets.find(preset => preset.id === presetId) ?? null : null
+    const workflowId = state.activePresetIds.workflow
+    return workflowId ? state.workflowPresets.find(preset => preset.id === workflowId) ?? null : null
   })
   // The manifest registry is the canonical workflow identity. Preset objects
   // can briefly lag behind activePresetId during an in-app workflow switch;
@@ -931,26 +931,26 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // Keep the last concrete workspace path for the active preset during manifest
   // refreshes. A transient null here unmounts the report pane and makes toolbar
   // popups think the user switched workflows.
-  const lastWorkspacePathRef = useRef<{ presetId: string | null, path: string | null }>({
-    presetId: activePresetId,
+  const lastWorkspacePathRef = useRef<{ workflowId: string | null, path: string | null }>({
+    workflowId: activePresetId,
     path: activeWorkflowWorkspacePath,
   })
 
   const workspacePath = useMemo(() => {
     if (activeWorkflowWorkspacePath) {
       lastWorkspacePathRef.current = {
-        presetId: activePresetId,
+        workflowId: activePresetId,
         path: activeWorkflowWorkspacePath,
       }
       return activeWorkflowWorkspacePath
     }
 
-    if (activePresetId && lastWorkspacePathRef.current.presetId === activePresetId) {
+    if (activePresetId && lastWorkspacePathRef.current.workflowId === activePresetId) {
       return lastWorkspacePathRef.current.path
     }
 
     lastWorkspacePathRef.current = {
-      presetId: activePresetId,
+      workflowId: activePresetId,
       path: null,
     }
     return null
@@ -1011,8 +1011,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   // on the open path writes a layout preference -- see the invariant in
   // utils/reportPreviewPreference.ts.
 
-  const createFreshWorkflowBuilderTab = useCallback(async (presetId: string) => {
-    const tabId = await ensureWorkflowBuilderTab(presetId)
+  const createFreshWorkflowBuilderTab = useCallback(async (workflowId: string) => {
+    const tabId = await ensureWorkflowBuilderTab(workflowId)
     activateTab(tabId)
     setShowChatArea(true)
   }, [setShowChatArea])
@@ -1325,7 +1325,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           Object.values(useChatStore.getState().chatTabs)
             .filter(t =>
               t.metadata?.mode === 'workflow' &&
-              t.metadata?.presetQueryId === activePresetId
+              t.metadata?.workflowId === activePresetId
             )
             .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
@@ -1395,9 +1395,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         // Add active sessions that belong to this preset. We read the
         // running-workflow registry (workflow-owned storage) instead of
         // reaching into the chat session metadata.
-        // Match live sessions through preset ID first, then workspace path.
+        // Match live sessions through workflow ID first, then workspace path.
         // This covers older workflow_phase sessions where the tracker knows the
-        // workspace but not the preset ID, without attaching unknown sessions to
+        // workspace but not the workflow ID, without attaching unknown sessions to
         // whatever workflow happens to be active.
         // Fallback: if no registry lookup resolved a preset, allow the session
         // through only when its persisted chat tab already binds it to the
@@ -1413,7 +1413,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             triggeredBy: registryRunning.triggered_by,
           }))
           const hasOpenTab = Object.values(useChatStore.getState().chatTabs).some(tab =>
-            tab.sessionId === s.session_id && tab.metadata?.presetQueryId === activePresetId
+            tab.sessionId === s.session_id && tab.metadata?.workflowId === activePresetId
           )
           if (!shouldDiscoverWorkflowChatTab({
             sessionId: s.session_id,
@@ -1428,8 +1428,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           let belongsToPreset = isLiveWorkflowSessionForPreset(s, activePresetId, workspacePath)
           try {
             const running = registryRunning || await agentApi.getRunningWorkflow(s.session_id)
-            if (running.preset_query_id) {
-              belongsToPreset = running.preset_query_id === activePresetId
+            if (running.workflow_id) {
+              belongsToPreset = running.workflow_id === activePresetId
             } else if (workspacePath && running.workspace_path) {
               belongsToPreset = normalizeWorkflowPath(running.workspace_path) === normalizeWorkflowPath(workspacePath)
             }
@@ -1440,7 +1440,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             const persistedTab = Object.values(chatTabsById).find(
               t => t.sessionId === s.session_id && t.metadata?.mode === 'workflow'
             )
-            if (persistedTab?.metadata?.presetQueryId === activePresetId) {
+            if (persistedTab?.metadata?.workflowId === activePresetId) {
               belongsToPreset = true
             }
           }
@@ -1470,7 +1470,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             sessionId: running.session_id,
             triggeredBy: running.triggered_by,
           }, Object.values(useChatStore.getState().chatTabs).some(tab =>
-            tab.sessionId === running.session_id && tab.metadata?.presetQueryId === activePresetId
+            tab.sessionId === running.session_id && tab.metadata?.workflowId === activePresetId
           ))) continue
           const belongsToPreset = runningWorkflowBelongsToPreset(running, activePresetId, workspacePath)
           if (!belongsToPreset) continue
@@ -1605,14 +1605,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         const restoreHistorySessionTab = async (historySession: ChatHistorySession, sessionId: string): Promise<string> => {
           const { tabId } = await resolveWorkflowTabForSession({
             getTabs: () => useChatStore.getState().chatTabs,
-            presetQueryId: activePresetId,
+            workflowId: activePresetId,
             sessionId,
             name: 'Automation Builder',
             metadata: {
               mode: 'workflow',
               phaseId: 'workflow-builder',
               phaseName: 'Automation Builder',
-              presetQueryId: activePresetId,
+              workflowId: activePresetId,
               isViewOnly: false,
             },
             createChatTab,
@@ -1704,14 +1704,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           // tab instead of opening a second one beside it.
           const { tabId } = await resolveWorkflowTabForSession({
             getTabs: () => useChatStore.getState().chatTabs,
-            presetQueryId: activePresetId,
+            workflowId: activePresetId,
             sessionId: session.sessionId,
             name: phaseName,
             metadata: {
               mode: 'workflow',
               phaseId: phaseId || undefined,
               phaseName,
-              presetQueryId: activePresetId,
+              workflowId: activePresetId,
               isViewOnly: isScheduled || isBot ? true : undefined,
               isScheduledRun: isScheduled || undefined,
               scheduledJobName: isScheduled ? (session.title || phaseName) : undefined,
@@ -1882,7 +1882,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             sessionId: item.session_id,
             triggeredBy: item.triggered_by,
           }, Object.values(useChatStore.getState().chatTabs).some(tab =>
-            tab.sessionId === item.session_id && tab.metadata?.presetQueryId === activePresetId
+            tab.sessionId === item.session_id && tab.metadata?.workflowId === activePresetId
           )))
           .sort((a, b) => new Date(b.started_at || 0).getTime() - new Date(a.started_at || 0).getTime())
           .flatMap(running => {
@@ -1910,7 +1910,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           const latestChatStore = useChatStore.getState()
           const { tabId } = await resolveWorkflowTabForSession({
             getTabs: () => useChatStore.getState().chatTabs,
-            presetQueryId: activePresetId,
+            workflowId: activePresetId,
             sessionId: running.session_id,
             name: projection.name,
             metadata: projection.metadata,
@@ -2029,13 +2029,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       const newPresetTabs = Object.values(chatTabs)
         .filter(t =>
           t.metadata?.mode === 'workflow' &&
-          t.metadata?.presetQueryId === activePresetId
+          t.metadata?.workflowId === activePresetId
         )
         .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
       if (newPresetTabs.length > 0) {
         const pendingReadOnlyRestore = pendingReadOnlyRestoreRef.current
-        const restoredReadOnlyTab = pendingReadOnlyRestore?.presetId === activePresetId
+        const restoredReadOnlyTab = pendingReadOnlyRestore?.workflowId === activePresetId
           ? newPresetTabs.find(t => t.tabId === pendingReadOnlyRestore.tabId && t.metadata?.isViewOnly)
           : undefined
         pendingReadOnlyRestoreRef.current = null
@@ -2188,13 +2188,13 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       if (
         !activeTab ||
         activeTab.metadata?.mode !== 'workflow' ||
-        activeTab.metadata?.presetQueryId !== activePresetId ||
+        activeTab.metadata?.workflowId !== activePresetId ||
         activeTab.metadata?.isViewOnly
       ) {
         const workflowTabs = Object.values(chatStore.chatTabs)
           .filter(t =>
             isInteractiveWorkflowTab(t) &&
-            t.metadata?.presetQueryId === activePresetId
+            t.metadata?.workflowId === activePresetId
           )
           .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
         if (workflowTabs.length > 0) {
@@ -2256,7 +2256,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     <WorkflowCanvas
       ref={canvasRef}
       workspacePath={workspacePath}
-      presetQueryId={activePresetId}
+      workflowId={activePresetId}
       currentPhase={activePhase || currentWorkflowPhase}
       onStartPhase={handleStartPhase}
       onCreatePlan={onCreatePlan || handleCreatePlan}
@@ -2272,7 +2272,7 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           key={`${activePresetId || 'workflow'}:${workspacePath}`}
           entityType="workflow"
           workspacePath={workspacePath}
-          workflowScope={{ presetQueryId: activePresetId || undefined, workspacePath }}
+          workflowScope={{ workflowId: activePresetId || undefined, workspacePath }}
           chatContent={<WorkflowPreviousChatsPanel primary chatOnly workspacePath={workspacePath} />}
         />
       ) : undefined}

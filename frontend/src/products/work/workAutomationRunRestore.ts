@@ -37,9 +37,9 @@ async function resolveRunProject(session: ActiveSessionInfo): Promise<WorkSessio
     const byTab = projects.find(project => project.id === boundProjectId)
     if (byTab) return byTab
   }
-  const presetId = session.preset_query_id?.trim()
-  if (presetId) {
-    const byPreset = projects.find(project => project.id === presetId)
+  const workflowId = session.workflow_id?.trim()
+  if (workflowId) {
+    const byPreset = projects.find(project => project.id === workflowId)
     if (byPreset) return byPreset
   }
   const sessionWorkspace = normalizeRunWorkspace(session.workspace_path)

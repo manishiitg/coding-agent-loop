@@ -4499,7 +4499,7 @@ func (s *SchedulerService) buildWorkshopRequest(ctx context.Context, sctx *Sched
 	reqMap := map[string]interface{}{
 		"agent_mode":                  "workflow_phase",
 		"phase_id":                    workflowtypes.WorkflowStatusWorkflowBuilder,
-		"preset_query_id":             sctx.WorkflowID,
+		"workflow_id":                 sctx.WorkflowID,
 		"selected_folder":             sctx.WorkspacePath,
 		"triggered_by":                scheduleSessionTrigger(sctx),
 		"session_title":               sctx.Schedule.Name,

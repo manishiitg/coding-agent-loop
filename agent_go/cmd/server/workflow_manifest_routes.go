@@ -743,7 +743,7 @@ func (api *StreamingAPI) handleDuplicateWorkflowManifest(w http.ResponseWriter, 
 // --- Resolve manifest for execution ---
 
 // ResolveWorkflowManifest loads a manifest for a given workspace path.
-func (api *StreamingAPI) ResolveWorkflowManifest(ctx context.Context, workspacePath string, presetQueryID string) (*WorkflowManifest, error) {
+func (api *StreamingAPI) ResolveWorkflowManifest(ctx context.Context, workspacePath string, workflowID string) (*WorkflowManifest, error) {
 	if workspacePath != "" {
 		manifest, exists, err := ReadWorkflowManifest(ctx, workspacePath)
 		if err == nil && exists {
@@ -757,24 +757,24 @@ func (api *StreamingAPI) ResolveWorkflowManifest(ctx context.Context, workspaceP
 	return nil, fmt.Errorf("no workflow.json manifest found at workspace path %q", workspacePath)
 }
 
-// --- Helper: resolve workspace path from preset/workflow ID ---
+// --- Helper: resolve workspace path from workflow manifest ID ---
 
-func (api *StreamingAPI) resolveWorkspacePathFromPreset(ctx context.Context, presetQueryID string) (string, error) {
-	if presetQueryID == "" {
-		return "", fmt.Errorf("preset_query_id is empty")
+func (api *StreamingAPI) resolveWorkspacePathFromWorkflowID(ctx context.Context, workflowID string) (string, error) {
+	if workflowID == "" {
+		return "", fmt.Errorf("workflow_id is empty")
 	}
 
 	// Look up workflow manifest by ID (file-backed, no DB dependency)
 	workflows, err := DiscoverWorkflowManifests(ctx)
 	if err == nil {
 		for _, wf := range workflows {
-			if wf.Manifest.ID == presetQueryID {
+			if wf.Manifest.ID == workflowID {
 				return wf.WorkspacePath, nil
 			}
 		}
 	}
 
-	return "", fmt.Errorf("workflow %s not found in discovered manifests", presetQueryID)
+	return "", fmt.Errorf("workflow %s not found in discovered manifests", workflowID)
 }
 
 // --- Helper: check if a setCORS-like helper already exists ---

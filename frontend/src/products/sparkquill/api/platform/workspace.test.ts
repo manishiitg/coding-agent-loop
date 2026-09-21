@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { FamilyWorkspace, documentsURL, familyRelative, sha256Hex, workspacePath } from './workspace'
+import { MAX_WORKSPACE_UPLOAD_BYTES } from '../../../../utils/workspaceUploadLimit'
 
 function fakeRequester(files: Record<string, string>, listing: unknown[] = []) {
   const calls: { method: string; path: string; body?: unknown }[] = []
@@ -138,5 +139,13 @@ describe('FamilyWorkspace', () => {
     await ws.writeJSON(ws.stateFile('scene:room/1'), { key: 'k', data: { score: 3 } })
     expect(Object.keys(fake.files)).toContain('Chats/SparkQuill/state/scene_room_1.json')
     expect((await ws.readJSON<{ data: unknown }>('state/scene_room_1.json'))?.data).toEqual({ score: 3 })
+  })
+
+  it('rejects an oversized upload before calling the workspace API', async () => {
+    const fake = fakeRequester({})
+    const ws = new FamilyWorkspace(fake.request)
+    const result = await ws.upload(new File([new Uint8Array(MAX_WORKSPACE_UPLOAD_BYTES + 1)], 'large.txt'), 'inbox')
+    expect(result.error).toContain('10 MB')
+    expect(fake.calls).toHaveLength(0)
   })
 })

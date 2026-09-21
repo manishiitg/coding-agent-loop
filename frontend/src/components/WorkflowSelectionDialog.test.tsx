@@ -91,7 +91,7 @@ it('lists Crew projects with identity and selects their guarded workspace path',
   expect(crewRow).toBeDefined()
   await act(async () => crewRow!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true })))
   expect(onSelect).toHaveBeenCalledWith(expect.objectContaining({
-    presetId: 'crew:crew-1',
+    workflowId: 'crew:crew-1',
     label: 'Harbor',
     workspacePath: 'Chats/Work/projects/release-operations-crew-1',
     kind: 'crew',

@@ -11,7 +11,7 @@ import type { PlannerFile, PresetLLMConfig } from '../services/api-types'
 interface PresetSelectionOverlayProps {
   isOpen: boolean
   onClose: () => void
-  onPresetSelected: (presetId: string) => void
+  onPresetSelected: (workflowId: string) => void
   modeCategory: Exclude<ModeCategory, null>
   setCurrentQuery?: (query: string) => void
 }
@@ -45,8 +45,8 @@ export const PresetSelectionOverlay: React.FC<PresetSelectionOverlayProps> = ({
     }
   }, [isOpen])
 
-  const handlePresetSelect = (presetId: string) => {
-    setSelectedPresetId(presetId)
+  const handlePresetSelect = (workflowId: string) => {
+    setSelectedPresetId(workflowId)
   }
 
   const handleConfirm = () => {

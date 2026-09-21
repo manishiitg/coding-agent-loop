@@ -4,6 +4,7 @@
 // the proxy stamps the user, and "Chats/…" resolves to that user's tree.
 import type { Activity, StoredMsg, TreeNode } from '../../stores/types'
 import type { FileContent, TreeResponse, UploadResult } from '../familyApi'
+import { workspaceUploadSizeError } from '../../../../utils/workspaceUploadLimit'
 
 export const FAMILY_ROOT = 'Chats/SparkQuill'
 export const ACTIVITIES = 'activities'
@@ -107,6 +108,9 @@ export class FamilyWorkspace {
   }
 
   async upload(file: File, folderRel: string): Promise<UploadResult> {
+    const sizeError = workspaceUploadSizeError(file)
+    if (sizeError) return { name: file.name, error: sizeError }
+
     const fd = new FormData()
     fd.append('folder_path', workspacePath(folderRel))
     fd.append('file', file)

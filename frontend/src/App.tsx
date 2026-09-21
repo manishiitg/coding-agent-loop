@@ -212,7 +212,7 @@ function App() {
             largestEventKB: Math.round(largestForSessionBytes / 1024),
             largestEventType: largestForSessionType,
             mode: firstTab.metadata?.mode || '?',
-            preset: (firstTab.metadata?.presetQueryId || '').slice(0, 8),
+            preset: (firstTab.metadata?.workflowId || '').slice(0, 8),
             streaming: sessionTabs.some(t => t.isStreaming),
             hasSSE: !!sseConns[sid]
           })
@@ -638,7 +638,7 @@ function App() {
 
         const activeTabMatchesPreset = activeTab &&
           activeTab.metadata?.mode === 'workflow' &&
-          activeTab.metadata?.presetQueryId === activePresetId
+          activeTab.metadata?.workflowId === activePresetId
         const explicitReadOnlyActiveTab = activeTabMatchesPreset && isRecentExplicitReadOnlyWorkflowTab(activeTab)
           ? activeTab
           : null
@@ -653,7 +653,7 @@ function App() {
           .sort((a, b) => workflowTabSortTimestamp(b) - workflowTabSortTimestamp(a))
 
         if (activePresetId) {
-          const presetTabs = workflowTabs.filter(tab => tab.metadata?.presetQueryId === activePresetId)
+          const presetTabs = workflowTabs.filter(tab => tab.metadata?.workflowId === activePresetId)
           if (presetTabs.length > 0) workflowTabs = presetTabs
         }
 
@@ -662,7 +662,7 @@ function App() {
           : null
         const rememberedWorkflowTabMatchesPreset = rememberedWorkflowTab &&
           isInteractiveWorkflowTab(rememberedWorkflowTab) &&
-          rememberedWorkflowTab.metadata?.presetQueryId === activePresetId
+          rememberedWorkflowTab.metadata?.workflowId === activePresetId
         const builderTab = workflowTabs.find(tab => tab.metadata?.phaseId === 'workflow-builder')
         const streamingTab = workflowTabs.find(tab => chatStore.getTabStreamingStatus(tab.tabId) || tab.isStreaming)
         const activeWorkflowViewMode = normalizeEventViewMode(

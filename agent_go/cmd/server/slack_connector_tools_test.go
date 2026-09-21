@@ -57,7 +57,7 @@ func TestSlackRouteToolAcceptsAuthenticatedCLIBridgeOwner(t *testing.T) {
 		t.Fatal(err)
 	}
 	tool := reg.tools["create_slack_bot_route"]
-	resolve := api.bindToolExecutionContext(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice"}), "builder-alice", QueryRequest{SelectedFolder: "Workflow/example", PresetQueryID: "example"}, false)
+	resolve := api.bindToolExecutionContext(context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "alice"}), "builder-alice", QueryRequest{SelectedFolder: "Workflow/example", WorkflowID: "example"}, false)
 	invoke := func(ctx context.Context, args map[string]interface{}) (string, error) {
 		operatorCtx, err := resolve(ctx, "create_slack_bot_route")
 		if err != nil {

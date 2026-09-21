@@ -23,7 +23,7 @@ From the frontend, builder chat is sent as:
 
 - `agent_mode = workflow_phase`
 - `phase_id = workflow-builder`
-- `preset_query_id = <workflow preset>`
+- `workflow_id = <workflow manifest ID>`
 
 The server then:
 - resolves the workflow manifest

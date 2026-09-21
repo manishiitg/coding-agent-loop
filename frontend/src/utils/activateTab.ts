@@ -42,7 +42,7 @@ export function activateTab(tabId: string): boolean {
 
   // The tab metadata is the source of truth for which pane it belongs to.
   const mode = tab.metadata?.mode ?? 'multi-agent'
-  if (mode === 'workflow' && tab.metadata?.presetQueryId) {
+  if (mode === 'workflow' && tab.metadata?.workflowId) {
     return activateWorkflowTab(tabId)
   }
 

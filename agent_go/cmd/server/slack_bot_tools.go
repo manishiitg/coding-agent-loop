@@ -351,7 +351,7 @@ func (api *StreamingAPI) mutateSlackRoute(ctx context.Context, target ChannelRou
 		return err
 	}
 	_, err = api.chatStore.UpsertBotConnectorConfig(ctx, &chathistory.CreateBotConnectorConfigRequest{
-		ID: "slack", Enabled: cfg.Enabled, BotMode: cfg.BotMode, ConfigJSON: cfg.ConfigJSON, DefaultPresetID: cfg.DefaultPresetID, AutoConfirm: cfg.AutoConfirm, AllowedChannels: string(encoded),
+		ID: "slack", Enabled: cfg.Enabled, BotMode: cfg.BotMode, ConfigJSON: cfg.ConfigJSON, DefaultWorkflowID: cfg.DefaultWorkflowID, AutoConfirm: cfg.AutoConfirm, AllowedChannels: string(encoded),
 	})
 	if err == nil {
 		api.revokeChangedBotSessions(routes)

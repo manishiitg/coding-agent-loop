@@ -7,7 +7,7 @@ import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from '../products/work/workData'
 import { EntityIdentityIcon } from './ui/EntityIdentityIcon'
 
 interface WorkflowItem {
-  presetId: string
+  workflowId: string
   label: string
   workspacePath: string
   kind: 'workflow' | 'crew'
@@ -76,7 +76,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
     ]).then(([response, crews]) => {
       if (cancelled) return
       const workflows: WorkflowItem[] = (response.workflows || []).map(workflow => ({
-        presetId: `workflow:${workflow.manifest.id || workflow.workspace_path}`,
+        workflowId: `workflow:${workflow.manifest.id || workflow.workspace_path}`,
         label: workflow.manifest.label,
         workspacePath: workflow.workspace_path,
         kind: 'workflow',
@@ -85,7 +85,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
       const crewProjects: WorkflowItem[] = crews.map(crew => {
         const identityName = crew.identity?.name?.trim() || crew.title
         return {
-          presetId: `crew:${crew.id}`,
+          workflowId: `crew:${crew.id}`,
           label: identityName,
           secondaryLabel: identityName === crew.title ? undefined : crew.title,
           workspacePath: crew.workspacePath,
@@ -214,7 +214,7 @@ export const WorkflowSelectionDialog: React.FC<WorkflowSelectionDialogProps> = (
         ) : (
           filteredWorkflows.map((workflow, index) => (
             <div
-              key={`${workflow.presetId}-${index}`}
+              key={`${workflow.workflowId}-${index}`}
               className={`px-3 py-2 cursor-pointer flex items-center gap-2 text-sm transition-colors ${
                 index === selectedIndex
                   ? 'bg-primary/10 text-primary border-l-2 border-primary'

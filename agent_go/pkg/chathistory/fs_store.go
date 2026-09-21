@@ -155,21 +155,21 @@ func (s *FilesystemStore) UpsertBotConnectorConfig(ctx context.Context, req *Cre
 		cfg.Enabled = req.Enabled
 		cfg.BotMode = req.BotMode
 		cfg.ConfigJSON = configJSON
-		cfg.DefaultPresetID = req.DefaultPresetID
+		cfg.DefaultWorkflowID = req.DefaultWorkflowID
 		cfg.AutoConfirm = req.AutoConfirm
 		cfg.AllowedChannels = allowedChannels
 		cfg.UpdatedAt = now
 	} else {
 		cfg = &BotConnectorConfig{
-			ID:              req.ID,
-			Enabled:         req.Enabled,
-			BotMode:         req.BotMode,
-			ConfigJSON:      configJSON,
-			DefaultPresetID: req.DefaultPresetID,
-			AutoConfirm:     req.AutoConfirm,
-			AllowedChannels: allowedChannels,
-			CreatedAt:       now,
-			UpdatedAt:       now,
+			ID:                req.ID,
+			Enabled:           req.Enabled,
+			BotMode:           req.BotMode,
+			ConfigJSON:        configJSON,
+			DefaultWorkflowID: req.DefaultWorkflowID,
+			AutoConfirm:       req.AutoConfirm,
+			AllowedChannels:   allowedChannels,
+			CreatedAt:         now,
+			UpdatedAt:         now,
 		}
 		s.botCfgs[req.ID] = cfg
 	}

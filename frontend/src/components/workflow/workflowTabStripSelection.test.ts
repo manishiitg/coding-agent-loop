@@ -10,7 +10,7 @@ function tab(tabId: string, overrides: Partial<ChatTab> = {}): ChatTab {
     createdAt: 1,
     isStreaming: false,
     config: {},
-    metadata: { mode: 'workflow', presetQueryId: 'twitter-automation' },
+    metadata: { mode: 'workflow', workflowId: 'twitter-automation' },
     ...overrides,
   } as ChatTab
 }
@@ -19,12 +19,12 @@ describe('selectWorkflowTabsForStrip', () => {
   it('keeps an opened schedule visible after Chat receives focus', () => {
     const chat = tab('chat', {
       name: 'Automation Builder',
-      metadata: { mode: 'workflow', presetQueryId: 'twitter-automation', phaseId: 'workflow-builder' },
+      metadata: { mode: 'workflow', workflowId: 'twitter-automation', phaseId: 'workflow-builder' },
     })
     const schedule = tab('schedule', {
       name: 'Daily SaaS Builder Growth x6',
       createdAt: 2,
-      metadata: { mode: 'workflow', presetQueryId: 'twitter-automation', isViewOnly: true, isScheduledRun: true },
+      metadata: { mode: 'workflow', workflowId: 'twitter-automation', isViewOnly: true, isScheduledRun: true },
     })
 
     expect(selectWorkflowTabsForStrip([chat, schedule], 'chat', 'twitter-automation', {}))
@@ -35,16 +35,16 @@ describe('selectWorkflowTabsForStrip', () => {
     const olderChat = tab('old-chat', {
       name: 'Automation Builder',
       createdAt: 1,
-      metadata: { mode: 'workflow', presetQueryId: 'twitter-automation', phaseId: 'workflow-builder' },
+      metadata: { mode: 'workflow', workflowId: 'twitter-automation', phaseId: 'workflow-builder' },
     })
     const currentChat = tab('current-chat', {
       name: 'Automation Builder',
       createdAt: 2,
-      metadata: { mode: 'workflow', presetQueryId: 'twitter-automation', phaseId: 'workflow-builder' },
+      metadata: { mode: 'workflow', workflowId: 'twitter-automation', phaseId: 'workflow-builder' },
     })
     const schedule = tab('schedule', {
       createdAt: 3,
-      metadata: { mode: 'workflow', presetQueryId: 'twitter-automation', isViewOnly: true, isScheduledRun: true },
+      metadata: { mode: 'workflow', workflowId: 'twitter-automation', isViewOnly: true, isScheduledRun: true },
     })
 
     expect(selectWorkflowTabsForStrip([olderChat, currentChat, schedule], 'current-chat', 'twitter-automation', {}))

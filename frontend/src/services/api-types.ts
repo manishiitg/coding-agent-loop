@@ -116,7 +116,7 @@ export interface AgentQueryRequest {
   phase_id?: string
   // Support both legacy and new config format
   llm_config?: LLMConfiguration | AgentLLMConfiguration
-  preset_query_id?: string
+  workflow_id?: string
   // Code execution mode: When enabled, only virtual tools are added to LLM
   // MCP tools are accessed via generated Go code using discover_code_files and write_code
   use_code_execution_mode?: boolean
@@ -1163,7 +1163,7 @@ export interface ActiveSessionInfo {
   workflow_label?: string
   workspace_path?: string
   preset_name?: string
-  preset_query_id?: string
+  workflow_id?: string
   phase_id?: string
   phase_name?: string
   bot_platform?: string
@@ -1392,7 +1392,7 @@ export interface FileVersionHistoryRequest {
 // Workflow metadata for background/minimized workflows
 // Stored in session config to enable querying and restoring background workflows
 export interface WorkflowMetadata {
-  preset_id?: string;           // Preset ID for context restoration
+  workflow_id?: string;           // Workflow manifest ID for context restoration
   preset_name?: string;         // Display name
   workspace_path?: string;      // Workflow workspace path
   run_folder?: string;          // Current run folder (e.g., "iteration-1")
@@ -1431,7 +1431,7 @@ export interface ChatSession {
   session_id: string;
   title: string;
   agent_mode?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   config?: ChatSessionConfig; // Typed configuration
   created_at: string;
   completed_at?: string;
@@ -1453,7 +1453,7 @@ export interface ChatHistorySummary {
   session_id: string;
   title: string;
   agent_mode?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   config?: ChatSessionConfig; // Typed configuration
   status: string;
   created_at: string;
@@ -1603,7 +1603,7 @@ export interface WorkflowBuilderSessionResponse {
   phase_id?: string;
   status: 'running' | 'completed' | 'idle' | 'error' | 'stopped' | string;
   display_status?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   workspace_path?: string;
   workflow_name?: string;
   updated_at?: string;
@@ -1619,13 +1619,13 @@ export interface WorkflowBuilderSessionResponse {
 export interface CreateChatSessionRequest {
   session_id: string;
   title?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
 }
 
 export interface UpdateChatSessionRequest {
   title?: string;
   agent_mode?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   status?: string;
   completed_at?: string;
 }
@@ -1636,7 +1636,7 @@ export interface RunningWorkflowInfo {
   query_id: string;
   session_id: string;
   kind?: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   preset_name?: string;
   workspace_path: string;
   run_folder?: string;
@@ -1786,7 +1786,7 @@ export interface WorkflowSelectedOptions {
 
 export interface Workflow {
   id: string;
-  preset_query_id: string;
+  workflow_id: string;
   workflow_status: string;
   selected_options: WorkflowSelectedOptions | null;
   created_at: string;
@@ -2487,7 +2487,7 @@ export interface WorkspaceState {
 export interface ActiveWorkflowExecution {
   query_id: string;
   session_id: string;
-  preset_query_id?: string;
+  workflow_id?: string;
   workspace_path: string;
   run_folder?: string;
   triggered_by: string;
@@ -3013,9 +3013,8 @@ export interface ScheduledJob {
   name: string
   description: string
   entity_type: 'workflow' | 'chat' | 'multi-agent' | 'product'
-  preset_query_id?: string
-  workspace_path?: string
   workflow_id?: string
+  workspace_path?: string
   workflow_label?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
@@ -3079,7 +3078,7 @@ export interface CreateScheduledJobRequest {
   entity_type: 'workflow' | 'chat' | 'multi-agent' | 'product'
   product_profile_id?: string
   product_project_id?: string
-  preset_query_id?: string
+  workflow_id?: string
   workspace_path?: string
   trigger_payload?: Record<string, unknown>
   group_names?: string[]  // undefined/empty = all groups
@@ -3391,7 +3390,7 @@ export interface DuplicateWorkflowManifestRequest {
 export interface MigrateWorkflowsResponse {
   success: boolean
   results: Array<{
-    preset_id: string
+    workflow_id: string
     label: string
     workspace_path: string
     status: 'migrated' | 'skipped' | 'error'

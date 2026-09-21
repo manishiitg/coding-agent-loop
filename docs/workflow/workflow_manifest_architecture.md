@@ -262,7 +262,10 @@ The old "workflow preset" view is now a compatibility layer built from manifests
 
 A few migration-era leftovers still exist in code, but they are no longer the architecture:
 
-- `presetQueryID` is still used in some session and tab compatibility paths, but it resolves to manifest workflow IDs
+- The workflow ID is the manifest's stable `id`; new session and tab payloads use `workflow_id` / `workflowId`. It identifies the workflow, not an individual chat or run.
+- `session_id` identifies one conversation; `query_id` identifies one request/execution. Neither is an alias for `workflow_id`.
+- Old persisted workflow-ID keys are read only for compatibility and are not emitted by current payloads.
+- Archived bug reports retain their original field names to preserve the payloads they documented; they do not describe the current API.
 - some comments and logs still talk about "run migration"
 - frontend API types still include `migrateWorkflowsToManifests`, but there is no registered `/api/workflows/migrate` route in current backend routing
 - `planning/step_override.json` is still included in version snapshots, but active global overrides come from `execution_defaults`

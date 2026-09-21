@@ -59,7 +59,7 @@ func applyBotRouteClaims(claims *UserClaims, reqMap map[string]interface{}) {
 	}
 	claims.Provider = "bot_route"
 	claims.BotRouteGrant = grant
-	claims.BotRouteWorkflowID = strings.TrimSpace(stringFromRequestMap(reqMap, "preset_query_id"))
+	claims.BotRouteWorkflowID = strings.TrimSpace(stringFromRequestMap(reqMap, "workflow_id"))
 	claims.BotRouteProfileID = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_id"))
 	claims.SlackTrustedApp, _ = reqMap["_trusted_slack_app"].(bool)
 	claims.BotRouteConversationKey = strings.TrimSpace(stringFromRequestMap(reqMap, "agent_profile_conversation_key"))
@@ -301,7 +301,7 @@ func (api *StreamingAPI) startSessionInternalWithResult(
 		return internalSessionTurnResult{}, fmt.Errorf("handleQuery did not return a query execution id")
 	}
 	err = api.waitForConversationTurnTree(ctx, sessionID, queryResp.QueryID, schedulerWorkshopMaxInactivity)
-	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.WorkflowID != "" {
 		if pruneErr := api.pruneSlackRuns(execution.Request.SelectedFolder); pruneErr != nil {
 			log.Printf("[SLACK_RETENTION] %v", pruneErr)
 		}
@@ -423,7 +423,7 @@ func (api *StreamingAPI) sendFollowUpInternal(
 		return services.NewBotSubmissionError(resp.StatusCode, respBody)
 	}
 
-	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.PresetQueryID != "" {
+	if execution, ok := api.botExecutionForSession(sessionID); ok && execution.Request.WorkflowID != "" {
 		var result QueryResponse
 		if json.NewDecoder(resp.Body).Decode(&result) == nil && result.QueryID != "" {
 			go func() {

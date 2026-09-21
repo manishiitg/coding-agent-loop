@@ -28,7 +28,6 @@ type ScheduledJobResponse struct {
 	WorkspacePath        string                 `json:"workspace_path"`
 	WorkflowID           string                 `json:"workflow_id,omitempty"`
 	WorkflowLabel        string                 `json:"workflow_label,omitempty"`
-	PresetQueryID        string                 `json:"preset_query_id,omitempty"` // empty — kept for frontend compat
 	TriggerPayload       json.RawMessage        `json:"trigger_payload,omitempty"`
 	GroupNames           []string               `json:"group_names,omitempty"`
 	RouteSelections      map[string]string      `json:"route_selections,omitempty"`
@@ -170,7 +169,6 @@ func buildJobResponse(workspacePath string, manifest *WorkflowManifest, sched Wo
 		WorkspacePath:            workspacePath,
 		WorkflowID:               manifest.ID,
 		WorkflowLabel:            manifest.Label,
-		PresetQueryID:            manifest.ID,
 		TriggerPayload:           sched.TriggerPayload,
 		GroupNames:               sched.GroupNames,
 		RouteSelections:          sched.RouteSelections,

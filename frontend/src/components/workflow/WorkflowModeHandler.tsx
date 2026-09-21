@@ -13,7 +13,7 @@ interface Preset {
 
 interface WorkflowModeHandlerProps {
   // Callbacks and children only
-  onPresetSelected: (presetId: string, presetContent: string) => void
+  onPresetSelected: (workflowId: string, presetContent: string) => void
   children: React.ReactNode
   onWorkflowPhaseChange?: (phase: WorkflowPhase) => void  // Callback to update phase in ChatArea
 }

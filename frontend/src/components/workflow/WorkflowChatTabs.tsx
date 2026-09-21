@@ -71,7 +71,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     const allTabs = Object.values(chatTabs)
     const matched = allTabs.filter(tab =>
       tab.metadata?.mode === 'workflow' &&
-      tab.metadata.presetQueryId === activePresetId &&
+      tab.metadata.workflowId === activePresetId &&
       shouldDisplayWorkflowTab(tab, activeTabId)
     )
     const activeTab = activeTabId ? chatTabs[activeTabId] : undefined
@@ -88,7 +88,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
       : allTabs.filter(tab =>
           tab.metadata?.mode === 'workflow' &&
           tab.metadata?.phaseId === 'workflow-builder' &&
-          !tab.metadata?.presetQueryId
+          !tab.metadata?.workflowId
         )
     // AgentWorks owns one persistent interactive Chat. Old duplicate tabs may
     // remain in persisted browser state, but they are no longer presented as
@@ -106,7 +106,7 @@ export const WorkflowChatTabs: React.FC<WorkflowChatTabsProps> = ({ embedded = f
     )
     const current = activeTabId ? chatTabs[activeTabId] : undefined
     const currentIsInteractiveDuplicate = current?.metadata?.mode === 'workflow' &&
-      current.metadata.presetQueryId === activePresetId &&
+      current.metadata.workflowId === activePresetId &&
       current.metadata.phaseId === 'workflow-builder' &&
       current.metadata.isViewOnly !== true
     if (persistentChat && currentIsInteractiveDuplicate && persistentChat.tabId !== activeTabId) {

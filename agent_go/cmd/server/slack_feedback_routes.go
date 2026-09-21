@@ -425,13 +425,13 @@ func updateSlackConfigHandler(api *StreamingAPI) http.HandlerFunc {
 		}
 		// Save bot_mode and Slack channel routing to the filesystem-backed bot connector config.
 		if _, err := api.chatStore.UpsertBotConnectorConfig(r.Context(), &chathistory.CreateBotConnectorConfigRequest{
-			ID:              "slack",
-			Enabled:         req.Enabled,
-			BotMode:         req.BotMode,
-			ConfigJSON:      currentBotConfig.ConfigJSON,
-			DefaultPresetID: currentBotConfig.DefaultPresetID,
-			AutoConfirm:     currentBotConfig.AutoConfirm,
-			AllowedChannels: allowedChannelsJSON,
+			ID:                "slack",
+			Enabled:           req.Enabled,
+			BotMode:           req.BotMode,
+			ConfigJSON:        currentBotConfig.ConfigJSON,
+			DefaultWorkflowID: currentBotConfig.DefaultWorkflowID,
+			AutoConfirm:       currentBotConfig.AutoConfirm,
+			AllowedChannels:   allowedChannelsJSON,
 		}); err != nil {
 			log.Printf("[SLACK] Failed to save bot config: %v", err)
 			http.Error(w, "failed to save Slack routes", http.StatusInternalServerError)

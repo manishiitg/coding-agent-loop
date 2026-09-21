@@ -1096,8 +1096,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const commandModeCategory = isWorkflowMode ? 'workflow' : selectedModeCategory
   const commandWorkflowPath = useWorkflowManifestStore(state => {
-    const presetId = activeTab?.metadata?.presetQueryId || activeWorkflowPresetId
-    return isWorkflowMode && presetId ? state.getWorkflowById(presetId)?.workspace_path : undefined
+    const workflowId = activeTab?.metadata?.workflowId || activeWorkflowPresetId
+    return isWorkflowMode && workflowId ? state.getWorkflowById(workflowId)?.workspace_path : undefined
   }) || activeWorkflowWorkspacePath || workflowPhaseWorkspacePath || workspaceActiveFolder
   const canWriteCommandWorkflow = useCanWriteWorkflow(commandWorkflowPath?.replace(/\/+$/, ''))
   const customCommandWorkspacePath = agentProfileWorkspace || (isWorkflowMode ? commandWorkflowPath : undefined) || undefined
@@ -2033,9 +2033,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   const getEffectiveWorkflowModes = useCallback(() => {
     const workflowState = useWorkflowStore.getState()
-    const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
+    const workflowId = useGlobalPresetStore.getState().activePresetIds.workflow
     const effectiveWorkshopMode = activeTab?.metadata?.workshopMode
-      || (presetId && workflowState.workshopModeByPreset[presetId])
+      || (workflowId && workflowState.workshopModeByPreset[workflowId])
       || workflowState.workshopMode
 
     return {
@@ -2574,7 +2574,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const handleCommandDialogClose = closeComposerPickers
   const handleFileDialogClose = closeComposerPickers
 
-  const handleWorkflowSelect = useCallback((workflow: { presetId: string; label: string; workspacePath: string }) => {
+  const handleWorkflowSelect = useCallback((workflow: { workflowId: string; label: string; workspacePath: string }) => {
     if (!textareaRef.current || hashPosition === -1 || !activeTabId) return
 
     const beforeHash = inputText.substring(0, hashPosition)
@@ -2589,10 +2589,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     // Add workflow to context (avoid duplicates)
     const currentWorkflowContext = useChatStore.getState().getTabConfig(activeTabId)?.workflowContext || []
-    const isAlreadyInContext = currentWorkflowContext.some(w => w.presetId === workflow.presetId)
+    const isAlreadyInContext = currentWorkflowContext.some(w => w.workflowId === workflow.workflowId)
     if (!isAlreadyInContext) {
       const updated = [...currentWorkflowContext, {
-        presetId: workflow.presetId,
+        workflowId: workflow.workflowId,
         label: workflow.label,
         workspacePath: workflow.workspacePath
       }]
@@ -3098,7 +3098,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 References:
               </span>
               {tabConfig!.workflowContext.map((w, index) => (
-                <div key={w.presetId} className="flex items-center gap-0.5">
+                <div key={w.workflowId} className="flex items-center gap-0.5">
                   <span className="text-xs text-gray-700 dark:text-gray-300 font-mono">
                     {w.label}
                   </span>
@@ -3106,7 +3106,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                     type="button"
                     onClick={() => {
                       if (activeTabId) {
-                        const remaining = tabConfig!.workflowContext.filter(wc => wc.presetId !== w.presetId)
+                        const remaining = tabConfig!.workflowContext.filter(wc => wc.workflowId !== w.workflowId)
                         setTabConfig(activeTabId, { workflowContext: remaining })
                         const ref = '#' + w.label
                         if (inputText.includes(ref)) {

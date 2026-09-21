@@ -133,7 +133,7 @@ import type { ExecutionOptions } from '../../../services/api-types'
 
 export interface WorkflowCanvasProps {
   workspacePath: string | null
-  presetQueryId: string | null
+  workflowId: string | null
   currentPhase?: string
   onStartPhase?: (phaseId: string, executionOptions?: ExecutionOptions) => void
   onCreatePlan?: () => void
@@ -1074,7 +1074,7 @@ export interface WorkflowCanvasRef {
 // component renders only the pane content for the flow view.
 const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>(({
   workspacePath,
-  presetQueryId,
+  workflowId,
   onCreatePlan,
   showChatArea = false,
   toolbarOnly = false,
@@ -1089,14 +1089,14 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
 
   // --- Performance diagnostics for workflow switching ---
   const renderCountRef = useRef(0)
-  const lastPresetRef = useRef(presetQueryId)
+  const lastPresetRef = useRef(workflowId)
   renderCountRef.current++
-  if (lastPresetRef.current !== presetQueryId) {
-    console.log(`%c[WorkflowCanvas] Preset switched: ${lastPresetRef.current?.slice(0,8)} → ${presetQueryId?.slice(0,8)}`, 'color: orange; font-weight: bold')
-    lastPresetRef.current = presetQueryId
+  if (lastPresetRef.current !== workflowId) {
+    console.log(`%c[WorkflowCanvas] Preset switched: ${lastPresetRef.current?.slice(0,8)} → ${workflowId?.slice(0,8)}`, 'color: orange; font-weight: bold')
+    lastPresetRef.current = workflowId
   }
   if (renderCountRef.current % 50 === 0) {
-    console.log(`%c[WorkflowCanvas] render #${renderCountRef.current} (preset: ${presetQueryId?.slice(0,8)})`, 'color: gray')
+    console.log(`%c[WorkflowCanvas] render #${renderCountRef.current} (preset: ${workflowId?.slice(0,8)})`, 'color: gray')
   }
   // Store step ID to focus on after nodes update (from backend plan changes)
   const pendingFocusStepIdRef = React.useRef<string | null>(null)
@@ -2105,8 +2105,8 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     
     if (nodesChanged) {
       // Nodes changed - will apply positions from usePlanToFlow
-      console.log(`%c[WorkflowCanvas] setNodes: ${initialNodes.length} nodes (preset: ${presetQueryId?.slice(0,8)})`, 'color: #4CAF50')
-      console.time(`[WorkflowCanvas] setNodes-${presetQueryId?.slice(0,8)}`)
+      console.log(`%c[WorkflowCanvas] setNodes: ${initialNodes.length} nodes (preset: ${workflowId?.slice(0,8)})`, 'color: #4CAF50')
+      console.time(`[WorkflowCanvas] setNodes-${workflowId?.slice(0,8)}`)
       setNodes(initialNodes)
 
       // Always try to restore positions after nodes regenerate (unless layout direction changed)
@@ -2389,16 +2389,16 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
     
     if (nodesChanged) {
-      console.timeEnd(`[WorkflowCanvas] setNodes-${presetQueryId?.slice(0,8)}`)
+      console.timeEnd(`[WorkflowCanvas] setNodes-${workflowId?.slice(0,8)}`)
     }
 
     if (edgesChanged) {
-      console.log(`%c[WorkflowCanvas] setEdges: ${initialEdges.length} edges (preset: ${presetQueryId?.slice(0,8)})`, 'color: #4CAF50')
+      console.log(`%c[WorkflowCanvas] setEdges: ${initialEdges.length} edges (preset: ${workflowId?.slice(0,8)})`, 'color: #4CAF50')
       setEdges(initialEdges)
       prevEdgesRef.current = initialEdges
     }
 
-  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, updateNode, presetQueryId, toolbarOnly])
+  }, [initialNodes, initialEdges, setNodes, setEdges, focusNode, buildNodeGroups, loadSavedLayout, layoutDirection, updateNode, workflowId, toolbarOnly])
 
   // Fit the full plan on first render so the workflow shape is visible by default.
   React.useEffect(() => {

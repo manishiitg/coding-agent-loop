@@ -13,9 +13,9 @@ function tabRecency(tab: ChatTab): number {
   return tab.lastAccessedAt ?? tab.createdAt ?? 0
 }
 
-function isInteractiveWorkflowTab(tab: ChatTab, presetId: string): boolean {
+function isInteractiveWorkflowTab(tab: ChatTab, workflowId: string): boolean {
   return tab.metadata?.mode === 'workflow' &&
-    tab.metadata?.presetQueryId === presetId &&
+    tab.metadata?.workflowId === workflowId &&
     tab.metadata?.isViewOnly !== true &&
     tab.metadata?.isScheduledRun !== true &&
     tab.metadata?.isBotRun !== true
@@ -51,10 +51,10 @@ export function selectWorkspacePaneProductTab(
 /** Select the interactive workflow conversation used by every right-pane action. */
 export function selectWorkspacePaneWorkflowTab(
   tabs: Record<string, ChatTab>,
-  presetId: string,
+  workflowId: string,
   activeTabId?: string | null,
 ): ChatTab | undefined {
-  const candidates = Object.values(tabs).filter(tab => isInteractiveWorkflowTab(tab, presetId))
+  const candidates = Object.values(tabs).filter(tab => isInteractiveWorkflowTab(tab, workflowId))
 
   return candidates.sort((left, right) => {
     if (left.isStreaming !== right.isStreaming) return left.isStreaming ? 1 : -1
@@ -142,7 +142,7 @@ export async function sendWorkspacePaneMessageToChat(request: WorkspacePaneChatR
         mode: 'workflow',
         phaseId: 'workflow-builder',
         phaseName: 'Automation Builder',
-        presetQueryId: preset.id,
+        workflowId: preset.id,
       })
       targetTab = useChatStore.getState().getTab(tabId)
     }

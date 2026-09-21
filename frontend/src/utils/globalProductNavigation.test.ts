@@ -69,7 +69,7 @@ describe('global AgentWorks and Crew navigation', () => {
   it('resolves stable Crew project identity from tabs and sessions', () => {
     expect(workProjectIdForTab(workTab)).toBe('project-1')
     expect(workProjectIdForSession(session({ session_id: 'work:project:project-2' }))).toBe('project-2')
-    expect(workProjectIdForSession(session({ preset_query_id: 'project-3' }))).toBe('project-3')
+    expect(workProjectIdForSession(session({ workflow_id: 'project-3' }))).toBe('project-3')
   })
 
   it('switches surfaces and selects the Crew project before activating its tab', () => {

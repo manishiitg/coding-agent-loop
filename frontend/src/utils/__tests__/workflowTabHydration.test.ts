@@ -14,7 +14,7 @@ describe('workflowTabsNeedingHydration', () => {
   const getTabEvents = (sessionId: string) => events[sessionId] ?? []
 
   it('includes a read-only scheduled-run tab whose events are gone (the stuck "Restoring previous session" case)', () => {
-    const scheduled = tab('t1', 'schedule-cron--d4007648_1', { mode: 'workflow', isViewOnly: true, isScheduledRun: true, presetQueryId: 'wf_1' })
+    const scheduled = tab('t1', 'schedule-cron--d4007648_1', { mode: 'workflow', isViewOnly: true, isScheduledRun: true, workflowId: 'wf_1' })
     const result = workflowTabsNeedingHydration([scheduled], getTabEvents)
     expect(result.map(t => t.tabId)).toEqual(['t1'])
   })

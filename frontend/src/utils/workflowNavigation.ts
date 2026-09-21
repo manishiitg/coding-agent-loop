@@ -85,7 +85,7 @@ export function activateWorkflowTab(
 ): boolean {
   const chatStore = useChatStore.getState()
   const tab = chatStore.chatTabs[tabId]
-  const workflowId = tab?.metadata?.presetQueryId
+  const workflowId = tab?.metadata?.workflowId
   if (!tab || tab.metadata?.mode !== 'workflow' || !workflowId) return false
 
   if (

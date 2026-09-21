@@ -140,7 +140,7 @@ func TestSlackSendCrossStepReferencesIdempotencyAndRevocation(t *testing.T) {
 	claims := botRouteUserClaims("bot", route)
 	claims.ExecutionPrincipal = &ExecutionPrincipal{Kind: "bot_route", Target: route, ID: "bot", Access: WorkflowAccessRead}
 	api := &StreamingAPI{chatStore: store}
-	req := QueryRequest{PresetQueryID: "demo", SelectedFolder: "Workflow/demo", BotPlatform: "slack", BotChannelID: "C123", BotThreadTS: "source.1"}
+	req := QueryRequest{WorkflowID: "demo", SelectedFolder: "Workflow/demo", BotPlatform: "slack", BotChannelID: "C123", BotThreadTS: "source.1"}
 	api.botExecutionSessions.Store("root", botExecutionSession{Claims: claims, Request: req})
 	virtualtools.RegisterParentChat("script-1", &virtualtools.ParentChatContext{SessionID: "root"})
 	virtualtools.RegisterParentChat("script-2", &virtualtools.ParentChatContext{SessionID: "root"})
@@ -274,7 +274,7 @@ func TestSlackWorkflowTriggerUsesWorkflowOwnerResourceScope(t *testing.T) {
 	}
 	api := &StreamingAPI{chatStore: store}
 	claims := botRouteUserClaims("bot-principal", route)
-	req := QueryRequest{PresetQueryID: manifest.ID, SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserID: "external-sender", TriggeredBy: "bot:slack"}
+	req := QueryRequest{WorkflowID: manifest.ID, SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserID: "external-sender", TriggeredBy: "bot:slack"}
 	resolved, err := api.revalidateExecutionPrincipal(context.WithValue(context.Background(), UserContextKey, claims), req)
 	if err != nil {
 		t.Fatal(err)
@@ -303,7 +303,7 @@ func TestSlackDistinctFullRunsAndRestartBinding(t *testing.T) {
 		t.Fatal(err)
 	}
 	api := &StreamingAPI{chatStore: store}
-	req := QueryRequest{PresetQueryID: "demo", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotThreadTS: "root.1", ExecutionOptions: &ExecutionOptions{SelectedRunFolder: "iteration-0"}}
+	req := QueryRequest{WorkflowID: "demo", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotThreadTS: "root.1", ExecutionOptions: &ExecutionOptions{SelectedRunFolder: "iteration-0"}}
 	ctx := context.WithValue(context.Background(), UserContextKey, botRouteUserClaims("bot", route))
 	ctx, err = api.revalidateExecutionPrincipal(ctx, req)
 	if err != nil {
@@ -552,7 +552,7 @@ func TestSlackEmailBlockTakesEffectOnNextTurn(t *testing.T) {
 	api := &StreamingAPI{chatStore: store}
 	claims := botRouteUserClaims("bot", route)
 	ctx := context.WithValue(context.Background(), UserContextKey, claims)
-	req := QueryRequest{PresetQueryID: "demo", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserEmail: "blocked@example.com"}
+	req := QueryRequest{WorkflowID: "demo", SelectedFolder: route.WorkspacePath, BotPlatform: "slack", BotChannelID: "C123", BotUserEmail: "blocked@example.com"}
 	if _, err := api.revalidateExecutionPrincipal(ctx, req); err == nil {
 		t.Fatal("blocked actor admitted")
 	}

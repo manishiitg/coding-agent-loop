@@ -27,7 +27,7 @@ type workflowBuilderSessionResponse struct {
 	PhaseID            string            `json:"phase_id,omitempty"`
 	Status             string            `json:"status"`
 	DisplayStatus      string            `json:"display_status,omitempty"`
-	PresetQueryID      string            `json:"preset_query_id,omitempty"`
+	WorkflowID         string            `json:"workflow_id,omitempty"`
 	WorkspacePath      string            `json:"workspace_path,omitempty"`
 	WorkflowName       string            `json:"workflow_name,omitempty"`
 	UpdatedAt          string            `json:"updated_at,omitempty"`
@@ -95,16 +95,16 @@ func (api *StreamingAPI) handleGetWorkflowBuilderSession(w http.ResponseWriter, 
 		return
 	}
 
-	presetQueryID := strings.TrimSpace(r.URL.Query().Get("preset_query_id"))
+	workflowID := strings.TrimSpace(r.URL.Query().Get("workflow_id"))
 	workspacePath := strings.Trim(strings.TrimSpace(r.URL.Query().Get("workspace_path")), "/")
-	if workspacePath == "" && presetQueryID != "" {
-		if resolved, err := api.resolveWorkspacePathFromPreset(r.Context(), presetQueryID); err == nil {
+	if workspacePath == "" && workflowID != "" {
+		if resolved, err := api.resolveWorkspacePathFromWorkflowID(r.Context(), workflowID); err == nil {
 			workspacePath = strings.Trim(strings.TrimSpace(resolved), "/")
 		}
 	}
 
-	if presetQueryID == "" && workspacePath == "" {
-		http.Error(w, "preset_query_id or workspace_path is required", http.StatusBadRequest)
+	if workflowID == "" && workspacePath == "" {
+		http.Error(w, "workflow_id or workspace_path is required", http.StatusBadRequest)
 		return
 	}
 	if access, _ := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspacePath); access == WorkflowAccessNone {
@@ -112,12 +112,12 @@ func (api *StreamingAPI) handleGetWorkflowBuilderSession(w http.ResponseWriter, 
 		return
 	}
 
-	if live := api.findLiveWorkflowBuilderSession(r.Context(), presetQueryID, workspacePath); live != nil {
+	if live := api.findLiveWorkflowBuilderSession(r.Context(), workflowID, workspacePath); live != nil {
 		_ = json.NewEncoder(w).Encode(live)
 		return
 	}
 
-	restored, err := api.restoreLatestBuilderConversation(r.Context(), presetQueryID, workspacePath)
+	restored, err := api.restoreLatestBuilderConversation(r.Context(), workflowID, workspacePath)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("failed to restore builder conversation: %v", err), http.StatusInternalServerError)
 		return
@@ -131,7 +131,7 @@ func (api *StreamingAPI) handleGetWorkflowBuilderSession(w http.ResponseWriter, 
 		Success:            true,
 		Source:             "none",
 		Status:             "idle",
-		PresetQueryID:      presetQueryID,
+		WorkflowID:         workflowID,
 		WorkspacePath:      workspacePath,
 		WorkflowName:       workflowNameFromWorkspacePath(workspacePath),
 		Events:             []json.RawMessage{},
@@ -139,7 +139,7 @@ func (api *StreamingAPI) handleGetWorkflowBuilderSession(w http.ResponseWriter, 
 	})
 }
 
-func (api *StreamingAPI) findLiveWorkflowBuilderSession(ctx context.Context, presetQueryID, workspacePath string) *workflowBuilderSessionResponse {
+func (api *StreamingAPI) findLiveWorkflowBuilderSession(ctx context.Context, workflowID, workspacePath string) *workflowBuilderSessionResponse {
 	currentUserID := GetUserIDFromContext(ctx)
 
 	var chosen *ActiveSessionInfo
@@ -151,7 +151,7 @@ func (api *StreamingAPI) findLiveWorkflowBuilderSession(ctx context.Context, pre
 		if session.UserID != "" && session.UserID != currentUserID {
 			continue
 		}
-		if !workflowBuilderSessionMatches(session, presetQueryID, workspacePath) {
+		if !workflowBuilderSessionMatches(session, workflowID, workspacePath) {
 			continue
 		}
 		if chosen == nil || session.LastActivity.After(chosen.LastActivity) {
@@ -188,7 +188,7 @@ func (api *StreamingAPI) findLiveWorkflowBuilderSession(ctx context.Context, pre
 		PhaseID:            "workflow-builder",
 		Status:             coalesceString(chosen.Status, "running"),
 		DisplayStatus:      "busy",
-		PresetQueryID:      coalesceString(chosen.PresetQueryID, presetQueryID),
+		WorkflowID:         coalesceString(chosen.WorkflowID, workflowID),
 		WorkspacePath:      coalesceString(chosen.WorkspacePath, workspacePath),
 		WorkflowName:       coalesceString(chosen.WorkflowName, chosen.WorkflowLabel, chosen.PresetName, workflowNameFromWorkspacePath(coalesceString(chosen.WorkspacePath, workspacePath))),
 		UpdatedAt:          chosen.LastActivity.Format(time.RFC3339Nano),
@@ -198,8 +198,8 @@ func (api *StreamingAPI) findLiveWorkflowBuilderSession(ctx context.Context, pre
 	}
 }
 
-func workflowBuilderSessionMatches(session *ActiveSessionInfo, presetQueryID, workspacePath string) bool {
-	if presetQueryID != "" && strings.TrimSpace(session.PresetQueryID) == presetQueryID {
+func workflowBuilderSessionMatches(session *ActiveSessionInfo, workflowID, workspacePath string) bool {
+	if workflowID != "" && strings.TrimSpace(session.WorkflowID) == workflowID {
 		return true
 	}
 	if workspacePath != "" && strings.Trim(strings.TrimSpace(session.WorkspacePath), "/") == workspacePath {
@@ -254,7 +254,7 @@ func effectiveBuilderConversationOwner(requestUserID, existingUserID string) str
 	return "default"
 }
 
-func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, presetQueryID, workspacePath string) (*workflowBuilderSessionResponse, error) {
+func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, workflowID, workspacePath string) (*workflowBuilderSessionResponse, error) {
 	workspacePath = strings.Trim(strings.TrimSpace(workspacePath), "/")
 	if workspacePath == "" {
 		return nil, nil
@@ -355,7 +355,7 @@ func (api *StreamingAPI) restoreLatestBuilderConversation(ctx context.Context, p
 		PhaseID:            coalesceString(latest.log.PhaseID, "workflow-builder"),
 		Status:             "completed",
 		DisplayStatus:      "stopped",
-		PresetQueryID:      presetQueryID,
+		WorkflowID:         workflowID,
 		WorkspacePath:      workspacePath,
 		WorkflowName:       workflowNameFromWorkspacePath(workspacePath),
 		UpdatedAt:          updatedAt,

@@ -54,7 +54,7 @@ func (api *StreamingAPI) revalidateExecutionPrincipal(ctx context.Context, req Q
 	if !sameSlackRouteDestination(route, expected) {
 		return ctx, fmt.Errorf("bot route target changed; start a new conversation")
 	}
-	if filepath.Clean(req.SelectedFolder) != filepath.Clean(route.WorkspacePath) || req.AgentProfileID != route.ProfileID || req.PresetQueryID != route.WorkflowID || req.AgentProfileConversationKey != route.ConversationKey {
+	if filepath.Clean(req.SelectedFolder) != filepath.Clean(route.WorkspacePath) || req.AgentProfileID != route.ProfileID || req.WorkflowID != route.WorkflowID || req.AgentProfileConversationKey != route.ConversationKey {
 		return ctx, fmt.Errorf("query does not match the bot route target")
 	}
 	principal := &ExecutionPrincipal{Kind: "bot_route", ID: services.BotPrincipalIDForRoute("slack", route), Target: route, Access: WorkflowAccessRead, AuditActor: req.BotUserID}

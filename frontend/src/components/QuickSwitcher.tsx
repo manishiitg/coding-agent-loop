@@ -84,7 +84,7 @@ const isWorkflowSession = (session: ActiveSessionInfo): boolean => {
     !!session.workflow_name ||
     !!session.workflow_label ||
     !!session.workspace_path ||
-    !!session.preset_query_id
+    !!session.workflow_id
 }
 
 const activeSessionLabel = (session: ActiveSessionInfo): string => {
@@ -129,13 +129,13 @@ const workflowSessionMatchesPreset = (
   tabs: Record<string, ChatTab>,
 ): boolean => {
   if (!isWorkflowSession(session)) return false
-  if (session.preset_query_id === preset.id) return true
+  if (session.workflow_id === preset.id) return true
   if (
     normalizeWorkspacePath(session.workspace_path) &&
     normalizeWorkspacePath(session.workspace_path) === normalizeWorkspacePath(preset.selectedFolder?.filepath)
   ) return true
   const tab = findTabForSession(tabs, session.session_id)
-  return tab?.metadata?.presetQueryId === preset.id
+  return tab?.metadata?.workflowId === preset.id
 }
 
 const itemTypeRank = (item: QuickSwitcherItem): number => {
@@ -283,7 +283,7 @@ export const QuickSwitcher: React.FC<QuickSwitcherProps> = ({
         )
         const activeSession = pickWorkflowActiveSession(matchingActiveSessions, preset, agentWorksTabs)
         const workflowTab = Object.values(agentWorksTabs).find(tab =>
-          tab.metadata?.mode === 'workflow' && tab.metadata?.presetQueryId === preset.id,
+          tab.metadata?.mode === 'workflow' && tab.metadata?.workflowId === preset.id,
         )
         const activeCountSuffix = matchingActiveSessions.length > 1 ? ` · ${matchingActiveSessions.length} active runs` : ''
         return {

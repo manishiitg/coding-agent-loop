@@ -69,7 +69,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 	api.activeSessionsMux.RUnlock()
 
 	filter.WorkspacePath = strings.TrimSpace(filter.WorkspacePath)
-	filter.PresetQueryID = strings.TrimSpace(filter.PresetQueryID)
+	filter.WorkflowID = strings.TrimSpace(filter.WorkflowID)
 	sort.Slice(candidates, func(i, j int) bool {
 		return candidates[i].LastActivity.After(candidates[j].LastActivity)
 	})
@@ -85,7 +85,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 		if filter.WorkspacePath != "" && !workspacePathsMatchForUser(userID, session.WorkspacePath, filter.WorkspacePath) {
 			continue
 		}
-		if filter.PresetQueryID != "" && strings.TrimSpace(session.PresetQueryID) != filter.PresetQueryID {
+		if filter.WorkflowID != "" && strings.TrimSpace(session.WorkflowID) != filter.WorkflowID {
 			continue
 		}
 		if target := botResumeTargetFromActive(&session); target != nil {
@@ -105,7 +105,7 @@ func (api *StreamingAPI) listBotResumeTargets(ctx context.Context, userID string
 			if seen[saved.SessionID] || chatHistorySessionWorkspace(saved) != normalizeConversationWorkspace(filter.WorkspacePath) {
 				continue
 			}
-			target := services.BotResumeTarget{SessionID: saved.SessionID, UserID: userID, AgentMode: saved.AgentMode, Status: "completed", Query: firstNonEmptyTrimmed(saved.Title, saved.Query), WorkspacePath: filter.WorkspacePath, PresetQueryID: filter.PresetQueryID, WorkshopMode: saved.WorkshopMode}
+			target := services.BotResumeTarget{SessionID: saved.SessionID, UserID: userID, AgentMode: saved.AgentMode, Status: "completed", Query: firstNonEmptyTrimmed(saved.Title, saved.Query), WorkspacePath: filter.WorkspacePath, WorkflowID: filter.WorkflowID, WorkshopMode: saved.WorkshopMode}
 			if filter.ProfileID != "" {
 				target.ProfileRoute = &services.ProfileRoute{ProfileID: filter.ProfileID, ConversationKey: filter.ConversationKey, WorkspaceUserID: userID, UploadFolder: filter.WorkspacePath}
 			}
@@ -163,7 +163,7 @@ func botResumeTargetFromActive(session *ActiveSessionInfo) *services.BotResumeTa
 		Status:        botResumeStatusWithActivity(session.Status, session.LastActivity),
 		Query:         strings.TrimSpace(session.Query),
 		WorkspacePath: strings.TrimSpace(session.WorkspacePath),
-		PresetQueryID: strings.TrimSpace(session.PresetQueryID),
+		WorkflowID:    strings.TrimSpace(session.WorkflowID),
 		PhaseID:       phaseID,
 		WorkshopMode:  strings.TrimSpace(session.WorkshopMode),
 		WorkflowName: firstNonEmptyTrimmed(

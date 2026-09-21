@@ -67,7 +67,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
   return (
     <div className="divide-y divide-gray-100 dark:divide-gray-700">
       {filteredJobs.map((job, index, jobsList) => {
-        const preset = presetMap.get(job.preset_query_id ?? '')
+        const preset = presetMap.get(job.workflow_id ?? '')
         const cronDesc = job.schedule_type === 'webhook' ? 'API trigger · on request' : describeCron(job.cron_expression)
         const localizedJobName = getLocalizedJobName(job)
         const workflowDisplayLabel = preset?.label || job.workflow_label || job.name

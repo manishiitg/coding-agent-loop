@@ -58,7 +58,7 @@ describe('workflow Ask AI placement', () => {
     const store = readFileSync('src/stores/useWorkflowStore.ts', 'utf8')
 
     expect(store).toContain("normalizeCanvasViewId(getWorkflowStorageItem(LEGACY_CANVAS_VIEW_MODE_KEY)) ?? 'report'")
-    expect(store).toContain("loadLegacyWorkspaceViewByPreset()[presetId] ?? 'report'")
+    expect(store).toContain("loadLegacyWorkspaceViewByPreset()[workflowId] ?? 'report'")
     expect(store).toContain('persistedUIState.workflowWorkspaceView ??')
   })
 })

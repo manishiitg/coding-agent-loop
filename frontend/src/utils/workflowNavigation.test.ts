@@ -46,7 +46,7 @@ function workflowTab(workflowId: string, tabId: string, viewMode: ChatTab['viewM
     metadata: {
       mode: 'workflow',
       phaseId: 'workflow-builder',
-      presetQueryId: workflowId,
+      workflowId: workflowId,
     },
   }
 }

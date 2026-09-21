@@ -289,7 +289,7 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 				api:           api,
 				sessionID:     sessionID,
 				workspacePath: phaseWorkspacePath,
-				presetQueryID: syntheticReq.PresetQueryID,
+				workflowID:    syntheticReq.WorkflowID,
 				userID:        userID,
 			})
 			workshopSession.SetOnStepCorrelationDone(cleanupStepDelegation)

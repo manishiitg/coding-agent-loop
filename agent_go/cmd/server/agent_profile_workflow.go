@@ -203,7 +203,7 @@ func (api *StreamingAPI) registerAgentProfileWorkflowTools(
 	workshopSession.SetExtraSubAgentNotifier(&workflowSubAgentTrackingNotifier{api: api, sessionID: sessionID})
 	workshopSession.SetWorkshopExecutionNotifier(&workshopExecutionBgNotifier{
 		api: api, sessionID: sessionID, workspacePath: runtimeWorkspacePath,
-		presetQueryID: req.PresetQueryID, userID: userID,
+		workflowID: req.WorkflowID, userID: userID,
 	})
 	workshopSession.SetOnStepCorrelationDone(cleanupStepDelegation)
 	workshopSession.SetExecutionStateChecks(

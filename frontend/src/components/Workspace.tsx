@@ -5,6 +5,7 @@ import { agentApi, workspaceApi } from '../services/api'
 import type { PlannerFile } from '../services/api-types'
 import PlannerFileList from './workspace/PlannerFileList'
 import { isValidJSON } from '../utils/event-helpers'
+import { workspaceUploadSizeError } from '../utils/workspaceUploadLimit'
 import CreateFolderDialog from './workspace/CreateFolderDialog'
 import MoveFileDialog from './workspace/MoveFileDialog'
 import RenameFileDialog from './workspace/RenameFileDialog'
@@ -1622,10 +1623,7 @@ export default function Workspace({
     if (blockedExtensions.includes(fileExt)) {
       return 'Blocked file type (executable/system file)'
     }
-    if (file.size > 5 * 1024 * 1024) {
-      return 'File exceeds 5MB limit'
-    }
-    return null
+    return workspaceUploadSizeError(file)
   }, [blockedExtensions])
 
   const addFiles = useCallback((files: FileList | File[]) => {
@@ -2305,7 +2303,7 @@ export default function Workspace({
                     Drag files here or click to browse
                   </p>
                   <p className="text-xs text-muted-foreground mt-1">
-                    Any files, 5MB max each
+                    Any files, 10 MB max each
                   </p>
                 </div>
                 <input

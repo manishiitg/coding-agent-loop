@@ -47,7 +47,7 @@ export function convertObservedWorkflowTabToInteractive(tab: ChatTab): ChatTab {
       mode: 'workflow',
       phaseId: 'workflow-builder',
       phaseName: 'Automation Builder',
-      presetQueryId: tab.metadata?.presetQueryId,
+      workflowId: tab.metadata?.workflowId,
       isViewOnly: false,
       isScheduledRun: false,
       scheduledJobName: undefined,

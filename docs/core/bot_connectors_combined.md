@@ -344,7 +344,7 @@ on a thread-less platform (`routeChangeKeepsSession`), so
 access check, `msg.PresetWorkflow`, and `msg.WorkspaceUserID` updates are
 unchanged, so the fresh session still starts under the incoming route.
 Regression coverage: `TestThreadlessRouteSwitchViaIncomingMessageStartsFresh`
-(switch starts fresh, no restored session, `preset_query_id` targets the new
+(switch starts fresh, no restored session, `workflow_id` targets the new
 workflow) and `TestThreadlessSameRouteViaIncomingMessageReusesSession`
 (same-route replies still continue the conversation).
 

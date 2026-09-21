@@ -82,7 +82,7 @@ export function reconcileWorkflowRuntimeTab(
       metadata: {
         ...tab.metadata,
         mode: 'workflow',
-        presetQueryId: projection.metadata.presetQueryId ?? tab.metadata.presetQueryId,
+        workflowId: projection.metadata.workflowId ?? tab.metadata.workflowId,
         isViewOnly: false,
         isScheduledRun: false,
         scheduledJobName: undefined,
@@ -179,7 +179,7 @@ export function staleWorkflowTabIds(
 /** Describe the top-level tab for one live workflow execution. */
 export function workflowRuntimeTabProjection(
   running: RunningWorkflowInfo,
-  presetQueryId: string,
+  workflowId: string,
 ): WorkflowRuntimeTabProjection | null {
   const identity = {
     sessionId: running.session_id,
@@ -206,7 +206,7 @@ export function workflowRuntimeTabProjection(
       name: scheduledJobName,
       metadata: {
         mode: 'workflow',
-        presetQueryId,
+        workflowId,
         isViewOnly: true,
         isScheduledRun: true,
         scheduledJobName,
@@ -224,7 +224,7 @@ export function workflowRuntimeTabProjection(
       mode: 'workflow',
       phaseId: running.phase_id || undefined,
       phaseName,
-      presetQueryId,
+      workflowId,
     },
     autoActivate: true,
   }

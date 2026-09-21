@@ -82,7 +82,7 @@ def build_request(args: argparse.Namespace, message: str) -> dict[str, Any]:
         "query": message,
         "agent_mode": "workflow_phase",
         "phase_id": "workflow-builder",
-        "preset_query_id": args.preset_query_id or args.workspace_path,
+        "workflow_id": args.workflow_id or args.workspace_path,
         "selected_folder": args.workspace_path,
         "execution_options": execution_options,
     }
@@ -94,7 +94,7 @@ def main() -> int:
     parser.add_argument("--workspace-path", required=True, help="Workflow workspace path, for example Workflows/My Workflow")
     parser.add_argument("--messages-file", required=True, help="JSON array or {messages: [...]} file")
     parser.add_argument("--session-id", default="", help="Existing Builder session id to resume")
-    parser.add_argument("--preset-query-id", default="", help="Preset id; defaults to workspace path")
+    parser.add_argument("--workflow-id", default="", help="Workflow manifest ID; defaults to workspace path")
     parser.add_argument("--group-name", action="append", default=[], help="Enabled variable group name; repeat for multiple groups")
     parser.add_argument("--run-folder", default="iteration-0", help="Run folder used by Builder execution tools")
     parser.add_argument("--workshop-mode", default="run", choices=["builder", "optimizer", "run", "reporting"])

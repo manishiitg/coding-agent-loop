@@ -4,8 +4,8 @@ import type { ChatTab } from '../stores/useChatStore'
 import { applyAgentProfileBinding, buildAgentProfileChatRequest, remainingWorkflowContextAfterSubmission, withoutOptimisticUserMessage } from './chatSubmitHelpers'
 
 describe('one-shot workflow references', () => {
-  const hdfc = { presetId: 'hdfc', label: 'HDFC', workspacePath: 'Workflow/HDFC' }
-  const icici = { presetId: 'icici', label: 'ICICI', workspacePath: 'Workflow/ICICI' }
+  const hdfc = { workflowId: 'hdfc', label: 'HDFC', workspacePath: 'Workflow/HDFC' }
+  const icici = { workflowId: 'icici', label: 'ICICI', workspacePath: 'Workflow/ICICI' }
 
   it('consumes references captured by an accepted submission', () => {
     expect(remainingWorkflowContextAfterSubmission([hdfc, icici], [hdfc, icici])).toEqual([])

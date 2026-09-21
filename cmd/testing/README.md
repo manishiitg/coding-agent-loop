@@ -27,8 +27,7 @@ Useful flags:
 
 - `--base-url`: Agent API URL. Defaults to `http://localhost:18743`.
 - `--session-id`: Reuse a Builder session. Defaults to a generated session id.
-- `--preset-query-id`: Optional preset id. Defaults to the workspace path so
-  manifest-backed workflows can still run without a database preset lookup.
+- `--workflow-id`: Optional workflow manifest ID. Defaults to the workspace path.
 - `--group-name`: Repeatable. Passed as enabled workflow variable groups.
 - `--workshop-mode`: `builder`, `optimizer`, `run`, or `reporting`.
 - `--dry-run`: Print requests without sending them.

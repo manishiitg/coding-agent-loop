@@ -26,8 +26,8 @@ export interface UseWorkflowExecutionReturn {
   error: string | null
 
   // Actions
-  startWorkflow: (presetQueryId: string) => Promise<void>
-  runStep: (stepId: string, presetQueryId: string) => Promise<void>
+  startWorkflow: (workflowId: string) => Promise<void>
+  runStep: (stepId: string, workflowId: string) => Promise<void>
   pauseWorkflow: () => Promise<void>
   stopWorkflow: () => Promise<void>
   resumeWorkflow: () => Promise<void>
@@ -144,7 +144,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   // doesn't update when new events arrive (the getTabEvents function reference doesn't change).
 
   // Start workflow - CRITICAL: Always use tab's observer ID, never fall back to global
-  const startWorkflow = useCallback(async (presetQueryId: string) => {
+  const startWorkflow = useCallback(async (workflowId: string) => {
     // Get active tab
     const activeTab = useChatStore.getState().getActiveTab()
     
@@ -181,7 +181,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(llmConfig)
       const requestPayload: AgentQueryRequest = {
-        query: `Execute workflow for preset: ${presetQueryId}`,
+        query: `Execute workflow for preset: ${workflowId}`,
         agent_mode: 'workflow' as const,
         enabled_tools: enabledTools.map(tool => tool.name),
         enabled_servers: effectiveServers,
@@ -189,7 +189,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         provider: llmConfig.provider as AgentQueryRequest['provider'],
         model_id: llmConfig.model_id,
         llm_config: llmConfigWithApiKeys,
-        preset_query_id: presetQueryId,
+        workflow_id: workflowId,
         use_code_execution_mode: activePreset?.useCodeExecutionMode,
         cdp_port: cdpPort
       }
@@ -222,7 +222,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
   }, [getActivePreset, currentPresetTools, enabledTools, effectiveServers, llmConfig, setTabStreaming, updateTabSessionId])
 
   // Run a specific step
-  const runStep = useCallback(async (stepId: string, presetQueryId: string) => {
+  const runStep = useCallback(async (stepId: string, workflowId: string) => {
     // CRITICAL: Always use tab's session ID - never fall back to global
     const activeTab = useChatStore.getState().getActiveTab()
     const currentSessionId = activeTab?.sessionId || null
@@ -252,7 +252,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
       // Build request payload with step_id
       const llmConfigWithApiKeys = buildLLMConfigWithApiKeys(llmConfig)
       const requestPayload = {
-        query: `Execute step ${stepId} for preset: ${presetQueryId}`,
+        query: `Execute step ${stepId} for preset: ${workflowId}`,
         agent_mode: 'workflow' as const,
         enabled_tools: enabledTools.map(tool => tool.name),
         enabled_servers: effectiveServers,
@@ -260,7 +260,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
         provider: llmConfig.provider as AgentQueryRequest['provider'],
         model_id: llmConfig.model_id,
         llm_config: llmConfigWithApiKeys,
-        preset_query_id: presetQueryId,
+        workflow_id: workflowId,
         step_id: stepId,
         use_code_execution_mode: activePreset?.useCodeExecutionMode,
         cdp_port: stepCdpPort
@@ -297,7 +297,7 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     const executionTabs = allTabs.filter(tab =>
       tab.metadata?.mode === 'workflow' &&
       tab.metadata?.phaseId === EXECUTION_PHASE_ID &&
-      tab.metadata?.presetQueryId === activePreset?.id
+      tab.metadata?.workflowId === activePreset?.id
     )
     
     // Use computed streaming status (not stored property) to find running tab

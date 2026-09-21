@@ -78,7 +78,7 @@ func (api *StreamingAPI) externalBuilderCall(w http.ResponseWriter, r *http.Requ
 		}
 		query := QueryRequest{
 			Query: message, AgentMode: "workflow_phase", PhaseID: "workflow-builder",
-			PresetQueryID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
+			WorkflowID: workflow.Manifest.ID, SelectedFolder: workflow.WorkspacePath,
 			Provider: provider, ModelID: modelID,
 		}
 		if persisted {

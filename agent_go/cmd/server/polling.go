@@ -384,7 +384,7 @@ func monitorSessionVisibleTo(ctx context.Context, session *ActiveSessionInfo) bo
 		return false
 	}
 	access, manifest := workflowAccessForWorkspacePath(ctx, claims, session.WorkspacePath)
-	return manifest != nil && manifest.ID == session.PresetQueryID && access != WorkflowAccessNone && userAllowedWorkflowID(claims, manifest.ID)
+	return manifest != nil && manifest.ID == session.WorkflowID && access != WorkflowAccessNone && userAllowedWorkflowID(claims, manifest.ID)
 }
 
 // collectActiveSessions returns the user-scoped active session list, including
@@ -427,7 +427,7 @@ func (api *StreamingAPI) collectActiveSessions(ctx context.Context) []*ActiveSes
 			SessionID: workflow.SessionID, AgentMode: "workflow", Status: workflow.Status,
 			CreatedAt: workflow.StartedAt, LastActivity: workflow.StartedAt,
 			Query: workflow.Query, Title: workflow.Title, WorkspacePath: workflow.WorkspacePath,
-			PresetName: workflow.PresetName, PresetQueryID: workflow.PresetQueryID,
+			PresetName: workflow.PresetName, WorkflowID: workflow.WorkflowID,
 			WorkflowName: label, WorkflowLabel: label, TriggeredBy: workflow.TriggeredBy,
 			NeedsUserInput: workflow.NeedsUserInput, WaitingMessage: workflow.WaitingMessage,
 			WaitingSince: workflow.WaitingSince, PhaseID: workflow.PhaseID, PhaseName: workflow.PhaseName,
@@ -466,8 +466,8 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 					enriched.WorkflowName = workflowName
 					enriched.WorkflowLabel = workflowName
 				}
-				if presetQueryID := strings.TrimSpace(snap.Metadata["preset_query_id"]); presetQueryID != "" {
-					enriched.PresetQueryID = presetQueryID
+				if workflowID := strings.TrimSpace(snap.Metadata["workflow_id"]); workflowID != "" {
+					enriched.WorkflowID = workflowID
 				}
 			}
 			if snap.CreatedAt.After(newestRunning) {
@@ -485,12 +485,12 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 		// workflow-builder/background execution can legitimately carry no
 		// workspace path or preset, and overwriting unconditionally erased
 		// both from a running scheduled session (PLAT-131). The frontend
-		// resolves a session's workflow by preset_query_id or workspace_path,
+		// resolves a session's workflow by workflow_id or workspace_path,
 		// so erasing them made a live pill unable to switch workflows at all —
 		// it opened a tab under whichever workflow happened to be on screen.
 		// TriggeredBy below was already guarded this way; these three were not.
-		if active.PresetQueryID != "" {
-			enriched.PresetQueryID = active.PresetQueryID
+		if active.WorkflowID != "" {
+			enriched.WorkflowID = active.WorkflowID
 		}
 		if active.PresetName != "" {
 			enriched.PresetName = active.PresetName
@@ -529,12 +529,12 @@ func (api *StreamingAPI) buildActiveSessionInfoSummary(session *ActiveSessionInf
 		// workflow-builder/background execution can legitimately carry no
 		// workspace path or preset, and overwriting unconditionally erased
 		// both from a running scheduled session (PLAT-131). The frontend
-		// resolves a session's workflow by preset_query_id or workspace_path,
+		// resolves a session's workflow by workflow_id or workspace_path,
 		// so erasing them made a live pill unable to switch workflows at all —
 		// it opened a tab under whichever workflow happened to be on screen.
 		// TriggeredBy below was already guarded this way; these three were not.
-		if active.PresetQueryID != "" {
-			enriched.PresetQueryID = active.PresetQueryID
+		if active.WorkflowID != "" {
+			enriched.WorkflowID = active.WorkflowID
 		}
 		if active.PresetName != "" {
 			enriched.PresetName = active.PresetName

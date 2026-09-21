@@ -13,7 +13,7 @@ func TestMonitorBotSessionVisibilityRespectsWorkflowAccess(t *testing.T) {
 	server := httptest.NewServer(workspace)
 	defer server.Close()
 	t.Setenv("WORKSPACE_API_URL", server.URL)
-	session := &ActiveSessionInfo{SessionID: "bot-slack--session", UserID: "bot-slack-8d3dd8b8e39a5d46", BotPlatform: "slack", WorkspacePath: "Workflow/monitor-bot", PresetQueryID: "wf-monitor"}
+	session := &ActiveSessionInfo{SessionID: "bot-slack--session", UserID: "bot-slack-8d3dd8b8e39a5d46", BotPlatform: "slack", WorkspacePath: "Workflow/monitor-bot", WorkflowID: "wf-monitor"}
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "reader", Username: "reader"})
 	if !monitorSessionVisibleTo(ctx, session) {
 		t.Fatal("workflow reader cannot see bot activity")
@@ -22,11 +22,11 @@ func TestMonitorBotSessionVisibilityRespectsWorkflowAccess(t *testing.T) {
 	if monitorSessionVisibleTo(outsider, session) {
 		t.Fatal("outsider can see bot activity")
 	}
-	session.PresetQueryID = "other-workflow"
+	session.WorkflowID = "other-workflow"
 	if monitorSessionVisibleTo(ctx, session) {
 		t.Fatal("mismatched workflow exposed")
 	}
-	session.PresetQueryID = "wf-monitor"
+	session.WorkflowID = "wf-monitor"
 	session.UserID = "another-human"
 	if monitorSessionVisibleTo(ctx, session) {
 		t.Fatal("another user's private session exposed")

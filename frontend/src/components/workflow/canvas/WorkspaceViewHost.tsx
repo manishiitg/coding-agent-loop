@@ -119,7 +119,7 @@ function FilesBody({ workspacePath }: { workspacePath: string | null }) {
   />
 }
 
-function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string | null; presetQueryId: string | null }) {
+function InspectorBody({ workspacePath, workflowId }: { workspacePath: string | null; workflowId: string | null }) {
   const workflowWorkspaceView = useWorkflowStore(state => state.workflowWorkspaceView)
   const refreshToken = useWorkflowStore(state => state.workspaceViewRefreshToken)
   const historyLogsTarget = useWorkflowStore(state => state.workspaceViewTarget?.view === 'execution-logs' && state.workspaceViewTarget.target.startsWith('history:') ? state.workspaceViewTarget : null)
@@ -167,7 +167,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         return (
           <WorkflowScheduleRunsPanel
             embedded
-            workflowScope={{ presetQueryId: presetQueryId || undefined, workspacePath: workspacePath || undefined }}
+            workflowScope={{ workflowId: workflowId || undefined, workspacePath: workspacePath || undefined }}
             onClose={closeInspector}
             headerAction={askAI('schedules')}
           />
@@ -264,7 +264,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
 export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((props, ref) => {
   const {
     workspacePath,
-    presetQueryId,
+    workflowId,
     currentPhase,
     onStartPhase,
     onCreatePlan,
@@ -672,7 +672,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       </Suspense>
     )
   } else {
-    body = <InspectorBody workspacePath={workspacePath} presetQueryId={presetQueryId} />
+    body = <InspectorBody workspacePath={workspacePath} workflowId={workflowId} />
   }
 
   return (
@@ -685,7 +685,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
               plan={plan || undefined}
               currentPhase={currentPhase}
               workspacePath={workspacePath}
-              presetQueryId={presetQueryId}
+              workflowId={workflowId}
               runFolders={runFoldersForToolbar}
               variablesManifest={variablesManifest}
               isLoadingWorkspaceState={isLoadingWorkspaceState}

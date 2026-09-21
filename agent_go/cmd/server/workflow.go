@@ -606,7 +606,7 @@ type ActiveWorkflowExecution struct {
 	QueryID       string    `json:"query_id"`
 	SessionID     string    `json:"session_id"`
 	Kind          string    `json:"kind,omitempty"`
-	PresetQueryID string    `json:"preset_query_id,omitempty"`
+	WorkflowID    string    `json:"workflow_id,omitempty"`
 	PresetName    string    `json:"preset_name,omitempty"`
 	WorkspacePath string    `json:"workspace_path"`
 	RunFolder     string    `json:"run_folder,omitempty"`
@@ -735,13 +735,13 @@ type AgentLLMConfig struct {
 
 // WorkflowRequest represents a workflow creation request
 type WorkflowRequest struct {
-	PresetQueryID             string `json:"preset_query_id"`
+	WorkflowID                string `json:"workflow_id"`
 	HumanVerificationRequired bool   `json:"human_verification_required"`
 }
 
 // WorkflowUpdateRequest represents a workflow update request
 type WorkflowUpdateRequest struct {
-	PresetQueryID   string                                 `json:"preset_query_id"`
+	WorkflowID      string                                 `json:"workflow_id"`
 	WorkflowStatus  *string                                `json:"workflow_status,omitempty"`
 	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
 	StepID          *string                                `json:"step_id,omitempty"` // Optional step ID for step-specific phase execution
@@ -754,7 +754,7 @@ type WorkflowUpdateRequest struct {
 // (which is fine — workflow_status is only meaningful during active execution).
 type WorkflowRuntimeState struct {
 	ID              string                                 `json:"id"`
-	PresetQueryID   string                                 `json:"preset_query_id"`
+	WorkflowID      string                                 `json:"workflow_id"`
 	WorkflowStatus  string                                 `json:"workflow_status"`
 	SelectedOptions *workflowtypes.WorkflowSelectedOptions `json:"selected_options,omitempty"`
 	CreatedAt       time.Time                              `json:"created_at"`
@@ -762,28 +762,28 @@ type WorkflowRuntimeState struct {
 }
 
 // workflowRuntimeStore is the in-memory store for workflow execution state.
-// Key: preset_query_id → WorkflowRuntimeState
+// Key: workflow_id → WorkflowRuntimeState
 var workflowRuntimeStore = struct {
 	sync.RWMutex
 	m map[string]*WorkflowRuntimeState
 }{m: make(map[string]*WorkflowRuntimeState)}
 
-func getWorkflowRuntime(presetQueryID string) *WorkflowRuntimeState {
+func getWorkflowRuntime(workflowID string) *WorkflowRuntimeState {
 	workflowRuntimeStore.RLock()
 	defer workflowRuntimeStore.RUnlock()
-	return workflowRuntimeStore.m[presetQueryID]
+	return workflowRuntimeStore.m[workflowID]
 }
 
 func setWorkflowRuntime(state *WorkflowRuntimeState) {
 	workflowRuntimeStore.Lock()
 	defer workflowRuntimeStore.Unlock()
-	workflowRuntimeStore.m[state.PresetQueryID] = state
+	workflowRuntimeStore.m[state.WorkflowID] = state
 }
 
-func deleteWorkflowRuntime(presetQueryID string) {
+func deleteWorkflowRuntime(workflowID string) {
 	workflowRuntimeStore.Lock()
 	defer workflowRuntimeStore.Unlock()
-	delete(workflowRuntimeStore.m, presetQueryID)
+	delete(workflowRuntimeStore.m, workflowID)
 }
 
 // handleCreateWorkflow handles workflow creation (in-memory runtime state).
@@ -800,14 +800,14 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.PresetQueryID == "" {
-		http.Error(w, "preset_query_id is required", http.StatusBadRequest)
+	if req.WorkflowID == "" {
+		http.Error(w, "workflow_id is required", http.StatusBadRequest)
 		return
 	}
 
 	// Check if already exists in memory
-	if existing := getWorkflowRuntime(req.PresetQueryID); existing != nil {
-		http.Error(w, "Workflow already exists for this preset query ID. Use update endpoint instead.", http.StatusConflict)
+	if existing := getWorkflowRuntime(req.WorkflowID); existing != nil {
+		http.Error(w, "Workflow already exists for this workflow ID. Use update endpoint instead.", http.StatusConflict)
 		return
 	}
 
@@ -819,7 +819,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 	now := time.Now()
 	state := &WorkflowRuntimeState{
 		ID:             fmt.Sprintf("wfrt_%d", now.UnixNano()),
-		PresetQueryID:  req.PresetQueryID,
+		WorkflowID:     req.WorkflowID,
 		WorkflowStatus: status,
 		CreatedAt:      now,
 		UpdatedAt:      now,
@@ -831,7 +831,7 @@ func (api *StreamingAPI) handleCreateWorkflow(w http.ResponseWriter, r *http.Req
 		"success": true,
 		"workflow": map[string]interface{}{
 			"id":              state.ID,
-			"preset_query_id": state.PresetQueryID,
+			"workflow_id":     state.WorkflowID,
 			"workflow_status": state.WorkflowStatus,
 			"created_at":      state.CreatedAt,
 		},
@@ -847,13 +847,13 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 		return
 	}
 
-	presetQueryID := r.URL.Query().Get("preset_query_id")
-	if presetQueryID == "" {
-		http.Error(w, "preset_query_id parameter is required", http.StatusBadRequest)
+	workflowID := r.URL.Query().Get("workflow_id")
+	if workflowID == "" {
+		http.Error(w, "workflow_id parameter is required", http.StatusBadRequest)
 		return
 	}
 
-	state := getWorkflowRuntime(presetQueryID)
+	state := getWorkflowRuntime(workflowID)
 	if state == nil {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -870,7 +870,7 @@ func (api *StreamingAPI) handleGetWorkflowStatus(w http.ResponseWriter, r *http.
 		"exists":  true,
 		"workflow": map[string]interface{}{
 			"id":               state.ID,
-			"preset_query_id":  state.PresetQueryID,
+			"workflow_id":      state.WorkflowID,
 			"workflow_status":  state.WorkflowStatus,
 			"selected_options": state.SelectedOptions,
 			"created_at":       state.CreatedAt,
@@ -898,8 +898,8 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	if req.PresetQueryID == "" {
-		http.Error(w, "preset_query_id is required", http.StatusBadRequest)
+	if req.WorkflowID == "" {
+		http.Error(w, "workflow_id is required", http.StatusBadRequest)
 		return
 	}
 
@@ -914,16 +914,16 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 		if api.workflowStepIDs == nil {
 			api.workflowStepIDs = make(map[string]string)
 		}
-		api.workflowStepIDs[req.PresetQueryID] = *req.StepID
+		api.workflowStepIDs[req.WorkflowID] = *req.StepID
 		api.workflowStepIDMux.Unlock()
 	}
 
 	// Get or create in-memory state (upsert)
-	state := getWorkflowRuntime(req.PresetQueryID)
+	state := getWorkflowRuntime(req.WorkflowID)
 	if state == nil {
 		state = &WorkflowRuntimeState{
 			ID:             fmt.Sprintf("wfrt_%d", time.Now().UnixNano()),
-			PresetQueryID:  req.PresetQueryID,
+			WorkflowID:     req.WorkflowID,
 			WorkflowStatus: workflowtypes.WorkflowStatusPreVerification,
 			CreatedAt:      time.Now(),
 		}
@@ -940,7 +940,7 @@ func (api *StreamingAPI) handleUpdateWorkflow(w http.ResponseWriter, r *http.Req
 
 	workflowResponse := map[string]interface{}{
 		"id":              state.ID,
-		"preset_query_id": state.PresetQueryID,
+		"workflow_id":     state.WorkflowID,
 		"workflow_status": state.WorkflowStatus,
 		"created_at":      state.CreatedAt,
 		"updated_at":      state.UpdatedAt,

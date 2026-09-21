@@ -40,7 +40,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
             const name = getLocalizedJobName(job)
             const isWebhook = job.schedule_type === 'webhook'
             const frequency = isWebhook ? 'Webhook · on request' : describeCron(job.cron_expression)
-            const workflow = panel.presetMap.get(job.preset_query_id ?? '')?.label || job.workflow_label || job.name
+            const workflow = panel.presetMap.get(job.workflow_id ?? '')?.label || job.workflow_label || job.name
             const isRunning = job.last_status === 'running'
             const state = isRunning ? 'Running' : isScheduleWaitingStatus(job.last_status) ? 'Queued' : job.enabled ? 'Enabled' : 'Paused'
             const open = expanded.has(job.id)

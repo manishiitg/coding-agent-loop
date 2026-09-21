@@ -722,7 +722,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     isCheckingActiveSessions,
     currentWorkflowPhase,
     setCurrentWorkflowPhase,
-    setCurrentWorkflowQueryId,
+    setCurrentWorkflowId,
     addToast,
     resetChatState,
     isAtBottom,
@@ -749,7 +749,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     isCheckingActiveSessions: state.isCheckingActiveSessions,
     currentWorkflowPhase: state.currentWorkflowPhase,
     setCurrentWorkflowPhase: state.setCurrentWorkflowPhase,
-    setCurrentWorkflowQueryId: state.setCurrentWorkflowQueryId,
+    setCurrentWorkflowId: state.setCurrentWorkflowId,
     addToast: state.addToast,
     resetChatState: state.resetChatState,
     isAtBottom: state.isAtBottom,
@@ -1177,14 +1177,14 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   }
 
   // Handle preset selection from overlay
-  const handlePresetSelected = (presetId: string) => {
+  const handlePresetSelected = (workflowId: string) => {
     if (pendingModeCategory) {
       // Now switch to the mode
       switchMode(pendingModeCategory)
 
-      // Apply the preset after mode switch (this will also set the active preset ID)
+      // Apply the preset after mode switch (this will also set the active workflow ID)
       setTimeout(() => {
-        const result = applyPreset(presetId, pendingModeCategory)
+        const result = applyPreset(workflowId, pendingModeCategory)
         if (!result.success) {
           logger.error('ChatArea', 'Failed to apply preset:', result.error)
         }
@@ -1438,11 +1438,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Deprecated: totalEventsRef useEffect removed
 
   // Workflow preset handlers
-  const handleWorkflowPresetSelected = useCallback(async (presetId: string, presetContent: string) => {
+  const handleWorkflowPresetSelected = useCallback(async (workflowId: string, presetContent: string) => {
     // Apply the preset using the global preset store
     // File context is now preset-specific (from preset.selectedFolder), no need to clear
-    selectWorkflowPreset(presetId)
-    setCurrentWorkflowQueryId(presetId) // Store the preset query ID for workflow approval
+    selectWorkflowPreset(workflowId)
+    setCurrentWorkflowId(workflowId) // Store the workflow ID for approval
 
     try {
       // Ensure phases are loaded and get them from store
@@ -1455,7 +1455,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       const defaultPhase = workflowStore.getDefaultPhase()
 
       // Check if workflow already exists for this preset
-      const workflowStatus = await agentApi.getWorkflowStatus(presetId)
+      const workflowStatus = await agentApi.getWorkflowStatus(workflowId)
 
       if (workflowStatus.success && workflowStatus.workflow) {
         const workflow = workflowStatus.workflow
@@ -1484,15 +1484,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       setCurrentWorkflowPhase(defaultPhase)
       setCurrentQuery(presetContent)
     }
-  }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowQueryId])
+  }, [setCurrentQuery, applyPreset, setCurrentWorkflowPhase, setCurrentWorkflowId])
 
   // Clear workflow state when starting a new chat
   const clearWorkflowState = useCallback(() => {
     clearActivePreset('workflow')
-    setCurrentWorkflowQueryId(null)
+    setCurrentWorkflowId(null)
     const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
     setCurrentWorkflowPhase(defaultPhase)
-  }, [clearActivePreset, setCurrentWorkflowQueryId, setCurrentWorkflowPhase])
+  }, [clearActivePreset, setCurrentWorkflowId, setCurrentWorkflowPhase])
 
   // Handle human verification actions
   // TODO: Re-enable when RequestHumanFeedbackEvent is available
@@ -1501,10 +1501,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
     setIsApprovingWorkflow(true)  // Set loading state
 
-    // Use the stored preset query ID instead of the request ID
-    const presetQueryId = currentWorkflowQueryId
-    if (!presetQueryId) {
-      logger.error('ChatArea', 'No preset query ID available for workflow approval')
+    // Use the stored workflow ID instead of the request ID
+    const workflowId = currentWorkflowId
+    if (!workflowId) {
+      logger.error('ChatArea', 'No workflow ID available for workflow approval')
       setIsApprovingWorkflow(false)
       return
     }
@@ -1520,7 +1520,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       }
 
       // Update workflow status to the determined next phase
-      await agentApi.updateWorkflow(presetQueryId, nextPhase)
+      await agentApi.updateWorkflow(workflowId, nextPhase)
 
       // Stop any ongoing SSE / polling to prevent events from coming back
       if (currentTab?.sessionId) {
@@ -1551,7 +1551,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     } finally {
       setIsApprovingWorkflow(false)  // Clear loading state
     }
-  }, [currentWorkflowQueryId, pollingInterval, setIsApprovingWorkflow, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setCurrentWorkflowPhase, setPollingInterval])
+  }, [currentWorkflowId, pollingInterval, setIsApprovingWorkflow, setLastEventIndex, setFinalResponse, setIsCompleted, setCurrentUserMessage, setShowUserMessage, setCurrentWorkflowPhase, setPollingInterval])
   */
 
   // Observer initialization removed - no longer needed
@@ -1604,7 +1604,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // Background preset tabs still store events but skip UI side effects
     // (workspace refresh, canvas updates, step progress) to avoid polluting the visible workflow.
     const isActivePresetTab =
-      tab?.metadata?.presetQueryId === useGlobalPresetStore.getState().activePresetIds.workflow
+      tab?.metadata?.workflowId === useGlobalPresetStore.getState().activePresetIds.workflow
 
     // --- Session status handling ---
     const activity = sessionStreamingState(response)
@@ -2821,7 +2821,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // An empty transport window is not a new-conversation request. Keep the
     // tab's allocated identity through startup, retries and deployments.
 
-    const ownerPresetId = currentTab.metadata?.presetQueryId
+    const ownerPresetId = currentTab.metadata?.workflowId
     const presetState = useGlobalPresetStore.getState()
     const freshWorkflowPreset = submitModeCategory === 'workflow'
       ? presetState.getPresetsForMode('workflow').find(preset => preset.id === ownerPresetId) : undefined
@@ -2860,7 +2860,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       window.dispatchEvent(new CustomEvent('workflow-chat-user-started', {
         detail: {
           tabId: currentTab.tabId,
-          presetQueryId: currentTab.metadata?.presetQueryId,
+          workflowId: currentTab.metadata?.workflowId,
           phaseId: currentTab.metadata?.phaseId,
         },
       }))
@@ -3089,10 +3089,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         }
       }
 
-      // DEBUG: log final request payload preset_query_id
+      // DEBUG: log final request payload workflow_id
       console.log('[DEBUG request payload]', {
         agent_mode: requestPayload.agent_mode,
-        preset_query_id: requestPayload.preset_query_id,
+        workflow_id: requestPayload.workflow_id,
         phase_id: requestPayload.phase_id,
         has_files_in_context: requestPayload.query.includes('📁 Files in context:'),
         restored_conversation_path: restoredConversationPath || undefined,
@@ -3400,7 +3400,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Keep the preset selected, just reset the workflow phase to default
       const defaultPhase = useWorkflowStore.getState().getDefaultPhase()
       setCurrentWorkflowPhase(defaultPhase)
-      // Don't clear selectedWorkflowPreset or currentWorkflowQueryId
+      // Don't clear selectedWorkflowPreset or currentWorkflowId
     } else if (!targetTab) {
       // For other modes, clear workflow state completely
       clearWorkflowState()
@@ -3479,7 +3479,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     isReadOnlyRunView,
   }, false, !selectedWorkflowPreset || (
     activeTab?.metadata?.mode === 'workflow' &&
-    activeTab.metadata.presetQueryId === selectedWorkflowPreset
+    activeTab.metadata.workflowId === selectedWorkflowPreset
   ))
   const visibleWorkflowSurface = workflowSurface
 

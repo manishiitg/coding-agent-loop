@@ -26,7 +26,7 @@ export function userInteractiveContinuationFlag(tab: Pick<ChatTab, 'metadata'>):
 }
 
 export type WorkflowReferenceContext = {
-  presetId: string
+  workflowId: string
   label: string
   workspacePath: string
 }
@@ -39,8 +39,8 @@ export function remainingWorkflowContextAfterSubmission(
   submitted: WorkflowReferenceContext[],
 ): WorkflowReferenceContext[] {
   if (submitted.length === 0) return current
-  const consumed = new Set(submitted.map(reference => `${reference.presetId}\u0000${reference.workspacePath}`))
-  return current.filter(reference => !consumed.has(`${reference.presetId}\u0000${reference.workspacePath}`))
+  const consumed = new Set(submitted.map(reference => `${reference.workflowId}\u0000${reference.workspacePath}`))
+  return current.filter(reference => !consumed.has(`${reference.workflowId}\u0000${reference.workspacePath}`))
 }
 
 // ---------------------------------------------------------------------------
@@ -136,9 +136,9 @@ export function buildQueryRequestPayload(params: {
   let enableContextEditing: boolean | undefined = undefined
   if (selectedModeCategory === 'workflow') {
     const presetStore = useGlobalPresetStore.getState()
-    const presetId = workflowPresetId || currentTab?.metadata?.presetQueryId
-    const preset = presetId
-      ? presetStore.workflowPresets.find(p => p.id === presetId)
+    const workflowId = workflowPresetId || currentTab?.metadata?.workflowId
+    const preset = workflowId
+      ? presetStore.workflowPresets.find(p => p.id === workflowId)
       : null
     if (preset?.llmConfig?.enable_context_editing === false) {
       enableContextEditing = false
@@ -177,7 +177,7 @@ export function buildQueryRequestPayload(params: {
     provider: effectiveLLMConfig.provider as AgentQueryRequest['provider'],
     model_id: effectiveLLMConfig.model_id,
     llm_config: llmConfigWithApiKeys as AgentQueryRequest['llm_config'],
-    preset_query_id: workflowPresetId || chatPresetId || undefined,
+    workflow_id: workflowPresetId || chatPresetId || undefined,
     use_code_execution_mode: correctAgentMode === 'multi-agent' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
     execution_options: executionOptions as AgentQueryRequest['execution_options'],
     enable_context_summarization: isChatLikeMode ? true : undefined,
@@ -289,12 +289,12 @@ export async function findOrCreateWorkflowTab(params: {
     ? existingPhaseTabs.sort((a, b) => b.createdAt - a.createdAt)[0]
     : null
 
-  // Fallback: legacy tabs without presetQueryId that match the phase
+  // Fallback: legacy tabs without workflowId that match the phase
   const legacyTab = !runningTab && !newestTab
     ? Object.values(chatStore.chatTabs).find(t =>
         t.metadata?.mode === 'workflow' &&
         t.metadata?.phaseId === phaseId &&
-        !t.metadata?.presetQueryId
+        !t.metadata?.workflowId
       )
     : null
 
@@ -315,7 +315,7 @@ export async function findOrCreateWorkflowTab(params: {
       mode: 'workflow',
       phaseId,
       phaseName,
-      presetQueryId: activePresetId || undefined
+      workflowId: activePresetId || undefined
     })
     const tab = getActiveTab()
     if (!tab) return null

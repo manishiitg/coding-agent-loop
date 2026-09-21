@@ -212,17 +212,31 @@ it('identifies trigger, schedule, and bot origins in the Crew chat index', async
   expect(host.textContent).toContain('Bot · Slack')
 })
 
-it('keeps scheduled transcripts in the unified workflow Chats index', async () => {
+it('keeps workflow automation transcripts and labels every source in the unified Chats index', async () => {
   vi.mocked(agentApi.listChatHistorySessions).mockImplementation(async (_limit, _offset, _workspacePath, kind) => ({
     sessions: kind === 'chat' ? [{
       session_id: 'builder-chat',
       title: 'Builder discussion',
+      username: 'Local user',
       created_at: '2026-09-21T08:00:00Z',
-    }] : [{
-      session_id: 'schedule-cron--daily_123',
-      title: 'Latest scheduled conversation',
-      created_at: '2026-09-21T09:00:00Z',
-    }],
+    }] : [
+      {
+        session_id: 'schedule-cron--daily_123',
+        title: 'Latest scheduled conversation',
+        created_at: '2026-09-21T09:00:00Z',
+      },
+      {
+        session_id: 'schedule-webhook--deploy_123',
+        title: 'Latest trigger conversation',
+        created_at: '2026-09-21T08:55:00Z',
+      },
+      {
+        session_id: 'bot-slack--thread-123',
+        title: 'Latest bot conversation',
+        bot_platform: 'slack',
+        created_at: '2026-09-21T08:50:00Z',
+      },
+    ],
   }))
   const host = document.createElement('div'); document.body.append(host)
   const root = createRoot(host)
@@ -239,6 +253,10 @@ it('keeps scheduled transcripts in the unified workflow Chats index', async () =
   expect(agentApi.listChatHistorySessions).toHaveBeenCalledWith(expect.any(Number), 0, 'Workflow/test', 'chat')
   expect(host.textContent).toContain('Latest scheduled conversation')
   expect(host.textContent).toContain('Builder discussion')
+  expect(host.textContent).toContain('Schedule')
+  expect(host.textContent).toContain('Trigger')
+  expect(host.textContent).toContain('Bot · Slack')
+  expect(host.textContent).toContain('Chat · Local user')
 })
 
 it('identifies the open persistent chat even before it appears in history', async () => {

@@ -1,6 +1,6 @@
 import './PreviousChatHistoryPanel.css'
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, UserRound, Webhook, type LucideIcon } from 'lucide-react'
+import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import { productWebhooksApi, type ProductTriggerScope } from '../api/productWebhooks'
@@ -1051,6 +1051,25 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
               const messageCountLabel = formatMessageCount(session.message_count)
               const botSourceLabel = botSessionSourceLabel(session)
               const automationSource = automationSourceBySession[session.session_id]
+              const chatKind = getChatKind(session)
+              const sourceBadge = automationSource
+                ? {
+                    label: `${automationSource.kind === 'trigger' ? 'Trigger' : 'Schedule'} · ${automationSource.label}`,
+                    icon: automationSource.kind === 'trigger' ? Webhook : CalendarClock,
+                  }
+                : chatKind === 'webhook'
+                  ? { label: 'Trigger', icon: Webhook }
+                  : chatKind === 'schedule'
+                    ? { label: 'Schedule', icon: CalendarClock }
+                    : chatKind === 'bot'
+                      ? { label: botSourceLabel ? `Bot · ${botSourceLabel}` : 'Bot', icon: Bot }
+                      : {
+                          label: session.username && session.username !== 'System / legacy'
+                            ? `Chat · ${session.username}`
+                            : 'Chat',
+                          icon: MessageSquare,
+                        }
+              const SourceIcon = sourceBadge.icon
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
@@ -1082,22 +1101,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                             <span>{messageCountLabel}</span>
                           </span>
                         )}
-                        {automationSource ? (
-                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5" title={`${automationSource.kind === 'trigger' ? 'Trigger' : 'Schedule'} · ${automationSource.label}`}>
-                            {automationSource.kind === 'trigger' ? <Webhook className="h-3 w-3 shrink-0" /> : <CalendarClock className="h-3 w-3 shrink-0" />}
-                            <span className="truncate">{automationSource.kind === 'trigger' ? 'Trigger' : 'Schedule'} · {automationSource.label}</span>
-                          </span>
-                        ) : botSourceLabel ? (
-                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
-                            <Bot className="h-3 w-3 shrink-0" />
-                            <span className="truncate">Bot · {botSourceLabel}</span>
-                          </span>
-                        ) : session.username && (
-                          <span className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5">
-                            <UserRound className="h-3 w-3 shrink-0" />
-                            <span className="truncate">{session.username}</span>
-                          </span>
-                        )}
+                        <span
+                          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5"
+                          title={sourceBadge.label}
+                        >
+                          <SourceIcon className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{sourceBadge.label}</span>
+                        </span>
                         {runtimeLabel && (
                           <ChatHistoryRuntimeBadge session={session} />
                         )}

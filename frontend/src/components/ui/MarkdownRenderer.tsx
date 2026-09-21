@@ -1141,8 +1141,11 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
           }
         `
       }} />
-      <ReactMarkdown 
-        remarkPlugins={[remarkGfm]}
+      <ReactMarkdown
+        // Single-tilde strikethrough off: chat/model text uses ~ for
+        // "approximately" (~2.37L), and pairing those into <del> spans
+        // strikes whole paragraphs. ~~ still strikethroughs, like GitHub.
+        remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
         components={{
           p: ({ children }) => <p className="mb-2 last:mb-0 text-sm leading-6 text-gray-700 dark:text-gray-300 break-words overflow-wrap-anywhere">{children}</p>,
           h1: ({ children }) => <h1 className="text-2xl font-bold mb-2 mt-4 first:mt-0 text-gray-900 dark:text-gray-100 break-words overflow-wrap-anywhere border-b border-gray-200 dark:border-gray-700 pb-2">{children}</h1>,

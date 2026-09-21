@@ -35,7 +35,9 @@ export function allowedReportPath(path: string): string {
 export function renderReportMarkdown(markdown: string, basePath = ''): string {
   if (!markdown) return ''
   try {
-    const rendered = renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [remarkGfm] }, markdown))
+    // Single-tilde strikethrough off: ~ means "approximately" in model text
+    // (~2.37L), and pairing those into <del> spans strikes whole paragraphs.
+    const rendered = renderToStaticMarkup(createElement(ReactMarkdown, { remarkPlugins: [[remarkGfm, { singleTilde: false }]] }, markdown))
     return `<div class="report-markdown">${rewriteReportMarkdownReferences(rendered, allowedReportPath, basePath)}</div>`
   } catch {
     return ''

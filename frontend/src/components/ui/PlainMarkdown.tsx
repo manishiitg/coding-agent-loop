@@ -24,7 +24,10 @@ export const PlainMarkdown: React.FC<{ content: string; className?: string }> = 
 }) => (
   <div className={`text-[12.5px] leading-5 text-neutral-300 ${className}`}>
     <ReactMarkdown
-      remarkPlugins={[remarkGfm]}
+      // Single-tilde strikethrough off: ~ means "approximately" in model
+      // text (~2.37L), and pairing those into <del> spans strikes whole
+      // paragraphs. ~~ still strikethroughs, like GitHub.
+      remarkPlugins={[[remarkGfm, { singleTilde: false }]]}
       components={{
         h1: ({ children }) => (
           <h1 className="mt-3 mb-1 text-[13px] font-semibold text-neutral-100 first:mt-0">{children}</h1>

@@ -135,7 +135,7 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 			return st
 		}
 		st.Authenticated, st.HasGmailScope, st.Email = true, true, email
-		st.Scopes = gmailOAuthScopesFor(false, nil)
+		st.Scopes = gmailOAuthScopesFor(false, false, nil)
 		return st
 	}
 	account, err := checkedGogAccount(ctx, gogPath, cfg.gogAccountEmail, cfg.gogClientName)
@@ -145,8 +145,16 @@ func (g *GmailService) computeAuthStatusGog(ctx context.Context, gogPath string,
 	}
 	st.Authenticated = true
 	st.Email = account.Email
-	st.Scopes = account.Scopes
-	st.HasGmailScope = scopesGrantGmailSend(account.Scopes)
+	scopes := account.Scopes
+	if len(scopes) == 0 {
+		// Imported accounts are valid but carry no scope metadata in
+		// gog's store: fall back to the connection's consent-time scopes.
+		// Empty here means "unknown", never "revoked" — the check above
+		// already proved the credential is live.
+		scopes = cfg.storedScopes
+	}
+	st.Scopes = scopes
+	st.HasGmailScope = scopesGrantGmailSend(scopes)
 	if !st.HasGmailScope {
 		st.Detail = "authenticated, but this account has no Gmail send scope"
 	}

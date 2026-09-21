@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | Implemented and deployed (confida) — no live Drive/Sheets connection exercised yet |
-| Last synchronized | 2026-09-08 |
+| Ticket state | Implemented and deployed (confida) — 2026-09-20 follow-up implemented locally, tests pass, not yet pushed/deployed |
+| Last synchronized | 2026-09-20 |
 | Priority | P2 platform capability |
 
 ## Problem
@@ -86,3 +86,45 @@ agent-facing way to use them even if there were.
 Shipped as part of confida's `agent_go` + frontend bundle
 (`deploy/cf/deploy-cf.sh`, remote-main mode). Not evaluated
 against RTS or Dominion — those deployments are managed separately.
+
+## Follow-up (2026-09-20): imported gog accounts report empty scopes
+
+After an "update permission" re-OAuth, Google shows success ("Connected as
+manish.prakash@excellencestechnologies.com — you can close this tab") but
+the app reports every permission revoked and the connection not Ready.
+
+Evidence: with the backend's `GOG_HOME`, `gog auth list --check --json`
+shows the imported account `valid: true` with `scopes: []`. The credential
+is live; only gog's scope metadata is empty. Root cause: refresh tokens
+imported from our own OAuth flow (`ImportRefreshTokenIntoGog`) carry no
+scope metadata in gog's store, and the status path reads the empty list as
+"gmail.send missing" (`computeAuthStatusGog` checked-account branch), which
+clears `HasGmailSendScope` and the Ready flag. The completion path also
+overwrites the connection's stored scopes with that empty observation.
+
+Fix (implemented 2026-09-20, not yet pushed/deployed):
+`CompleteGmailOAuth` returns the consent-time `tokeninfo` scopes, the
+callback route threads them into `CompleteGogConnection`, which records
+them via `resolveCompletionScopes` (granted > gog metadata > keep stored,
+never wipe with empty); `computeAuthStatusGog`'s checked-account branch
+falls back to the connection's stored scopes when gog reports empty on a
+valid account. Regression tests:
+`TestGogStatusFallsBackToStoredScopesWhenGogReportsNone` (failed before,
+passes after),
+`TestResolveCompletionScopesNeverWipesStoredScopes`, and a granted-scopes
+assertion in `TestOAuthCallbackStoresOnlyInGog`. `go test
+./cmd/server/services/` and `go test ./cmd/server/` both pass.
+
+## Decision history
+
+- 2026-09-08: scope truth read live at status time (`tokeninfo`, then
+  `getProfile` fallback, then gog `--check` metadata). Belief: gog's
+  account record carries granted scopes.
+- 2026-09-20: supersedes the gog-metadata belief for imported accounts —
+  `gog auth list --check` returns `valid: true` with `scopes: []` for
+  externally imported refresh tokens, so consent-time `tokeninfo` scopes
+  persisted on the connection become the scope source of truth, with live
+  gog metadata as a non-empty-only refinement. This continues the running
+  gog reliability thread (backend naming, send-only identity, shared
+  store/`GOG_HOME` in PLAT-312): gog owns the tokens, but our status and
+  scope reporting cannot trust its metadata alone.

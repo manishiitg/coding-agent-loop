@@ -79,7 +79,11 @@ fallback survives restarts. The change bounds only repeated historical work.
   state, bounded worker concurrency, and preservation of newer demands.
 - `git diff --check` passes.
 - Deployment and a post-deployment RTS CPU profile remain pending.
-- Add rootless Video Studio log rotation separately (`copytruncate`, compressed
-  retention) and retain a diagnostic tail before reclaiming the current logs.
-  Log truncation is operational cleanup, not the CPU fix, and was not performed
-  during this investigation.
+- Rootless Video Studio now installs a low-priority user timer that checks logs
+  every ten minutes, rotates at 100 MB with `copytruncate`, and retains seven
+  compressed generations. Production-debug workspace messages are opt-in, shell
+  diagnostics persist only command length plus a short SHA-256 fingerprint, and
+  the unused agent `--log-file` flag is removed so systemd owns one clear log
+  path. The registry-side hot-path suppression shipped in `mcpagent` commit
+  `22ff53a` (included on `main` by merge `ee12433`). Deployment and one-time
+  cleanup of the existing files remain pending.

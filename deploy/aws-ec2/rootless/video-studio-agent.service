@@ -23,7 +23,7 @@ Environment=PUBLIC_URL=https://video.realtrainingsys.com
 # does -- get a writable location instead of EACCES.
 Environment=XDG_CONFIG_HOME=%h/.local/state/xdg-config
 WorkingDirectory=%h/video-studio/current
-ExecStart=%h/video-studio/current/bin/video-studio-agent server --host 0.0.0.0 --port 8000 --log-level info --log-file /data/video-studio/logs/agent.log --mcp-config %h/video-studio/current/configs/mcp_servers_video_studio.json --provider ${AGENT_PROVIDER} --model ${AGENT_MODEL} --max-turns 100
+ExecStart=%h/video-studio/current/bin/video-studio-agent server --host 0.0.0.0 --port 8000 --log-level info --mcp-config %h/video-studio/current/configs/mcp_servers_video_studio.json --provider ${AGENT_PROVIDER} --model ${AGENT_MODEL} --max-turns 100
 StandardOutput=append:%h/video-studio/logs/agent.log
 StandardError=append:%h/video-studio/logs/agent.log
 Restart=always

@@ -49,8 +49,9 @@ func ExecuteShellCommand(c *gin.Context) {
 	// Log user ID from request header for debugging
 	rawUserIDHeader := c.GetHeader("X-User-ID")
 	resolvedUserID := getUserID(c)
-	log.Printf("[USER_ID_DEBUGGING] Shell handler: X-User-ID header=%q, resolved=%q, command=%q, working_dir=%q",
-		rawUserIDHeader, resolvedUserID, req.Command, req.WorkingDirectory)
+	commandLength, commandFingerprint := shellCommandLogIdentity(req.Command)
+	workspaceDebugLogf("[USER_ID_DEBUGGING] Shell handler: X-User-ID header=%q, resolved=%q, command_length=%d, command_sha256=%s, working_dir=%q",
+		rawUserIDHeader, resolvedUserID, commandLength, commandFingerprint, req.WorkingDirectory)
 
 	// Determine working directory
 	workingDir := docsDir
@@ -133,7 +134,7 @@ func ExecuteShellCommand(c *gin.Context) {
 				physicalPath = filepath.Join(docsDir, physicalPath)
 			}
 			if mkErr := os.MkdirAll(physicalPath, 0755); mkErr != nil {
-				fmt.Printf("[SHELL ISOLATOR] Warning: failed to pre-create write path %s: %v\n", physicalPath, mkErr)
+				log.Printf("[SHELL ISOLATOR] Warning: failed to pre-create write path %s: %v", physicalPath, mkErr)
 			}
 		}
 
@@ -153,7 +154,7 @@ func ExecuteShellCommand(c *gin.Context) {
 		}
 
 		// Debug: log isolator configuration for troubleshooting mount namespace issues
-		fmt.Printf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v BlockedWritePaths=%v\n",
+		workspaceDebugPrintf("[SHELL ISOLATOR] WorkDir=%s ReadPaths=%v WritePaths=%v BlockedWritePaths=%v\n",
 			workingDir, req.FolderGuard.ReadPaths, req.FolderGuard.WritePaths, req.FolderGuard.BlockedWritePaths)
 
 		fullCommand = stripShellPrefix(req.Command)
@@ -226,13 +227,13 @@ func ExecuteShellCommand(c *gin.Context) {
 			extraEnvCount++
 		}
 	}
-	log.Printf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d allowed (runtime prefixes plus DB_PATH/PYTHONDONTWRITEBYTECODE)", len(req.ExtraEnv), extraEnvCount)
+	workspaceDebugLogf("[SHELL_ENV_DEBUG] ExtraEnv received: %d keys total, %d allowed (runtime prefixes plus DB_PATH/PYTHONDONTWRITEBYTECODE)", len(req.ExtraEnv), extraEnvCount)
 	if len(req.ExtraEnv) > 0 {
 		keys := make([]string, 0, len(req.ExtraEnv))
 		for k := range req.ExtraEnv {
 			keys = append(keys, k)
 		}
-		log.Printf("[SHELL_ENV_DEBUG] ExtraEnv keys: %v", keys)
+		workspaceDebugLogf("[SHELL_ENV_DEBUG] ExtraEnv keys: %v", keys)
 	}
 
 	// Capture stdout and stderr separately

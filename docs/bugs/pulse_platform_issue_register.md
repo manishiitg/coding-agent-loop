@@ -83,6 +83,23 @@ See [PLAT-307](pulse_platform/security-sandbox/plat-307.md) for scope and tests.
 
 # Pulse Platform-Issue Register
 
+## Workflow navigation transcript isolation — PLAT-343
+
+[PLAT-343](pulse_platform/frontend-chat/plat-343.md) prevents the previous
+workflow's transcript from remaining visible after a different workflow is
+selected. The workflow chat surface now verifies that the active tab belongs to
+the selected workflow and displays its loading state during asynchronous tab
+resolution. Focused resolver tests and the frontend build pass; deployment and
+live acceptance remain pending.
+
+## Ctrl+K first-open latency — PLAT-342
+
+[PLAT-342](pulse_platform/performance/plat-342.md) removes the quick switcher's
+first-use chunk fetch, renders its cached session list immediately, and stops
+forcing an active-session request or resetting the overlay when preset data
+changes. The focused performance contract and frontend build pass; deployment
+and production timing verification remain pending.
+
 ## Native transcript recovery CPU saturation — PLAT-341
 
 [PLAT-341](pulse_platform/performance/plat-341.md) records the RTS
@@ -92,8 +109,10 @@ full message text inside every matrix comparison. Production pprof attributed
 55% of agent CPU to that recovery path. Message keys are now precomputed,
 historical retries use bounded backoff/age/attempt limits with one worker, and
 older attempts cannot overwrite newer recovery demands. Focused regressions
-pass; deployment, post-deployment pprof verification, and log-rotation cleanup
-remain pending.
+pass. Production logging now also has bounded rotation, opt-in debug chatter,
+safe shell-command fingerprints, and deduplicated registry diagnostics.
+Deployment, post-deployment pprof verification, and one-time cleanup of the
+existing large logs remain pending.
 
 ## Scheduled scripted-tool child ownership — PLAT-338
 

@@ -1,3 +1,12 @@
+## Interactive workflow Stop/resume — PLAT-340
+
+[PLAT-340](pulse_platform/chat-reliability/plat-340.md) records the Confida
+workflow-chat failure where Stop canceled the response but also discarded the
+request and workspace binding needed by the next message. Interactive chat Stop
+now preserves those bindings while still canceling current work; scheduled,
+webhook, and bot runs retain full teardown. Endpoint-level and guard regressions
+are green; deployment and live acceptance remain pending.
+
 ## Read-only Crew workflow invocation — PLAT-339
 
 [PLAT-339](pulse_platform/security-sandbox/plat-339.md) makes the bidirectional

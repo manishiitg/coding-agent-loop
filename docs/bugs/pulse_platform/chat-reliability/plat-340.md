@@ -1,11 +1,11 @@
 [← Pulse platform index](../../pulse_platform_issue_register.md)
 
-# PLAT-339 — Stopping an interactive workflow response stranded the next message
+# PLAT-340 — Stopping an interactive workflow response stranded the next message
 
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented locally; regression tests green; not pushed or deployed` |
+| Ticket state | `implemented; regression tests green; deployment pending` |
 | Last synchronized | `2026-09-21` |
 | Priority | `P2 chat reliability` |
 
@@ -63,7 +63,7 @@ Changed paths: `agent_go/cmd/server/session_lifecycle.go`,
   assertion was fixed on remote `main` in `b1d3b3d8f`, but this working tree
   has not been rebased because it contains unrelated local changes.
 
-The fix is **not pushed or deployed**. After integration with current `main`,
-run the full frontend build, deploy, and reverify Stop → send again in the
+After integration with current `main`, run the full frontend build, deploy,
+and reverify Stop → send again in the
 same Confida workflow chat. Confirm that stopped schedules/triggers stay
 stopped and cannot resume from internal notifications.

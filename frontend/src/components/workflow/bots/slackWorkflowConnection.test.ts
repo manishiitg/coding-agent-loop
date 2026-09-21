@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { resolveWorkflowSlackConnection } from './slackWorkflowConnection'
+import { resolveWorkflowSlackConnection, selectedWorkflowSlackReady } from './slackWorkflowConnection'
 import type { SlackConnection } from '../../../services/api-types'
 
 const entry = (overrides: Partial<SlackConnection> & { id: string }): SlackConnection => ({
@@ -26,6 +26,13 @@ describe('Workflow Slack connection resolution', () => {
   it('prefers the manifest selection over the default', () => {
     const resolved = resolveWorkflowSlackConnection(connections, 'Workflow/alpha', 'slack_aaa', 'slack_001')
     expect(resolved.effective?.id).toBe('slack_aaa')
+    expect(selectedWorkflowSlackReady(resolved)).toBe(true)
+  })
+
+  it('keeps an unselected or disabled app from making routes ready', () => {
+    expect(selectedWorkflowSlackReady(resolveWorkflowSlackConnection(connections, 'Workflow/alpha', undefined, 'slack_001'))).toBe(false)
+    const disabled = [entry({ id: 'slack_off', workspace_path: 'Workflow/alpha', enabled: false })]
+    expect(selectedWorkflowSlackReady(resolveWorkflowSlackConnection(disabled, 'Workflow/alpha', 'slack_off', undefined))).toBe(false)
   })
 
   it('reports a dangling selection instead of silently falling back', () => {

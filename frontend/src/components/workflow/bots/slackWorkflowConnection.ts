@@ -11,6 +11,10 @@ export type WorkflowSlackSelection = {
   selectionId: string
 }
 
+export function selectedWorkflowSlackReady(selection: WorkflowSlackSelection): boolean {
+  return !!selection.selectionId && !!selection.effective?.enabled && !!selection.effective?.configured
+}
+
 export function resolveWorkflowSlackConnection(
   connections: SlackConnection[] | undefined,
   workspacePath: string | null,

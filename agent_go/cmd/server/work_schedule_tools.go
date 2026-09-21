@@ -17,7 +17,11 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 	if api.productSchedules == nil {
 		return nil
 	}
-	raw, found, err := readFileFromWorkspace(context.Background(), filepath.ToSlash(filepath.Join(workspacePath, "product.json")))
+	// Product conversations keep a public Chats/... binding, while project
+	// manifests live under the paired user's _users/<id>/Chats/... directory.
+	// Read the manifest from that runtime path before registering tools.
+	projectWorkspace := agentProfileRuntimeWorkspace(userID, workspacePath)
+	raw, found, err := readFileFromWorkspace(context.Background(), filepath.ToSlash(filepath.Join(projectWorkspace, "product.json")))
 	if err != nil || !found {
 		return firstError(err, fmt.Errorf("Work project manifest not found"))
 	}

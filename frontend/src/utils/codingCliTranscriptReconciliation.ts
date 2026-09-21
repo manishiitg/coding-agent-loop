@@ -28,8 +28,9 @@ export function codingCliCompletionNeedsTranscriptReconciliation(event: PollingE
   const source = typeof metadata?.source === 'string'
     ? metadata.source.trim().toLowerCase()
     : ''
+  const terminalFormat = metadata?.coding_agent_terminal_format === true
 
   return CODING_CLI_PROVIDERS.has(provider) && (
-    source === 'mcpagent_session' || source === 'coding_agent_sidecar'
+    source === 'mcpagent_session' || source === 'coding_agent_sidecar' || terminalFormat
   )
 }

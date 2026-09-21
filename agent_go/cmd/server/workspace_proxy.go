@@ -43,7 +43,8 @@ func workspaceProxyHandler() http.Handler {
 	log.Printf("[WORKSPACE PROXY] Proxying /api/wp/* → %s", wsURL)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Internal transactions must not be reachable through the generic proxy.
+		// Keep the retired workflow-files path closed, and never expose the
+		// internal shared-assets endpoint through the generic proxy.
 		if internalPath := path.Clean("/" + workspaceProxyRelativePath(r)); internalPath == "/api/workflow-files" || internalPath == "/api/shared-assets" {
 			http.NotFound(w, r)
 			return

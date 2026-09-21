@@ -39,8 +39,11 @@ by building this binary.
 
 Configure the same nonempty `WORKSPACE_API_TOKEN` in the agent and workspace
 services. This is a **server-to-server credential**, never a user's CLI token.
-The internal `/api/workflow-files` and `/api/shared-assets` endpoints fail closed
-when this token is missing and are blocked by the generic workspace proxy. Keep the workspace
+The internal `/api/shared-assets` endpoint fails closed when this token is
+missing and is blocked by the generic workspace proxy. The former
+`/api/workflow-files` revision/write endpoint has been removed; external file
+tools read the shared filesystem or use the read-only shared-assets endpoint
+when the agent and workspace run on separate volumes. Keep the workspace
 service on the internal network; expose only the authenticated AgentWorks server.
 
 ## Test locally with the testing workflow

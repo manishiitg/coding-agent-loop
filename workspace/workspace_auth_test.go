@@ -32,16 +32,16 @@ func TestWorkspaceExecutionToken(t *testing.T) {
 	}
 }
 
-func TestManagedWorkflowFilesRequireConfiguredServiceToken(t *testing.T) {
+func TestSharedAssetsRequireConfiguredServiceToken(t *testing.T) {
 	router := gin.New()
 	called := false
-	router.POST("/api/workflow-files", requireConfiguredWorkspaceAPIToken(), func(c *gin.Context) { called = true; c.Status(200) })
+	router.POST("/api/shared-assets", requireConfiguredWorkspaceAPIToken(), func(c *gin.Context) { called = true; c.Status(200) })
 	for _, tc := range []struct {
 		configured, supplied string
 		status               int
 	}{{"", "", 503}, {"secret", "", 401}, {"secret", "wrong", 401}, {"secret", "secret", 200}} {
 		t.Setenv(workspaceAPITokenEnv, tc.configured)
-		req := httptest.NewRequest("POST", "/api/workflow-files", nil)
+		req := httptest.NewRequest("POST", "/api/shared-assets", nil)
 		req.Header.Set("X-Workspace-Token", tc.supplied)
 		rec := httptest.NewRecorder()
 		called = false

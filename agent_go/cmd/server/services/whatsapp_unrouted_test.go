@@ -31,7 +31,24 @@ func TestFormatWhatsAppSlugChoicesSortsConfiguredRoutes(t *testing.T) {
 
 func TestFormatWhatsAppSlugChoicesExplainsEmptyRouting(t *testing.T) {
 	message := formatWhatsAppSlugChoices(nil)
-	if !strings.Contains(message, "No WhatsApp workflows are configured") {
+	if !strings.Contains(message, "No WhatsApp destinations are configured") || !strings.Contains(message, "workflows and Crews") {
 		t.Fatalf("empty-route message = %q", message)
+	}
+}
+
+func TestFormatWhatsAppSlugChoicesIncludesCrewRoutes(t *testing.T) {
+	message := formatWhatsAppSlugChoices(WhatsAppRouting{
+		"invoice-processing": {WorkflowID: "wf-invoices", WorkspacePath: "Workflow/invoices"},
+		"company-ca": {
+			ProfileID:       "work",
+			ConversationKey: "company-ca-1234",
+			WorkspacePath:   "Chats/Work/projects/company-ca-1234",
+			ProfileLabel:    "Company CA",
+		},
+	})
+	for _, want := range []string{"Choose a workflow or Crew", "@company-ca", "@invoice-processing"} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("choice message %q does not contain %q", message, want)
+		}
 	}
 }

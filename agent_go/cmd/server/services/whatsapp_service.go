@@ -83,13 +83,14 @@ type WhatsAppService struct {
 
 	routingMu sync.RWMutex
 	routing   WhatsAppRouting
-	// autoRoutedWorkflows holds the workflow IDs that have already been given
-	// their default @<automation-name> route. Provisioning is once-only per
-	// workflow: a route the operator renames or deletes afterwards stays gone
-	// instead of reappearing on the next scan.
+	// autoRoutedWorkflows holds stable destination keys that have already been
+	// given their default @<name> route. Workflow keys remain their historical
+	// bare IDs; Crew keys use the "crew:" prefix. Provisioning is once-only: a
+	// route the operator renames or deletes afterwards stays gone instead of
+	// reappearing on the next scan.
 	autoRoutedWorkflows map[string]bool
 	// autoRouteCheckedAt throttles the workspace scan behind
-	// EnsureDefaultWorkflowRoutes, which is driven by polled HTTP handlers.
+	// EnsureDefaultWhatsAppRoutes, which is driven by polled HTTP handlers.
 	autoRouteCheckedAt time.Time
 
 	activeRoutesMu sync.RWMutex
@@ -842,7 +843,7 @@ func (w *WhatsAppService) clearBotSessionBinding(ctx context.Context, chatJID st
 	return err
 }
 
-// GetRouting returns a copy of the slug → workflow map. Safe for UI display.
+// GetRouting returns a copy of the slug → workflow/Crew map. Safe for UI display.
 func (w *WhatsAppService) GetRouting() WhatsAppRouting {
 	w.routingMu.RLock()
 	defer w.routingMu.RUnlock()
@@ -890,15 +891,14 @@ func (w *WhatsAppService) SetRouting(routing WhatsAppRouting) error {
 	}
 	w.routingMu.Lock()
 	w.routing = cleaned
-	// Any workflow that is present in this routing map has, by definition,
-	// been provisioned once already (by automation or by the operator). Record
-	// that fact so a workflow route that is later deliberately deleted is not
-	// auto-provisioned again on the next workspace scan.
+	// Any destination present in this routing map has, by definition, been
+	// provisioned once already. Record that fact so a route that is later
+	// deliberately deleted is not auto-provisioned again on the next scan.
 	for _, route := range cleaned {
-		w.markWorkflowAutoRoutedLocked(route.WorkflowID)
+		w.markWhatsAppDestinationAutoRoutedLocked(autoRouteKeyForWhatsAppRoute(route))
 	}
 	if err := w.persistAutoRoutedWorkflowsLocked(context.Background()); err != nil {
-		log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids after routing update: %v", err)
+		log.Printf("[WHATSAPP] Failed to persist auto-routed destination keys after routing update: %v", err)
 	}
 	w.routingMu.Unlock()
 
@@ -1193,8 +1193,8 @@ func (w *WhatsAppService) activeSlug(chatJID string) string {
 
 // formatWhatsAppSlugChoices is the safe landing page for a chat that has no
 // active route. WhatsApp messages must always run in an explicitly selected
-// workflow; they must never fall through to the generic Builder chat (whose
-// runtime/model selection is unrelated to the WhatsApp routing table).
+// workflow or Crew; they must never fall through to the generic Builder chat
+// (whose runtime/model selection is unrelated to the WhatsApp routing table).
 func formatWhatsAppSlugChoices(routing WhatsAppRouting) string {
 	slugs := make([]string, 0, len(routing))
 	for slug := range routing {
@@ -1204,11 +1204,11 @@ func formatWhatsAppSlugChoices(routing WhatsAppRouting) string {
 	}
 	sort.Strings(slugs)
 	if len(slugs) == 0 {
-		return "No WhatsApp workflows are configured yet. Ask an admin to add a workflow slug."
+		return "No WhatsApp destinations are configured yet. Use @list to see available workflows and Crews."
 	}
 
 	var sb strings.Builder
-	sb.WriteString("Choose a workflow for this chat:\n")
+	sb.WriteString("Choose a workflow or Crew for this chat:\n")
 	for i, slug := range slugs {
 		fmt.Fprintf(&sb, "%d. @%s\n", i+1, slug)
 	}
@@ -1216,13 +1216,17 @@ func formatWhatsAppSlugChoices(routing WhatsAppRouting) string {
 	return sb.String()
 }
 
-type whatsappWorkflowCandidate struct {
-	Number        int
-	ID            string
-	Label         string
-	WorkspacePath string
-	Slug          string
-	WorkshopMode  string
+type whatsappDestinationCandidate struct {
+	Number          int
+	Kind            string
+	ID              string
+	Label           string
+	WorkspacePath   string
+	Slug            string
+	WorkshopMode    string
+	ProfileID       string
+	ConversationKey string
+	ProfileLabel    string
 }
 
 type whatsappWorkflowManifest struct {
@@ -1231,6 +1235,15 @@ type whatsappWorkflowManifest struct {
 	ExecutionDefs struct {
 		WorkshopMode string `json:"workshop_mode"`
 	} `json:"execution_defaults"`
+}
+
+type whatsappCrewManifest struct {
+	Product  string `json:"product"`
+	ID       string `json:"id"`
+	Title    string `json:"title"`
+	Identity struct {
+		Name string `json:"name"`
+	} `json:"identity"`
 }
 
 type whatsappDocumentListResponse struct {
@@ -1257,12 +1270,12 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		return true
 
 	case "list", "workflows":
-		candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+		candidates, err := w.discoverDestinationCandidates(ctx, owner)
 		if err != nil {
-			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't list workflows: %v", err))
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't list workflows and Crews: %v", err))
 			return true
 		}
-		w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppWorkflowList(candidates))
+		w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppDestinationList(candidates))
 		return true
 
 	case "switch":
@@ -1270,26 +1283,29 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 			w.sendWorkflowCommandReply(ctx, chatJID, "Use: @switch 3 [run|workshop]")
 			return true
 		}
-		workflowQuery, mode, modeErr := parseWhatsAppSwitchArg(arg)
+		destinationQuery, mode, modeErr := parseWhatsAppSwitchArg(arg)
 		if modeErr != nil {
 			w.sendWorkflowCommandReply(ctx, chatJID, modeErr.Error())
 			return true
 		}
-		candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+		candidates, err := w.discoverDestinationCandidates(ctx, owner)
 		if err != nil {
-			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't switch workflow: %v", err))
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Couldn't switch destination: %v", err))
 			return true
 		}
-		candidate, matches := matchWhatsAppWorkflowCandidate(candidates, workflowQuery)
+		candidate, matches := matchWhatsAppDestinationCandidate(candidates, destinationQuery)
 		if candidate == nil {
 			if len(matches) > 1 {
-				w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppWorkflowMatches(matches))
+				w.sendWorkflowCommandReply(ctx, chatJID, formatWhatsAppDestinationMatches(matches))
 			} else {
 				w.sendWorkflowCommandReply(ctx, chatJID, "Not found. Use @list, then @switch <number>.")
 			}
 			return true
 		}
-		slug := w.ensureWorkflowRoute(ctx, *candidate, mode)
+		if candidate.Kind == "crew" {
+			mode = "run"
+		}
+		slug := w.ensureDestinationRoute(ctx, *candidate, mode)
 		w.setActiveSlug(chatJID, slug)
 		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Using %s (%s). Off: @off", candidate.Label, formatWhatsAppRouteMode(mode)))
 		return true
@@ -1297,7 +1313,7 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 	case "status":
 		active := w.activeSlug(chatJID)
 		if active == "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active workflow. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active destination. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
 			w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 			return true
 		}
@@ -1313,12 +1329,12 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 				return true
 			}
 			w.clearActiveSlug(chatJID)
-			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active workflow. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
+			w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("No active destination. %s Use @list.", w.formatWhatsAppDetailModeStatus(chatJID)))
 			w.forwardWhatsAppBotSessionControl(cmd, arg, chatJID, owner, info)
 			return true
 		}
 		label := active
-		if candidate := w.findWorkflowCandidateByRoute(ctx, owner, *route); candidate != nil {
+		if candidate := w.findDestinationCandidateByRoute(ctx, owner, *route); candidate != nil {
 			label = candidate.Label
 		}
 		w.sendWorkflowCommandReply(ctx, chatJID, fmt.Sprintf("Using %s (@%s, %s). %s Off: @off", label, active, formatWhatsAppRouteMode(route.WorkshopMode), w.formatWhatsAppDetailModeStatus(chatJID)))
@@ -1333,9 +1349,9 @@ func (w *WhatsAppService) handleWorkflowCommand(ctx context.Context, text, chatJ
 		active := w.activeSlug(chatJID)
 		w.clearActiveSlug(chatJID)
 		if active != "" {
-			w.sendWorkflowCommandReply(ctx, chatJID, "Workflow off. Send a new @slug to choose another workflow; use @list to see the options.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "Destination off. Send a new @slug to choose another workflow or Crew; use @list to see the options.")
 		} else {
-			w.sendWorkflowCommandReply(ctx, chatJID, "No active workflow. Use @list to choose one.")
+			w.sendWorkflowCommandReply(ctx, chatJID, "No active destination. Use @list to choose one.")
 		}
 		return true
 	}
@@ -1382,7 +1398,7 @@ func parseWhatsAppWorkflowCommand(text string) (cmd, arg string, ok bool) {
 	switch first {
 	case "", "help", "commands", "?":
 		return "help", strings.TrimSpace(strings.Join(fields[1:], " ")), true
-	case "list", "workflows", "workflow-list":
+	case "list", "workflows", "workflow-list", "crews", "destinations":
 		return "list", strings.TrimSpace(strings.Join(fields[1:], " ")), true
 	case "switch", "sw", "select", "siwthc":
 		return "switch", strings.TrimSpace(strings.Join(fields[1:], " ")), true
@@ -1468,7 +1484,7 @@ func (w *WhatsAppService) formatWhatsAppDetailModeStatus(chatJID string) string 
 	return fmt.Sprintf("Detail mode: %s. Use @full / @concise to switch.", mode)
 }
 
-func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner *WhatsAppOwner) ([]whatsappWorkflowCandidate, error) {
+func (w *WhatsAppService) discoverDestinationCandidates(ctx context.Context, owner *WhatsAppOwner) ([]whatsappDestinationCandidate, error) {
 	if owner == nil {
 		return nil, fmt.Errorf("pairing has no workspace-user owner")
 	}
@@ -1499,7 +1515,7 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 
 	seenManifestPaths := make(map[string]bool, len(manifestPaths))
 	seenWorkflowKeys := make(map[string]bool, len(manifestPaths))
-	candidates := make([]whatsappWorkflowCandidate, 0, len(manifestPaths))
+	candidates := make([]whatsappDestinationCandidate, 0, len(manifestPaths))
 	for _, manifestPath := range manifestPaths {
 		manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
 		if manifestPath == "" || seenManifestPaths[manifestPath] {
@@ -1533,7 +1549,8 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 			continue
 		}
 		seenWorkflowKeys[workflowKey] = true
-		candidates = append(candidates, whatsappWorkflowCandidate{
+		candidates = append(candidates, whatsappDestinationCandidate{
+			Kind:          "workflow",
 			ID:            id,
 			Label:         label,
 			WorkspacePath: workspacePath,
@@ -1542,8 +1559,78 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 		})
 	}
 
+	// Crew projects are user-owned product conversations, not workflows. Scan
+	// the same user-scoped workspace API and build profile routes so selecting
+	// a Crew enters its canonical persistent project chat.
+	crewList, crewErr := wsClient.ListWorkspaceFiles(ctx, workspace.ListWorkspaceFilesParams{Folder: "Chats/Work/projects", MaxDepth: &maxDepth})
+	if crewErr != nil {
+		log.Printf("[WHATSAPP] Failed to list Crew projects for user %s: %v", owner.UserID, crewErr)
+	} else {
+		var crewResp whatsappDocumentListResponse
+		if err := json.Unmarshal(crewList.Raw, &crewResp); err != nil {
+			log.Printf("[WHATSAPP] Failed to parse Crew project list for user %s: %v", owner.UserID, err)
+		} else {
+			var crewManifestPaths []string
+			walkDocs = func(docs []whatsappDocument) {
+				for _, doc := range docs {
+					if strings.HasSuffix(doc.FilePath, "/product.json") {
+						crewManifestPaths = append(crewManifestPaths, doc.FilePath)
+					}
+					if len(doc.Children) > 0 {
+						walkDocs(doc.Children)
+					}
+				}
+			}
+			walkDocs(crewResp.Data)
+			sort.Strings(crewManifestPaths)
+			seenCrewPaths := make(map[string]bool, len(crewManifestPaths))
+			seenCrewIDs := make(map[string]bool, len(crewManifestPaths))
+			for _, manifestPath := range crewManifestPaths {
+				manifestPath = filepath.ToSlash(strings.TrimSpace(manifestPath))
+				if manifestPath == "" || seenCrewPaths[manifestPath] {
+					continue
+				}
+				seenCrewPaths[manifestPath] = true
+				content, err := wsClient.ReadWorkspaceFile(ctx, workspace.ReadWorkspaceFileParams{Filepath: manifestPath})
+				if err != nil {
+					log.Printf("[WHATSAPP] Failed to read Crew manifest %s: %v", manifestPath, err)
+					continue
+				}
+				var manifest whatsappCrewManifest
+				if err := json.Unmarshal([]byte(content.Content), &manifest); err != nil || !strings.EqualFold(strings.TrimSpace(manifest.Product), "work") {
+					continue
+				}
+				id := strings.TrimSpace(manifest.ID)
+				if id == "" || seenCrewIDs[strings.ToLower(id)] {
+					continue
+				}
+				label := strings.TrimSpace(manifest.Title)
+				if label == "" {
+					label = strings.TrimSpace(manifest.Identity.Name)
+				}
+				if label == "" {
+					continue
+				}
+				seenCrewIDs[strings.ToLower(id)] = true
+				candidates = append(candidates, whatsappDestinationCandidate{
+					Kind:            "crew",
+					ID:              id,
+					Label:           label,
+					WorkspacePath:   strings.TrimSuffix(manifestPath, "/product.json"),
+					Slug:            slugifyWhatsAppWorkflow(label),
+					WorkshopMode:    "run",
+					ProfileID:       "work",
+					ConversationKey: id,
+					ProfileLabel:    label,
+				})
+			}
+		}
+	}
+
 	sort.Slice(candidates, func(i, j int) bool {
-		return strings.ToLower(candidates[i].Label) < strings.ToLower(candidates[j].Label)
+		left := strings.ToLower(candidates[i].Label + "\x00" + candidates[i].Kind)
+		right := strings.ToLower(candidates[j].Label + "\x00" + candidates[j].Kind)
+		return left < right
 	})
 	for i := range candidates {
 		candidates[i].Number = i + 1
@@ -1551,35 +1638,43 @@ func (w *WhatsAppService) discoverWorkflowCandidates(ctx context.Context, owner 
 	return candidates, nil
 }
 
-func formatWhatsAppWorkflowList(candidates []whatsappWorkflowCandidate) string {
+func formatWhatsAppDestinationList(candidates []whatsappDestinationCandidate) string {
 	if len(candidates) == 0 {
-		return "No workflows found."
+		return "No workflows or Crews found."
 	}
 	const maxList = 25
 	var sb strings.Builder
-	sb.WriteString("Workflows:\n")
+	sb.WriteString("Workflows and Crews:\n")
 	for i, c := range candidates {
 		if i >= maxList {
-			sb.WriteString(fmt.Sprintf("\n...and %d more. Use @switch <name> for workflows not shown.", len(candidates)-maxList))
+			sb.WriteString(fmt.Sprintf("\n...and %d more. Use @switch <name> for destinations not shown.", len(candidates)-maxList))
 			break
 		}
-		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
+		kind := "Workflow"
+		if c.Kind == "crew" {
+			kind = "Crew"
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s: %s\n", c.Number, kind, c.Label))
 	}
 	sb.WriteString("\n@switch 3 [run|workshop]\n@status | @full | @concise | @off")
 	return strings.TrimSpace(sb.String())
 }
 
-func formatWhatsAppWorkflowMatches(candidates []whatsappWorkflowCandidate) string {
+func formatWhatsAppDestinationMatches(candidates []whatsappDestinationCandidate) string {
 	var sb strings.Builder
-	sb.WriteString("Multiple workflows matched. Pick one:\n")
+	sb.WriteString("Multiple destinations matched. Pick one:\n")
 	for _, c := range candidates {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", c.Number, c.Label))
+		kind := "Workflow"
+		if c.Kind == "crew" {
+			kind = "Crew"
+		}
+		sb.WriteString(fmt.Sprintf("%d. %s: %s\n", c.Number, kind, c.Label))
 	}
 	sb.WriteString("\nUse @switch <number>.")
 	return strings.TrimSpace(sb.String())
 }
 
-func matchWhatsAppWorkflowCandidate(candidates []whatsappWorkflowCandidate, query string) (*whatsappWorkflowCandidate, []whatsappWorkflowCandidate) {
+func matchWhatsAppDestinationCandidate(candidates []whatsappDestinationCandidate, query string) (*whatsappDestinationCandidate, []whatsappDestinationCandidate) {
 	q := strings.ToLower(strings.TrimSpace(query))
 	if q == "" {
 		return nil, nil
@@ -1599,7 +1694,7 @@ func matchWhatsAppWorkflowCandidate(candidates []whatsappWorkflowCandidate, quer
 			return &candidates[i], nil
 		}
 	}
-	var matches []whatsappWorkflowCandidate
+	var matches []whatsappDestinationCandidate
 	for _, c := range candidates {
 		haystack := strings.ToLower(strings.Join([]string{c.Label, c.ID, c.Slug, filepath.Base(c.WorkspacePath)}, " "))
 		if strings.Contains(haystack, q) || strings.Contains(haystack, qSlug) {
@@ -1612,45 +1707,82 @@ func matchWhatsAppWorkflowCandidate(candidates []whatsappWorkflowCandidate, quer
 	return nil, matches
 }
 
-func (w *WhatsAppService) findWorkflowCandidateByRoute(ctx context.Context, owner *WhatsAppOwner, route ChannelRoute) *whatsappWorkflowCandidate {
-	candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+func (w *WhatsAppService) findDestinationCandidateByRoute(ctx context.Context, owner *WhatsAppOwner, route ChannelRoute) *whatsappDestinationCandidate {
+	candidates, err := w.discoverDestinationCandidates(ctx, owner)
 	if err != nil {
 		return nil
 	}
 	for i := range candidates {
-		if candidates[i].ID == route.WorkflowID || candidates[i].WorkspacePath == route.WorkspacePath {
+		if candidates[i].matchesRoute(route) {
 			return &candidates[i]
 		}
 	}
 	return nil
 }
 
-func (w *WhatsAppService) ensureWorkflowRoute(ctx context.Context, candidate whatsappWorkflowCandidate, mode string) string {
+func (c whatsappDestinationCandidate) autoRouteKey() string {
+	if c.Kind == "crew" {
+		return "crew:" + strings.ToLower(strings.TrimSpace(c.ID))
+	}
+	return strings.TrimSpace(c.ID)
+}
+
+func (c whatsappDestinationCandidate) route(mode string) ChannelRoute {
+	if c.Kind == "crew" {
+		return ChannelRoute{
+			ProfileID:       firstNonEmptyString(strings.TrimSpace(c.ProfileID), "work"),
+			ConversationKey: strings.TrimSpace(c.ConversationKey),
+			WorkspacePath:   strings.TrimSpace(c.WorkspacePath),
+			ProfileLabel:    strings.TrimSpace(c.ProfileLabel),
+			WorkshopMode:    "run",
+			BotGrant:        "run",
+		}
+	}
+	return ChannelRoute{WorkflowID: strings.TrimSpace(c.ID), WorkspacePath: strings.TrimSpace(c.WorkspacePath), WorkshopMode: mode}
+}
+
+func (c whatsappDestinationCandidate) matchesRoute(route ChannelRoute) bool {
+	if c.Kind == "crew" {
+		return strings.EqualFold(strings.TrimSpace(route.ProfileID), firstNonEmptyString(strings.TrimSpace(c.ProfileID), "work")) &&
+			strings.EqualFold(strings.TrimSpace(route.ConversationKey), strings.TrimSpace(c.ConversationKey))
+	}
+	return strings.EqualFold(strings.TrimSpace(route.WorkflowID), strings.TrimSpace(c.ID)) ||
+		(strings.TrimSpace(route.WorkflowID) != "" && strings.EqualFold(strings.TrimSpace(route.WorkspacePath), strings.TrimSpace(c.WorkspacePath)))
+}
+
+func autoRouteKeyForWhatsAppRoute(route ChannelRoute) string {
+	if strings.TrimSpace(route.ProfileID) != "" && strings.TrimSpace(route.ConversationKey) != "" {
+		return "crew:" + strings.ToLower(strings.TrimSpace(route.ConversationKey))
+	}
+	return strings.TrimSpace(route.WorkflowID)
+}
+
+func (w *WhatsAppService) ensureDestinationRoute(ctx context.Context, candidate whatsappDestinationCandidate, mode string) string {
 	w.routingMu.Lock()
 	defer w.routingMu.Unlock()
 
-	finalSlug := w.assignWorkflowRouteLocked(candidate, mode)
-	w.markWorkflowAutoRoutedLocked(candidate.ID)
+	finalSlug := w.assignDestinationRouteLocked(candidate, mode)
+	w.markWhatsAppDestinationAutoRoutedLocked(candidate.autoRouteKey())
 	if err := w.persistRoutingLocked(ctx); err != nil {
-		log.Printf("[WHATSAPP] Failed to persist auto workflow route @%s: %v", finalSlug, err)
+		log.Printf("[WHATSAPP] Failed to persist destination route @%s: %v", finalSlug, err)
 	}
 	if err := w.persistAutoRoutedWorkflowsLocked(ctx); err != nil {
-		log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids: %v", err)
+		log.Printf("[WHATSAPP] Failed to persist auto-routed destination keys: %v", err)
 	}
 	return finalSlug
 }
 
-// assignWorkflowRouteLocked maps the automation onto its own name as the
-// slug — "Invoice Processing" answers to @invoice-processing — falling back
-// to a name+id slug only when a different workflow already holds that name.
+// assignDestinationRouteLocked maps a workflow or Crew onto its own name as
+// the slug, falling back to a name+id slug only when another destination
+// already holds that name.
 // Caller holds routingMu.
-func (w *WhatsAppService) assignWorkflowRouteLocked(candidate whatsappWorkflowCandidate, mode string) string {
+func (w *WhatsAppService) assignDestinationRouteLocked(candidate whatsappDestinationCandidate, mode string) string {
 	slug := candidate.Slug
 	if slug == "" {
 		slug = slugifyWhatsAppWorkflow(candidate.Label)
 	}
 	if slug == "" {
-		slug = "workflow"
+		slug = "destination"
 	}
 	if normalized, ok := normalizeWhatsAppRouteMode(mode); ok {
 		mode = normalized
@@ -1661,57 +1793,58 @@ func (w *WhatsAppService) assignWorkflowRouteLocked(candidate whatsappWorkflowCa
 		w.routing = make(WhatsAppRouting)
 	}
 	finalSlug := slug
-	if existing, ok := w.routing[finalSlug]; ok && existing.WorkflowID != candidate.ID {
+	if existing, ok := w.routing[finalSlug]; ok && !candidate.matchesRoute(existing) {
 		suffix := strings.TrimPrefix(candidate.ID, "wf_")
 		suffix = slugifyWhatsAppWorkflow(suffix)
 		if suffix == "" || suffix == finalSlug {
-			suffix = "workflow"
+			suffix = candidate.Kind
+			if suffix == "" {
+				suffix = "destination"
+			}
 		}
 		finalSlug = slug + "-" + suffix
 	}
-	w.routing[finalSlug] = ChannelRoute{WorkflowID: candidate.ID, WorkspacePath: candidate.WorkspacePath, WorkshopMode: mode}
+	w.routing[finalSlug] = candidate.route(mode)
 	return finalSlug
 }
 
-// routingHasWorkflowLocked reports whether any slug already points at this
-// workflow. Caller holds routingMu.
-func (w *WhatsAppService) routingHasWorkflowLocked(workflowID string) bool {
+// routingHasDestinationLocked reports whether any slug already points at this
+// destination. Caller holds routingMu.
+func (w *WhatsAppService) routingHasDestinationLocked(candidate whatsappDestinationCandidate) bool {
 	for _, route := range w.routing {
-		if route.WorkflowID == workflowID {
+		if candidate.matchesRoute(route) {
 			return true
 		}
 	}
 	return false
 }
 
-// markWorkflowAutoRoutedLocked records that this workflow has had its default
-// route provisioned, so it is never provisioned a second time. Caller holds
-// routingMu.
-func (w *WhatsAppService) markWorkflowAutoRoutedLocked(workflowID string) {
-	if strings.TrimSpace(workflowID) == "" {
+// markWhatsAppDestinationAutoRoutedLocked records that this destination has
+// had its default route provisioned, so it is never provisioned a second time.
+// Caller holds routingMu.
+func (w *WhatsAppService) markWhatsAppDestinationAutoRoutedLocked(key string) {
+	if strings.TrimSpace(key) == "" {
 		return
 	}
 	if w.autoRoutedWorkflows == nil {
 		w.autoRoutedWorkflows = make(map[string]bool)
 	}
-	w.autoRoutedWorkflows[workflowID] = true
+	w.autoRoutedWorkflows[key] = true
 }
 
-// whatsappAutoRouteScanInterval bounds how often EnsureDefaultWorkflowRoutes
+// whatsappAutoRouteScanInterval bounds how often EnsureDefaultWhatsAppRoutes
 // walks the workspace. The handlers that call it are polled, and the scan
-// reads every workflow manifest.
+// reads every workflow and Crew manifest.
 const whatsappAutoRouteScanInterval = 30 * time.Second
 
-// EnsureDefaultWorkflowRoutes gives every automation a WhatsApp route named
-// after it, so a paired phone reaches one with @<automation-name> without
-// anyone having to invent a slug first — before this, a workflow with no
-// slug simply could not be talked to over WhatsApp.
+// EnsureDefaultWhatsAppRoutes gives every workflow and Crew a WhatsApp route
+// named after it, so a paired phone can reach either from the initial list.
 //
-// Each workflow is provisioned exactly once: a route later renamed or
-// deleted is not recreated, and automations added after pairing pick theirs
-// up on a later call. No-op until the phone is paired and a workspace user
-// owns the pairing (the scan runs as that user).
-func (w *WhatsAppService) EnsureDefaultWorkflowRoutes(ctx context.Context) {
+// Each destination is provisioned exactly once: a route later renamed or
+// deleted is not recreated, and workflows or Crews added after pairing pick
+// theirs up on a later call. No-op until the phone is paired and a workspace
+// user owns the pairing (the scan runs as that user).
+func (w *WhatsAppService) EnsureDefaultWhatsAppRoutes(ctx context.Context) {
 	owner := w.GetOwner()
 	if owner == nil || !w.IsPaired() {
 		return
@@ -1725,9 +1858,9 @@ func (w *WhatsAppService) EnsureDefaultWorkflowRoutes(ctx context.Context) {
 	w.autoRouteCheckedAt = time.Now()
 	w.routingMu.Unlock()
 
-	candidates, err := w.discoverWorkflowCandidates(ctx, owner)
+	candidates, err := w.discoverDestinationCandidates(ctx, owner)
 	if err != nil {
-		log.Printf("[WHATSAPP] Couldn't provision default workflow routes: %v", err)
+		log.Printf("[WHATSAPP] Couldn't provision default destination routes: %v", err)
 		return
 	}
 
@@ -1735,34 +1868,35 @@ func (w *WhatsAppService) EnsureDefaultWorkflowRoutes(ctx context.Context) {
 	added := make([]string, 0, len(candidates))
 	changed := false
 	for _, candidate := range candidates {
-		if strings.TrimSpace(candidate.ID) == "" || w.autoRoutedWorkflows[candidate.ID] {
+		key := candidate.autoRouteKey()
+		if key == "" || w.autoRoutedWorkflows[key] {
 			continue
 		}
-		// A workflow routed by hand counts as provisioned too, so removing
+		// A destination routed by hand counts as provisioned too, so removing
 		// that hand-made route later doesn't bring a default one back.
-		if w.routingHasWorkflowLocked(candidate.ID) {
-			w.markWorkflowAutoRoutedLocked(candidate.ID)
+		if w.routingHasDestinationLocked(candidate) {
+			w.markWhatsAppDestinationAutoRoutedLocked(key)
 			changed = true
 			continue
 		}
-		added = append(added, w.assignWorkflowRouteLocked(candidate, candidate.WorkshopMode))
-		w.markWorkflowAutoRoutedLocked(candidate.ID)
+		added = append(added, w.assignDestinationRouteLocked(candidate, candidate.WorkshopMode))
+		w.markWhatsAppDestinationAutoRoutedLocked(key)
 		changed = true
 	}
 	if len(added) > 0 {
 		if err := w.persistRoutingLocked(ctx); err != nil {
-			log.Printf("[WHATSAPP] Failed to persist default workflow routes: %v", err)
+			log.Printf("[WHATSAPP] Failed to persist default destination routes: %v", err)
 		}
 	}
 	if changed {
 		if err := w.persistAutoRoutedWorkflowsLocked(ctx); err != nil {
-			log.Printf("[WHATSAPP] Failed to persist auto-routed workflow ids: %v", err)
+			log.Printf("[WHATSAPP] Failed to persist auto-routed destination keys: %v", err)
 		}
 	}
 	w.routingMu.Unlock()
 
 	if len(added) > 0 {
-		log.Printf("[WHATSAPP] Provisioned %d default workflow route(s): @%s", len(added), strings.Join(added, ", @"))
+		log.Printf("[WHATSAPP] Provisioned %d default destination route(s): @%s", len(added), strings.Join(added, ", @"))
 	}
 }
 
@@ -2306,8 +2440,8 @@ func (w *WhatsAppService) HandleCommand(ctx context.Context, msg *whatsappbot.Me
 	return w.handleWorkflowCommand(ctx, msg.Text, msg.Chat.String(), owner, msg.Event.Info)
 }
 
-// Resolve implements whatsappbot.Router: "@slug" names a configured
-// workflow route, else one of the default product's own profiles.
+// Resolve implements whatsappbot.Router: "@slug" names a configured workflow
+// or Crew route, else one of the default product's own profiles.
 func (w *WhatsAppService) Resolve(ctx context.Context, _ string, token string) *whatsappbot.Route {
 	key := strings.ToLower(strings.TrimSpace(token))
 	if route := w.resolveSlugRoute(key); route != nil {
@@ -2355,7 +2489,7 @@ func (w *WhatsAppService) RouteActivated(ctx context.Context, msg *whatsappbot.M
 // RouteDeactivated implements whatsappbot.RouteObserver ("@slug deactivate").
 func (w *WhatsAppService) RouteDeactivated(ctx context.Context, msg *whatsappbot.Message, key string) {
 	msg.React("👀")
-	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Send another @slug to choose a workflow; use @list to see the options.", key)); err != nil {
+	if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: msg.Chat.String()}, fmt.Sprintf("Deactivated @%s. Send another @slug to choose a workflow or Crew; use @list to see the options.", key)); err != nil {
 		log.Printf("[WHATSAPP] Failed to send deactivate acknowledgement for @%s: %v", key, err)
 	}
 }
@@ -2398,7 +2532,7 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 	// remembered by ActiveSlugStore. A product pairing may instead declare a
 	// default profile (SparkQuill's parent chat); that is an explicit product
 	// destination too and is resolved by botProfileTurn below. Only a pairing
-	// with neither kind of destination should stop and offer workflow slugs.
+	// with neither kind of destination should stop and offer destination slugs.
 	if msg.Route == nil && owner.DefaultProfileID == "" {
 		if stale := w.activeSlug(chatJID); stale != "" {
 			w.clearActiveSlug(chatJID)
@@ -2409,7 +2543,7 @@ func (w *WhatsAppService) HandleMessage(ctx context.Context, msg *whatsappbot.Me
 		if _, err := w.SendThreadMessage(ctx, ThreadID{Platform: "whatsapp", ChannelID: chatJID}, reply); err != nil {
 			log.Printf("[WHATSAPP] Failed to send route choices for chat=%s user=%s: %v", chatJID, owner.UserID, err)
 		}
-		log.Printf("[WHATSAPP] Unrouted message held for chat=%s user=%s; offered workflow slug choices", chatJID, owner.UserID)
+		log.Printf("[WHATSAPP] Unrouted message held for chat=%s user=%s; offered workflow/Crew slug choices", chatJID, owner.UserID)
 		return
 	}
 

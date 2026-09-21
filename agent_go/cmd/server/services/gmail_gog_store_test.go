@@ -50,6 +50,27 @@ func TestGogMigrationVerifiesIdentityBeforeSwitching(t *testing.T) {
 	}
 }
 
+func TestGogMigrationPreservesKnownScopesWhenGogMetadataIsEmpty(t *testing.T) {
+	t.Setenv("GOG_HOME", t.TempDir())
+	known := []string{"https://www.googleapis.com/auth/gmail.send", GmailComposeScope}
+	conn := GmailConnection{
+		ID: "gmail_001", Email: "me@example.com", ClientName: "primary", Enabled: true,
+		Scopes: known,
+	}
+	account := gogStoredAccount{Email: conn.Email, Client: conn.ClientName, Valid: true}
+	cfg := &GmailConfig{
+		Connections: []GmailConnection{conn},
+		GogPath:     fakeCheckedGog(t, []gogStoredAccount{account}),
+	}
+	migrated, err := MigrateGmailConfigToGog(context.Background(), cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := migrated.Connections[0].Scopes; !stringSlicesEqual(got, known) {
+		t.Fatalf("migration replaced known scopes with empty gog metadata: got %v, want %v", got, known)
+	}
+}
+
 func TestGogConnectionDoesNotReadOrRefreshLegacyToken(t *testing.T) {
 	t.Setenv("GMAIL_OAUTH_TOKEN_DIR", t.TempDir())
 	if err := storeGmailOAuthToken("gmail_001", &oauth2.Token{AccessToken: "legacy", RefreshToken: "legacy-refresh"}); err != nil {
@@ -72,6 +93,43 @@ func TestGogSendOnlyStatusUsesActualScopes(t *testing.T) {
 	st := (&GmailService{}).computeAuthStatusGog(context.Background(), binary, gmailConnectionConfig(GmailConnection{Email: account.Email, ClientName: account.Client, AuthBackend: "gog"}))
 	if !st.Authenticated || !st.HasGmailScope || st.Email != account.Email || len(st.Scopes) != 1 {
 		t.Fatalf("send-only status incorrect: %+v", st)
+	}
+}
+
+func TestGogStatusFallsBackToStoredScopesWhenGogReportsNone(t *testing.T) {
+	// Imported accounts are valid but carry no scope metadata in gog's
+	// store; the connection's consent-time scopes must keep it Ready
+	// instead of rendering every permission revoked.
+	account := gogStoredAccount{Email: "me@example.com", Client: "primary", Valid: true}
+	binary := fakeCheckedGog(t, []gogStoredAccount{account})
+	stored := []string{"https://www.googleapis.com/auth/gmail.send", "https://www.googleapis.com/auth/userinfo.email"}
+	conn := GmailConnection{ID: "gmail_001", Email: account.Email, ClientName: account.Client, AuthBackend: "gog", Scopes: stored}
+	st := (&GmailService{}).computeAuthStatusGog(context.Background(), binary, gmailConnectionConfig(conn))
+	if !st.Authenticated || !st.HasGmailScope || st.Email != account.Email {
+		t.Fatalf("valid gog account with stored scopes reported as revoked: %+v", st)
+	}
+	if len(st.Scopes) != len(stored) || !scopesGrantGmailSend(st.Scopes) {
+		t.Fatalf("stored scopes not surfaced: %+v", st.Scopes)
+	}
+}
+
+func TestResolveCompletionScopesNeverWipesStoredScopes(t *testing.T) {
+	send := []string{"https://www.googleapis.com/auth/gmail.send"}
+	read := []string{"https://www.googleapis.com/auth/gmail.readonly"}
+	for _, tc := range []struct {
+		name                           string
+		granted, account, stored, want []string
+	}{
+		{"consent-time granted scopes win", send, read, read, send},
+		{"gog metadata used when no granted scopes", nil, send, read, send},
+		{"stored scopes kept when both empty", nil, nil, send, send},
+		{"all empty stays empty", nil, nil, nil, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := resolveCompletionScopes(tc.granted, tc.account, tc.stored); !stringSlicesEqual(got, tc.want) {
+				t.Fatalf("got %v, want %v", got, tc.want)
+			}
+		})
 	}
 }
 
@@ -186,14 +244,17 @@ func TestOAuthCallbackStoresOnlyInGog(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(bin, "gog"), []byte("#!/bin/sh\nexit "+exit+"\n"), 0755); err != nil {
 			t.Fatal(err)
 		}
-		authURL, err := BeginGmailOAuth("gmail_001", "primary", "http://localhost/callback", false, nil)
+		authURL, err := BeginGmailOAuth("gmail_001", "primary", "http://localhost/callback", false, false, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
 		parsed, _ := url.Parse(authURL)
-		id, email, err := CompleteGmailOAuth(context.Background(), parsed.Query().Get("state"), "fixture-code")
+		id, email, scopes, err := CompleteGmailOAuth(context.Background(), parsed.Query().Get("state"), "fixture-code")
 		if succeeds && (err != nil || id != "gmail_001" || email != "me@example.com") {
 			t.Fatalf("successful import not completed: %s %s %v", id, email, err)
+		}
+		if succeeds && !scopesGrantGmailSend(scopes) {
+			t.Fatalf("completion dropped the granted scopes: %v", scopes)
 		}
 		if !succeeds && err == nil {
 			t.Fatal("failed gog import was reported as connected")

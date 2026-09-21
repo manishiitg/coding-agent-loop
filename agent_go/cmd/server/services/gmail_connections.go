@@ -592,6 +592,7 @@ func gmailConnectionConfig(conn GmailConnection) *GmailConfig {
 		CredentialsFile: conn.CredentialsFile,
 		gogAccountEmail: conn.Email,
 		gogClientName:   conn.ClientName,
+		storedScopes:    append([]string(nil), conn.Scopes...),
 	}
 	if conn.AuthBackend == "gog" {
 		cfg.UseGogBackend = true

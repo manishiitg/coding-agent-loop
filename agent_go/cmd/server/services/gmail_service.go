@@ -102,6 +102,11 @@ type GmailConfig struct {
 	// token rather than a server-managed access token).
 	gogAccountEmail string
 	gogClientName   string
+	// storedScopes carries the connection's consent-time scopes into the
+	// status check, in-memory only like the selectors above. gog reports no
+	// scope metadata for imported accounts, so the checked-account branch
+	// falls back to these instead of reading empty as revoked.
+	storedScopes []string
 
 	// Connections is the multi-account registry (see gmail_connections.go).
 	// The legacy auth fields above stay authoritative for delivery until the
@@ -413,7 +418,7 @@ func (g *GmailService) computeAuthStatus(ctx context.Context, gwsPath string, us
 	if cfg != nil && strings.TrimSpace(cfg.Token) != "" {
 		st.Authenticated = true
 		st.HasGmailScope = true
-		st.Scopes = gmailOAuthScopesFor(false, nil)
+		st.Scopes = gmailOAuthScopesFor(false, false, nil)
 		// Same identity strategy as the gog path: tokeninfo's email works for
 		// the send-only default, where getProfile is closed. Best-effort — a
 		// tokeninfo failure changes nothing about the auth state here, since

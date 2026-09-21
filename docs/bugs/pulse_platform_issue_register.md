@@ -349,7 +349,11 @@ per-service Drive/Sheets/Docs/Slides/Calendar grants (read-only default,
 opt-in write) to a connection, plus a `google_workspace_cli` agent tool that
 runs `gog` directly under the resolved connection's credential rather than a
 bespoke tool per operation. Implemented and deployed to confida; no live
-Drive/Sheets connection exercised yet.
+Drive/Sheets connection exercised yet. 2026-09-20 follow-up implemented
+locally (not yet pushed/deployed): imported gog accounts report
+`valid: true` with empty scopes, so post-re-OAuth status read as fully
+revoked; fix is consent-time `tokeninfo` scope persist plus
+stored-scopes fallback, with regression tests passing.
 
 ## Streaming report video/audio evidence — PLAT-299
 

@@ -75,7 +75,7 @@ func startGmailOAuthHandler(api *StreamingAPI) http.HandlerFunc {
 
 		redirectURI := gmailOAuthRedirectURI(r)
 		extraScopes := services.GoogleServiceScopeURIs(conn.Services)
-		authURL, err := services.BeginGmailOAuth(id, conn.ClientName, redirectURI, conn.AllowReadAccess, extraScopes)
+		authURL, err := services.BeginGmailOAuth(id, conn.ClientName, redirectURI, conn.AllowReadAccess, conn.AllowAgentWriteAccess, extraScopes)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
@@ -105,7 +105,7 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		connectionID, email, err := services.CompleteGmailOAuth(r.Context(), state, code)
+		connectionID, email, scopes, err := services.CompleteGmailOAuth(r.Context(), state, code)
 		if err != nil {
 			log.Printf("[GMAIL] OAuth callback failed: %v", err)
 			writeGmailOAuthPage(w, false, "Sign-in failed", html.EscapeString(err.Error()))
@@ -118,7 +118,7 @@ func gmailOAuthCallbackHandler(api *StreamingAPI) http.HandlerFunc {
 			return
 		}
 
-		if err := svc.CompleteGogConnection(r.Context(), connectionID, email); err != nil {
+		if err := svc.CompleteGogConnection(r.Context(), connectionID, email, scopes); err != nil {
 			writeGmailOAuthPage(w, false, "Sign-in failed", html.EscapeString(err.Error()))
 			return
 		}

@@ -85,7 +85,10 @@ func checkedGogAccount(ctx context.Context, binary, email, client string) (gogSt
 
 // CompleteGogConnection records a successfully imported connection. There is
 // no refresh token in this registry; all future use goes through gog.
-func (g *GmailService) CompleteGogConnection(ctx context.Context, id, email string) error {
+// grantedScopes are the consent-time tokeninfo scopes from CompleteGmailOAuth;
+// they are authoritative for what this consent granted, since gog keeps no
+// scope metadata for imported accounts.
+func (g *GmailService) CompleteGogConnection(ctx context.Context, id, email string, grantedScopes []string) error {
 	cfg := g.GetConfig()
 	for i := range cfg.Connections {
 		conn := &cfg.Connections[i]
@@ -97,7 +100,7 @@ func (g *GmailService) CompleteGogConnection(ctx context.Context, id, email stri
 			return err
 		}
 		conn.Email, conn.AuthBackend = account.Email, "gog"
-		conn.Scopes = account.Scopes
+		conn.Scopes = resolveCompletionScopes(grantedScopes, account.Scopes, conn.Scopes)
 		conn.Status = GmailConnectionConnected
 		conn.Enabled = true
 		conn.UpdatedAt = time.Now().UTC()
@@ -109,6 +112,24 @@ func (g *GmailService) CompleteGogConnection(ctx context.Context, id, email stri
 		return nil
 	}
 	return fmt.Errorf("Google connection %q no longer exists", id)
+}
+
+// resolveCompletionScopes selects the scopes recorded on a connection at
+// OAuth completion. Consent-time tokeninfo scopes win — they describe exactly
+// what this consent granted; gog's stored metadata is the fallback for
+// accounts that carry it. When both are empty the previously stored scopes
+// are kept: gog reports no scope metadata for imported accounts, and empty
+// means "unknown", never "revoked". Mirrors syncConnectionScopes' rule of
+// never persisting an empty observation over a known one.
+func resolveCompletionScopes(granted, account, stored []string) []string {
+	switch {
+	case len(granted) > 0:
+		return append([]string(nil), granted...)
+	case len(account) > 0:
+		return append([]string(nil), account...)
+	default:
+		return stored
+	}
 }
 
 // VerifyGmailConfigGog checks the existing gog store without importing or
@@ -158,7 +179,10 @@ func MigrateGmailConfigToGog(ctx context.Context, cfg *GmailConfig) (*GmailConfi
 			}
 		}
 		conn.AuthBackend = "gog"
-		conn.Scopes = account.Scopes
+		// gog commonly reports an imported account as valid with no scope
+		// metadata. Empty means unknown, not revoked; preserve the last known
+		// scopes during migration just as OAuth completion does.
+		conn.Scopes = resolveCompletionScopes(nil, account.Scopes, conn.Scopes)
 		conn.Status = GmailConnectionConnected
 		conn.UpdatedAt = time.Now().UTC()
 	}

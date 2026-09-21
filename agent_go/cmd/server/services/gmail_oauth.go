@@ -39,13 +39,16 @@ import (
 // (Drive, Sheets, Docs, Slides, Calendar...) that the connection was granted
 // via GmailConnection.Services. Nil/empty for a Gmail-only connection, the
 // pre-existing behavior.
-func gmailOAuthScopesFor(includeRead bool, extraScopes []string) []string {
+func gmailOAuthScopesFor(includeRead, includeAgentWrite bool, extraScopes []string) []string {
 	scopes := []string{
 		"https://www.googleapis.com/auth/gmail.send",
 		"https://www.googleapis.com/auth/userinfo.email",
 	}
 	if includeRead {
 		scopes = append(scopes, "https://www.googleapis.com/auth/gmail.readonly")
+	}
+	if includeAgentWrite {
+		scopes = append(scopes, GmailComposeScope)
 	}
 	scopes = append(scopes, extraScopes...)
 	return scopes
@@ -82,7 +85,7 @@ func gmailOAuthTokenPath(connectionID string) string {
 // shared client_secret.json / env vars, so a connection created before this
 // migration keeps working unattended until GmailService.ImportLegacyOAuthClient
 // backfills its name.
-func gmailOAuthConfig(redirectURL, clientName string, includeRead bool, extraScopes []string) (*oauth2.Config, error) {
+func gmailOAuthConfig(redirectURL, clientName string, includeRead, includeAgentWrite bool, extraScopes []string) (*oauth2.Config, error) {
 	clientName = strings.TrimSpace(clientName)
 
 	var clientID, clientSecret string
@@ -109,7 +112,7 @@ func gmailOAuthConfig(redirectURL, clientName string, includeRead bool, extraSco
 		ClientID:     clientID,
 		ClientSecret: clientSecret,
 		RedirectURL:  redirectURL,
-		Scopes:       gmailOAuthScopesFor(includeRead, extraScopes),
+		Scopes:       gmailOAuthScopesFor(includeRead, includeAgentWrite, extraScopes),
 		Endpoint:     google.Endpoint,
 	}, nil
 }
@@ -236,7 +239,7 @@ func accessTokenForConnection(ctx context.Context, connectionID, clientName stri
 		// includeRead/extraScopes are irrelevant here: Google ignores the scope
 		// parameter on a refresh_token grant — the token keeps whatever scopes
 		// it was originally issued with.
-		cfg, err := gmailOAuthConfig("", clientName, false, nil)
+		cfg, err := gmailOAuthConfig("", clientName, false, false, nil)
 		if err != nil {
 			gmailTokenSourceMu.Unlock()
 			return "", err
@@ -270,6 +273,8 @@ type GmailOAuthPending struct {
 	// ClientName: the token exchange must request the identical scope set the
 	// consent URL was built for.
 	IncludeRead bool
+	// IncludeAgentWrite records whether this flow requested gmail.compose.
+	IncludeAgentWrite bool
 	// ExtraScopes are the additional Google Workspace service scopes (Drive,
 	// Sheets...) requested for this flow, for the same reason as IncludeRead.
 	ExtraScopes []string
@@ -289,8 +294,8 @@ const gmailOAuthPendingTTL = 15 * time.Minute
 //
 // state is random and server-held, so a callback cannot be forged to attach
 // someone else's Google account to a connection.
-func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead bool, extraScopes []string) (string, error) {
-	cfg, err := gmailOAuthConfig(redirectURL, clientName, includeRead, extraScopes)
+func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead, includeAgentWrite bool, extraScopes []string) (string, error) {
+	cfg, err := gmailOAuthConfig(redirectURL, clientName, includeRead, includeAgentWrite, extraScopes)
 	if err != nil {
 		return "", err
 	}
@@ -307,12 +312,13 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead b
 		}
 	}
 	gmailOAuthPending[state] = GmailOAuthPending{
-		ConnectionID: connectionID,
-		ClientName:   strings.TrimSpace(clientName),
-		IncludeRead:  includeRead,
-		ExtraScopes:  extraScopes,
-		RedirectURL:  redirectURL,
-		CreatedAt:    time.Now(),
+		ConnectionID:      connectionID,
+		ClientName:        strings.TrimSpace(clientName),
+		IncludeRead:       includeRead,
+		IncludeAgentWrite: includeAgentWrite,
+		ExtraScopes:       extraScopes,
+		RedirectURL:       redirectURL,
+		CreatedAt:         time.Now(),
 	}
 	gmailOAuthPendingMu.Unlock()
 
@@ -328,37 +334,40 @@ func BeginGmailOAuth(connectionID, clientName, redirectURL string, includeRead b
 }
 
 // CompleteGmailOAuth exchanges the callback code and stores the credential.
-// Returns the connection and verified account email after gog import succeeds.
-func CompleteGmailOAuth(ctx context.Context, state, code string) (string, string, error) {
+// Returns the connection, the verified account email, and the scopes Google
+// reports for the fresh access token after gog import succeeds. The caller
+// persists those scopes on the connection: gog keeps no scope metadata for
+// imported accounts, so without them the connection would read as revoked.
+func CompleteGmailOAuth(ctx context.Context, state, code string) (string, string, []string, error) {
 	gmailOAuthPendingMu.Lock()
 	pending, ok := gmailOAuthPending[state]
 	delete(gmailOAuthPending, state)
 	gmailOAuthPendingMu.Unlock()
 
 	if !ok {
-		return "", "", fmt.Errorf("this sign-in link has expired or was already used — start again from the Gmail settings")
+		return "", "", nil, fmt.Errorf("this sign-in link has expired or was already used — start again from the Gmail settings")
 	}
 	if time.Since(pending.CreatedAt) > gmailOAuthPendingTTL {
-		return "", "", fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
+		return "", "", nil, fmt.Errorf("this sign-in took too long and expired — start again from the Gmail settings")
 	}
 
-	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName, pending.IncludeRead, pending.ExtraScopes)
+	cfg, err := gmailOAuthConfig(pending.RedirectURL, pending.ClientName, pending.IncludeRead, pending.IncludeAgentWrite, pending.ExtraScopes)
 	if err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
 	token, err := cfg.Exchange(ctx, code)
 	if err != nil {
-		return "", "", fmt.Errorf("gmail oauth: exchange authorization code: %w", err)
+		return "", "", nil, fmt.Errorf("gmail oauth: exchange authorization code: %w", err)
 	}
 	if strings.TrimSpace(token.RefreshToken) == "" {
-		return "", "", fmt.Errorf("Google did not return a refresh token — revoke this app's access in your Google account and try again")
+		return "", "", nil, fmt.Errorf("Google did not return a refresh token — revoke this app's access in your Google account and try again")
 	}
-	_, email, err := googleTokenInfo(ctx, token.AccessToken)
+	scopes, email, err := googleTokenInfo(ctx, token.AccessToken)
 	if err != nil || email == "" {
-		return "", "", fmt.Errorf("could not verify the Google account identity; retry sign-in")
+		return "", "", nil, fmt.Errorf("could not verify the Google account identity; retry sign-in")
 	}
 	if err := ImportRefreshTokenIntoGog(ctx, email, pending.ClientName, token.RefreshToken); err != nil {
-		return "", "", err
+		return "", "", nil, err
 	}
-	return pending.ConnectionID, email, nil
+	return pending.ConnectionID, email, scopes, nil
 }

@@ -132,8 +132,9 @@ workflows:
   selected_skills: []
   browser_mode: ""
 
-# Mode is distinct from origin. Writable users and server-owned turns use the
-# Builder surface; read-only access is the sole reason to select Run mode.
+# Mode is derived from authenticated workflow access, never selected by the
+# client: owner/write use Builder and read-only uses Run. Origin is provenance
+# only and may narrow that access-derived capability set.
 chat_policy:
   modes:
     builder: &builder_capabilities

@@ -3,7 +3,6 @@ import { isForegroundSessionEvent } from '../../shared/session/foreground'
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
-import { codingCliCompletionNeedsTranscriptReconciliation } from '../utils/codingCliTranscriptReconciliation'
 import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { chatSubmissionLane } from '../utils/promiseLane'
@@ -1239,7 +1238,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   // Track whether workspace-modifying events occurred during the current run
   const hadWorkspaceActivityRef = useRef<boolean>(false)
-  const reconciledCodingCliCompletionsRef = useRef<Set<string>>(new Set())
 
   // Ref to track if we're currently performing programmatic scrolling
   const isProgrammaticScrollRef = useRef<boolean>(false)
@@ -2078,30 +2076,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       applyConfirmationsToStore()
     }
 
-    // A retained CLI can accept a second message while it is still answering
-    // the first. Its single live completion contains only the newest final
-    // result, while its native transcript contains both ordered exchanges.
-    // Re-read the bounded durable history at completion so no user message or
-    // assistant reply is lost from Chat. hydrateTabEvents merges the volatile
-    // live tail back afterwards, preserving tool activity and the completion.
-    const codingCliCompletion = newEvents.find(codingCliCompletionNeedsTranscriptReconciliation)
-    if (tab && codingCliCompletion) {
-      const completionKey = `${actualSessionId}:${codingCliCompletion.id || codingCliCompletion.timestamp || 'completion'}`
-      if (!reconciledCodingCliCompletionsRef.current.has(completionKey)) {
-        reconciledCodingCliCompletionsRef.current.add(completionKey)
-        void hydrateTabEvents(actualSessionId, {
-          workspacePath: tab.metadata?.agentProfileWorkspace,
-          fallbackToChatHistory: true,
-          preferChatHistory: true,
-          includeUiEvents: true,
-        }).catch(error => {
-          // Allow a later replay of the same completion to retry after a
-          // transient history read failure.
-          reconciledCodingCliCompletionsRef.current.delete(completionKey)
-          logger.warn('ChatArea', 'Failed to reconcile coding CLI transcript after completion', error)
-        })
-      }
-    }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [getTabEvents, getTabLastEventIndex, setTabLastEventIndex, setLastEventIndex, addTabEvents, setIsStreaming, setIsCompleted, setHasActiveChat, selectedModeCategory])
 

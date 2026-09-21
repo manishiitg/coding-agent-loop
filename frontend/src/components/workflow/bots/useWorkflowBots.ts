@@ -9,7 +9,7 @@ import type {
 import { routeId, type ChannelKind, type WorkflowRoute } from './types'
 import { gmailOAuthAttemptCompleted } from './gmailOAuthState'
 import { slackConnectionStatus } from './slackConnectionStatus'
-import { resolveWorkflowSlackConnection } from './slackWorkflowConnection'
+import { resolveWorkflowSlackConnection, selectedWorkflowSlackReady } from './slackWorkflowConnection'
 
 type WaRoute = WhatsAppRoute
 
@@ -1157,9 +1157,11 @@ export function useWorkflowBots(workspacePath: string | null, target?: BotRouteT
   }
 
   // ── Connection status per channel ─────────────────────────────────────────
-  // Slack bot sessions require the app to be enabled and bot mode turned on.
-  const slackReady = slackOriginal.enabled && !!slackOriginal.bot_mode
-  const slackStatusLabel = slackConnectionStatus(slackOriginal.enabled, !!slackOriginal.bot_mode, slackLoading, slackTesting, testResult)
+  // A workflow's explicitly selected app can run without the platform default.
+  // The route form must not disappear just because the shared app is disabled.
+  const selectedSlackReady = selectedWorkflowSlackReady(slackSelection)
+  const slackReady = selectedSlackReady || (slackOriginal.enabled && !!slackOriginal.bot_mode)
+  const slackStatusLabel = selectedSlackReady ? 'Connected' : slackConnectionStatus(slackOriginal.enabled, !!slackOriginal.bot_mode, slackLoading, slackTesting, testResult)
 
   const waLinkedDevices = waStatus?.devices?.filter(device => device.paired) || []
   const waReady = !!waStatus?.enabled && (waStatus.paired || waLinkedDevices.length > 0)

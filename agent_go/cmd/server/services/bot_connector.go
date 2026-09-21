@@ -866,7 +866,14 @@ func (m *BotConversationManager) authorizeWorkflowRouteForMessage(ctx context.Co
 		return false
 	}
 	if route == nil || (strings.TrimSpace(route.WorkflowID) == "" && strings.TrimSpace(route.ProfileID) == "") {
-		// Not workflow-routed: generic chat, governed by the allowed_emails filter.
+		// Slack channel mentions need a route; direct messages can still use generic chat.
+		channelID := strings.ToUpper(strings.TrimSpace(msg.ChannelID))
+		if strings.EqualFold(msg.Platform, "slack") && (strings.HasPrefix(channelID, "C") || strings.HasPrefix(channelID, "G")) {
+			if msg.IsMention {
+				m.sendWorkflowAccessDenied(msg.Platform, threadID, unroutedBotAccessMessage(msg.Platform, ""))
+			}
+			return false
+		}
 		return true
 	}
 	if msg.Platform == "slack" && !SlackRouteAllowsEmail(*route, msg.UserEmail) {

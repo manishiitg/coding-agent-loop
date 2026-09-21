@@ -5925,11 +5925,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			if isToolBackedChat {
 				activeForMCP, _ := api.getActiveSession(sessionID)
-				chatMode := "workshop"
-				if req.ExecutionOptions != nil && req.ExecutionOptions.WorkshopMode != "" {
-					chatMode = req.ExecutionOptions.WorkshopMode
-				}
-				mcpPolicy := resolveWorkflowChatPolicy(chatMode, sessionID, req, activeForMCP, currentUserIsReadOnly)
+				mcpPolicy := resolveWorkflowChatPolicy(sessionID, req, activeForMCP, currentUserIsReadOnly)
 				if err := api.registerMCPToolsForChat(llmAgent, mcpPolicy, func(toolName string) bool {
 					return profileDisablesVirtualTool(resolvedProfile, toolName)
 				}); err != nil {
@@ -6429,7 +6425,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					phaseTemplateVars["WorkshopMode"] = "workshop"
 				}
 				activeForCapabilities, _ := api.getActiveSession(sessionID)
-				phasePolicy := resolveWorkflowChatPolicy(phaseTemplateVars["WorkshopMode"], sessionID, req, activeForCapabilities, currentUserIsReadOnly)
+				phasePolicy := resolveWorkflowChatPolicy(sessionID, req, activeForCapabilities, currentUserIsReadOnly)
 				if !phasePolicy.allows("plan_authoring") {
 					phaseTemplateVars["WorkshopMode"] = "run"
 				}
@@ -6672,7 +6668,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		var preModeChangeSnapshot []llmtypes.MessageContent
 		if newWorkshopMode != "" {
 			activeForPolicy, _ := api.getActiveSession(sessionID)
-			policyKey := api.chatPolicySessionKey(resolveWorkflowChatPolicy(newWorkshopMode, sessionID, req, activeForPolicy, currentUserIsReadOnly))
+			policyKey := api.chatPolicySessionKey(resolveWorkflowChatPolicy(sessionID, req, activeForPolicy, currentUserIsReadOnly))
 			codingProvider := common.IsCLIProvider(finalProvider)
 			api.conversationMux.RLock()
 			_, knownInMemory := api.lastChatPolicyBySession[sessionID]

@@ -21,7 +21,7 @@ func TestWorkflowRetainedPolicyChecksCurrentPermissions(t *testing.T) {
 	req := QueryRequest{SelectedFolder: "Workflow/test"}
 	api := &StreamingAPI{lastChatPolicyBySession: map[string]string{}}
 	keyFor := func(readOnly bool) string {
-		return api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", req, nil, readOnly))
+		return api.chatPolicySessionKey(resolveWorkflowChatPolicy("chat", req, nil, readOnly))
 	}
 	api.lastChatPolicyBySession["chat"] = keyFor(true)
 	if compatible, err := api.workflowRetainedPolicyCompatible(ctx, "chat", req); err != nil || compatible {
@@ -65,7 +65,7 @@ func TestWorkflowLiveInputRefreshesInsteadOfDeliveringToOldCLI(t *testing.T) {
 			next <- req
 		},
 	}
-	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", query, nil, true))
+	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("chat", query, nil, true))
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
 	req := httptest.NewRequest(http.MethodPost, "/api/sessions/chat/live-input", strings.NewReader(`{"message":"remove the integration from this workflow"}`)).WithContext(ctx)
 	req = mux.SetURLVars(req, map[string]string{"session_id": "chat"})
@@ -103,7 +103,7 @@ func TestWorkflowRetainedProviderAndAccountChangesRequireReconnect(t *testing.T)
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
 	req := QueryRequest{SelectedFolder: "Workflow/test", Provider: "claude-code", ModelID: "claude-sonnet-5", ConnectionID: "account-a"}
 	api := &StreamingAPI{lastQueryRequests: map[string]QueryRequest{"chat": req}, lastChatPolicyBySession: map[string]string{}}
-	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", "chat", req, nil, false))
+	api.lastChatPolicyBySession["chat"] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("chat", req, nil, false))
 	for _, tc := range []struct {
 		name, provider, model, account string
 		want                           bool

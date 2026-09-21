@@ -325,7 +325,7 @@ func TestWorkflowChatAcceptsLiveInputAfterStop(t *testing.T) {
 			nextTurn <- request
 		},
 	}
-	api.lastChatPolicyBySession[sessionID] = api.chatPolicySessionKey(resolveWorkflowChatPolicy("", sessionID, query, nil, false))
+	api.lastChatPolicyBySession[sessionID] = api.chatPolicySessionKey(resolveWorkflowChatPolicy(sessionID, query, nil, false))
 	ctx := context.WithValue(context.Background(), UserContextKey, &UserClaims{UserID: "owner"})
 	stop := httptest.NewRequest(http.MethodPost, "/api/session/stop?cancelAgents=true&preserveConversation=true", nil).WithContext(ctx)
 	stop.Header.Set("X-Session-ID", sessionID)

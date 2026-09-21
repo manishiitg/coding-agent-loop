@@ -11,31 +11,31 @@ import (
 
 func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 	for _, tc := range []struct {
-		name, mode, session string
-		req                 QueryRequest
-		active              *ActiveSessionInfo
-		readOnly, want      bool
+		name, session  string
+		req            QueryRequest
+		active         *ActiveSessionInfo
+		readOnly, want bool
 	}{
-		{name: "Builder", mode: "workshop", want: true},
+		{name: "Builder", want: true},
 		{name: "legacy Builder", want: true},
-		{name: "legacy Run request by writable user", mode: "run", want: true},
+		{name: "legacy Run request by writable user", req: QueryRequest{ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"}}, want: true},
 		{name: "manual workflow execution", req: QueryRequest{AgentMode: "workflow"}},
-		{name: "cron shares builder mode", mode: "workshop", req: QueryRequest{TriggeredBy: "cron"}, want: true},
-		{name: "retained schedule", mode: "workshop", session: "schedule-digest_123", want: true},
-		{name: "restored origin", mode: "workshop", active: &ActiveSessionInfo{TriggeredBy: "cron"}, want: true},
-		{name: "read only Builder", mode: "workshop", readOnly: true},
-		{name: "Pulse maintenance", mode: "workshop", req: QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}},
-		{name: "Pulse reviewer", mode: "workshop", req: QueryRequest{SessionKind: "pulse_reviewer", ParentSessionID: "parent"}},
-		{name: "restored child", mode: "workshop", active: &ActiveSessionInfo{ParentSessionID: "parent"}},
-		{name: "notification", mode: "workshop", req: QueryRequest{IsAutoNotification: true}, want: true},
-		{name: "bot", mode: "workshop", req: QueryRequest{BotPlatform: "slack"}, want: true},
-		{name: "promoted schedule", mode: "workshop", session: "schedule-digest_123", req: QueryRequest{UserInteractiveContinuation: true}, want: true},
-		{name: "promotion cannot elevate child", mode: "workshop", req: QueryRequest{UserInteractiveContinuation: true, SessionKind: "pulse_reviewer"}},
+		{name: "cron shares builder mode", req: QueryRequest{TriggeredBy: "cron"}, want: true},
+		{name: "retained schedule", session: "schedule-digest_123", want: true},
+		{name: "restored origin", active: &ActiveSessionInfo{TriggeredBy: "cron"}, want: true},
+		{name: "read only Builder", readOnly: true},
+		{name: "Pulse maintenance", req: QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}},
+		{name: "Pulse reviewer", req: QueryRequest{SessionKind: "pulse_reviewer", ParentSessionID: "parent"}},
+		{name: "restored child", active: &ActiveSessionInfo{ParentSessionID: "parent"}},
+		{name: "notification", req: QueryRequest{IsAutoNotification: true}, want: true},
+		{name: "owner bot", req: QueryRequest{BotPlatform: "whatsapp"}, want: true},
+		{name: "promoted schedule", session: "schedule-digest_123", req: QueryRequest{UserInteractiveContinuation: true}, want: true},
+		{name: "promotion cannot elevate child", req: QueryRequest{UserInteractiveContinuation: true, SessionKind: "pulse_reviewer"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			api := &StreamingAPI{}
 			reg := &recordingRegistrar{}
-			policy := resolveWorkflowChatPolicy(tc.mode, tc.session, tc.req, tc.active, tc.readOnly)
+			policy := resolveWorkflowChatPolicy(tc.session, tc.req, tc.active, tc.readOnly)
 			if err := api.registerMCPToolsForChat(reg, policy, nil); err != nil {
 				t.Fatal(err)
 			}
@@ -57,16 +57,52 @@ func TestMCPManagementRegistrationFollowsChatPolicy(t *testing.T) {
 }
 
 func TestPulseMaintenanceRetainsApprovedImprovementAuthority(t *testing.T) {
-	p := resolveWorkflowChatPolicy("workshop", "schedule-pulse_123", QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}, nil, false)
+	p := resolveWorkflowChatPolicy("schedule-pulse_123", QueryRequest{TriggeredBy: "cron", PulseLifecycleTurn: true}, nil, false)
 	if p.Origin != "pulse" || !p.allows("plan_authoring") || p.allows("mcp_management") || p.allows("workspace_ui") {
 		t.Fatalf("Pulse authority changed: %+v", p)
 	}
 }
 
 func TestWritableScheduledTurnsGetBuilderAuthority(t *testing.T) {
-	p := resolveWorkflowChatPolicy("workshop", "schedule-maintenance_123", QueryRequest{TriggeredBy: "cron"}, nil, false)
+	p := resolveWorkflowChatPolicy("schedule-maintenance_123", QueryRequest{TriggeredBy: "cron"}, nil, false)
 	if p.Mode != "builder" || p.Origin != "scheduled" || !p.allows("plan_authoring") {
 		t.Fatalf("writable scheduled turn lacks Builder authority: %+v", p)
+	}
+}
+
+// TestWorkflowAccessModeMatrix is the release contract for the single
+// permission-to-mode rule. Transports may select an identity and provenance,
+// but they do not independently select conversational authority.
+func TestWorkflowAccessModeMatrix(t *testing.T) {
+	tests := []struct {
+		name, session, wantMode, wantOrigin string
+		access                              WorkflowAccessLevel
+		req                                 QueryRequest
+		active                              *ActiveSessionInfo
+		wantPlanAuthoring                   bool
+	}{
+		{name: "interactive owner", access: WorkflowAccessOwner, wantMode: "builder", wantOrigin: "interactive", wantPlanAuthoring: true},
+		{name: "interactive writer", access: WorkflowAccessWrite, wantMode: "builder", wantOrigin: "interactive", wantPlanAuthoring: true},
+		{name: "interactive reader", access: WorkflowAccessRead, wantMode: "run", wantOrigin: "interactive"},
+		{name: "owner ignores stale client Run", access: WorkflowAccessOwner, req: QueryRequest{ExecutionOptions: &ExecutionOptions{WorkshopMode: "run"}}, wantMode: "builder", wantOrigin: "interactive", wantPlanAuthoring: true},
+		{name: "owner explicit downgrade", access: WorkflowAccessOwner, req: QueryRequest{PinRunMode: true}, wantMode: "run", wantOrigin: "interactive"},
+		{name: "cron owner", access: WorkflowAccessOwner, session: "schedule-cron--daily", req: QueryRequest{TriggeredBy: "cron"}, wantMode: "builder", wantOrigin: "scheduled", wantPlanAuthoring: true},
+		{name: "manual trigger owner", access: WorkflowAccessOwner, session: "schedule-manual--daily", req: QueryRequest{TriggeredBy: "manual"}, wantMode: "builder", wantOrigin: "scheduled", wantPlanAuthoring: true},
+		{name: "API trigger owner", access: WorkflowAccessOwner, session: "schedule-api--hook", req: QueryRequest{TriggeredBy: "api"}, wantMode: "builder", wantOrigin: "scheduled", wantPlanAuthoring: true},
+		{name: "internal trigger owner", access: WorkflowAccessOwner, session: "schedule-internal--hook", req: QueryRequest{TriggeredBy: "internal"}, wantMode: "builder", wantOrigin: "scheduled", wantPlanAuthoring: true},
+		{name: "restored schedule owner", access: WorkflowAccessOwner, active: &ActiveSessionInfo{TriggeredBy: "cron"}, wantMode: "builder", wantOrigin: "scheduled", wantPlanAuthoring: true},
+		{name: "Slack read principal", access: WorkflowAccessRead, req: QueryRequest{BotPlatform: "slack"}, wantMode: "run", wantOrigin: "bot"},
+		{name: "WhatsApp paired owner", access: WorkflowAccessOwner, req: QueryRequest{BotPlatform: "whatsapp"}, wantMode: "builder", wantOrigin: "bot", wantPlanAuthoring: true},
+		{name: "headless executor is not chat", access: WorkflowAccessOwner, req: QueryRequest{AgentMode: "workflow"}, wantMode: "run", wantOrigin: "interactive"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			readOnly := readOnlyForRequest(tc.access, tc.req)
+			policy := resolveWorkflowChatPolicy(tc.session, tc.req, tc.active, readOnly)
+			if policy.Mode != tc.wantMode || policy.Origin != tc.wantOrigin || policy.allows("plan_authoring") != tc.wantPlanAuthoring {
+				t.Fatalf("profile = mode %q origin %q plan_authoring=%v, want %q/%q/%v", policy.Mode, policy.Origin, policy.allows("plan_authoring"), tc.wantMode, tc.wantOrigin, tc.wantPlanAuthoring)
+			}
+		})
 	}
 }
 

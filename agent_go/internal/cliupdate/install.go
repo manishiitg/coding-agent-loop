@@ -47,6 +47,14 @@ func updateGlobalCLI(ctx context.Context, p Provider, _ string, _ Result) (strin
 	if err != nil {
 		return "", "", fmt.Errorf("verify updated %s: %w", p.Name, err)
 	}
+	if p.Name == "pi" {
+		// `pi update --self` covers the binary only, and pi never refreshes
+		// temporary `-e npm:` extensions on its own, so managed plugins are
+		// refreshed here on the same cadence and retry policy.
+		if err := updatePiTempPlugins(ctx, env); err != nil {
+			return "", "", fmt.Errorf("update pi plugins: %w", err)
+		}
+	}
 	return executable, version, nil
 }
 

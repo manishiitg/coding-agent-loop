@@ -180,6 +180,7 @@ func TestGlobalUpdaterUsesOfficialCommandsAndSanitizedEnvironment(t *testing.T) 
 	log := filepath.Join(base, "calls")
 	t.Setenv("PATH", bin+string(os.PathListSeparator)+"/usr/bin:/bin")
 	t.Setenv("HOME", base)
+	t.Setenv("PI_CODING_AGENT_DIR", "")
 	t.Setenv("SECRET_TEST", "must-not-leak")
 	if err := os.MkdirAll(bin, 0700); err != nil {
 		t.Fatal(err)
@@ -220,6 +221,7 @@ esac
 
 func TestExplicitPiPathIsTheGlobalCLIThatGetsUpdated(t *testing.T) {
 	base := t.TempDir()
+	t.Setenv("HOME", base)
 	pi := filepath.Join(base, "custom-pi")
 	marker := filepath.Join(base, "updated")
 	script := "#!/bin/sh\nif [ \"$1\" = update ]; then touch '" + marker + "'; else echo 3; fi\n"

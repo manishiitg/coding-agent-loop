@@ -26,6 +26,15 @@ func (api *StreamingAPI) reconcileUnexpectedTerminalExit(snapshot terminals.Snap
 	}
 
 	if codingAgentSnapshotIsMainAgent(snapshot) {
+		// Provider cleanup can remove tmux a few seconds after the turn has
+		// already recorded its real completion/error. That terminal boundary is
+		// authoritative; never replace it with the secondary observation that
+		// the now-disposable pane is gone.
+		if runtime, ok := api.authoritativeRuntimeSnapshot(snapshot.SessionID); ok && runtimePhaseIsTerminal(runtime.Phase) {
+			log.Printf("[TERMINAL RECONCILE] skipped settled main terminal=%s session=%s phase=%s reason=%q",
+				snapshot.TerminalID, snapshot.SessionID, runtime.Phase, runtime.Reason)
+			return false
+		}
 		active, ok := api.getActiveSession(snapshot.SessionID)
 		if !ok || active == nil || !strings.EqualFold(strings.TrimSpace(active.Status), "running") {
 			log.Printf("[TERMINAL RECONCILE] skipped main terminal=%s session=%s: no running owner", snapshot.TerminalID, snapshot.SessionID)

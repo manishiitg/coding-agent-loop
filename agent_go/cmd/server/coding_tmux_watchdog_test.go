@@ -130,11 +130,12 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 		wantActive bool
 		wantState  string
 		wantTmux   bool
+		ticks      int
 	}{
-		{name: "live pane stays active", paneState: "0\n", wantActive: true, wantState: "running", wantTmux: true},
-		{name: "dead active pane fails", paneState: "1\n", wantActive: false, wantState: "failed", wantTmux: false},
-		{name: "missing active pane fails", paneErr: errors.New("can't find session: mlp-test"), wantActive: false, wantState: "failed", wantTmux: false},
-		{name: "unknown failure stays active", paneErr: errors.New("temporary tmux failure"), wantActive: true, wantState: "running", wantTmux: true},
+		{name: "live pane stays active", paneState: "0\n", wantActive: true, wantState: "running", wantTmux: true, ticks: 1},
+		{name: "dead active pane fails", paneState: "1\n", wantActive: false, wantState: "failed", wantTmux: false, ticks: 1},
+		{name: "missing active pane fails after confirmation", paneErr: errors.New("can't find session: mlp-test"), wantActive: false, wantState: "failed", wantTmux: false, ticks: codingWatchdogMissingConfirmChecks},
+		{name: "unknown failure stays active", paneErr: errors.New("temporary tmux failure"), wantActive: true, wantState: "running", wantTmux: true, ticks: 1},
 	}
 
 	for _, tc := range tests {
@@ -148,7 +149,10 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 			runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
 				return tc.paneState, tc.paneErr
 			}
-			api.reapRateLimitedCodingSessionsOnce(map[string]codingWatchdogObservation{})
+			streak := map[string]codingWatchdogObservation{}
+			for i := 0; i < tc.ticks; i++ {
+				api.reapRateLimitedCodingSessionsOnce(streak)
+			}
 
 			snapshot, ok := store.Get(terminalID)
 			if !ok {
@@ -161,6 +165,28 @@ func TestCodingTmuxWatchdogReconcilesFromActualPaneState(t *testing.T) {
 				t.Fatalf("tmux present = %v, want %v", gotTmux, tc.wantTmux)
 			}
 		})
+	}
+}
+
+func TestCodingTmuxWatchdogDoesNotFailOnFirstMissingObservation(t *testing.T) {
+	oldOutput := runTerminalTmuxOutputCommand
+	t.Cleanup(func() { runTerminalTmuxOutputCommand = oldOutput })
+	runTerminalTmuxOutputCommand = func(context.Context, ...string) (string, error) {
+		return "", errors.New("can't find session: mlp-test")
+	}
+
+	store := terminals.NewStore()
+	sessionID := "missing-pane-race"
+	terminalID := sessionID + ":main:" + sessionID
+	store.HandleEvent(sessionID, terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-test", "stable pane", 1))
+	api := &StreamingAPI{terminalStore: store}
+	streak := map[string]codingWatchdogObservation{}
+
+	api.reapRateLimitedCodingSessionsOnce(streak)
+
+	snapshot, ok := store.Get(terminalID)
+	if !ok || !snapshot.Active || snapshot.State != "running" || snapshot.TmuxSession == "" {
+		t.Fatalf("first missing observation changed terminal state: %#v", snapshot)
 	}
 }
 

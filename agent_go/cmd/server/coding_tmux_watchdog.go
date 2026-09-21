@@ -24,6 +24,11 @@ const (
 	// codingWatchdogConfirmChecks is how many consecutive rate-limited
 	// observations are required before force-stopping.
 	codingWatchdogConfirmChecks = 2
+	// A missing pane can be expected cleanup racing a still-unwinding provider
+	// turn. Confirm it across polls so the primary provider/tool error reaches
+	// the durable event stream instead of being overwritten by a secondary
+	// "tmux pane disappeared" failure.
+	codingWatchdogMissingConfirmChecks = 2
 	// Only inspect the current tail. Rate-limit text can remain in tmux scrollback
 	// after a provider has recovered and resumed useful work.
 	codingWatchdogRateLimitTailLines = 80
@@ -78,6 +83,19 @@ func (api *StreamingAPI) reapRateLimitedCodingSessionsOnce(streak map[string]cod
 		watchdogKey := tmux
 		switch inspectCodingTmuxPaneState(tmux) {
 		case codingTmuxPaneMissing:
+			stillLimited[watchdogKey] = true
+			observation := streak[watchdogKey]
+			if observation.evidence == "tmux-pane-missing" {
+				observation.count++
+			} else {
+				observation = codingWatchdogObservation{evidence: "tmux-pane-missing", count: 1}
+			}
+			streak[watchdogKey] = observation
+			if observation.count < codingWatchdogMissingConfirmChecks {
+				log.Printf("[CODING_WATCHDOG] session %s tmux %s is missing (%d/%d) - waiting for owner cleanup to settle",
+					sessionID, tmux, observation.count, codingWatchdogMissingConfirmChecks)
+				continue
+			}
 			reason := "tmux pane disappeared unexpectedly"
 			if snap.Active {
 				api.terminalStore.MarkFailed(snap.TerminalID)

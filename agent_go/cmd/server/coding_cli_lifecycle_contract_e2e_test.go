@@ -301,6 +301,38 @@ func TestTerminalOwnerReconciliationRejectsStaleGeneration(t *testing.T) {
 	}
 }
 
+func TestTerminalOwnerReconciliationPreservesSettledTurnError(t *testing.T) {
+	store := terminals.NewStore()
+	sessionID := "settled-main-session"
+	event := terminalRouteChunkEvent(sessionID, "main:"+sessionID, "mlp-claude-code-settled", "pane", 1)
+	event.ExecutionKind = "main_agent"
+	event.Data.Data.(*agentevents.StreamingChunkEvent).Metadata["execution_kind"] = "main_agent"
+	store.HandleEvent(sessionID, event)
+	snapshot := mustLifecycleTerminal(t, store, sessionID+":main:"+sessionID)
+
+	coordinator := NewRuntimeCoordinator()
+	coordinator.MarkTerminalBoundary(sessionID, runtimePhaseFailed, "execute request: context canceled")
+	api := &StreamingAPI{
+		terminalStore:      store,
+		runtimeCoordinator: coordinator,
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running"},
+		},
+		stoppedSessions: make(map[string]bool),
+	}
+
+	if api.reconcileUnexpectedTerminalExit(snapshot, "tmux pane disappeared unexpectedly") {
+		t.Fatal("secondary tmux cleanup replaced an already-settled turn failure")
+	}
+	runtime, ok := api.authoritativeRuntimeSnapshot(sessionID)
+	if !ok || runtime.Phase != runtimePhaseFailed || runtime.Reason != "execute request: context canceled" {
+		t.Fatalf("runtime = %#v, want original settled failure", runtime)
+	}
+	if api.isSessionMarkedStopped(sessionID) {
+		t.Fatal("secondary tmux cleanup stopped an already-settled session")
+	}
+}
+
 func TestTerminalSnapshotExpiryMatrix(t *testing.T) {
 	for _, providerPrefix := range []string{"mlp-claude-code-int", "mlp-codex-cli-int", "mlp-cursor-cli-int", "mlp-pi-cli-int"} {
 		t.Run(providerPrefix, func(t *testing.T) {

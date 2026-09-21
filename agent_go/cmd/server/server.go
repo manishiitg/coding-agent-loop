@@ -3582,6 +3582,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid agent profile request: "+err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Workflow-phase payloads identify the workspace through their preset,
+	// not selected_folder (the client never sends it for these chats).
+	// Resolve it BEFORE access: otherwise conversationTargetAccess skips the
+	// manifest and answers from the account tier, so a manifest reader chats
+	// as Builder while every tool call fails the permission-drift guard
+	// once the folder is backfilled later in this handler.
+	api.backfillWorkflowPhaseFolder(r.Context(), &req)
 	access, accessErr := api.conversationTargetAccess(r.Context(), req)
 	if accessErr != nil {
 		http.Error(w, accessErr.Error(), http.StatusForbidden)

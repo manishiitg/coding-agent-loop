@@ -1,3 +1,19 @@
+## Crews get a read-only Run mode: single owner, inspect-and-run for everyone else — PLAT-353
+
+[PLAT-353](pulse_platform/security-sandbox/plat-353.md) fixes `BUG_ID_001`
+([issue #205](https://github.com/manishiitg/coding-agent-loop/issues/205)):
+every Crew keeps a single owner and is read-only for everyone else, instead
+of deriving permissions from linked workflows or keeping Crews private. Any
+other signed-in user with the Crew product gets Run — chat with a read-only
+tool deny-list and system prompt, mediated memory/file inspection with owner
+transcripts and run databases excluded, and workflow-trigger invocation that
+re-checks access. Reader conversations store under the reader's own account
+and never touch the owner's manifest or live session; the proxy refuses raw
+cross-user workspace traffic. The UI lists shared Crews with owner badges,
+restricts them to chat plus Memory and a read-only file browser, and guards
+all manifest writes. Implemented and pushed to main; deployment and live
+acceptance on the Confida server pending.
+
 ## Simplify chat render and restoration to one durable ordered log — PLAT-352
 
 [PLAT-352](pulse_platform/chat-reliability/plat-352.md) is a design

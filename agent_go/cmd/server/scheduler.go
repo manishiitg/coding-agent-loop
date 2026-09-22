@@ -3294,7 +3294,7 @@ func pulseLifecycleFinalSteps(pulseRunID string, instructions ...workflowNotific
 		notificationContext += "\n\nPULSE REVIEW SUMMARY INSTRUCTIONS. Apply these only to the section describing what Pulse reviewed, fixed, recommended, or needs from the user:\n" + pulseInstructions
 	}
 	if len(ownerInstructions.runSummaryChannels) > 0 || len(ownerInstructions.pulseSummaryChannels) > 0 {
-		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. Run-summary external channels: %s. Pulse-summary external channels: %s. The backend enforces these routes when the matching notification is externally eligible; dashboard-only recording remains available for a quiet run.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
+		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. notification_kind=\"run_summary\" configured channels: %s. notification_kind=\"pulse_summary\" configured channels: %s. The backend enforces these routes when the matching notification is externally eligible; dashboard-only recording remains available for a quiet run.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
 	}
 	if len(ownerInstructions.runSummaryRecipients) > 0 || len(ownerInstructions.pulseSummaryRecipients) > 0 {
 		// Stated so the finalizer does not "helpfully" pass email_to and override

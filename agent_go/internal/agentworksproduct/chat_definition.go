@@ -118,9 +118,9 @@ func ChatSkills(mode string) []string {
 	return append([]string(nil), def.Skills...)
 }
 
-// ChatDefinitionKey refreshes retained coding-CLI instructions when the selected
-// prompt (including shared files) or skill list changes across a deployment.
+// ChatDefinitionKey refreshes retained coding-CLI sessions when any declared
+// chat surface changes across a deployment.
 func ChatDefinitionKey(mode string) string {
-	sum := sha256.Sum256([]byte(ChatPromptTemplate(mode) + "\x00" + strings.Join(ChatSkills(mode), "\x00")))
+	sum := sha256.Sum256([]byte(ChatPromptTemplate(mode) + "\x00" + strings.Join(ChatSkills(mode), "\x00") + "\x00" + strings.Join(ChatTools(mode), "\x00")))
 	return fmt.Sprintf("%x", sum[:])
 }

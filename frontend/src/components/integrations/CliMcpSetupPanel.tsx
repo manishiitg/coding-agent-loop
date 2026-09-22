@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, KeyRound, Plug, Terminal } from 'lucide-react'
+import { Check, Copy, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
 import { authApi, getApiBaseUrl } from '../../services/api'
@@ -228,6 +228,24 @@ export function CliMcpSetupPanel() {
             <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
             <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
             <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
+          </div>
+        )}
+      </SettingsCard>
+      <SettingsCard
+        icon={<Globe className="h-4 w-4 text-primary" />}
+        title="Hosted AI assistants"
+        description="ChatGPT and Claude Cowork connect over HTTPS — no local install. Paste this URL as a custom MCP server."
+      >
+        {!connection ? (
+          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
+        ) : (
+          <div className="space-y-2">
+            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(connection.token)}`} />
+            <p className="text-xs text-muted-foreground">
+              ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
+              Claude Cowork: Settings → Connectors → Add custom connector.
+              Anyone with this URL can use the token — revoke it here when done.
+            </p>
           </div>
         )}
       </SettingsCard>

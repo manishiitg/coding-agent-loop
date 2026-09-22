@@ -85,11 +85,15 @@ func accessTokenClaims(t accesstokens.Token) (*UserClaims, error) {
 }
 
 func authenticateAccessToken(w http.ResponseWriter, r *http.Request, raw string) (*UserClaims, bool) {
-	if r.Header.Get("Authorization") == "" {
+	// Hosted MCP clients (ChatGPT connectors) cannot set request headers, so
+	// the MCP endpoint also accepts the middleware's ?token= fallback. Every
+	// other PAT path still requires the Authorization header: credentials in
+	// URLs leak into proxy logs and history.
+	if r.Header.Get("Authorization") == "" && r.URL.Path != externalMCPPath {
 		externalError(w, 401, "unauthorized", "Access tokens must use the Authorization header.")
 		return nil, false
 	}
-	if !((r.Method == "GET" && r.URL.Path == "/api/external/v1/tools") || (r.Method == "POST" && r.URL.Path == "/api/external/v1/call") || ((r.Method == "GET" || r.Method == "HEAD") && r.URL.Path == "/api/external/v1/files/content")) {
+	if !((r.Method == "GET" && r.URL.Path == "/api/external/v1/tools") || (r.Method == "POST" && r.URL.Path == "/api/external/v1/call") || ((r.Method == "GET" || r.Method == "HEAD") && r.URL.Path == "/api/external/v1/files/content") || (r.URL.Path == externalMCPPath && (r.Method == "POST" || r.Method == "GET" || r.Method == "DELETE"))) {
 		externalError(w, 403, "forbidden", "Access tokens are valid only for the external tools API.")
 		return nil, false
 	}

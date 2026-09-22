@@ -136,8 +136,7 @@ claude mcp add --transport stdio agentworks -- agentworks mcp serve
 
 The bridge runs locally and calls your configured hosted server. It discovers
 all tool schemas from that server at startup. Restart the bridge after upgrading
-the server to refresh its catalog. This release provides stdio MCP; there is no
-public Streamable HTTP MCP endpoint yet.
+the server to refresh its catalog.
 
 Example request:
 
@@ -146,6 +145,31 @@ Example request:
 
 The agent discovers the workflow ID, then reads the plan, files, and runs. If
 the task needs a change, it says so instead of attempting one.
+
+## Connect hosted assistants
+
+ChatGPT and Claude Cowork cannot spawn the local stdio bridge, so the server
+also exposes the same catalog over MCP Streamable HTTP at
+`POST/GET/DELETE /api/external/v1/mcp`. The Connect tab's **Hosted AI
+assistants** card shows the ready-to-paste URL for the active installation:
+
+```text
+https://your-server/api/external/v1/mcp?token=aw_pat_…
+```
+
+- ChatGPT: Settings → Apps & Connectors → Developer Mode → add a custom MCP
+  connector with that URL.
+- Claude Cowork: Settings → Connectors → Add custom connector with that URL.
+- Direct integrations should send the token in the `Authorization: Bearer`
+  header instead of the URL.
+
+Tools, schemas, scopes, and per-request token validation are identical to the
+REST external API and the stdio bridge: every MCP tool call runs through the
+same dispatcher, read-only tokens see no run tools, and revoking the token
+rejects subsequent MCP calls immediately. The `?token=` form exists only for
+clients that cannot set headers — credentials in URLs leak into proxy logs
+and history, so prefer the header form everywhere it is accepted. There is no
+OAuth flow yet; Cowork-style OAuth login remains a follow-up.
 
 ## CLI examples
 
@@ -461,8 +485,10 @@ to the union. Changing the surface means editing the yaml and the golden test
 together, deliberately; adding a tool to run mode exposes it externally with
 no further change.
 
-Public tool endpoints are `GET /api/external/v1/tools` and
-`POST /api/external/v1/call`. The CLI uses a PAT in the Bearer header; app sessions
+Public tool endpoints are `GET /api/external/v1/tools`,
+`POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
+`POST/GET/DELETE /api/external/v1/mcp` (same catalog, same scopes). The CLI
+uses a PAT in the Bearer header; app sessions
 can also use these endpoints with their normal JWT. Account token management is
 `GET/POST /api/auth/access-tokens` and `DELETE /api/auth/access-tokens/{id}`, using
 an app session only. Call bodies

@@ -87,6 +87,7 @@ export function CliMcpSetupPanel() {
   const [error, setError] = useState<string | null>(null)
   const [skillBusy, setSkillBusy] = useState<'download' | 'copy' | null>(null)
   const [skillMsg, setSkillMsg] = useState<string | null>(null)
+  const [tokenCopied, setTokenCopied] = useState(false)
   const server = getApiBaseUrl() || window.location.origin
 
   useEffect(() => {
@@ -210,6 +211,17 @@ export function CliMcpSetupPanel() {
     }
   }
 
+  const copyToken = async () => {
+    if (!connection) return
+    try {
+      await navigator.clipboard.writeText(connection.token)
+      setTokenCopied(true)
+      window.setTimeout(() => setTokenCopied(false), 1500)
+    } catch {
+      setTokenCopied(false)
+    }
+  }
+
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const origin = server.replace(/\/+$/, '')
   const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
@@ -234,6 +246,9 @@ export function CliMcpSetupPanel() {
         actions={
           connection ? (
             <div className="flex gap-2">
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void copyToken()}>
+                <Copy className="mr-1 h-3.5 w-3.5" />{tokenCopied ? 'Copied' : 'Copy token'}
+              </Button>
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => void generate()}>New token</Button>
               <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
             </div>

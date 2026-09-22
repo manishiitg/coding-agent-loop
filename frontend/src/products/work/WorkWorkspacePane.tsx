@@ -83,12 +83,13 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
   const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
   const visibleOps = enabledPanels ? OPS_BUTTONS.filter(item => enabledPanels.has(item.id)) : OPS_BUTTONS
   const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => isWorkWorkspaceViewEnabled(item.id, enabledPanels)) : SETUP_BUTTONS
-  const [openGroup, setOpenGroup] = useState<'ops' | 'setup' | null>(() =>
-    OPS_BUTTONS.some(item => item.id === view) ? 'ops' : SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : null,
+  // Setup stays permanently expanded (no toggle); only Ops collapses.
+  const [openGroup, setOpenGroup] = useState<'ops' | null>(() =>
+    OPS_BUTTONS.some(item => item.id === view) ? 'ops' : null,
   )
 
   useEffect(() => {
-    setOpenGroup(OPS_BUTTONS.some(item => item.id === view) ? 'ops' : SETUP_BUTTONS.some(item => item.id === view) ? 'setup' : null)
+    setOpenGroup(OPS_BUTTONS.some(item => item.id === view) ? 'ops' : null)
   }, [view])
 
   return (
@@ -102,7 +103,7 @@ export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enable
           {visibleOps.length > 0 && <WorkspaceToolbarGroup label="Ops" open={openGroup === 'ops'} onToggle={() => setOpenGroup(current => current === 'ops' ? null : 'ops')} title="Operations: project files, database and costs">
             <div className="inline-flex items-center gap-0.5">{visibleOps.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>}
-          {visibleSetup.length > 0 && <WorkspaceToolbarGroup label="Setup" open={openGroup === 'setup'} onToggle={() => setOpenGroup(current => current === 'setup' ? null : 'setup')} title="Setup: identity and integrations">
+          {visibleSetup.length > 0 && <WorkspaceToolbarGroup label="Setup" open title="Setup: identity and integrations">
             <div className="inline-flex items-center gap-0.5">{visibleSetup.map((item) => <WorkToolbarButton key={item.id} {...item} active={view === item.id} onClick={() => onViewChange(item.id)} />)}</div>
           </WorkspaceToolbarGroup>}
         </div>

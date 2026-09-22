@@ -23,7 +23,7 @@ describe('formatted Chat structured-source boundary', () => {
     const source = readFileSync('src/components/ChatArea.tsx', 'utf8')
     const boundary = source.indexOf('tabEventIndices[sid] === undefined')
     const hydration = source.indexOf('hydrateTabEvents(sid', boundary)
-    const connection = source.indexOf('connectSSE(', hydration)
+    const connection = source.indexOf('connectSessionStream(sid)', hydration)
 
     expect(boundary).toBeGreaterThan(-1)
     expect(hydration).toBeGreaterThan(boundary)

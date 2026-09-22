@@ -2644,6 +2644,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (!tab.sessionId) continue
       neededSessionIds.add(tab.sessionId)
     }
+    const connectSessionStream = (sessionId: string) => {
+      const store = useChatStore.getState()
+      const stillOwnsTab = Object.values(store.chatTabs).some(tab => tab.sessionId === sessionId)
+      if (!stillOwnsTab || store.sseConnections[sessionId]) return
+      connectSSE(
+        sessionId,
+        (msg: SSEEventMessage) => handleSSEMessage(msg, sessionId),
+        (msg: SSEStatusMessage) => handleSSEStatus(msg, sessionId),
+        () => handleSSEFallback(sessionId)
+      )
+    }
     // Connect SSE for sessions that don't have a connection yet (any
     // view mode — see neededSessionIds comment for why terminal mode
     // can no longer skip this).
@@ -2670,25 +2681,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           logger.error('ChatArea', `Failed to establish restore cursor before SSE for ${sid}`, error)
         }).finally(() => {
           sseRestoreInFlightRef.current.delete(sid)
-          const freshStore = useChatStore.getState()
-          const stillOwnsTab = Object.values(freshStore.chatTabs).some(candidate => candidate.sessionId === sid)
-          if (!stillOwnsTab || freshStore.sseConnections[sid]) return
-          connectSSE(
-            sid,
-            (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
-            (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
-            () => handleSSEFallback(sid)
-          )
+          connectSessionStream(sid)
         })
         continue
       }
 
-      connectSSE(
-        sid,
-        (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
-        (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
-        () => handleSSEFallback(sid)
-      )
+      connectSessionStream(sid)
     }
 
     // Disconnect SSE for sessions that are no longer active.

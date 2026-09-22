@@ -367,6 +367,30 @@ firstCaptureObserved:
 	}
 }
 
+func TestRetainedTurnDurableSettleAllowedRequiresCompletionAssertingReader(t *testing.T) {
+	cases := []struct {
+		provider llmproviders.Provider
+		want     bool
+	}{
+		{llmproviders.ProviderMuseCLI, true},
+		{llmproviders.ProviderCodexCLI, true},
+		{llmproviders.ProviderClaudeCode, true},
+		{llmproviders.ProviderCursorCLI, true},
+		// Pi's reader returns all in-turn messages with no completion gate;
+		// a question awaiting a slow user must never settle the turn.
+		{llmproviders.ProviderPiCLI, false},
+		{llmproviders.Provider("future-cli"), false},
+		{"", false},
+		// Case/whitespace tolerant like CodingAgentPaneReady.
+		{llmproviders.Provider("  MUSE-CLI "), true},
+	}
+	for _, tc := range cases {
+		if got := retainedTurnDurableSettleAllowed(tc.provider); got != tc.want {
+			t.Errorf("retainedTurnDurableSettleAllowed(%q) = %v, want %v", tc.provider, got, tc.want)
+		}
+	}
+}
+
 func TestRetainedMainTurnSettlesOnDurableFinalResponseWhenPaneNeverIdles(t *testing.T) {
 	oldQuiet := retainedMainTurnDurableQuietWindow
 	oldRecheck := retainedMainTurnDurableRecheckWindow

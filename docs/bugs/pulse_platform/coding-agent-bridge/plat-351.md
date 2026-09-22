@@ -42,6 +42,11 @@ nothing on the live path asked it.
   tool is in flight the newest assistant message carries the ToolCall
   (PLAT-179 guard) or the TUI is not at its prompt, so the sidecar stays
   empty.
+- The live-loop settle is additionally allowlisted to readers that assert
+  completion (Muse, Codex, Claude, Cursor). Pi is excluded: its reader
+  returns all in-turn messages with no completion gate, so a question
+  awaiting a slow user would settle early. Follow-up: gate Pi's reader on
+  completion (or a provider-contract capability flag) and re-admit it.
 - One diagnostic `WARNING` per observer at 30m when neither pane-idle nor
   a durable final response has fired. It never settles the turn:
   marathon turns are untouched by design (no hard observer deadline).

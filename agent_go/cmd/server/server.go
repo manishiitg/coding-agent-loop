@@ -8211,15 +8211,38 @@ var (
 )
 
 // retainedTurnFinalResponse reads the provider's durable retained-turn
-// sidecar for this turn. Providers with retained-turn readers (Muse, Codex,
-// Claude, Cursor, Pi) report their own completion contract there; providers
-// without one return "" and keep the previous pane-only behavior.
+// sidecar for this turn. Providers with retained-turn readers report their
+// latest turn text there; providers without one return "". Reading is safe
+// for every provider (completion payload, stream-closed reconcile); settling
+// a live turn on the sidecar is additionally gated by
+// retainedTurnDurableSettleAllowed below.
 func (api *StreamingAPI) retainedTurnFinalResponse(provider llmproviders.Provider, sessionID string, turnStartedAt time.Time) string {
 	readFinalResponse := retainedturn.FinalResponse
 	if api != nil && api.internalRetainedTurnFinalResponseReader != nil {
 		readFinalResponse = api.internalRetainedTurnFinalResponseReader
 	}
 	return readFinalResponse(provider, sessionID, turnStartedAt)
+}
+
+// retainedTurnDurableSettleAllowed reports whether a durable final response
+// on a quiet pane may settle a live turn for this provider. Only readers
+// that assert completion — not just "latest text" — qualify:
+//   - Muse: museRetainedTurnReady (log quiet + TUI at prompt + pane stable,
+//     pending-input excluded) gates ReadRetainedTurnMessages.
+//   - Codex: the rollout phase must be final_answer/final for this turn.
+//   - Claude: completedAssistantResponseFromTranscript must report Completed.
+//   - Cursor: the idle composer is required in addition to the transcript.
+//
+// Pi is deliberately excluded: its reader returns all in-turn messages with
+// no completion gate, so a question awaiting a slow user would settle early.
+// Providers outside this set keep pane-only behavior (fail closed).
+func retainedTurnDurableSettleAllowed(provider llmproviders.Provider) bool {
+	switch llmproviders.Provider(strings.ToLower(strings.TrimSpace(string(provider)))) {
+	case llmproviders.ProviderMuseCLI, llmproviders.ProviderCodexCLI, llmproviders.ProviderClaudeCode, llmproviders.ProviderCursorCLI:
+		return true
+	default:
+		return false
+	}
 }
 
 // observeRetainedMainTurnStream derives the logical end of a direct retained
@@ -8313,8 +8336,11 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 				// The pane heuristics cannot see idle for every provider.
 				// Once the stream has gone quiet, a durable final response
 				// from the provider's own turn contract settles the turn on
-				// runner outcome instead of pixels.
-				if now.Sub(lastOutputAt) >= retainedMainTurnDurableQuietWindow &&
+				// runner outcome instead of pixels — but only for readers
+				// that assert completion, so an ungated reader (Pi) can never
+				// settle a turn that is merely awaiting a slow user.
+				if retainedTurnDurableSettleAllowed(provider) &&
+					now.Sub(lastOutputAt) >= retainedMainTurnDurableQuietWindow &&
 					now.Sub(lastDurableCheck) >= retainedMainTurnDurableRecheckWindow {
 					lastDurableCheck = now
 					if finalResult := api.retainedTurnFinalResponse(provider, sessionID, turnStartedAt); strings.TrimSpace(finalResult) != "" {

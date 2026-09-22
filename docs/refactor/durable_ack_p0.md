@@ -96,6 +96,21 @@ its draft-only safety and duplicate risk still need live review before calling
 the full transport policy re-certified. The changes are local and have not
 yet passed live provider/server↔chat re-certification.
 
+### Production dependency parity (2026-09-22)
+
+The production agent Dockerfile removed the local sibling-repository replaces
+and then built the versions pinned in `agent_go/go.mod`. That pin was
+`multi-llm-provider-go` revision `36f1e19` from 2026-09-19, while local tests
+used the sibling repository's `main`. Production could therefore omit newer
+submit/Enter and durable-ack fixes even after those fixes passed locally.
+
+The production Docker build now resolves both `mcpagent` and
+`multi-llm-provider-go` from `main`, matching local development. The refs are
+explicit Docker build arguments defaulting to `main`; an exact commit may be
+supplied only for an intentional rollback or bisect. The deterministic Coding
+CLI workflow verifies those defaults so a pinned-production/local-main split
+cannot be reintroduced silently.
+
 After the 2026-09-22 main pull, `/api/query` owns steer-vs-next-turn routing.
 Human submissions now attempt a compatible retained tmux CLI once *before*
 the occupied-turn queue. A known missing target falls through to the durable

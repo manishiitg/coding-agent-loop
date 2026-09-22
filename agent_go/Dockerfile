@@ -11,6 +11,11 @@
 # Build stage - Debian so the binary links against glibc and runs on the Debian runtime
 FROM golang:1.25-bookworm AS builder
 
+# Production intentionally follows the same dependency branches used by local
+# development. Override these args only for an explicit rollback or bisect.
+ARG MCPAGENT_REF=main
+ARG MULTI_LLM_PROVIDER_REF=main
+
 RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates gcc libc6-dev && rm -rf /var/lib/apt/lists/*
 
 # Set working directory
@@ -25,17 +30,20 @@ COPY agent_go/go.mod agent_go/go.sum ./agent_go/
 RUN printf 'go 1.25.0\nuse (\n\t./agent_go\n\t./workspace\n)\n' > /app/go.work
 ENV GOWORK=/app/go.work
 
-# Drop local-dev replace directives for mcpagent and multi-llm-provider-go — those
-# point to ../../mcpagent / ../../multi-llm-provider-go on the developer's laptop and
-# are not part of the Docker build context. The production build must pull these
-# modules from GitHub at the version pinned in require blocks. The `workspace` replace
-# IS kept (workspace/ lives in this repo and is part of the build context).
+# Drop local-dev replace directives because sibling checkouts are not in the
+# Docker build context, then resolve the same main branches local development
+# uses. This prevents production from silently running old coding-agent input
+# and durable-ack code while local tests exercise newer sibling checkouts.
+# The refs remain build args so an emergency rollback can name an exact commit.
 RUN cd /app/agent_go && \
     go mod edit -dropreplace=github.com/manishiitg/mcpagent && \
-    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go
+    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go && \
+    GOWORK=off GOFLAGS=-mod=mod go get \
+      github.com/manishiitg/mcpagent@${MCPAGENT_REF} \
+      github.com/manishiitg/multi-llm-provider-go@${MULTI_LLM_PROVIDER_REF}
 
 # Download dependencies (retry up to 3 times — proxy.golang.org can be flaky).
-# mcpagent and multi-llm-provider-go come from GitHub via go.mod tags.
+# mcpagent and multi-llm-provider-go come from the GitHub refs resolved above.
 # Inline GOFLAGS=-mod=mod + GOWORK=off lets `go mod download` add missing checksums
 # to go.sum for those modules, which aren't present in the committed go.sum because
 # the developer's go.sum was generated with the local `replace` directives active.
@@ -50,10 +58,13 @@ COPY workspace/ ./workspace/
 COPY agent_go/ ./agent_go/
 COPY playbooks/ ./playbooks/
 
-# Full COPY overwrote the patched go.mod — re-drop the local-dev replaces before build.
+# Full COPY overwrote the resolved go.mod. Reapply the production branch refs.
 RUN cd /app/agent_go && \
     go mod edit -dropreplace=github.com/manishiitg/mcpagent && \
-    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go
+    go mod edit -dropreplace=github.com/manishiitg/multi-llm-provider-go && \
+    GOWORK=off GOFLAGS=-mod=mod go get \
+      github.com/manishiitg/mcpagent@${MCPAGENT_REF} \
+      github.com/manishiitg/multi-llm-provider-go@${MULTI_LLM_PROVIDER_REF}
 # Build from /app so go.work is found; output binary to agent_go dir (glibc-linked for Debian runtime).
 # -p=2 caps the parallel compile-job count — the in-cluster buildkit pod runs on a memory-tight
 # node and the default (NumCPU) compile fan-out OOM-killed the build. Slower but survivable.

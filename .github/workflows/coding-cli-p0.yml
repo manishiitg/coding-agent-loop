@@ -72,6 +72,10 @@ jobs:
       - name: Install tmux for hermetic lifecycle contracts
         run: sudo apt-get update && sudo apt-get install -y tmux
 
+      - name: Verify production follows coding dependency main branches
+        working-directory: coding-agent-loop
+        run: ./agent_go/scripts/check-production-dependency-refs.sh
+
       - name: Verify coding CLI registry
         working-directory: coding-agent-loop
         run: >-

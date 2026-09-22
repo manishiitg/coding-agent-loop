@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	"github.com/mark3labs/mcp-go/mcp"
 	"github.com/mark3labs/mcp-go/server"
 )
@@ -16,14 +16,65 @@ import (
 // externalMCPPath is the MCP Streamable HTTP endpoint. It exposes the same
 // external tool catalog, schemas, scopes, and PAT auth as the REST external
 // API for hosted MCP clients (ChatGPT, Claude Cowork) that cannot spawn the
-// local stdio bridge. The MCP layer is a transport adapter only: every tool
-// call runs through handleExternalCall, so the MCP surface can never drift
-// from the REST surface.
+// local stdio bridge.
+//
+// Unlike the CLI and stdio bridge, which list every tool, the remote surface
+// is two self-describing tools: get_api_spec discovers names and schemas,
+// call_tool executes. The full catalog (product.yaml's external_tools plus
+// run.tools) is resolved internally, so the MCP surface stays tiny no matter
+// how run mode grows, and hosted clients without tool search never face a
+// truncated tail.
 const externalMCPPath = "/api/external/v1/mcp"
 
-// handleExternalMCP serves the scope-filtered external tool catalog over MCP
-// Streamable HTTP. It runs stateless: every request is independently
-// authenticated, matching the per-request PAT validation of the REST API.
+const (
+	externalMCPToolSpec = "get_api_spec"
+	externalMCPToolCall = "call_tool"
+)
+
+// Remote instructions are short: the two tool descriptions teach the
+// protocol, since hosted clients may not deliver initialize instructions at
+// all (ChatGPT delivers tools only).
+const externalMCPInstructions = `You are connected to an AgentWorks server: tools read, and run-mode tools execute in pinned Run-mode sessions; nothing creates, edits, or authors. Call get_api_spec with no arguments to list the available tools, then get_api_spec with names for schemas, then call_tool to execute. Discover workflow IDs with list_workflows first; IDs are never filesystem paths. Answer from what you read; if the task needs a change, say so instead of attempting one.`
+
+const externalMCPReadOnlyInstructions = `You are connected to an AgentWorks server with a read-only connection: every tool reads; nothing creates, edits, or runs. Call get_api_spec with no arguments to list the available tools, then get_api_spec with names for schemas, then call_tool to execute. Discover workflow IDs with list_workflows first; IDs are never filesystem paths. Answer from what you read; if the task needs a change, say so instead of attempting one.`
+
+var externalMCPToolSchemas = map[string]map[string]any{
+	externalMCPToolSpec: {
+		"type": "object",
+		"properties": map[string]any{
+			"names": map[string]any{
+				"description": "Tool name or names to get JSON schemas for. Omit to list every available tool with a one-line description.",
+			},
+		},
+		"additionalProperties": false,
+	},
+	externalMCPToolCall: {
+		"type": "object",
+		"properties": map[string]any{
+			"name": map[string]any{
+				"type":        "string",
+				"description": "Tool name from get_api_spec.",
+				"minLength":   1,
+			},
+			"arguments": map[string]any{
+				"type":                 "object",
+				"description":          "Arguments matching the tool's schema. Defaults to {}.",
+				"additionalProperties": true,
+			},
+		},
+		"required":             []any{"name"},
+		"additionalProperties": false,
+	},
+}
+
+var externalMCPToolDescriptions = map[string]string{
+	externalMCPToolSpec: "Discover AgentWorks tools. Call with no arguments to list every available tool name with a one-line description; call with names (a string or an array of strings) to get full JSON schemas for those tools. Only tools this connection may use are listed. Then execute with call_tool.",
+	externalMCPToolCall: "Execute one AgentWorks tool by name. Get its schema first with get_api_spec. Arguments must match the tool's schema; workflow tools need the workflow_id from list_workflows.",
+}
+
+// handleExternalMCP serves the two-tool remote surface over MCP Streamable
+// HTTP. It runs stateless: every request is independently authenticated,
+// matching the per-request PAT validation of the REST API.
 func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Request) {
 	claims := GetUserFromContext(r.Context())
 	if claims == nil {
@@ -43,12 +94,12 @@ func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Reques
 			allowed = append(allowed, tool)
 		}
 	}
-	instructions := agentworksclient.MCPReadOnlyInstructions
+	instructions := externalMCPReadOnlyInstructions
 	for _, tool := range allowed {
 		// The catalog omits run tools from tokens lacking runs:execute, so
 		// execute_step's presence proves this connection runs.
 		if tool.Name == "execute_step" {
-			instructions = agentworksclient.MCPInstructions
+			instructions = externalMCPInstructions
 			break
 		}
 	}
@@ -56,17 +107,16 @@ func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Reques
 		server.WithToolCapabilities(false),
 		server.WithInstructions(instructions),
 	)
-	for _, tool := range allowed {
-		name := tool.Name
-		schema, err := json.Marshal(tool.InputSchema)
+	for _, name := range []string{externalMCPToolSpec, externalMCPToolCall} {
+		schema, err := json.Marshal(externalMCPToolSchemas[name])
 		if err != nil {
 			externalError(w, http.StatusInternalServerError, "schema_error", err.Error())
 			return
 		}
 		mcpServer.AddTool(
-			mcp.NewToolWithRawSchema(name, tool.Description, schema),
+			mcp.NewToolWithRawSchema(name, externalMCPToolDescriptions[name], schema),
 			func(ctx context.Context, request mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-				return api.externalMCPCall(ctx, r, name, request), nil
+				return api.externalMCPCall(ctx, r, name, allowed, request), nil
 			},
 		)
 	}
@@ -80,14 +130,42 @@ func (api *StreamingAPI) handleExternalMCP(w http.ResponseWriter, r *http.Reques
 	httpServer.ServeHTTP(w, r)
 }
 
-// externalMCPCall dispatches one MCP tool call through the REST external
-// dispatcher and converts its response to an MCP result.
-func (api *StreamingAPI) externalMCPCall(ctx context.Context, r *http.Request, name string, request mcp.CallToolRequest) *mcp.CallToolResult {
+// externalMCPCall dispatches one remote tool call: get_api_spec resolves
+// against the scope-filtered catalog, call_tool runs through the REST
+// external dispatcher so results can never drift from the REST surface.
+func (api *StreamingAPI) externalMCPCall(ctx context.Context, r *http.Request, name string, allowed []externalTool, request mcp.CallToolRequest) *mcp.CallToolResult {
 	args := request.GetArguments()
 	if args == nil {
 		args = map[string]any{}
 	}
-	body, err := json.Marshal(map[string]any{"name": name, "arguments": args})
+	if name == externalMCPToolSpec {
+		return externalMCPAPISpec(args, allowed)
+	}
+	target, _ := args["name"].(string)
+	target = strings.TrimSpace(target)
+	if target == "" {
+		return mcp.NewToolResultError("invalid_arguments: call_tool requires the tool name in \"name\" (discover names with get_api_spec)")
+	}
+	byName := make(map[string]externalTool, len(allowed))
+	for _, tool := range allowed {
+		byName[tool.Name] = tool
+	}
+	if _, ok := byName[target]; !ok {
+		catalog, err := externalTools()
+		if err == nil {
+			for _, tool := range catalog {
+				if tool.Name == target {
+					return mcp.NewToolResultError("insufficient_scope: this connection may not call \"" + target + "\"")
+				}
+			}
+		}
+		return mcp.NewToolResultError("unknown_tool: \"" + target + "\" is not exposed by this API; call get_api_spec with no arguments for the available tools")
+	}
+	callArgs, _ := args["arguments"].(map[string]any)
+	if callArgs == nil {
+		callArgs = map[string]any{}
+	}
+	body, err := json.Marshal(map[string]any{"name": target, "arguments": callArgs})
 	if err != nil {
 		return mcp.NewToolResultError("failed to encode tool arguments: " + err.Error())
 	}
@@ -106,6 +184,54 @@ func (api *StreamingAPI) externalMCPCall(ctx context.Context, r *http.Request, n
 	result, err := mcp.NewToolResultJSON(value)
 	if err != nil {
 		return mcp.NewToolResultText(rec.body.String())
+	}
+	return result
+}
+
+// externalMCPAPISpec serves the scope-filtered catalog: no names returns the
+// name/description list, names returns full schemas for those tools.
+func externalMCPAPISpec(args map[string]any, allowed []externalTool) *mcp.CallToolResult {
+	byName := make(map[string]externalTool, len(allowed))
+	for _, tool := range allowed {
+		byName[tool.Name] = tool
+	}
+	raw, hasNames := args["names"]
+	if !hasNames || raw == nil {
+		entries := make([]map[string]string, 0, len(allowed))
+		for _, tool := range allowed {
+			entries = append(entries, map[string]string{"name": tool.Name, "description": tool.Description})
+		}
+		result, err := mcp.NewToolResultJSON(map[string]any{"tools": entries, "count": len(entries)})
+		if err != nil {
+			return mcp.NewToolResultError("failed to encode tool list: " + err.Error())
+		}
+		return result
+	}
+	var names []string
+	switch typed := raw.(type) {
+	case string:
+		names = []string{typed}
+	case []any:
+		for _, item := range typed {
+			name, _ := item.(string)
+			names = append(names, name)
+		}
+	case []string:
+		names = typed
+	default:
+		return mcp.NewToolResultError("invalid_arguments: \"names\" must be a string or an array of strings")
+	}
+	schemas := make(map[string]any, len(names))
+	for _, name := range names {
+		tool, ok := byName[strings.TrimSpace(name)]
+		if !ok {
+			return mcp.NewToolResultError("unknown_tool: \"" + name + "\" is not available to this connection; call get_api_spec with no arguments for the available tools")
+		}
+		schemas[tool.Name] = map[string]any{"description": tool.Description, "inputSchema": tool.InputSchema}
+	}
+	result, err := mcp.NewToolResultJSON(map[string]any{"schemas": schemas})
+	if err != nil {
+		return mcp.NewToolResultError("failed to encode tool schemas: " + err.Error())
 	}
 	return result
 }

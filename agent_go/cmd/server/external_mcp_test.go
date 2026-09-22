@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	"github.com/mark3labs/mcp-go/client"
 	"github.com/mark3labs/mcp-go/client/transport"
 	"github.com/mark3labs/mcp-go/mcp"
@@ -96,66 +95,121 @@ func TestExternalMCPRequiresIdentity(t *testing.T) {
 	}
 }
 
-func TestExternalMCPStreamableListAndCall(t *testing.T) {
+func callRemoteTool(t *testing.T, ctx context.Context, cli *client.Client, name string, args map[string]any) *mcp.CallToolResult {
+	t.Helper()
+	result, err := cli.CallTool(ctx, mcp.CallToolRequest{
+		Params: mcp.CallToolParams{Name: name, Arguments: args},
+	})
+	if err != nil {
+		t.Fatalf("call %s: %v", name, err)
+	}
+	return result
+}
+
+func requireRemoteSuccess(t *testing.T, result *mcp.CallToolResult, what string) {
+	t.Helper()
+	if result.IsError {
+		t.Fatalf("%s returned tool error: %+v", what, result.Content)
+	}
+}
+
+func requireRemoteError(t *testing.T, result *mcp.CallToolResult, what, wantCode string) {
+	t.Helper()
+	if !result.IsError {
+		t.Fatalf("%s unexpectedly succeeded", what)
+	}
+	if got := marshalContent(t, result); !strings.Contains(got, wantCode) {
+		t.Fatalf("%s missing code %q: %s", what, wantCode, got)
+	}
+}
+
+func TestExternalMCPStreamableSpecAndCall(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	srv := serveExternalMCP(t, f.api, &UserClaims{UserID: "owner", Username: "owner"})
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 	cli := dialExternalMCP(t, ctx, srv.URL+externalMCPPath)
 	initResult := initializeExternalMCP(t, ctx, cli)
-	if initResult.Instructions != agentworksclient.MCPInstructions {
+	if initResult.Instructions != externalMCPInstructions {
 		t.Fatalf("run-capable connection got read-only instructions: %q", initResult.Instructions)
 	}
 
+	// The remote surface is exactly two tools; the catalog resolves inside.
 	tools := listExternalMCPTools(t, ctx, cli)
-	for _, name := range []string{"list_workflows", "get_plan", "read_file", "execute_step", "get_agent_context"} {
+	if len(tools) != 2 {
+		names := make([]string, 0, len(tools))
+		for name := range tools {
+			names = append(names, name)
+		}
+		t.Fatalf("remote tools %v, want exactly [get_api_spec call_tool]", names)
+	}
+	for _, name := range []string{externalMCPToolSpec, externalMCPToolCall} {
 		if _, ok := tools[name]; !ok {
-			t.Fatalf("MCP catalog missing %q (got %d tools)", name, len(tools))
+			t.Fatalf("remote surface missing %q", name)
 		}
 	}
 
-	call := func(name string, args map[string]any) *mcp.CallToolResult {
-		t.Helper()
-		result, err := cli.CallTool(ctx, mcp.CallToolRequest{
-			Params: mcp.CallToolParams{Name: name, Arguments: args},
-		})
-		if err != nil {
-			t.Fatalf("call %s: %v", name, err)
+	// Spec with no arguments lists the whole scope-filtered catalog.
+	catalog, err := externalTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	spec := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{})
+	requireRemoteSuccess(t, spec, "get_api_spec")
+	listed := marshalStructured(t, spec)
+	for _, name := range []string{"list_workflows", "get_plan", "read_file", "execute_step", "get_agent_context"} {
+		if !strings.Contains(listed, name) {
+			t.Fatalf("spec list missing %q: %s", name, listed)
 		}
-		if result.IsError {
-			t.Fatalf("call %s returned tool error: %+v", name, result.Content)
-		}
-		return result
+	}
+	var decoded struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal([]byte(listed), &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.Count != len(catalog) {
+		t.Fatalf("spec count %d, want full catalog %d", decoded.Count, len(catalog))
 	}
 
-	workflows := call("list_workflows", map[string]any{})
+	// Spec accepts a single name or an array and returns JSON schemas.
+	single := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{"names": "read_file"})
+	requireRemoteSuccess(t, single, "get_api_spec single name")
+	if got := marshalStructured(t, single); !strings.Contains(got, "inputSchema") || !strings.Contains(got, "workflow_id") {
+		t.Fatalf("single-name spec missing schema: %s", got)
+	}
+	multi := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{"names": []any{"read_file", "list_workflows"}})
+	requireRemoteSuccess(t, multi, "get_api_spec name array")
+	if got := marshalStructured(t, multi); !strings.Contains(got, "read_file") || !strings.Contains(got, "list_workflows") {
+		t.Fatalf("array spec missing entries: %s", got)
+	}
+	unknown := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{"names": "update_workflow_config"})
+	requireRemoteError(t, unknown, "spec of unexposed tool", "unknown_tool")
+
+	// Calls dispatch through the REST surface.
+	workflows := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{"name": "list_workflows", "arguments": map[string]any{}})
+	requireRemoteSuccess(t, workflows, "call list_workflows")
 	if got := marshalStructured(t, workflows); !strings.Contains(got, "invoices") {
 		t.Fatalf("list_workflows result missing invoices workflow: %s", got)
 	}
-	process := call("read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md"})
+	process := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{
+		"name": "read_file", "arguments": map[string]any{"workflow_id": "invoices", "path": "docs/process.md"},
+	})
+	requireRemoteSuccess(t, process, "call read_file")
 	if got := marshalStructured(t, process); !strings.Contains(got, "reviewed weekly") {
 		t.Fatalf("read_file result missing expected content: %s", got)
 	}
 	// A workflow the caller cannot see surfaces as a tool error carrying the
 	// REST error code, not a protocol failure.
-	denied, err := cli.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "read_file", Arguments: map[string]any{"workflow_id": "secret", "path": "docs/process.md"}},
+	denied := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{
+		"name": "read_file", "arguments": map[string]any{"workflow_id": "secret", "path": "docs/process.md"},
 	})
-	if err != nil {
-		t.Fatalf("denied call: %v", err)
-	}
-	if !denied.IsError {
-		t.Fatal("read of an invisible workflow unexpectedly succeeded")
-	}
-	if got := marshalContent(t, denied); !strings.Contains(got, "workflow_not_found") {
-		t.Fatalf("denied call missing REST error code: %s", got)
-	}
+	requireRemoteError(t, denied, "read of invisible workflow", "workflow_not_found")
 
-	if _, err := cli.CallTool(ctx, mcp.CallToolRequest{
-		Params: mcp.CallToolParams{Name: "update_workflow_config", Arguments: map[string]any{}},
-	}); err == nil {
-		t.Fatal("unexposed tool call unexpectedly succeeded")
-	}
+	bogus := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{"name": "update_workflow_config"})
+	requireRemoteError(t, bogus, "call of unexposed tool", "unknown_tool")
+	nameless := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{})
+	requireRemoteError(t, nameless, "call without name", "invalid_arguments")
 }
 
 func TestExternalMCPRespectsTokenScopes(t *testing.T) {
@@ -168,18 +222,27 @@ func TestExternalMCPRespectsTokenScopes(t *testing.T) {
 	defer cancel()
 	cli := dialExternalMCP(t, ctx, srv.URL+externalMCPPath)
 	initResult := initializeExternalMCP(t, ctx, cli)
-	if initResult.Instructions != agentworksclient.MCPReadOnlyInstructions {
+	if initResult.Instructions != externalMCPReadOnlyInstructions {
 		t.Fatalf("read-only connection got run instructions: %q", initResult.Instructions)
 	}
+	// Same two tools; the scope filter applies inside the spec and the calls.
 	tools := listExternalMCPTools(t, ctx, cli)
+	if len(tools) != 2 {
+		t.Fatalf("read-only surface has %d tools, want 2", len(tools))
+	}
+	spec := callRemoteTool(t, ctx, cli, externalMCPToolSpec, map[string]any{})
+	requireRemoteSuccess(t, spec, "read-only spec list")
+	listed := marshalStructured(t, spec)
 	for _, name := range []string{"list_workflows", "read_file", "get_agent_context"} {
-		if _, ok := tools[name]; !ok {
-			t.Fatalf("read-only catalog missing %q", name)
+		if !strings.Contains(listed, name) {
+			t.Fatalf("read-only spec missing %q", name)
 		}
 	}
 	for _, name := range []string{"execute_step", "chat", "trigger_schedule", "run_reply_input"} {
-		if _, ok := tools[name]; ok {
-			t.Fatalf("read-only catalog unexpectedly exposes %q", name)
+		if strings.Contains(listed, `"`+name+`"`) {
+			t.Fatalf("read-only spec unexpectedly exposes %q", name)
 		}
 	}
+	blocked := callRemoteTool(t, ctx, cli, externalMCPToolCall, map[string]any{"name": "execute_step"})
+	requireRemoteError(t, blocked, "read-only run call", "insufficient_scope")
 }

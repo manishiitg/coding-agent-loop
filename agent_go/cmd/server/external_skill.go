@@ -28,9 +28,10 @@ const hostedSkillDescription = "Read and run AgentWorks workflows over MCP (list
 // buildHostedSkillMarkdown renders the hosted SKILL.md. It must stay
 // self-contained: ChatGPT delivers tools only (no MCP prompts, resources, or
 // initialize instructions), so a hosted agent sees exactly this text plus
-// tool schemas. Keep in sync with
-// agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md (same sections,
-// minus the local-CLI Connect block).
+// tool schemas. It shares sections with
+// agent_go/pkg/agentworksclient/skills/agentworks/SKILL.md, but the dispatch
+// differs: the remote surface exposes only get_api_spec and call_tool, so
+// every tool below runs through call_tool.
 func buildHostedSkillMarkdown(origin string) string {
 	server := strings.TrimRight(strings.TrimSpace(origin), "/")
 	var body strings.Builder
@@ -38,11 +39,11 @@ func buildHostedSkillMarkdown(origin string) string {
 	fmt.Fprintf(&body, `
 # AgentWorks
 
-You are connected to an AgentWorks server at %s via MCP. This connection reads and runs: tools read, and run-mode tools execute in pinned Run-mode sessions. Nothing creates, edits, or authors. Workflows below are identified by workflow ID, never by filesystem path.
+You are connected to an AgentWorks server at %s via MCP. This connection exposes exactly two tools and reads and runs through them: tools read, and run-mode tools execute in pinned Run-mode sessions. Nothing creates, edits, or authors. Workflows below are identified by workflow ID, never by filesystem path.
 
 ## First step
 
-Call `+"`get_agent_context`"+` for token capabilities, available tools, and the guidance version. Discover workflow IDs with `+"`list_workflows`"+` first — IDs are never filesystem paths.
+Call `+"`get_api_spec`"+` with no arguments to list every available tool. Call `+"`get_api_spec`"+` again with names for their JSON schemas. Execute everything with `+"`call_tool`"+`, passing the tool name and its arguments — never call a listed tool directly, only these two tools exist. Discover workflow IDs with `+"`list_workflows`"+` first — IDs are never filesystem paths. Call `+"`get_agent_context`"+` for token capabilities and the guidance version.
 
 ## Guidance per task
 

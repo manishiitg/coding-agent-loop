@@ -149,9 +149,15 @@ the task needs a change, it says so instead of attempting one.
 ## Connect hosted assistants
 
 ChatGPT and Claude Cowork cannot spawn the local stdio bridge, so the server
-also exposes the same catalog over MCP Streamable HTTP at
-`POST/GET/DELETE /api/external/v1/mcp`. The Connect tab's **Hosted AI
-assistants** card shows the ready-to-paste URL for the active installation:
+also exposes the catalog over MCP Streamable HTTP at
+`POST/GET/DELETE /api/external/v1/mcp`. Unlike the CLI and stdio bridge,
+which list every tool, the remote surface is exactly two self-describing
+tools: `get_api_spec` (no arguments lists every available tool, names return
+JSON schemas) and `call_tool` (executes by name). The full catalog —
+product.yaml's external tools plus run tools — resolves internally, so the
+surface stays tiny no matter how run mode grows. The Connect tab's **Hosted
+AI assistants** card shows the ready-to-paste URL for the active
+installation:
 
 ```text
 https://your-server/api/external/v1/mcp?token=aw_pat_…
@@ -172,10 +178,10 @@ text into Custom Instructions / the connector's Instructions field. The skill
 names the installation but carries no credential. Both endpoints accept the
 app session or a PAT.
 
-Tools, schemas, scopes, and per-request token validation are identical to the
-REST external API and the stdio bridge: every MCP tool call runs through the
-same dispatcher, read-only tokens see no run tools, and revoking the token
-rejects subsequent MCP calls immediately. The `?token=` form exists only for
+Schemas, scopes, and per-request token validation are identical to the REST
+external API: `get_api_spec` only lists and describes tools the token may
+use, every `call_tool` runs through the same dispatcher, and revoking the
+token rejects subsequent MCP calls immediately. The `?token=` form exists only for
 clients that cannot set headers — credentials in URLs leak into proxy logs
 and history, so prefer the header form everywhere it is accepted. There is no
 OAuth flow yet; Cowork-style OAuth login remains a follow-up.
@@ -496,7 +502,7 @@ no further change.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
-`POST/GET/DELETE /api/external/v1/mcp` (same catalog, same scopes). The CLI
+`POST/GET/DELETE /api/external/v1/mcp` (get_api_spec + call_tool over the same catalog). The CLI
 uses a PAT in the Bearer header; app sessions
 can also use these endpoints with their normal JWT. Account token management is
 `GET/POST /api/auth/access-tokens` and `DELETE /api/auth/access-tokens/{id}`, using

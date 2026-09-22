@@ -718,3 +718,144 @@ its assertion with a rail-visible fixture swap. `tsc -b` clean, 96/96
 transcript, full frontend suite 1786/1788 (sole failure is the
 pre-existing `formsKitAdoption` settings-kit case, untouched files).
 Not committed or pushed — awaiting explicit instruction.
+
+## Appendix: post-deletion producer/consumer audit (2026-09-22)
+
+Review after the 37-event deletion found another class of false
+positives in the earlier catalog: a type declaration, schema-gen entry,
+renderer, store match arm, or tracer handler is not proof of a producer.
+For this pass, an event counts as produced only when live code constructs
+the payload (or an equivalent generic envelope) and sends it through an
+event listener/bridge. This stricter check found the candidates below.
+
+### Candidate deletion batch 4: no current producer
+
+Core/schema-only contracts (14):
+
+- `error_detail`
+- `json_validation_start`
+- `json_validation_end`
+- `llm_messages`
+- `llm_token_usage`
+- `performance`
+- `streaming_error`
+- `streaming_progress`
+- `streaming_connection_lost`
+- `tool_output`
+- `tool_response`
+- `tool_call_progress`
+- `debug`
+- bare `mcp_server_connection` (the carrier struct is live for the
+  separately typed `mcp_server_connection_start/end` tracer events, but
+  the bare discriminator is never emitted)
+
+Orchestrator contracts with downstream handling but no emitter (4):
+
+- `independent_steps_selected`
+- `human_verification_response`
+- `synthetic_turn_ready`
+- `auto_notification_steered`
+
+Dead workflow event family (4):
+
+- `workflow_start`
+- `workflow_progress`
+- `workflow_end`
+- `workflow_error`
+
+The workflow family has no Go emitter. Frontend renderers, generated
+union/map entries, retention/status arrays, `cleanConversation` cases,
+and workflow-store completion/error branches are downstream-only. The
+live completion contract is `orchestrator_end`/`unified_completion`;
+live errors use the agent/conversation/orchestrator-agent error paths.
+This corrects the batch-3 note above that classified `workflow_error`
+as having a verified live emitter.
+
+One additional terminal discriminator is downstream-only:
+
+- `background_agent_failed`: current background failures are reported
+  through `background_agent_completed` with `status: "failed"`; no code
+  emits a separate `background_agent_failed` event.
+
+That makes **23 candidate event contracts** for the next deletion batch.
+Before deletion, add every removed wire name to the legacy tombstone
+filter described below, then remove its const/struct/constructor,
+schema-gen entry, generated type, renderer, store match arms, retention
+entry, and tests as applicable.
+
+Two more frontend branches are dead event interpretations, but the
+strings themselves are live in a different namespace:
+
+- `workflow_step_started`
+- `workflow_step_completed`
+
+They are `BotNotificationKind` values, not structured chat events.
+Remove the `cleanConversation` event branches without deleting the bot
+notification constants.
+
+### Active events that should not be durable chat rows
+
+These have real producers, so do not delete them blindly. They should be
+demoted from the chat journal while preserving their actual consumer:
+
+- `system_prompt`: emitted with the complete effective prompt, stored in
+  SQLite, and hidden from every transcript. Keep it in the conversation
+  debug artifact and observability trace; bridge-skip it from chat
+  persistence. This is potentially a large row for every Crew/sub-agent.
+- `mcp_server_selection`: emitted for the initial query, consumed by
+  Langfuse as routing telemetry, and explicitly rendered as `null` in the
+  frontend. Add it to bridge `SKIP_EVENTS` and store
+  `NEVER_SHOW_EVENTS`; tracer delivery happens before the UI bridge and
+  remains intact.
+- `status_line`: live and required to update terminal model/token/cost
+  metadata, but potentially emitted many times and excluded from readable
+  transcripts. Preserve delivery to `terminalStore.HandleEvent`, then
+  avoid the durable SQLite append. This needs a small transient-event
+  path rather than simple deletion or bridge skipping because the
+  terminal store currently receives it through the EventStore callback.
+
+`large_tool_output_file_write_error` is also live but has no meaningful
+frontend presentation. Do not delete the failure signal. Convert it to a
+normal tool/server error plus structured logging, or add an intentional
+error renderer; it must not fall through as an unknown JSON card.
+
+### Required historical compatibility
+
+Deleting a type from current producers/renderers does not remove rows
+already present in `structured-chat-events.sqlite`. `ShouldShowEvent`
+currently fails open for unrecognized types, so old removed rows can:
+
+- consume the initial 300-event restoration window;
+- increase restore payload and reconciliation work; and
+- render as `Unknown Event Type` cards after their renderer is deleted.
+
+Maintain a compact `LEGACY_REMOVED_EVENT_TYPES`/tombstone set at the
+server polling/restoration boundary. It must include all 37 names from
+deletion batches 1-3 plus the 23 names above when batch 4 lands. Test
+that each tombstoned historical event is excluded from polling and does
+not consume the structural-event window.
+
+### Diagnostics-rail correction found during review
+
+The minimal-rail comment says content-bearing errors remain visible, but
+`TERMINAL_RAIL_HIDDEN_TYPES` currently includes
+`orchestrator_agent_error`. That event is actively emitted for routing,
+todo, message-sequence, human-input, and Crew failures. Remove it from
+the hidden set and add a terminal-selection regression test so developer
+diagnostics never suppress the failure that explains why a child
+execution stopped.
+
+### Verification required for batch 4
+
+For every proposed removal:
+
+1. search raw wire strings and typed constructors across builder,
+   `mcpagent`, and the provider repo;
+2. prove there is no `emitTypedEvent`, event-listener, bridge, or generic
+   envelope construction path (schema registration is not a producer);
+3. distinguish structured chat events from file-log and bot-notification
+   namespaces that reuse similar strings;
+4. regenerate schemas/types and run TypeScript plus event/transcript
+   suites; and
+5. restore a fixture containing every legacy name and verify that no row
+   is returned or rendered.

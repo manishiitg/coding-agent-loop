@@ -341,13 +341,20 @@ copied, and conversation deletion removes its durable rows.
 
 ## Appendix: event-type audit (2026-09-22)
 
-All 118 cataloged types were checked for backend producers (mcpagent,
+All cataloged types were checked for backend producers (mcpagent,
 agent_go, provider repo) and frontend consumers (outside tests/generated).
 Method: const-name references plus raw wire-string grep; stale binaries
 excluded. A dispatcher branch alone does not count as live — emission was
-verified per type. Result: **6 dead consts, 10 dead handlers/renderers, 13
-produced-then-dropped, 11 telemetry demotions; ~78 remain genuinely live,
-of which ~12 families become durable canonical.**
+verified per type. The catalog grew during review from 118 to **~130**:
+branching on `event.type` surfaced `workflow_step_started/completed`,
+`workflow_end/error`, `human_input`, `take_control`, `viewer_control/error`,
+`work_workflow_references_updated`, `fix_applied`, and `context_canceled`
+(all with backend emitters). Result: **6 dead consts, 10 dead
+handlers/renderers, 13 produced-then-dropped, 11 telemetry demotions; the
+rest remain genuinely live, of which ~12 families become durable
+canonical.** Three more frontend-only strings (`decision_request_missing`,
+`work_identity_updated`, `learning_completed/failed`) are not yet
+classified (client-synthesized vs dead handling).
 
 Delete outright — defined, never produced or consumed anywhere:
 
@@ -387,11 +394,23 @@ journal. Delete the emit calls at source, don't extend the skip list:
   core; `cache_hit/miss/expired/cleanup/error/operation_start`,
   `comprehensive_cache`)
 
-Naming bug: the backend emits `comprehensive_cache`, the bridge skips
-`comprehensive_cache_event`, and the frontend renders
+Naming bugs (two): the backend emits `comprehensive_cache`, the bridge
+skips `comprehensive_cache_event`, and the frontend renders
 `comprehensive_cache_event` — three spellings, none matching. The emitted
 event is invisible and unskipped: it rides the bus and the journal for
-nobody. Delete or fix the spelling plus the dead renderer.
+nobody. Delete or fix the spelling plus the dead renderer. Separately,
+both `context_canceled` (1 L) and `context_cancelled` (2 L) are emitted;
+consumers must not assume one spelling — canonicalize on migration.
+
+Key migration constraint — canvas derives execution state from chat
+events: `WorkflowLayout` scans tab events to rebuild batch context, step
+statuses, and current step on every hydrate; `useRunningWorkflowsStore`
+tracks running work from orchestrator/agent boundaries; `cleanConversation`
+builds activity summaries from routing/todo/batch events. The step family
+therefore cannot be deleted or unjournaled until the canvas reads
+execution logs instead. That reorder — canvas first, journal narrowing
+second — is the hard part of migration step 4, not the converter
+deletion.
 
 Write-only telemetry — emitted, never read; demote to logs/metrics, not bus
 events (consistent with the persistence boundary above):
@@ -411,8 +430,10 @@ Open allowlist items from the restore inventory (not yet resolved):
   pairing, or refresh resurrects answered approvals as pending.
 - Context-lifecycle markers (summarization, max-turns/limits) need an
   explicit home (`assistant_progress` kind vs new marker type).
-- In-chat step collapse/expand depends on orchestrator/step boundary
-  events; moving them to Execution Logs is a UI change to acknowledge.
+- In-chat step collapse/expand and canvas restore depend on
+  orchestrator/step boundary events; moving them to Execution Logs is a
+  UI + canvas-data change to acknowledge (see migration constraint
+  above), not just a storage move.
 - `background_agent_started` schema must carry what delegation cards
   render (id, instruction, depth, model, servers, template).
 

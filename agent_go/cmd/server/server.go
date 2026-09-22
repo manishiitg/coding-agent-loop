@@ -8190,12 +8190,47 @@ const (
 
 var inspectRetainedMainTurnTmuxState = inspectCodingTmuxPaneState
 
+var (
+	// retainedMainTurnDurableQuietWindow is how long the tmux output stream
+	// must stay silent before the observer consults the provider's durable
+	// turn sidecar. Pane heuristics cannot see idle for every provider (Muse
+	// has no PaneReadyForInput signal), but the provider's own retained-turn
+	// reader already encodes its completion contract, so a quiet pane plus a
+	// durable final response settles the turn on runner outcome instead of
+	// pixels. Vars (not consts) so tests can shrink them.
+	retainedMainTurnDurableQuietWindow = 15 * time.Second
+	// retainedMainTurnDurableRecheckWindow bounds how often the observer
+	// consults the sidecar while the pane stays quiet. Each consult can
+	// capture a pane and read a transcript, so it stays well below the
+	// 1s pane-recheck cadence.
+	retainedMainTurnDurableRecheckWindow = 5 * time.Second
+	// retainedMainTurnStuckWarnAfter emits one diagnostic line per observer
+	// when a turn still has neither pane-idle nor a durable final response.
+	// It never settles the turn: marathon turns stay untouched.
+	retainedMainTurnStuckWarnAfter = 30 * time.Minute
+)
+
+// retainedTurnFinalResponse reads the provider's durable retained-turn
+// sidecar for this turn. Providers with retained-turn readers (Muse, Codex,
+// Claude, Cursor, Pi) report their own completion contract there; providers
+// without one return "" and keep the previous pane-only behavior.
+func (api *StreamingAPI) retainedTurnFinalResponse(provider llmproviders.Provider, sessionID string, turnStartedAt time.Time) string {
+	readFinalResponse := retainedturn.FinalResponse
+	if api != nil && api.internalRetainedTurnFinalResponseReader != nil {
+		readFinalResponse = api.internalRetainedTurnFinalResponseReader
+	}
+	return readFinalResponse(provider, sessionID, turnStartedAt)
+}
+
 // observeRetainedMainTurnStream derives the logical end of a direct retained
 // turn from the real tmux output stream. Stream output schedules a coherent
 // in-band pane capture after a short quiet boundary; the provider adapter then
 // decides whether the screen is truly back at its idle composer. Requiring the
 // ready screen to remain stable prevents an intermediate repaint from settling
-// a turn that immediately continues into another tool/action.
+// a turn that immediately continues into another tool/action. When the pane
+// never reports idle but stays silent, the provider's durable turn sidecar is
+// consulted instead, so runner outcome — not pixels — settles providers whose
+// composer the pane heuristics cannot see (Muse).
 func (api *StreamingAPI) observeRetainedMainTurnStream(
 	ctx context.Context,
 	sessionID string,
@@ -8204,6 +8239,12 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 ) {
 	if api == nil || api.liveAttach == nil || strings.TrimSpace(snapshot.TmuxSession) == "" || provider == "" {
 		return
+	}
+	api.retainedMainTurnsMu.Lock()
+	turnStartedAt := api.retainedMainTurns[sessionID]
+	api.retainedMainTurnsMu.Unlock()
+	if turnStartedAt.IsZero() {
+		turnStartedAt = time.Now()
 	}
 	output := make(chan struct{}, 1)
 	stream, unsubscribe, err := api.liveAttach.observeOutput(snapshot.TmuxSession, func([]byte) {
@@ -8237,6 +8278,10 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 	}
 
 	var readySince time.Time
+	observeStartedAt := time.Now()
+	lastOutputAt := observeStartedAt
+	var lastDurableCheck time.Time
+	warnedStuck := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -8249,6 +8294,7 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 			return
 		case <-output:
 			readySince = time.Time{}
+			lastOutputAt = time.Now()
 			resetTimer(retainedMainTurnStreamQuietWindow)
 		case <-timer.C:
 			captureCtx, cancel := context.WithTimeout(ctx, retainedMainTurnCaptureTimeout)
@@ -8263,6 +8309,24 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 			}
 			if !llmproviders.CodingAgentPaneReady(provider, pane) {
 				readySince = time.Time{}
+				now := time.Now()
+				// The pane heuristics cannot see idle for every provider.
+				// Once the stream has gone quiet, a durable final response
+				// from the provider's own turn contract settles the turn on
+				// runner outcome instead of pixels.
+				if now.Sub(lastOutputAt) >= retainedMainTurnDurableQuietWindow &&
+					now.Sub(lastDurableCheck) >= retainedMainTurnDurableRecheckWindow {
+					lastDurableCheck = now
+					if finalResult := api.retainedTurnFinalResponse(provider, sessionID, turnStartedAt); strings.TrimSpace(finalResult) != "" {
+						log.Printf("[RETAINED_TURN] Durable provider sidecar reports completion while pane stays busy; settling session=%s terminal=%s provider=%s quiet=%s", sessionID, snapshot.TerminalID, provider, now.Sub(lastOutputAt).Round(time.Second))
+						api.emitRetainedMainTurnStreamCompletion(sessionID, snapshot, provider, "completed", "")
+						return
+					}
+				}
+				if !warnedStuck && now.Sub(observeStartedAt) >= retainedMainTurnStuckWarnAfter {
+					warnedStuck = true
+					log.Printf("[RETAINED_TURN] WARNING: turn still observed with no pane-idle and no durable final response session=%s terminal=%s provider=%s elapsed=%s quiet=%s", sessionID, snapshot.TerminalID, provider, now.Sub(observeStartedAt).Round(time.Second), now.Sub(lastOutputAt).Round(time.Second))
+				}
 				// A capture can race the final repaint and leave no later output
 				// to wake this observer. Keep checking while the turn is active.
 				resetTimer(retainedMainTurnRecheckWindow)
@@ -8296,11 +8360,7 @@ func (api *StreamingAPI) handleRetainedMainTurnStreamClosed(
 	if !tracked || ctx.Err() != nil {
 		return
 	}
-	readFinalResponse := retainedturn.FinalResponse
-	if api.internalRetainedTurnFinalResponseReader != nil {
-		readFinalResponse = api.internalRetainedTurnFinalResponseReader
-	}
-	if finalResult := readFinalResponse(provider, sessionID, turnStartedAt); strings.TrimSpace(finalResult) != "" {
+	if finalResult := api.retainedTurnFinalResponse(provider, sessionID, turnStartedAt); strings.TrimSpace(finalResult) != "" {
 		log.Printf("[RETAINED_TURN] Tmux stream closed after a durable final response; settling session=%s terminal=%s", sessionID, snapshot.TerminalID)
 		api.emitRetainedMainTurnStreamCompletion(sessionID, snapshot, provider, "completed", "")
 		return
@@ -8353,11 +8413,7 @@ func (api *StreamingAPI) emitRetainedMainTurnStreamCompletion(sessionID string, 
 	if executionID == "" {
 		executionID = "main:" + sessionID
 	}
-	readFinalResponse := retainedturn.FinalResponse
-	if api.internalRetainedTurnFinalResponseReader != nil {
-		readFinalResponse = api.internalRetainedTurnFinalResponseReader
-	}
-	finalResult := readFinalResponse(provider, sessionID, turnStartedAt)
+	finalResult := api.retainedTurnFinalResponse(provider, sessionID, turnStartedAt)
 	if strings.TrimSpace(finalResult) == "" && strings.TrimSpace(failureReason) != "" {
 		finalResult = strings.TrimSpace(failureReason)
 	}

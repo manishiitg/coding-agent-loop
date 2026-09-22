@@ -13,6 +13,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -363,6 +364,118 @@ firstCaptureObserved:
 	}
 	if !foundCompletion {
 		t.Fatal("tmux stream settlement did not emit unified_completion")
+	}
+}
+
+func TestRetainedMainTurnSettlesOnDurableFinalResponseWhenPaneNeverIdles(t *testing.T) {
+	oldQuiet := retainedMainTurnDurableQuietWindow
+	oldRecheck := retainedMainTurnDurableRecheckWindow
+	retainedMainTurnDurableQuietWindow = 150 * time.Millisecond
+	retainedMainTurnDurableRecheckWindow = 50 * time.Millisecond
+	defer func() {
+		retainedMainTurnDurableQuietWindow = oldQuiet
+		retainedMainTurnDurableRecheckWindow = oldRecheck
+	}()
+
+	// Muse has no PaneReadyForInput signal, so the pane heuristics can never
+	// report idle no matter what the TUI shows. The pane stays busy for the
+	// whole test; only the durable sidecar can settle this turn.
+	installFakeAttach(t, func(cmd string) liveattach.Reply {
+		if strings.HasPrefix(cmd, "capture-pane ") {
+			return liveattach.Reply{Lines: []string{"⠋ Working…", "› agent output"}}
+		}
+		return liveattach.Reply{}
+	})
+
+	const sessionID = "retained-durable-settle"
+	const tmuxSession = "mlp-muse-int-durable-settle"
+	terminalID := sessionID + ":main:" + sessionID
+	terminalStore := terminals.NewStore()
+	terminalStore.HandleEvent(sessionID, codingAgentTmuxReaperChunkEvent(
+		time.Now(), sessionID, "main:"+sessionID, tmuxSession,
+	))
+	if _, ok := terminalStore.MarkTurnCompleted(terminalID); !ok {
+		t.Fatal("could not prepare idle retained terminal")
+	}
+	eventStore := internalevents.NewEventStore(100)
+	defer eventStore.Stop()
+	var durableCalls atomic.Int64
+	var durableMu sync.Mutex
+	durableFinal := ""
+	api := &StreamingAPI{
+		eventStore:                   eventStore,
+		terminalStore:                terminalStore,
+		liveAttach:                   newLiveAttachManager(),
+		activeSessions:               map[string]*ActiveSessionInfo{sessionID: {SessionID: sessionID, Status: "completed"}},
+		retainedMainTurns:            make(map[string]time.Time),
+		retainedMainTurnWatchCancels: make(map[string]context.CancelFunc),
+		internalRetainedTurnFinalResponseReader: func(provider llmproviders.Provider, owner string, _ time.Time) string {
+			durableCalls.Add(1)
+			if provider != llmproviders.ProviderMuseCLI || owner != sessionID {
+				t.Errorf("durable consult = provider %q owner %q, want %q %q", provider, owner, llmproviders.ProviderMuseCLI, sessionID)
+			}
+			durableMu.Lock()
+			defer durableMu.Unlock()
+			return durableFinal
+		},
+	}
+	eventStore.SetEventAddedCallback(func(ownerSessionID string, event internalevents.Event) {
+		terminalStore.HandleEventWithChange(ownerSessionID, event)
+		api.observeRetainedMainTurnEvent(ownerSessionID, event)
+	})
+
+	api.markRetainedMainCodingTurnRunning(sessionID)
+	if !api.isSessionBusy(sessionID) {
+		t.Fatal("retained turn was not marked busy")
+	}
+
+	// A quiet stream plus an empty sidecar must keep the turn open: the
+	// durable consult fires but reports no final response yet.
+	consultDeadline := time.Now().Add(3 * time.Second)
+	for durableCalls.Load() == 0 && time.Now().Before(consultDeadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if durableCalls.Load() == 0 {
+		t.Fatal("observer never consulted the durable sidecar while quiet")
+	}
+	if !api.isSessionBusy(sessionID) {
+		t.Fatal("empty durable sidecar settled the retained turn")
+	}
+
+	// Once the provider's durable contract reports its final response, the
+	// turn settles even though the pane never shows an idle composer.
+	durableMu.Lock()
+	durableFinal = "durable final text"
+	durableMu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for api.isSessionBusy(sessionID) && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	if api.isSessionBusy(sessionID) {
+		t.Fatal("durable final response did not settle retained turn")
+	}
+	settled, ok := terminalStore.GetRaw(terminalID)
+	if !ok || settled.Active || settled.State != "completed" || settled.ProcessState != "live" {
+		t.Fatalf("settled terminal = %+v, want completed logical turn with live tmux", settled)
+	}
+	api.activeSessionsMux.RLock()
+	gotStatus := api.activeSessions[sessionID].Status
+	api.activeSessionsMux.RUnlock()
+	if gotStatus != "completed" {
+		t.Fatalf("session status = %q, want completed", gotStatus)
+	}
+	if runtime, _ := api.authoritativeRuntimeSnapshot(sessionID); runtime.Phase != runtimePhaseCompleted {
+		t.Fatalf("runtime phase = %q (%s), want completed", runtime.Phase, runtime.Reason)
+	}
+	foundCompletion := false
+	for _, event := range eventStore.GetAllEventsRaw(sessionID) {
+		if event.Type == "unified_completion" && event.TerminalID == terminalID {
+			foundCompletion = true
+			break
+		}
+	}
+	if !foundCompletion {
+		t.Fatal("durable settlement did not emit unified_completion")
 	}
 }
 

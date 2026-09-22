@@ -90,8 +90,8 @@ func TestNoParallelContractUpgradeDecisionChannel(t *testing.T) {
 // migration. Guard the complete upgrade chain so a mandatory route, step,
 // table, or retired evaluation turn cannot silently return.
 func TestNoUpgradeMandatesMeasurementTopology(t *testing.T) {
-	if WorkflowContractCurrentVersion != workflowContractRunScopedRoutesVersion {
-		t.Fatalf("current contract = %s, want historical marker %s", WorkflowContractCurrentVersion, workflowContractRunScopedRoutesVersion)
+	if WorkflowContractCurrentVersion != workflowContractNestedAgentArtifactsVersion {
+		t.Fatalf("current contract = %s, want nested Agent artifacts marker %s", WorkflowContractCurrentVersion, workflowContractNestedAgentArtifactsVersion)
 	}
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: workflowContractInitialVersion})
 	joined := strings.ToLower(strings.Join(func() []string {
@@ -115,8 +115,9 @@ func TestNoUpgradeMandatesMeasurementTopology(t *testing.T) {
 		workflowContractRunScopedRoutesVersion,
 		workflowContractEvalRetirementVersion,
 	} {
-		if got := workflowVersionUpgradePlan(&WorkflowManifest{Version: version}); len(got) != 0 {
-			t.Errorf("retired marker %s still emits migration turns: %+v", version, got)
+		got := workflowVersionUpgradePlan(&WorkflowManifest{Version: version})
+		if len(got) != 1 || got[0].label != "upgrade-nested-agent-artifacts" {
+			t.Errorf("older marker %s migration plan = %+v, want only nested Agent artifacts", version, got)
 		}
 	}
 }

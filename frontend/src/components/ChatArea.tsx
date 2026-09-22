@@ -60,6 +60,7 @@ import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
 import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
+import { recordChatDeliveryTelemetry } from '../utils/chatDeliveryTelemetry'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
@@ -2088,6 +2089,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // micro-batched exactly as before.
       if (confirmations.length > 0) appendTimelineAndApplyConfirmations(actualSessionId, newEvents, confirmations)
       else addTabEvents(actualSessionId, newEvents)
+      recordChatDeliveryTelemetry('processed', actualSessionId, newEvents, 'event_processor', finalTab.tabId)
     } else {
       applyConfirmationsToStore()
     }
@@ -2102,6 +2104,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const actualSessionId = (msg as unknown as Record<string, unknown>).session_id as string || sid
 
     const incomingEvents = msg.events
+    const matchingTabForTelemetry = Object.values(chatStore.chatTabs).find(tab => tab.sessionId === actualSessionId)
+    recordChatDeliveryTelemetry('sse_received', actualSessionId, incomingEvents, 'sse', matchingTabForTelemetry?.tabId)
 
     // Streaming events are transport/progress noise for the main timeline. Keep
     // delegation and owned terminal state, but do not populate the global
@@ -2301,6 +2305,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         if (response.session_id && response.session_id !== effectiveSessionId) continue
         if (currentTab && chatStore.getTab(currentTab.tabId)?.sessionId !== effectiveSessionId) continue
 
+        recordChatDeliveryTelemetry('poll_received', effectiveSessionId, response.events, 'poll', currentTab?.tabId)
         processEventsResponse(response, effectiveSessionId, currentTab)
       } catch {
         // Continue polling other observers even if one fails
@@ -2366,6 +2371,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         const response = await agentApi.getSessionEvents(sessionId, since)
         const freshStore = useChatStore.getState()
         const freshTab = Object.values(freshStore.chatTabs).find(candidate => candidate.sessionId === sessionId) || null
+        recordChatDeliveryTelemetry('catchup_received', sessionId, response.events, 'foreground_catchup', freshTab?.tabId)
         processEventsResponse(response, sessionId, freshTab)
         shouldContinue = sessionStreamingState(response).isActive
       } catch (error) {

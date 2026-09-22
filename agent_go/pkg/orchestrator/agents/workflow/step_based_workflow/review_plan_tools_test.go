@@ -18,12 +18,14 @@ func TestEveryReadOnlyBackgroundReviewerGetsQueryButNotMutation(t *testing.T) {
 		WorkspaceTools: []llmtypes.Tool{
 			tool("execute_shell_command"),
 			tool("human_feedback"),
+			tool("notify_user"),
 			tool("query_workflow_db"),
 			tool("mutate_workflow_db"),
 		},
 		WorkspaceToolExecutors: map[string]interface{}{
 			"execute_shell_command": noop,
 			"human_feedback":        noop,
+			"notify_user":           noop,
 			"query_workflow_db":     noop,
 			"mutate_workflow_db":    noop,
 		},
@@ -41,5 +43,11 @@ func TestEveryReadOnlyBackgroundReviewerGetsQueryButNotMutation(t *testing.T) {
 	}
 	if slices.Contains(names, "mutate_workflow_db") || executors["mutate_workflow_db"] != nil {
 		t.Fatalf("read-only background reviewer received mutation authority: tools=%v executors=%v", names, executors)
+	}
+	if slices.Contains(names, "human_feedback") || executors["human_feedback"] != nil {
+		t.Fatalf("Builder reviewer received run-only human_feedback: tools=%v executors=%v", names, executors)
+	}
+	if !slices.Contains(names, "notify_user") || executors["notify_user"] == nil {
+		t.Fatalf("Builder reviewer missing product-declared notify_user: tools=%v executors=%v", names, executors)
 	}
 }

@@ -7,7 +7,7 @@ import (
 
 func TestWorkflowVersionUpgradePlanFrom122MigratesReportsThenScheduledRoutes(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: "1.0.22"})
-	if len(plan) != 17 {
+	if len(plan) != 18 {
 		t.Fatalf("plan from 1.0.22 = %d steps, want retained migrations through explicit schedule Pulse: %+v", len(plan), plan)
 	}
 	if plan[0].label != "upgrade-direct-html-reports" || plan[0].to != "1.0.23" {
@@ -33,6 +33,9 @@ func TestWorkflowVersionUpgradePlanFrom122MigratesReportsThenScheduledRoutes(t *
 	}
 	if plan[7].label != "upgrade-pulse-lifecycle-reconciliation" || plan[7].to != workflowContractPulseLifecycleReconciliationVersion || plan[8].label != "upgrade-pulse-backlog-triage" || plan[8].to != workflowContractPulseBacklogTriageVersion || plan[9].label != "upgrade-pulse-actionable-backlog" || plan[9].to != workflowContractPulseActionableBacklogVersion || plan[10].label != "upgrade-orchestrator-step-type" || plan[10].to != workflowContractOrchestratorStepTypeVersion || plan[11].label != "upgrade-activity-tab-from-run-summary" || plan[11].to != workflowContractActivityTabFromRunSummaryVersion || plan[12].label != "upgrade-scripted-type-stays-regular" || plan[12].to != workflowContractScriptedTypeStaysRegularVersion || plan[13].label != "upgrade-declared-execution-mode-retired" || plan[13].to != workflowContractDeclaredExecutionModeRetiredVersion || plan[14].label != "upgrade-declared-execution-mode-stripped" || plan[14].to != workflowContractDeclaredExecutionModeStrippedVersion || plan[15].label != "upgrade-route-summaries" || plan[15].to != workflowContractRouteSummariesVersion || plan[16].label != "upgrade-explicit-schedule-pulse" || plan[16].to != workflowContractExplicitSchedulePulseVersion {
 		t.Fatalf("plan[7] = %+v, want Pulse lifecycle reconciliation migration to current", plan[7])
+	}
+	if plan[17].label != "upgrade-nested-agent-artifacts" || plan[17].to != workflowContractNestedAgentArtifactsVersion {
+		t.Fatalf("final migration = %+v, want nested Agent artifacts", plan[17])
 	}
 }
 

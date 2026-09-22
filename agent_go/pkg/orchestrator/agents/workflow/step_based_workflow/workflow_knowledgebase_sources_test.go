@@ -193,7 +193,7 @@ func TestKBSourcesWriteGrantAppliesToAllThreeFolderGuards(t *testing.T) {
 	}
 
 	step := &OrchestratorPlanStep{CommonStepFields: CommonStepFields{ID: "step-3"}, AgentConfigs: writeStepConfig}
-	_, writes = hcpo.setupOrchestratorFolderGuard(step)
+	_, writes = hcpo.setupOrchestratorFolderGuard(step, "step-1")
 	if !containsString(writes, notesPath) {
 		t.Fatal("orchestrator folder guard did not grant external write source", writes)
 	}

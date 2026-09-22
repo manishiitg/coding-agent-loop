@@ -2,7 +2,7 @@ import { useMemo, useRef, useEffect } from 'react'
 import type { Node, Edge } from '@xyflow/react'
 import dagre from 'dagre'
 import type { PlanStep, PlanningResponse, AgentLLMConfig, ValidationSchema, RoutingRoute, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, isCrewStep, runsAsMessageSequence, effectiveMessageSequenceItems } from '../../../utils/stepConfigMatching'
+import { isHumanInputStep, isTodoTaskStep, isRoutingStep, isBranchStep, isMessageSequenceStep, isRegularStep, isCrewStep, runsAsMessageSequence, effectiveMessageSequenceItems, effectiveAgentItems } from '../../../utils/stepConfigMatching'
 import type { ChangeType, PlanChanges } from './usePlanData'
 import type { VariablesManifest, ScheduledJob } from '../../../services/api-types'
 import type { VariablesNodeData } from '../nodes/VariablesNode'
@@ -92,13 +92,17 @@ export interface MessageSequenceNodeData extends Record<string, unknown> {
   description?: string
   items?: MessageSequenceItem[]   // Ordered queue of user_message / prevalidation / foreach items
   predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step?: PlanStep; orphan_step_ref?: string }>
-  status: 'pending' | 'running' | 'completed' | 'failed' | 'executing'
+  status: 'pending' | 'running' | 'completed' | 'failed' | 'executing' | 'evaluating' | 'orchestrating'
   stepIndex: number
   step: PlanStep
   changeType?: ChangeType
   workspacePath?: string | null
   selectedRunFolder?: string
   validation_schema?: ValidationSchema
+  enable_generic_agent?: boolean
+  parentOrchestratorTitle?: string
+  routeName?: string
+  routeCondition?: string
   isOrphan?: boolean  // True for orphan steps (workshop-only, not in main execution flow)
 }
 
@@ -158,7 +162,7 @@ export interface WorkflowTriggerNodeData extends Record<string, unknown> {
   onRefresh?: () => void
 }
 
-export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | CrewStepNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData | WorkflowArtifactNodeData
+export type WorkflowNodeData = WorkflowTriggerNodeData | StepNodeData | TodoTaskNodeData | HumanInputNodeData | RoutingStepNodeData | MessageSequenceNodeData | CrewStepNodeData | ValidationNodeData | LearningNodeData | VariablesNodeData | WorkflowArtifactNodeData
 
 // Node and edge types
 export type WorkflowNode = Node<WorkflowNodeData>
@@ -301,21 +305,6 @@ function estimateNodeHeight(node: WorkflowNode): number {
     if (hiddenCount > 0) contentHeight += 18
   }
 
-  // For todo_task nodes, add height for predefined routes and generic agent indicator
-  if (node.type === 'todo_task') {
-    const todoData = data as TodoTaskNodeData
-    if (todoData.predefined_routes && todoData.predefined_routes.length > 0) {
-      contentHeight += 36 + Math.min(todoData.predefined_routes.length, 4) * 32
-    }
-    const step = todoData.step
-    if (step && 'messages' in step && Array.isArray(step.messages) && step.messages.length > 0) {
-      contentHeight += 30 + Math.min(step.messages.length, 20) * 28
-    }
-    if (todoData.enable_generic_agent) {
-      contentHeight += 20
-    }
-  }
-
   // For routing/branch nodes, add height for the decision question + route labels
   if (node.type === 'routing' || node.type === 'branch') {
     const routingData = data as RoutingStepNodeData
@@ -395,7 +384,7 @@ function getNodeFootprintDimensions(
   visited: Set<string> = new Set()
 ): { width: number; height: number } {
   const ownDimensions = getNodeLayoutDimensions(node)
-  if (visited.has(node.id) || node.type !== 'todo_task') {
+  if (visited.has(node.id) || !isAgentCoordinatorNode(node)) {
     return ownDimensions
   }
 
@@ -424,6 +413,12 @@ function getNodeFootprintDimensions(
   }
 }
 
+function isAgentCoordinatorNode(node: WorkflowNode): boolean {
+  if (node.type !== 'message_sequence' && node.type !== 'todo_task') return false
+  const data = node.data as MessageSequenceNodeData | TodoTaskNodeData
+  return (data.predefined_routes?.length ?? 0) > 0 || data.enable_generic_agent === true
+}
+
 /**
  * Calculate topology metrics to adjust layout spacing
  */
@@ -434,10 +429,10 @@ function calculateTopologyMetrics(nodes: WorkflowNode[]): { hasOrchestrator: boo
   let maxRoutingBranches = 0
 
   nodes.forEach(node => {
-    if (node.type === 'todo_task') {
+    if (isAgentCoordinatorNode(node)) {
       hasOrchestrator = true
-      const data = node.data as TodoTaskNodeData
-      const routes = (data as TodoTaskNodeData).predefined_routes
+      const data = node.data as MessageSequenceNodeData | TodoTaskNodeData
+      const routes = data.predefined_routes
       const numRoutes = routes?.length || 0
 
       // Count actual sub-agents
@@ -514,7 +509,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     }
   }
 
-  const todoTaskNodeIds = new Set(nodes.filter(node => node.type === 'todo_task').map(node => node.id))
+  const todoTaskNodeIds = new Set(nodes.filter(isAgentCoordinatorNode).map(node => node.id))
 
   // Add all nodes except excluded nodes to Dagre graph
   nodes.forEach(node => {
@@ -524,7 +519,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
       let height = layoutDimensions.height
 
       // For todo tasks, use compound dimensions to reserve space for sub-agents
-      if (node.type === 'todo_task') {
+      if (isAgentCoordinatorNode(node)) {
         const immediateSubAgentDimensions = nodes
           .filter(candidate => getImmediateSubAgentParentId(candidate.id, todoTaskNodeIds) === node.id)
           .map(candidate => getNodeFootprintDimensions(candidate, nodes, todoTaskNodeIds, direction))
@@ -593,7 +588,7 @@ function layoutWithDagre(nodes: WorkflowNode[], edges: WorkflowEdge[], direction
     y -= dims.height / 2
 
     // Adjust for TodoTask Compound positioning
-    if (node.type === 'todo_task') {
+    if (isAgentCoordinatorNode(node)) {
       const immediateSubAgentDimensions = nodes
         .filter(candidate => getImmediateSubAgentParentId(candidate.id, todoTaskNodeIds) === node.id)
         .map(candidate => getNodeFootprintDimensions(candidate, nodes, todoTaskNodeIds, direction))
@@ -1071,8 +1066,7 @@ function stepToNode(
 
   const getStepTitle = () => {
     if (isTodoTaskStep(step)) {
-      // For todo task nodes, use step title or fallback
-      return step.title || `Todo Task ${stepIndex + 1}`
+      return step.title || `Agent ${stepIndex + 1}`
     }
     if (isHumanInputStep(step)) {
       // For human input nodes, prefer question over generic title
@@ -1129,17 +1123,17 @@ function stepToNode(
   if (isTodoTaskStep(step)) {
     return {
       id: nodeId,
-      type: 'todo_task',
+      type: 'message_sequence',
       position: { x: 0, y: 0 },
       data: {
         ...baseData,
-        todo_task_step: step.todo_task_step,  // backwards compat
+        items: effectiveAgentItems(step),
         predefined_routes: step.predefined_routes,
         enable_generic_agent: step.enable_generic_agent,
         // Flat format: validation_schema is directly on step
         validation_schema: step.validation_schema || step.todo_task_step?.validation_schema
         // Note: status is inherited from baseData (computed based on completedStepIndices)
-      } as TodoTaskNodeData
+      } as MessageSequenceNodeData
     }
   }
 
@@ -1258,13 +1252,13 @@ function processSteps(
   const buildTodoTaskSubAgentGraph = (
     todoTaskStep: PlanStep,
     todoTaskNodeId: string,
-    todoTaskNodeData: TodoTaskNodeData,
+    todoTaskNodeData: MessageSequenceNodeData,
     includeCompletionEdge: boolean
   ): { nodes: WorkflowNode[], edges: WorkflowEdge[] } => {
     const todoTaskEdges: WorkflowEdge[] = []
     const todoTaskSubAgentNodes: WorkflowNode[] = []
     const parentStepIndex = todoTaskNodeData.stepIndex
-    const todoTaskTitle = todoTaskNodeData.title || todoTaskStep.title || `Todo Task ${parentStepIndex + 1}`
+    const todoTaskTitle = todoTaskNodeData.title || todoTaskStep.title || `Agent ${parentStepIndex + 1}`
 
     if ((isTodoTaskStep(todoTaskStep) || isMessageSequenceStep(todoTaskStep)) && todoTaskStep.predefined_routes && todoTaskStep.predefined_routes.length > 0) {
       todoTaskStep.predefined_routes.forEach((route) => {
@@ -1304,7 +1298,7 @@ function processSteps(
         if (isTodoTaskStep(subAgentStep)) {
           const nestedTodoNode: WorkflowNode = {
             id: subAgentNodeId,
-            type: 'todo_task',
+            type: 'message_sequence',
             position: { x: 0, y: 0 },
             data: {
               id: subAgentNodeId,
@@ -1315,7 +1309,7 @@ function processSteps(
               stepIndex: parentStepIndex,
               step: subAgentStep,
               changeType,
-              todo_task_step: subAgentStep.todo_task_step,  // backwards compat
+              items: effectiveAgentItems(subAgentStep),
               predefined_routes: subAgentStep.predefined_routes,
               enable_generic_agent: subAgentStep.enable_generic_agent,
               validation_schema: subAgentStep.validation_schema || subAgentStep.todo_task_step?.validation_schema,
@@ -1324,7 +1318,7 @@ function processSteps(
               parentOrchestratorTitle: todoTaskTitle,
               routeName: route.route_name || undefined,
               routeCondition: route.condition || undefined
-            } as TodoTaskNodeData
+            } as MessageSequenceNodeData
           }
 
           todoTaskSubAgentNodes.push(nestedTodoNode)
@@ -1332,7 +1326,7 @@ function processSteps(
           const nestedTodoGraph = buildTodoTaskSubAgentGraph(
             subAgentStep,
             subAgentNodeId,
-            nestedTodoNode.data as TodoTaskNodeData,
+            nestedTodoNode.data as MessageSequenceNodeData,
             false
           )
           todoTaskSubAgentNodes.push(...nestedTodoGraph.nodes)
@@ -1370,7 +1364,7 @@ function processSteps(
             const nestedAgentGraph = buildTodoTaskSubAgentGraph(
               subAgentStep,
               subAgentNodeId,
-              seqNode.data as unknown as TodoTaskNodeData,
+              seqNode.data as MessageSequenceNodeData,
               false
             )
             todoTaskSubAgentNodes.push(...nestedAgentGraph.nodes)
@@ -1432,7 +1426,7 @@ function processSteps(
           id: subAgentNodeId,
           title: 'Generic Agent',
           description: 'Executes ad-hoc tasks using workspace tools',
-          success_criteria: 'Task completion verified by orchestrator',
+          success_criteria: 'Task completion verified by the parent agent',
           status,
           stepIndex: parentStepIndex,
           step: {
@@ -1756,7 +1750,7 @@ function processSteps(
       const todoTaskGraph = buildTodoTaskSubAgentGraph(
         step,
         node.id,
-        node.data as TodoTaskNodeData,
+        node.data as MessageSequenceNodeData,
         true
       )
 
@@ -2192,9 +2186,9 @@ export function usePlanToFlow(
       if (firstStepNode) {
         // Calculate the leftmost point of this node (accounting for sub-agent overflow if it's a compound node)
         let firstStepLeftEdge = firstStepNode.position.x
-        if (firstStepNode.type === 'todo_task') {
-          const data = firstStepNode.data as TodoTaskNodeData
-          const routes = (data as TodoTaskNodeData).predefined_routes
+        if (isAgentCoordinatorNode(firstStepNode)) {
+          const data = firstStepNode.data as MessageSequenceNodeData | TodoTaskNodeData
+          const routes = data.predefined_routes
           const numSubAgents = routes?.length || 0
           
           if (numSubAgents > 0 && layoutDirection === 'LR') {
@@ -2290,7 +2284,7 @@ export function usePlanToFlow(
 
     // Pass 1: Find all todo task nodes first to initialize map
     layoutedResult.nodes.forEach((node, index) => {
-      if (node.type === 'todo_task') {
+      if (isAgentCoordinatorNode(node)) {
         parentNodeMap.set(node.id, { nodeIndex: index, subAgentIndices: [] })
       }
     })
@@ -2532,7 +2526,7 @@ export function usePlanToFlow(
 
     // Inject read-only context into step-type nodes.
     layoutedResult.nodes = layoutedResult.nodes.map(node => {
-      if (node.type === 'step' || node.type === 'human_input' || node.type === 'todo_task') {
+      if (node.type === 'step' || node.type === 'human_input' || node.type === 'todo_task' || node.type === 'message_sequence') {
         return {
           ...node,
           data: {

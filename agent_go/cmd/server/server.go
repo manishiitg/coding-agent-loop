@@ -2227,6 +2227,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/auth/logout", api.handleLogout).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/me", api.handleGetCurrentUser).Methods("GET")
 	apiRouter.HandleFunc("/auth/mode", api.handleGetAuthMode).Methods("GET")
+	apiRouter.HandleFunc("/client-telemetry/chat-delivery", api.handleClientChatTelemetry).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/auth/users", requireWorkflowOwnerAccess(api.handleListAuthUsers)).Methods("GET", "OPTIONS")
 	// Account management (docs/design/user_accounts_and_workflow_sharing.md):
 	// the user directory in config/users.json; admins only.
@@ -3469,6 +3470,9 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 // measure real polling frequency from server logs instead of the browser
 // Network tab — remove this override once the investigation is done.
 func shouldTraceAPIRequest(r *http.Request) bool {
+	if r.URL.Path == "/api/client-telemetry/chat-delivery" {
+		return false
+	}
 	switch r.Method {
 	case http.MethodGet, http.MethodHead, http.MethodOptions:
 		return apiRequestLogIncludeGET()

@@ -53,7 +53,7 @@ Both frontend and backend **read and write** only the object format with `steps`
       "agent_configs": {
         "selected_servers": ["server1", "server2"],
         "selected_tools": ["server1:tool1", "server1:tool2", "server2:*"],
-        "enabled_custom_tools": ["workspace_advanced:*", "human_tools:*"],
+        "enabled_custom_tools": ["workspace_browser:agent_browser"],
         "execution_llm": {
           "provider": "openai",
           "model_id": "gpt-4o"
@@ -166,7 +166,7 @@ Per-step and workflow-default turn-limit properties are retired. Legacy `executi
 |-------|------|---------|---------|
 | `selected_servers` | `string[]` | `[]` | MCP servers to use for this step (subset of preset servers) |
 | `selected_tools` | `string[]` | `[]` | Specific tools (format: `"server:tool"` or `"server:*"` for all tools) |
-| `enabled_custom_tools` | `string[]` | `[]` | **Unified format**: Custom tools to enable (format: `"category:tool"` or `"category:*"`). Current categories include `workspace_advanced` (shell/diff/media), `workspace_tools` (backward-compatible alias for the current workspace registry), `workspace_browser`, and `human_tools`. Legacy `workspace_basic` / `list_workspace_files` style tools are not exposed to current workflow agents. Example: `"workspace_advanced:execute_shell_command"` |
+| `enabled_custom_tools` | `string[]` | `[]` | Optional additions in `"category:tool"` or `"category:*"` format. Execution agents automatically receive `workspace_advanced` plus `human_feedback`, `notify_user`, and `create_human_input_request`. Name any additional `human_tools` entry explicitly. Legacy `human_tools:*` is normalized to the same three-tool baseline. |
 | `enabled_custom_tool_categories` | `string[]` | `[]` | **Legacy format**: Tool categories (e.g., `["workspace_tools", "human_tools"]`) - deprecated, use `enabled_custom_tools` instead |
 
 ### Validation Configuration

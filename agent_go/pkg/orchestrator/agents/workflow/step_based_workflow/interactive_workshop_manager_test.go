@@ -90,7 +90,7 @@ func TestInteractiveWorkshopPromptDocumentsMessageSequenceRouteReuse(t *testing.
 		"Conversational route sub-agents use `message_sequence`, including stateless one-turn work",
 		"Normal repeated calls reuse the route conversation",
 		"re-entry user message",
-		"As an orchestrator predefined route, a message_sequence behaves like a reusable specialist sub-agent",
+		"The sequence's own conversation remains responsible for reasoning, verification",
 		"restart only when the prior conversation is stale, wrong, or contaminated",
 		"## MESSAGE SEQUENCE ROUTE PATTERNS",
 	}
@@ -121,8 +121,8 @@ func TestOptimizerPromptDocumentsMessageSequenceRoutePatterns(t *testing.T) {
 	doc := guidance.RenderSystemDoc("message-sequence")
 	docMustContain := []string{
 		"## MESSAGE SEQUENCE ROUTE PATTERNS",
-		"Use these patterns when designing or repairing orchestrator predefined routes",
-		"For an orchestrator route, use `message_sequence` when the orchestrator should preserve specialist memory",
+		"Use these patterns when designing or repairing an agent's `predefined_routes`",
+		"Use a `message_sequence` route when the parent agent should preserve specialist memory",
 		"restart only when the prior conversation is stale, wrong, or contaminated",
 	}
 	for _, snippet := range docMustContain {

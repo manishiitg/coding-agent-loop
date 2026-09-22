@@ -58,8 +58,11 @@ func requireCurrentWorkflowContractForManualRun(ctx context.Context, workspacePa
 		return fmt.Errorf("workflow_contract_check_failed: workflow.json was not found at %s; no execution was started", workspacePath)
 	}
 	current := workflowContractVersionForUpgrade(manifest)
-	if workflowContractVersionIsExecutionCompatible(current) {
+	if workflowContractVersionIsExecutionCompatible(current) && manifest.CodeLayoutVersion == 1 {
 		return nil
+	}
+	if workflowContractVersionIsExecutionCompatible(current) {
+		return fmt.Errorf("workflow_contract_migration_required: workflow contract v%s requires code_layout_version=1; no step was started. Ask the user: \"This workflow's scripted code must be migrated to code/<step-id>/ before it can run. Shall I migrate it now?\"", current)
 	}
 
 	pending := workflowVersionUpgradePlan(manifest)

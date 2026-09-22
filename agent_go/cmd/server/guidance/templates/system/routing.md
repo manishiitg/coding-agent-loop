@@ -77,22 +77,33 @@ Each entry in `routes[]` has:
 - `condition` — short prose explaining when this route should be selected
 - `next_step_id` — the ID of an existing step in the plan that this route branches to
 
-Routing routes do **not** define inline sub-agents. Unlike orchestrator `predefined_routes` (which embed a `sub_agent_step`), routing `routes[]` are pointers — every `next_step_id` must reference a step that already exists in the plan. Add those downstream steps separately (as regular, message_sequence, orchestrator, or human_input steps), then point the routes at their IDs.
+Routing routes do **not** define inline sub-agents. Unlike a message-sequence
+agent's `predefined_routes` (which may embed a `sub_agent_step`), routing
+`routes[]` are pointers—every `next_step_id` must reference an existing plan
+step. Add downstream scripted, message-sequence, or human-input steps separately,
+then point the routes at their IDs.
 
 ### Convergence — branches MUST rejoin via `next_step_id`
 
 A routing step jumps execution **into** the selected branch, but it does not stop the engine from continuing in list order afterwards. So each branch must explicitly route **out** to the shared continuation (or `end`), or execution will fall through into the *next* branch in the list and run a non-selected path.
 
 - Give the **terminal step of each branch** a `next_step_id` pointing to the shared downstream step (e.g. each portal branch → `normalize`), or `"end"` to finish.
-- The engine honors `next_step_id` on `routing`, `orchestrator`, `human_input`, **and `message_sequence`** steps: the selected branch runs, jumps to the shared step, and the sibling branches are skipped. Multiple branches pointing at the same `next_step_id` render as a shared finish line (convergence).
+- The engine honors `next_step_id` on `routing`, `human_input`, and
+  `message_sequence` steps (including legacy orchestrator compatibility
+  records): the selected branch runs, jumps to the shared step, and sibling
+  branches are skipped.
 - A branch whose terminal step has **no** `next_step_id` falls through to the next step in the list — the classic "the non-selected branch also ran" bug. Always wire the convergence.
 
-If every branch is just "run one sub-agent then continue the same way," a `orchestrator` orchestrator is simpler — it bundles the alternatives in one node and only the chosen one runs. Use routing when the branches lead to genuinely different downstream steps.
+If an agent must decide whether or which specialists to call from live evidence,
+use a `message_sequence` with `predefined_routes`. Use routing when an already
+made decision selects exactly one genuinely different downstream path.
 
 ### Routing vs. other primitives
 
-- **Routing vs. orchestrator**: orchestrator can run multiple sub-tasks. Routing runs exactly one alternative.
-- **Routing vs. message_sequence**: message_sequence is one ordered conversation with no branching.
+- **Routing vs. agent with specialists**: a routed message-sequence agent may call
+  zero, one, or several specialists adaptively. Routing runs exactly one fixed
+  downstream alternative.
+- **Routing vs. plain message_sequence**: a plain sequence is one ordered conversation; add `predefined_routes` only for adaptive delegation.
 - **Routing vs. human_input**: do not ask the user again when the builder already knows the requested branch. Use `route_selections`. Use `human_input` only when the workflow must pause mid-run for information that was not available at launch.
 
 ### Example

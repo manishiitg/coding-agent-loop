@@ -53,14 +53,15 @@ there is no child LLM, automatic script repair, or automatic retry in this path.
 A failed batch stops the sequence with per-call outcomes. See
 `references/message-sequence.md` for authoring and remaining limits.
 
-Do not add `predefined_routes`, agentic children, or generic-agent tools to a
-sequence. Parallel conversations and runtime-discovered script batches are not
-supported. SQL `foreach` remains sequential conversational iteration.
+Add `predefined_routes` only for bounded agentic or scripted specialists the
+sequence agent may choose adaptively. The runtime supplies the sub-agent tools
+and asynchronous completion lifecycle when routes exist. SQL `foreach` remains
+sequential conversational iteration; known deterministic batches use a
+`scripted` item rather than agentic delegation.
 
 Examples:
 - **Message sequence:** run ten specified scripts, account for all ten results,
-  then use the parent conversation to analyze and report. Ten separate agentic analyses currently
-  use explicit message-sequence plan steps, not agentic children of a sequence.
+  then use the parent conversation to analyze and report.
 - **Message sequence with routes:** investigate falling performance, choose analyses from the
   evidence, resolve contradictions, and revise the investigation until the
   explanation is supported. The parent owns that reasoning and may write the report.
@@ -99,7 +100,7 @@ If selecting the next call genuinely requires live judgment, keep the decision a
 ### Step 3: Design Context Flow
 
 Every step reads from prior steps and writes for downstream steps:
-- **description** is executable for agentic steps. For `message_sequence`, it is the opening instruction prepended to the first item. For `orchestrator`, it is the orchestrator's first turn. A scripted `regular` step describes its deterministic contract and `main.py` implements it. For `routing`, leave it empty because routing never runs an agent. Legacy non-scripted regular steps temporarily use the description through the compatibility adapter. Before writing or editing any of these descriptions, call `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])` — it covers writing an optimized description, not just choosing the right step type.
+- **description** defines the durable system-level charter for an agent step: its objective, boundaries, and definition of done. For `message_sequence` (including agents with `predefined_routes`), `items[]` are the ordered user messages that tell the agent how to execute and verify that charter. A scripted `regular` step describes its deterministic contract and `main.py` implements it. For `routing`, leave it empty because routing never runs an agent. Legacy non-scripted regular steps temporarily use the description through the compatibility adapter. Before writing or editing any of these descriptions, call `read_skill(skills=[{"name":"builder-reference","path":"references/step-description.md"}])` — it covers writing an optimized description, not just choosing the right step type.
 - **context_dependencies**: Files from prior steps this step needs (e.g., ["login_status.json"])
 - **context_output**: The file this step produces (e.g., "extracted_data.json")
 - **Flow must be forward-only** — no circular dependencies
@@ -107,7 +108,10 @@ Every step reads from prior steps and writes for downstream steps:
 
 ### Step 4: When an Agent Needs Specialist Routes
 
-**Note:** Users may refer to orchestrator steps as "Orchestrators", "orchestrators", "sub-workflows", or "pipelines", and to the routes/sub-agent steps within them as "sub-agents". These are all the same concept — the internal type name is orchestrator.
+**Note:** Users may call this an "orchestrator", "sub-workflow", or "pipeline",
+and call its routes "sub-agents". The canonical plan shape is a
+`message_sequence` with `predefined_routes`; `orchestrator` and `todo_task` are
+legacy compatibility types.
 
 **Eligibility gate:** add `predefined_routes` to a `message_sequence` only when the agent makes a real runtime
 orchestration decision the static plan cannot directly express. Examples are:
@@ -122,9 +126,9 @@ Do not reduce the parent to a dispatcher that only starts, waits, and reports.
 Known task lists, SQL-selected rows, parallel fan-out, and fixed retry rules
 alone are not substantive strategy decisions.
 
-**A fixed child set and order does not justify an `orchestrator` step.** Different tools,
+**A fixed child set and order does not justify adaptive routes.** Different tools,
 separate learnings, progress visibility, and easier debugging are supporting
-properties after the eligibility gate, not reasons to add an orchestrator by
+properties after the eligibility gate, not reasons to add routes by
 themselves. Use explicit plan steps/dependencies for known independent fixed
 work; use one `message_sequence` for known same-context work; use scripted
 steps for known deterministic work; use `branch` or `routing` for a fixed
@@ -136,9 +140,16 @@ major sub-workflow fork).
 - **Self-contained** — clear inputs/outputs, can be validated independently
 - **Worth optimizing** — complex enough that accumulated learnings improve reliability
 
-Route sub-agents use `message_sequence` for conversational work, including stateless one-turn work; `regular` is reserved for explicitly scripted deterministic routes, and `orchestrator` provides one nested orchestration layer.
+Route sub-agents use `message_sequence` for conversational work, including
+stateless one-turn work; `regular` is reserved for explicitly scripted
+deterministic routes. A routed message-sequence specialist may itself own routes
+for one nested delegation layer.
 
-Use a `message_sequence` route when the parent orchestrator should be able to call the same specialist repeatedly with memory. Normal repeated calls reuse the route session and send the new instructions as the re-entry user message. Use `message_sequence_restart=true` only when the orchestrator intentionally needs a clean rerun that archives the existing route session and replays the configured queue from the beginning.
+Use a `message_sequence` route when the parent agent should be able to call the
+same specialist repeatedly with memory. Normal repeated calls reuse the route
+session and send the new instructions as the re-entry user message. Use
+`message_sequence_restart=true` only when the parent intentionally needs a clean
+rerun that archives the existing route session and replays the configured queue.
 
 **Use the generic agent** (no predefined route) for tasks that are:
 - **Dynamic** — unpredictable at design time
@@ -150,6 +161,10 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 
 `message_sequence` is the **default** step type (see Step 2). Use it whenever ordered agent turns share the same working context and build on each other, and the boundary between turns is not a durable workflow boundary — which is most agentic work, since the natural shape is **do the task, then verify and fix it in follow-up items of the same conversation**. This is better than several regular steps that re-read the same files, need each other's transient reasoning, and produce only one final output.
 
+- **Separate charter from turns.** Put the stable objective, boundaries, and
+  definition of done in `description`; it becomes the common system-level Step
+  Charter. Put execution and verification instructions in `items[]`; each item
+  is a user message. Do not copy the description into item 0.
 - **Give the work turn the complete outcome.** Let the agent perform all routine sub-actions, tool calls, and internal checks needed for that outcome in one substantial turn; do not create one item per checklist line, source, or tool call.
 - **Consume deterministic evidence; do not fetch it conversationally.** Fixed API/SDK/CLI acquisition and stable parsing belong in an upstream scripted regular step. The sequence reads the resulting DB rows/artifacts and spends its turns on judgment, synthesis, semantic validation, and repair.
 - **Make verification a follow-up item, not a separate step.** A typical sequence is `[complete the outcome] → [re-open the evidence and verify every success criterion; identify anything unsupported or incomplete] → [repair every verified gap and recheck]`. The verifier turn has the full context of what was just done, so it catches more than a fresh regular step reconstructing from artifacts.
@@ -160,12 +175,12 @@ Use a `message_sequence` route when the parent orchestrator should be able to ca
 - Add explicit reference-check, hallucination-check, critique, or self-validation items when reliability needs it.
 - Plain items inherit the step-level KB, DB, and learnings permissions, just like regular steps. Use a non-empty `write_access` object or `kind` only to narrow a particular turn; an item can never escalate beyond the step configuration. See `read_skill(skills=[{"name":"builder-reference","path":"references/message-sequence.md"}])`.
 - Deterministic code lives in saved regular script definitions with explicit inputs, outputs, and validation. Run them as standalone plan steps or reference orphan scripts in a `scripted` batch item; never embed code in a message item.
-- As an orchestrator predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
-- For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. A SQL-selected worklist does not by itself require an orchestrator. For known script batches, use a `scripted` item; choose orchestrator only when its parent owns substantive strategy.
+- As a predefined route, a message_sequence behaves like a reusable specialist sub-agent: reuse the same route for critique, test feedback, validation feedback, or follow-up work that should keep prior context; restart only when the prior conversation is stale, wrong, or contaminated.
+- For row/item iteration, use a `foreach` item inside message_sequence when one shared conversation should process every row. A SQL-selected worklist does not by itself require delegation. For known script batches, use a `scripted` item; add routes only when the parent owns substantive adaptive strategy.
 
 ### Step 6: When to Use Routing or Branch (brief)
 
-Use `routing` or `branch` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Both are deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every known sub-task, use a message sequence or explicit plan steps within current capabilities. Use orchestrator when the parent must reason about what work is needed.
+Use `routing` or `branch` when the next step must be **exactly one of N mutually exclusive paths** (e.g., "did login succeed, hit MFA, or fail?"). Both are deterministic: a caller or prior step must provide `route_selection.json` (or `route_selections`) with the selected route. For running every known sub-task, use a message sequence or explicit plan steps. Give a message-sequence agent `predefined_routes` when it must reason about what specialist work is needed.
 
 **Routing is now the "route" concept: a major, self-contained sub-workflow fork** — use it when the alternatives lead to substantially different continuations of the plan. **Branch is the small in-flow decision** — use it for a lightweight fork that converges back quickly. File-based selection mechanics are shared; branch additionally supports `route_source="human"` for fixed-choice decisions. **A plan has at most one routing step** — the mode selector whose route schedules pick via `route_selections`, each route a sub-workflow of many steps. Every further fixed choice — any simple if-condition, anything with an option that goes straight to `end` — is a branch; `add_step` rejects a second routing step and any route to `end`.
 
@@ -178,7 +193,7 @@ For full route structure, file contract, and anti-patterns, call `read_skill(ski
 Every step MUST have a **validation_schema** — the automated gate that pass/fails the step:
 - Check file existence, required fields, value types, patterns, and lengths
 - Include enough checks that stale/leftover files from previous runs can't pass
-- For orchestrator steps: validation passing IS the completion signal
+- For message-sequence agents with routes: validation passing is still the completion signal; successful child calls alone are not completion
 - For message_sequence steps: the runtime automatically runs the step-level schema after the final work turn and repairs failures in the same conversation. Add explicit prevalidation items only for intermediate gates.
 - **When a field's `value_type` is `object`, also add nested `json_checks` for its expected keys** (e.g. `$.semantic_balance.real_journey_count`, not just `$.semantic_balance`). A bare `{"value_type": "object"}` only rejects the wrong outer type — it accepts any shape at all, including one with none of the fields anything downstream actually reads. Worse, it gives the authoring agent no way to know what the object should contain, so it has to guess; a wrong guess (e.g. writing a descriptive string instead, since the field name alone doesn't say "object") then fails validation with no clue what shape was actually expected, and the automatic repair turn that follows has to go searching elsewhere in the workspace for a definition that was never written down. Name every required key up front instead.
 
@@ -198,11 +213,11 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 - **Missing validation**: No validation_schema means no automated quality gate
 - **Vague or bloated descriptions**: "Process the data appropriately" is too vague — state WHAT the step must achieve, its scope and success criteria, and WHERE its result belongs. Put reusable HOW-to-execute guidance in accessible skills/learnings and output structure in `validation_schema`. The opposite failure is just as real: restating the same instruction from several angles, copy-pasting shared policy into every step that needs it, or spelling out a rigid procedure a judgment call didn't need. See `references/step-description.md`.
 - **Over-sequencing**: Steps that don't depend on each other can potentially run in parallel via independent step groups
-- **Inline sub-tasks in orchestrator**: If you're writing detailed instructions for a specific task inside the orchestrator description, that task should be a sub-agent route instead
+- **Inline specialist contracts in the parent charter**: If the description contains detailed instructions for one bounded specialist task, move that contract into a route and keep only the parent agent's objective and decision boundaries in the description
 
 ### Step Types Reference
 
-- **Message Sequence** (type: "message_sequence") — **the default for conversational work**: a single-agent ordered conversation with `items`. Do the whole coherent job, then **verify and fix it in focused follow-up user_message items** in the same context. Supports foreach turns and intermediate prevalidation gates. Its top-level validation_schema is automatically enforced as the final gate with same-conversation repair retries. Deterministic code lives in saved regular script definitions, invoked as standalone steps or scripted batch items with explicit input/output contracts. As a top-level step the queue runs once; as an orchestrator route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
+- **Message Sequence** (type: "message_sequence") — **the canonical agent step**: one system-level description charter plus ordered user-message `items` in a persistent conversation. Do the coherent job, then verify and fix it in focused follow-up items. It supports foreach turns, intermediate prevalidation gates, scripted batches, and optional `predefined_routes` for adaptive specialist delegation. Its top-level validation_schema is automatically enforced as the final gate with same-conversation repair retries. As a top-level step the queue runs once; as a route it can be re-entered during the same workflow run and receive new instructions without replaying the queue.
 - **Regular** (type: "regular"): an explicitly scripted deterministic boundary for fixed API/CLI/data work. New regular steps are automatically declared `scripted`; use `message_sequence` for every conversational or judgment-heavy step, including one-turn work.
 - A reusable scripted route may declare `script_parameters`: a small named, typed contract (`type`, `description`, optional `required`, `default`, `enum`) for controlled per-call variation. Keep credentials in Secrets and file dependencies in `context_dependencies`; do not encode dynamic route behavior as rewritten code or narrative instructions.
 - **Agent with specialists** (type: `message_sequence` plus `predefined_routes`): Manages runtime delegation only after the Step 4 eligibility gate is met; a fixed child set/order is not enough. Each route can define an inline **sub_agent_step** or reuse a plan-local orphan through **orphan_step_ref**. Conversational specialists use **message_sequence** and deterministic specialists use **regular**. Only one nested delegation layer is allowed. Legacy `orchestrator` / `todo_task` plans remain readable as the compatibility form of this shape.
@@ -213,13 +228,17 @@ Step-level `success_criteria` is deprecated. Rely on a strong `description` plus
 
 ### Inner Steps
 
-Inner steps live inside orchestrator `predefined_routes[].sub_agent_step` (and nested orchestrator containers). They have their own step IDs and can be individually executed and configured via **execute_step**, **update_step_config** using the inner step ID. Routing steps do not have inner steps — their `routes[].next_step_id` points to existing steps elsewhere in the plan.
+Inner steps live inside an agent's `predefined_routes[].sub_agent_step` (including
+the legacy orchestrator compatibility shape). They have their own step IDs and
+can be individually executed and configured via **execute_step** and
+**update_step_config** using the inner step ID. Routing steps do not have inner
+steps—their `routes[].next_step_id` points to existing plan steps.
 
 ### Reusable Orphan Route Pattern
 
 When an orchestrator route should reuse an orphan step:
 - Put the reusable step definition in `orphan_steps[]`.
-- On that orphan step, set `shared_with.orchestrator_ids` to the IDs of the orchestrator orchestrators allowed to reuse it.
+- On that orphan step, set `shared_with.orchestrator_ids` to the IDs of the parent agents allowed to reuse it (the field name remains for compatibility).
 - On the route, set `orphan_step_ref` to the orphan step ID instead of embedding an inline `sub_agent_step`.
 - Use inline `sub_agent_step` only when the route needs its own dedicated definition.
 

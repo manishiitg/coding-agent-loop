@@ -46,7 +46,7 @@ func TestMessageSequenceExecutionRelPath_UsesNormalStepFolder(t *testing.T) {
 	hcpo := &StepBasedWorkflowOrchestrator{selectedRunFolder: "iteration-0"}
 	for _, tc := range []struct{ stepPath, stepID string }{
 		{"step-5", "step-run-intent-orchestrator"},
-		{"step-3-sub-login", "login-specialist"},
+		{"parent/agents/login/calls/call-1", "login-specialist"},
 	} {
 		got := hcpo.messageSequenceExecutionRelPath(tc.stepPath, tc.stepID)
 		// Must equal the folder every other step writes to (execution/<stepID>) —
@@ -58,6 +58,15 @@ func TestMessageSequenceExecutionRelPath_UsesNormalStepFolder(t *testing.T) {
 		if strings.Contains(got, "message_sequences") {
 			t.Fatalf("sequence still writes to isolated message_sequences folder: %q", got)
 		}
+	}
+}
+
+func TestMessageSequenceRouteSessionLivesAboveCallFolders(t *testing.T) {
+	hcpo := &StepBasedWorkflowOrchestrator{selectedRunFolder: "iteration-0"}
+	stepPath := "parent/agents/login/calls/call-1"
+	want := filepath.Join("runs", "iteration-0", "execution", "parent", "agents", "login", "session.json")
+	if got := hcpo.messageSequenceSessionPath(stepPath, "login-specialist"); got != want {
+		t.Fatalf("messageSequenceSessionPath() = %q, want %q", got, want)
 	}
 }
 

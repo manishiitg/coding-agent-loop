@@ -89,7 +89,9 @@ if len(config.SelectedServers) > 0 {
     "enabled_custom_tools": [
       "workspace_advanced:*",
       "workspace_advanced:execute_shell_command",
-      "human_tools:*"
+      "human_tools:human_feedback",
+      "human_tools:notify_user",
+      "human_tools:create_human_input_request"
     ]
   }
 }
@@ -107,7 +109,7 @@ if len(config.SelectedServers) > 0 {
 - `workspace_tools`: Backward-compatible alias for the current workspace registry.
 - `workspace_advanced`: Current workspace tools (`execute_shell_command`, `diff_patch_workspace_file`, `read_image`, `generate_text_llm`, `search_web_llm`, plus the media generators `image_gen` / `image_edit` / `generate_video` / `text_to_speech` / `speech_to_text` / `generate_music`)
 - Legacy basic file tools such as `list_workspace_files`, `read_workspace_file`, `update_workspace_file`, `delete_workspace_file`, and `move_workspace_file` are not part of the current workflow-builder registry. Use shell and diff tools instead.
-- `human_tools`: `human_feedback` (short-lived blocking input answered directly by the human), `notify_user` (non-blocking outbound push to configured Slack bot routing, WhatsApp, Gmail, and an optional workflow-scoped Slack Incoming Webhook). The webhook is one-way and is deliberately excluded from `human_feedback`. Workflow input cards submit directly to the backend rather than through an agent relay tool.
+- `human_tools`: workflow execution agents receive only the narrow baseline: `human_feedback` (short-lived blocking input), `notify_user` (non-blocking notification), and `create_human_input_request` (durable non-blocking decision). Administrative, decision-consumer, Slack, and Google Workspace tools must be selected explicitly. Legacy `human_tools:*` step configuration is normalized to the same three-tool baseline rather than expanding the category.
 - `workspace_browser`: `agent_browser`
 
 ### 🛠️ Common Issues & Solutions

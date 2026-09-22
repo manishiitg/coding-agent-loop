@@ -31,7 +31,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) getOrchestratorStepExecutionPath(step
 }
 
 // setupOrchestratorFolderGuard is used for both enforcement and prompt text.
-func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step PlanStepInterface) (readPaths, writePaths []string) {
+func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step PlanStepInterface, stepPath string) (readPaths, writePaths []string) {
 	baseWorkspacePath := hcpo.GetWorkspacePath()
 	executionWorkspacePath := hcpo.getOrchestratorExecutionWorkspacePath()
 	skillStepConfig := getAgentConfigs(step)
@@ -44,11 +44,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupOrchestratorFolderGuard(step Pla
 	// Do not grant the workflow root here. That would expose workflow.json, variables/,
 	// planning/, and sibling groups to a nested todo_task orchestrator whose job is
 	// to coordinate work inside the current run, not inspect global workflow state.
+	parentRoot := filepath.Join(executionWorkspacePath, parentAgentArtifactRoot(step.GetID(), stepPath))
+	sharedPath := filepath.Join(parentRoot, "shared")
 	downloadsPath := filepath.Join(executionWorkspacePath, "Downloads")
-	readPaths = []string{executionWorkspacePath, downloadsPath, filepath.Join(baseWorkspacePath, "soul", "soul.md")}
+	readPaths = []string{executionWorkspacePath, parentRoot, sharedPath, downloadsPath, filepath.Join(baseWorkspacePath, "soul", "soul.md")}
 	// The bridge writes oversized tool results here; agents need read access to retrieve them.
 	readPaths = append(readPaths, filepath.Join(baseWorkspacePath, "tool_output_folder"))
-	writePaths = []string{executionWorkspacePath, downloadsPath}
+	writePaths = []string{parentRoot, sharedPath, downloadsPath}
 	readPaths, writePaths = appendManagedDBFileAccess(baseWorkspacePath, readPaths, writePaths)
 	if learningsAccessForGuard != LearningsAccessNone {
 		globalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
@@ -132,7 +134,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 	// All paths should include the workspace prefix (e.g., Workflow/codeanalysis/...)
 
 	stepExecutionPath := hcpo.getOrchestratorStepExecutionPath(stepID, orchestratorStepPath)
-	readPaths, writePaths := hcpo.setupOrchestratorFolderGuard(step)
+	readPaths, writePaths := hcpo.setupOrchestratorFolderGuard(step, orchestratorStepPath)
 
 	// Snapshot the shared orchestrator-level guard and restore it on exit. The
 	// todo_task orchestrator still enforces via this shared guard (unlike
@@ -267,9 +269,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 			}
 		}
 		// Pre-save prompts.json so get_step_prompts works during execution, not just after.
-		if todoAgent, ok := agent.(*WorkflowOrchestratorAgent); ok {
-			preSystemPrompt := todoAgent.orchestratorSystemPromptProcessor(templateVars)
-			preUserMessage := todoAgent.orchestratorUserMessageProcessor(templateVars, nil)
+		if executionAgent, ok := agent.(*WorkflowExecutionOnlyAgent); ok {
+			preSystemPrompt := executionAgent.executionOnlySystemPromptProcessor(templateVars)
+			preUserMessage := executionAgent.executionOnlyUserMessageProcessor(templateVars)
 			hcpo.preSavePromptsJSON(stepIndex, stepID, orchestratorStepPath, "todo_task_orchestrator", preSystemPrompt, preUserMessage, executionLLM, "todo-task-prompts.json")
 		}
 		return agent, nil
@@ -279,9 +281,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 		for k, v := range templateVars {
 			vars[k] = v
 		}
-		if !opening {
-			vars["FollowUpMessage"] = message
-		}
+		// The description is the system-level step charter. Every authored item,
+		// including the first one, is an actual user message.
+		vars["FollowUpMessage"] = message
 		return vars
 	}
 	// The todo_task execution-log shape (SubAgentCallRecords, todo_task_response) is
@@ -292,18 +294,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 		hcpo.saveOrchestratorExecutionLog(logCtx, stepID, orchestratorStepPath, 1, turnNumber-1, turnLLM, history, toolCalls, llmCalls, startedAt, completedAt, completedAt.Sub(startedAt), "")
 	}
 
-	// Run the orchestrator on the message_sequence executor: the opening turn is the
-	// step description rendered through the orchestrator's own templates, followed by
-	// the step's scripted messages, the synthetic final validation gate, and the
+	// Run the orchestrator on the message_sequence executor: the step description is
+	// rendered as the system charter; authored messages are user turns, followed by
+	// the synthetic final validation gate and the
 	// closing reflection turn. Repairs happen in place with full memory (the
 	// prevalidation repair loop) instead of restarting the whole step.
-	items := make([]MessageSequenceItem, 0, len(orchestratorStep.Messages)+1)
-	items = append(items, MessageSequenceItem{
-		ID:      stepID + "-opening",
-		Type:    "user_message",
-		Kind:    "execution",
-		Message: templateVars["StepDescription"],
-	})
+	items := make([]MessageSequenceItem, 0, len(orchestratorStep.Messages))
 	for _, m := range orchestratorStep.Messages {
 		if t := strings.TrimSpace(m.Type); t == "message" {
 			m.Type = "user_message"
@@ -393,7 +389,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildOrchestratorTemplateVars(
 		}
 		fmt.Fprintf(&routesBuilder, "- **%s** (`%s`) — %s", ResolveVariables(route.RouteName, hcpo.variableValues), route.RouteID, routeStepTypeSummary(route.SubAgentStep))
 		if route.SubAgentStep != nil {
-			subStepPath := todoSubAgentArtifactFolderName(stepPath, route.RouteID, "<todo_id>")
+			scripted := isScriptedStep(route.SubAgentStep, getAgentConfigs(route.SubAgentStep))
+			subStepPath := todoSubAgentArtifactFolderName(step.GetID(), stepPath, route.RouteID, "<call-id>", scripted)
 			subExecRelPath := getExecutionFolderPath(hcpo.getOrchestratorExecutionWorkspacePath(), "", subStepPath)
 			subExecAbsPath := filepath.Join(GetPromptDocsRoot(), subExecRelPath)
 			contextOutput := strings.TrimSpace(ResolveVariables(route.SubAgentStep.GetContextOutput().String(), hcpo.variableValues))
@@ -435,7 +432,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildOrchestratorTemplateVars(
 	fgGlobalLearningsPath := filepath.Join(baseWorkspacePath, "learnings", GlobalLearningID)
 	fgKnowledgebasePath := getKnowledgebasePath(baseWorkspacePath)
 	fgDBPath := getDBPath(baseWorkspacePath)
-	fgReadPaths, fgWritePaths := hcpo.setupOrchestratorFolderGuard(step)
+	fgReadPaths, fgWritePaths := hcpo.setupOrchestratorFolderGuard(step, stepPath)
 
 	templateVars := map[string]string{
 		// Resolve variables in step metadata
@@ -619,6 +616,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 	allSteps []PlanStepInterface,
 	progress *StepProgress,
 ) (string, []llmtypes.MessageContent, error) {
+	ctx = withParentStepIndex(ctx, stepIndex)
 	// Use todoID as the task title
 	// All actual task content comes from response.InstructionsToSubAgent
 	taskTitle := response.TodoIDToExecute
@@ -661,10 +659,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeGenericAgent(
 		}(),
 	}
 
-	// Build generic step path
-	genericStepPath := fmt.Sprintf("%s-generic-%s", stepPath, todoIDPart)
+	callID := subAgentCallID(asyncSubAgentExecutionID(ctx), response.TodoIDToExecute, time.Now().UnixNano())
+	// Generic agents are a named route beneath their owning Agent. Every call is
+	// isolated while remaining inside the parent's shared artifact subtree.
+	genericStepPath := genericAgentArtifactFolderName(step.GetID(), stepPath, callID)
 
-	if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, genericStepPath, "", false); err != nil {
+	if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, genericStepPath, ""); err != nil {
 		return "", nil, fmt.Errorf("failed to cleanup generic sub-agent output %q: %w", genericStepPath, err)
 	}
 
@@ -843,11 +843,12 @@ func cloneStepWithDelegationOverrides(
 		return &stepCopy, nil
 	case *MessageSequencePlanStep:
 		stepCopy := *s
-		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
+		// The saved description is the durable system charter. Dynamic parent
+		// instructions are queued as user messages by executeRoutedSubAgentStep.
 		return &stepCopy, nil
 	case *OrchestratorPlanStep:
 		stepCopy := *s
-		applyDelegationOverridesToCommonFields(&stepCopy.CommonStepFields, instructions)
+		// Keep dynamic delegation out of the system charter; it is a user turn.
 		return &stepCopy, nil
 	default:
 		return step, nil
@@ -880,6 +881,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		delegatingSequence = true
 	}
 	if isOrchestratorStep(stepToExecute) || delegatingSequence {
+		if orchestratorStep, ok := delegatingStep.(*OrchestratorPlanStep); ok {
+			stepCopy := *orchestratorStep
+			stepCopy.Messages = append([]MessageSequenceItem(nil), orchestratorStep.Messages...)
+			if instruction := strings.TrimSpace(delegationInstructions); instruction != "" {
+				stepCopy.Messages = append([]MessageSequenceItem{{
+					ID:      stepCopy.GetID() + "-initial-instruction",
+					Type:    "user_message",
+					Kind:    "execution",
+					Message: instruction,
+				}}, stepCopy.Messages...)
+			}
+			delegatingStep = &stepCopy
+		}
 		successCriteriaMet, _, err := hcpo.executeOrchestratorStep(
 			ctx,
 			delegatingStep,
@@ -917,7 +931,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		hcpo.GetLogger().Info(fmt.Sprintf("💬 Normalizing routed non-scripted regular step %q to the message-sequence runtime", stepToExecute.GetID()))
 	}
 	if isMessageSequenceStep(sequenceExecutionStep) {
-		reentryMessage := strings.TrimSpace(sequenceExecutionStep.GetDescription())
 		messageSequenceRestart, _ := ctx.Value(virtualtools.SubAgentMessageSequenceRestartKey).(bool)
 		// See the matching comment in controller_execution.go: mint this step
 		// its own "exec-<step>-<timestamp>" id so message-sequence item
@@ -937,7 +950,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 			allSteps,
 			messageSequenceCallOptions{
 				Source:              "orchestrator_reentry",
-				ReentryMessage:      reentryMessage,
 				ContinuationMessage: strings.TrimSpace(delegationInstructions),
 				Restart:             messageSequenceRestart,
 			},
@@ -976,6 +988,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	progress *StepProgress,
 	humanInputs map[string]string,
 ) (string, []llmtypes.MessageContent, error) {
+	ctx = withParentStepIndex(ctx, stepIndex)
 	// Find the route
 	var route *PlanOrchestrationRoute
 	for i, r := range step.PredefinedRoutes {
@@ -1008,16 +1021,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) executePredefinedSubAgent(
 	if err != nil {
 		return "", nil, fmt.Errorf("failed to clone delegated sub-agent step: %w", err)
 	}
-	if err := validateOrchestratorNestingDepth(stepToExecute, strings.Count(stepPath, "-sub-")+1); err != nil {
+	if err := validateOrchestratorNestingDepth(stepToExecute, nestedArtifactDelegationDepth(stepPath)+1); err != nil {
 		return "", nil, fmt.Errorf("route %s exceeds supported todo_task nesting depth: %w", response.SelectedRouteID, err)
 	}
 
-	// Build a per-todo artifact path so parallel calls to the same route do not
-	// share execution files, logs, folder guards, or message-sequence sessions.
-	subAgentStepPath := todoSubAgentArtifactFolderName(stepPath, route.RouteID, response.TodoIDToExecute)
+	// The route owns one persistent session and every invocation owns a separate
+	// calls/<call-id>/ output folder. Scripted routes live under scripts/routes;
+	// conversational routes live under agents.
+	callID := subAgentCallID(asyncSubAgentExecutionID(ctx), response.TodoIDToExecute, time.Now().UnixNano())
+	isScriptedRoute := isScriptedStep(route.SubAgentStep, getAgentConfigs(route.SubAgentStep))
+	subAgentStepPath := todoSubAgentArtifactFolderName(step.GetID(), stepPath, route.RouteID, callID, isScriptedRoute)
 	messageSequenceRestart, _ := ctx.Value(virtualtools.SubAgentMessageSequenceRestartKey).(bool)
 	if !isMessageSequenceStep(stepToExecute) || messageSequenceRestart {
-		if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, subAgentStepPath, "", false); err != nil {
+		if err := hcpo.cleanupExecutionArtifactsForStepPath(ctx, subAgentStepPath, ""); err != nil {
 			return "", nil, fmt.Errorf("failed to cleanup sub-agent output %q: %w", subAgentStepPath, err)
 		}
 	}

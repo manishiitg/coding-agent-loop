@@ -729,6 +729,14 @@ function transcriptThinkingText(event: PollingEvent): string {
   return typeof raw === 'string' ? raw.trim() : ''
 }
 
+function isEmptyThinkingActivity(event: PollingEvent): boolean {
+  const envelope = event.data as Record<string, unknown> | undefined
+  const inner = envelope?.data as Record<string, unknown> | undefined
+  const fields = inner || envelope || {}
+  const metadata = fields.metadata
+  return Boolean(metadata && typeof metadata === 'object' && (metadata as Record<string, unknown>).thinking_active === true)
+}
+
 /**
  * selectTerminalEvents scopes the session's event stream to ONE terminal.
  *
@@ -994,7 +1002,12 @@ export function buildTranscriptItems(events: PollingEvent[]): TranscriptItem[] {
         cursor += 1
       }
       const text = batch.map(transcriptThinkingText).filter(Boolean).join('\n\n')
-      if (text) {
+      // Claude can expose that it started thinking while intentionally
+      // redacting the reasoning text. Keep that marker only while it is the
+      // newest event; once a tool, reply, or failure follows it becomes stale
+      // history and should disappear rather than leave an empty card behind.
+      const activeEmptyThinking = !text && cursor === visibleEvents.length && batch.some(isEmptyThinkingActivity)
+      if (text || activeEmptyThinking) {
         items.push({ kind: 'thinking', key: batch[0].id || `thinking-${items.length}`, events: batch, text, assistantUpdate })
       }
       continue

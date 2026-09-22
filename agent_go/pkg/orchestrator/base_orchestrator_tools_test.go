@@ -1,6 +1,7 @@
 package orchestrator
 
 import (
+	"slices"
 	"testing"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
@@ -16,6 +17,19 @@ func TestWorkspaceAdvancedCategoryIncludesProviderMediaTools(t *testing.T) {
 		if !names[name] {
 			t.Fatalf("workspace_advanced category missing %q", name)
 		}
+	}
+}
+
+func TestBuilderHumanToolSelectionsComeFromProductYAMLWithoutWildcard(t *testing.T) {
+	selections := AgentWorksChatHumanToolSelections("builder")
+	if slices.Contains(selections, "human_tools:*") {
+		t.Fatal("Builder human-tool selection must not use a category wildcard")
+	}
+	if !slices.Contains(selections, "human_tools:notify_user") || !slices.Contains(selections, "human_tools:get_notification_history") {
+		t.Fatalf("Builder selections are missing product-declared notification tools: %v", selections)
+	}
+	if slices.Contains(selections, "human_tools:human_feedback") {
+		t.Fatalf("Builder selections include run-only human_feedback: %v", selections)
 	}
 }
 

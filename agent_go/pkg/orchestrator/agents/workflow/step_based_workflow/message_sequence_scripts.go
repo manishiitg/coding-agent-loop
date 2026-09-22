@@ -224,9 +224,13 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceScripts(ctx con
 		runPath = filepath.Join(runPath, "runs", hcpo.selectedRunFolder)
 	}
 	executionRoot := filepath.Join(runPath, "execution")
-	batchPath := filepath.Join(getExecutionFolderPath(executionRoot, step.ID, stepPath), "scripts", item.ID)
+	itemPath := filepath.Join(
+		getExecutionFolderPath(executionRoot, step.ID, stepPath),
+		"scripts", "items", workflowSafeIDPart(item.ID, "item"),
+	)
+	batchPath := filepath.Join(itemPath, "calls")
 	results, batchErr := runSequenceScriptBatch(ctx, calls, item.MaxParallel, func(ctx context.Context, call resolvedSequenceScript) (string, error) {
-		outputPath := filepath.Join(batchPath, call.Call.ID)
+		outputPath := filepath.Join(batchPath, workflowSafeIDPart(call.Call.ID, "call"))
 		if err := createFolderViaAPI(ctx, outputPath); err != nil {
 			return outputPath, err
 		}
@@ -250,7 +254,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceScripts(ctx con
 	if err != nil {
 		return "", errors.Join(batchErr, err)
 	}
-	receiptPath := batchPath + "/results.json"
+	receiptPath := filepath.Join(itemPath, "results.json")
 	logCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 15*time.Second)
 	defer cancel()
 	if err := hcpo.WriteWorkspaceFile(logCtx, receiptPath, string(receipt)); err != nil {

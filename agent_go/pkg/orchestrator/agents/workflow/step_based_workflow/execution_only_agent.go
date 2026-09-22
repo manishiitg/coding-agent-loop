@@ -19,6 +19,7 @@ import (
 
 // Pre-parsed templates for execution-only agent - panics at startup if invalid
 var executionOnlySystemTemplate = MustRegisterTemplate("executionOnlySystem", guidance.StepSystemPromptTemplate("execution"))
+var agentDelegationSystemTemplate = MustRegisterTemplate("agentDelegationSystem", guidance.StepSystemPromptTemplate("agent-delegation"))
 
 var executionOnlyUserTemplate = MustRegisterTemplate("executionOnlyUser", `{{if eq .IsContributionTurn "true"}}{{.BaseDescription}}{{else}}{{if .OrchestratorInstructions}}## Orchestrator Instructions (HIGHEST PRIORITY)
 {{.OrchestratorInstructions}}
@@ -114,6 +115,21 @@ func NewWorkflowExecutionOnlyAgent(config *agents.OrchestratorAgentConfig, logge
 	return &WorkflowExecutionOnlyAgent{
 		BaseOrchestratorAgent: baseAgent,
 	}
+}
+
+// NewWorkflowDelegatingAgent uses the common message-sequence implementation
+// while retaining the orchestration agent type required by child lifecycle and
+// progress event plumbing.
+func NewWorkflowDelegatingAgent(config *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) *WorkflowExecutionOnlyAgent {
+	baseAgent := agents.NewBaseOrchestratorAgentWithEventBridge(
+		config,
+		logger,
+		tracer,
+		agents.OrchestratorAgentType,
+		eventBridge,
+	)
+
+	return &WorkflowExecutionOnlyAgent{BaseOrchestratorAgent: baseAgent}
 }
 
 // Execute implements the OrchestratorAgent interface
@@ -262,10 +278,17 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 	validationSchema := templateVars["ValidationSchema"] // Validation schema JSON string
 	folderGuardReadPaths := templateVars["FolderGuardReadPaths"]
 	folderGuardWritePaths := templateVars["FolderGuardWritePaths"]
+	systemStepDescription := templateVars["StepDescription"]
+	if isScriptedMode {
+		systemStepDescription = sanitizeScriptedDescription(systemStepDescription)
+	}
 
 	// Execute the pre-parsed template
 	var result strings.Builder
 	err := executionOnlySystemTemplate.Execute(&result, map[string]interface{}{
+		"StepTitle":                 templateVars["StepTitle"],
+		"StepDescription":           systemStepDescription,
+		"StepContextDependencies":   templateVars["StepContextDependencies"],
 		"WorkspacePath":             workspacePath,
 		"IsCodeExecutionMode":       isCodeExecutionMode,
 		"CodeExecutionSection":      codeExecutionSection,
@@ -305,11 +328,27 @@ func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlySystemPromptProcessor(te
 		// scripts AND learn-code saved main.py. Only the final-artifact permanence
 		// differs between modes; the discovery/selector discipline is identical.
 		"BrowserAuthoringRules": browserAuthoringRulesForExecution(templateVars, useProjectedReferenceSkills),
+		"DelegationGuidance":    renderAgentDelegationGuidance(templateVars),
 	})
 	if err != nil {
 		panic(fmt.Sprintf("execution-only system prompt template execution failed (missing variable?): %v", err))
 	}
 
+	return result.String()
+}
+
+func renderAgentDelegationGuidance(templateVars map[string]string) string {
+	routes := strings.TrimSpace(templateVars["PredefinedRoutes"])
+	if routes == "" {
+		return ""
+	}
+	var result strings.Builder
+	if err := agentDelegationSystemTemplate.Execute(&result, map[string]interface{}{
+		"PredefinedRoutes":    routes,
+		"IsCodeExecutionMode": templateVars["IsCodeExecutionMode"] == "true",
+	}); err != nil {
+		panic(fmt.Sprintf("agent delegation system prompt template execution failed: %v", err))
+	}
 	return result.String()
 }
 
@@ -332,6 +371,13 @@ func browserAuthoringRulesForExecution(templateVars map[string]string, useProjec
 
 // executionOnlyUserMessageProcessor generates the user message for execution-only agent
 func (hctpeoa *WorkflowExecutionOnlyAgent) executionOnlyUserMessageProcessor(templateVars map[string]string) string {
+	// Message-sequence turns after the opener are already fully authored user
+	// messages. Preserve them verbatim instead of re-rendering the opening task
+	// envelope on every turn.
+	if followUp := strings.TrimSpace(templateVars["FollowUpMessage"]); followUp != "" {
+		return followUp
+	}
+
 	// Split description into base description and orchestrator instructions
 	fullDescription := templateVars["StepDescription"]
 	isScriptedMode := templateVars["IsScriptedMode"] == "true"

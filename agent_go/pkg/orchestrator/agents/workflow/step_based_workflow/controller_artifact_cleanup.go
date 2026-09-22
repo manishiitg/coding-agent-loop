@@ -3,31 +3,9 @@ package step_based_workflow
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"strings"
 )
-
-func isSubAgentArtifactFolderForStep(folderName string, stepNumber int) bool {
-	return strings.HasPrefix(folderName, fmt.Sprintf("step-%d-sub-", stepNumber))
-}
-
-func isGenericAgentArtifactFolderForStep(folderName string, stepNumber int) bool {
-	prefixes := []string{
-		fmt.Sprintf("step-%d-generic-", stepNumber),
-		fmt.Sprintf("generic-step-%d-", stepNumber),
-	}
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(folderName, prefix) {
-			return true
-		}
-	}
-	return false
-}
-
-func isMessageSequenceStepPathForStep(stepPath string, stepNumber int) bool {
-	return stepPath == fmt.Sprintf("step-%d", stepNumber) ||
-		strings.HasPrefix(stepPath, fmt.Sprintf("step-%d-sub-", stepNumber)) ||
-		strings.HasPrefix(stepPath, fmt.Sprintf("step-%d-generic-", stepNumber))
-}
 
 func workflowSafeIDPart(s string, fallback string) string {
 	s = strings.TrimSpace(strings.ToLower(s))
@@ -61,16 +39,78 @@ func workflowSafeIDPart(s string, fallback string) string {
 	return out
 }
 
-func todoSubAgentArtifactFolderName(stepPath string, routeID string, todoID string) string {
-	routePart := workflowSafeIDPart(routeID, "route")
-	todoPart := workflowSafeIDPart(todoID, "")
-	if todoPart == "" {
-		return fmt.Sprintf("%s-sub-%s", stepPath, routePart)
+func parentAgentArtifactRoot(parentStepID, parentStepPath string) string {
+	parentStepPath = strings.TrimSpace(parentStepPath)
+	if strings.Contains(parentStepPath, string(filepath.Separator)) {
+		return filepath.Clean(parentStepPath)
 	}
-	return fmt.Sprintf("%s-sub-%s-%s", stepPath, routePart, todoPart)
+	return workflowSafeIDPart(parentStepID, workflowSafeIDPart(parentStepPath, "agent"))
 }
 
-func (hcpo *StepBasedWorkflowOrchestrator) cleanupExecutionArtifactsForStepPath(ctx context.Context, stepPath string, stepID string, includeMessageSequence bool) error {
+func subAgentCallID(executionID, taskID string, startedAtUnixNano int64) string {
+	if id := workflowSafeIDPart(executionID, ""); id != "" {
+		return id
+	}
+	taskPart := workflowSafeIDPart(taskID, "call")
+	return fmt.Sprintf("%s-%d", taskPart, startedAtUnixNano)
+}
+
+func todoSubAgentArtifactFolderName(parentStepID, parentStepPath, routeID, callID string, scripted bool) string {
+	root := parentAgentArtifactRoot(parentStepID, parentStepPath)
+	routePart := workflowSafeIDPart(routeID, "route")
+	callPart := workflowSafeIDPart(callID, "call")
+	if scripted {
+		return filepath.Join(root, "scripts", "routes", routePart, "calls", callPart)
+	}
+	return filepath.Join(root, "agents", routePart, "calls", callPart)
+}
+
+func genericAgentArtifactFolderName(parentStepID, parentStepPath, callID string) string {
+	return filepath.Join(
+		parentAgentArtifactRoot(parentStepID, parentStepPath),
+		"agents", "generic", "calls", workflowSafeIDPart(callID, "call"),
+	)
+}
+
+// messageSequenceRouteRoot returns the persistent agent-route directory for a
+// nested call. session.json lives here while each invocation writes beneath
+// calls/<call-id>/. Top-level sequences return no route root.
+func messageSequenceRouteRoot(stepPath string) string {
+	clean := filepath.Clean(strings.TrimSpace(stepPath))
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := len(parts) - 2; i >= 0; i-- {
+		if parts[i] == "calls" && i > 0 && parts[i-1] != "items" && parts[i-1] != "routes" {
+			return filepath.Join(parts[:i]...)
+		}
+	}
+	return ""
+}
+
+func nestedArtifactParentRoot(stepPath string) string {
+	clean := filepath.Clean(strings.TrimSpace(stepPath))
+	parts := strings.Split(clean, string(filepath.Separator))
+	for i := len(parts) - 1; i >= 0; i-- {
+		if parts[i] == "agents" || parts[i] == "scripts" {
+			if i == 0 {
+				return ""
+			}
+			return filepath.Join(parts[:i]...)
+		}
+	}
+	return ""
+}
+
+func nestedArtifactDelegationDepth(stepPath string) int {
+	depth := 0
+	for _, part := range strings.Split(filepath.Clean(strings.TrimSpace(stepPath)), string(filepath.Separator)) {
+		if part == "agents" {
+			depth++
+		}
+	}
+	return depth
+}
+
+func (hcpo *StepBasedWorkflowOrchestrator) cleanupExecutionArtifactsForStepPath(ctx context.Context, stepPath string, stepID string) error {
 	if hcpo.selectedRunFolder == "" {
 		return fmt.Errorf("selectedRunFolder not set - cannot cleanup execution artifacts")
 	}
@@ -108,12 +148,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupExecutionArtifactsForStepPath(
 		logsFolderPath := fmt.Sprintf("%s/%s", logsWorkspacePath, folderName)
 		if err := hcpo.archiveLogsFolder(ctx, logsFolderPath, folderName); err != nil {
 			hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to archive logs for execution artifact folder %s: %v", folderName, err))
-		}
-	}
-
-	if includeMessageSequence {
-		if err := hcpo.cleanupMessageSequenceStepPath(ctx, stepPath); err != nil {
-			return err
 		}
 	}
 

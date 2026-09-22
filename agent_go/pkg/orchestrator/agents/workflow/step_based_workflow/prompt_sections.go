@@ -419,45 +419,8 @@ func ResolveDependencyPathCandidates(
 		}
 	}
 
-	if cut := strings.LastIndex(currentStepPath, "-sub-"); cut != -1 {
-		if stepIndex >= 0 && stepIndex < len(allSteps) {
-			if todoStep, ok := allSteps[stepIndex].(*OrchestratorPlanStep); ok {
-				parentRoutePrefix := fmt.Sprintf("step-%d-sub-", stepIndex+1)
-				currentTodoIDPart := ""
-				parentStepPath := fmt.Sprintf("step-%d", stepIndex+1)
-				for _, route := range todoStep.PredefinedRoutes {
-					routePrefix := fmt.Sprintf("%s%s-", parentRoutePrefix, workflowSafeIDPart(route.RouteID, "route"))
-					if strings.HasPrefix(currentStepPath, routePrefix) {
-						currentTodoIDPart = strings.TrimPrefix(currentStepPath, routePrefix)
-						break
-					}
-				}
-				for _, route := range todoStep.PredefinedRoutes {
-					if route.SubAgentStep == nil {
-						continue
-					}
-					routeOutput := ResolveVariables(route.SubAgentStep.GetContextOutput().String(), variableValues)
-					if !contextOutputMatchesDependency(routeOutput, dep) {
-						continue
-					}
-					if currentTodoIDPart != "" {
-						routeStepPath := todoSubAgentArtifactFolderName(parentStepPath, route.RouteID, currentTodoIDPart)
-						routeExecPath := getExecutionFolderPath(executionWorkspacePath, "", routeStepPath)
-						appendCandidate(buildDepAbsPath(routeExecPath, dep))
-					}
-					routeStepPath := parentRoutePrefix + route.RouteID
-					routeExecPath := getExecutionFolderPath(executionWorkspacePath, route.SubAgentStep.GetID(), routeStepPath)
-					appendCandidate(buildDepAbsPath(routeExecPath, dep))
-				}
-			}
-		}
-
-		parentStepPath := currentStepPath[:cut]
-		parentStepID := ""
-		if parentStepPath == fmt.Sprintf("step-%d", stepIndex+1) {
-			parentStepID = currentStepID
-		}
-		parentStepExecPath := getExecutionFolderPath(executionWorkspacePath, parentStepID, parentStepPath)
+	if parentStepPath := nestedArtifactParentRoot(currentStepPath); parentStepPath != "" {
+		parentStepExecPath := getExecutionFolderPath(executionWorkspacePath, "", parentStepPath)
 		appendCandidate(buildDepAbsPath(parentStepExecPath, dep))
 	}
 

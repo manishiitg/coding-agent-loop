@@ -13,7 +13,7 @@ import (
 
 func TestExplicitSchedulePulseMigration(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: "1.0.40"})
-	if len(plan) != 1 || plan[0].to != workflowContractExplicitSchedulePulseVersion || plan[0].label != "upgrade-explicit-schedule-pulse" {
+	if len(plan) != 2 || plan[0].to != workflowContractExplicitSchedulePulseVersion || plan[0].label != "upgrade-explicit-schedule-pulse" || plan[1].to != workflowContractNestedAgentArtifactsVersion {
 		t.Fatalf("unexpected migration: %+v", plan)
 	}
 	for _, want := range []string{"pulse_mode_reason", "disabled schedules", "calendar schedules", "retained", "Do not change cron", "Do not execute the workflow", "do not stamp", "token cost", "multiple runs"} {
@@ -26,25 +26,22 @@ func TestExplicitSchedulePulseMigration(t *testing.T) {
 	}
 }
 
-func TestRunScopedRouteMigrationIsRetired(t *testing.T) {
-	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: workflowContractExplicitSchedulePulseVersion})
-	if len(plan) != 0 {
-		t.Fatalf("retired migrations must not emit an upgrade turn: %+v", plan)
-	}
+func TestRetiredMarkersStillRequireCurrentNestedArtifactMigration(t *testing.T) {
 	for _, version := range []string{
 		workflowContractExplicitSchedulePulseVersion,
 		workflowContractRunScopedRoutesVersion,
 		workflowContractEvalRetirementVersion,
 	} {
-		if !workflowContractVersionIsExecutionCompatible(version) {
-			t.Errorf("retired contract marker %s still blocks execution", version)
+		plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: version})
+		if len(plan) != 1 || plan[0].label != "upgrade-nested-agent-artifacts" || plan[0].to != workflowContractNestedAgentArtifactsVersion {
+			t.Fatalf("marker %s upgrade plan = %+v, want only nested artifacts", version, plan)
+		}
+		if workflowContractVersionIsExecutionCompatible(version) {
+			t.Errorf("older contract marker %s unexpectedly remained execution-compatible", version)
 		}
 		turns, err := scheduledWorkshopTurns(&WorkflowManifest{Version: version}, []string{"run normal work"}, "Workflow/demo")
-		if err != nil {
-			t.Fatalf("retired contract marker %s blocked its schedule: %v", version, err)
-		}
-		if len(turns) != 1 || turns[0].label != "schedule-message-1" {
-			t.Fatalf("retired contract marker %s injected a migration turn: %+v", version, turns)
+		if err != nil || len(turns) != 2 || turns[0].label != "upgrade-nested-agent-artifacts" || turns[1].label != "schedule-message-1" {
+			t.Fatalf("older marker %s did not inject the required migration turn: turns=%+v err=%v", version, turns, err)
 		}
 	}
 }

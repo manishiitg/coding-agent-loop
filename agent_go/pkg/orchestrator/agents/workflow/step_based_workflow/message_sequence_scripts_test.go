@@ -253,7 +253,7 @@ func TestSequenceScriptsP0SavedRunnerAndValidation(t *testing.T) {
 				if received[0].ExtraEnv[ScriptedParametersEnv] != `{"market":"NSE"}` {
 					t.Fatalf("parameters lost: %+v", received[0].ExtraEnv)
 				}
-				want := "Workflow/scripts-test/runs/iteration-1/default/execution/analyze/scripts/collect/one"
+				want := "Workflow/scripts-test/runs/iteration-1/default/execution/analyze/scripts/items/collect/calls/one"
 				if received[0].FolderGuard.WritePaths[0] != want || !strings.HasSuffix(received[0].ExtraEnv["STEP_OUTPUT_DIR"], want) {
 					t.Fatalf("invocation output/guard mismatch: %+v", received[0])
 				}

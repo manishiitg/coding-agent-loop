@@ -31,4 +31,20 @@ describe('thinking transcript grouping', () => {
     ])
     expect(items.map(item => item.kind)).toEqual(['event'])
   })
+
+  it('shows an explicit empty thinking activity only while it is newest', () => {
+    const active = mk('t1', 'conversation_thinking', {
+      thinking: '', turn: 1, metadata: { thinking_active: true },
+    })
+    const liveItems = buildTranscriptItems([mk('u1', 'user_message', { content: 'hi' }), active])
+    expect(liveItems.map(item => item.kind)).toEqual(['event', 'thinking'])
+    expect(liveItems[1]?.kind === 'thinking' && liveItems[1].text).toBe('')
+
+    const completedItems = buildTranscriptItems([
+      mk('u1', 'user_message', { content: 'hi' }),
+      active,
+      mk('a1', 'llm_generation_end', { content: 'Done.' }),
+    ])
+    expect(completedItems.map(item => item.kind)).toEqual(['event', 'event'])
+  })
 })

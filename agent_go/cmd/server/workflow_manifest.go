@@ -28,7 +28,7 @@ const WorkflowManifestSchemaVersion = 1
 // contract version. Unlike schema_version, this gates agent-run workflow
 // upgrades: Pulse can add version-specific messages and stamp this value only
 // after the workflow has been checked or migrated.
-const WorkflowContractCurrentVersion = workflowContractRunScopedRoutesVersion
+const WorkflowContractCurrentVersion = workflowContractNestedAgentArtifactsVersion
 
 const workflowContractExplicitSchedulePulseVersion = schedulepolicy.ExplicitPulseContractVersion
 
@@ -42,6 +42,11 @@ const workflowContractRunScopedRoutesVersion = "1.0.42"
 // retired. Keep recognizing already-stamped manifests without asking an older
 // workflow to migrate forward into a contract that no longer exists.
 const workflowContractEvalRetirementVersion = "1.0.43"
+
+// Routed agents and scripted calls are nested beneath their owning Agent step.
+// Workflows must migrate authored path assumptions and use the canonical code/
+// source tree before execution can resume.
+const workflowContractNestedAgentArtifactsVersion = step_based_workflow.NestedAgentArtifactsContractVersion
 
 const workflowContractInitialVersion = "1.0.0"
 const workflowContractMessageSequenceCodeVersion = "1.0.10"

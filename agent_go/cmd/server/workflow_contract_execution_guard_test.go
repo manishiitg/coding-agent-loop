@@ -12,12 +12,13 @@ func serveContractGuardManifest(t *testing.T, version string) string {
 	t.Helper()
 	const workspacePath = "Workflow/contract-guard"
 	data, err := json.Marshal(map[string]interface{}{
-		"schema_version": 1,
-		"version":        version,
-		"id":             "wf-contract-guard",
-		"label":          "Contract guard",
-		"capabilities":   map[string]interface{}{},
-		"schedules":      []interface{}{},
+		"schema_version":      1,
+		"version":             version,
+		"code_layout_version": 1,
+		"id":                  "wf-contract-guard",
+		"label":               "Contract guard",
+		"capabilities":        map[string]interface{}{},
+		"schedules":           []interface{}{},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -38,7 +39,7 @@ func TestRequireCurrentWorkflowContractForManualRunAllowsCurrent(t *testing.T) {
 	}
 }
 
-func TestRequireCurrentWorkflowContractForManualRunAllowsRetiredMarkers(t *testing.T) {
+func TestRequireCurrentWorkflowContractForManualRunRequiresNestedArtifactMigrationForOlderMarkers(t *testing.T) {
 	for _, version := range []string{
 		workflowContractExplicitSchedulePulseVersion,
 		workflowContractRunScopedRoutesVersion,
@@ -46,8 +47,9 @@ func TestRequireCurrentWorkflowContractForManualRunAllowsRetiredMarkers(t *testi
 	} {
 		t.Run(version, func(t *testing.T) {
 			workspacePath := serveContractGuardManifest(t, version)
-			if err := requireCurrentWorkflowContractForManualRun(context.Background(), workspacePath); err != nil {
-				t.Fatalf("execution-compatible retired marker %s was blocked: %v", version, err)
+			err := requireCurrentWorkflowContractForManualRun(context.Background(), workspacePath)
+			if err == nil || !strings.Contains(err.Error(), "upgrade-nested-agent-artifacts") {
+				t.Fatalf("older marker %s did not require the nested-artifact migration: %v", version, err)
 			}
 		})
 	}

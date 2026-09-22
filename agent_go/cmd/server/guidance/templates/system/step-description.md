@@ -1,6 +1,11 @@
 ## Writing Optimized Step Descriptions (Prompt Engineering)
 
-A step's `description` is the prompt an execution agent actually runs on. Every word costs context and dilutes the ones that matter. This is a different concern from step-type selection or validation design — it is about writing quality: does this description say exactly what is needed, once, and nothing else. Read this before writing or editing any step's `description`.
+A step's `description` is the durable system-level charter the execution agent
+receives on every turn. Every word costs context and has system-level authority,
+so keep it stable and task-defining. For `message_sequence`, the ordered
+`items[]` are the actual user messages that tell the agent how to carry out,
+inspect, verify, or repair that charter. Read this before writing or editing a
+step's `description` or sequence items.
 
 ### Check what the runtime already supplies
 
@@ -32,9 +37,20 @@ also shows run-specific context unavailable in the source template. A saved
 prompt is evidence for that run, not a preview of later configuration changes;
 new steps have no saved prompt until execution starts.
 
-### Description defines WHAT; skills and learnings carry HOW
+### Description defines WHAT; items carry turn instructions; skills and learnings carry reusable HOW
 
-Write the description as an execution prompt focused on the step's objective: what result to achieve, which inputs or evidence to use, the scope and business rules, what success means, and where the result belongs. Keep binding constraints here, including approval requirements and actions outside the step's authority. These define the task even when the implementation changes.
+Write the description as a stable charter focused on the step's objective: what
+result to achieve, which inputs or evidence govern it, the scope and business
+rules, what success means, and where the result belongs. Keep binding constraints
+here, including approval requirements and actions outside the step's authority.
+These define the task even when the implementation changes.
+
+For `message_sequence`, put execution phases and conversational instructions in
+`items[]`: perform the work, re-open authoritative evidence, critique it, repair
+verified gaps, or incorporate new runtime input. Do not repeat the description in
+the first item. The first item should tell the agent what to do now under the
+charter, not redefine the charter. Live Workshop `human_input` and parent-agent
+delegation instructions are also user messages, not description mutations.
 
 Put reusable execution methods in the step's skills and learnings: tool usage, selectors, API/authentication sequences, troubleshooting, and techniques verified in prior runs. Reference the relevant guidance and configure the step's skill/learning access so it can actually read it. Do not assume a skill exists or that a new step has already learned a procedure; provide needed guidance there, or let the execution agent choose a method within the task's constraints and retain verified reusable know-how through the configured learning flow.
 
@@ -56,7 +72,12 @@ Before finalizing a description, cut anything that:
 
 ### Let `validation_schema` name the shape — don't restate it in prose
 
-`validation_schema` is shown to the executing agent on its opening turn for every step type (`regular`, `message_sequence`, `orchestrator`) — not only reactively after a failed attempt. So once a step has a schema, the description does not need to also spell out the object's keys; doing so is exactly the duplication the earlier sections warn against, and the two copies drift the moment one is edited. Define the schema, then let the description state the outcome and any context the schema itself can't carry (why the field matters, where the source data comes from) — not the field list.
+`validation_schema` is rendered as part of the executing agent's system contract
+for every step type — not only reactively after a failed attempt. So once a step
+has a schema, neither the description nor an item needs to spell out the object's
+keys; doing so duplicates the contract and lets the copies drift. Define the
+schema, then let the description state the durable outcome and context the schema
+cannot carry, while items state the work and verification to perform.
 
 If an output needs a defined structure and no schema exists, add a light `validation_schema` or reference an accessible authoritative contract. Do not use the description as a substitute schema. Free-form output does not need an invented object structure.
 
@@ -72,7 +93,12 @@ Over: "First, open the API testing tool. Then, for each endpoint, carefully send
 
 The first names one precise, checkable outcome. The second spends four sentences restating the same instruction with decreasing specificity, and its vagueness ("looks wrong," "be thorough") gives the model nothing an evaluator could verify against.
 
-When a fixed procedure is necessary (browser selectors, a multi-stage authentication flow, or an ordered API call chain), put it in a skill or learning and reference it. Keep any task-specific ordering constraint in the description when it defines correctness or authority—for example, approval must precede publishing—without copying the operational procedure.
+When a reusable fixed procedure is necessary (browser selectors, a multi-stage
+authentication flow, or an ordered API call chain), put it in a skill or learning
+and reference it. Put a task-specific execution sequence in `items[]`. Keep only
+an ordering constraint that defines correctness or authority in the description
+itself—for example, approval must precede publishing—without copying the
+operational procedure.
 
 ### Do not duplicate across steps
 
@@ -80,7 +106,14 @@ If two steps in the same plan describe the same task-specific policy, contract, 
 
 ### A rough self-check before finalizing
 
-Could someone who has never seen the workflow read the description and understand the intended result, evidence, constraints, and success criteria? Do the separately supplied schema and referenced skills/learnings provide the output contract and execution guidance without contradictions? The description should not need to reconstruct the schema or teach the procedure. Could you delete a sentence without losing information the model needs? If yes, delete it — regardless of how short the description already is. Could you delete a check from `validation_schema` without losing the ability to catch a real failure? If yes, delete it too — a schema is a contract, not a transcript of the output.
+Could someone who has never seen the workflow read the description and understand
+the intended result, evidence, constraints, and success criteria? Could they read
+the items and understand what the agent should do on each turn without finding a
+second, conflicting charter? Do the separately supplied schema and referenced
+skills/learnings provide the output contract and reusable execution guidance
+without contradictions? The description should not reconstruct the schema or
+teach the procedure. Delete any sentence or validation check that carries no
+necessary contract information.
 
 ### Related
 

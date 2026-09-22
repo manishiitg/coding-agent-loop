@@ -6,6 +6,22 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/contractupgrade"
 )
 
+// NestedAgentArtifactsContractVersion is shared with the server's workflow
+// contract ladder because the stamp executor must enforce this migration's
+// source-layout prerequisite, not merely describe it in a prompt.
+const NestedAgentArtifactsContractVersion = "1.0.44"
+
+func validateContractVersionStampPrerequisites(version string, manifest map[string]interface{}) error {
+	if version != NestedAgentArtifactsContractVersion {
+		return nil
+	}
+	codeLayout, ok := manifest["code_layout_version"].(float64)
+	if !ok || codeLayout != 1 {
+		return fmt.Errorf("contract %s requires code_layout_version=1; migrate every scripted bundle to code/<step-id>/ and call set_code_layout_version(code_layout_version=1) before stamping", version)
+	}
+	return nil
+}
+
 // authorizeContractVersionStamp decides whether sessionID may stamp version
 // right now, spending the authorization when it may. The second return value
 // reports permission; the first is the refusal to hand back when it does not.

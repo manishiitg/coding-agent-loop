@@ -13,6 +13,10 @@ New plans should express this as a `message_sequence` agent with optional
 bounded specialists. The legacy type remains readable for plan, event, log, and
 UI compatibility during migration.
 
+Both routed and non-routed sequences share the same base system prompt and
+default tools. Routes add only the specialist catalog, delegation guidance,
+and sub-agent lifecycle tools.
+
 Since PLAT-269 the orchestrator **runs on the message_sequence executor**. It
 is a message sequence that owns routes: one conversation, ordered items, an
 in-place prevalidation repair loop, a synthetic final validation gate, and a
@@ -70,10 +74,11 @@ step, or a scripted step (see the `todo-task` and `plan-design` guidance).
 
 `executeOrchestratorStep` (`controller_orchestrator.go`) is a thin wrapper:
 
-1. Computes the orchestrator folder guard: the run's execution folder plus
-   `db/`, learnings and KB when granted, skills read-only. It deliberately
-   does **not** grant the workflow root, so a nested orchestrator cannot read
-   `workflow.json`, `variables/`, `planning/`, or sibling groups.
+1. Computes the Agent folder guard. The parent owns
+   `execution/<parent-step>/`; its agents, routed scripts, and scripted items
+   may read and write inside that parent subtree. Store, learnings, KB, and
+   skills access is added only when declared. It deliberately does **not**
+   grant the workflow root.
 2. Builds the orchestrator prompt variables (`buildOrchestratorTemplateVars`):
    the route catalog, inlined context dependencies, stores, folder guard,
    validation schema, and any Workshop human input.
@@ -123,8 +128,8 @@ See `sub_agent_async.go`.
 ### Tool arguments
 
 - `route_id` — parent-side selector for a configured route.
-- `task_id` — a stable label for one unit of delegated work, used for tracking
-  and artifact naming (`execution/<step>/<route>-<task_id>/`). Formerly
+- `task_id` — a stable label for one unit of delegated work, used for tracking.
+  The runtime `call-id`, not `task_id`, isolates each invocation. Formerly
   `todo_id`; it never referred to a persisted todo item.
 - `execution_id` — runtime identity of one exact invocation; the only identity
   used for query, stop, and conversation diagnostics.
@@ -139,9 +144,20 @@ See `sub_agent_async.go`.
   by `saveOrchestratorExecutionLog`. Turn 1 is iteration 0. These carry the
   `SubAgentCallRecord`s that `ExecutionLogsPopup` renders as the
   route-selection view and populate `stepLogs.todo_task`.
-- Sequence session: `execution/<step>/session.json` (one-way observability
-  log, not a resume checkpoint) and per-gate prevalidation logs.
-- Sub-agent artifacts: `execution/<step>/<route>-<task_id>/`.
+- Parent Agent outputs: `execution/<parent-step>/`.
+- Parent-shared artifacts: `execution/<parent-step>/shared/`.
+- Route session: `execution/<parent-step>/agents/<route-id>/session.json`
+  (one-way observability log, not a resume checkpoint).
+- Conversational route call artifacts:
+  `execution/<parent-step>/agents/<route-id>/calls/<call-id>/`.
+- Scripted route call artifacts:
+  `execution/<parent-step>/scripts/routes/<route-id>/calls/<call-id>/`.
+- Scripted item call artifacts:
+  `execution/<parent-step>/scripts/items/<item-id>/calls/<call-id>/`.
+
+Every child is given its call leaf as `STEP_OUTPUT_DIR` and the parent subtree
+as its execution scope, so siblings under one parent can intentionally exchange
+artifacts. The runtime does not read or write the retired flattened layouts.
 - Prompts: `todo-task-prompts.json` pre-saved so `get_step_prompts` works
   during execution.
 

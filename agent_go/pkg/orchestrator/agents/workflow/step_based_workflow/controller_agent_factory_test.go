@@ -316,6 +316,78 @@ func TestPrepareCustomToolsMaterializesDBCapabilityFromDBAccess(t *testing.T) {
 	}
 }
 
+func TestPrepareCustomToolsUsesNarrowRequiredHumanToolBaseline(t *testing.T) {
+	base, err := orchestrator.NewBaseOrchestrator(
+		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0,
+		"", nil, nil, false, &orchestrator.LLMConfig{}, 1, nil, nil, nil,
+	)
+	if err != nil {
+		t.Fatalf("NewBaseOrchestrator returned error: %v", err)
+	}
+	tool := func(name string) llmtypes.Tool {
+		return llmtypes.Tool{Type: "function", Function: &llmtypes.FunctionDefinition{Name: name}}
+	}
+	noop := func(context.Context, map[string]interface{}) (string, error) { return "", nil }
+	allHumanTools := []string{
+		"human_feedback",
+		"notify_user",
+		"create_human_input_request",
+		"get_notification_history",
+		"send_slack_message",
+		"slack",
+		"google_workspace_cli",
+		"get_human_input_request",
+		"list_approved_fixer_decisions",
+		"answer_human_input_request",
+		"mark_human_input_consumed",
+		"dismiss_duplicate_human_input_request",
+	}
+	base.WorkspaceTools = []llmtypes.Tool{tool("execute_shell_command")}
+	base.WorkspaceToolExecutors = map[string]interface{}{"execute_shell_command": noop}
+	base.ToolCategories = map[string]string{"execute_shell_command": "workspace_advanced"}
+	for _, name := range allHumanTools {
+		base.WorkspaceTools = append(base.WorkspaceTools, tool(name))
+		base.WorkspaceToolExecutors[name] = noop
+		base.ToolCategories[name] = "human_tools"
+	}
+	hcpo := &StepBasedWorkflowOrchestrator{BaseOrchestrator: base}
+
+	for _, config := range []*AgentConfigs{
+		nil,
+		{EnabledCustomTools: []string{"workspace_advanced:execute_shell_command"}},
+		{EnabledCustomTools: []string{"human_tools:*"}},
+	} {
+		tools, executors := hcpo.prepareCustomTools(config)
+		names := make([]string, 0, len(tools))
+		for _, definition := range tools {
+			if definition.Function != nil {
+				names = append(names, definition.Function.Name)
+			}
+		}
+		for _, required := range []string{"human_feedback", "notify_user", "create_human_input_request"} {
+			if !slices.Contains(names, required) || executors[required] == nil {
+				t.Fatalf("required human tool %q missing: tools=%v", required, names)
+			}
+		}
+		for _, excluded := range allHumanTools[3:] {
+			if slices.Contains(names, excluded) || executors[excluded] != nil {
+				t.Fatalf("default step tools unexpectedly include human tool %q: tools=%v", excluded, names)
+			}
+		}
+	}
+
+	tools, _ := hcpo.prepareCustomTools(&AgentConfigs{EnabledCustomTools: []string{"human_tools:get_notification_history"}})
+	names := make([]string, 0, len(tools))
+	for _, definition := range tools {
+		if definition.Function != nil {
+			names = append(names, definition.Function.Name)
+		}
+	}
+	if !slices.Contains(names, "get_notification_history") {
+		t.Fatalf("explicitly named extra human tool was not enabled: tools=%v", names)
+	}
+}
+
 func TestExecutionFolderGuardAddsOnlySafeWorkflowRelativeReadPaths(t *testing.T) {
 	base, err := orchestrator.NewBaseOrchestrator(
 		loggerv2.NewNoop(), nil, orchestrator.OrchestratorTypeWorkflow, "", 0,
@@ -1399,6 +1471,20 @@ func TestExecutionDoesNotInjectHistoryBasedTierOverrides(t *testing.T) {
 	for _, retired := range []string{"decideAdaptiveExecutionTier", "recordAdaptiveExecutionTierSuccess", "DescriptionHashRuns", "PreferredExecutionTier", "context.WithValue(executionAgentCtx, WorkshopTierOverrideKey"} {
 		if strings.Contains(src, retired) {
 			t.Fatalf("execution still derives a tier override from retired history: %s", retired)
+		}
+	}
+}
+
+func TestStepExecutionScopeUsesOwningAgentSubtree(t *testing.T) {
+	tests := map[string]string{
+		"/workspace/runs/run/execution/parent/agents/research/calls/call-1":                           "/workspace/runs/run/execution/parent",
+		"/workspace/runs/run/execution/parent/scripts/items/collect/calls/call-1":                     "/workspace/runs/run/execution/parent",
+		"/workspace/runs/run/execution/parent/agents/research/calls/call-1/agents/check/calls/call-2": "/workspace/runs/run/execution/parent/agents/research/calls/call-1",
+		"/workspace/runs/run/execution/top-level":                                                     "/workspace/runs/run/execution",
+	}
+	for output, want := range tests {
+		if got := stepExecutionScopeAbsPath(output); got != want {
+			t.Errorf("stepExecutionScopeAbsPath(%q) = %q, want %q", output, got, want)
 		}
 	}
 }

@@ -126,8 +126,8 @@ Each entry in `routes[]` has:
 
 Branch routes do **not** define inline sub-agents. Every `next_step_id`
 must reference a step that already exists in the plan. Add those
-downstream steps separately (as regular, message_sequence, orchestrator, or
-human_input steps), then point the routes at their IDs.
+downstream steps separately (as scripted, message_sequence, or human_input
+steps), then point the routes at their IDs.
 
 ### Convergence — options MUST rejoin via `next_step_id`
 
@@ -146,10 +146,11 @@ each option a `next_step_id` pointing to the shared downstream step, or
   self-contained sub-workflow fork; use it when the alternatives lead to
   substantially different continuations of the plan. Branch is the small
   in-flow decision.
-- **Branch vs. orchestrator**: orchestrator can run multiple sub-tasks. Branch
-  runs exactly one alternative.
-- **Branch vs. message_sequence**: message_sequence is one ordered
-  conversation with no branching.
+- **Branch vs. agent with specialists**: a message-sequence agent with routes may
+  call zero, one, or several specialists adaptively. Branch runs exactly one
+  fixed alternative.
+- **Branch vs. plain message_sequence**: a plain sequence is one ordered
+  conversation; add routes only for adaptive delegation.
 - **Branch vs. human_input**: do not ask the user again when the builder
   already knows the requested option. Use `route_selections`. Use
   `human_input` only when the workflow must pause mid-run for information

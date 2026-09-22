@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
@@ -26,8 +27,8 @@ func getToolNamesByCategory(category string) map[string]bool {
 		// HumanToolImplementationNames is the complete implementation inventory.
 		// CreateHumanToolExecutors only contains the older
 		// immediate-feedback tools, so using it here silently dropped the
-		// durable Pulse decision tools from `human_tools:*` in background
-		// workflow agents.
+		// durable Pulse decision tools from `human_tools:*` in workflow
+		// execution agents.
 		for _, toolName := range virtualtools.HumanToolImplementationNames() {
 			toolNames[toolName] = true
 		}
@@ -42,11 +43,29 @@ func getToolNamesByCategory(category string) map[string]bool {
 	return toolNames
 }
 
+// AgentWorksChatHumanToolSelections projects the explicit product.yaml chat
+// admission into the category-qualified format used by execution-agent tool
+// filtering. Builder-owned phase/reviewer agents must use this instead of
+// human_tools:* so adding a Go implementation cannot silently widen Builder.
+func AgentWorksChatHumanToolSelections(mode string) []string {
+	implementations := make(map[string]bool)
+	for _, name := range virtualtools.HumanToolImplementationNames() {
+		implementations[name] = true
+	}
+	var selections []string
+	for _, name := range agentworksproduct.ChatTools(mode) {
+		if implementations[name] {
+			selections = append(selections, virtualtools.GetHumanToolCategory()+":"+name)
+		}
+	}
+	return selections
+}
+
 // FilterCustomToolsByCategory filters custom tools and executors based on enabled tools
 // Format: single array with entries like "category:tool" or "category:*"
 //   - "workspace_tools:*" → the advanced workspace registry plus browser tools
 //   - "workspace_tools:execute_shell_command" → specific tool
-//   - "human_tools:*" → all tools from CreateHumanToolExecutors()
+//   - "human_tools:*" → all tools from HumanToolImplementationNames()
 //   - "human_tools:human_feedback" → specific blocking tool
 //   - "human_tools:notify_user" → specific non-blocking bot notification tool
 //
@@ -111,15 +130,15 @@ func FilterCustomToolsByCategory(
 }
 
 // PreparePhaseAgentTools returns a minimal tool set for phase agents (planning, debugging, etc.)
-// Phase agents only need shell_command (for file operations) and human tools (for feedback).
+// Phase agents only need shell_command (for file operations) and the human
+// tools explicitly admitted to Builder by AgentWorks product.yaml.
 // They do NOT need the full workspace_advanced tool set.
 func (bo *BaseOrchestrator) PreparePhaseAgentTools() ([]llmtypes.Tool, map[string]interface{}) {
+	enabledTools := []string{"workspace_advanced:execute_shell_command"}
+	enabledTools = append(enabledTools, AgentWorksChatHumanToolSelections("builder")...)
 	return FilterCustomToolsByCategory(
 		bo.WorkspaceTools,
 		bo.WorkspaceToolExecutors,
-		[]string{
-			"workspace_advanced:execute_shell_command",
-			"human_tools:*",
-		},
+		enabledTools,
 	)
 }

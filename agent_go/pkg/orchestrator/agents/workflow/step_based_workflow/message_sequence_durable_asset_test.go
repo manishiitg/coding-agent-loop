@@ -38,7 +38,7 @@ func TestMessageSequenceResearchPacketsPersistInsideGrantedAssets(t *testing.T) 
 	for _, source := range []string{"reddit", "x_twitter", "hackernews", "websearch"} {
 		t.Run(source, func(t *testing.T) {
 			sessionID := "durable-packet-" + source
-			reads, writes := hcpo.setupMessageSequenceFolderGuard("step-1-sub-"+source, source, nil, MessageSequenceWriteAccess{})
+			reads, writes := hcpo.setupMessageSequenceFolderGuard("parent/agents/"+source+"/calls/call-1", source, nil, MessageSequenceWriteAccess{})
 			common.SetSessionFolderGuard(sessionID, reads, writes)
 			configureWorkflowDBSession(sessionID, workflow, DBAccessReadWrite, false)
 			t.Cleanup(func() { common.ClearSessionShellConfig(sessionID) })

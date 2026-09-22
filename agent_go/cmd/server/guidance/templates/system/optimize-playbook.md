@@ -201,7 +201,7 @@ After running a step, review it for optimization — but follow this priority or
   - **Simple steps** (single tool call, straightforward output): leave `learning_objective` empty (the default). Learning is opt-in; simple steps don't earn their keep with the learning-agent overhead.
   - **Medium steps** (2-5 tool calls, clear pattern): Run with write access for **2-3 successful runs**, review learnings, then change to `learnings_access="read"` when new contributions become redundant.
   - **Complex steps** (many tool calls, branching logic, API interactions, error handling): Run with write access for **3-5 successful runs**. Review and curate learnings after each run — edit out noise and keep actionable patterns. Retain write access only while the step is still producing useful reusable HOW.
-  - **Sub-agent steps** (orchestrator routes): Each sub-agent has its own learning access and objective; review them independently.
+  - **Sub-agent steps** (message-sequence specialist routes, including legacy orchestrator records): Each sub-agent has its own learning access and objective; review them independently.
 - **When to stop writes**: Change to `learnings_access="read"` when the same patterns repeat across successful runs. The execution agent still consumes the curated shared learnings without paying for a contribution turn.
 - **When to resume writes**: Restore `read-write` with a concrete objective if the description/tools change materially or failures reveal new reusable HOW.
 
@@ -271,12 +271,13 @@ A step's execution mode is its plan type — `regular` is scripted, `message_seq
 - `mode="cross_step"`: use this after several contributing steps have run and the work needs a holistic view. The agent receives every step's `knowledgebase_contribution` plus step output folders from the selected run. Examples: *"reconcile company/organization naming drift across step contributions"*, *"write pattern notes for repeated shapes across per-account steps"*, *"surface contested employee-count values where two steps disagree"*.
 - Boundary: if you can describe the instruction as one concrete file/topic transformation, use `targeted`. If the justification depends on comparing multiple steps, runs, or topic files, use `cross_step`.
 
-### 9. Orchestrator (Sub-Workflow / Pipeline) — For Dynamic Delegation
-The `plan-design` reference owns step-type eligibility. Use `orchestrator` only
-when the parent makes a real runtime orchestration decision the static plan
-cannot directly express. Several routine actions do not justify an orchestrator.
+### 9. Agent with Specialists — For Dynamic Delegation
+The `plan-design` reference owns step-type eligibility. Add `predefined_routes`
+to a `message_sequence` only when the parent makes a real runtime orchestration
+decision the static plan cannot directly express. Several routine actions do not
+justify routes. `orchestrator` / `todo_task` are legacy compatibility shapes.
 
-**When to use orchestrator:**
+**When to add specialist routes:**
 - Runtime evidence determines which or how many specialist tasks are needed
 - The parent interprets evidence to decide which workers or investigations are needed
 - The parent reasons about evidence or failures and changes its strategy
@@ -284,9 +285,9 @@ cannot directly express. Several routine actions do not justify an orchestrator.
 
 Different tools/skills/servers, separate learnings, progress visibility, and
 granular debugging can help choose boundaries **after** eligibility is proven;
-none is sufficient by itself. **A fixed child set and order does not justify an `orchestrator` step.**
+none is sufficient by itself. **A fixed child set and order does not justify adaptive routes.**
 
-**When NOT to use orchestrator:**
+**When NOT to add routes:**
 - Fixed API/SDK/CLI/data acquisition and stable transforms — use coherent scripted regular fetchers
 - One substantial reasoning outcome with same-context verification and repair — use one large message_sequence
 - A known linear checklist whose items share one output/retry boundary — keep it inside the owning step rather than delegating micro-tasks
@@ -294,21 +295,20 @@ none is sufficient by itself. **A fixed child set and order does not justify an 
 - The task is **trivial** — a one-line action that doesn't benefit from learning
 
 **Sub-agent design:**
-- Break known, predictable tasks into **predefined sub-agents** (routes) rather than leaving them as inline orchestrator instructions
+- Define reusable, bounded specialists as **predefined routes** rather than copying their contracts into the parent description
 - Each sub-agent has its own **learning files**, **server/tool scoping**, **skills (via enabled_skills in step_config)**, and **validation schemas**
 - Sub-agents can be **individually debugged, re-run, and hardened** via the workshop tools
-- The orchestrator owns substantive strategy and synthesis; bounded workers handle specialist tasks. The parent may analyze and write the final report directly.
-- If one route still needs **multiple independently delegated sub-tasks with isolated contexts**, its **sub_agent_step** may be another **orchestrator** — but stop at one nested layer. A known checklist or several same-context actions stay inside one large route `message_sequence`.
+- The parent sequence agent owns substantive strategy and synthesis; bounded workers handle specialist tasks. The parent may analyze and write the final report directly.
+- If one route still needs adaptive specialist delegation, its `message_sequence` worker may declare routes — but stop at one nested layer. A known checklist or several same-context actions stay inside one large route conversation.
 
-**Design principle:** Split by durable control boundary, not action count. A scripted fetcher may perform many related calls/transforms under one source/auth/retry/output contract, and a message sequence may perform a large reasoning job plus verification/repair. Use orchestrator only when the parent owns substantive adaptive reasoning. Known script batches belong to the sequence design. Sequence child support is scoped to scripts only for now, with reasoning in the parent conversation; keep known isolated agentic work as separate plan steps. See `references/plan-design.md`, Step 2, for scripted batches and their limits. Parallelism, isolation, and completion tracking alone do not qualify.
+**Design principle:** Split by durable control boundary, not action count. A scripted fetcher may perform many related calls/transforms under one source/auth/retry/output contract, and a message-sequence agent may perform a large reasoning job plus verification/repair. Add `predefined_routes` only when that same agent owns substantive adaptive reasoning about whether, when, and how to delegate. Known script batches belong in `scripted` items; known isolated agentic work may remain explicit plan steps. Parallelism, isolation, and completion tracking alone do not justify adaptive routes. Legacy `orchestrator` / `todo_task` records are compatibility forms of the routed message-sequence agent.
 
-**Rule of thumb:** For data workflows start with scripted fetcher(s) → durable DB/file evidence → one large agentic message sequence. Add routing, human gates, or orchestrator only for real control boundaries.
+**Rule of thumb:** For data workflows start with scripted fetcher(s) → durable DB/file evidence → one large agentic message sequence. Add routing, human gates, or specialist routes only for real control boundaries.
 
-### 9a. Deterministic delegation belongs in a scripted step, not an orchestrator
+### 9a. Deterministic batches do not need specialist routes
 
-There is no scripted mode for `orchestrator`. If an orchestrator's delegation turns out to be
-a fixed set of route calls that only branches on success/failure, the orchestrator is not
-making a runtime decision and should not exist: express the fixed calls as plan steps, or
-as one regular scripted step whose `main.py` calls the routes through the workflow's
-custom-tool endpoint. That keeps the regular scripted repair loop and save-back, which the
-old orchestrator fast path never had.
+If a routed agent always calls a fixed set in a fixed order and only branches on
+success/failure, it is not making a runtime delegation decision. Express the
+work as explicit plan steps, or use a `scripted` message-sequence item for a
+declared batch of saved scripts. Keep the parent conversation only for reasoning,
+verification, and repair over those deterministic results.

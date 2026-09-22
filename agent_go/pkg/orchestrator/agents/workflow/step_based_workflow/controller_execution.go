@@ -232,50 +232,23 @@ func isValidationFailure(validationResponse *ValidationResponse) bool {
 	return validationResponse.ExecutionStatus == "FAILED"
 }
 
-// StepPathInfo contains the top-level owner and whether a path belongs to a
-// nested execution such as a todo route or sub-agent.
+// StepPathInfo contains a positional top-level step number. Nested Agent paths
+// are stable-ID paths and carry their parent index in execution context instead.
 type StepPathInfo struct {
 	ParentStepNumber  int  // 1-based top-level owner step number
 	IsNestedExecution bool // True for child route/sub-agent execution paths
 }
 
-// parseStepPath extracts the top-level owner from current execution paths.
-// Examples:
-//   - "step-1" -> {ParentStepNumber: 1, IsNestedExecution: false}
-//   - "step-2-sub-agent-1" -> {ParentStepNumber: 2, IsNestedExecution: true}
-//   - "step-2-sub-login" -> {ParentStepNumber: 2, IsNestedExecution: true}
+// parseStepPath extracts the number from a positional top-level path such as
+// "step-1". It intentionally does not recognize retired flattened child paths.
 func parseStepPath(stepPath string) StepPathInfo {
-	// Regular step pattern: "step-{number}"
 	regularStepRegex := regexp.MustCompile(`^step-(\d+)$`)
-	// Sub-agent step pattern: "step-{number}-sub-agent-{index}" or "step-{number}-sub-agent-{index}-i-{iteration}"
-	subAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-agent-(\d+)(?:-i-(\d+))?$`)
-	// Todo-task route sub-agent step pattern: "step-{number}-sub-{routeId}"
-	orchestratorSubAgentStepRegex := regexp.MustCompile(`^step-(\d+)-sub-.+$`)
-
-	if matches := subAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		parentStepNumber := 0
-		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
-		return StepPathInfo{
-			ParentStepNumber:  parentStepNumber,
-			IsNestedExecution: true,
-		}
-	} else if matches := orchestratorSubAgentStepRegex.FindStringSubmatch(stepPath); matches != nil {
-		parentStepNumber := 0
-		fmt.Sscanf(matches[1], "%d", &parentStepNumber)
-		return StepPathInfo{
-			ParentStepNumber:  parentStepNumber,
-			IsNestedExecution: true,
-		}
-	} else if matches := regularStepRegex.FindStringSubmatch(stepPath); matches != nil {
+	if matches := regularStepRegex.FindStringSubmatch(stepPath); matches != nil {
 		stepNumber := 0
 		fmt.Sscanf(matches[1], "%d", &stepNumber)
 		return StepPathInfo{ParentStepNumber: stepNumber}
 	}
-
-	// Fallback: try to extract just the step number
-	stepNumber := 0
-	fmt.Sscanf(stepPath, "step-%d", &stepNumber)
-	return StepPathInfo{ParentStepNumber: stepNumber}
+	return StepPathInfo{IsNestedExecution: strings.Contains(stepPath, string(filepath.Separator))}
 }
 
 const maxInlineFileSize = 15 * 1024  // 15 KB — inline small text files into LLM prompt
@@ -347,6 +320,12 @@ func (hcpo *StepBasedWorkflowOrchestrator) formatContextDependenciesWithContent(
 }
 
 func getArtifactFolderName(stepID string, stepPath string) string {
+	// Nested runtime artifacts carry their complete parent-relative path. Never
+	// collapse them back to the logical step ID: that would escape the owning
+	// Agent subtree and make concurrent calls overwrite one another.
+	if strings.Contains(strings.TrimSpace(stepPath), string(filepath.Separator)) {
+		return filepath.Clean(stepPath)
+	}
 	stepID = strings.TrimSpace(stepID)
 	if stepID != "" {
 		return stepID
@@ -481,20 +460,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) findExecutionPlanProducerCandidates(
 			appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, stepID, stepID), outputName))
 		}
 
-		// Backward compatibility: older runs may still have artifacts in positional step folders
-		// like execution/step-1 or execution/step-1-sub-read-credentials.
-		legacyStepPath := ""
-		if info.TopIndex > 0 {
-			legacyStepPath = fmt.Sprintf("step-%d", info.TopIndex)
-		} else {
-			infoCopy := info
-			legacyStepPath = resolveInnerStepPath(executionPlanFromContext(ctx).Steps, &infoCopy)
-		}
-		if legacyStepPath != "" {
-			for _, outputName := range outputNames {
-				appendCandidate(filepath.Join(docsRoot, getExecutionFolderPath(executionWorkspacePath, "", legacyStepPath), outputName))
-			}
-		}
 	}
 
 	return candidates

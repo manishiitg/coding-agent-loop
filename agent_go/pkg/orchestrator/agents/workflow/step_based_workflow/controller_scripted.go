@@ -946,7 +946,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) execScriptedScript(
 	}
 
 	// ExtraEnv: merge workspace env (SECRET_*, MCP_API_URL) with STEP_OUTPUT_DIR and STEP_EXECUTION_DIR.
-	stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+	stepExecutionAbsPath := stepExecutionScopeAbsPath(stepOutputAbsPath)
 	extraEnv := map[string]string{
 		"STEP_OUTPUT_DIR":         stepOutputAbsPath,
 		"STEP_EXECUTION_DIR":      stepExecutionAbsPath,

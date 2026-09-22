@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -30,7 +31,8 @@ type WorkshopExecuteOptions struct {
 // its matching logs folder. This is used for inner-step workshop runs where we need
 // targeted cleanup without touching sibling or parent step artifacts.
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupWorkshopExecutionPath(ctx context.Context, stepPath string, stepID string, includeMessageSequence bool) error {
-	return hcpo.cleanupExecutionArtifactsForStepPath(ctx, stepPath, stepID, includeMessageSequence)
+	_ = includeMessageSequence
+	return hcpo.cleanupExecutionArtifactsForStepPath(ctx, stepPath, stepID)
 }
 
 // ExecuteStepForWorkshop executes a single step by its ID for the interactive workshop phase.
@@ -202,9 +204,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) ExecuteStepForWorkshop(
 		setup.Context.SavedScriptOnly = true
 	}
 
-	// For inner steps: skip cleanup and set step path override so the inner step
-	// writes to its own folder (e.g., "step-3-sub-login-expert") instead of "step-1"
-	// which would collide with/delete the top-level step-1's output.
+	// For inner steps: skip top-level cleanup and route execution into the
+	// owning Agent's nested artifact subtree.
 	if isInnerStep {
 		hcpo.GetLogger().Info(fmt.Sprintf("[WORKSHOP-INNER] Original cleanup scope for inner step %q: CleanAll=%v, CleanFrom=%d, CleanSpecific=%d",
 			stepID, setup.Cleanup.CleanAllSteps, setup.Cleanup.CleanFromStep, setup.Cleanup.CleanSpecificStep))
@@ -568,33 +569,30 @@ func (hcpo *StepBasedWorkflowOrchestrator) loadStepResultFromLogsByPath(ctx cont
 	return "", false
 }
 
-// resolveInnerStepPath computes the execution folder path for a nested step
-// based on its parent step's position and nested location. This matches the naming convention
-// used by the normal execution pipeline:
-//   - Sub-agent routes: "step-{N}-sub-{route_id}"
-//   - Todo task step: "step-{N}-todo-task"
+// resolveInnerStepPath computes a deterministic Workshop call directory inside
+// the owning Agent subtree. Normal runtime calls use their execution id in the
+// final segment; Workshop uses the reserved "workshop" call id.
 func resolveInnerStepPath(topLevelSteps []PlanStepInterface, info *WorkshopStepInfo) string {
-	// Find parent step's 1-based position in the top-level plan
-	parentNum := 0
-	for i, s := range topLevelSteps {
+	parentID := ""
+	for _, s := range topLevelSteps {
 		if s.GetID() == info.ParentID {
-			parentNum = i + 1
+			parentID = s.GetID()
 			break
 		}
 	}
-	if parentNum == 0 {
-		// Fallback: use step ID as suffix to avoid collisions
-		return fmt.Sprintf("step-inner-%s", info.Step.GetID())
+	if parentID == "" {
+		parentID = info.ParentID
 	}
+	parentRoot := parentAgentArtifactRoot(parentID, parentID)
 
 	location := info.NestedLocation
 	switch {
 	case location == "todo_task_step":
-		return fmt.Sprintf("step-%d-todo-task", parentNum)
+		return filepath.Join(parentRoot, "agents", workflowSafeIDPart(info.Step.GetID(), "nested"), "calls", "workshop")
 	case strings.HasPrefix(location, "route:"):
 		routeID := strings.TrimPrefix(location, "route:")
-		return fmt.Sprintf("step-%d-sub-%s", parentNum, routeID)
+		return todoSubAgentArtifactFolderName(parentID, parentRoot, routeID, "workshop", isScriptedStep(info.Step, getAgentConfigs(info.Step)))
 	default:
-		return fmt.Sprintf("step-%d-inner-%s", parentNum, info.Step.GetID())
+		return filepath.Join(parentRoot, "agents", workflowSafeIDPart(info.Step.GetID(), "nested"), "calls", "workshop")
 	}
 }

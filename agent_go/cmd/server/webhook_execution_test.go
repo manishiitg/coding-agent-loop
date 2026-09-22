@@ -71,8 +71,11 @@ func TestDirectWebhookRequiresPreparedWorkflow(t *testing.T) {
 		workflowContractRunScopedRoutesVersion,
 		workflowContractEvalRetirementVersion,
 	} {
-		if err := directWebhookPreflight(&WorkflowManifest{Version: version}); err != nil {
-			t.Fatalf("execution-compatible contract %s rejected: %v", version, err)
+		if err := directWebhookPreflight(&WorkflowManifest{Version: version}); !errors.Is(err, errWorkflowUpgradePreflightBlocked) {
+			t.Fatalf("older contract %s bypassed the nested-artifact migration: %v", version, err)
 		}
+	}
+	if err := directWebhookPreflight(&WorkflowManifest{Version: WorkflowContractCurrentVersion, CodeLayoutVersion: 1}); err != nil {
+		t.Fatalf("current prepared workflow rejected: %v", err)
 	}
 }

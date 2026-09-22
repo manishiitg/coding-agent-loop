@@ -21,7 +21,9 @@ first and plan to repair the graph afterward.
 agents can own many actions and long tool sessions, so the strongest shape is
 one conversation that completes the coherent span and then proves it in
 follow-up items: `[do the whole span] → [re-open evidence and prove every
-criterion] → [repair gaps and double-check]`. Improve the description,
+criterion] → [repair gaps and double-check]`. Put the stable objective,
+boundaries, and definition of done in the system-level `description`; put those
+execution and verification instructions in `items[]` as user turns. Improve the charter,
 run-specific proof/provenance output, top-level `validation_schema`, and
 verify/repair turns before adding another step. A request for more checking is
 not itself a step boundary.
@@ -30,9 +32,9 @@ Use multiple large sequences when their contexts should not be shared: distinct
 credentials/security exposure, independent durable outputs or retries,
 clean-room independence, human/routing boundaries, or unrelated context that
 would distract or contaminate the next agent. The builder must decide this from
-the workflow semantics and be able to state the boundary. Use `regular` for a
-coherent one-turn outcome with no same-context repair loop, or for deterministic
-work that must be scripted. Every producing step still needs a
+the workflow semantics and be able to state the boundary. Use `regular` only for
+deterministic work implemented as a saved script. Every conversational or
+judgment-heavy outcome, including one turn, uses `message_sequence`. Every producing step still needs a
 `validation_schema`; context flow stays forward-only via
 `context_dependencies` → `context_output`.
 
@@ -40,22 +42,23 @@ For a fixed choice the user already gave the builder, prefer a deterministic
 switch instead of asking again — `branch` for a small in-flow decision,
 `routing` when the choice forks into a major, self-contained sub-workflow —
 and pass `route_selections` when running either.
-Use `orchestrator` only when independent sub-agent delegation itself adds value;
-several known actions in one shared context are not enough. Do not add a
+Add `predefined_routes` to a `message_sequence` only when the agent must choose
+specialist work adaptively from runtime evidence; several known actions in one
+shared context are not enough. Legacy `orchestrator` / `todo_task` records are
+compatibility shapes for this routed agent. Do not add a
 `human_input` step just to ask the same branch choice again.
 
 ## Step types
 
-- **`message_sequence`** (default for reasoning) — one substantial outcome
-  sharing one conversation: process persisted evidence, then verify/fix in
-  focused follow-up user messages
+- **`message_sequence`** (canonical agent step) — a system-level description
+  charter plus ordered user-message items in one conversation; optional
+  `predefined_routes` expose bounded specialists the agent chooses adaptively
 - **`regular`** — a scripted deterministic boundary for API/SDK/CLI fetching,
   parsing, normalization, and mechanical persistence; batch related calls
   rather than making micro-steps. Conversational work uses `message_sequence`,
   even for one turn
-- **`orchestrator`** — orchestrator with `predefined_routes`; each route
-  is `message_sequence` / `regular` / nested `orchestrator` (1 level
-  deep only)
+- **`orchestrator` / `todo_task`** — legacy compatibility records for a
+  `message_sequence` with `predefined_routes`; do not author new plans in this shape
 - **`routing`** — choose next step from a fixed route map; a major,
   self-contained sub-workflow fork
 - **`branch`** — same deterministic route-map mechanics as `routing`, for a
@@ -72,8 +75,8 @@ step-types reference, inner steps, reusable orphan-route pattern),
 call **`read_skill(skills=[{"name":"builder-reference","path":"references/plan-design.md"}])`** — this is the entry
 point for any plan-composition decision. From there:
 
-- **Per-step-type deep dives**: `orchestrator` (anatomy + routes +
-  nested + scripted routes), `human-input` (input types + routing
+- **Per-step-type deep dives**: `orchestrator` (legacy compatibility + route
+  migration), `human-input` (input types + routing
   pairing + unattended schedules), `message-sequence` (full pattern
   catalog: Stateful Specialist, Test/Fix Loop, Maker+Reviewer, Panel,
 	  Clean-Room Retry, HITL Re-entry, Scripted Conversation), `routing`

@@ -11,8 +11,7 @@ import (
 // silently diverge from the source the builder reads before authoring a step.
 func TestStepRuntimeUsesBuilderPromptSource(t *testing.T) {
 	for name, runtime := range map[string]*template.Template{
-		"execution":    executionOnlySystemTemplate,
-		"orchestrator": orchestratorSystemTemplate,
+		"execution": executionOnlySystemTemplate,
 	} {
 		if runtime.Tree.Root.String() != guidance.StepSystemPromptTemplate(name) {
 			t.Fatalf("%s runtime diverged from builder-reference/step-system-prompts", name)

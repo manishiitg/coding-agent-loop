@@ -10,6 +10,11 @@ capabilities, not a prescribed checklist: the sequence agent receives
 specialist. With no routes it remains a single-agent sequence. Legacy
 `orchestrator` steps are still read and run for compatibility.
 
+Routed and non-routed sequences use the same execution system prompt and the
+same default tool policy. Declaring routes does not switch the sequence to a
+different agent profile; it only appends delegation guidance and enables the
+sub-agent lifecycle tools.
+
 The preferred shape is: complete the whole span, re-open authoritative evidence and prove every criterion, repair verified gaps, then double-check before the top-level validation gate. Require run-specific proof/provenance in the output. Use multiple large sequences only when contexts should not be shared because of security/credentials, independently rerunnable outputs or failure domains, clean-room independence, human/routing boundaries, or context contamination.
 
 Supported item types:
@@ -68,7 +73,9 @@ Deterministic code is not a sequence item. Put code in a standalone `regular` st
 }
 ```
 
-The step `description` is turn 0. Items are turns 1 through N.
+The step `description` is the system-level charter shared by every turn. Items
+are the actual user messages, in order, describing how the agent should carry
+out and verify that charter.
 
 The top-level `validation_schema` is the sequence's final contract. When it is present, the runtime automatically runs it after the configured work turns and before synthetic learning/knowledge closing turns. A failed gate is returned to the same conversation as a repair turn and retried. Explicit `prevalidation` items are only needed for intermediate checkpoints; a final explicit gate with the same schema is not run twice.
 
@@ -117,7 +124,29 @@ regular scripted: fetch-and-normalize-authoritative-data
   -> message_sequence: analyze-verify-and-repair-from-fetched-data
 ```
 
-The scripted step owns `learnings/fetch-and-normalize-authoritative-data/main.py`, batches related deterministic API/SDK calls or CLI commands under one source/auth/retry/output contract, and writes validated DB rows or an explicit output artifact with provenance and freshness. This makes failures, retries, permissions, logs, and costs visible at the workflow-step level. The message sequence consumes those results for judgment, synthesis, semantic verification, and repair; it does not re-fetch or re-parse stable response shapes conversationally.
+The scripted step owns `code/fetch-and-normalize-authoritative-data/main.py`, batches related deterministic API/SDK calls or CLI commands under one source/auth/retry/output contract, and writes validated DB rows or an explicit output artifact with provenance and freshness. Its working directory is its own `code/<step-id>/` directory. This makes failures, retries, permissions, logs, and costs visible at the workflow-step level. The message sequence consumes those results for judgment, synthesis, semantic verification, and repair; it does not re-fetch or re-parse stable response shapes conversationally.
+
+## Runtime artifact layout
+
+An Agent step owns one artifact subtree:
+
+```text
+runs/<run>/execution/<parent-step>/
+├── <parent outputs>
+├── shared/
+├── agents/<route-id>/
+│   ├── session.json
+│   └── calls/<call-id>/
+└── scripts/
+    ├── items/<item-id>/calls/<call-id>/
+    └── routes/<route-id>/calls/<call-id>/
+```
+
+Each child receives its call directory as `STEP_OUTPUT_DIR` and may collaborate
+through the owning parent subtree. A script always executes
+`code/<script-step-id>/main.py` with `code/<script-step-id>/` as its working
+directory. There is no fallback to flattened sub-agent, `message_sequences`,
+or older scripted-item artifact paths; workflows on older contracts must migrate.
 
 When call selection requires judgment, use an agentic request-specification step before the scripted executor and a later message sequence to interpret the result. Do not create one scripted step per endpoint or tiny transform.
 

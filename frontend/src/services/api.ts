@@ -35,6 +35,7 @@ import { GATEWAY_LOGIN_HEADER, gatewayLoginTarget, redirectToGatewayLogin } from
 import { apiTimingPathFor, recordApiTiming, sanitizeApiBody } from '../utils/apiTiming'
 import { retryUncertainChatSubmission } from './uncertainSubmissionRetry'
 import { retryTurnRunningSubmission } from './turnRunningRetry'
+import { configureChatDeliveryTelemetryTransport } from '../utils/chatDeliveryTelemetry'
 import type {
   AgentQueryRequest,
   AgentQueryResponse,
@@ -654,6 +655,13 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+configureChatDeliveryTelemetryTransport(async batch => {
+  await api.post('/api/client-telemetry/chat-delivery', batch, {
+    headers: { 'X-Session-ID': batch.events[0]?.session_id || '' },
+    timeout: 5000,
+  })
+})
 
 // Helper to extract user ID from JWT token
 function getUserIdFromToken(token: string): string | null {

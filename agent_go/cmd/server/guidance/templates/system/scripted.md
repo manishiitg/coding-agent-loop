@@ -9,7 +9,8 @@ Do not create an agentic regular step: every new conversational or judgment-heav
 steps are normalized to a one-turn message sequence at runtime; they never use the removed
 direct regular-agent path. See `read_skill(skills=[{"name":"builder-reference","path":"references/message-sequence.md"}])`.
 Use the others for branching (`branch` for a small in-flow decision, `routing` for a major
-sub-workflow fork), sub-agent coordination (`orchestrator`), or operator input (`human_input`).
+sub-workflow fork), adaptive specialist coordination (`message_sequence` with
+`predefined_routes`), or operator input (`human_input`).
 
 ## When to use
 
@@ -36,9 +37,9 @@ for the exact item schema, permissions, parallelism, Stop behavior, and limits.
 
 ## Anatomy
 
-- `description` — the executable instruction/prompt for the step agent, not metadata. Resolved variable values are available as `$VAR_*`.
+- `description` — the durable system-level contract for what the saved script must accomplish, not a per-run user instruction. Resolved variable values are available as `$VAR_*`.
 - `script_parameters` — the optional, typed public input contract for direct execution,
-  orchestrator routes, or message-sequence scripted batches. Each named parameter declares `type`,
+  routed message-sequence specialists, or message-sequence scripted batches. Each named parameter declares `type`,
   `description`, and optionally `required`, `default`, and `enum`. These are non-secret
   per-call values; credentials still belong in Secrets. The builder defines this contract
   with the step, and `main.py` reads the validated object from `STEP_PARAMS_JSON`.
@@ -66,7 +67,7 @@ Preferred data shape: `regular scripted fetcher(s) → message_sequence processo
 
 Use parameters—not rewritten code or free-form delegation prose—when one reusable script
 needs controlled variation between calls. Direct execution, sequence batches, and
-orchestrator routes share the saved step's parameter contract:
+routed agent calls share the saved step's parameter contract:
 
 ```json
 "script_parameters": {
@@ -95,7 +96,7 @@ for `context_dependencies`.
   modify those values at runtime; no template/environment-variable expansion or
   binding from earlier conversation results is implemented. There is no child
   LLM or automatic repair for sequence script calls.
-- **Orchestrator:** read the route description, then call `call_scripted_sub_agent`
+- **Agent with routes:** read the route description, then call `call_scripted_sub_agent`
   with `parameters` matching this contract. That tool has no `instructions`
   argument. If this route enters its existing repair path, preserve the declared
   parameter interface and current validated values.
@@ -109,7 +110,7 @@ steps and rejects invalid values before registering background execution.
 
 - Branching on a decision or run flag → **`branch`** (small in-flow decision) or **`routing`**
   (major, self-contained sub-workflow fork).
-- Owning an adaptive strategy that interprets evidence and chooses subsequent work → **`orchestrator`**. A known script batch belongs in a message sequence; worker count alone does not justify an orchestrator.
+- Owning an adaptive strategy that interprets evidence and chooses subsequent specialist work → **`message_sequence` with `predefined_routes`**. A known script batch belongs in a `scripted` item; worker count alone does not justify routes.
 - Same-context ordered turns, a stateful conversation, self-validation/grounding
   gate, or stepping through a db array row-by-row → **`message_sequence`**
   (incl. its `foreach` item).
@@ -134,8 +135,8 @@ Each saved-script attempt is retained in the execution log directory as `scripte
 - Narrative branching in the description ("if X do A else B") — use a `branch` or `routing` step.
 - Choosing an agent merely because there are many records. Deterministic row processing
   can stay in a saved script. Use SQL `foreach` in `references/message-sequence.md`
-  when every selected row needs a conversational turn; use `references/orchestrator.md`
-  when the parent must reason about the investigation or strategy.
+  when every selected row needs a conversational turn; add `predefined_routes`
+  when the parent must adaptively choose bounded specialists for the investigation.
 - Missing or weak `validation_schema` — every step needs one strong enough that a
   bad/absent output fails it.
 

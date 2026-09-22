@@ -64,7 +64,7 @@ func getUpdateStepConfigParameters() map[string]interface{} {
 			"enabled_custom_tools": map[string]interface{}{
 				"type":        "array",
 				"items":       map[string]interface{}{"type": "string"},
-				"description": "Workspace/custom tools to enable (format: 'category:tool' or 'category:*'). Categories: workspace_advanced (execute_shell_command, diff_patch_workspace_file, read_image, generate_text_llm, search_web_llm), human_tools (human_feedback, notify_user), workspace_browser (agent_browser). Example: ['workspace_advanced:execute_shell_command', 'workspace_advanced:diff_patch_workspace_file']",
+				"description": "Optional workspace/custom tools to add (format: 'category:tool' or 'category:*'). Every execution agent already receives workspace_advanced plus the narrow human baseline: human_feedback, notify_user, and create_human_input_request. Name any additional human tool explicitly. Legacy human_tools:* is normalized to the same three-tool baseline and does not grant the complete category. workspace_browser:agent_browser enables browser automation.",
 			},
 			"enabled_skills": map[string]interface{}{
 				"type":        "array",
@@ -514,26 +514,6 @@ func createUpdateStepConfigExecutor(runtime stepConfigToolRuntime, logger logger
 				}
 			}
 
-			// 5b. Ensure required workspace tools are present (execute_shell_command, diff_patch_workspace_file)
-			existingSet := make(map[string]bool, len(targetConfig.AgentConfigs.EnabledCustomTools))
-			for _, t := range targetConfig.AgentConfigs.EnabledCustomTools {
-				existingSet[t] = true
-			}
-			if !existingSet["workspace_advanced:*"] {
-				required := map[string]string{
-					"workspace_advanced:execute_shell_command":     "execute_shell_command",
-					"workspace_advanced:diff_patch_workspace_file": "diff_patch_workspace_file",
-				}
-				var missing []string
-				for key, name := range required {
-					if !existingSet[key] {
-						missing = append(missing, name)
-					}
-				}
-				if len(missing) > 0 {
-					errors = append(errors, fmt.Sprintf("Required workspace tools missing from enabled_custom_tools: %v. These are essential for every step (file operations, script execution). Add them as 'workspace_advanced:<tool_name>' or use 'workspace_advanced:*' to include all.", missing))
-				}
-			}
 		}
 
 		// 6. Validate learning config consistency.
@@ -752,7 +732,7 @@ func externalPlanToolRegistry() []externalPlanTool {
 		add("update_human_input_step", "Update an existing human input step.", getUpdateHumanInputStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createUpdateHumanInputStepExecutor(r.workspacePath, l, r.readFile, r.writeFile)
 		})
-		add("update_orchestrator_step", "Update an existing orchestrator step.", getUpdateOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
+		add("update_orchestrator_step", "Update an existing legacy orchestrator compatibility record; new adaptive agents use message_sequence with predefined_routes.", getUpdateOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createUpdateOrchestratorStepExecutor(r.workspacePath, l, r.readFile, r.writeFile)
 		})
 		add("update_crew_step", "Update an existing crew step.", getUpdateCrewStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
@@ -761,7 +741,7 @@ func externalPlanToolRegistry() []externalPlanTool {
 		add("add_scripted_step", "Add a scripted step to an existing plan.", getAddRegularStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddRegularStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
-		add("add_message_sequence_step", "Add a conversational message sequence step.", getAddMessageSequenceStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
+		add("add_message_sequence_step", "Add an agent step whose description is the system charter and whose items are user turns; optional predefined_routes enable adaptive specialist delegation.", getAddMessageSequenceStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddMessageSequenceStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
 		add("add_routing_step", "Add a routing step.", getAddRoutingStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
@@ -773,7 +753,7 @@ func externalPlanToolRegistry() []externalPlanTool {
 		add("add_human_input_step", "Add a human input step.", getAddHumanInputStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddHumanInputStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
-		add("add_orchestrator_step", "Add an orchestrator step.", getAddOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
+		add("add_orchestrator_step", "Legacy compatibility action; new adaptive agents use add_message_sequence_step with predefined_routes.", getAddOrchestratorStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {
 			return createAddOrchestratorStepExecutor(r.workspacePath, l, r.readFile, r.writeFile, r.moveFile)
 		})
 		add("add_crew_step", "Add a crew step.", getAddCrewStepSchema(), func(r *externalPlanRuntime, l loggerv2.Logger) externalPlanExecutor {

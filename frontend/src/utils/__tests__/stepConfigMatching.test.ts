@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   effectiveExecutionMode,
   effectiveExecutionModeReason,
+  effectiveAgentItems,
   effectiveMessageSequenceItems,
   runsAsMessageSequence,
   type PlanStep,
@@ -65,5 +66,33 @@ describe('effectiveExecutionMode', () => {
   it('treats a plan step without a type as the legacy default, regular', () => {
     expect(effectiveExecutionMode({ agent_configs: {} })).toBe('scripted')
     expect(effectiveExecutionMode(undefined)).toBeUndefined()
+  })
+})
+
+describe('effectiveAgentItems', () => {
+  it('presents legacy orchestrator messages as the canonical Agent queue', () => {
+    const step: PlanStep = {
+      id: 'legacy-agent',
+      type: 'orchestrator',
+      title: 'Legacy agent',
+      messages: [
+        { id: 'ask', type: 'message', message: 'Inspect the workspace.' },
+        { id: 'gate', type: 'prevalidation', validation_schema: { files: [] } },
+        { id: 'rows', type: 'foreach', source: 'tasks.json', source_path: 'tasks', message: 'Process the row.' },
+      ],
+    }
+
+    expect(effectiveAgentItems(step).map(item => item.type)).toEqual([
+      'user_message',
+      'prevalidation',
+      'foreach',
+    ])
+  })
+
+  it('gives a legacy agent without messages the runtime-compatible execution turn', () => {
+    const step: PlanStep = { id: 'legacy-agent', type: 'todo_task', title: 'Legacy agent' }
+    expect(effectiveAgentItems(step)).toMatchObject([
+      { id: 'execute-step-charter', type: 'user_message' },
+    ])
   })
 })

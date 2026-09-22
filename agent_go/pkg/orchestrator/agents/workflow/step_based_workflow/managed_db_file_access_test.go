@@ -33,7 +33,7 @@ func TestManagedStepDBFileAccessP0(t *testing.T) {
 			} else {
 				reads, writes = hcpo.setupOrchestratorFolderGuard(&OrchestratorPlanStep{
 					Type: StepTypeOrchestrator, CommonStepFields: CommonStepFields{ID: "test-step"}, AgentConfigs: config,
-				})
+				}, "step-1")
 			}
 			for _, path := range append(append([]string{}, reads...), writes...) {
 				if !strings.HasPrefix(path, root+string(os.PathSeparator)) {

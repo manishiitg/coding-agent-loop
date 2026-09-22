@@ -6,9 +6,9 @@ import (
 )
 
 func TestOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing.T) {
-	agent := &WorkflowOrchestratorAgent{}
+	agent := &WorkflowExecutionOnlyAgent{}
 
-	prompt := agent.orchestratorSystemPromptProcessor(map[string]string{
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
 		"CurrentTodos":          "",
 		"ProgressSummary":       "",
 		"VariableNames":         "",
@@ -34,12 +34,14 @@ func TestOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing.T) {
 	})
 
 	requiredSnippets := []string{
-		"**Sub-agent tool rule**:",
-		"Prefer calling these sub-agent tools directly only when they are actually listed as provider-callable tools in this session.",
-		"In bridge-only CLI sessions where only the documented api-bridge tools are native, sub-agent tools are dynamic custom tools:",
+		"# Step Execution Agent",
+		"## Specialist Delegation",
+		"call_sub_agent",
+		"Prefer direct sub-agent tools whenever the provider exposes them.",
+		"in a bridge-only CLI session",
 		"**CODE EXECUTION MODE — Access MCP Tools via HTTP API:**",
 		"{{TOOL_STRUCTURE}}",
-		"MCP_CUSTOM and MCP_AUTH",
+		"`MCP_CUSTOM` / `MCP_AUTH`",
 		"get_api_spec(tool_name=\"...\")",
 	}
 	for _, snippet := range requiredSnippets {
@@ -50,9 +52,9 @@ func TestOrchestratorPromptIncludesSharedCodeExecutionSection(t *testing.T) {
 }
 
 func TestOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) {
-	agent := &WorkflowOrchestratorAgent{}
+	agent := &WorkflowExecutionOnlyAgent{}
 
-	prompt := agent.orchestratorSystemPromptProcessor(map[string]string{
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
 		"ShowToolsSection":    "true",
 		"IsCodeExecutionMode": "false",
 		"PredefinedRoutes":    "- route-sequence",
@@ -60,17 +62,17 @@ func TestOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) {
 
 	requiredSnippets := []string{
 		"[AUTO-NOTIFICATION] SUB-AGENT COMPLETION BATCH",
-		"**Message sequence routes**:",
+		"### Message sequence routes",
 		"Step type: message_sequence",
-		"First call starts the route conversation",
-		"instructions are added as initial context",
-		"Later calls to the same route resume",
+		"first call starts its configured queue",
+		"instructions as initial",
+		"Later calls to that route resume",
 		"instructions become the re-entry user message",
 		"message_sequence_restart=true",
-		"configured queue is replayed from the beginning",
+		"replay the configured queue from the beginning",
 		"query_sub_agent(execution_id)",
 		"stop_sub_agent(execution_id)",
-		"never poll it to detect normal completion",
+		"never to poll",
 	}
 	for _, snippet := range requiredSnippets {
 		if !strings.Contains(prompt, snippet) {
@@ -80,13 +82,13 @@ func TestOrchestratorPromptDocumentsMessageSequenceRoutes(t *testing.T) {
 }
 
 func TestOrchestratorPromptRoutesConsequentialEvidenceToPulseReview(t *testing.T) {
-	agent := &WorkflowOrchestratorAgent{}
-	prompt := agent.orchestratorSystemPromptProcessor(map[string]string{})
+	agent := &WorkflowExecutionOnlyAgent{}
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{})
 
 	for _, want := range []string{
 		"## Completion",
-		"Technical Review evaluates consequential non-fatal evidence directly",
-		"emit a separate concern protocol",
+		"Pulse Technical Review reads retained outputs",
+		"do not emit a `CONCERNS:` line",
 		"STATUS: COMPLETED",
 		"STATUS: FAILED",
 	} {
@@ -94,14 +96,30 @@ func TestOrchestratorPromptRoutesConsequentialEvidenceToPulseReview(t *testing.T
 			t.Fatalf("todo-task prompt missing concern handoff %q:\n%s", want, prompt)
 		}
 	}
-	if strings.Contains(prompt, "CONCERNS:") {
-		t.Fatalf("todo-task prompt must not revive the retired free-text concern protocol:\n%s", prompt)
+}
+
+func TestDelegatingAndPlainMessageSequencesShareSystemPromptBase(t *testing.T) {
+	plain := (&WorkflowExecutionOnlyAgent{}).executionOnlySystemPromptProcessor(map[string]string{})
+	delegating := (&WorkflowExecutionOnlyAgent{}).executionOnlySystemPromptProcessor(map[string]string{
+		"PredefinedRoutes": "- specialist (`specialist`) — type: `message_sequence`",
+	})
+
+	for name, prompt := range map[string]string{"plain": plain, "delegating": delegating} {
+		if !strings.HasPrefix(prompt, "# Step Execution Agent") {
+			t.Fatalf("%s sequence does not use the common agent prompt:\n%s", name, prompt)
+		}
+	}
+	if strings.Contains(plain, "## Specialist Delegation") {
+		t.Fatalf("plain sequence unexpectedly received delegation guidance:\n%s", plain)
+	}
+	if !strings.Contains(delegating, "## Specialist Delegation") {
+		t.Fatalf("delegating sequence did not receive the conditional delegation overlay:\n%s", delegating)
 	}
 }
 
 func TestOrchestratorCLIPromptUsesProjectedWorkflowLearnings(t *testing.T) {
-	agent := &WorkflowOrchestratorAgent{}
-	prompt := agent.orchestratorSystemPromptProcessor(map[string]string{
+	agent := &WorkflowExecutionOnlyAgent{}
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
 		"UseProjectedReferenceSkills": "true",
 		"LearningHistory":             "legacy recursive inventory that must not be rendered",
 		"CurrentTodos":                "- [ ] inspect the application\n- [ ] verify the result",
@@ -156,15 +174,15 @@ func TestFormatMessageSequenceRoutePromptBlock(t *testing.T) {
 	}
 }
 
-func TestOrchestratorUserPromptIncludesWorkshopHumanInput(t *testing.T) {
-	agent := &WorkflowOrchestratorAgent{}
+func TestDelegatingAgentUserPromptIncludesWorkshopHumanInput(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
 
-	prompt := agent.orchestratorUserMessageProcessor(map[string]string{
+	prompt := agent.executionOnlyUserMessageProcessor(map[string]string{
 		"StepTitle":           "Investigate RCA",
 		"StepDescription":     "Gather evidence and synthesize.",
 		"StepSuccessCriteria": "Answer is complete.",
 		"WorkshopHumanInput":  "focus on production incidents from the last hour",
-	}, nil)
+	})
 
 	requiredSnippets := []string{
 		"## Human Input (Highest Priority)",

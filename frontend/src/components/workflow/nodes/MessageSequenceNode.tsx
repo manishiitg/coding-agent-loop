@@ -36,6 +36,8 @@ const statusIcons: Record<string, ReactElement | null> = {
   pending: null,
   running: <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />,
   executing: <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />,
+  evaluating: <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />,
+  orchestrating: <Loader2 className="w-4 h-4 text-violet-500 animate-spin" />,
   completed: <CheckCircle className="w-4 h-4 text-green-500" />,
   failed: <XCircle className="w-4 h-4 text-red-500" />
 }
@@ -131,7 +133,7 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
       )}
 
       {/* Top handle */}
-      <Handle type="target" position={Position.Top} className={`w-3 h-3 ${modeHandleColor}`} />
+      <Handle id="top" type="target" position={Position.Top} className={`w-3 h-3 ${modeHandleColor}`} />
 
       {/* Header */}
       <div className="px-4 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between">
@@ -151,6 +153,11 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {(data.parentOrchestratorTitle || data.routeName) && (
+            <span className="text-[10px] font-medium text-violet-700 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/30 rounded px-1.5 py-0.5">
+              Specialist
+            </span>
+          )}
           {(predefined_routes?.length ?? 0) > 0 && (
             <span className="text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-100 dark:bg-cyan-900/30 rounded px-1.5 py-0.5 flex items-center gap-1">
               <Bot className="w-3 h-3" />

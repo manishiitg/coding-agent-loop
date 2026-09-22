@@ -46,8 +46,8 @@ import { useWorkflowStore } from '../../../stores/useWorkflowStore'
 import { useWorkspaceStore } from '../../../stores/useWorkspaceStore'
 import { useChatStore } from '../../../stores/useChatStore'
 import { agentApi } from '../../../services/api'
-import type { PlanStep, MessageSequenceItem } from '../../../utils/stepConfigMatching'
-import { effectiveExecutionMode, effectiveExecutionModeReason, isCrewStep } from '../../../utils/stepConfigMatching'
+import type { PlanStep } from '../../../utils/stepConfigMatching'
+import { effectiveAgentItems, effectiveExecutionMode, effectiveExecutionModeReason, isCrewStep } from '../../../utils/stepConfigMatching'
 import { CrewStepDetailSection } from './CrewStepDetailSection'
 import {
   WORKFLOW_PLAN_STEP_FOCUS_EVENT,
@@ -69,7 +69,7 @@ const PNG_EXPORT_MAX_PIXELS = 64_000_000
 // (custom drag positions from the old editor) are dropped and the new computed
 // layout takes over. 2.8-wide-route-lanes: each major route gets its own
 // column; route segments follow execution order.
-const WORKFLOW_LAYOUT_VERSION = '2.8-wide-route-lanes'
+const WORKFLOW_LAYOUT_VERSION = '2.9-unified-agent-nodes'
 const FLOW_FIT_PADDING = 0.24
 const FLOW_FIT_MIN_ZOOM = 0.08
 const FLOW_FIT_MAX_ZOOM = 0.95
@@ -757,11 +757,10 @@ function ReadOnlyStepDetailPanel({
   const type = planStepTypeLabel(rawType)
   const routes = step?.type === 'routing' || step?.type === 'branch'
     ? step.routes
-    : (step?.type === 'todo_task' || step?.type === 'orchestrator')
+    : (step?.type === 'todo_task' || step?.type === 'orchestrator' || step?.type === 'message_sequence')
       ? step.predefined_routes
       : undefined
-  const todoMessages = (step?.type === 'todo_task' || step?.type === 'orchestrator') ? step.messages : undefined
-  const sequenceItems = (step ? (step as { items?: MessageSequenceItem[] }).items : undefined) || undefined
+  const sequenceItems = step && node.type === 'message_sequence' ? effectiveAgentItems(step) : undefined
   const validationSchema = step?.validation_schema || ('validation_schema' in data ? data.validation_schema : undefined)
   const agentConfigs = step?.agent_configs
   const declaredExecutionMode = effectiveExecutionMode(step)
@@ -889,58 +888,12 @@ function ReadOnlyStepDetailPanel({
           </DetailSection>
         )}
 
-        {todoMessages?.length ? (
-          <DetailSection icon={ListOrdered} title={`Scripted Sequence (${todoMessages.length})`}>
-            <p className="mb-2 text-xs text-muted-foreground">Ordered turns fed into the orchestrator&apos;s own conversation after its first turn.</p>
-            <ol className="space-y-2">
-              {todoMessages.map((msg, index) => {
-                const kind = msg.type || 'message'
-                const chipClass =
-                  kind === 'prevalidation' ? 'bg-amber-500/15 text-amber-600 dark:text-amber-400'
-                    : kind === 'foreach' ? 'bg-violet-500/15 text-violet-600 dark:text-violet-400'
-                      : 'bg-blue-500/15 text-blue-600 dark:text-blue-400'
-                return (
-                  <li key={msg.id || index} className="rounded-md border border-border bg-muted/25 p-2">
-                    <div className="mb-1 flex items-center gap-2">
-                      <span className="inline-flex h-4 w-4 shrink-0 items-center justify-center rounded-full bg-muted-foreground/20 text-[10px] font-semibold text-foreground/70">{index + 1}</span>
-                      <span className={`rounded px-1.5 py-0.5 font-mono text-[10px] uppercase ${chipClass}`}>{kind}</span>
-                      {msg.id && <span className="truncate font-mono text-[10px] text-muted-foreground">{msg.id}</span>}
-                    </div>
-                    {kind === 'foreach' ? (
-                      <div className="space-y-1 text-xs text-foreground/85">
-                        <div>
-                          For each row in <span className="font-mono text-foreground">{msg.source || '—'}</span>
-                          {msg.source_path ? <> at <span className="font-mono text-foreground">{msg.source_path}</span></> : null}
-                          {msg.max_iterations ? <> (max {msg.max_iterations})</> : null}:
-                        </div>
-                        {msg.message && <div className="rounded bg-muted/40 px-2 py-1 leading-relaxed text-foreground/80">{msg.message}</div>}
-                      </div>
-                    ) : kind === 'prevalidation' ? (
-                      <div className="space-y-1 text-xs text-foreground/85">
-                        <div className="text-muted-foreground">
-                          Validation gate{typeof msg.max_corrections === 'number' ? ` · up to ${msg.max_corrections} correction${msg.max_corrections === 1 ? '' : 's'}` : ''}
-                        </div>
-                        {msg.validation_schema && (
-                          <pre className="overflow-x-auto whitespace-pre-wrap rounded bg-muted/40 px-2 py-1 font-mono text-[10px] leading-relaxed text-foreground/70">{formatJson(msg.validation_schema)}</pre>
-                        )}
-                      </div>
-                    ) : (
-                      msg.message ? <div className="text-xs leading-relaxed text-foreground/85">{msg.message}</div> : null
-                    )}
-                  </li>
-                )
-              })}
-            </ol>
-          </DetailSection>
-        ) : null}
-
         {sequenceItems?.length ? (
           <DetailSection icon={ListOrdered} title={`Agent instructions (${sequenceItems.length})`}>
             <p className="mb-2 text-xs text-muted-foreground">Ordered items the step runs top to bottom.</p>
             <ol className="space-y-2">
               {sequenceItems.map((item, index) => {
-                // Normalize so it reads consistently with the node card and the
-                // orchestrator's scripted messages ("message", not "user message").
+                // Normalize so it reads consistently with the Agent node card.
                 const kind = (!item.type || item.type === 'user_message') ? 'message' : item.type
                 const subKind = item.kind && item.kind !== 'execution' ? item.kind : undefined
                 const chipClass =

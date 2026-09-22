@@ -326,9 +326,9 @@ func TestOrchestratorEligibilityStaysConsistentAcrossGuidance(t *testing.T) {
 	}
 	for _, want := range []string{
 		"real runtime orchestration decision",
-		"A fixed child set and order does not justify an `orchestrator` step",
-		"supporting properties after this eligibility gate",
-		"known independent fixed work belongs in explicit plan steps/dependencies",
+		"A fixed child set and order does not justify adaptive delegation",
+		"Routes are bounded capabilities",
+		"predetermined isolated agentic tasks can remain explicit plan steps",
 	} {
 		if !containsNormalizedText(canonical, want) {
 			t.Fatalf("canonical design-plan guidance missing %q", want)
@@ -337,7 +337,7 @@ func TestOrchestratorEligibilityStaysConsistentAcrossGuidance(t *testing.T) {
 
 	for _, kind := range []string{"plan-design", "orchestrator", "optimize-playbook"} {
 		doc := RenderSystemDoc(kind)
-		if !containsNormalizedText(doc, "fixed child set and order does not justify an `orchestrator` step") {
+		if !containsNormalizedText(doc, "fixed child set and order does not justify adaptive routes") {
 			t.Fatalf("%s guidance weakened the canonical fixed-child invariant", kind)
 		}
 	}

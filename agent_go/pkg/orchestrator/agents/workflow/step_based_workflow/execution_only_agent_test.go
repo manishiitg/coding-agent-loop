@@ -163,7 +163,7 @@ func TestExecutionOnlyPromptsTreatSkillAsAdvisory(t *testing.T) {
 	})
 	systemSnippets := []string{
 		"Treat learnings/skill content as advisory guidance from previous runs",
-		"the current step description, orchestrator instructions, and human input are the source of truth",
+		"the system-level Step Charter and current user message (including any parent-agent or human input) are the source of truth",
 	}
 	for _, snippet := range systemSnippets {
 		if !strings.Contains(systemPrompt, snippet) {
@@ -284,6 +284,33 @@ func TestContributionTurnUserMessageDropsExecutionScaffolding(t *testing.T) {
 	for _, want := range []string{"Execution Checklist", "Create the output file", "### Inputs", "### Output"} {
 		if !strings.Contains(normal, want) {
 			t.Fatalf("a normal execution turn must keep its scaffolding %q:\n%s", want, normal)
+		}
+	}
+}
+
+func TestExecutionOnlyUserMessagePreservesSequenceFollowUp(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	want := "Now verify the specialist result and repair any remaining gap."
+	got := agent.executionOnlyUserMessageProcessor(map[string]string{
+		"StepDescription": "opening task that must not be replayed",
+		"FollowUpMessage": want,
+	})
+	if got != want {
+		t.Fatalf("follow-up message = %q, want verbatim %q", got, want)
+	}
+}
+
+func TestExecutionOnlySystemPromptContainsStepCharter(t *testing.T) {
+	agent := &WorkflowExecutionOnlyAgent{}
+	prompt := agent.executionOnlySystemPromptProcessor(map[string]string{
+		"StepTitle":               "Research the account",
+		"StepDescription":         "Produce an evidence-backed account brief and fail closed when sources disagree.",
+		"StepContextDependencies": "- account.json — resolved dependency",
+	})
+
+	for _, want := range []string{"## Step Charter", "**Title:** Research the account", "Produce an evidence-backed account brief", "## Declared Inputs", "account.json — resolved dependency"} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("system prompt missing step charter content %q:\n%s", want, prompt)
 		}
 	}
 }

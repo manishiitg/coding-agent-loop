@@ -61,6 +61,16 @@ describe('shared transcript failure retry', () => {
     expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')).toBeNull()
   })
 
+  it('renders Claude empty thinking activity as a live indicator without a blank body', async () => {
+    const host = await mount([event('claude-thinking', 'conversation_thinking', {
+      thinking: '', metadata: { thinking_active: true },
+    })])
+    const toggle = host.querySelector('[data-testid="terminal-clear-thinking-batch-toggle"]')
+    expect(toggle?.textContent).toBe('Thinking')
+    expect(toggle?.querySelector('.animate-pulse')).not.toBeNull()
+    expect(host.querySelector('[data-testid="terminal-clear-thinking-batch-content"]')).toBeNull()
+  })
+
   it('shows only the timestamp while delivery is still sending', async () => {
     const host = await mount([event('user', 'user_message', {
       content: 'Check the browser', metadata: { delivery_status: 'sending' },

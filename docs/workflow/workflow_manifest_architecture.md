@@ -78,7 +78,7 @@ The backend struct lives in [workflow_manifest.go](../../agent_go/cmd/server/wor
     "disable_learning": false,
     "global_skill_objective": "What the shared skill should capture",
     "disable_parallel_tool_execution": false,
-    "enabled_custom_tools": ["workspace_advanced:*", "human_tools:*"]
+    "enabled_custom_tools": ["workspace_browser:agent_browser"]
   },
   "ownership": {
     "employee_id": null

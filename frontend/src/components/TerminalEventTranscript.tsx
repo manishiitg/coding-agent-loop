@@ -27,6 +27,7 @@ import { ConversationContinuityNotice, isConversationContinuityNotice } from './
 import { DeliveryTick } from './events/system/DeliveryTick'
 import { deliveryTickState } from './events/system/deliveryTickState'
 import { askAIDisplayText, hasAskAIMessage } from '../utils/askAIMessage'
+import { isChatDeliveryTelemetryEvent, recordChatDeliveryTelemetry } from '../utils/chatDeliveryTelemetry'
 
 // Message text sizes multiply --chat-scale (default 1), so a product can offer
 // a bigger reading size (SparkQuill's Child Mode "T" button sets it on the
@@ -639,6 +640,7 @@ const ToolCallField: React.FC<{ label: string; value: string }> = ({ label, valu
 // while the agent is still reasoning; the toggle is the user's alone.
 const ThinkingBatch: React.FC<{ item: Extract<TranscriptItem, { kind: 'thinking' }>; live: boolean }> = ({ item, live }) => {
   const [expanded, toggle] = useDisclosure(`thinking:${item.key}`, true)
+  const hasText = Boolean(item.text.trim())
 
   if (item.assistantUpdate) {
     return (
@@ -652,18 +654,18 @@ const ThinkingBatch: React.FC<{ item: Extract<TranscriptItem, { kind: 'thinking'
     <div data-testid="terminal-clear-thinking-batch" className="my-1">
       <button
         type="button"
-        onClick={toggle}
-        aria-expanded={expanded}
+        onClick={hasText ? toggle : undefined}
+        aria-expanded={hasText ? expanded : undefined}
         data-testid="terminal-clear-thinking-batch-toggle"
         className="flex items-center gap-1 py-1 text-left text-[11px] text-muted-foreground transition-colors hover:text-foreground"
       >
         <span>Thinking</span>
         {live && <span aria-hidden="true" className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-muted-foreground/70" />}
-        {expanded
+        {hasText && (expanded
           ? <ChevronDown className="h-3 w-3 shrink-0" />
-          : <ChevronRight className="h-3 w-3 shrink-0" />}
+          : <ChevronRight className="h-3 w-3 shrink-0" />)}
       </button>
-      {expanded && (
+      {hasText && expanded && (
         <p
           data-testid="terminal-clear-thinking-batch-content"
           className="mt-1 whitespace-pre-wrap break-words border-l border-border pl-3 text-xs leading-5 text-muted-foreground"
@@ -770,6 +772,18 @@ const TerminalEventTranscriptInner: React.FC<TerminalEventTranscriptProps & { re
     () => selectTerminalEvents(events, terminal, siblingTerminals, keepInteractionKinds),
     [events, terminal, siblingTerminals, keepInteractionKinds],
   )
+  const latestTelemetryEvent = useMemo(
+    () => [...scoped].reverse().find(isChatDeliveryTelemetryEvent),
+    [scoped],
+  )
+  useEffect(() => {
+    if (!latestTelemetryEvent) return
+    const frame = window.requestAnimationFrame(() => {
+      const sessionId = latestTelemetryEvent.session_id || terminal?.session_id || ''
+      recordChatDeliveryTelemetry('painted', sessionId, [latestTelemetryEvent], 'react', terminal?.terminal_id)
+    })
+    return () => window.cancelAnimationFrame(frame)
+  }, [latestTelemetryEvent, terminal?.session_id, terminal?.terminal_id])
   const items = useMemo<TranscriptRenderItem[]>(
     () => removeAdjacentDuplicateAssistantResponses(collapseTurnFailures(buildTranscriptItems(scoped))),
     [scoped],

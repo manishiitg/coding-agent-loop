@@ -251,7 +251,7 @@ func backgroundMessageSequenceSchema() map[string]interface{} {
 		"type":        "array",
 		"minItems":    1,
 		"maxItems":    maxBackgroundMessageSequenceItems,
-		"description": "Optional ordered follow-up turns. The backend sends them sequentially to the same agent after the opening instructions turn, preserving one conversation, MCP session, folder guard, and isolated coding workspace. Use explicit items when later analysis must build on earlier analysis; do not use it to run independent work in parallel.",
+		"description": "Ordered user-message turns. The step description is the shared system-level charter; the backend sends these items sequentially to the same agent, preserving one conversation, MCP session, folder guard, and isolated coding workspace. Use explicit items when later analysis must build on earlier analysis; do not use them to run independent work in parallel.",
 		"items": map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
@@ -3481,7 +3481,11 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"route_id": map[string]interface{}{
 					"type":        "string",
-					"description": "Optional route ID for sub-agent steps (e.g., 'icici-login'). When provided with a parent step_id, looks up logs at step-{N}-sub-{route_id}/",
+					"description": "Optional route ID for a conversational specialist. Pair it with call_id and the owning parent Agent step_id.",
+				},
+				"call_id": map[string]interface{}{
+					"type":        "string",
+					"description": "Exact specialist invocation ID beneath agents/{route-id}/calls/{call-id}. Required with route_id.",
 				},
 				"attempt": map[string]interface{}{
 					"type":        "integer",
@@ -3505,11 +3509,15 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			}
 
 			routeID, _ := args["route_id"].(string)
+			callID, _ := args["call_id"].(string)
 
 			// Resolve historical positions only against the selected run's revision.
 			// Exact stable IDs remain usable when old runs predate plan revisions.
-			if strings.ContainsAny(stepID, `/\`) || stepID == "." || stepID == ".." || strings.ContainsAny(routeID, `/\`) {
-				return "", fmt.Errorf("step_id and route_id must be IDs, not file paths")
+			if strings.ContainsAny(stepID, `/\`) || stepID == "." || stepID == ".." || strings.ContainsAny(routeID, `/\`) || strings.ContainsAny(callID, `/\`) {
+				return "", fmt.Errorf("step_id, route_id, and call_id must be IDs, not file paths")
+			}
+			if routeID != "" && strings.TrimSpace(callID) == "" {
+				return "", fmt.Errorf("call_id is required with route_id; routed logs are isolated per invocation")
 			}
 			resolvedForPrompts := stepID
 			var stepInfo *WorkshopStepInfo
@@ -3546,8 +3554,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			// Determine the correct log path based on step type
 			var stepPath string
 			if routeID != "" && stepInfo != nil && stepInfo.TopIndex > 0 {
-				// Generated route executions retain their historical composite folder name.
-				stepPath = fmt.Sprintf("step-%d-sub-%s", stepInfo.TopIndex, routeID)
+				stepPath = todoSubAgentArtifactFolderName(stepInfo.Step.GetID(), stepInfo.Step.GetID(), routeID, callID, false)
 			} else {
 				stepPath = workshopStepLogFolder(resolvedForPrompts)
 			}
@@ -4975,7 +4982,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				"enabled_custom_tools": map[string]interface{}{
 					"type":        "array",
 					"items":       map[string]interface{}{"type": "string"},
-					"description": "Workflow-level default workspace/custom tools (stored in execution_defaults, applies to EVERY step unless a step sets its own enabled_custom_tools). Format: 'category:tool' or 'category:*', same categories as update_step_config's enabled_custom_tools. Use only when nearly every step in this workflow needs the same tools; prefer per-step tuning via update_step_config otherwise. Pass an empty array to clear the workflow-level default.",
+					"description": "Workflow-level optional workspace/custom tools (stored in execution_defaults, applies to EVERY step unless a step sets its own enabled_custom_tools). Execution agents already receive workspace_advanced plus human_feedback, notify_user, and create_human_input_request. Add only capabilities nearly every step needs and name additional human tools explicitly. Legacy human_tools:* is normalized to the same three-tool baseline. Prefer per-step tuning otherwise. Pass an empty array to clear the workflow-level additions.",
 				},
 				"advisor_specialization_approval_input_id": map[string]interface{}{
 					"type":        "string",
@@ -6242,6 +6249,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err := schedulepolicy.ValidatePulseStamp([]byte(content), version); err != nil {
 				return fmt.Sprintf("Refused: schedule Pulse migration is incomplete: %v", err), nil
 			}
+			if err := validateContractVersionStampPrerequisites(version, manifest); err != nil {
+				return fmt.Sprintf("Refused: nested Agent artifact migration is incomplete: %v", err), nil
+			}
 			if current, _ := manifest["version"].(string); strings.TrimSpace(current) == version {
 				return fmt.Sprintf("Workflow contract version is already %s.", version), nil
 			}
@@ -7504,7 +7514,7 @@ Modern agents can handle long context and many tool calls. Do not flag a step me
 
 Start from one large `+"`message_sequence`"+` per coherent shared-context span. Prefer the fewest durable steps that preserve real control boundaries. One agentic step may own a substantial end-to-end outcome when the work shares one objective, context, tool/security envelope, output contract, retry domain, and final validation gate. Do not require a separate scripted step for each subtask, checklist item, source, tool, proof check, double-check, or intermediate thought.
 
-When that coherent outcome needs staged assurance, prefer one `+"`message_sequence`"+` over several regular steps. Give the first work turn the whole outcome; add only decision-useful follow-up turns that inspect evidence, challenge completion, and repair gaps (for example: `+"`re-open the result, verify every success criterion, and fix anything unsupported or incomplete`"+`). Do not turn a large task into one tiny sequence item per routine action.
+When that coherent outcome needs staged assurance, prefer one `+"`message_sequence`"+` over several regular steps. Its `+"`description`"+` is the durable system-level charter (objective, boundaries, definition of done); its `+"`items[]`"+` are the actual user turns that execute and verify that charter. Do not repeat the description as item 0. Give the first work item the whole outcome; add only decision-useful follow-up turns that inspect evidence, challenge completion, and repair gaps (for example: `+"`re-open the result, verify every success criterion, and fix anything unsupported or incomplete`"+`). Do not turn a large task into one tiny sequence item per routine action.
 
 Treat validation as an improvement to that large step before treating it as a topology change. Require run-specific proof/provenance in the output, tighten the top-level `+"`validation_schema`"+`, and add evidence-based double-check and repair turns. Flag a separate validation/reviewer step unless it needs an independently rerunnable artifact/failure domain, different permissions/tools, or genuine clean-room independence from the maker.
 
@@ -8133,15 +8143,16 @@ func prepareReadOnlyBackgroundAgentTools(base *orchestrator.BaseOrchestrator) ([
 	if base == nil {
 		return nil, nil
 	}
+	enabledTools := []string{
+		"workspace_advanced:execute_shell_command",
+		"workflow_db:query_workflow_db",
+		"workflow_costs:query_workflow_costs",
+	}
+	enabledTools = append(enabledTools, orchestrator.AgentWorksChatHumanToolSelections("builder")...)
 	return orchestrator.FilterCustomToolsByCategory(
 		base.WorkspaceTools,
 		base.WorkspaceToolExecutors,
-		[]string{
-			"workspace_advanced:execute_shell_command",
-			"human_tools:*",
-			"workflow_db:query_workflow_db",
-			"workflow_costs:query_workflow_costs",
-		},
+		enabledTools,
 	)
 }
 

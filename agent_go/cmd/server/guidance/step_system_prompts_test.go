@@ -22,21 +22,38 @@ func TestStepSystemPromptsShareRuntimeAndBuilderSource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"execution", "orchestrator", "managed-db-read", "managed-db-write"} {
+	for _, name := range []string{"execution", "agent-delegation", "managed-db-read", "managed-db-write"} {
 		body := parsed.Lookup(name)
 		if body == nil || body.Tree.Root.String() != StepSystemPromptTemplate(name) {
 			t.Fatalf("builder and runtime disagree on %s", name)
 		}
 	}
-	for _, marker := range []string{"{{.FolderGuardReadPaths}}", "{{.DBGuidance}}", "{{if .ValidationSchema}}"} {
+	for _, marker := range []string{"{{.FolderGuardReadPaths}}", "{{.DBGuidance}}", "{{if and .ValidationSchema", "## Declared Inputs", "{{.StepContextDependencies}}"} {
 		if !strings.Contains(projected, marker) {
 			t.Fatalf("source reference lost runtime conditional/placeholder %s", marker)
 		}
 	}
 	guide := materializedFileContent(t, skill, "references/step-description.md")
-	for _, marker := range []string{ref, "get_step_prompts", "Do not", "table names", "global learnings"} {
+	for _, marker := range []string{ref, "get_step_prompts", "Do not", "table names", "global learnings", "durable system-level charter", "actual user messages"} {
 		if !strings.Contains(guide, marker) {
 			t.Fatalf("step authoring guidance missing %q", marker)
+		}
+	}
+	sequence := materializedFileContent(t, skill, "references/message-sequence.md")
+	for _, marker := range []string{"canonical agent step", "description` is the system-level charter", "items[]` entry is a user turn", "predefined_routes"} {
+		if !strings.Contains(sequence, marker) {
+			t.Fatalf("message-sequence guidance missing unified-agent contract %q", marker)
+		}
+	}
+	legacy := materializedFileContent(t, skill, "references/orchestrator.md")
+	for _, marker := range []string{"compatibility", "message_sequence", "predefined_routes"} {
+		if !strings.Contains(legacy, marker) {
+			t.Fatalf("orchestrator migration guidance missing %q", marker)
+		}
+	}
+	for _, stale := range []string{"description is turn 0", "description is the opening user", "no agentic children"} {
+		if strings.Contains(strings.ToLower(guide+sequence+legacy), stale) {
+			t.Fatalf("builder reference retains stale prompt model %q", stale)
 		}
 	}
 	// This authoring reference must not add both system prompts to the

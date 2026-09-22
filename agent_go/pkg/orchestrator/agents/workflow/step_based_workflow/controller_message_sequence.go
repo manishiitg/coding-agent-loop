@@ -29,6 +29,7 @@ type messageSequenceRuntimeSessionOverrideKey struct{}
 type messageSequenceFolderGuardOverride struct {
 	ReadPaths  []string
 	WritePaths []string
+	OutputPath string
 }
 
 type messageSequenceRuntimeSessionOverride struct {
@@ -104,8 +105,8 @@ type messageSequenceDelegation struct {
 	// every turn of the sequence.
 	CreateAgent func(ctx context.Context) (agents.OrchestratorAgent, error)
 	// TurnVars returns the orchestrator's template variables for one turn. The
-	// opening turn renders the full orchestrator user template; follow-up turns
-	// carry the item text verbatim.
+	// durable description remains in the common system prompt; every item is
+	// carried as a user message.
 	TurnVars func(item MessageSequenceItem, message string, opening bool) map[string]string
 	// LogTurn persists one turn in the todo_task execution-log shape. turnNumber
 	// is 1-based.
@@ -363,8 +364,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 	opts messageSequenceCallOptions,
 ) (string, []llmtypes.MessageContent, error) {
 	_ = progress
-	_ = execCtx
 	_ = allSteps
+	ctx = withParentStepIndex(ctx, stepIndex)
 
 	sequenceStep, ok := step.(*MessageSequencePlanStep)
 	if !ok {
@@ -468,32 +469,36 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 		// learning_objective / knowledgebase_contribution — the same post-step
 		// learnings/KB a regular step runs. (Copy first so we never mutate the plan's
 		// Items slice.)
-		plannedItems = appendMessageSequenceFinalValidation(sequenceStep.Items, sequenceStep.ValidationSchema)
-		plannedItems = append(plannedItems, hcpo.messageSequenceClosingItems(ctx, sequenceStep, stepIndex)...)
-		// description = turn 0 (consistent across all sequence-like steps): the step
-		// description is the opening instruction and leads the first conversational
-		// turn — it is prepended to items[0] in executeMessageSequenceUserMessage.
-		// For a ROUTE the orchestrator supplies that opening instruction dynamically
-		// via ReentryMessage (the route's description + the call_sub_agent
-		// instructions), so it takes precedence. For a STANDALONE run we fall back to
-		// the step's own description so it is no longer silently dropped — matching the
-		// todo_task orchestrator, whose description is likewise its first user turn.
-		session.delegation = opts.Delegation
-		if opts.Delegation == nil {
-			if reentry := strings.TrimSpace(opts.ReentryMessage); reentry != "" {
-				session.LastRuntimeContext = "Builder/orchestrator initial instruction:\n" + reentry
-			} else if desc := strings.TrimSpace(sequenceStep.GetDescription()); desc != "" {
-				session.LastRuntimeContext = "Step description (opening instruction):\n" + desc
-			}
-			// Show the validation schema on the opening turn — the same way regular
-			// and todo_task steps already surface it proactively — so a
-			// message_sequence step doesn't have to guess the output shape and only
-			// learn it reactively after a failed pre-validation attempt.
-			session.LastRuntimeContext = appendMessageSequenceValidationSchema(session.LastRuntimeContext, sequenceStep.ValidationSchema)
+		configuredItems := append([]MessageSequenceItem(nil), sequenceStep.Items...)
+		// Live caller/operator input is conversational state, not part of the
+		// durable step charter. Put it in the user-message queue before authored
+		// items so the system description remains stable across calls.
+		initialInstruction := ""
+		if isRoute {
+			initialInstruction = strings.TrimSpace(opts.ContinuationMessage)
 		}
-		// A delegating sequence renders its description, dependencies, human
-		// input, and validation schema through the orchestrator's own templates
-		// (TurnVars), so nothing is prepended here.
+		if initialInstruction == "" && execCtx != nil {
+			initialInstruction = strings.TrimSpace(execCtx.WorkshopHumanInput)
+		}
+		if initialInstruction != "" {
+			configuredItems = append([]MessageSequenceItem{{
+				ID:      sequenceStep.GetID() + "-initial-instruction",
+				Type:    "user_message",
+				Kind:    "execution",
+				Message: initialInstruction,
+			}}, configuredItems...)
+		}
+		if len(configuredItems) == 0 {
+			configuredItems = []MessageSequenceItem{{
+				ID:      sequenceStep.GetID() + "-execute",
+				Type:    "user_message",
+				Kind:    "execution",
+				Message: "Execute the step charter now and verify that its requirements are satisfied.",
+			}}
+		}
+		plannedItems = appendMessageSequenceFinalValidation(configuredItems, sequenceStep.ValidationSchema)
+		plannedItems = append(plannedItems, hcpo.messageSequenceClosingItems(ctx, sequenceStep, stepIndex)...)
+		session.delegation = opts.Delegation
 		source = "configured_queue"
 	}
 
@@ -1272,7 +1277,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) getMessageSequenceRuntime(ctx context
 	// what regular steps get, since a regular step's learnings turn enforces through
 	// the per-item session guard rather than a reused frozen snapshot.
 	_, snapshotWrite := hcpo.setupMessageSequenceFolderGuard(stepPath, step.GetID(), getAgentConfigs(step), hcpo.messageSequenceStepFullWriteAccess(step))
-	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: snapshotWrite}
+	outputPath := filepath.Join(hcpo.GetWorkspacePath(), hcpo.messageSequenceExecutionRelPath(stepPath, step.GetID()))
+	folderOverride := &messageSequenceFolderGuardOverride{ReadPaths: readPaths, WritePaths: snapshotWrite, OutputPath: outputPath}
 	sessionOverride := &messageSequenceRuntimeSessionOverride{SessionID: sessionID, KeepAlive: true}
 	agentCtx := context.WithValue(ctx, messageSequenceFolderGuardOverrideKey{}, folderOverride)
 	agentCtx = context.WithValue(agentCtx, messageSequenceRuntimeSessionOverrideKey{}, sessionOverride)
@@ -1312,7 +1318,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setMessageSequenceShellEnv(sessionID,
 	registerStepSessionShellEnv(
 		sessionID,
 		stepOutputAbs,
-		filepath.Dir(stepOutputAbs),
+		stepExecutionScopeAbsPath(stepOutputAbs),
 		"",
 		hcpo.selectedRunFolder,
 		hcpo.snapshotWorkspaceEnv(),
@@ -1483,6 +1489,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	// is workflow-root-RELATIVE (for the workspace-file API) and must NOT be used
 	// directly as a guard path or it omits the workflow root.
 	stepFolderPath := filepath.Join(executionWorkspacePath, getArtifactFolderName(stepID, stepPath))
+	writeRootPath := stepFolderPath
+	if parentRoot := nestedArtifactParentRoot(stepPath); parentRoot != "" {
+		writeRootPath = filepath.Join(executionWorkspacePath, parentRoot)
+	}
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 
 	readPaths = []string{
@@ -1510,7 +1520,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupMessageSequenceFolderGuard(stepP
 	if learningsAccess != LearningsAccessNone {
 		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
-	writePaths = append(writePaths, stepFolderPath, downloadsPath)
+	writePaths = append(writePaths, writeRootPath, downloadsPath)
 	if itemWriteAccess.Knowledgebase && kbAccessAllowsWrite(kbAccess) {
 		writePaths = append(writePaths, filepath.Join(getKnowledgebasePath(baseWorkspacePath), "notes"))
 		// A "write" knowledgebase_source grants the same notes/-only write,
@@ -1541,11 +1551,7 @@ func firstValidationFileName(schema *ValidationSchema) string {
 	return ""
 }
 
-// formatMessageSequenceValidationSchema renders a step's validation_schema for the
-// opening turn, matching the section regular and todo_task steps already render into
-// their system prompts (see execution_only_agent.go / todo_task_orchestrator_agent.go).
-// Returns "" when there is no schema or it fails to marshal.
-func formatMessageSequenceValidationSchema(schema *ValidationSchema) string {
+func messageSequenceValidationSchemaJSON(schema *ValidationSchema) string {
 	if schema == nil {
 		return ""
 	}
@@ -1553,21 +1559,7 @@ func formatMessageSequenceValidationSchema(schema *ValidationSchema) string {
 	if err != nil {
 		return ""
 	}
-	return "## Required Output (Pre-Validation Schema)\nYour output MUST match this structure (it may check files and/or the db):\n```json\n" + string(schemaJSON) + "\n```"
-}
-
-// appendMessageSequenceValidationSchema joins a rendered validation_schema section onto
-// an existing opening-turn runtime context (description and/or reentry instruction),
-// separated by a blank line. Returns runtimeContext unchanged when there is no schema.
-func appendMessageSequenceValidationSchema(runtimeContext string, schema *ValidationSchema) string {
-	schemaSection := formatMessageSequenceValidationSchema(schema)
-	if schemaSection == "" {
-		return runtimeContext
-	}
-	if runtimeContext == "" {
-		return schemaSection
-	}
-	return runtimeContext + "\n\n" + schemaSection
+	return string(schemaJSON)
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step *MessageSequencePlanStep, item MessageSequenceItem, stepIndex int, stepPath string, message string, readPaths []string, writePaths []string, writeAccess MessageSequenceWriteAccess) map[string]string {
@@ -1603,9 +1595,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) buildMessageSequenceTemplateVars(step
 	}
 	return map[string]string{
 		"StepTitle":                 step.GetTitle(),
-		"StepDescription":           message,
-		"BaseDescription":           message,
-		"OrchestratorInstructions":  message,
+		"StepDescription":           ResolveVariables(step.GetDescription(), hcpo.variableValues),
+		"BaseDescription":           ResolveVariables(step.GetDescription(), hcpo.variableValues),
+		"FollowUpMessage":           message,
+		"ValidationSchema":          messageSequenceValidationSchemaJSON(step.GetValidationSchema()),
 		"IsContributionTurn":        isContributionTurn,
 		"StepContextDependencies":   strings.Join(step.GetContextDependencies(), "\n"),
 		"StepContextOutput":         contextOutput,
@@ -1666,58 +1659,19 @@ func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceAbsPath(workflowRel st
 }
 
 // messageSequenceExecutionRelPath returns the step's execution folder — the SAME
-// folder regular and orchestrator steps use (execution/<stepID>). The sequence's
+// folder regular and Agent steps use (execution/<stepID>). The sequence's
 // per-item artifacts and session.json live in subfolders under it, and its
 // declared context_output lands directly here, so downstream context_dependencies
-// resolve it exactly like any other step's output. (Previously this was an
-// isolated execution/message_sequences/<stepPath>/<stepID> folder that was not on
-// the dependency-resolution path, so a sequence could not hand off a local output
-// file to later steps.)
+// resolve it exactly like any other step's output.
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceExecutionRelPath(stepPath string, stepID string) string {
 	return filepath.Join("runs", hcpo.selectedRunFolder, "execution", getArtifactFolderName(stepID, stepPath))
 }
 
 func (hcpo *StepBasedWorkflowOrchestrator) messageSequenceSessionPath(stepPath string, stepID string) string {
+	if routeRoot := messageSequenceRouteRoot(stepPath); routeRoot != "" {
+		return filepath.Join("runs", hcpo.selectedRunFolder, "execution", routeRoot, "session.json")
+	}
 	return filepath.Join(hcpo.messageSequenceExecutionRelPath(stepPath, stepID), "session.json")
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPath(ctx context.Context, stepPath string) error {
-	if hcpo.selectedRunFolder == "" {
-		return fmt.Errorf("selectedRunFolder not set - cannot cleanup message_sequence execution path")
-	}
-	if strings.TrimSpace(stepPath) == "" {
-		return fmt.Errorf("stepPath not set - cannot cleanup message_sequence execution path")
-	}
-	relPath := filepath.Join("runs", hcpo.selectedRunFolder, "execution", "message_sequences", stepPath)
-	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence execution path: %s", relPath))
-	if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s", stepPath)); err != nil {
-		return fmt.Errorf("failed to cleanup message_sequence execution path %s: %w", stepPath, err)
-	}
-	return nil
-}
-
-func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPathsForStep(ctx context.Context, stepNumber int) error {
-	if hcpo.selectedRunFolder == "" {
-		return fmt.Errorf("selectedRunFolder not set - cannot cleanup message_sequence execution paths")
-	}
-	root := filepath.Join(hcpo.GetWorkspacePath(), "runs", hcpo.selectedRunFolder, "execution", "message_sequences")
-	stepPaths, err := hcpo.BaseOrchestrator.ListWorkspaceFiles(ctx, root)
-	if err != nil {
-		errStr := err.Error()
-		if strings.Contains(errStr, "not found") || strings.Contains(errStr, "no such file") || strings.Contains(errStr, "does not exist") {
-			return nil
-		}
-		return err
-	}
-	for _, stepPath := range stepPaths {
-		if !isMessageSequenceStepPathForStep(stepPath, stepNumber) {
-			continue
-		}
-		if err := hcpo.cleanupMessageSequenceStepPath(ctx, stepPath); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 // cleanupMessageSequenceRuntime wipes a route's on-disk execution artifacts
@@ -1725,7 +1679,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceStepPathsForSte
 func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx context.Context, stepPath string, stepID string) error {
 	relPath := hcpo.messageSequenceExecutionRelPath(stepPath, stepID)
 	hcpo.GetLogger().Info(fmt.Sprintf("🗑️ Cleaning message_sequence runtime: %s", relPath))
-	if err := hcpo.CleanupDirectory(ctx, relPath, fmt.Sprintf("execution/message_sequences/%s/%s", stepPath, stepID)); err != nil {
+	if err := hcpo.CleanupDirectory(ctx, relPath, filepath.Join("execution", getArtifactFolderName(stepID, stepPath))); err != nil {
 		return fmt.Errorf("failed to cleanup message_sequence runtime %s/%s: %w", stepPath, stepID, err)
 	}
 	return nil
@@ -1733,6 +1687,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) cleanupMessageSequenceRuntime(ctx con
 
 // msgSeqRouteKey identifies a message_sequence route's in-memory conversation within a run.
 func (hcpo *StepBasedWorkflowOrchestrator) msgSeqRouteKey(stepPath, stepID string) string {
+	if routeRoot := messageSequenceRouteRoot(stepPath); routeRoot != "" {
+		return routeRoot
+	}
 	return stepPath + "/" + stepID
 }
 

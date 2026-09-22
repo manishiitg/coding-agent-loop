@@ -433,6 +433,54 @@ export function effectiveMessageSequenceItems(step: PlanStep): MessageSequenceIt
   return items;
 }
 
+// Convert the former orchestrator `messages` shape into the canonical Agent
+// item queue. This is display-only compatibility for plans which have not yet
+// been rewritten as `message_sequence` steps.
+export function legacyTodoMessagesAsSequenceItems(step: TodoTaskPlanStep): MessageSequenceItem[] {
+  const items = (step.messages ?? []).map((message, index): MessageSequenceItem => {
+    const id = message.id || `legacy-item-${index + 1}`;
+    if (message.type === 'prevalidation') {
+      return {
+        id,
+        type: 'prevalidation',
+        validation_schema: message.validation_schema
+      };
+    }
+    if (message.type === 'foreach') {
+      return {
+        id,
+        type: 'foreach',
+        message: message.message,
+        source: message.source,
+        source_path: message.source_path,
+        max_iterations: message.max_iterations
+      };
+    }
+    return {
+      id,
+      type: 'user_message',
+      kind: 'execution',
+      message: message.message
+    };
+  });
+
+  if (items.length > 0) return items;
+  return [{
+    id: 'execute-step-charter',
+    type: 'user_message',
+    kind: 'execution',
+    message: 'Execute the step charter and verify its success criteria.'
+  }];
+}
+
+// The Plan Design UI has one Agent concept. Canonical message sequences and
+// legacy orchestrator/todo_task records differ only in their stored shape.
+export function effectiveAgentItems(step: PlanStep): MessageSequenceItem[] {
+  return isTodoTaskStep(step)
+    ? legacyTodoMessagesAsSequenceItems(step)
+    : effectiveMessageSequenceItems(step);
+}
+
 export function isRoutingStep(step: PlanStep): step is RoutingPlanStep {
   return step.type === 'routing';
 }

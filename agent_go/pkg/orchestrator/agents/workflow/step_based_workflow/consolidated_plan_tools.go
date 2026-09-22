@@ -248,7 +248,7 @@ func (r *consolidatedPlanRegistrar) flush() error {
 			return err
 		}
 	}
-	if err := r.registerActions("manage_step_route", "Manage an orchestrator's predefined route with action=add/update/delete. parameters uses that action's native route schema, including parent_step_id and reason. Legacy todo_task names are not exposed.", map[string]string{"add": "add_orchestrator_route", "update": "update_orchestrator_route", "delete": "delete_orchestrator_route"}); err != nil {
+	if err := r.registerActions("manage_step_route", "Manage predefined_routes for a message-sequence agent or persisted legacy orchestrator record with action=add/update/delete. parameters uses that action's native route schema, including parent_step_id and reason. Legacy todo_task names are not exposed.", map[string]string{"add": "add_orchestrator_route", "update": "update_orchestrator_route", "delete": "delete_orchestrator_route"}); err != nil {
 		return err
 	}
 	if err := r.registerActions("manage_group", "Manage a variable group with action=add/update/delete. parameters uses that action's native fields. Existing group validation, current-session refresh and last-group deletion checks are preserved.", map[string]string{"add": "add_group", "update": "update_group", "delete": "delete_group"}); err != nil {

@@ -4,12 +4,14 @@
 
 ## MESSAGE SEQUENCE — THE AGENT STEP
 
-Use `message_sequence` as the canonical agent step: one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is turn 0; `items[]` are turns 1..N.
+Use `message_sequence` as the canonical agent step: one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is the system-level charter for the whole sequence; every `items[]` entry is a user turn describing how to carry it out.
 
 An agent step may declare `predefined_routes`. When routes exist, the agent gets
 bounded sub-agent tools and decides at runtime whether, when, and how often to
 call those specialists. Routes define available capabilities; they do not
 prescribe execution order. Without routes, the step is a single-agent sequence.
+Both forms use the same system prompt and default tool policy; routes add only
+the specialist catalog, delegation guidance, and sub-agent lifecycle tools.
 The separate `orchestrator` plan type remains a compatibility alias while plans
 and UI consumers migrate to this unified shape.
 
@@ -46,7 +48,7 @@ Use it when:
 - Turns read the same upstream context.
 - Critique and correction should happen in the same specialist conversation.
 - The unit has one tightly coupled outcome and should fail/retry together.
-- An orchestrator route needs a specialist that can be re-entered during the same workflow run.
+- A routed agent needs a specialist that can be re-entered during the same workflow run.
 
 Do not use it when:
 
@@ -55,7 +57,9 @@ Do not use it when:
 - Work is a fixed API/SDK call, CLI command, data fetch, stable parse/normalize operation, or mechanical write; use a scripted regular step and consume its durable result here.
 - The workflow needs deterministic branching; use `branch` (small in-flow
   decision) or `routing` (major sub-workflow fork).
-- The parent must choose or revise the strategy from evidence; use `orchestrator`. Independent delegation alone is not the eligibility rule.
+- The agent must choose or revise strategy from evidence; add bounded specialist
+  routes when delegation helps. Independent delegation alone does not require a
+  separate step type.
 
 ## DELEGATION AND CONTROL
 
@@ -72,9 +76,9 @@ runtime calls with no child LLM. Running ten known scripts, accounting for every
 result, and reporting is sequence work even if those scripts run in parallel.
 
 Read `references/plan-design.md`, Step 2, for the decision rule. Ordered turns,
-script batches, and completion gates are enforced by the runtime, not merely a
-system-prompt preference. Continue using the existing step types; there is no
-new mode field or agentic delegation tool for sequences.
+script batches, delegation lifecycles, and completion gates are enforced by the
+runtime, not merely a system-prompt preference. There is no separate mode field:
+`predefined_routes` are the capability declaration.
 
 ## SCRIPTED BATCHES
 
@@ -109,23 +113,25 @@ inside `parameters`. Do not put a placeholder there and promise it will resolve.
 SQL `foreach` templates apply to their own conversational messages only.
 
 Follow this item with a `user_message` to analyze the validated results and report.
-A script item can come first: the opening description reaches the first
-conversational turn, after the script results are available.
+A script item can come first: its results are added to runtime context before
+the next conversational item, while the description remains the system charter.
 
 - The runtime checks every reference, parameter contract, and saved source before
   starting the batch. No arbitrary file path, inline code, or agentic step is callable.
 - `max_parallel` defaults to sequential (0/1), with a maximum of 8. Use parallel
   execution only for independent scripts, including safe DB/asset writes and no
   conflicting browser-session actions. Calls to the same script serialize.
-- Each call gets its own `STEP_OUTPUT_DIR` under the sequence's execution folder:
-  `scripts/<item-id>/<call-id>/`. Parameters go through `STEP_PARAMS_JSON`. Source
-  layout version 1 and legacy learnings layouts use the existing script runner.
+- Each call gets its own `STEP_OUTPUT_DIR` under the parent Agent step:
+  `scripts/items/<item-id>/calls/<call-id>/`. Parameters go through
+  `STEP_PARAMS_JSON`. Source is `code/<script-step-id>/main.py`, and the process
+  working directory is `code/<script-step-id>/`. The current workflow contract
+  requires `code_layout_version: 1`; older workflows must migrate before execution.
 - Script definitions own store permissions and output validation. Item-level
   `kind`/`write_access` and message/foreach fields are rejected on scripted items.
 - Every call must exit successfully AND pass validation. A failure waits for the
   remaining batch calls and then stops the sequence; subsequent reporting or
   side-effect items do not run. Per-call status and output paths persist in
-  `scripts/<item-id>/results.json`, with stdout/diagnostics in each call folder.
+  `scripts/items/<item-id>/results.json`, with stdout/diagnostics in each call folder.
 - Stop cancels active scripts and prevents queued scripts from starting. It does
   not turn partial completion into success. Re-running may repeat side effects;
   scripts must implement their own idempotency/deduplication contract.
@@ -139,7 +145,7 @@ conversational turn, after the script results are available.
 ## MEMORY
 
 - A top-level message_sequence runs its fixed item queue once.
-- A message_sequence inside an orchestrator route can be re-entered during the same workflow run.
+- A message_sequence specialist route can be re-entered during the same workflow run.
 - Route memory is in-memory only. It does not survive process restart or a later workflow run.
 - `message_sequence_restart=true` starts a clean route conversation when prior context is stale or contaminated.
 - `session.json` is an observability record, not resume state.
@@ -249,23 +255,24 @@ a cap, a failed row, or an accidental filter must not look like full completion.
 
 ## ROUTE PATTERNS
 
-Conversational route sub-agents use `message_sequence`, including stateless one-turn work. Use `regular` only for an explicitly scripted deterministic route. Use these patterns when designing or repairing orchestrator predefined routes.
+Conversational route sub-agents use `message_sequence`, including stateless one-turn work. Use `regular` only for an explicitly scripted deterministic route. Use these patterns when designing or repairing an agent's `predefined_routes`.
 
-For an orchestrator route, use `message_sequence` when the orchestrator should preserve specialist memory. As an orchestrator predefined route, a message_sequence behaves like a reusable specialist sub-agent: Normal repeated calls reuse the route conversation and each call is delivered as a re-entry user message. Set `message_sequence_restart=true` to restart only when the prior conversation is stale, wrong, or contaminated.
+Use a `message_sequence` route when the parent agent should preserve specialist memory. Normal repeated calls reuse the route conversation and each call is delivered as a re-entry user message. Set `message_sequence_restart=true` to restart only when the prior conversation is stale, wrong, or contaminated.
 
 ## MESSAGE SEQUENCE ROUTE PATTERNS
 
 - Stateful specialist: re-enter one route for follow-up work.
 - Test/fix loop: validate externally, then re-enter the specialist with concrete failures.
 - Maker/reviewer: keep creation and independent review in separate routes.
-- Panel: separate domain specialists coordinated by an orchestrator.
+- Panel: separate domain specialists coordinated by the parent sequence agent.
 - Clean-room retry: restart a contaminated specialist route.
 - Human feedback: send approved operator feedback into the same route conversation.
 
 ## AUTHORING RULES
 
-- Write the real opening instruction in `description`.
-- Make turn 0 own the whole shared-context outcome; do not turn routine phases into separate items.
+- Write the stable objective, boundaries, and definition of done in `description`.
+- Write the actual ordered execution/verification instructions in `items[]`.
+- Make the first item a coherent execution instruction for the whole shared-context outcome; do not turn routine phases into separate items.
 - Require run-specific proof/provenance, then add a turn that re-opens authoritative evidence and proves every criterion, followed by repair and double-checking.
 - Keep each user-message item focused on one outcome.
 - Use explicit durable files or DB rows for cross-step handoff.

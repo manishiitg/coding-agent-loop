@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -294,6 +295,25 @@ func registerStepSessionShellEnv(sessionID, stepOutputAbsPath, stepExecutionAbsP
 	common.SetSessionShellEnv(sessionID, env)
 }
 
+// stepExecutionScopeAbsPath returns the collaboration root visible to the
+// current invocation. Top-level steps keep the run execution directory;
+// nested agents and scripts receive their immediate owning Agent subtree.
+func stepExecutionScopeAbsPath(stepOutputAbsPath string) string {
+	clean := filepath.Clean(stepOutputAbsPath)
+	separator := string(filepath.Separator)
+	marker := separator + "execution" + separator
+	markerIndex := strings.LastIndex(clean, marker)
+	if markerIndex < 0 {
+		return filepath.Dir(clean)
+	}
+	executionRoot := clean[:markerIndex+len(marker)-1]
+	relativeOutput := clean[markerIndex+len(marker):]
+	if parentRoot := nestedArtifactParentRoot(relativeOutput); parentRoot != "" {
+		return filepath.Join(executionRoot, parentRoot)
+	}
+	return filepath.Dir(clean)
+}
+
 const workflowDBAccessEnv = "WORKFLOW_DB_ACCESS"
 
 // configureWorkflowDBSession records the trusted logical DB capability for the
@@ -412,11 +432,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupBrowserDownloadsPathOverride(ctx
 }
 
 // isGenericAgentStep reports whether a step was spawned via call_generic_agent.
-// executeGenericAgent sets stepID to "generic-{parentPath}-{todoID}" and stepPath to
-// "{parentPath}-generic-{todoID}", so either form is enough to identify these ad-hoc
-// steps and widen their folder guard.
 func isGenericAgentStep(stepID, stepPath string) bool {
-	return strings.HasPrefix(stepID, "generic-") || strings.Contains(stepPath, "-generic-")
+	return strings.HasPrefix(stepID, "generic-") || strings.Contains(filepath.ToSlash(stepPath), "/agents/generic/")
 }
 
 // setupExecutionFolderGuard sets up folder guard paths for execution agents.
@@ -445,6 +462,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 	// update agent (setupKBUpdateFolderGuard, triggered by a non-empty knowledgebase_contribution).
 	// Use getExecutionFolderPath to support top-level and nested executions.
 	stepFolderPath := getExecutionFolderPath(executionWorkspacePath, stepID, stepPath)
+	writeRootPath := stepFolderPath
+	if parentRoot := nestedArtifactParentRoot(stepPath); parentRoot != "" {
+		writeRootPath = filepath.Join(executionWorkspacePath, parentRoot)
+	}
 	downloadsPath := fmt.Sprintf("%s/Downloads", executionWorkspacePath)
 	soulPath := fmt.Sprintf("%s/soul", baseWorkspacePath)
 	// planning/ is READ-ONLY here and deliberately so. A step previously could not
@@ -482,15 +503,10 @@ func (hcpo *StepBasedWorkflowOrchestrator) setupExecutionFolderGuard(stepPath st
 		readPaths = appendLearningReadPaths(readPaths, baseWorkspacePath, stepID)
 	}
 
-	// Generic agents (spawned via call_generic_agent) get write access to the entire
-	// execution/ folder. They run ad-hoc tasks that may span multiple step folders
-	// (e.g. patching sibling outputs, staging downloads under a step-owned path),
-	// and locking them to a single folder causes spurious sandbox denials.
-	if isGenericAgentStep(stepID, stepPath) {
-		writePaths = []string{executionWorkspacePath}
-	} else {
-		writePaths = []string{stepFolderPath, downloadsPath}
-	}
+	// Every routed child shares its owning Agent subtree. This permits sibling
+	// agents and scripts under the same parent to exchange artifacts without
+	// granting write access to another top-level step.
+	writePaths = []string{writeRootPath, downloadsPath}
 
 	// db/ is always readable. Ordinary workflow execution currently resolves dbAccess
 	// to read-write uniformly, so db/ is also writable for those steps. The read branch
@@ -815,8 +831,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) disableParentAgentTimeout(config *age
 // prepareCustomTools filters and prepares custom tools based on step config
 func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentConfigs) ([]llmtypes.Tool, map[string]interface{}) {
 	// Explicit selection narrows optional tools. Defaults and explicit lists
-	// share the same capability-derived additions below.
-	enabledTools := []string{"workspace_advanced:*", "human_tools:*"}
+	// share the same capability-derived additions below. Human tools are named
+	// individually: a step needs immediate feedback, notifications, and durable
+	// decision creation, not every administrative/connector tool that happens to
+	// share the human_tools registry.
+	enabledTools := []string{"workspace_advanced:*"}
 	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
 		enabledTools = nil
 		hasAdvanced := false
@@ -827,6 +846,11 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 				entry == "workspace_image_edit:*" || strings.HasPrefix(entry, "workspace_image_edit:") {
 				continue
 			}
+			// Legacy step configs commonly persisted human_tools:*. Treat it as
+			// the safe baseline; additional human tools must now be named.
+			if strings.TrimSpace(entry) == "human_tools:*" {
+				continue
+			}
 			if strings.HasPrefix(entry, "workspace_advanced") {
 				hasAdvanced = true
 			}
@@ -835,6 +859,15 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 		if !hasAdvanced {
 			enabledTools = append(enabledTools, "workspace_advanced:*")
 			hcpo.GetLogger().Info("🔧 Auto-including workspace_advanced:*")
+		}
+	}
+	for _, required := range []string{
+		"human_tools:human_feedback",
+		"human_tools:notify_user",
+		"human_tools:create_human_input_request",
+	} {
+		if !slices.Contains(enabledTools, required) {
+			enabledTools = append(enabledTools, required)
 		}
 	}
 
@@ -1216,11 +1249,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyPostSetupToAgent(agent agents.Or
 // ============================================================================
 
 // createExecutionOnlyAgent creates an execution-only agent that receives pre-discovered learning history.
-// stepPath: Step path identifier (for example, "step-1" or "step-2-sub-agent-1").
+// stepPath: Top-level step path or nested Agent artifact call path.
 // stepIDOverride: Optional explicit step ID to use for learnings / metadata selection (e.g., sub-agent step ID).
 // artifactFolderNameOverride: Optional execution/log folder name. This keeps logical step ID stable while isolating per-call artifacts.
 //
 //	When empty, the step ID will be derived from stepPath.
+type parentStepIndexContextKey struct{}
+
+func withParentStepIndex(ctx context.Context, stepIndex int) context.Context {
+	return context.WithValue(ctx, parentStepIndexContextKey{}, stepIndex)
+}
+
+func parentStepIndexFromContext(ctx context.Context, fallback int) int {
+	if stepIndex, ok := ctx.Value(parentStepIndexContextKey{}).(int); ok && stepIndex >= 0 {
+		return stepIndex
+	}
+	return fallback
+}
+
 func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.Context, phase string, stepPath string, agentName string, stepConfig *AgentConfigs, planStep PlanStepInterface, stepIDOverride string, artifactFolderNameOverride string) (agents.OrchestratorAgent, error) {
 	// 1. Resolve stepID first (needed for folder guard setup)
 	stepID := hcpo.resolveStepID(stepPath, stepIDOverride)
@@ -1240,8 +1286,8 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 	if override, ok := ctx.Value(messageSequenceFolderGuardOverrideKey{}).(*messageSequenceFolderGuardOverride); ok && override != nil {
 		readPaths = append([]string{}, override.ReadPaths...)
 		writePaths = append([]string{}, override.WritePaths...)
-		if len(writePaths) > 0 {
-			stepEnvOutputPathOverride = writePaths[0]
+		if strings.TrimSpace(override.OutputPath) != "" {
+			stepEnvOutputPathOverride = override.OutputPath
 		}
 		// The item-specific override may narrow files/KB/learnings, but DB is a
 		// uniform workflow-step capability. Restore the workflow DB path instead
@@ -1378,7 +1424,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 			stepExecutionPath = stepEnvOutputPathOverride
 		}
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionPath)
-		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+		stepExecutionAbsPath := stepExecutionScopeAbsPath(stepOutputAbsPath)
 		dbAbsPath := ""
 		if directDBAccess {
 			dbAbsPath = filepath.Join(GetPromptDocsRoot(), hcpo.GetWorkspacePath(), DBFolderName, "db.sqlite")
@@ -1395,13 +1441,17 @@ func (hcpo *StepBasedWorkflowOrchestrator) createExecutionOnlyAgent(ctx context.
 
 	// 6. Use base factory! (This handles all setup automatically)
 	pathInfo := parseStepPath(stepPath)
+	parentStepIndex := parentStepIndexFromContext(ctx, pathInfo.ParentStepNumber-1)
+	if parentStepIndex < 0 {
+		parentStepIndex = 0
+	}
 	agent, err := hcpo.CreateAndSetupStandardAgentWithConfig(
 		ctx,
 		config,
 		phase,
-		pathInfo.ParentStepNumber-1, // 0-based step number
-		0,                           // iteration
-		stepID,                      // Step ID (resolved from step path)
+		parentStepIndex,
+		0,      // iteration
+		stepID, // Step ID (resolved from step path)
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
 			return NewWorkflowExecutionOnlyAgent(cfg, logger, tracer, eventBridge)
 		},
@@ -1713,28 +1763,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 	// Setup Downloads folder for agent-browser.
 	hcpo.setupBrowserDownloadsPathOverride(ctx, config, stepConfig)
 
-	// Prepare custom tools and executors
-	var toolsToRegister []llmtypes.Tool
-	var executorsToUse map[string]interface{}
-
-	if stepConfig != nil && len(stepConfig.EnabledCustomTools) > 0 {
-		// Filter tools based on unified format (category:tool or category:*)
-		toolsToRegister, executorsToUse = orchestrator.FilterCustomToolsByCategory(
-			hcpo.WorkspaceTools,
-			hcpo.WorkspaceToolExecutors,
-			stepConfig.EnabledCustomTools,
-		)
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools for todo task orchestrator agent: %d tools enabled from %d entries: %v", len(toolsToRegister), len(stepConfig.EnabledCustomTools), stepConfig.EnabledCustomTools))
-	} else {
-		toolsToRegister = hcpo.WorkspaceTools
-		// Clone to avoid mutating the shared workspace executor map when we wrap
-		// execute_shell_command below to inject STEP_OUTPUT_DIR / STEP_EXECUTION_DIR.
-		executorsToUse = make(map[string]interface{}, len(hcpo.WorkspaceToolExecutors))
-		for k, v := range hcpo.WorkspaceToolExecutors {
-			executorsToUse[k] = v
-		}
-		hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using all workspace tools for todo task orchestrator agent: %d tools", len(toolsToRegister)))
-	}
+	// Start with the exact same default custom-tool policy as every other
+	// message-sequence agent. Specialist tools are the only conditional overlay.
+	toolsToRegister, executorsToUse := hcpo.prepareCustomTools(stepConfig)
 	// DB capability tools are always derived from trusted db_access even when a
 	// step supplies a narrower custom-tool list.
 	hasTool := func(name string) bool {
@@ -1780,7 +1811,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 	{
 		stepExecutionRelPath := hcpo.getOrchestratorStepExecutionPath(stepID, stepPath)
 		stepOutputAbsPath := filepath.Join(GetPromptDocsRoot(), stepExecutionRelPath)
-		stepExecutionAbsPath := filepath.Dir(stepOutputAbsPath)
+		stepExecutionAbsPath := stepExecutionScopeAbsPath(stepOutputAbsPath)
 		// The todo-task orchestrator now uses a dedicated MCP session for shell/file tools.
 		// Browser reuse is bound separately above, so this session override narrows
 		// filesystem scope without breaking shared browser behavior with the builder.
@@ -1865,7 +1896,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createOrchestratorAgent(ctx context.C
 		iteration,
 		stepID, // Step ID
 		func(cfg *agents.OrchestratorAgentConfig, logger loggerv2.Logger, tracer observability.Tracer, eventBridge mcpagent.AgentEventListener) agents.OrchestratorAgent {
-			return NewWorkflowOrchestratorAgent(cfg, logger, tracer, eventBridge)
+			return NewWorkflowDelegatingAgent(cfg, logger, tracer, eventBridge)
 		},
 		toolsToRegister, // Pass workspace tools (filtered by step config if specified)
 		executorsToUse,  // Pass workspace tool executors

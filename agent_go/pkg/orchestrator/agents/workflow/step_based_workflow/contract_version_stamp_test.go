@@ -136,3 +136,22 @@ func TestClearingASessionDropsItsGrant(t *testing.T) {
 		t.Fatal("a grant survived the end of its scheduled run")
 	}
 }
+
+func TestNestedAgentArtifactStampRequiresCodeLayoutOne(t *testing.T) {
+	for name, manifest := range map[string]map[string]interface{}{
+		"missing": {},
+		"legacy":  {"code_layout_version": float64(0)},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := validateContractVersionStampPrerequisites(NestedAgentArtifactsContractVersion, manifest); err == nil {
+				t.Fatal("nested artifact contract was stampable without code_layout_version=1")
+			}
+		})
+	}
+	if err := validateContractVersionStampPrerequisites(NestedAgentArtifactsContractVersion, map[string]interface{}{"code_layout_version": float64(1)}); err != nil {
+		t.Fatalf("code layout 1 rejected: %v", err)
+	}
+	if err := validateContractVersionStampPrerequisites("1.0.43", map[string]interface{}{}); err != nil {
+		t.Fatalf("unrelated historical stamp gained a new prerequisite: %v", err)
+	}
+}

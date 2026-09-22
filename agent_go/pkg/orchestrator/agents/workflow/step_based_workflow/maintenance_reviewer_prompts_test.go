@@ -63,7 +63,7 @@ func TestReviewPlanPromptPrefersCoherentAgenticSteps(t *testing.T) {
 		"fewest durable steps",
 		"substantial end-to-end outcome",
 		"message_sequence",
-		"Give the first work turn the whole outcome",
+		"Give the first work item the whole outcome",
 		"tiny sequence item per routine action",
 		"Separate deterministic acquisition from agentic processing",
 		"scripted regular fetcher steps",

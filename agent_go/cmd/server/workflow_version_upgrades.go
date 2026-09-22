@@ -24,20 +24,10 @@ func workflowContractVersionForUpgrade(manifest *WorkflowManifest) string {
 	return version
 }
 
-// workflowContractVersionIsExecutionCompatible treats retired, no-op contract
-// rungs as equivalent for execution. v1.0.42 and v1.0.43 were briefly stamped
-// by deployed servers, while v1.0.41 workflows never needed either retired
-// agent-authored migration. None should be blocked or rewritten solely to move
-// among these historical markers.
+// Only the current artifact contract is execution-compatible. Historical
+// 1.0.41-1.0.43 workflows now owe the nested-agent-artifact migration.
 func workflowContractVersionIsExecutionCompatible(version string) bool {
-	switch strings.TrimSpace(version) {
-	case workflowContractExplicitSchedulePulseVersion,
-		workflowContractRunScopedRoutesVersion,
-		workflowContractEvalRetirementVersion:
-		return true
-	default:
-		return false
-	}
+	return strings.TrimSpace(version) == workflowContractNestedAgentArtifactsVersion
 }
 
 // workflowContractVersionRank is intentionally a closed set. A workflow made
@@ -79,6 +69,7 @@ func workflowContractVersionRank(version string) (int, bool) {
 		workflowContractExplicitSchedulePulseVersion,
 		workflowContractRunScopedRoutesVersion,
 		workflowContractEvalRetirementVersion,
+		workflowContractNestedAgentArtifactsVersion,
 	}
 	for rank, candidate := range known {
 		if version == candidate {
@@ -92,6 +83,23 @@ const upgradeMessageSequenceCode = `WORKFLOW CONTRACT UPGRADE: MESSAGE-SEQUENCE 
 
 This workflow predates the current message-sequence contract. Do only this migration.
 Call migrate_message_sequence_code_items. It is the trusted tool that either converts unambiguous legacy code items into standalone scripted steps or reports a precise blocker. Then inspect the resulting plan and confirm no legacy message-sequence code item remains. Do not run the workflow. If the migration is blocked or validation fails, do not stamp a version. Otherwise call set_workflow_contract_version(version="1.0.10") and stop.`
+
+const upgradeNestedAgentArtifacts = `WORKFLOW CONTRACT UPGRADE: NESTED AGENT RUNTIME ARTIFACTS.
+
+Do only this migration. Runtime artifacts now live exclusively beneath their owning Agent step:
+
+runs/<run>/execution/<parent-step>/agents/<route-id>/session.json
+runs/<run>/execution/<parent-step>/agents/<route-id>/calls/<call-id>/
+runs/<run>/execution/<parent-step>/scripts/items/<item-id>/calls/<call-id>/
+runs/<run>/execution/<parent-step>/scripts/routes/<route-id>/calls/<call-id>/
+
+There is no runtime fallback to flattened step-*-sub-*, step-*-generic-*, execution/message_sequences/, or scripts/<item-id>/<call-id>/ paths. Historical run folders are evidence: do not move, rewrite, or delete them.
+
+Read workflow.json, planning/plan.json, planning/step_config.json, and every workflow-authored script or referenced instruction that names runtime paths. Replace hardcoded legacy execution paths with STEP_OUTPUT_DIR for the current invocation, STEP_EXECUTION_DIR or declared context dependencies for reads, and the nested layout only where an explicit relative artifact reference is unavoidable. Do not alter business behavior.
+
+Every scripted step must use the canonical source code/<script-step-id>/main.py with code/<script-step-id>/ as its working directory. If workflow.json.code_layout_version is not 1, perform the deliberate code-layout migration: copy and verify every complete scripted bundle (main.py, helpers, and script_metadata.json) under code/<step-id>/, then switch with set_code_layout_version(code_layout_version=1). Do not leave a scripted step available only under learnings/.
+
+Validate the changed plan/config and run focused script checks without executing the workflow's external side effects. Re-read every changed artifact. If a hardcoded legacy path is ambiguous or a scripted bundle cannot be migrated safely, report the exact blocker and do not stamp. Otherwise call set_workflow_contract_version(version="1.0.44") and stop.`
 
 const upgradeNotificationConfig = `WORKFLOW CONTRACT UPGRADE: NOTIFICATION CONFIGURATION.
 
@@ -447,9 +455,12 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 	if rank < 40 {
 		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractExplicitSchedulePulseVersion, label: "upgrade-explicit-schedule-pulse", query: upgradeExplicitSchedulePulse})
 	}
-	// Contracts v1.0.42 and v1.0.43 remain known historical markers, but both
-	// scheduled migrations are retired. v1.0.41 is execution-compatible with
-	// them, so no unattended agent turn is emitted just to advance a stamp.
+	// Contracts v1.0.42 and v1.0.43 remain known historical markers, but their
+	// retired migrations are skipped. Every older workflow advances directly to
+	// the first active contract after them.
+	if rank < 43 {
+		steps = append(steps, workflowVersionUpgrade{from: version, to: workflowContractNestedAgentArtifactsVersion, label: "upgrade-nested-agent-artifacts", query: upgradeNestedAgentArtifacts})
+	}
 	// Attached here rather than at the call site so the turn text is identical
 	// wherever it is built. The version pair used to be added only on the Pulse
 	// delivery path, which meant the blocking preflight — the one that actually

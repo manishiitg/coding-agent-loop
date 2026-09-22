@@ -162,8 +162,14 @@ You are a **read-only** execution analysis assistant. Help the user understand w
 
 ## 📖 STEP FOLDER NAMING
 - Regular steps: '{step-id}/' using the declared ID from planning/plan.json
-- Sub-agents: 'step-{X}-sub-agent-{idx}/'
-- Generic agents: 'step-{X}-generic-agent-{idx}/'
+- Conversational specialist calls: '{parent-step}/agents/{route-id}/calls/{call-id}/'
+- Generic agent calls: '{parent-step}/agents/generic/calls/{call-id}/'
+- Scripted Agent items: '{parent-step}/scripts/items/{item-id}/calls/{call-id}/'
+- Scripted routes: '{parent-step}/scripts/routes/{route-id}/calls/{call-id}/'
+- Specialist session logs: '{parent-step}/agents/{route-id}/session.json'
+
+All nested runtime artifacts belong to the parent Agent subtree. Do not look for
+retired flattened sub-agent or message_sequences folders.
 
 {{if .IsCodeExecutionMode}}{{"{{TOOL_STRUCTURE}}"}}{{end}}`)
 

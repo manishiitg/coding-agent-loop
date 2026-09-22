@@ -149,8 +149,10 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
 
   // No explicit view means the pane is on whichever canvas view was last open.
   const activeWorkspaceView: WorkspaceViewId = workflowWorkspaceView ?? lastCanvasView
-  const [openToolbarMenu, setOpenToolbarMenu] = useState<'views' | 'ops' | 'setup'>('views')
-  const toggleToolbarMenu = useCallback((menu: 'views' | 'ops' | 'setup') => {
+  // Setup stays permanently expanded (no toggle); the toggle switches
+  // between Views and Ops only.
+  const [openToolbarMenu, setOpenToolbarMenu] = useState<'views' | 'ops'>('views')
+  const toggleToolbarMenu = useCallback((menu: 'views' | 'ops') => {
     setOpenToolbarMenu(current => current === menu ? 'views' : menu)
   }, [])
 
@@ -163,14 +165,13 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
     [],
   )
 
-  // Exactly one group open at a time: the group holding the active view
-  // expands so its active button is always visible; everything else falls
-  // back to Views.
+  // The toggle follows the active view between Views and Ops. Setup views
+  // leave the toggle alone because Setup is always expanded.
+  const isSetupView = capabilityViewDefinitions.some(def => def.id === activeWorkspaceView) || activeWorkspaceView === 'access'
   useEffect(() => {
     if (OPERATIONS_TOOLBAR_VIEW_IDS.has(activeWorkspaceView)) setOpenToolbarMenu('ops')
-    else if (capabilityViewDefinitions.some(def => def.id === activeWorkspaceView) || activeWorkspaceView === 'access') setOpenToolbarMenu('setup')
-    else setOpenToolbarMenu('views')
-  }, [activeWorkspaceView, capabilityViewDefinitions])
+    else if (!isSetupView) setOpenToolbarMenu('views')
+  }, [activeWorkspaceView, isSetupView])
 
   // Backup/publish/notify status dots -- lightweight polls independent of
   // whether the pane is showing that view.
@@ -386,7 +387,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
           {/* One continuous pill: frequent tools | compact menus. */}
           {(workspacePath || canWriteWorkflow) && (
           <div className="inline-flex h-8 items-center divide-x divide-border rounded-lg border border-border bg-muted/60 py-0.5 shadow-sm">
-          {/* Exactly one group open at a time: Views, Ops, or Setup. */}
+          {/* Views and Ops toggle; Setup stays permanently expanded. */}
           {workspacePath && (
             <WorkspaceToolbarGroup
               label="Views"
@@ -449,13 +450,12 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
         )}
 
         {/* Workflow capabilities remain discoverable for readers. Each panel
-            owns its read-only state and disables mutations in place. */}
+            owns its read-only state and disables mutations in place. Setup
+            has no toggle: it stays expanded next to Views/Ops. */}
         {workspacePath && (
           <WorkspaceToolbarGroup
             label="Setup"
-            hideToggleWhenOpen
-            open={openToolbarMenu === 'setup'}
-            onToggle={() => toggleToolbarMenu('setup')}
+            open
             title="Setup: identity, integrations, playbooks and access"
           >
             <div className="inline-flex items-center gap-0.5">

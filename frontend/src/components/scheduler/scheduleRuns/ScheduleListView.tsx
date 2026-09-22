@@ -65,7 +65,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
   const scheduledCount = filteredJobs.length - missedCount - runningCount
 
   return (
-    <div className="divide-y divide-gray-100 dark:divide-gray-700">
+    <div className="divide-y divide-border">
       {filteredJobs.map((job, index, jobsList) => {
         const preset = presetMap.get(job.preset_query_id ?? '')
         const cronDesc = job.schedule_type === 'webhook' ? 'API trigger · on request' : describeCron(job.cron_expression)
@@ -87,43 +87,43 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
         return (
           <React.Fragment key={job.id}>
             {showRunningHeader && (
-              <div className="px-5 py-2 bg-amber-500/5 border-b border-amber-500/10">
-                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Running schedules <span className="font-normal text-muted-foreground">· {runningCount}</span></div>
+              <div className="px-5 py-3 bg-warning/5 border-b border-warning/10">
+                <div className="text-sm font-semibold text-warning">Running schedules <span className="font-normal text-muted-foreground">· {runningCount}</span></div>
               </div>
             )}
 
             {showScheduledHeader && (
-              <div className="px-5 py-2 bg-muted/30 border-b border-border">
+              <div className="px-5 py-3 bg-muted/30 border-b border-border">
                 <div className="text-sm font-semibold text-foreground">Automation schedules <span className="font-normal text-muted-foreground">· {scheduledCount}</span></div>
               </div>
             )}
 
             {showMissedHeader && (
-              <div className="px-5 py-2 bg-amber-500/5 border-b border-amber-500/10">
-                <div className="text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules <span className="font-normal text-muted-foreground">· {missedCount}</span></div>
+              <div className="px-5 py-3 bg-warning/5 border-b border-warning/10">
+                <div className="text-sm font-semibold text-warning">Missed schedules <span className="font-normal text-muted-foreground">· {missedCount}</span></div>
               </div>
             )}
 
-            <div className={`px-5 py-3 ${!job.enabled ? 'opacity-60' : ''}`}>
+            <div className={`px-5 py-4 ${!job.enabled ? 'opacity-60' : ''}`}>
             {/* Row top */}
             <div className="relative flex items-start gap-3">
               {/* Status dot */}
               <div className={`mt-1 w-2 h-2 rounded-full flex-shrink-0 ${
-                job.last_status === 'running' ? 'bg-amber-500 animate-pulse' :
-                isWaitingJob ? 'bg-sky-500 animate-pulse' :
-                isMissedJob ? 'bg-amber-500' :
-                job.enabled ? 'bg-green-500' : 'bg-gray-300 dark:bg-gray-600'
+                job.last_status === 'running' ? 'bg-warning animate-pulse' :
+                isWaitingJob ? 'bg-info animate-pulse' :
+                isMissedJob ? 'bg-warning' :
+                job.enabled ? 'bg-success' : 'bg-muted-foreground/50'
               }`} />
 
               {/* Main content */}
               <div className="flex-1 min-w-0">
                 {showWorkflowIdentityInScheduleRows && (
                   <div className="min-w-0 pr-28">
-                    <div className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                       Automation
                     </div>
                     <div className="mt-0.5 flex items-center gap-2 flex-wrap">
-                      <span className="text-sm font-semibold text-gray-900 dark:text-gray-100 truncate" title={workflowDisplayLabel}>
+                      <span className="text-sm font-semibold text-foreground truncate" title={workflowDisplayLabel}>
                         {workflowDisplayLabel}
                       </span>
                     </div>
@@ -132,39 +132,39 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
 
                 <div className={`${showWorkflowIdentityInScheduleRows ? 'mt-1' : ''} flex items-center gap-2 flex-wrap pr-28`}>
                   {showWorkflowIdentityInScheduleRows && (
-                    <span className="text-[11px] uppercase tracking-wide text-gray-400 dark:text-gray-500">
+                    <span className="text-[11px] uppercase tracking-wide text-muted-foreground">
                       {job.schedule_type === 'webhook' ? 'Webhook' : 'Schedule'}
                     </span>
                   )}
-                  <span className={`${showWorkflowIdentityInScheduleRows ? 'text-xs font-medium' : 'text-sm font-semibold'} text-gray-700 dark:text-gray-300 truncate`} title={job.name}>
+                  <span className={`${showWorkflowIdentityInScheduleRows ? 'text-xs font-medium' : 'text-sm font-semibold'} text-foreground truncate`} title={job.name}>
                     {localizedJobName}
                   </span>
                   {isMissedJob && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300">
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-warning/15 text-warning">
                       Missed
                     </span>
                   )}
                   {isWaitingJob && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-sky-100 dark:bg-sky-900/30 text-sky-700 dark:text-sky-300">
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-info/15 text-info">
                       {job.last_status === 'waiting_for_capacity'
                         ? 'Waiting for capacity'
                         : `Queued${job.queued_occurrences && job.queued_occurrences > 1 ? ` · ${job.queued_occurrences} combined` : ''}`}
                     </span>
                   )}
                   {!job.enabled && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400">
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-muted text-muted-foreground">
                       Paused
                     </span>
                   )}
                   {executionScope && (
-                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 font-medium" title={executionScope.title}>
+                    <span className="text-xs px-1.5 py-0.5 rounded-full bg-secondary text-secondary-foreground font-medium" title={executionScope.title}>
                       {executionScope.label}
                     </span>
                   )}
                 </div>
 
                 {/* Cron + groups */}
-                <div className="mt-0.5 flex flex-wrap gap-x-3 gap-y-0.5 pr-28 text-xs text-gray-500 dark:text-gray-400">
+                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-1 pr-28 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1">
                     <Clock className="w-3 h-3" />
                     {cronDesc}
@@ -189,7 +189,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                   )}
                 </div>
                 {dependencyNames.length > 0 && (
-                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pr-28 text-xs text-indigo-600 dark:text-indigo-300">
+                  <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 pr-28 text-xs text-info">
                     {dependencyNames.length > 0 && <span>Waits for: {dependencyNames.join(', ')}</span>}
                   </div>
                 )}
@@ -197,8 +197,8 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                   <div className="mt-1 pr-28">
                     <div className="space-y-0.5">
                       {job.messages.map((m, i) => (
-                        <div key={i} className="flex items-start gap-1 text-xs text-gray-500 dark:text-gray-400">
-                          <span className="shrink-0 text-gray-400 dark:text-gray-500">{i + 1}.</span>
+                        <div key={i} className="flex items-start gap-1 text-xs text-muted-foreground">
+                          <span className="shrink-0 text-muted-foreground">{i + 1}.</span>
                           <span>{m}</span>
                         </div>
                       ))}
@@ -209,20 +209,20 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                 {job.schedule_type === 'webhook' && <WebhookEndpoint id={job.id} name={job.name} />}
 
                 {/* Run stats */}
-                <div className="mt-1 flex flex-wrap gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400">
+                <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-xs text-muted-foreground">
                   <span className="flex items-center gap-1" title={formatExactDateTime(job.last_run_at)}>
                     {job.last_status === 'running' ? (
-                      <Loader className="w-3 h-3 text-amber-500 animate-spin" />
+                      <Loader className="w-3 h-3 text-warning animate-spin" />
                     ) : isWaitingJob ? (
-                      <Clock className="w-3 h-3 text-sky-500" />
+                      <Clock className="w-3 h-3 text-info" />
                     ) : job.last_status === 'success' ? (
-                      <CheckCircle className="w-3 h-3 text-green-500" />
+                      <CheckCircle className="w-3 h-3 text-success" />
                     ) : job.last_status === 'error' ? (
-                      <XCircle className="w-3 h-3 text-red-500" />
+                      <XCircle className="w-3 h-3 text-destructive" />
                     ) : isSchedulePartialStatus(job.last_status) ? (
-                      <AlertTriangle className="w-3 h-3 text-amber-500" />
+                      <AlertTriangle className="w-3 h-3 text-warning" />
                     ) : job.last_status === 'stopped' ? (
-                      <Square className="w-3 h-3 text-gray-500" />
+                      <Square className="w-3 h-3 text-muted-foreground" />
                     ) : (
                       <Minus className="w-3 h-3" />
                     )}
@@ -248,7 +248,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                       : 'paused'}
                   </span>
                   {isMissedJob && (
-                    <span className="text-amber-700 dark:text-amber-300" title={missedReason}>
+                    <span className="text-warning" title={missedReason}>
                       {missedReason}
                     </span>
                   )}
@@ -260,12 +260,12 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
 
                 {/* Error message */}
                 {(isScheduleIssueStatus(job.last_status) || job.last_status === 'stopped') && job.last_error && (
-                  <div className={`mt-1 text-xs truncate max-w-lg ${job.last_status === 'error' ? 'text-red-500' : isSchedulePartialStatus(job.last_status) ? 'text-amber-600 dark:text-amber-400' : 'text-gray-500'}`} title={job.last_error}>
+                  <div className={`mt-1 text-xs truncate max-w-lg ${job.last_status === 'error' ? 'text-destructive' : isSchedulePartialStatus(job.last_status) ? 'text-warning' : 'text-muted-foreground'}`} title={job.last_error}>
                     ✗ {job.last_error}
                   </div>
                 )}
                 {isWaitingJob && job.waiting_reason && (
-                  <div className="mt-1 text-xs truncate max-w-lg text-sky-700 dark:text-sky-300" title={job.waiting_reason}>
+                  <div className="mt-1 text-xs truncate max-w-lg text-info" title={job.waiting_reason}>
                     {job.waiting_reason}
                   </div>
                 )}
@@ -285,7 +285,7 @@ export const ScheduleListView: React.FC<ScheduleListViewProps> = ({ panel }) => 
                   handleTrigger={handleTrigger}
                   handleToggle={handleToggle}
                   handleDelete={handleDelete}
-                  menuButtonClassName="rounded-md p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 dark:hover:bg-gray-700 dark:hover:text-gray-200"
+                  menuButtonClassName="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
                 />
               </div>
             </div>

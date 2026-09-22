@@ -1,13 +1,10 @@
 import './PreviousChatHistoryPanel.css'
-import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowUpRight, Bot, CalendarClock, ChevronDown, ChevronRight, Code2, Loader2, MessageSquare, Paperclip, Pencil, Trash2, Webhook, type LucideIcon } from 'lucide-react'
+import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import { ArrowUpRight, Bot, CalendarClock, Code2, Copy, Loader2, MessageSquare, MoreHorizontal, Paperclip, Pencil, Trash2, Webhook, type LucideIcon } from 'lucide-react'
 import { agentApi } from '../services/api'
 import { schedulerApi } from '../api/scheduler'
 import { productWebhooksApi, type ProductTriggerScope } from '../api/productWebhooks'
 import {
-  type ChatHistoryConversation,
-  type ChatHistoryMessage,
-  type ChatHistoryPreviewMessage,
   type ChatHistorySession,
   type ScheduledJob,
   type ScheduledJobRun,
@@ -17,13 +14,11 @@ import { workflowTriggerLabel } from '../utils/workflowSessionKinds'
 import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { chatHistoryWorkshopMode } from '../utils/chatHistoryWorkshopMode'
 import { chatHistoryRuntimeLabel, chatHistoryRuntimeShortLabel } from '../utils/chatHistoryRuntimeLabel'
-import { sanitizeProviderTranscriptContent } from '../utils/restoredConversationFilter'
 import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
-import { askAIDisplayText } from '../utils/askAIMessage'
 import { type ScheduleActivityItem } from '../utils/scheduleRunPresentation'
 import { ScheduleRunCard } from './ScheduleRunCard'
-import { ChatSessionIdCopyButton } from './ChatSessionIdCopyButton'
-import { ConversationMarkdownRenderer } from './ui/MarkdownRenderer'
+import { copyToClipboard } from '../utils/textUtils'
+import ConfirmationDialog from './ui/ConfirmationDialog'
 import {
   CHAT_HISTORY_CLEANUP_AGE_OPTIONS,
   type ChatHistoryCleanupAgeDays,
@@ -36,15 +31,6 @@ const PAGE_SIZE = 5
 // renders five rows at a time, so loading 100 upfront makes the spinner feel
 // stuck on workflows with months of schedule/pulse history.
 const FETCH_LIMIT = 25
-// How many stored messages the first expand pulls. Every fetched message is
-// rendered (assistant prose, tool calls, tool results), so this is the whole
-// budget rather than a fetch-more-than-you-show buffer -- "Load more" walks
-// further back through the conversation in increments.
-const EXPANDED_FETCH_LIMIT = 16
-const EXPANDED_FETCH_INCREMENT = 30
-// Fallback rows built from the session-list metadata (session.preview_messages),
-// shown before the details fetch lands or if it fails.
-const PREVIEW_MESSAGE_LIMIT = 14
 
 type PreviousChatKind = 'chat' | 'schedule' | 'bot' | 'webhook'
 type PreviousChatFilter = PreviousChatKind
@@ -67,8 +53,8 @@ const emptyStateContent: Record<PreviousChatFilter, {
   },
   webhook: {
     icon: Webhook,
-    title: 'No webhook runs yet',
-    body: 'Ask the workflow builder chat to create a webhook. Its executions will appear here when an external service calls it.',
+    title: 'No trigger runs yet',
+    body: 'Ask the workflow builder chat to create a trigger. Its executions will appear here when an external service calls it.',
   },
   bot: {
     icon: Bot,
@@ -236,127 +222,25 @@ const isSessionOlderThanDays = (session: ChatHistorySession, days: number): bool
   return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
 }
 
+// Mirrors the backend's terminal-status gate: cleanup only ever counts runs
+// the server would actually delete.
+const isTerminalScheduledRun = (run: ScheduledJobRun): boolean => {
+  const status = (run.status || '').toLowerCase()
+  return status !== '' && status !== 'running' && status !== 'queued' &&
+    status !== 'waiting_for_capacity' && status !== 'waiting_for_workflow'
+}
+
+const isRunOlderThanDays = (run: ScheduledJobRun, days: number): boolean => {
+  const timestamp = Date.parse(run.started_at || '')
+  if (Number.isNaN(timestamp)) return false
+  return timestamp < Date.now() - days * 24 * 60 * 60 * 1000
+}
+
 const getChatKind = (session: ChatHistorySession): PreviousChatKind => {
   if (workflowTriggerLabel({ sessionId: session.session_id }) === 'Webhook') return 'webhook'
   if (isScheduledChatHistorySession(session)) return 'schedule'
   if (session.session_id.startsWith('bot-')) return 'bot'
   return 'chat'
-}
-
-const previewMessages = (session: ChatHistorySession): ChatHistoryPreviewMessage[] => {
-  return (session.preview_messages || [])
-    .filter(message => message.text?.trim())
-    .slice(-PREVIEW_MESSAGE_LIMIT)
-}
-
-const messageRole = (message: ChatHistoryMessage): string => {
-  return String(message.Role || message.role || '').toLowerCase().trim()
-}
-
-const cleanMessageText = (text: string): string => {
-  const markers = [
-    '\n\nPrevious workflow-builder conversation file:',
-    '\n\nPrevious builder chat file available:',
-    '\n\nPrevious conversation file:',
-  ]
-  for (const marker of markers) {
-    const markerIndex = text.indexOf(marker)
-    if (markerIndex >= 0) return text.slice(0, markerIndex).trim()
-  }
-  return text.trim()
-}
-
-const messageText = (message: ChatHistoryMessage): string => {
-  const parts = message.Parts || message.parts || []
-  const text = parts
-    .map(part => part.Text || part.text || part.Content || part.content || '')
-    .filter(Boolean)
-    .join('\n')
-    .trim()
-  return cleanMessageText(text)
-}
-
-const functionCallOf = (part: unknown): Record<string, unknown> | null => {
-  const call = (part as Record<string, unknown>)?.FunctionCall ?? (part as Record<string, unknown>)?.functionCall
-  return call && typeof call === 'object' ? call as Record<string, unknown> : null
-}
-
-const messageToolName = (message: ChatHistoryMessage): string => {
-  const parts = message.Parts || message.parts || []
-  for (const part of parts) {
-    const call = functionCallOf(part)
-    const name = call?.Name ?? call?.name
-      ?? (part as Record<string, unknown>).Name ?? (part as Record<string, unknown>).name
-    if (typeof name === 'string' && name.trim()) return name.trim()
-  }
-  return ''
-}
-
-// The tool CALL lives as a FunctionCall part on an assistant message and holds
-// no text, so messageText() came back empty and the call was filtered out
-// entirely -- only its result survived. Surface the arguments so a reader can
-// see what was actually run, not just what came back.
-const messageToolArgs = (message: ChatHistoryMessage): string => {
-  const parts = message.Parts || message.parts || []
-  for (const part of parts) {
-    const call = functionCallOf(part)
-    const args = call?.Arguments ?? call?.arguments
-    if (typeof args === 'string' && args.trim()) {
-      try {
-        return JSON.stringify(JSON.parse(args), null, 2)
-      } catch {
-        return args.trim()
-      }
-    }
-  }
-  return ''
-}
-
-const messageIsError = (message: ChatHistoryMessage): boolean => {
-  const parts = message.Parts || message.parts || []
-  return parts.some(part => Boolean((part as Record<string, unknown>).IsError ?? (part as Record<string, unknown>).is_error))
-}
-
-const conversationMessages = (conversation: ChatHistoryConversation): ChatHistoryPreviewMessage[] => {
-  return (conversation.conversation_history || [])
-    .flatMap((message): ChatHistoryPreviewMessage[] => {
-      const role = messageRole(message)
-      const rawText = messageText(message)
-      const text = role === 'ai' || role === 'assistant'
-        ? sanitizeProviderTranscriptContent(rawText)
-        : rawText
-      const toolName = messageToolName(message)
-      const rows: ChatHistoryPreviewMessage[] = []
-      if (text) rows.push({ role, text, toolName, isError: messageIsError(message) })
-      // An assistant turn often has prose AND a tool call; emit the call as its
-      // own row so neither hides the other.
-      if (role === 'ai' || role === 'assistant') {
-        const args = messageToolArgs(message)
-        if (args) rows.push({ role: 'tool_call', text: args, toolName })
-      }
-      return rows
-    })
-    .filter(message => {
-      if (!message.text) return false
-      // Prose heuristics (auto-notification banners, replayed tool summaries)
-      // must not be applied to raw tool arguments/results.
-      if (message.role !== 'tool' && message.role !== 'tool_call' && message.text.startsWith('[AUTO-NOTIFICATION]')) return false
-      return message.role === 'human' ||
-        message.role === 'user' ||
-        message.role === 'ai' ||
-        message.role === 'assistant' ||
-        // Tool calls were filtered out entirely, so a chat that spent most of
-        // its turns in tools -- and any tool that failed -- read as if nothing
-        // happened between one message and the next.
-        message.role === 'tool' ||
-        message.role === 'tool_call'
-    })
-}
-
-// No local slice: the server already returns exactly the requested window, and
-// trimming again here would make "Load more" fetch messages it then discarded.
-const recentConversationMessages = (messages: ChatHistoryPreviewMessage[]): ChatHistoryPreviewMessage[] => {
-  return messages.filter(message => message.text?.trim())
 }
 
 const mergeSessions = (current: ChatHistorySession[], next: ChatHistorySession[]): ChatHistorySession[] => {
@@ -366,6 +250,86 @@ const mergeSessions = (current: ChatHistorySession[], next: ChatHistorySession[]
   }
   return Array.from(byId.values()).sort((a, b) =>
     Date.parse(b.updated_at || b.created_at || '') - Date.parse(a.updated_at || a.created_at || '')
+  )
+}
+
+const ChatRowActionsMenu: React.FC<{
+  sessionId: string
+  canRename: boolean
+  canDelete: boolean
+  isDeleting: boolean
+  open: boolean
+  onToggle: () => void
+  onClose: () => void
+  onRename: () => void
+  onDelete: () => void
+}> = ({ sessionId, canRename, canDelete, isDeleting, open, onToggle, onClose, onRename, onDelete }) => {
+  const addToast = useChatStore(state => state.addToast)
+
+  const handleCopy = async () => {
+    const copied = await copyToClipboard(sessionId)
+    onClose()
+    addToast(copied ? 'Copied session ID' : 'Copy failed', copied ? 'success' : 'error')
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={(event) => { event.stopPropagation(); onToggle() }}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Chat actions"
+        title="Chat actions"
+        className="inline-flex items-center rounded border border-border bg-background p-1 text-muted-foreground opacity-70 transition-colors hover:text-foreground group-hover:opacity-100"
+      >
+        <MoreHorizontal className="h-3.5 w-3.5" />
+      </button>
+      {open && (
+        <>
+          <button
+            type="button"
+            aria-label="Close chat actions"
+            className="fixed inset-0 z-30 cursor-default bg-transparent"
+            onClick={onClose}
+          />
+          <div
+            role="menu"
+            className="absolute right-0 top-full z-40 mt-1 w-44 overflow-hidden rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-lg"
+          >
+            {canRename && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => { onClose(); onRename() }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted"
+              >
+                <Pencil className="h-3.5 w-3.5" /> Rename chat
+              </button>
+            )}
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => void handleCopy()}
+              className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs hover:bg-muted"
+            >
+              <Copy className="h-3.5 w-3.5" /> Copy session ID
+            </button>
+            {canDelete && (
+              <button
+                type="button"
+                role="menuitem"
+                disabled={isDeleting}
+                onClick={() => { onClose(); onDelete() }}
+                className="flex w-full items-center gap-2 px-2 py-1.5 text-left text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />} Delete chat
+              </button>
+            )}
+          </div>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -437,15 +401,14 @@ interface PreviousChatHistoryPanelProps {
   showAll?: boolean
   /** Keep the shared history UI while hiding automation-only filters. */
   recentOnly?: boolean
-  /** Show automation-created conversations in the unfiltered chat index. */
+  /** Fetch automation-created conversations and offer the origin filters. */
   includeAutomationChats?: boolean
-  /** History browser only: expand stored messages in place without making an
-   *  earlier session live or exposing an Open/Resume action. */
+  /** History browser only: no rename, delete, or cleanup actions. */
   readOnly?: boolean
   /** Keep history management read-only while still allowing a conversation to
    *  open in its own tab. */
   allowOpen?: boolean
-  /** Use the row as the open action and omit inline transcript expansion. */
+  /** Use the row as the open action instead of a separate Open button. */
   openOnRowClick?: boolean
   /** Show one automation run feed without the general history filters. */
   runOnly?: 'schedule' | 'webhook'
@@ -483,31 +446,19 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const [isCleanupLoading, setIsCleanupLoading] = useState(false)
   const [deletingSessionIds, setDeletingSessionIds] = useState<Set<string>>(() => new Set())
   const [activeFilter, setActiveFilter] = useState<PreviousChatFilter>(runOnly || 'chat')
+  const [selectedBotChannel, setSelectedBotChannel] = useState('all')
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE)
-  const [expandedSessionIds, setExpandedSessionIds] = useState<Set<string>>(() => new Set())
-  const [expandedMessagesBySession, setExpandedMessagesBySession] = useState<Record<string, ChatHistoryPreviewMessage[]>>({})
-  const [loadingExpandedSessionIds, setLoadingExpandedSessionIds] = useState<Set<string>>(() => new Set())
-  // How many stored messages each expanded session has pulled so far, and
-  // whether the server still had older ones to give.
-  const [expandedWindowBySession, setExpandedWindowBySession] = useState<Record<string, number>>({})
-  const [hasMoreBySession, setHasMoreBySession] = useState<Record<string, boolean>>({})
   const [scheduleJobs, setScheduleJobs] = useState<ScheduledJob[]>([])
   // Both trigger feeds use recorded runs, ordered by recency.
   const [scheduleRunsByJob, setScheduleRunsByJob] = useState<Record<string, ScheduledJobRun[]>>({})
   const [isLoadingScheduleActivity, setIsLoadingScheduleActivity] = useState(false)
   const [automationSourceBySession, setAutomationSourceBySession] = useState<Record<string, { kind: 'schedule' | 'trigger'; label: string }>>({})
+  const [openRowMenuSessionId, setOpenRowMenuSessionId] = useState<string | null>(null)
+  const [runsRefreshToken, setRunsRefreshToken] = useState(0)
+  const [isCleanupRunsLoading, setIsCleanupRunsLoading] = useState(false)
+  const [pendingRunCleanup, setPendingRunCleanup] = useState<{ days: ChatHistoryCleanupAgeDays; count: number } | null>(null)
   const [scheduleJobsWorkspacePath, setScheduleJobsWorkspacePath] = useState('')
-  const expandedMessagesRef = useRef(expandedMessagesBySession)
-  const loadingExpandedSessionIdsRef = useRef(loadingExpandedSessionIds)
   const addToast = useChatStore(state => state.addToast)
-
-  useEffect(() => {
-    expandedMessagesRef.current = expandedMessagesBySession
-  }, [expandedMessagesBySession])
-
-  useEffect(() => {
-    loadingExpandedSessionIdsRef.current = loadingExpandedSessionIds
-  }, [loadingExpandedSessionIds])
 
   useEffect(() => {
     let cancelled = false
@@ -516,10 +467,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     setScheduleRunsByJob({})
     setScheduleJobsWorkspacePath('')
     setActiveFilter(runOnly || 'chat')
+    setSelectedBotChannel('all')
     setVisibleCount(PAGE_SIZE)
-    setExpandedSessionIds(new Set())
-    setExpandedMessagesBySession({})
-    setLoadingExpandedSessionIds(new Set())
     setIsLoading(true)
 
     // Fetch ordinary chats separately. A schedule-heavy workflow can have many
@@ -554,7 +503,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
   const showRunActivity = activeFilter === 'schedule' || activeFilter === 'webhook'
   useEffect(() => {
-    if (recentOnly) {
+    if (recentOnly && !includeAutomationChats) {
       setScheduleJobs([])
       setScheduleRunsByJob({})
       setScheduleJobsWorkspacePath('')
@@ -596,7 +545,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     void refresh(true)
     const timer = showRunActivity ? window.setInterval(() => { if (!document.hidden) void refresh() }, 10000) : undefined
     return () => { cancelled = true; if (timer !== undefined) window.clearInterval(timer) }
-  }, [addToast, recentOnly, runEntityType, workspacePath, showRunActivity, refreshToken])
+  }, [addToast, includeAutomationChats, recentOnly, runEntityType, workspacePath, showRunActivity, refreshToken, runsRefreshToken])
 
   // Crew automation sessions are ordinary product conversations. Join the
   // durable run indexes by session id so the chat list can name its source.
@@ -647,6 +596,16 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     [activeSessionId],
   )
 
+  const botChannels = useMemo(() => {
+    const channels = new Set<string>()
+    for (const session of visibleSessions) {
+      if (getChatKind(session) !== 'bot') continue
+      const key = (session.bot_platform || botPlatformFromSessionID(session.session_id)).trim().toLowerCase()
+      channels.add(key || 'bot')
+    }
+    return Array.from(channels).sort()
+  }, [visibleSessions])
+
   const filterCounts = useMemo(() => {
     const counts: Record<PreviousChatFilter, number> = {
       chat: 0,
@@ -660,12 +619,15 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     return counts
   }, [visibleSessions])
 
-  const filteredSessions = useMemo(
-    () => recentOnly && includeAutomationChats
-      ? visibleSessions
-      : visibleSessions.filter(session => getChatKind(session) === activeFilter),
-    [activeFilter, includeAutomationChats, recentOnly, visibleSessions]
-  )
+  const filteredSessions = useMemo(() => {
+    if (activeFilter === 'bot' && selectedBotChannel !== 'all') {
+      return visibleSessions.filter(session =>
+        getChatKind(session) === 'bot' &&
+        ((session.bot_platform || botPlatformFromSessionID(session.session_id)).trim().toLowerCase() || 'bot') === selectedBotChannel
+      )
+    }
+    return visibleSessions.filter(session => getChatKind(session) === activeFilter)
+  }, [activeFilter, selectedBotChannel, visibleSessions])
 
   const oldVisibleSessionCounts = useMemo(
     () => CHAT_HISTORY_CLEANUP_AGE_OPTIONS.reduce((counts, days) => {
@@ -707,6 +669,11 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   const displayedScheduleRuns = showAll ? filteredRuns : filteredRuns.slice(0, visibleCount)
   const filteredJobs = scheduleJobs.filter(job => (job.schedule_type === 'webhook') === (activeFilter === 'webhook'))
 
+  const oldRunCounts = CHAT_HISTORY_CLEANUP_AGE_OPTIONS.reduce((counts, days) => {
+    counts[days] = filteredRuns.filter(({ run }) => isTerminalScheduledRun(run) && isRunOlderThanDays(run, days)).length
+    return counts
+  }, {} as Record<ChatHistoryCleanupAgeDays, number>)
+
   const displayFilterCounts = {
     ...filterCounts,
     schedule: scheduleDataMatchesWorkspace && !isLoadingScheduleActivity ? scheduledRuns.length : '…',
@@ -729,73 +696,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     onHasChatsChange?.(!isLoading && visibleSessions.length > 0, !isLoading)
   }, [isLoading, onHasChatsChange, visibleSessions.length])
 
-  const loadExpandedMessages = useCallback(async (session: ChatHistorySession, requestedWindow?: number) => {
-    const sessionId = session.session_id
-    const window = requestedWindow ?? EXPANDED_FETCH_LIMIT
-    const isLoadMore = requestedWindow !== undefined
-    // A plain expand is a no-op once loaded; "Load more" deliberately re-fetches
-    // the same session with a larger window.
-    if (!isLoadMore && expandedMessagesRef.current[sessionId]) return
-    if (loadingExpandedSessionIdsRef.current.has(sessionId)) return
-
-    const nextLoading = new Set(loadingExpandedSessionIdsRef.current)
-    nextLoading.add(sessionId)
-    loadingExpandedSessionIdsRef.current = nextLoading
-    setLoadingExpandedSessionIds(nextLoading)
-    try {
-      const conversation = await agentApi.getChatHistoryConversation(sessionId, workspacePath, window)
-      const messages = conversationMessages(conversation)
-      const recentMessages = recentConversationMessages(messages)
-      // The server returns the tail of the conversation capped at `window`.
-      // Getting back fewer than asked for means we reached the beginning.
-      const returned = conversation.conversation_history?.length ?? 0
-      setExpandedWindowBySession(current => ({ ...current, [sessionId]: window }))
-      setHasMoreBySession(current => ({ ...current, [sessionId]: returned >= window }))
-      setExpandedMessagesBySession(current => {
-        const next = {
-          ...current,
-          [sessionId]: recentMessages.length > 0 ? recentMessages : previewMessages(session),
-        }
-        expandedMessagesRef.current = next
-        return next
-      })
-    } catch {
-      setExpandedMessagesBySession(current => {
-        const next = {
-          ...current,
-          [sessionId]: previewMessages(session),
-        }
-        expandedMessagesRef.current = next
-        return next
-      })
-      addToast('Failed to load full chat details', 'error')
-    } finally {
-      setLoadingExpandedSessionIds(current => {
-        const next = new Set(current)
-        next.delete(sessionId)
-        loadingExpandedSessionIdsRef.current = next
-        return next
-      })
-    }
-  }, [addToast, workspacePath])
-
-  const toggleExpanded = useCallback((session: ChatHistorySession) => {
-    const sessionId = session.session_id
-    const wasExpanded = expandedSessionIds.has(sessionId)
-    setExpandedSessionIds(current => {
-      const next = new Set(current)
-      if (next.has(sessionId)) {
-        next.delete(sessionId)
-      } else {
-        next.add(sessionId)
-      }
-      return next
-    })
-    if (!wasExpanded) {
-      void loadExpandedMessages(session)
-    }
-  }, [expandedSessionIds, loadExpandedMessages])
-
   const handleSelect = useCallback((session: ChatHistorySession) => {
     void onSelectSession(session)
   }, [onSelectSession])
@@ -813,17 +713,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     try {
       await agentApi.deleteChatHistorySession(sessionId, workspacePath)
       setSessions(current => current.filter(item => item.session_id !== sessionId))
-      setExpandedSessionIds(current => {
-        const next = new Set(current)
-        next.delete(sessionId)
-        return next
-      })
-      setExpandedMessagesBySession(current => {
-        const next = { ...current }
-        delete next[sessionId]
-        expandedMessagesRef.current = next
-        return next
-      })
       addToast('Deleted previous chat', 'success')
     } catch {
       addToast('Failed to delete previous chat', 'error')
@@ -894,9 +783,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
         agentApi.listChatHistorySessions(FETCH_LIMIT, 0, workspacePath, 'chat'),
       ])
       setSessions(mergeSessions(allResponse.sessions || [], chatResponse.sessions || []))
-      setExpandedSessionIds(new Set())
-      setExpandedMessagesBySession({})
-      expandedMessagesRef.current = {}
       addToast(
         deletedCount === 0
           ? `No chats older than ${olderThanDays} days`
@@ -910,6 +796,52 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     }
   }, [addToast, oldVisibleSessionCounts, workspacePath])
 
+  // Run-record cleanup is workflow-only for now: product run history lives in
+  // a runtime workspace this panel cannot address. The delivery-history feed
+  // opts in via runOnly even though it renders readOnly: there are no session
+  // rows there, so run cleanup is that feed's own management action.
+  const showRunsCleanup = isRunFilter && runEntityType === 'workflow' && !!workspacePath && (!readOnly || runOnly)
+
+  const handleSelectRunCleanup = (days: ChatHistoryCleanupAgeDays) => {
+    const count = oldRunCounts[days] || 0
+    if (count === 0) {
+      addToast(`No runs older than ${days} days`, 'info')
+      return
+    }
+    setPendingRunCleanup({ days, count })
+  }
+
+  const handleConfirmRunCleanup = useCallback(async () => {
+    if (!pendingRunCleanup || !workspacePath) return
+    const scheduleIds = filteredJobs.map(job => job.id).filter(Boolean)
+    if (scheduleIds.length === 0) {
+      addToast('No runs to delete', 'info')
+      setPendingRunCleanup(null)
+      return
+    }
+    setIsCleanupRunsLoading(true)
+    try {
+      const response = await schedulerApi.cleanupJobRuns({
+        workspace_path: workspacePath,
+        older_than_days: pendingRunCleanup.days,
+        schedule_ids: scheduleIds.join(','),
+      })
+      const deletedCount = response.deleted_count ?? 0
+      setRunsRefreshToken(token => token + 1)
+      addToast(
+        deletedCount === 0
+          ? `No runs older than ${pendingRunCleanup.days} days`
+          : `Deleted ${deletedCount} run record${deletedCount === 1 ? '' : 's'} older than ${pendingRunCleanup.days} days`,
+        'success'
+      )
+    } catch {
+      addToast('Failed to delete old runs', 'error')
+    } finally {
+      setIsCleanupRunsLoading(false)
+      setPendingRunCleanup(null)
+    }
+  }, [addToast, filteredJobs, pendingRunCleanup, workspacePath])
+
   const ActionIcon = actionLabel.toLowerCase() === 'attach' ? Paperclip : ArrowUpRight
   // This row is a content filter inside the conversation hub, not another set
   // of active chats. The main Chat owns the one continuing conversation;
@@ -918,8 +850,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
     { filter: 'chat' as const, label: 'History', icon: MessageSquare },
     { filter: 'schedule' as const, label: 'Schedules', icon: CalendarClock },
     { filter: 'bot' as const, label: 'Bots', icon: Bot },
-    { filter: 'webhook' as const, label: 'Webhooks', icon: Webhook },
-  ].filter(({ filter }) => runOnly ? filter === runOnly : !recentOnly || filter === 'chat')
+    { filter: 'webhook' as const, label: 'Triggers', icon: Webhook },
+  ].filter(({ filter }) => runOnly ? filter === runOnly : (!recentOnly || includeAutomationChats || filter === 'chat'))
   const showPanelHeader = Boolean((!compact && title) || (!isLoading && (
     filterItems.length > 1 || (!readOnly && !isRunFilter && hasOldVisibleSessions)
   )))
@@ -927,13 +859,13 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
   return (
     <div className={`chat-history-panel min-w-0 w-full ${fill ? 'flex min-h-0 flex-1 flex-col overflow-hidden' : 'shrink-0'} border-b border-border bg-background`}>
       <div className={`${fill ? 'flex min-h-0 flex-1 flex-col' : ''} w-full`}>
-        {showPanelHeader && <div className={`flex flex-wrap items-center gap-2 border-b border-border px-3 py-2 ${compact || !title ? 'justify-end' : 'justify-between'}`}>
+        {showPanelHeader && <div className={`flex flex-wrap items-center border-b border-border ${compact ? 'gap-2 px-3 py-2' : 'gap-3 px-4 py-3'} ${compact || !title ? 'justify-end' : 'justify-between'}`}>
           {/* The "Previous … chats" heading is redundant in the compact rail —
               the filter pills + list make the purpose obvious — so hide it there. */}
           {!compact && title && (
             <div className="flex min-w-0 items-center gap-2 text-sm">
               <MessageSquare className="h-4 w-4 shrink-0 text-muted-foreground/80" />
-              <span className="truncate font-medium text-foreground">{runOnly ? title : activeFilter === 'webhook' ? 'Webhook activity' : activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
+              <span className="truncate font-medium text-foreground">{runOnly ? title : activeFilter === 'webhook' ? 'Trigger activity' : activeFilter === 'schedule' ? 'Schedule activity' : title}</span>
             </div>
           )}
 
@@ -950,8 +882,8 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     aria-pressed={isActive}
                     title={`${label} (${displayFilterCounts[filter]})`}
                     type="button"
-                    onClick={() => setActiveFilter(filter)}
-                    className={`inline-flex shrink-0 items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
+                    onClick={() => { setActiveFilter(filter); setSelectedBotChannel('all') }}
+                    className={`inline-flex shrink-0 items-center gap-1.5 rounded-md text-xs font-medium transition-colors ${compact ? 'px-2 py-1' : 'px-3 py-1.5'} ${
                       isActive
                         ? 'bg-background text-foreground shadow-sm ring-1 ring-border/40'
                         : 'text-muted-foreground hover:bg-background/60 hover:text-foreground'
@@ -971,11 +903,32 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                 })}
               </div>
                 )}
+                {activeFilter === 'bot' && botChannels.length > 1 && (
+                  <select
+                    aria-label="Filter bots by channel"
+                    value={selectedBotChannel}
+                    onChange={(event) => setSelectedBotChannel(event.target.value)}
+                    className="max-w-full rounded-md border border-border bg-background px-2 py-1 text-xs text-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                  >
+                    <option value="all">All channels</option>
+                    {botChannels.map((channel) => (
+                      <option key={channel} value={channel}>{formatBotPlatform(channel)}</option>
+                    ))}
+                  </select>
+                )}
               {!readOnly && !isRunFilter && hasOldVisibleSessions && (
                 <CleanupOldChatsDropdown
                   counts={oldVisibleSessionCounts}
                   isLoading={isCleanupLoading || isLoading}
                   onSelect={handleCleanupOldChats}
+                />
+              )}
+              {showRunsCleanup && (
+                <CleanupOldChatsDropdown
+                  counts={oldRunCounts}
+                  isLoading={isCleanupRunsLoading || isLoadingScheduleActivity}
+                  onSelect={handleSelectRunCleanup}
+                  title="Delete old runs"
                 />
               )}
             </div>
@@ -989,12 +942,12 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
             {isLoadingScheduleActivity ? (
               <div className="flex items-center gap-2 px-3 py-4 text-xs text-muted-foreground">
                 <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                <span>Loading {activeFilter === 'webhook' ? 'webhook' : 'schedule'} activity...</span>
+                <span>Loading {activeFilter === 'webhook' ? 'trigger' : 'schedule'} activity...</span>
               </div>
             ) : filteredJobs.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No webhooks configured. Ask the workflow builder chat to create one.' : 'No schedules are configured for this workflow yet.'}</div>
+              <div className="px-3 py-4 text-sm text-muted-foreground">{activeFilter === 'webhook' ? 'No triggers configured. Ask the workflow builder chat to create one.' : 'No schedules are configured for this workflow yet.'}</div>
             ) : filteredRuns.length === 0 ? (
-              <div className="px-3 py-4 text-sm text-muted-foreground">{runOnly ? emptyText : activeFilter === 'webhook' ? 'No webhook runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
+              <div className="px-3 py-4 text-sm text-muted-foreground">{runOnly ? emptyText : activeFilter === 'webhook' ? 'No trigger runs recorded yet.' : 'No scheduled runs recorded yet.'}</div>
             ) : (
               <div className="divide-y divide-border">
                 {displayedScheduleRuns.map(({ job, run }) => (
@@ -1037,12 +990,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
         ) : (
           <div className={`${fill ? 'min-h-0 flex-1 overflow-y-auto' : ''} divide-y divide-border`}>
             {displayedSessions.map(session => {
-              const messages = expandedMessagesBySession[session.session_id] || previewMessages(session)
-              const isExpanded = expandedSessionIds.has(session.session_id)
-              const isLoadingDetails = loadingExpandedSessionIds.has(session.session_id)
-              // Distinguishes a first expand (blank, show a spinner) from a
-              // "Load more" (keep the list on screen while the next page loads).
-              const hasLoadedMessages = Boolean(expandedMessagesBySession[session.session_id]?.length)
               const runtimeLabel = chatHistoryRuntimeLabel(session)
               const isDeleting = deletingSessionIds.has(session.session_id)
               const canResume = !readOnly && session.can_resume !== false
@@ -1073,24 +1020,14 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
 
               return (
                 <div key={session.session_id} className="group bg-background transition-colors hover:bg-muted/20">
-                  <div className={`flex items-start gap-2 ${compact ? 'px-2.5 py-2' : 'px-3 py-2.5'}`}>
-                    {!openOnRowClick && <button
-                      type="button"
-                      onClick={() => toggleExpanded(session)}
-                      disabled={messages.length === 0 && !session.message_count}
-                      className="mt-0.5 rounded p-1 text-muted-foreground transition-colors hover:bg-background hover:text-foreground disabled:cursor-default disabled:opacity-30 disabled:hover:bg-transparent disabled:hover:text-muted-foreground"
-                      aria-label={isExpanded ? 'Hide chat details' : 'Show chat details'}
-                    >
-                      {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-                    </button>}
-
+                  <div className={`flex items-start ${compact ? 'gap-2 px-2.5 py-2' : 'gap-3 px-4 py-4'}`}>
                     <button
                       type="button"
-                      onClick={() => openOnRowClick ? handleSelect(session) : readOnly ? toggleExpanded(session) : handleSelect(session)}
+                      onClick={() => { if (openOnRowClick || !readOnly || allowOpen) handleSelect(session) }}
                       className="min-w-0 flex-1 text-left"
                     >
                       <div className="line-clamp-1 text-sm font-medium text-foreground">{chatHistorySessionTitle(session)}</div>
-                      <div className={`mt-0.5 flex min-w-0 flex-nowrap items-center gap-x-2 overflow-hidden text-muted-foreground/80 ${compact ? 'text-[9px]' : 'text-[10px]'}`}>
+                      <div className={`flex min-w-0 flex-nowrap items-center overflow-hidden text-muted-foreground/80 ${compact ? 'mt-0.5 gap-x-2 text-[9px]' : 'mt-1.5 gap-x-3 text-xs'}`}>
                         <span className="inline-flex shrink-0 items-center gap-1">
                           <CalendarClock className="h-3 w-3 shrink-0" />
                           <span className="whitespace-nowrap">{timeLabel}</span>
@@ -1102,7 +1039,7 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                           </span>
                         )}
                         <span
-                          className="inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 px-1.5 py-0.5"
+                          className={`inline-flex min-w-0 max-w-full items-center gap-1 rounded border border-border/70 bg-muted/30 ${compact ? 'px-1.5 py-0.5' : 'px-2 py-1'}`}
                           title={sourceBadge.label}
                         >
                           <SourceIcon className="h-3 w-3 shrink-0" />
@@ -1115,30 +1052,17 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </button>
 
                     <div className="flex shrink-0 items-center gap-1">
-                      {canResume && (
-                        <button
-                          type="button"
-                          onClick={() => { void handleRenameSession(session) }}
-                          className="inline-flex items-center rounded border border-border bg-background p-1 text-muted-foreground opacity-70 transition-colors hover:text-foreground group-hover:opacity-100"
-                          title="Rename chat"
-                          aria-label="Rename chat"
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </button>
-                      )}
-                      <ChatSessionIdCopyButton sessionId={session.session_id} compact />
-                      {canDelete && (
-                        <button
-                          type="button"
-                          onClick={() => { void handleDeleteSession(session) }}
-                          disabled={isDeleting}
-                          className="inline-flex items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-destructive opacity-70 transition-colors hover:bg-destructive/10 group-hover:opacity-100 disabled:cursor-not-allowed disabled:opacity-50"
-                          title="Delete this chat"
-                          aria-label="Delete this chat"
-                        >
-                          {isDeleting ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-                        </button>
-                      )}
+                      <ChatRowActionsMenu
+                        sessionId={session.session_id}
+                        canRename={canResume}
+                        canDelete={canDelete}
+                        isDeleting={isDeleting}
+                        open={openRowMenuSessionId === session.session_id}
+                        onToggle={() => setOpenRowMenuSessionId(current => current === session.session_id ? null : session.session_id)}
+                        onClose={() => setOpenRowMenuSessionId(null)}
+                        onRename={() => { void handleRenameSession(session) }}
+                        onDelete={() => { void handleDeleteSession(session) }}
+                      />
                       {(!openOnRowClick && (!readOnly || allowOpen)) && (
                         <button
                           type="button"
@@ -1154,78 +1078,6 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
                     </div>
                   </div>
 
-                  {!openOnRowClick && isExpanded && (
-                    <div className="px-10 pb-3">
-                      <div className="max-h-80 space-y-2 overflow-y-auto rounded-md border border-border bg-muted/20 p-2 text-xs text-foreground">
-                        {isLoadingDetails && !hasLoadedMessages && (
-                          <div className="flex items-center gap-2 text-muted-foreground">
-                            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                            <span>Loading messages...</span>
-                          </div>
-                        )}
-                        {!isLoadingDetails && messages.length === 0 && (
-                          <div className="text-muted-foreground">No displayable messages found.</div>
-                        )}
-                        {isLoadingDetails && hasLoadedMessages && (
-                          <div className="flex items-center justify-center gap-2 py-1 text-[11px] text-muted-foreground">
-                            <Loader2 className="h-3 w-3 animate-spin" />
-                            <span>Loading older messages...</span>
-                          </div>
-                        )}
-                        {!isLoadingDetails && hasMoreBySession[session.session_id] && (
-                          <button
-                            type="button"
-                            onClick={() => void loadExpandedMessages(
-                              session,
-                              (expandedWindowBySession[session.session_id] ?? EXPANDED_FETCH_LIMIT) + EXPANDED_FETCH_INCREMENT,
-                            )}
-                            className="w-full rounded border border-border/60 px-2 py-1 text-[11px] text-muted-foreground transition-colors hover:bg-muted/40 hover:text-foreground"
-                          >
-                            Load older messages
-                          </button>
-                        )}
-                        {(!isLoadingDetails || hasLoadedMessages) && messages.map((message, index) => {
-                          const isToolCall = message.role === 'tool_call'
-                          const isTool = message.role === 'tool' || isToolCall
-                          const normalizedRole = isTool
-                            ? `${isToolCall ? 'Tool call' : 'Tool result'}${message.toolName ? ` · ${message.toolName}` : ''}`
-                            : message.role === 'ai' || message.role === 'assistant' ? 'Assistant' : 'User'
-                          const roleClass = message.isError
-                            ? 'text-red-600 dark:text-red-400'
-                            : isTool
-                              ? 'text-amber-600 dark:text-amber-400'
-                              : normalizedRole === 'Assistant'
-                                ? 'text-emerald-600 dark:text-emerald-400'
-                                : 'text-sky-600 dark:text-sky-400'
-
-                          return (
-                            <div key={`${session.session_id}-previous-preview-${index}`} className="space-y-1 rounded bg-background/70 px-2 py-1.5">
-                              <div className={`text-[10px] font-semibold uppercase leading-none ${roleClass}`}>
-                                {normalizedRole}
-                              </div>
-                              {/* Rendered as markdown, not raw text: the stored
-                                  answer is markdown (bold, headings, tables) and
-                                  whitespace-pre-wrap showed it literally, e.g.
-                                  "**Toptal**" with the asterisks visible. */}
-                              {isTool ? (
-                                <pre className={`max-h-40 overflow-auto whitespace-pre-wrap break-words rounded px-1 py-0.5 font-mono text-[11px] leading-4 ${
-                                  message.isError
-                                    ? 'bg-red-950/25 text-red-200'
-                                    : 'bg-muted/40 text-muted-foreground'
-                                }`}>
-                                  {message.text}
-                                </pre>
-                              ) : (
-                                <div className="break-words leading-relaxed text-muted-foreground">
-                                  <ConversationMarkdownRenderer content={normalizedRole === 'User' ? askAIDisplayText(message.text) : message.text} maxHeight="none" framed={false} />
-                                </div>
-                              )}
-                            </div>
-                          )
-                        })}
-                      </div>
-                    </div>
-                  )}
                 </div>
               )
             })}
@@ -1244,6 +1096,19 @@ export const PreviousChatHistoryPanel: React.FC<PreviousChatHistoryPanelProps> =
           </div>
         )}
       </div>
+      {pendingRunCleanup && (
+        <ConfirmationDialog
+          isOpen
+          onClose={() => { if (!isCleanupRunsLoading) setPendingRunCleanup(null) }}
+          onConfirm={() => void handleConfirmRunCleanup()}
+          title="Delete old runs"
+          message={`Delete ${pendingRunCleanup.count} ${activeFilter === 'webhook' ? 'trigger' : 'scheduled'} run record${pendingRunCleanup.count === 1 ? '' : 's'} older than ${pendingRunCleanup.days} days? Run folders and conversation transcripts are kept. This cannot be undone.`}
+          confirmText="Delete runs"
+          type="danger"
+          isLoading={isCleanupRunsLoading}
+          loadingText="Deleting runs..."
+        />
+      )}
     </div>
   )
 }

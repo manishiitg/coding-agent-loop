@@ -456,10 +456,10 @@ const WorkflowPreviousChatsPanel: React.FC<{
       fill={primary}
       showAll={primary}
       recentOnly={chatOnly}
-      // Automation > Chats is a unified chronological index, not only the
-      // persistent Builder thread. Keep schedule/webhook/bot transcripts in
-      // that feed; the Schedules and Triggers tabs remain the run-centric
-      // views with status and delivery metadata.
+      // Automation > Chats offers the origin filters (History, Schedules,
+      // Bots, Triggers) over the workflow's past conversations. The Schedules
+      // and Triggers tabs remain the run-centric views with status and
+      // delivery metadata.
       includeAutomationChats={chatOnly}
       refreshToken={refreshToken}
     />

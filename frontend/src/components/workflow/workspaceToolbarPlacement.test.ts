@@ -12,7 +12,7 @@ describe('workflow Ask AI placement', () => {
     expect(host).toContain('assistantControl={workspacePath ? (')
   })
 
-  it('keeps exactly one of the Views, Ops, and Setup inline groups open', () => {
+  it('toggles between Views and Ops while Setup stays permanently expanded', () => {
     const toolbar = readFileSync('src/components/workflow/canvas/WorkflowToolbar.tsx', 'utf8')
 
     expect(toolbar).not.toContain('label="Tools"')
@@ -20,14 +20,14 @@ describe('workflow Ask AI placement', () => {
     expect(toolbar).toContain('label="Ops"')
     expect(toolbar).toContain('label="Setup"')
     expect(toolbar).toContain('hideLabel')
-    expect(toolbar.match(/hideToggleWhenOpen/g)).toHaveLength(3)
-    expect(toolbar).toContain("useState<'views' | 'ops' | 'setup'>('views')")
+    expect(toolbar.match(/hideToggleWhenOpen/g)).toHaveLength(2)
+    expect(toolbar).toContain("useState<'views' | 'ops'>('views')")
     expect(toolbar).toContain("open={openToolbarMenu === 'views'}")
     expect(toolbar).toContain("open={openToolbarMenu === 'ops'}")
-    expect(toolbar).toContain("open={openToolbarMenu === 'setup'}")
+    expect(toolbar).not.toContain("openToolbarMenu === 'setup'")
     expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('views')}")
     expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('ops')}")
-    expect(toolbar).toContain("onToggle={() => toggleToolbarMenu('setup')}")
+    expect(toolbar).not.toContain("toggleToolbarMenu('setup')")
     expect(toolbar).toContain('<WorkspaceToolbarGroup')
     expect(toolbar).toContain('<ToolbarInlineItem')
     expect(toolbar).not.toContain('ToolbarPopoverGroup')

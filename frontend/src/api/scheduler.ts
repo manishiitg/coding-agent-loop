@@ -47,6 +47,9 @@ export const schedulerApi = {
   deleteJob: (id: string) =>
     api.delete(`/api/scheduler/jobs/${id}`),
 
+  cleanupJobRuns: (params: { workspace_path: string; older_than_days: number; schedule_ids?: string }) =>
+    api.delete<{ deleted_count: number; workspace_path: string }>('/api/scheduler/jobs/runs/cleanup', { params }).then(r => r.data),
+
   enableJob: (id: string) =>
     api.post<ScheduledJob>(`/api/scheduler/jobs/${id}/enable`).then(r => r.data),
 

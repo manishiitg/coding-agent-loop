@@ -211,3 +211,81 @@ func TestFindScheduleRun(t *testing.T) {
 		t.Fatal("expected an error for an unknown run id")
 	}
 }
+
+func seedScheduleRunEntries(t *testing.T, stub *scheduleRunWorkspaceStub, workspacePath string, runs []ScheduleRunEntry) {
+	t.Helper()
+	data, err := json.Marshal(runs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub.files[workspacePath+"/schedule-runs.json"] = string(data)
+}
+
+func remainingScheduleRunIDs(t *testing.T, ctx context.Context, workspacePath string) []string {
+	t.Helper()
+	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := make([]string, 0, len(runs))
+	for _, run := range runs {
+		ids = append(ids, run.ID)
+	}
+	return ids
+}
+
+func TestDeleteScheduleRunsOlderThan(t *testing.T) {
+	stub, _ := newScheduleRunWorkspaceStub(t)
+	ctx := context.Background()
+	ws := "Workflow/cleanup-test"
+	old := time.Now().UTC().AddDate(0, 0, -60)
+	recent := time.Now().UTC().AddDate(0, 0, -2)
+	seedScheduleRunEntries(t, stub, ws, []ScheduleRunEntry{
+		{ID: "old-terminal", ScheduleID: "sched-1", Status: "success", StartedAt: old},
+		{ID: "old-running", ScheduleID: "sched-1", Status: "running", StartedAt: old},
+		{ID: "old-queued", ScheduleID: "sched-1", Status: "queued", StartedAt: old},
+		{ID: "recent-terminal", ScheduleID: "sched-1", Status: "error", StartedAt: recent},
+		{ID: "old-other-schedule", ScheduleID: "sched-2", Status: "success", StartedAt: old},
+		{ID: "zero-time", ScheduleID: "sched-1", Status: "success"},
+	})
+
+	deleted, err := DeleteScheduleRunsOlderThan(ctx, ws, []string{"sched-1"}, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1", deleted)
+	}
+	want := map[string]bool{"old-running": true, "old-queued": true, "recent-terminal": true, "old-other-schedule": true, "zero-time": true}
+	for _, id := range remainingScheduleRunIDs(t, ctx, ws) {
+		if !want[id] {
+			t.Fatalf("remaining run %q should have been deleted", id)
+		}
+		delete(want, id)
+	}
+	if len(want) != 0 {
+		t.Fatalf("missing remaining runs: %v", want)
+	}
+
+	deleted, err = DeleteScheduleRunsOlderThan(ctx, ws, nil, 30)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if deleted != 1 {
+		t.Fatalf("deleted = %d, want 1 (other schedule, no filter)", deleted)
+	}
+	if got := remainingScheduleRunIDs(t, ctx, ws); len(got) != 4 {
+		t.Fatalf("len(remaining) = %d, want 4", len(got))
+	}
+}
+
+func TestDeleteScheduleRunsOlderThanLeavesCorruptHistoryAlone(t *testing.T) {
+	stub, _ := newScheduleRunWorkspaceStub(t)
+	stub.files["Workflow/corrupt/schedule-runs.json"] = "{not valid json"
+	if _, err := DeleteScheduleRunsOlderThan(context.Background(), "Workflow/corrupt", nil, 30); err == nil {
+		t.Fatal("DeleteScheduleRunsOlderThan() error = nil, want corrupt-history error")
+	}
+	if got := stub.files["Workflow/corrupt/schedule-runs.json"]; got != "{not valid json" {
+		t.Fatalf("corrupt history was overwritten: %q", got)
+	}
+}

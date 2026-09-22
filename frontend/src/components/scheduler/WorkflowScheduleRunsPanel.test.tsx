@@ -103,7 +103,9 @@ describe('schedule panel views', () => {
     await act(async () => root.render(<WorkflowScheduleRunsPanel embedded hideHeader onClose={() => {}} />))
     try {
       expect(host.textContent).not.toContain('Automation Schedules')
-      expect(host.querySelector('[aria-label="Schedule views"]')).not.toBeNull()
+      expect(host.querySelector('[aria-label="Schedule views"]')).toBeNull()
+      expect(host.querySelector('[aria-label="Search schedules"]')).toBeNull()
+      expect(host.querySelector('[aria-label="Filter schedules by state"]')).not.toBeNull()
     } finally { await act(async () => root.unmount()); host.remove() }
   })
 
@@ -135,14 +137,57 @@ describe('schedule panel views', () => {
   })
 
   it('keeps views, search, and state filter in one toolbar row without a count line', async () => {
+    const { state } = buildPanelState()
+    hookState.current = state
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    // Modal (non-embedded) so the unscoped sticky toolbar renders; the modal
+    // portals to the body, so query there.
+    await act(async () => root.render(<WorkflowScheduleRunsPanel onClose={() => {}} />))
+    try {
+      const toolbar = document.body.querySelector('.sticky')
+      expect(toolbar?.querySelector('[aria-label="Schedule views"]')).not.toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Search schedules"]')).not.toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Filter schedules by state"]')).not.toBeNull()
+      expect(document.body.querySelectorAll('[aria-label="Search schedules"]').length).toBe(1)
+      expect(document.body.textContent).not.toContain('1 schedule · All')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('banners the global pause with a resume action', async () => {
+    const { state } = buildPanelState({ isSchedulerPaused: true })
+    const { host, root } = await renderPanel(state)
+    try {
+      const banner = host.querySelector('[aria-label="All schedules paused"]')
+      expect(banner).not.toBeNull()
+      expect(host.textContent).toContain("Timed runs won't start until you resume them.")
+      const resume = Array.from(banner!.querySelectorAll('button')).find(b => b.textContent?.includes('Resume schedules'))!
+      await act(async () => resume.click())
+      expect(state.handleToggleGlobalPause as ReturnType<typeof vi.fn>).toHaveBeenCalled()
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('hides the pause banner while running and the resume action when read-only', async () => {
+    const running = buildPanelState()
+    const r1 = await renderPanel(running.state)
+    try {
+      expect(r1.host.querySelector('[aria-label="All schedules paused"]')).toBeNull()
+    } finally { await act(async () => r1.root.unmount()); r1.host.remove() }
+    const ro = buildPanelState({ isSchedulerPaused: true, isReadOnlyUser: true })
+    const r2 = await renderPanel(ro.state)
+    try {
+      expect(r2.host.querySelector('[aria-label="All schedules paused"]')).not.toBeNull()
+      expect(Array.from(r2.host.querySelectorAll('button')).some(b => b.textContent?.includes('Resume schedules'))).toBe(false)
+    } finally { await act(async () => r2.root.unmount()); r2.host.remove() }
+  })
+
+  it('shows only the state filter in a workflow-scoped toolbar', async () => {
     const { state } = buildPanelState({ isWorkflowScoped: true })
     const { host, root } = await renderPanel(state)
     try {
       const toolbar = host.querySelector('.sticky')
-      expect(toolbar?.querySelector('[aria-label="Schedule views"]')).not.toBeNull()
-      expect(toolbar?.querySelector('[aria-label="Search schedules"]')).not.toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Schedule views"]')).toBeNull()
+      expect(toolbar?.querySelector('[aria-label="Search schedules"]')).toBeNull()
       expect(toolbar?.querySelector('[aria-label="Filter schedules by state"]')).not.toBeNull()
-      expect(host.querySelectorAll('[aria-label="Search schedules"]').length).toBe(1)
       expect(host.textContent).not.toContain('1 schedule · All')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
@@ -167,8 +212,8 @@ describe('schedule group headers', () => {
   it('use card-title style instead of kickers', () => {
     const list = readFileSync('src/components/scheduler/scheduleRuns/ScheduleListView.tsx', 'utf8')
     expect(list).toContain('text-sm font-semibold text-foreground">Automation schedules')
-    expect(list).toContain('text-sm font-semibold text-amber-600 dark:text-amber-400">Missed schedules')
-    expect(list).not.toContain('uppercase tracking-wide text-amber-600')
+    expect(list).toContain('text-sm font-semibold text-warning">Missed schedules')
+    expect(list).not.toContain('uppercase tracking-wide text-warning')
     expect(list).not.toContain('uppercase tracking-wide text-muted-foreground">Automation schedules')
   })
 })

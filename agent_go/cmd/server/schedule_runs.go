@@ -323,6 +323,54 @@ func isTerminalScheduleRunStatus(status string) bool {
 	}
 }
 
+// DeleteScheduleRunsOlderThan drops terminal run entries started more than
+// olderThanDays ago, restricted to scheduleIDs when non-empty. Running and
+// queued entries are never deleted, and neither are run folders or
+// conversation transcripts — chat-history cleanup owns those. Entries with
+// no start time are kept: unknown age must not read as old. It returns the
+// number of deleted entries.
+func DeleteScheduleRunsOlderThan(ctx context.Context, workspacePath string, scheduleIDs []string, olderThanDays int) (int, error) {
+	if olderThanDays <= 0 {
+		olderThanDays = 30
+	}
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return 0, err
+	}
+	cutoff := time.Now().AddDate(0, 0, -olderThanDays)
+	only := make(map[string]bool, len(scheduleIDs))
+	for _, id := range scheduleIDs {
+		if id = strings.TrimSpace(id); id != "" {
+			only[id] = true
+		}
+	}
+	kept := []ScheduleRunEntry{}
+	deleted := 0
+	for _, run := range runs {
+		if len(only) > 0 && !only[run.ScheduleID] {
+			kept = append(kept, run)
+			continue
+		}
+		if run.StartedAt.IsZero() || !isTerminalScheduleRunStatus(run.Status) || run.StartedAt.After(cutoff) {
+			kept = append(kept, run)
+			continue
+		}
+		deleted++
+	}
+	if deleted == 0 {
+		return 0, nil
+	}
+	if err := writeScheduleRunsUnlocked(ctx, workspacePath, kept); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
 // ListScheduleRuns returns runs for a specific schedule ID with pagination.
 // Runs are returned newest-first.
 func ListScheduleRuns(ctx context.Context, workspacePath string, scheduleID string, limit, offset int) ([]ScheduleRunEntry, int, error) {

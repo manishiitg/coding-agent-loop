@@ -36,7 +36,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
     <div className="px-5 py-4 space-y-4">
 
       {isSchedulerPaused && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-3">
+        <div className="rounded-xl border border-warning/30 bg-warning/10 px-4 py-3">
           <div className="flex items-center justify-between gap-3">
             <div>
               <div className="text-sm font-medium text-foreground">All scheduled automation triggers are paused</div>
@@ -63,7 +63,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
         >
           <div className="text-[11px] uppercase tracking-wide text-muted-foreground">Running schedules</div>
           <div className="mt-1 flex items-center gap-2">
-            <Radio className="w-3.5 h-3.5 text-amber-500" />
+            <Radio className="w-3.5 h-3.5 text-warning" />
             <span className="text-lg font-semibold text-foreground">{summary.running}</span>
           </div>
         </button>
@@ -100,10 +100,10 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
       </div>
 
       {missedJobs.length > 0 && (
-        <div className="rounded-xl border border-amber-500/30 bg-amber-500/10 px-3 py-3">
+        <div className="rounded-xl border border-warning/30 bg-warning/10 px-3 py-3">
           <div className="mb-2">
             <div>
-              <div className="text-[11px] uppercase tracking-wide text-amber-600 dark:text-amber-400">Missed schedules</div>
+              <div className="text-[11px] uppercase tracking-wide text-warning">Missed schedules</div>
               <div className="text-sm font-medium text-foreground">Schedules that were due but have not run yet</div>
             </div>
           </div>
@@ -122,13 +122,13 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
                 <button
                   key={`missed-${job.id}`}
                   onClick={() => showJobInWorkflowGroups(job)}
-                  className="rounded-lg border border-amber-400/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
+                  className="rounded-lg border border-warning/30 bg-card px-3 py-2 text-left hover:bg-muted transition-colors"
                 >
                   <div className="flex items-center justify-between gap-3">
                     <span className="truncate text-sm font-medium text-foreground" title={label}>
                       {label}
                     </span>
-                    <span className="text-xs font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                    <span className="text-xs font-medium text-warning whitespace-nowrap">
                       {job.missed_run_count && job.missed_run_count > 1
                         ? `${job.missed_run_count} missed`
                         : `Missed by ${formatOverdueDuration(overdueMs)}`}
@@ -138,7 +138,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
                     <span className="truncate" title={job.name}>{getLocalizedJobName(job)}</span>
                     <span className="whitespace-nowrap">{formatLocalScheduleTime(job.latest_missed_run_at || job.next_run_at)}</span>
                   </div>
-                  <div className="mt-1 truncate text-xs text-amber-700 dark:text-amber-300" title={missedReason}>
+                  <div className="mt-1 truncate text-xs text-warning" title={missedReason}>
                     {missedReason}
                   </div>
                 </button>
@@ -180,7 +180,7 @@ export const ScheduleOverviewView: React.FC<ScheduleOverviewViewProps> = ({ pane
                     <span className="truncate text-sm font-medium text-foreground" title={label}>
                       {label}
                     </span>
-                    <span className="text-xs font-medium text-amber-600 dark:text-amber-400 whitespace-nowrap">
+                    <span className="text-xs font-medium text-warning whitespace-nowrap">
                       {formatTimeUntil(job.next_run_at)}
                     </span>
                   </div>

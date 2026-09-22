@@ -42,15 +42,19 @@ export default {
   				foreground: 'hsl(var(--accent-foreground))'
   			},
   			destructive: {
-  				DEFAULT: 'hsl(var(--destructive))',
+				DEFAULT: 'hsl(var(--destructive) / <alpha-value>)',
   				foreground: 'hsl(var(--destructive-foreground))'
   			},
 			warning: {
-				DEFAULT: 'hsl(var(--warning))',
+				DEFAULT: 'hsl(var(--warning) / <alpha-value>)',
 				foreground: 'hsl(var(--foreground))'
 			},
 			info: {
-				DEFAULT: 'hsl(var(--info))',
+				DEFAULT: 'hsl(var(--info) / <alpha-value>)',
+				foreground: 'hsl(var(--foreground))'
+			},
+			success: {
+				DEFAULT: 'hsl(var(--success) / <alpha-value>)',
 				foreground: 'hsl(var(--foreground))'
 			},
   			border: 'hsl(var(--border))',

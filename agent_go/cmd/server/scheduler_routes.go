@@ -370,6 +370,45 @@ func SchedulerRoutes(router *mux.Router, svc *SchedulerService) {
 	apiRouter.HandleFunc("/jobs/{id}/stop", stopScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/reset-history", resetHistoryScheduledJobHandler(svc)).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/jobs/{id}/runs", getScheduledJobRunsHandler(svc)).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/jobs/runs/cleanup", requireWorkflowWriteAccess(cleanupScheduledJobRunsHandler(svc))).Methods("DELETE", "OPTIONS")
+}
+
+// cleanupScheduledJobRunsHandler bulk-deletes old terminal run entries for a
+// workspace, optionally restricted to schedule_ids (comma-separated). Run
+// folders and conversation transcripts are left alone.
+func cleanupScheduledJobRunsHandler(svc *SchedulerService) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "OPTIONS" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		_ = svc
+		workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+		if workspacePath == "" {
+			http.Error(w, "workspace_path is required", http.StatusBadRequest)
+			return
+		}
+		olderThanDays := 30
+		if v := strings.TrimSpace(r.URL.Query().Get("older_than_days")); v != "" {
+			n, err := strconv.Atoi(v)
+			if err != nil || n <= 0 {
+				http.Error(w, "older_than_days must be a positive integer", http.StatusBadRequest)
+				return
+			}
+			olderThanDays = n
+		}
+		var scheduleIDs []string
+		if v := strings.TrimSpace(r.URL.Query().Get("schedule_ids")); v != "" {
+			scheduleIDs = strings.Split(v, ",")
+		}
+		deleted, err := DeleteScheduleRunsOlderThan(r.Context(), workspacePath, scheduleIDs, olderThanDays)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"deleted_count": deleted, "workspace_path": workspacePath})
+	}
 }
 
 func triggerWorkflowPulseHandler(svc *SchedulerService) http.HandlerFunc {

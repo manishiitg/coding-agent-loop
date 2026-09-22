@@ -1,6 +1,7 @@
 import React, { lazy, useEffect, useState } from 'react'
-import { Bot, CalendarClock, ChevronLeft, Clock, Search, MessageSquare, Webhook } from 'lucide-react'
+import { Bot, CalendarClock, ChevronLeft, Clock, Search, MessageSquare, Webhook, Loader, Pause, Play } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
+import { Button } from '../ui/Button'
 import type { ScheduledJob } from '../../services/api-types'
 import { TooltipProvider } from '../ui/tooltip'
 import { useScheduleRunsData } from './scheduleRuns/useScheduleRunsData'
@@ -78,6 +79,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
     filteredJobs,
     workflowGroups,
     filterPills,
+    isReadOnlyUser,
+    isUpdatingSchedulerPause,
+    handleToggleGlobalPause,
   } = panel
 
   const compact = embedded && !isWorkflowScoped
@@ -159,24 +163,49 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
 
         {/* Body */}
         <div className="flex-1 overflow-y-auto">
+          {isSchedulerPaused && !isLoading && !error && (
+            <div role="status" aria-label="All schedules paused" className="border-b border-warning/30 bg-warning/10 px-5 py-2.5">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-0.5 text-xs">
+                  <span className="inline-flex items-center gap-1.5 font-medium text-warning">
+                    <Pause className="h-3.5 w-3.5 shrink-0" />
+                    All schedules are paused.
+                  </span>
+                  <span className="text-muted-foreground">Timed runs won't start until you resume them.</span>
+                </div>
+                {!isReadOnlyUser && (
+                  <Button variant="outline" size="sm" onClick={() => void handleToggleGlobalPause()} disabled={isUpdatingSchedulerPause}>
+                    {isUpdatingSchedulerPause ? <Loader className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    Resume schedules
+                  </Button>
+                )}
+              </div>
+            </div>
+          )}
           {(!compact || hideHeader) && panelJobs.length > 0 && (
             <div className="sticky top-0 z-10 border-b border-border bg-card/95 backdrop-blur px-5 py-3">
               <div className="space-y-2">
                 <div className="flex flex-wrap items-center gap-2">
-                  {viewControls}
+                  {/* The view switcher and search earn their place only across
+                      automations. A workflow-scoped view already identifies one
+                      automation and always shows its schedule list, so it keeps
+                      just the state filter. */}
+                  {!isWorkflowScoped && viewControls}
                   {(activeView === 'schedules' || activeView === 'by-workflow') && (
                     <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
-                      <div className="relative min-w-48 flex-1">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <input
-                          type="text"
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          aria-label="Search schedules"
-                          placeholder={isWorkflowScoped ? 'Search schedules…' : 'Search automations or schedules…'}
-                          className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
-                        />
-                      </div>
+                      {!isWorkflowScoped && (
+                        <div className="relative min-w-48 flex-1">
+                          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                          <input
+                            type="text"
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            aria-label="Search schedules"
+                            placeholder="Search automations or schedules…"
+                            className="w-full rounded-lg border border-border bg-background pl-9 pr-3 py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/50"
+                          />
+                        </div>
+                      )}
                       {!isWorkflowScoped && (activeView !== 'by-workflow' || selectedWorkflowFilter !== 'all') && (
                         <select
                           aria-label="Filter by automation"
@@ -213,7 +242,9 @@ const WorkflowScheduleRunsPanel: React.FC<WorkflowScheduleRunsPanelProps> = ({ o
           {isLoading && panelJobs.length === 0 ? (
             <div className="flex items-center justify-center h-40 text-sm text-muted-foreground">Loading...</div>
           ) : error ? (
-            <div className="flex items-center justify-center h-40 text-sm text-red-500">{error}</div>
+            <div className="flex items-center justify-center px-6 py-10">
+              <p role="alert" className="rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive">{error}</p>
+            </div>
           ) : panelJobs.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-48 gap-3 px-6 text-center text-sm text-muted-foreground">
               <Clock className="w-8 h-8 opacity-30" />

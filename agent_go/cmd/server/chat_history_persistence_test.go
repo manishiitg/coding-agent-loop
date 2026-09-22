@@ -1823,6 +1823,59 @@ func TestDeleteChatHistoryOlderThanUsesJSONTimestampAndSkipsEmpty(t *testing.T) 
 	}
 }
 
+func TestDeleteChatHistoryOlderThanWorkProjectRemovesBothCopies(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+
+	const (
+		userID        = "alice"
+		workspacePath = "Chats/Work/projects/demo"
+	)
+	oldAt := time.Now().AddDate(0, 0, -15).Format(time.RFC3339)
+	newAt := time.Now().Format(time.RFC3339)
+	conversation := func(sessionID, updatedAt string, history string) string {
+		return `{"session_id": "` + sessionID + `", "workspace_path": "` + workspacePath + `", "conversation_history": [` + history + `], "updated_at": "` + updatedAt + `"}`
+	}
+	message := `{"Role": "human", "Parts": [{"Text": "hello"}]}`
+	writeConversation := func(path, payload string) {
+		t.Helper()
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatalf("mkdir conversation parent: %v", err)
+		}
+		if err := os.WriteFile(path, []byte(payload), 0o600); err != nil {
+			t.Fatalf("write conversation: %v", err)
+		}
+	}
+	projectDir := filepath.Join(root, "_users", userID, filepath.FromSlash(workspacePath), "builder", "conversation", "2026-09-14")
+	legacyDir := filepath.Join(root, "_users", userID, "chat_history", "2026-09-14")
+	oldProject := filepath.Join(projectDir, "session-old-chat-conversation.json")
+	oldLegacy := filepath.Join(legacyDir, "session-old-chat-conversation.json")
+	writeConversation(oldProject, conversation("old-chat", oldAt, message))
+	writeConversation(oldLegacy, conversation("old-chat", oldAt, message))
+	newProject := filepath.Join(projectDir, "session-new-chat-conversation.json")
+	writeConversation(newProject, conversation("new-chat", newAt, message))
+	emptyProject := filepath.Join(projectDir, "session-empty-chat-conversation.json")
+	writeConversation(emptyProject, conversation("empty-chat", oldAt, ""))
+
+	result, err := DeleteChatHistoryOlderThan(userID, 14, workspacePath)
+	if err != nil {
+		t.Fatalf("cleanup Work chats: %v", err)
+	}
+	if result.DeletedCount != 2 {
+		t.Fatalf("deleted count = %d, want project and legacy copies of the old chat: %#v", result.DeletedCount, result.DeletedPaths)
+	}
+	for _, gone := range []string{oldProject, oldLegacy} {
+		if _, err := os.Stat(gone); !os.IsNotExist(err) {
+			t.Fatalf("conversation still exists or stat failed: %s: %v", gone, err)
+		}
+	}
+	for _, kept := range []string{newProject, emptyProject} {
+		if _, err := os.Stat(kept); err != nil {
+			t.Fatalf("conversation should remain: %s: %v", kept, err)
+		}
+	}
+}
+
 func TestDeleteChatHistoryOlderThanWorkflowUsesJSONTimestampAndSkipsEmpty(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("WORKSPACE_DOCS_PATH", root)

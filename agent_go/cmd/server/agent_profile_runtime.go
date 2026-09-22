@@ -18,13 +18,17 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/mcpagent/llm"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
 type resolvedAgentProfile struct {
 	Definition      agentprofiles.Profile
 	SelectedServers []string
 	Prompt          string
+	// IdentityKey carries the Crew's user-owned identity (role and purpose)
+	// resolved from product.json for this query. Empty for products without
+	// one. It feeds the session fingerprint so a retained native session
+	// relaunches when the identity it was launched with changes.
+	IdentityKey string
 	// APIKeys carries the project-scoped credential this resolver loaded from the
 	// encrypted per-user/workspace store. It is returned on the resolver's own
 	// result rather than handed back through req.LLMConfig so the query path can
@@ -36,41 +40,22 @@ type resolvedAgentProfile struct {
 
 // agentProfileSessionKey identifies the immutable product definition projected
 // into a provider-native coding session. Native CLIs retain their original
-// system prompt, tools, and skill files when resumed, so a changed definition
-// must start a fresh native session even though the application conversation
-// history remains intact.
-func agentProfileSessionKey(profile *resolvedAgentProfile, attachedSkills []*llmtypes.Skill) string {
+// system prompt and tools when resumed, so a changed definition, MCP server
+// selection, or Crew identity (role and purpose) must start a fresh native
+// session even though the application conversation history remains intact.
+// Skills stay out of the key: they are markdown files the agent re-reads
+// from the workspace on demand, so edits apply without a relaunch.
+func agentProfileSessionKey(profile *resolvedAgentProfile) string {
 	if profile == nil {
 		return ""
 	}
-	type skillFingerprint struct {
-		Name                   string               `json:"name"`
-		Description            string               `json:"description"`
-		Content                string               `json:"content"`
-		Paths                  []string             `json:"paths,omitempty"`
-		DisableModelInvocation bool                 `json:"disable_model_invocation,omitempty"`
-		Metadata               map[string]string    `json:"metadata,omitempty"`
-		SupportingFiles        []llmtypes.SkillFile `json:"supporting_files,omitempty"`
-	}
-	fingerprints := make([]skillFingerprint, 0, len(attachedSkills))
-	for _, skill := range attachedSkills {
-		if skill == nil {
-			continue
-		}
-		fingerprints = append(fingerprints, skillFingerprint{
-			Name: skill.Name, Description: skill.Description, Content: skill.Content,
-			Paths: skill.Paths, DisableModelInvocation: skill.DisableModelInvocation,
-			Metadata: skill.Metadata, SupportingFiles: skill.SupportingFiles,
-		})
-	}
-	sort.Slice(fingerprints, func(i, j int) bool { return fingerprints[i].Name < fingerprints[j].Name })
 	servers := append([]string(nil), profile.SelectedServers...)
 	sort.Strings(servers)
 	payload, err := json.Marshal(struct {
 		Definition      agentprofiles.Profile `json:"definition"`
-		Skills          []skillFingerprint    `json:"skills,omitempty"`
 		SelectedServers []string              `json:"selected_servers,omitempty"`
-	}{Definition: profile.Definition, Skills: fingerprints, SelectedServers: servers})
+		IdentityKey     string                `json:"identity_key,omitempty"`
+	}{Definition: profile.Definition, SelectedServers: servers, IdentityKey: profile.IdentityKey})
 	if err != nil {
 		return fmt.Sprintf("%s@%d", profile.Definition.ID, profile.Definition.Version)
 	}
@@ -339,12 +324,14 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 	// Product prompt variables are computed here from trusted state; never
 	// from the request body.
 	promptContext.Product = nil
+	identityKey := ""
 	if productVars, err := api.agentProfiles.PromptVariables(ctx, profile.ID, agentprofiles.RuntimeContext{
 		UserID: userID, SessionID: sessionID, WorkspacePath: workspacePath,
 	}); err != nil {
 		return nil, fmt.Errorf("agent profile %q prompt variables: %w", profile.ID, err)
 	} else if len(productVars) > 0 {
 		promptContext.Product = productVars
+		identityKey = productVars["WORK_IDENTITY_KEY"]
 	}
 	rendered, err := agentprofiles.RenderPrompt(profile, promptContext)
 	if err != nil {
@@ -476,7 +463,7 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 			req.Servers = nil
 		}
 	}
-	return &resolvedAgentProfile{Definition: profile, Prompt: rendered, APIKeys: resolvedKeys, SelectedServers: selectedServers}, nil
+	return &resolvedAgentProfile{Definition: profile, Prompt: rendered, APIKeys: resolvedKeys, SelectedServers: selectedServers, IdentityKey: identityKey}, nil
 }
 
 func profileRuntimeEventType(event any) string {

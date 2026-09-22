@@ -176,10 +176,9 @@ func RegisterProductSkills() error {
 }
 
 type workIdentity struct {
-	Icon         string `json:"icon,omitempty"`
-	Name         string `json:"name,omitempty"`
-	Role         string `json:"role,omitempty"`
-	Instructions string `json:"instructions,omitempty"`
+	Icon string `json:"icon,omitempty"`
+	Name string `json:"name,omitempty"`
+	Role string `json:"role,omitempty"`
 }
 
 type workProjectManifest struct {
@@ -189,23 +188,22 @@ type workProjectManifest struct {
 }
 
 const (
-	workIdentityIconLimit         = 8
-	workIdentityNameLimit         = 60
-	workIdentityRoleLimit         = 120
-	workIdentityInstructionsLimit = 500
+	workIdentityIconLimit    = 8
+	workIdentityNameLimit    = 60
+	workIdentityRoleLimit    = 120
+	workIdentityPurposeLimit = 1000
 )
 
 func normalizeWorkIdentity(identity workIdentity) workIdentity {
 	identity.Icon = strings.TrimSpace(identity.Icon)
 	identity.Name = strings.TrimSpace(identity.Name)
 	identity.Role = strings.TrimSpace(identity.Role)
-	identity.Instructions = strings.TrimSpace(identity.Instructions)
 	return identity
 }
 
 func renderWorkIdentity(identity workIdentity) string {
 	identity = normalizeWorkIdentity(identity)
-	if identity.Icon == "" && identity.Name == "" && identity.Role == "" && identity.Instructions == "" {
+	if identity.Icon == "" && identity.Name == "" && identity.Role == "" {
 		return ""
 	}
 	var lines []string
@@ -224,9 +222,6 @@ func renderWorkIdentity(identity workIdentity) string {
 	if identity.Role != "" {
 		lines = append(lines, "Role: "+identity.Role)
 	}
-	if identity.Instructions != "" {
-		lines = append(lines, "Instructions:\n"+identity.Instructions)
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -242,7 +237,6 @@ func validateWorkIdentity(identity workIdentity) string {
 	}{
 		{label: "name", value: identity.Name, max: workIdentityNameLimit},
 		{label: "role", value: identity.Role, max: workIdentityRoleLimit},
-		{label: "instructions", value: identity.Instructions, max: workIdentityInstructionsLimit},
 	}
 	for _, field := range limits {
 		if utf8.RuneCountInString(field.value) > field.max {
@@ -282,20 +276,20 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 			Name:     "set_work_identity",
 			Category: "work_identity",
 			Description: "Set, update, or clear this Crew project's agent identity when the user asks. " +
-				"A short name, icon, role, and instructions keep the agent consistent across project chats, schedules, bots, and background work; they change presentation and behavior, never permissions. " +
-				"Role and instructions are required: ask the user for both before the first save, and refuse to clear them. " +
+				"A short name, icon, role, and purpose keep the agent consistent across project chats, schedules, bots, and background work; they change presentation and behavior, never permissions. " +
+				"Role and purpose are required: ask the user for both before the first save, and refuse to clear them. " +
 				"Store it in product.json, preserve omitted fields, and never invent an identity.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"operation": map[string]interface{}{
 						"type": "string", "enum": []string{"set", "clear"},
-						"description": "Use set to create or update the identity, or clear to remove its icon and name. Role and instructions are required and clear never removes them.",
+						"description": "Use set to create or update the identity, or clear to remove its icon and name. Role and purpose are required and clear never removes them.",
 					},
-					"icon":         map[string]interface{}{"type": "string", "maxLength": workIdentityIconLimit, "description": "One emoji or short glyph. Omit to preserve; pass empty to remove."},
-					"name":         map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Short display name. Omit to preserve; pass empty to remove."},
-					"role":         map[string]interface{}{"type": "string", "maxLength": workIdentityRoleLimit, "description": "Required short role or purpose. Omit to preserve."},
-					"instructions": map[string]interface{}{"type": "string", "maxLength": workIdentityInstructionsLimit, "description": "Required brief behavior, tone, or working preferences. Omit to preserve."},
+					"icon":    map[string]interface{}{"type": "string", "maxLength": workIdentityIconLimit, "description": "One emoji or short glyph. Omit to preserve; pass empty to remove."},
+					"name":    map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Short display name. Omit to preserve; pass empty to remove."},
+					"role":    map[string]interface{}{"type": "string", "maxLength": workIdentityRoleLimit, "description": "Required short role. Omit to preserve."},
+					"purpose": map[string]interface{}{"type": "string", "maxLength": workIdentityPurposeLimit, "description": "Required short purpose for this Crew. Saved as the project description. Omit to preserve."},
 				},
 				"required": []string{"operation"},
 			},
@@ -311,19 +305,20 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 				operation, _ := args["operation"].(string)
 				operation = strings.ToLower(strings.TrimSpace(operation))
 				if operation == "clear" {
-					// Role and instructions are required, so clear removes
-					// presentation only. A legacy identity without them is
-					// dropped entirely instead of lingering half-empty.
+					// Role is required, so clear removes presentation only.
+					// A legacy identity without it is dropped entirely
+					// instead of lingering half-empty. Purpose lives in the
+					// top-level description and is never touched by clear.
 					cleared := workIdentity{}
 					if current, ok := manifest["identity"]; ok {
 						encoded, _ := json.Marshal(current)
 						_ = json.Unmarshal(encoded, &cleared)
 						cleared = normalizeWorkIdentity(cleared)
 					}
-					if cleared.Role == "" && cleared.Instructions == "" {
+					if cleared.Role == "" {
 						delete(manifest, "identity")
 					} else {
-						manifest["identity"] = workIdentity{Role: cleared.Role, Instructions: cleared.Instructions}
+						manifest["identity"] = workIdentity{Role: cleared.Role}
 					}
 				} else if operation == "set" {
 					identity := workIdentity{}
@@ -340,16 +335,23 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					if value, ok := args["role"].(string); ok {
 						identity.Role = value
 					}
-					if value, ok := args["instructions"].(string); ok {
-						identity.Instructions = value
-					}
 					identity = normalizeWorkIdentity(identity)
 					if validationError := validateWorkIdentity(identity); validationError != "" {
 						return validationError, nil
 					}
-					if identity.Role == "" || identity.Instructions == "" {
-						return "Role and instructions are both required for the Crew identity. Ask the user for whichever is missing before saving.", nil
+					purpose, _ := manifest["description"].(string)
+					if value, ok := args["purpose"].(string); ok {
+						purpose = strings.TrimSpace(value)
+					} else {
+						purpose = strings.TrimSpace(purpose)
 					}
+					if utf8.RuneCountInString(purpose) > workIdentityPurposeLimit {
+						return fmt.Sprintf("The identity purpose must be at most %d characters.", workIdentityPurposeLimit), nil
+					}
+					if identity.Role == "" || purpose == "" {
+						return "Role and purpose are both required for the Crew identity. Ask the user for whichever is missing before saving.", nil
+					}
+					manifest["description"] = purpose
 					manifest["identity"] = identity
 				} else {
 					return "operation must be set or clear.", nil
@@ -364,7 +366,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 				}
 				if operation == "clear" {
 					emitIdentityUpdated(operation)
-					return "The project icon and name were removed. The required role and instructions are preserved and still apply.", nil
+					return "The project icon and name were removed. The required role and purpose are preserved and still apply.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])
@@ -387,7 +389,7 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 			Category: "work_projects",
 			Description: "Create another basic Crew project for the signed-in user when they ask. " +
 				"The new Crew has its own durable conversation, files, runtime configuration, display name, and icon. " +
-				"This does not replace or rename the active Crew. After creation, tell the user to select the new Crew from the top project menu; it asks for its required role and instructions on first chat.",
+				"This does not replace or rename the active Crew. After creation, tell the user to select the new Crew from the top project menu; it asks for its required role and purpose on first chat.",
 			Parameters: map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,
@@ -520,10 +522,13 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 			return nil, fmt.Errorf("decode Crew identity: %w", err)
 		}
 		identity := ""
+		role := ""
 		if manifest.Identity != nil {
 			identity = renderWorkIdentity(*manifest.Identity)
+			role = normalizeWorkIdentity(*manifest.Identity).Role
 		}
-		if purpose := strings.TrimSpace(manifest.Description); purpose != "" {
+		purpose := strings.TrimSpace(manifest.Description)
+		if purpose != "" {
 			if identity != "" {
 				identity = "Purpose: " + purpose + "\n" + identity
 			} else {
@@ -531,6 +536,9 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 			}
 		}
 		// Always return the key because the Crew prompt uses missingkey=error.
-		return map[string]string{"WORK_IDENTITY": identity}, nil
+		// WORK_IDENTITY_KEY carries just role and purpose so the agent
+		// session fingerprint relaunches retained sessions when the Crew's
+		// identity changes, without churning on cosmetic icon/name edits.
+		return map[string]string{"WORK_IDENTITY": identity, "WORK_IDENTITY_KEY": role + "\n" + purpose}, nil
 	})
 }

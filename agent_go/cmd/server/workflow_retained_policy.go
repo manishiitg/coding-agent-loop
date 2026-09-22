@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
@@ -150,9 +149,7 @@ func (api *StreamingAPI) agentProfileRetainedPolicyCompatible(ctx context.Contex
 	if profile == nil {
 		return false, fmt.Errorf("product profile is unavailable")
 	}
-	names := skills.WithAgentBrowserCapability(req.SelectedSkills, buildChatBrowserConfig(req).HasAgentBrowser)
-	attached := skills.LoadAttachableIn(getWorkspaceAPIURL(), req.SelectedFolder, names)
-	key := agentProfileSessionKey(profile, attached)
+	key := agentProfileSessionKey(profile)
 	api.conversationMux.RLock()
 	launched, known := api.launchedAgentProfileKeyBySession[session]
 	api.conversationMux.RUnlock()

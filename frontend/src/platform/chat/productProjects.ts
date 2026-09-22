@@ -28,7 +28,6 @@ export type ProductIdentity = {
   icon?: string
   name?: string
   role?: string
-  instructions?: string
 }
 
 type ProductManifest = {
@@ -54,7 +53,6 @@ function parseProductIdentity(value: unknown): ProductIdentity | undefined {
     icon: asString(raw.icon),
     name: asString(raw.name),
     role: asString(raw.role),
-    instructions: asString(raw.instructions),
   }
   return Object.values(identity).some(Boolean) ? identity : undefined
 }
@@ -345,12 +343,13 @@ export type ProductIdentityPatch = {
   icon?: string
   name?: string
   role?: string
-  instructions?: string
+  purpose?: string
 }
 
 // Identity always lives in product.json, never in the runtime manifest.
 // Mirrors the server set_work_identity tool: omitted fields are preserved,
 // empty fields are removed, and an identity with nothing left is dropped.
+// Purpose is stored as the top-level project description.
 export async function updateProductProjectIdentity<P extends string>(
   project: ProductProject<P>,
   patch: ProductIdentityPatch,
@@ -370,16 +369,18 @@ export async function updateProductProjectIdentity<P extends string>(
     ? { ...(manifest.identity as Record<string, unknown>) }
     : {}
   const merged: Record<string, string> = {}
-  for (const key of ['icon', 'name', 'role', 'instructions'] as const) {
+  for (const key of ['icon', 'name', 'role'] as const) {
     const value = patch[key] === undefined ? asString(current[key]) : patch[key].trim()
     if (value) merged[key] = value
   }
   if (Object.keys(merged).length > 0) manifest.identity = merged
   else delete manifest.identity
+  const description = patch.purpose === undefined ? asString(manifest.description) : patch.purpose.trim()
+  if (description) manifest.description = description
   const updatedAt = new Date().toISOString()
   manifest.updated_at = updatedAt
   await agentApi.updatePlannerFile(path, `${JSON.stringify(manifest, null, 2)}\n`, commitLabel)
-  return { ...project, identity: parseProductIdentity(manifest.identity), updatedAt }
+  return { ...project, description: asString(manifest.description), identity: parseProductIdentity(manifest.identity), updatedAt }
 }
 
 export async function updateProductProjectLLMConfig<P extends string>(

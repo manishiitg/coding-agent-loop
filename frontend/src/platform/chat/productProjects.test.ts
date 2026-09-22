@@ -21,7 +21,6 @@ describe('parseProductProjectManifest', () => {
         icon: '🚀',
         name: 'Nova',
         role: 'Launch partner',
-        instructions: 'Keep decisions concise.',
       },
       capabilities: { selected_servers: [], selected_skills: [] },
     }), 'Chats/Work/projects/launch', 'work')
@@ -30,7 +29,6 @@ describe('parseProductProjectManifest', () => {
       icon: '🚀',
       name: 'Nova',
       role: 'Launch partner',
-      instructions: 'Keep decisions concise.',
     })
   })
 })
@@ -54,13 +52,23 @@ describe('updateProductProjectIdentity', () => {
   }
 
   it('merges the patch into product.json and preserves omitted fields', async () => {
-    mockManifest({ icon: '🚀', name: 'Nova', role: 'Launch partner', instructions: 'Keep it short.' })
+    mockManifest({ icon: '🚀', name: 'Nova', role: 'Launch partner' })
     const updated = await updateProductProjectIdentity(project, { name: '  Stella  ' }, 'Update identity')
 
     expect(agentApi.getPlannerFileContent).toHaveBeenCalledWith('Chats/Work/projects/launch/product.json')
     const written = JSON.parse(updatePlannerFile.mock.calls[0][1])
-    expect(written.identity).toEqual({ icon: '🚀', name: 'Stella', role: 'Launch partner', instructions: 'Keep it short.' })
+    expect(written.identity).toEqual({ icon: '🚀', name: 'Stella', role: 'Launch partner' })
     expect(updated.identity?.name).toBe('Stella')
+  })
+
+  it('writes purpose to the top-level description', async () => {
+    mockManifest({ icon: '🚀', name: 'Nova', role: 'Launch partner' })
+    const updated = await updateProductProjectIdentity(project, { purpose: '  Ship the launch.  ' }, 'Update identity')
+
+    const written = JSON.parse(updatePlannerFile.mock.calls[0][1])
+    expect(written.description).toBe('Ship the launch.')
+    expect(written.identity).toEqual({ icon: '🚀', name: 'Nova', role: 'Launch partner' })
+    expect(updated.description).toBe('Ship the launch.')
   })
 
   it('removes emptied fields and drops an emptied identity', async () => {

@@ -39,8 +39,9 @@ const IDENTITY_TAB_ASK_AI_MESSAGE: Record<WorkIdentityTab, string> = {
   models: 'Help me choose between the coding agents available for this project. Explain the practical differences before changing anything.',
 }
 
-function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onDeleteRequest }: {
+function WorkGeneralPanel({ projectTitle, projectPurpose, projectIdentity, onUpdateIdentity, onDeleteRequest }: {
   projectTitle: string
+  projectPurpose: string
   projectIdentity?: ProductIdentity
   onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>
   onDeleteRequest: () => void
@@ -48,7 +49,7 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
   const [nameDraft, setNameDraft] = useState('')
   const [iconDraft, setIconDraft] = useState('')
   const [roleDraft, setRoleDraft] = useState('')
-  const [instructionsDraft, setInstructionsDraft] = useState('')
+  const [purposeDraft, setPurposeDraft] = useState('')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -56,20 +57,20 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
     setNameDraft(projectIdentity?.name ?? '')
     setIconDraft(projectIdentity?.icon ?? '')
     setRoleDraft(projectIdentity?.role ?? '')
-    setInstructionsDraft(projectIdentity?.instructions ?? '')
+    setPurposeDraft(projectPurpose)
     setError(null)
-  }, [projectIdentity?.name, projectIdentity?.icon, projectIdentity?.role, projectIdentity?.instructions])
+  }, [projectIdentity?.name, projectIdentity?.icon, projectIdentity?.role, projectPurpose])
 
   const displayName = nameDraft.trim() || projectTitle
   const dirty = nameDraft.trim() !== (projectIdentity?.name ?? '')
     || iconDraft.trim() !== (projectIdentity?.icon ?? '')
     || roleDraft.trim() !== (projectIdentity?.role ?? '')
-    || instructionsDraft.trim() !== (projectIdentity?.instructions ?? '')
+    || purposeDraft.trim() !== projectPurpose
 
   const save = async () => {
     if (!dirty || saving) return
-    if (!roleDraft.trim() || !instructionsDraft.trim()) {
-      setError('Role and instructions are both required.')
+    if (!roleDraft.trim() || !purposeDraft.trim()) {
+      setError('Role and purpose are both required.')
       return
     }
     setSaving(true)
@@ -79,7 +80,7 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
         name: nameDraft.trim(),
         icon: iconDraft.trim(),
         role: roleDraft.trim(),
-        instructions: instructionsDraft.trim(),
+        purpose: purposeDraft.trim(),
       })
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Unable to save.')
@@ -125,7 +126,7 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
       <SettingsCard
         icon={<Target aria-hidden="true" className="h-4 w-4 text-primary" />}
         title="Purpose"
-        description="Role and instructions are required. They keep the agent consistent across chats, schedules, and bots."
+        description="Role and purpose are required. They keep the agent consistent across chats, schedules, and bots."
       >
         <div>
           <Label className="mb-2 block">Role (required)</Label>
@@ -137,12 +138,12 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
           />
         </div>
         <div>
-          <Label className="mb-2 block">Instructions (required)</Label>
+          <Label className="mb-2 block">Purpose (required)</Label>
           <Textarea
-            value={instructionsDraft}
-            onChange={event => setInstructionsDraft(event.target.value)}
+            value={purposeDraft}
+            onChange={event => setPurposeDraft(event.target.value)}
             disabled={saving}
-            placeholder="e.g. Keep decisions concise."
+            placeholder="e.g. Plan and ship the Q3 launch."
             rows={3}
           />
         </div>
@@ -256,9 +257,10 @@ function WorkFoldersBody({ workspacePath, workflowContextPaths, onWorkflowContex
   )
 }
 
-export function WorkIdentityPanel({ workspacePath, projectTitle, projectIdentity, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
+export function WorkIdentityPanel({ workspacePath, projectTitle, projectDescription, projectIdentity, tabId, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, projectLLMConfig, enabledPanels, onAsk, onRuntimeChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: {
   workspacePath: string
   projectTitle: string
+  projectDescription: string
   projectIdentity?: ProductIdentity
   tabId: string
   selectedSecrets: string[]
@@ -300,6 +302,7 @@ export function WorkIdentityPanel({ workspacePath, projectTitle, projectIdentity
       <div key={`${activeTab}:${tabNonce}`} className="min-h-0 flex-1 overflow-y-auto p-4">
         {activeTab === 'general' && <WorkGeneralPanel
           projectTitle={projectTitle}
+          projectPurpose={projectDescription}
           projectIdentity={projectIdentity}
           onUpdateIdentity={onUpdateIdentity}
           onDeleteRequest={onDeleteRequest}

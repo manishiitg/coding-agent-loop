@@ -3667,7 +3667,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	if api.lastAgentProfileKeyBySession == nil {
 		api.lastAgentProfileKeyBySession = make(map[string]string)
 	}
-	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
+	api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile)
 	api.conversationMux.Unlock()
 	// Scheduled/Chief requests may already carry the configured secret name at
 	// this point. Resolve it for backend delivery and strip it from agent env.
@@ -6184,7 +6184,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					log.Printf("[SKILLS] Attached %d of %d skill(s): %v", len(attached), len(identitySkillNames), attachedNames)
 					if resolvedProfile != nil {
 						api.conversationMux.Lock()
-						api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, attached)
+						api.lastAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile)
 						api.conversationMux.Unlock()
 					}
 				}
@@ -7195,7 +7195,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			if api.launchedAgentProfileKeyBySession == nil {
 				api.launchedAgentProfileKeyBySession = make(map[string]string)
 			}
-			api.launchedAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile, resolvedProfileSkills)
+			api.launchedAgentProfileKeyBySession[sessionID] = agentProfileSessionKey(resolvedProfile)
 			if launchedAgent := llmAgent.GetUnderlyingAgent(); launchedAgent != nil {
 				api.agentProfileAdmissions.Store(launchedAgent, api.launchedAgentProfileKeyBySession[sessionID])
 				defer api.agentProfileAdmissions.Delete(launchedAgent)

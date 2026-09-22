@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Loader2, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import ChatArea from '../../components/ChatArea'
+import ChatArea, { type ChatAreaRef } from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
 import { ModePresetBar } from '../../components/ModePresetBar'
 import LlmModalHost from '../../components/topbar/LlmModalHost'
@@ -610,6 +610,7 @@ export function WorkSurface() {
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
   const [enabledWorkspacePanels, setEnabledWorkspacePanels] = useState<Set<string> | undefined>()
   const splitLayoutRef = useRef<HTMLDivElement>(null)
+  const chatAreaRef = useRef<ChatAreaRef>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
   const splitRatioRef = useRef(splitRatio)
   // All split classes derive from the shared layout resolver: one decision
@@ -936,12 +937,18 @@ export function WorkSurface() {
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 {layout.showChat ? <main className={layout.chatClassName}>
-                  {!isWorkIdentityComplete(selected.identity) ? (
+                  {!isWorkIdentityComplete(selected.identity, selected.description) ? (
                     <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
-                      <span className="min-w-0 flex-1 text-muted-foreground">This Crew needs a role and instructions before it can help at its best.</span>
+                      <span className="min-w-0 flex-1 text-muted-foreground">This Crew needs a role and purpose before it can help at its best.</span>
                       <button
                         type="button"
-                        onClick={() => { setPanelOpen(true); selectWorkspaceView('identity') }}
+                        onClick={() => {
+                          setPanelOpen(true)
+                          selectWorkspaceView('identity')
+                          chatAreaRef.current?.submitQuery('Help me set up this Crew: ask me what it is for and what role you should take, then save both.').catch(cause => {
+                            useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not start the setup chat.', 'error')
+                          })
+                        }}
                         className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
                       >
                         Set them up
@@ -951,6 +958,7 @@ export function WorkSurface() {
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
+                          ref={chatAreaRef}
                           tabId={tabId}
                           compact
                           landingContent={<WorkNewChatGuide />}
@@ -990,6 +998,7 @@ export function WorkSurface() {
                         workspacePath={selected.workspacePath}
                         projectId={selected.id}
                         projectTitle={selected.title}
+                        projectDescription={selected.description}
                         projectIdentity={selected.identity}
                         tabId={tabId}
                         view={workspaceView}

@@ -66,11 +66,10 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		t.Fatalf("build Crew identity tool: %v", err)
 	}
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"operation":    "set",
-		"icon":         "🛠️",
-		"name":         "Nova",
-		"role":         "Engineering partner",
-		"instructions": "Be concise and concrete.",
+		"operation": "set",
+		"icon":      "🛠️",
+		"name":      "Nova",
+		"role":      "Engineering partner",
 	})
 	if err != nil {
 		t.Fatalf("set Crew identity: %v", err)
@@ -106,6 +105,9 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Purpose: Ship the demo Crew.") || !strings.Contains(got, "Icon: 🛠️") || !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
 		t.Fatalf("prompt identity was not reloaded: %q", got)
 	}
+	if got := variables["WORK_IDENTITY_KEY"]; got != "Engineering partner\nShip the demo Crew." {
+		t.Fatalf("identity key should carry only role and purpose: %q", got)
+	}
 
 	if _, err := tool.Execute(context.Background(), map[string]interface{}{"operation": "clear"}); err != nil {
 		t.Fatalf("clear Crew identity: %v", err)
@@ -119,13 +121,13 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload cleared Crew prompt variables: %v", err)
 	}
-	// Clear removes presentation only: the required role and instructions stay.
-	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Role: Engineering partner") || !strings.Contains(got, "Be concise and concrete.") || strings.Contains(got, "Nova") || strings.Contains(got, "Icon:") {
-		t.Fatalf("clear should preserve only role and instructions: %q", got)
+	// Clear removes presentation only: the required role and purpose stay.
+	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Role: Engineering partner") || !strings.Contains(got, "Purpose: Ship the demo Crew.") || strings.Contains(got, "Nova") || strings.Contains(got, "Icon:") {
+		t.Fatalf("clear should preserve only role and purpose: %q", got)
 	}
 }
 
-func TestWorkIdentityRequiresRoleAndInstructions(t *testing.T) {
+func TestWorkIdentityRequiresRoleAndPurpose(t *testing.T) {
 	const projectPath = "Chats/Work/projects/required"
 	manifest := `{"schema_version":1,"product":"work","id":"required","title":"Required","capabilities":{"selected_servers":[]}}`
 	var mu sync.Mutex
@@ -176,12 +178,12 @@ func TestWorkIdentityRequiresRoleAndInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set without role: %v", err)
 	}
-	if !strings.Contains(result, "Role and instructions are both required") {
+	if !strings.Contains(result, "Role and purpose are both required") {
 		t.Fatalf("missing-fields set should be refused: %q", result)
 	}
 
 	result, err = tool.Execute(context.Background(), map[string]interface{}{
-		"operation": "set", "role": "Helper", "instructions": "Be brief.",
+		"operation": "set", "role": "Helper", "purpose": "Help out.",
 	})
 	if err != nil || !strings.Contains(result, "Adopt it immediately") {
 		t.Fatalf("complete set should save: %q, %v", result, err)
@@ -194,32 +196,31 @@ func TestWorkIdentityRequiresRoleAndInstructions(t *testing.T) {
 	if err != nil {
 		t.Fatalf("set empty role: %v", err)
 	}
-	if !strings.Contains(result, "Role and instructions are both required") {
+	if !strings.Contains(result, "Role and purpose are both required") {
 		t.Fatalf("emptying role should be refused: %q", result)
 	}
 }
 
 func TestWorkIdentityStaysCompact(t *testing.T) {
 	identity := workIdentity{
-		Icon:         strings.Repeat("x", workIdentityIconLimit+1),
-		Name:         "Nova",
-		Role:         "Assistant",
-		Instructions: "Be concise.",
+		Icon: strings.Repeat("x", workIdentityIconLimit+1),
+		Name: "Nova",
+		Role: "Assistant",
 	}
 	if got := validateWorkIdentity(identity); got != "The identity icon is invalid: icon must be 8 characters or fewer." {
 		t.Fatalf("unexpected icon validation: %q", got)
 	}
 
 	identity.Icon = "N"
-	identity.Instructions = strings.Repeat("x", workIdentityInstructionsLimit+1)
-	if got := validateWorkIdentity(identity); got != "The identity instructions must be at most 500 characters." {
-		t.Fatalf("unexpected instructions validation: %q", got)
+	identity.Role = strings.Repeat("x", workIdentityRoleLimit+1)
+	if got := validateWorkIdentity(identity); got != "The identity role must be at most 120 characters." {
+		t.Fatalf("unexpected role validation: %q", got)
 	}
 }
 
 func TestWorkIdentityAcceptsUploadedImage(t *testing.T) {
 	image := "data:image/png;base64," + strings.Repeat("A", 1024)
-	identity := workIdentity{Icon: image, Name: "Nova", Role: "Assistant", Instructions: "Be concise."}
+	identity := workIdentity{Icon: image, Name: "Nova", Role: "Assistant"}
 	if got := validateWorkIdentity(identity); got != "" {
 		t.Fatalf("uploaded image icon should validate, got %q", got)
 	}

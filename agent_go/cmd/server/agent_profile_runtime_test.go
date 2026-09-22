@@ -14,22 +14,22 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentprofiles"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
-	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
-func TestAgentProfileSessionKeyTracksDefinitionAndSkillContent(t *testing.T) {
+func TestAgentProfileSessionKeyTracksDefinitionAndIdentity(t *testing.T) {
 	base := &resolvedAgentProfile{Definition: agentprofiles.Profile{ID: "work", Version: 1, Skills: []string{"work-mcp"}}}
-	key := agentProfileSessionKey(base, []*llmtypes.Skill{{Name: "work-mcp", Content: "select connected MCP servers"}})
+	key := agentProfileSessionKey(base)
 	if key == "" {
 		t.Fatal("profile key must not be empty")
 	}
 	changedDefinition := &resolvedAgentProfile{Definition: base.Definition}
 	changedDefinition.Definition.Tools = append(changedDefinition.Definition.Tools, agentprofiles.ToolBinding{ID: "update_project_mcp_server_selection"})
-	if got := agentProfileSessionKey(changedDefinition, []*llmtypes.Skill{{Name: "work-mcp", Content: "select connected MCP servers"}}); got == key {
+	if got := agentProfileSessionKey(changedDefinition); got == key {
 		t.Fatal("profile key did not change with tool definition")
 	}
-	if got := agentProfileSessionKey(base, []*llmtypes.Skill{{Name: "work-mcp", Content: "new instructions"}}); got == key {
-		t.Fatal("profile key did not change with skill content")
+	changedIdentity := &resolvedAgentProfile{Definition: base.Definition, IdentityKey: "Reviewer\nShip it."}
+	if got := agentProfileSessionKey(changedIdentity); got == key {
+		t.Fatal("profile key did not change with Crew identity")
 	}
 }
 
@@ -624,20 +624,20 @@ func TestCleanAgentProfileWorkspaceRejectsCrossUserPaths(t *testing.T) {
 
 func TestAgentProfileSessionKeyTracksMCPSelection(t *testing.T) {
 	profile := &resolvedAgentProfile{Definition: agentprofiles.Profile{ID: "work", Version: 1}}
-	before := agentProfileSessionKey(profile, nil)
+	before := agentProfileSessionKey(profile)
 	profile.SelectedServers = []string{"Notion"}
-	selected := agentProfileSessionKey(profile, nil)
+	selected := agentProfileSessionKey(profile)
 	if before == selected {
 		t.Fatal("adding Notion retained stale native tool scope")
 	}
 	profile.SelectedServers = []string{"Linear", "Notion"}
-	ordered := agentProfileSessionKey(profile, nil)
+	ordered := agentProfileSessionKey(profile)
 	profile.SelectedServers = []string{"Notion", "Linear"}
-	if agentProfileSessionKey(profile, nil) != ordered {
+	if agentProfileSessionKey(profile) != ordered {
 		t.Fatal("selection order changed native scope")
 	}
 	profile.SelectedServers = nil
-	if agentProfileSessionKey(profile, nil) != before {
+	if agentProfileSessionKey(profile) != before {
 		t.Fatal("removing all servers retained native tool scope")
 	}
 }
@@ -664,7 +664,7 @@ func TestResolveAgentProfileUsesSavedMCPScopeBeforeRetainedDelivery(t *testing.T
 	if strings.Join(req.EnabledServers, ",") != "Notion" {
 		t.Fatalf("stale request won over saved selection: %v", req.EnabledServers)
 	}
-	previous := agentProfileSessionKey(profile, nil)
+	previous := agentProfileSessionKey(profile)
 	workspace.mu.Lock()
 	workspace.files[folder+"/product.json"] = `{"capabilities":{"selected_servers":[]}}`
 	workspace.mu.Unlock()
@@ -673,7 +673,7 @@ func TestResolveAgentProfileUsesSavedMCPScopeBeforeRetainedDelivery(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(req.EnabledServers) != 0 || previous == agentProfileSessionKey(profile, nil) {
+	if len(req.EnabledServers) != 0 || previous == agentProfileSessionKey(profile) {
 		t.Fatal("deselection retained previous scope or native fingerprint")
 	}
 }

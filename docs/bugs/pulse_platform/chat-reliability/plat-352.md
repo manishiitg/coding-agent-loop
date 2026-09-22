@@ -415,3 +415,23 @@ Open allowlist items from the restore inventory (not yet resolved):
   events; moving them to Execution Logs is a UI change to acknowledge.
 - `background_agent_started` schema must carry what delegation cards
   render (id, instruction, depth, model, servers, template).
+
+Observed-UI mapping (2026-09-22) — what the current transcript actually
+shows, via `TerminalEventTranscript` (payload-based components first,
+`EventDispatcher` as fallback):
+
+- User bubbles + `AssistantTranscriptMessage` (payload fields, not event
+  types) for all assistant carriers.
+- Minimized tools: `ToolCallCard` behind a disclosure, built by
+  `pairToolCalls` from exactly `tool_call_start/end/error`, paired by
+  `tool_call_id`. The canonical schema must preserve that pairing.
+- Turn completion/failure cards, delegation/bg-agent cards, input
+  requests when pending, `large_tool_output_*` artifact rows.
+
+That is ~8 visible families — fewer than the 12 canonical types, so the
+allowlist covers the screen with room to spare. Conversely,
+`tool_call`/`tool_result`/`tool_execution`/`tool_output` reach no
+renderer even in the new transcript and join the delete/demote list, not
+the canonical one. Token/context widgets have reachable renderers but no
+events arrive on retained-CLI tabs (CLIs report no per-turn usage), which
+confirms keeping them out of the journal as ledger/diagnostics data.

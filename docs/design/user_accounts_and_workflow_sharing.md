@@ -43,28 +43,36 @@ See [PLAT-330](../bugs/pulse_platform/security-sandbox/plat-330.md).
 
 Two places a permission can live, nothing else.
 
-**On the account** (AgentWorks user record):
-- `admin: true|false`. Admins manage users, set product access, and can open
-  any workflow. The first admin is named in config, never inferred.
-- `can_create: true|false`. Controls creation of new workflows. `true` is a
-  normal member that owns what they create.
-- `can_edit: true|false` (optional). Controls whether an account may own and
-  edit workflows explicitly assigned to it. When absent it follows
-  `can_create`, preserving existing records. `can_create: false` plus
-  `can_edit: true` is a contributor: it can own assigned workflows but cannot
-  create or duplicate workflows. Both false is read-only.
+**On the account** (AgentWorks user record): one `role` per account —
+`admin`, `creator`, `editor`, or `viewer`.
+- `admin` manages users, sets product access, and can open any workflow.
+  The first admin is named in config, never inferred.
+- `creator` creates workflows and projects and owns what they create.
+- `editor` may own and edit explicitly assigned workflows but cannot
+  create or duplicate workflows.
+- `viewer` is read-only.
+- The legacy `admin`/`can_create`/`can_edit` booleans stay as fallback for
+  records that predate roles (admin, then can_create, then can_edit, else
+  viewer) and are dual-written on every admin save. `role` wins when set.
 - `products: ["agentworks", "video-studio", ...]`. Which product surfaces the
-  user may open. A member with the list absent gets all products; a
-  read-only user with it absent gets none.
+  user may open. A creator with the list absent gets all products; an
+  editor or viewer with it absent gets none.
 
-**On the workflow** (`Workflow/<folder>/workflow.json`, `access` block):
+**On the workflow** (`Workflow/<folder>/workflow.json`, `access` block),
+using the same words as the account roles:
 - `owners: [user_id, ...]`. The creator is the first owner. Owners edit, run,
-  share, transfer, delete. There is deliberately no editor tier: to let a
-  colleague edit, add them as an owner.
-- `readers: [user_id, ...]`. Read-only, with exactly PLAT-262 semantics:
+  share, transfer, delete.
+- `editors: [user_id, ...]`. Edit and run, but cannot share.
+- `readers: [user_id, ...]` (the Viewer tier; the key keeps its name for
+  backward compatibility). Read-only, with exactly PLAT-262 semantics:
   chat, trigger and watch runs, inspect files and DB; no mutating tools, no
   shell writes. Added either by an owner (sharing) or by an admin (assigning
   a specific workflow to a user).
+
+Effective access is the lesser of the account role and the manifest grant:
+a Viewer account is never more than a reader even when listed as owner or
+editor. `/api/auth/me` reports the global tier plus the resolved
+per-workflow map; clients gate workflow actions on the map.
 
 Builder and Run are the presentation of workflow access, not a second authority
 control. In workflow chat there is one rule: effective owner/write access means

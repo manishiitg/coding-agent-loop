@@ -9,23 +9,24 @@ import { Badge } from '../ui/badge'
 import { SecretField } from '../ui/SecretField'
 import ConfirmationDialog from '../ui/ConfirmationDialog'
 
-// Account roles separate creating a new workflow from editing one explicitly
-// assigned to the account. Existing records without can_edit retain their old
-// behavior server-side (can_edit follows can_create).
-type Role = 'admin' | 'member' | 'contributor' | 'readonly'
+// One role per account. The server stamps `role` and dual-writes the legacy
+// booleans; both are sent so older servers (which ignore `role`) enforce
+// the same access. Records without a stamped role map from the booleans.
+type Role = 'admin' | 'creator' | 'editor' | 'viewer'
 const ROLES: { value: Role; label: string; hint: string }[] = [
-  { value: 'readonly', label: 'Read-only', hint: 'Can chat, run and watch what is shared with them. Cannot create or edit anything.' },
-  { value: 'contributor', label: 'Contributor', hint: 'Can own and edit assigned workflows, but cannot create new workflows.' },
-  { value: 'member', label: 'Member', hint: 'Creates workflows and projects and owns what they create.' },
-  { value: 'admin', label: 'Admin', hint: 'Member, plus manages users and product access. Can open any workflow.' },
+  { value: 'viewer', label: 'Viewer', hint: 'Can chat, run and watch what is shared with them. Cannot create or edit anything.' },
+  { value: 'editor', label: 'Editor', hint: 'Can own and edit assigned workflows, but cannot create new workflows.' },
+  { value: 'creator', label: 'Creator', hint: 'Creates workflows and projects and owns what they create.' },
+  { value: 'admin', label: 'Admin', hint: 'Creator, plus manages users and product access. Can open any workflow.' },
 ]
-const roleOf = (u: { admin: boolean; can_create: boolean; can_edit: boolean }): Role => (
-  u.admin ? 'admin' : u.can_create ? 'member' : u.can_edit ? 'contributor' : 'readonly'
+const roleOf = (u: { role?: Role; admin: boolean; can_create: boolean; can_edit: boolean }): Role => (
+  u.role ?? (u.admin ? 'admin' : u.can_create ? 'creator' : u.can_edit ? 'editor' : 'viewer')
 )
-const roleFields = (r: Role): Pick<AdminUserWrite, 'admin' | 'can_create' | 'can_edit'> => ({
+const roleFields = (r: Role): Pick<AdminUserWrite, 'role' | 'admin' | 'can_create' | 'can_edit'> => ({
+  role: r,
   admin: r === 'admin',
-  can_create: r === 'admin' || r === 'member',
-  can_edit: r !== 'readonly',
+  can_create: r === 'admin' || r === 'creator',
+  can_edit: r !== 'viewer',
 })
 
 const PRODUCT_LABELS: Record<string, string> = {
@@ -93,7 +94,7 @@ const UsersAdminPanel: React.FC = () => {
         icon={<Users className="h-4 w-4 text-primary" />}
         title="Accounts"
         count={`${sorted.length} ${sorted.length === 1 ? 'account' : 'accounts'}`}
-        description="Everyone who can open this deployment, and what each account may do. A member owns what they create; a contributor may edit assigned workflows but cannot create new ones; a read-only account only sees shared workflows. Product boxes decide which surfaces an account may open."
+        description="Everyone who can open this deployment, and what each account may do. A creator owns what they create; an editor may edit assigned workflows but cannot create new ones; a viewer only sees shared workflows. Product boxes decide which surfaces an account may open."
       >
         {error && (
           <div className="flex items-start gap-2 rounded-md border border-destructive/30 bg-destructive/10 p-3 text-xs text-destructive">
@@ -157,8 +158,8 @@ const UsersAdminPanel: React.FC = () => {
                               {productLabel(p)}
                             </label>
                           ))}
-                          {role === 'member' && u.products.length === 0 && <span className="text-muted-foreground">(all)</span>}
-                          {role === 'readonly' && u.products.length === 0 && <span className="text-muted-foreground">(none)</span>}
+                          {role === 'creator' && u.products.length === 0 && <span className="text-muted-foreground">(all)</span>}
+                          {(role === 'viewer' || role === 'editor') && u.products.length === 0 && <span className="text-muted-foreground">(none)</span>}
                         </div>
                       )}
                     </td>

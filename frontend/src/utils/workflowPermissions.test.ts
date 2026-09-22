@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { AuthUser } from '../services/api'
-import { hasWorkflowCreateAccess } from './workflowPermissions'
+import { hasWorkflowCreateAccess, workflowAccessFor } from './workflowPermissions'
 
 const user = (overrides: Partial<AuthUser>): AuthUser => ({
   id: 'user-1',
@@ -29,5 +29,14 @@ describe('hasWorkflowCreateAccess', () => {
   it('falls back safely for responses from older servers', () => {
     expect(hasWorkflowCreateAccess(user({ workflow_access: 'owner' }), true)).toBe(true)
     expect(hasWorkflowCreateAccess(user({ workflow_access: 'write' }), true)).toBe(false)
+  })
+
+  it('resolves effective per-workflow access from the map', () => {
+    const editor = user({ workflow_access: 'write', workflows: { wf_1: 'read', wf_2: 'owner' } })
+    expect(workflowAccessFor(editor, 'wf_1')).toBe('read')
+    expect(workflowAccessFor(editor, 'wf_2')).toBe('owner')
+    expect(workflowAccessFor(editor, 'wf_missing')).toBe(undefined)
+    expect(workflowAccessFor(editor, null)).toBe(undefined)
+    expect(workflowAccessFor(user({}), 'wf_1')).toBe(undefined)
   })
 })

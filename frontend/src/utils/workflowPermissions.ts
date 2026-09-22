@@ -44,3 +44,14 @@ export function hasWorkflowCreateAccess(user: AuthUser | null | undefined, isMul
 export function isWorkflowReadOnly(user: AuthUser | null | undefined, isMultiUserMode: boolean): boolean {
   return !hasWorkflowWriteAccess(user, isMultiUserMode)
 }
+
+// Effective access on one workflow, from the /api/auth/me per-workflow map.
+// Prefer this over the global flags whenever a workflow id is at hand: a
+// global editor can be a viewer (or an owner) on any given workflow.
+export function workflowAccessFor(
+  user: AuthUser | null | undefined,
+  workflowId: string | null | undefined,
+): 'owner' | 'write' | 'read' | undefined {
+  if (!workflowId) return undefined
+  return user?.workflows?.[workflowId]
+}

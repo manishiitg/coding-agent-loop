@@ -318,3 +318,59 @@ func TestChangeOwnPassword(t *testing.T) {
 		t.Fatal("password set without the current one does not verify")
 	}
 }
+
+func TestRoleForRecordMapsLegacyBooleans(t *testing.T) {
+	canEdit := true
+	noEdit := false
+	cases := []struct {
+		name string
+		rec  UserRecord
+		want string
+	}{
+		{"explicit role wins", UserRecord{Role: "editor", Admin: true}, UserRoleEditor},
+		{"admin", UserRecord{Admin: true}, UserRoleAdmin},
+		{"can_create", UserRecord{CanCreate: true}, UserRoleCreator},
+		{"can_edit", UserRecord{CanEdit: &canEdit}, UserRoleEditor},
+		{"neither", UserRecord{}, UserRoleViewer},
+		{"explicit no-edit", UserRecord{CanEdit: &noEdit}, UserRoleViewer},
+		{"create without edit maps to creator", UserRecord{CanCreate: true, CanEdit: &noEdit}, UserRoleCreator},
+		{"unknown role falls back", UserRecord{Role: "superuser", CanCreate: true}, UserRoleCreator},
+	}
+	for _, tc := range cases {
+		if got := roleForRecord(&tc.rec); got != tc.want {
+			t.Fatalf("%s: role=%s want %s", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestApplyRoleWriteStampsAndDualWrites(t *testing.T) {
+	rec := UserRecord{ID: "b2", Username: "bob"}
+	role := "creator"
+	if err := applyRoleWrite(&rec, userWriteRequest{Role: &role}); err != nil {
+		t.Fatalf("role write: %v", err)
+	}
+	if rec.Role != UserRoleCreator || rec.Admin || !rec.CanCreate {
+		t.Fatalf("creator not stamped: %+v", rec)
+	}
+	if rec.CanEdit == nil || !*rec.CanEdit {
+		t.Fatalf("creator must dual-write can_edit: %+v", rec)
+	}
+	if acc := accessForRecord(&rec); !acc.CanCreate || !acc.CanEdit || acc.Admin {
+		t.Fatalf("creator access: %+v", acc)
+	}
+
+	bad := "superuser"
+	if err := applyRoleWrite(&rec, userWriteRequest{Role: &bad}); err == nil {
+		t.Fatal("invalid role was accepted")
+	}
+
+	// A legacy-boolean write clears the stamped role so the booleans win.
+	admin := false
+	create := false
+	if err := applyRoleWrite(&rec, userWriteRequest{Admin: &admin, CanCreate: &create}); err != nil {
+		t.Fatalf("legacy write: %v", err)
+	}
+	if rec.Role != "" || roleForRecord(&rec) != UserRoleEditor {
+		t.Fatalf("legacy write should clear role and map from booleans: %+v", rec)
+	}
+}

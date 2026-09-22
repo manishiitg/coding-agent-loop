@@ -163,9 +163,9 @@ func workflowAccessForClaims(claims *UserClaims) WorkflowAccessLevel {
 
 func workflowAccessForIdentity(userID, username, email string) WorkflowAccessLevel {
 	// The user directory (config/users.json) is authoritative for anyone it
-	// knows: an admin is owner, an account that may edit is write, and a
-	// read-only account is read. Creation is intentionally separate so a
-	// contributor can own an assigned workflow without creating new ones.
+	// knows: an admin is owner, a creator or editor is write, and a viewer
+	// is read. Creation is intentionally separate so an editor can own an
+	// assigned workflow without creating new ones.
 	// Identities it does not know fall through
 	// to the legacy env/file tiers below, unchanged.
 	if rec := directoryUserFor(userID, username, email); rec != nil {
@@ -215,6 +215,7 @@ func workflowPermissionInfo(access WorkflowAccessLevel) WorkflowPermissionInfo {
 }
 
 func userInfoWithWorkflowPermissions(info UserInfo) UserInfo {
+	info.Role = roleForClaims(&UserClaims{UserID: info.ID, Username: info.Username, Email: info.Email})
 	access := workflowAccessForIdentity(info.ID, info.Username, info.Email)
 	perms := workflowPermissionInfo(access)
 	info.WorkflowAccess = string(perms.WorkflowAccess)

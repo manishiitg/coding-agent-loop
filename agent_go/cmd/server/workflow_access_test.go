@@ -185,3 +185,27 @@ func TestRunBotRouteAccessForLegacyUnownedWorkflow(t *testing.T) {
 		t.Fatalf("legacy workflow granted bot authoring access: %s", got)
 	}
 }
+
+func TestWorkflowEditorsGrant(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[
+	  {"id":"b2","username":"bob","can_create":true,"products":[]},
+	  {"id":"c3","username":"carol","can_create":false,"products":[]},
+	  {"id":"e5","username":"erin","can_create":false,"can_edit":true,"products":["agentworks"]}
+	]}`)
+	bob, carol, erin := &UserClaims{UserID: "b2"}, &UserClaims{UserID: "c3"}, &UserClaims{UserID: "e5"}
+
+	shared := &WorkflowManifest{ID: "w1", Access: &WorkflowAccess{
+		Owners: []string{"b2"}, Editors: []string{"e5", "c3"}, Readers: []string{"c3"},
+	}}
+	if got := workflowAccessForManifest(erin, shared); got != WorkflowAccessWrite {
+		t.Fatalf("editor: %s", got)
+	}
+	// A viewer account caps at read even when listed as an editor.
+	if got := workflowAccessForManifest(carol, shared); got != WorkflowAccessRead {
+		t.Fatalf("viewer listed as editor: %s", got)
+	}
+	if got := workflowAccessForManifest(bob, shared); got != WorkflowAccessOwner {
+		t.Fatalf("owner: %s", got)
+	}
+}

@@ -63,6 +63,11 @@ type UserRecord struct {
 	// explicit true with CanCreate=false is a contributor: they may own/edit a
 	// shared workflow but cannot create another one.
 	CanEdit *bool `json:"can_edit,omitempty"`
+	// Role is the standardized account role: admin, creator, editor, or
+	// viewer. It wins over Admin/CanCreate/CanEdit when present; those stay
+	// as fallback for records that predate roles and are dual-written on
+	// every admin save so older servers keep working during rollout.
+	Role string `json:"role,omitempty"`
 	// Products the account may open. Meaning depends on the account: an
 	// admin ignores it (all products), a member with an empty list gets all
 	// products, a read-only user with an empty list gets none.
@@ -335,22 +340,89 @@ type UserAccess struct {
 	ProductsRestricted bool
 }
 
-func accessForRecord(rec *UserRecord) UserAccess {
-	canEdit := rec.CanCreate
-	if rec.CanEdit != nil {
-		canEdit = *rec.CanEdit
+// Standardized account roles. Exactly one applies per account:
+//   - admin: everything, all products, all workflows, user management.
+//   - creator: create workflows, edit assigned ones, full products.
+//   - editor: edit assigned workflows, no creation.
+//   - viewer: read-only, sees only assigned products/workflows.
+const (
+	UserRoleAdmin   = "admin"
+	UserRoleCreator = "creator"
+	UserRoleEditor  = "editor"
+	UserRoleViewer  = "viewer"
+)
+
+func normalizeUserRole(role string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case UserRoleAdmin:
+		return UserRoleAdmin, true
+	case UserRoleCreator:
+		return UserRoleCreator, true
+	case UserRoleEditor:
+		return UserRoleEditor, true
+	case UserRoleViewer:
+		return UserRoleViewer, true
+	default:
+		return "", false
 	}
-	acc := UserAccess{Known: true, Admin: rec.Admin, CanCreate: rec.Admin || rec.CanCreate, CanEdit: rec.Admin || canEdit, Disabled: rec.Disabled}
+}
+
+// roleForRecord returns the record's standardized role. An explicit valid
+// role wins; otherwise the legacy booleans map onto the closest role
+// (admin, then can_create, then can_edit, else viewer). The exotic legacy
+// combo can_create without can_edit maps to creator — creation implies the
+// edit rights its own workflows need.
+func roleForRecord(rec *UserRecord) string {
+	if rec == nil {
+		return ""
+	}
+	if role, ok := normalizeUserRole(rec.Role); ok {
+		return role
+	}
 	switch {
 	case rec.Admin:
+		return UserRoleAdmin
+	case rec.CanCreate:
+		return UserRoleCreator
+	case rec.CanEdit != nil && *rec.CanEdit:
+		return UserRoleEditor
+	default:
+		return UserRoleViewer
+	}
+}
+
+// applyRoleToRecord stamps a role and dual-writes the legacy booleans so
+// older servers (and older UI builds) keep enforcing the same access.
+func applyRoleToRecord(rec *UserRecord, role string) {
+	rec.Role = role
+	rec.Admin = role == UserRoleAdmin
+	rec.CanCreate = role == UserRoleAdmin || role == UserRoleCreator
+	canEdit := role != UserRoleViewer
+	rec.CanEdit = &canEdit
+}
+
+func accessForRecord(rec *UserRecord) UserAccess {
+	var canEdit, canCreate, admin bool
+	switch roleForRecord(rec) {
+	case UserRoleAdmin:
+		admin, canCreate, canEdit = true, true, true
+	case UserRoleCreator:
+		canCreate, canEdit = true, true
+	case UserRoleEditor:
+		canEdit = true
+	}
+	acc := UserAccess{Known: true, Admin: admin, CanCreate: canCreate, CanEdit: canEdit, Disabled: rec.Disabled}
+	switch {
+	case acc.Admin:
 		acc.ProductsRestricted = false
 	case len(rec.Products) > 0:
 		acc.ProductsRestricted = true
 		acc.Products = append([]string(nil), rec.Products...)
-	case rec.CanCreate:
+	case acc.CanCreate:
+		// Creators with no explicit list open every product.
 		acc.ProductsRestricted = false
 	default:
-		// Read-only account with nothing enabled: no products at all.
+		// Editors and viewers with nothing assigned: no products at all.
 		acc.ProductsRestricted = true
 		acc.Products = []string{}
 	}
@@ -576,6 +648,7 @@ type userAdminView struct {
 	Admin       bool     `json:"admin"`
 	CanCreate   bool     `json:"can_create"`
 	CanEdit     bool     `json:"can_edit"`
+	Role        string   `json:"role"`
 	Products    []string `json:"products"`
 	Disabled    bool     `json:"disabled"`
 	CreatedAt   string   `json:"created_at,omitempty"`
@@ -591,9 +664,11 @@ func viewOf(rec UserRecord) userAdminView {
 	if products == nil {
 		products = []string{}
 	}
+	acc := accessForRecord(&rec)
 	return userAdminView{
 		ID: rec.ID, Username: rec.Username, Email: rec.Email, Provider: provider,
-		HasPassword: rec.PasswordHash != "", Admin: rec.Admin, CanCreate: rec.CanCreate, CanEdit: accessForRecord(&rec).CanEdit,
+		HasPassword: rec.PasswordHash != "", Admin: acc.Admin, CanCreate: acc.CanCreate, CanEdit: acc.CanEdit,
+		Role: roleForRecord(&rec),
 		Products: products, Disabled: rec.Disabled, CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
 	}
 }
@@ -632,8 +707,37 @@ type userWriteRequest struct {
 	Admin     *bool     `json:"admin"`
 	CanCreate *bool     `json:"can_create"`
 	CanEdit   *bool     `json:"can_edit"`
+	Role      *string   `json:"role"`
 	Products  *[]string `json:"products"`
 	Disabled  *bool     `json:"disabled"`
+}
+
+// applyRoleWrite stamps a requested role after validating it. An explicit
+// role wins over any legacy booleans in the same request.
+func applyRoleWrite(rec *UserRecord, req userWriteRequest) error {
+	if req.Role == nil {
+		if req.Admin != nil {
+			rec.Admin = *req.Admin
+		}
+		if req.CanCreate != nil {
+			rec.CanCreate = *req.CanCreate
+		}
+		if req.CanEdit != nil {
+			rec.CanEdit = req.CanEdit
+		}
+		// A legacy-boolean write clears any stamped role so the booleans
+		// stay authoritative for the record they describe.
+		if req.Admin != nil || req.CanCreate != nil || req.CanEdit != nil {
+			rec.Role = ""
+		}
+		return nil
+	}
+	role, ok := normalizeUserRole(*req.Role)
+	if !ok {
+		return fmt.Errorf("role must be one of admin, creator, editor, viewer")
+	}
+	applyRoleToRecord(rec, role)
+	return nil
 }
 
 var errUsernameInvalid = errors.New("username must be 2-64 characters: letters, digits, dot, dash, underscore, or an email address")
@@ -705,14 +809,9 @@ func (api *StreamingAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Re
 		}
 		rec.PasswordHash = hash
 	}
-	if req.Admin != nil {
-		rec.Admin = *req.Admin
-	}
-	if req.CanCreate != nil {
-		rec.CanCreate = *req.CanCreate
-	}
-	if req.CanEdit != nil {
-		rec.CanEdit = req.CanEdit
+	if err := applyRoleWrite(&rec, req); err != nil {
+		writeUsersError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if req.Products != nil {
 		rec.Products = normalizeProducts(*req.Products)
@@ -725,7 +824,7 @@ func (api *StreamingAPI) handleAdminCreateUser(w http.ResponseWriter, r *http.Re
 		writeUsersError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	log.Printf("[USERS] %s created user %s (admin=%v can_create=%v products=%v)", GetUserIDFromContext(r.Context()), rec.Username, rec.Admin, rec.CanCreate, rec.Products)
+	log.Printf("[USERS] %s created user %s (role=%s products=%v)", GetUserIDFromContext(r.Context()), rec.Username, roleForRecord(&rec), rec.Products)
 	writeUsersJSON(w, http.StatusCreated, viewOf(rec))
 }
 
@@ -749,9 +848,16 @@ func (api *StreamingAPI) handleAdminUpdateUser(w http.ResponseWriter, r *http.Re
 	}
 	callerID := GetUserIDFromContext(r.Context())
 	// An admin cannot lock themselves out: no removing their own admin
-	// flag or disabling their own account. Another admin can.
+	// flag or disabling their own account. Another admin can. A role
+	// change away from admin counts as removing the flag.
+	selfDemotion := req.Admin != nil && !*req.Admin
+	if req.Role != nil {
+		if role, ok := normalizeUserRole(*req.Role); !ok || role != UserRoleAdmin {
+			selfDemotion = true
+		}
+	}
 	if rec.ID == callerID {
-		if (req.Admin != nil && !*req.Admin) || (req.Disabled != nil && *req.Disabled) {
+		if selfDemotion || (req.Disabled != nil && *req.Disabled) {
 			writeUsersError(w, http.StatusBadRequest, "you cannot remove your own admin access or disable your own account")
 			return
 		}
@@ -771,14 +877,9 @@ func (api *StreamingAPI) handleAdminUpdateUser(w http.ResponseWriter, r *http.Re
 		}
 		rec.PasswordHash = hash
 	}
-	if req.Admin != nil {
-		rec.Admin = *req.Admin
-	}
-	if req.CanCreate != nil {
-		rec.CanCreate = *req.CanCreate
-	}
-	if req.CanEdit != nil {
-		rec.CanEdit = req.CanEdit
+	if err := applyRoleWrite(rec, req); err != nil {
+		writeUsersError(w, http.StatusBadRequest, err.Error())
+		return
 	}
 	if req.Products != nil {
 		rec.Products = normalizeProducts(*req.Products)
@@ -791,7 +892,7 @@ func (api *StreamingAPI) handleAdminUpdateUser(w http.ResponseWriter, r *http.Re
 		writeUsersError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	log.Printf("[USERS] %s updated user %s (admin=%v can_create=%v products=%v disabled=%v)", callerID, rec.Username, rec.Admin, rec.CanCreate, rec.Products, rec.Disabled)
+	log.Printf("[USERS] %s updated user %s (role=%s products=%v disabled=%v)", callerID, rec.Username, roleForRecord(rec), rec.Products, rec.Disabled)
 	writeUsersJSON(w, http.StatusOK, viewOf(*rec))
 }
 

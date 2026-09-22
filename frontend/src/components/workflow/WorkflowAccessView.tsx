@@ -24,8 +24,8 @@ const ACCESS_TABS: Array<{ value: AccessTabId; label: string }> = [
  * Access, as a right-side workspace view like Notify, Pulse and Backup --
  * not a modal (user request, 2026-09-03). Two tabs:
  *
- *  - "This workflow": who may see or edit the open workflow (owners and
- *    read-only readers).
+ *  - "This workflow": who may see or edit the open workflow (owners,
+ *    editors, and read-only readers).
  *  - "Users": the deployment's accounts and roles (admins only).
  */
 export default function WorkflowAccessView({ workspacePath }: WorkflowAccessViewProps) {
@@ -58,7 +58,7 @@ export default function WorkflowAccessView({ workspacePath }: WorkflowAccessView
         title="Access"
         subtitle={activeTab === 'users'
           ? 'Accounts and roles for this deployment.'
-          : `${scopeName} · owners edit, run, share and delete; read-only people chat, run and watch.`}
+          : `${scopeName} · owners edit, run, share and delete; editors edit and run; read-only people chat, run and watch.`}
         actions={
           activeTab ? (
             <WorkspaceViewActions

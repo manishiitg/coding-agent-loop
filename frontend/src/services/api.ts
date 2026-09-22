@@ -2587,6 +2587,8 @@ export interface AuthUser {
   email?: string
   provider?: string
   is_bot_manager?: boolean
+  /** Standardized account role. Absent on older servers; derive from flags. */
+  role?: 'admin' | 'creator' | 'editor' | 'viewer'
   workflow_access?: 'read' | 'write' | 'owner'
   can_run_workflows?: boolean
   can_write_workflows?: boolean
@@ -2599,11 +2601,12 @@ export interface AuthUser {
   allowed_products?: string[] | null
   allowed_workflow_ids?: string[] | null
   // Account level (docs/design/user_accounts_and_workflow_sharing.md):
-  // admins manage users/products; can_create and can_edit are independent so
-  // a contributor may own an assigned workflow without creating new ones.
+  // one role per account. The booleans stay for older servers.
   is_admin?: boolean
   can_create?: boolean
   can_edit?: boolean
+  /** Effective access per visible workflow id. Gate workflow actions on this, never on the global flags alone. */
+  workflows?: Record<string, 'owner' | 'write' | 'read'>
 }
 
 /** One account as the admin page sees it (never the password hash). */
@@ -2616,6 +2619,7 @@ export interface AdminUser {
   admin: boolean
   can_create: boolean
   can_edit: boolean
+  role: 'admin' | 'creator' | 'editor' | 'viewer'
   products: string[]
   disabled: boolean
   created_at?: string
@@ -2629,6 +2633,7 @@ export interface AdminUserWrite {
   admin?: boolean
   can_create?: boolean
   can_edit?: boolean
+  role?: 'admin' | 'creator' | 'editor' | 'viewer'
   products?: string[]
   disabled?: boolean
 }
@@ -2811,8 +2816,8 @@ export const authApi = {
     const response = await api.get(`/api/workflow/access?workspace_path=${encodeURIComponent(workspacePath)}`)
     return response.data
   },
-  setWorkflowAccess: async (workspacePath: string, owners: string[], readers: string[]): Promise<WorkflowAccessInfo> => {
-    const response = await api.put('/api/workflow/access', { workspace_path: workspacePath, owners, readers })
+  setWorkflowAccess: async (workspacePath: string, owners: string[], editors: string[], readers: string[]): Promise<WorkflowAccessInfo> => {
+    const response = await api.put('/api/workflow/access', { workspace_path: workspacePath, owners, editors, readers })
     return response.data
   },
 }
@@ -2826,6 +2831,7 @@ export interface WorkflowAccessUser {
 export interface WorkflowAccessInfo {
   workspace_path: string
   owners: WorkflowAccessUser[]
+  editors: WorkflowAccessUser[]
   readers: WorkflowAccessUser[]
   my_access: 'owner' | 'write' | 'read' | 'none'
   /** Nothing recorded yet: open to every member until a grant is saved. */

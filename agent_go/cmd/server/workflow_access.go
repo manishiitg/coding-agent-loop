@@ -12,24 +12,29 @@ import (
 // Per-workflow ownership and sharing (phase 3 of
 // docs/design/user_accounts_and_workflow_sharing.md).
 //
-// A workflow carries an `access` block in its manifest: owners, who may edit,
-// run, share and delete it, and readers, who get exactly the PLAT-262
-// read-only session (chat, run, watch, inspect; no mutating tools, no shell
-// writes). The creator is the first owner. There is deliberately no editor
-// tier — to let someone edit, make them an owner.
+// A workflow carries an `access` block in its manifest with the same words
+// as the account roles: owners, who may edit, run, share and delete it;
+// editors, who may edit and run but not share; and readers (viewers), who
+// get exactly the PLAT-262 read-only session (chat, run, watch, inspect;
+// no mutating tools, no shell writes). The creator is the first owner.
+// The stored `readers` key keeps its name for backward compatibility; it
+// means the Viewer tier.
 //
-// Resolution order for a request against a workflow:
+// Effective access is the lesser of the account role and the manifest
+// grant: a Viewer account is never more than a reader even when listed as
+// owner or editor; Editor and Creator accounts take the manifest grant
+// as-is. Resolution order:
 //   1. an account admin is owner of everything;
 //   2. a manifest with an ownership record (an access block, or a created_by
-//      stamp) answers from its lists, except that a read-only ACCOUNT is
-//      never more than a reader even when listed as owner;
+//      stamp) answers from its lists, capped by the account role;
 //   3. a legacy manifest with neither keeps today's behavior: the account's
-//      own tier (members write, read-only accounts read), so an existing
+//      own tier (creators and editors write, viewers read), so an existing
 //      deployment sees no change until someone claims or shares a workflow.
 
 // WorkflowAccess is the manifest's `access` block.
 type WorkflowAccess struct {
 	Owners  []string `json:"owners"`
+	Editors []string `json:"editors,omitempty"`
 	Readers []string `json:"readers"`
 	// AllowedKBWriters lists workflow IDs explicitly permitted to write into
 	// this workflow's knowledgebase/notes/ via a "write" knowledgebase_source
@@ -62,6 +67,13 @@ func (m *WorkflowManifest) effectiveReaders() []string {
 	return m.Access.Readers
 }
 
+func (m *WorkflowManifest) effectiveEditors() []string {
+	if m == nil || m.Access == nil {
+		return nil
+	}
+	return m.Access.Editors
+}
+
 // hasOwnershipRecord reports whether anyone has ever been recorded as owning
 // this workflow; without one the legacy account-tier answer applies.
 func (m *WorkflowManifest) hasOwnershipRecord() bool {
@@ -79,6 +91,49 @@ func containsID(list []string, id string) bool {
 
 // workflowAccessForManifest is the one answer to "what may this user do with
 // this workflow".
+// roleForClaims returns the caller's standardized account role for API
+// responses. Directory members use their record; anyone else maps from the
+// legacy/compat access answer.
+func roleForClaims(claims *UserClaims) string {
+	if claims != nil {
+		if rec := directoryUserFor(claims.UserID, claims.Username, claims.Email); rec != nil {
+			return roleForRecord(rec)
+		}
+	}
+	acc := userAccessForClaims(claims)
+	switch {
+	case acc.Admin:
+		return UserRoleAdmin
+	case acc.CanCreate:
+		return UserRoleCreator
+	case acc.CanEdit:
+		return UserRoleEditor
+	default:
+		return UserRoleViewer
+	}
+}
+
+// effectiveWorkflowAccessMap resolves the caller's effective access for
+// every visible workflow, keyed by workflow id. Workflows the caller may
+// not see are omitted rather than listed as none, so the map doubles as
+// the visible-workflow list.
+func effectiveWorkflowAccessMap(ctx context.Context, claims *UserClaims) (map[string]string, error) {
+	discovered, err := DiscoverWorkflowManifests(ctx)
+	if err != nil {
+		return nil, err
+	}
+	access := make(map[string]string, len(discovered))
+	for _, item := range discovered {
+		if item.Manifest == nil || strings.TrimSpace(item.Manifest.ID) == "" {
+			continue
+		}
+		if level := workflowAccessForManifest(claims, item.Manifest); level != WorkflowAccessNone {
+			access[item.Manifest.ID] = string(level)
+		}
+	}
+	return access, nil
+}
+
 func workflowAccessForManifest(claims *UserClaims, m *WorkflowManifest) WorkflowAccessLevel {
 	account := workflowAccessForClaims(claims)
 	if claims == nil {
@@ -98,6 +153,12 @@ func workflowAccessForManifest(claims *UserClaims, m *WorkflowManifest) Workflow
 			return WorkflowAccessRead
 		}
 		return WorkflowAccessOwner
+	}
+	if containsID(m.effectiveEditors(), claims.UserID) {
+		if !userAccessForClaims(claims).CanEdit {
+			return WorkflowAccessRead
+		}
+		return WorkflowAccessWrite
 	}
 	if containsID(m.effectiveReaders(), claims.UserID) {
 		return WorkflowAccessRead
@@ -193,10 +254,11 @@ type workflowAccessUser struct {
 type workflowAccessResponse struct {
 	WorkspacePath string               `json:"workspace_path"`
 	Owners        []workflowAccessUser `json:"owners"`
+	Editors       []workflowAccessUser `json:"editors"`
 	Readers       []workflowAccessUser `json:"readers"`
 	MyAccess      WorkflowAccessLevel  `json:"my_access"`
 	// Legacy is true when nothing has been recorded yet and the workflow is
-	// open to every member; saving any grant ends that.
+	// open to every creator and editor; saving any grant ends that.
 	Legacy bool `json:"legacy"`
 }
 
@@ -235,20 +297,23 @@ func (api *StreamingAPI) handleGetWorkflowAccess(w http.ResponseWriter, r *http.
 	writeUsersJSON(w, http.StatusOK, workflowAccessResponse{
 		WorkspacePath: workspacePath,
 		Owners:        describeUsers(manifest.effectiveOwners(), dir),
+		Editors:       describeUsers(manifest.effectiveEditors(), dir),
 		Readers:       describeUsers(manifest.effectiveReaders(), dir),
 		MyAccess:      level,
 		Legacy:        !manifest.hasOwnershipRecord(),
 	})
 }
 
-// PUT /api/workflow/access {workspace_path, owners:[...], readers:[...]}
+// PUT /api/workflow/access {workspace_path, owners:[...], editors:[...], readers:[...]}
 // Entries may be user ids, usernames, or emails; they are stored as ids. The
 // caller must be an owner (or admin) and cannot remove the last owner.
+// Editors may edit and run but not share; readers are view-only.
 func (api *StreamingAPI) handleSetWorkflowAccess(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		WorkspacePath string   `json:"workspace_path"`
-		Owners        []string `json:"owners"`
-		Readers       []string `json:"readers"`
+		WorkspacePath string    `json:"workspace_path"`
+		Owners        []string  `json:"owners"`
+		Editors       *[]string `json:"editors"`
+		Readers       []string  `json:"readers"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeUsersError(w, http.StatusBadRequest, "invalid body")
@@ -265,7 +330,10 @@ func (api *StreamingAPI) handleSetWorkflowAccess(w http.ResponseWriter, r *http.
 		writeUsersError(w, http.StatusNotFound, "no workflow at that path")
 		return
 	}
-	if level != WorkflowAccessOwner && level != WorkflowAccessWrite {
+	// Only owners share a claimed workflow. Account-tier writers may still
+	// share a legacy manifest with no ownership record — that save is what
+	// claims it and ends the legacy openness.
+	if level != WorkflowAccessOwner && (level != WorkflowAccessWrite || manifest.hasOwnershipRecord()) {
 		writeWorkflowPermissionDenied(w, "owner")
 		return
 	}
@@ -299,6 +367,22 @@ func (api *StreamingAPI) handleSetWorkflowAccess(w http.ResponseWriter, r *http.
 		writeUsersError(w, http.StatusBadRequest, "unknown user: "+unknown)
 		return
 	}
+	// An absent editors key (older clients) preserves the stored list,
+	// quietly dropping deleted accounts; an explicit empty list clears it.
+	var editors []string
+	if req.Editors == nil {
+		for _, id := range manifest.effectiveEditors() {
+			if dir.byID(id) != nil {
+				editors = append(editors, id)
+			}
+		}
+	} else {
+		var unknown string
+		if editors, unknown = resolve(*req.Editors); unknown != "" {
+			writeUsersError(w, http.StatusBadRequest, "unknown user: "+unknown)
+			return
+		}
+	}
 	readers, unknown := resolve(req.Readers)
 	if unknown != "" {
 		writeUsersError(w, http.StatusBadRequest, "unknown user: "+unknown)
@@ -308,22 +392,29 @@ func (api *StreamingAPI) handleSetWorkflowAccess(w http.ResponseWriter, r *http.
 		writeUsersError(w, http.StatusBadRequest, "a workflow needs at least one owner")
 		return
 	}
-	// A user is either an owner or a reader, never both.
+	// A user holds exactly one tier; higher tiers win overlaps.
+	keptEditors := editors[:0]
+	for _, id := range editors {
+		if !containsID(owners, id) {
+			keptEditors = append(keptEditors, id)
+		}
+	}
 	filtered := readers[:0]
 	for _, id := range readers {
-		if !containsID(owners, id) {
+		if !containsID(owners, id) && !containsID(keptEditors, id) {
 			filtered = append(filtered, id)
 		}
 	}
-	manifest.Access = &WorkflowAccess{Owners: owners, Readers: filtered}
+	manifest.Access = &WorkflowAccess{Owners: owners, Editors: keptEditors, Readers: filtered}
 	if err := WriteWorkflowManifest(r.Context(), req.WorkspacePath, manifest); err != nil {
 		writeUsersError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
-	log.Printf("[ACCESS] %s set access on %s: owners=%v readers=%v", GetUserIDFromContext(r.Context()), req.WorkspacePath, owners, filtered)
+	log.Printf("[ACCESS] %s set access on %s: owners=%v editors=%v readers=%v", GetUserIDFromContext(r.Context()), req.WorkspacePath, owners, keptEditors, filtered)
 	writeUsersJSON(w, http.StatusOK, workflowAccessResponse{
 		WorkspacePath: req.WorkspacePath,
 		Owners:        describeUsers(owners, dir),
+		Editors:       describeUsers(keptEditors, dir),
 		Readers:       describeUsers(filtered, dir),
 		MyAccess:      workflowAccessForManifest(claims, manifest),
 	})
@@ -331,7 +422,7 @@ func (api *StreamingAPI) handleSetWorkflowAccess(w http.ResponseWriter, r *http.
 
 // GET /api/users/directory — the picker behind sharing: every enabled
 // account's id, username and email, nothing else. Any signed-in user may
-// call it (a member needs it to share their own workflow).
+// call it (an owner needs it to share their own workflow).
 func (api *StreamingAPI) handleUserDirectory(w http.ResponseWriter, r *http.Request) {
 	dir, err := loadUserDirectory()
 	if err != nil {

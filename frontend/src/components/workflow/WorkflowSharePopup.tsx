@@ -14,11 +14,13 @@ interface WorkflowSharePopupProps {
 }
 
 /**
- * Share one workflow: who owns it (edit, run, share, delete) and who may
- * read it (chat, run, watch — nothing changes). Owners and admins only; the
- * server refuses anything else and never lets the last owner go.
+ * Share one workflow: owners (edit, run, share, delete), editors (edit and
+ * run, no sharing), and read-only readers (chat, run, watch — nothing
+ * changes). Owners and admins only; the server refuses anything else and
+ * never lets the last owner go.
  * docs/design/user_accounts_and_workflow_sharing.md, phase 3.
  */
+type ShareTier = 'owner' | 'editor' | 'reader'
 const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, readOnly = false }) => {
   const me = useAuthStore((s) => s.user)
   const refreshWorkflows = useWorkflowManifestStore((s) => s.refreshWorkflows)
@@ -28,7 +30,12 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [pickId, setPickId] = useState('')
-  const [pickRole, setPickRole] = useState<'reader' | 'owner'>('reader')
+  const [pickRole, setPickRole] = useState<ShareTier>('reader')
+  // Owners and admins share freely. Write-level accounts may share only an
+  // unclaimed (legacy) workflow — that save claims it. On a claimed
+  // workflow the server refuses non-owner writes, so the UI locks too.
+  const canEdit = !readOnly && (!!me?.is_admin || info?.my_access === 'owner' || (info?.my_access === 'write' && !!info?.legacy))
+  const locked = !canEdit
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -48,12 +55,12 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
     void load()
   }, [load])
 
-  const save = useCallback(async (owners: string[], readers: string[]) => {
-    if (readOnly) return
+  const save = useCallback(async (owners: string[], editors: string[], readers: string[]) => {
+    if (locked) return
     setSaving(true)
     setError(null)
     try {
-      const next = await authApi.setWorkflowAccess(workspacePath, owners, readers)
+      const next = await authApi.setWorkflowAccess(workspacePath, owners, editors, readers)
       setInfo(next)
       void refreshWorkflows()
     } catch (err) {
@@ -61,27 +68,37 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
     } finally {
       setSaving(false)
     }
-  }, [readOnly, workspacePath, refreshWorkflows])
+  }, [locked, workspacePath, refreshWorkflows])
 
   const ownerIds = useMemo(() => (info?.owners ?? []).map((u) => u.id), [info])
+  const editorIds = useMemo(() => (info?.editors ?? []).map((u) => u.id), [info])
   const readerIds = useMemo(() => (info?.readers ?? []).map((u) => u.id), [info])
   const candidates = useMemo(
-    () => directory.filter((u) => !ownerIds.includes(u.id) && !readerIds.includes(u.id)),
-    [directory, ownerIds, readerIds],
+    () => directory.filter((u) => !ownerIds.includes(u.id) && !editorIds.includes(u.id) && !readerIds.includes(u.id)),
+    [directory, ownerIds, editorIds, readerIds],
   )
 
   const add = () => {
     if (!pickId) return
-    if (pickRole === 'owner') void save([...ownerIds, pickId], readerIds)
-    else void save(ownerIds, [...readerIds, pickId])
+    if (pickRole === 'owner') void save([...ownerIds, pickId], editorIds, readerIds)
+    else if (pickRole === 'editor') void save(ownerIds, [...editorIds, pickId], readerIds)
+    else void save(ownerIds, editorIds, [...readerIds, pickId])
     setPickId('')
   }
-  const remove = (id: string) => void save(ownerIds.filter((x) => x !== id), readerIds.filter((x) => x !== id))
-  const promote = (id: string) => void save([...ownerIds, id], readerIds.filter((x) => x !== id))
-  const demote = (id: string) => void save(ownerIds.filter((x) => x !== id), [...readerIds, id])
+  const remove = (id: string) => void save(ownerIds.filter((x) => x !== id), editorIds.filter((x) => x !== id), readerIds.filter((x) => x !== id))
+  const moveTo = (id: string, tier: ShareTier) => {
+    const owners = ownerIds.filter((x) => x !== id)
+    const editors = editorIds.filter((x) => x !== id)
+    const readers = readerIds.filter((x) => x !== id)
+    if (tier === 'owner') owners.push(id)
+    else if (tier === 'editor') editors.push(id)
+    else readers.push(id)
+    void save(owners, editors, readers)
+  }
 
   const label = (u: WorkflowAccessUser) => (u.id === me?.id ? `${u.username} (you)` : u.username)
-  const total = ownerIds.length + readerIds.length
+  const total = ownerIds.length + editorIds.length + readerIds.length
+  const tierOf = (id: string): ShareTier => (ownerIds.includes(id) ? 'owner' : editorIds.includes(id) ? 'editor' : 'reader')
 
   return (
     <div className="space-y-4">
@@ -91,9 +108,9 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
         count={info ? `${total} ${total === 1 ? 'person' : 'people'}` : undefined}
         description={
           <>
-            Owners edit, run, share and delete. Read-only people can chat, run and watch, but change nothing.
-            {readOnly && <span className="mt-1 block font-medium text-amber-600 dark:text-amber-400">Read-only: membership is visible, but all changes are disabled.</span>}
-            {info?.legacy && <span className="mt-1 block text-amber-600">Nothing recorded yet: every member can edit this workflow until you save a first grant.</span>}
+            Owners edit, run, share and delete. Editors edit and run but cannot share. Read-only people can chat, run and watch, but change nothing.
+            {locked && <span className="mt-1 block font-medium text-amber-600 dark:text-amber-400">Read-only: membership is visible, but all changes are disabled.</span>}
+            {info?.legacy && <span className="mt-1 block text-amber-600">Nothing recorded yet: every creator and editor can edit this workflow until you save a first grant.</span>}
           </>
         }
       >
@@ -103,7 +120,7 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
             <span>{error}</span>
           </div>
         )}
-        {!readOnly && (
+        {!locked && (
           <div className="flex flex-col gap-2 sm:flex-row sm:items-end">
             <div className="flex-1">
               <Label>Add a person</Label>
@@ -114,8 +131,9 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
             </div>
             <div className="sm:w-36">
               <Label>As</Label>
-              <select value={pickRole} onChange={(e) => setPickRole(e.target.value as 'reader' | 'owner')} className="w-full mt-1 px-2 py-1.5 text-sm bg-muted/40 border border-border rounded disabled:cursor-not-allowed disabled:opacity-50">
+              <select value={pickRole} onChange={(e) => setPickRole(e.target.value as ShareTier)} className="w-full mt-1 px-2 py-1.5 text-sm bg-muted/40 border border-border rounded disabled:cursor-not-allowed disabled:opacity-50">
                 <option value="reader">Read-only</option>
+                <option value="editor">Editor</option>
                 <option value="owner">Owner</option>
               </select>
             </div>
@@ -131,32 +149,38 @@ const WorkflowSharePopup: React.FC<WorkflowSharePopupProps> = ({ workspacePath, 
           </div>
         ) : (
           <>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mb-1">Owners</p>
-              {info.owners.length === 0 && <SettingsEmpty>No owner recorded.</SettingsEmpty>}
-              {info.owners.map((u) => (
-                <div key={u.id} className="flex items-center justify-between py-1.5 border-t border-border">
-                  <span className="text-sm">{label(u)}{u.email && <span className="ml-1 text-xs text-muted-foreground">{u.email}</span>}</span>
-                  <span className="flex items-center gap-1">
-                    <Button variant="outline" size="sm" disabled={readOnly || saving || info.owners.length < 2} title={readOnly ? 'Read-only access' : info.owners.length < 2 ? 'A workflow needs at least one owner' : 'Make read-only'} onClick={() => demote(u.id)}>Make read-only</Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" disabled={readOnly || saving || info.owners.length < 2} title={readOnly ? 'Read-only access' : 'Remove'} onClick={() => remove(u.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                  </span>
-                </div>
-              ))}
-            </div>
-            <div>
-              <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mt-4 mb-1">Read-only</p>
-              {info.readers.length === 0 && <SettingsEmpty>Nobody yet.</SettingsEmpty>}
-              {info.readers.map((u) => (
-                <div key={u.id} className="flex items-center justify-between py-1.5 border-t border-border">
-                  <span className="text-sm">{label(u)}{u.email && <span className="ml-1 text-xs text-muted-foreground">{u.email}</span>}</span>
-                  <span className="flex items-center gap-1">
-                    <Button variant="outline" size="sm" disabled={readOnly || saving} title={readOnly ? 'Read-only access' : undefined} onClick={() => promote(u.id)}>Make owner</Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" disabled={readOnly || saving} title={readOnly ? 'Read-only access' : 'Remove'} onClick={() => remove(u.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
-                  </span>
-                </div>
-              ))}
-            </div>
+            {([
+              { tier: 'owner' as ShareTier, title: 'Owners', empty: 'No owner recorded.', users: info.owners },
+              { tier: 'editor' as ShareTier, title: 'Editors', empty: 'Nobody yet.', users: info.editors ?? [] },
+              { tier: 'reader' as ShareTier, title: 'Read-only', empty: 'Nobody yet.', users: info.readers },
+            ]).map((section) => (
+              <div key={section.tier}>
+                <p className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground mt-4 mb-1">{section.title}</p>
+                {section.users.length === 0 && <SettingsEmpty>{section.empty}</SettingsEmpty>}
+                {section.users.map((u) => {
+                  const lastOwner = section.tier === 'owner' && info.owners.length < 2
+                  return (
+                    <div key={u.id} className="flex items-center justify-between py-1.5 border-t border-border">
+                      <span className="text-sm">{label(u)}{u.email && <span className="ml-1 text-xs text-muted-foreground">{u.email}</span>}</span>
+                      <span className="flex items-center gap-1">
+                        <select
+                          value={tierOf(u.id)}
+                          disabled={locked || saving || lastOwner}
+                          title={locked ? 'Read-only access' : lastOwner ? 'A workflow needs at least one owner' : 'Change tier'}
+                          onChange={(e) => moveTo(u.id, e.target.value as ShareTier)}
+                          className="px-2 py-1 text-xs bg-muted/40 border border-border rounded disabled:cursor-not-allowed disabled:opacity-50"
+                        >
+                          <option value="owner">Owner</option>
+                          <option value="editor">Editor</option>
+                          <option value="reader">Read-only</option>
+                        </select>
+                        <Button variant="ghost" size="icon" className="h-7 w-7 text-destructive hover:bg-destructive/10" disabled={locked || saving || lastOwner} title={locked ? 'Read-only access' : 'Remove'} onClick={() => remove(u.id)}><Trash2 className="h-3.5 w-3.5" /></Button>
+                      </span>
+                    </div>
+                  )
+                })}
+              </div>
+            ))}
           </>
         )}
       </SettingsCard>

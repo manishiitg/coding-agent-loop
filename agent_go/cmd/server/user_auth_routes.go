@@ -35,6 +35,7 @@ type UserInfo struct {
 	Username                string   `json:"username"`
 	Email                   string   `json:"email,omitempty"`
 	Provider                string   `json:"provider,omitempty"`
+	Role                    string   `json:"role,omitempty"`
 	WorkflowAccess          string   `json:"workflow_access,omitempty"`
 	CanRunWorkflows         bool     `json:"can_run_workflows"`
 	CanWriteWorkflows       bool     `json:"can_write_workflows"`
@@ -548,7 +549,13 @@ func isBotManager(email string) bool {
 	return false
 }
 
-// handleGetCurrentUser returns the current authenticated user's info
+// handleGetCurrentUser returns the current authenticated user's info.
+//
+// The workflow_* capability flags are the GLOBAL account tier. Effective
+// access varies per workflow (a global editor can be a viewer on one
+// workflow and an owner of another), so the response also carries the
+// resolved per-workflow map — clients must gate workflow actions on it,
+// never on the global flags alone.
 func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Request) {
 	user := GetUserFromContext(r.Context())
 	if user == nil {
@@ -563,6 +570,7 @@ func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Req
 		"email":          user.Email,
 		"provider":       user.Provider,
 		"is_bot_manager": isBotManager(user.Email),
+		"role":           roleForClaims(user),
 	}
 	for key, value := range workflowPermissionResponseFields(workflowPermissionInfoForClaims(user)) {
 		response[key] = value
@@ -573,6 +581,9 @@ func (api *StreamingAPI) handleGetCurrentUser(w http.ResponseWriter, r *http.Req
 	acc := userAccessForClaims(user)
 	response["is_admin"] = acc.Admin
 	response["can_create"] = acc.CanCreate
+	if access, err := effectiveWorkflowAccessMap(r.Context(), user); err == nil {
+		response["workflows"] = access
+	}
 	json.NewEncoder(w).Encode(response)
 }
 

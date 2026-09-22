@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `two additional recurrence fixes pushed to main; deployment and fresh-client verification pending` |
-| Last synchronized | `2026-09-21` |
+| Ticket state | `shared durable conversation-turn dispatcher implemented locally; push, deployment, and fresh-client verification pending` |
+| Last synchronized | `2026-09-22` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
   confusing (the agent appears to "forget" recent work and asks the user to
@@ -20,6 +20,57 @@
   different symptom — tool-access confusion vs. this ticket's conversation
   data loss; investigated together, filed separately since the root causes
   are unrelated).
+
+## 2026-09-22 follow-up — one durable dispatcher for every conversation producer
+
+The rapid-send fix made pending messages visible sooner, but delivery was still
+split across `/api/query`, `/live-input`, Crew chat, Workflow Builder chat, and
+server-owned schedule, trigger, and bot starts. Each path could independently
+decide whether to inject into an occupied CLI, wait, or start another turn. That
+made the correctness of a conversation depend on which producer submitted the
+message.
+
+A workspace-backed FIFO dispatcher now owns this boundary for all conversation
+turns. When a session is occupied, it persists the complete turn request in
+`conversation-turn-dispatch.json`, records the user message immediately as a
+structured event with `queued_for_turn`, and starts it only after the current
+turn releases the shared session lane. The browser displays an amber queued
+receipt and queue position; confirmation or failure updates that same durable
+message identity. Queue recovery runs before schedulers start after a server
+restart. Persisted requests exclude decrypted secrets and API keys, which are
+resolved again when execution begins.
+
+The matrix covers regular chat, Crew, Workflow Builder, live input, schedules,
+triggers/webhooks, and bots. Retained CLI input is no longer a separate hidden
+queue when the active CLI is busy. Headless workflow execution is intentionally
+outside this dispatcher because it is an execution job rather than a
+conversation turn; its existing scheduler remains authoritative. Automatic
+completion notifications likewise retain their existing durable queue.
+
+### Live finding: the old browser lane could freeze every later send
+
+Before this dispatcher was deployed, RTS showed messages as permanent single
+ticks while the server received no corresponding external `/api/query` or
+`/live-input` request. The browser had already rendered each optimistic row,
+but `chatSubmissionLane` put its network mutation behind an older unresolved
+promise. Because the lane had no durable state or expiry, one hung preparation
+or HTTP request caused unbounded head-of-line blocking for every later message
+in that conversation.
+
+The frontend lane has now been removed. Every user send starts its HTTP request
+immediately, while the backend dispatcher provides the one authoritative FIFO,
+durability, idempotency and restart recovery boundary. Exact rapid duplicate
+clicks remain coalesced, but distinct user turns are never held only in browser
+memory. The structured-source regression explicitly rejects reintroducing
+`chatSubmissionLane` in the chat submission path.
+
+The final frontend exception was removed at the same time: the queued-message
+**Steer** action previously called `/api/sessions/:id/live-input` directly.
+Enter, Send, queued decisions, report actions, and Steer now all submit through
+`/api/query`; only the backend decides whether the message starts a turn, joins
+the active provider, or waits in the durable FIFO. The `/live-input` server
+route remains temporarily as a compatibility shim for older already-loaded
+clients, with no caller in the current frontend.
 
 ## 2026-09-21 recurrence — rapid messages were accepted but appeared late
 

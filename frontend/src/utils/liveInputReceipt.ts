@@ -1,6 +1,6 @@
 import type { PollingEvent } from '../services/api-types'
 
-export function withLiveInputReceipt(event: PollingEvent, status: string, provider?: string, messageId?: string): PollingEvent {
+export function withLiveInputReceipt(event: PollingEvent, status: string, provider?: string, messageId?: string, queuePosition?: number): PollingEvent {
   const outer = event.data as unknown as Record<string, unknown>
   const inner = (outer.data ?? {}) as Record<string, unknown>
   const existing = (inner.metadata ?? {}) as Record<string, unknown>
@@ -8,11 +8,12 @@ export function withLiveInputReceipt(event: PollingEvent, status: string, provid
   // Never downgrade: a durability verdict that already landed (for
   // example via a replayed event racing the ack) always wins.
   const accepted = status === 'sent_to_cli' || status === 'next_turn_started' || status === 'queued_for_injection'
-  const confirmation = existing.confirmation ?? (accepted ? 'fast' : undefined)
+  const confirmation = existing.confirmation ?? (status === 'queued_for_turn' ? 'queued' : accepted ? 'fast' : undefined)
   return { ...event, data: { ...outer, data: { ...inner, metadata: {
     ...existing,
     source: 'coding_agent_live_input', delivery_status: status, provider,
     ...(messageId?.trim() ? { message_id: messageId.trim() } : {}),
+    ...(queuePosition !== undefined ? { queue_position: queuePosition } : {}),
     ...(confirmation !== undefined ? { confirmation } : {}),
   } } } as PollingEvent['data'] }
 }
@@ -85,7 +86,7 @@ export function stampLiveInputIdentity(event: PollingEvent, messageId: string, d
     message_id: messageId.trim(),
     delivery_status: deliveryStatus,
     ...(provider ? { provider } : {}),
-    ...(existing.confirmation === undefined ? { confirmation: 'fast' } : {}),
+    ...(existing.confirmation === undefined ? { confirmation: deliveryStatus === 'queued_for_turn' ? 'queued' : 'fast' } : {}),
   } } } as PollingEvent['data'] }
 }
 

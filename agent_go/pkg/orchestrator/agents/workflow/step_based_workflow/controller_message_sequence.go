@@ -113,12 +113,12 @@ type messageSequenceDelegation struct {
 }
 
 // messageSequenceDelegationItemAllowed reports whether an item kind may run on an
-// orchestrator. Plan validation already rejects code/file items on a todo_task's
-// messages; this is the runtime backstop so a bypassed plan can never make the
-// orchestrator execute code items itself.
+// delegating agent sequence. Inline code/file items remain forbidden, while a
+// declared scripted batch is safe because it can only invoke validated saved
+// regular-script definitions and never creates an agent session.
 func messageSequenceDelegationItemAllowed(item MessageSequenceItem) bool {
 	switch strings.TrimSpace(item.Type) {
-	case "", "user_message", "foreach", "prevalidation":
+	case "", "user_message", "foreach", "prevalidation", "scripted":
 		return true
 	}
 	return false
@@ -393,7 +393,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeMessageSequenceStep(
 		}
 		for _, item := range sequenceStep.Items {
 			if !messageSequenceDelegationItemAllowed(item) {
-				return "", nil, fmt.Errorf("orchestrator step %q message %q has type %q; an orchestrator runs only user_message, foreach, and prevalidation items — code/file work belongs in a sub-agent route", step.GetID(), item.ID, item.Type)
+				return "", nil, fmt.Errorf("delegating agent step %q item %q has unsupported type %q; use user_message, foreach, prevalidation, or a declared scripted batch", step.GetID(), item.ID, item.Type)
 			}
 		}
 		if opts.Delegation.ExecCtx != nil {

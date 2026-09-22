@@ -91,6 +91,7 @@ export interface MessageSequenceNodeData extends Record<string, unknown> {
   title: string
   description?: string
   items?: MessageSequenceItem[]   // Ordered queue of user_message / prevalidation / foreach items
+  predefined_routes?: Array<{ route_id: string; route_name: string; condition: string; sub_agent_step?: PlanStep; orphan_step_ref?: string }>
   status: 'pending' | 'running' | 'completed' | 'failed' | 'executing'
   stepIndex: number
   step: PlanStep
@@ -251,6 +252,10 @@ function countOrphanStepRefs(steps: PlanStep[] | undefined): Map<string, number>
           for (const call of item.scripted_steps || []) {
             counts.set(call.step_id, (counts.get(call.step_id) || 0) + 1)
           }
+        }
+        for (const r of s.predefined_routes || []) {
+          if (r.orphan_step_ref) counts.set(r.orphan_step_ref, (counts.get(r.orphan_step_ref) || 0) + 1)
+          if (r.sub_agent_step) visit([r.sub_agent_step])
         }
       }
       if (isTodoTaskStep(s) && Array.isArray(s.predefined_routes)) {
@@ -1179,7 +1184,8 @@ function stepToNode(
       position: { x: 0, y: 0 },
       data: {
         ...baseData,
-        items: effectiveMessageSequenceItems(step)
+        items: effectiveMessageSequenceItems(step),
+        predefined_routes: isMessageSequenceStep(step) ? step.predefined_routes : undefined
         // Note: status is inherited from baseData (computed based on completedStepIndices)
       } as MessageSequenceNodeData
     }
@@ -1260,7 +1266,7 @@ function processSteps(
     const parentStepIndex = todoTaskNodeData.stepIndex
     const todoTaskTitle = todoTaskNodeData.title || todoTaskStep.title || `Todo Task ${parentStepIndex + 1}`
 
-    if (isTodoTaskStep(todoTaskStep) && todoTaskStep.predefined_routes && todoTaskStep.predefined_routes.length > 0) {
+    if ((isTodoTaskStep(todoTaskStep) || isMessageSequenceStep(todoTaskStep)) && todoTaskStep.predefined_routes && todoTaskStep.predefined_routes.length > 0) {
       todoTaskStep.predefined_routes.forEach((route) => {
         const isEndRoute = route.route_id?.toLowerCase() === 'end'
 
@@ -1344,6 +1350,7 @@ function processSteps(
               title: subAgentStep.title || `${route.route_name || route.route_id || routeId}`,
               description: subAgentStep.description,
               items: effectiveMessageSequenceItems(subAgentStep),
+              predefined_routes: isMessageSequenceStep(subAgentStep) ? subAgentStep.predefined_routes : undefined,
               status,
               stepIndex: parentStepIndex,
               step: subAgentStep,
@@ -1358,6 +1365,17 @@ function processSteps(
           }
 
           todoTaskSubAgentNodes.push(seqNode)
+
+          if (isMessageSequenceStep(subAgentStep) && subAgentStep.predefined_routes?.length) {
+            const nestedAgentGraph = buildTodoTaskSubAgentGraph(
+              subAgentStep,
+              subAgentNodeId,
+              seqNode.data as unknown as TodoTaskNodeData,
+              false
+            )
+            todoTaskSubAgentNodes.push(...nestedAgentGraph.nodes)
+            todoTaskEdges.push(...nestedAgentGraph.edges)
+          }
         } else {
           const subAgentNode: WorkflowNode = {
             id: subAgentNodeId,
@@ -1734,7 +1752,7 @@ function processSteps(
     // Todo task steps have predefined routes (sub-agents)
     // and optionally a generic agent. After sub-agents complete, they return to the main todo task node.
     // The todo task step connects to next_step_id when all tasks are complete.
-    if (isTodoTaskStep(step)) {
+    if (isTodoTaskStep(step) || (isMessageSequenceStep(step) && (step.predefined_routes?.length ?? 0) > 0)) {
       const todoTaskGraph = buildTodoTaskSubAgentGraph(
         step,
         node.id,

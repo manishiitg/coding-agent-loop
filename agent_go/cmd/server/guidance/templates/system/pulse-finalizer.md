@@ -23,19 +23,29 @@ Run Backup, Publish, then Notify. Before and after each, call
    is disabled, its artifact is unverified, it is already current, or the
    publish operation itself fails. Never perform first verification unattended.
    Keep status truthful and record the live URL.
-3. **Notify.** Notify every run. Account channels are inherited; absent workflow
+3. **Notify.** Evaluate notification policy every run. Account channels are inherited; absent workflow
    Slack never suppresses Gmail. The backend applies `notifications`
    exclusions/recipient blocks. Never copy account config into `workflow.json`,
    put notification preferences in soul.md, or skip sending to enforce one.
 
+   Read the saved run-summary and Pulse-summary instructions supplied in this
+   finalizer turn. They override the default new-and-important policy for their
+   own summary kind. When the default applies, call `get_notification_history`
+   before deciding and compare semantic state, blockers, decisions, findings,
+   routes, and outcomes—not timestamps or wording.
+
    The terminal `record_pulse_result(module=...)` calls are the single source for
    **What Pulse did**. The backend projects their user-readable reasons into one
    Activity item for the Pulse run. Do not publish, rewrite, or duplicate a Pulse
-   summary with `notify_user`.
+   summary in Activity with `notify_user`.
 
-   Send only the workflow execution outcome with
+   Record the workflow execution outcome with
    `notify_user(notification_kind="run_summary")` when this invocation ran the
-   workflow. Keep the final command statuses truthful with
+   workflow. Use `delivery_mode="dashboard_only"` when no important external
+   update is warranted, otherwise use normal delivery. Pulse Activity is already
+   projected; when its instructions call for an external update, send
+   `notification_kind="pulse_summary"` with `delivery_mode="external_only"` so
+   Slack/Gmail/WhatsApp receive it without duplicating Activity. Keep final command statuses truthful with
    `record_pulse_result(command=...)`.
 
 Use the channel-neutral `summary_title`, `summary_status`, `summary_fields`,

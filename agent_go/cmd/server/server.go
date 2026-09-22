@@ -586,11 +586,20 @@ type StreamingAPI struct {
 	runningAgents    map[string]*mcpagent.Agent
 	runningAgentsMux sync.RWMutex
 
-	// Per-session new-turn lane for interactive chats. It serializes expensive
-	// turn construction only; retained coding-CLI live input bypasses it and is
-	// ordered at the provider's tmux readiness/broker boundary.
+	// Per-session turn lane shared by chat, Crew, workflows and internal
+	// producers. Busy retained coding-CLI input is persisted by the dispatcher
+	// instead of relying on a provider-local tmux queue.
 	sessionInputLanes   map[string]*sessionInputLane
 	sessionInputLanesMu sync.Mutex
+	// Durable turns waiting behind that shared lane. Every producer reaches the
+	// same dispatcher; tmux remains an execution transport, never a queue.
+	conversationTurnQueueMu        sync.Mutex
+	conversationTurnQueueOwners    map[string]string
+	conversationTurnQueueDraining  map[string]bool
+	conversationTurnQueueWaiters   map[string]chan queuedConversationTurnResult
+	conversationTurnQueueCallbacks map[string]func(event *unifiedevents.AgentEvent)
+	internalTurnQueueRead          func(context.Context, string) (string, bool, error)
+	internalTurnQueueWrite         func(context.Context, string, string) error
 
 	// Last-seen WorkshopMode per session — used to detect mode toggles between
 	// turns. When the mode changes, native coding-agent resume is skipped for
@@ -1360,13 +1369,16 @@ type QueryResponse struct {
 	// can upgrade its optimistic bubble (and later its delivery tick)
 	// by backend identity instead of content matching.
 	MessageID string `json:"message_id,omitempty"`
+	// QueuePosition is populated when the durable conversation dispatcher
+	// accepts this request behind a turn that already owns the session lane.
+	QueuePosition int `json:"queue_position,omitempty"`
 }
 
 // queryStatusLiveInputDelivered is the QueryResponse.Status returned when a
 // /api/query message was delivered to a retained coding-agent CLI instead of
 // starting a new streaming turn. This is the single backend source of truth for
-// tmux-transport CLI input. The regular query endpoint still uses this path as
-// a fallback; plain CLI follow-ups use the smaller /live-input endpoint first.
+// deciding whether ordinary chat starts, queues, or steers a turn. The separate
+// /live-input route remains only as a compatibility shim for older clients.
 const queryStatusLiveInputDelivered = "live_input_delivered"
 
 const (
@@ -1490,6 +1502,9 @@ func (api *StreamingAPI) releaseSessionInputLaneFunc(sessionID string, lane *ses
 		once.Do(func() {
 			<-lane.sem
 			api.dropSessionInputLaneRef(sessionID, lane)
+			// The persisted queue is the authority for what runs next. Kicking
+			// after release closes the accept-vs-completion race.
+			api.kickConversationTurnQueue(sessionID)
 		})
 	}
 }
@@ -1532,6 +1547,7 @@ type LiveInputResponse struct {
 	Provider       string `json:"provider,omitempty"`
 	MessageID      string `json:"message_id,omitempty"`
 	QueryID        string `json:"query_id,omitempty"`
+	QueuePosition  int    `json:"queue_position,omitempty"`
 }
 
 // ControlKeyRequest carries a tmux control key (e.g. "Escape") to inject into
@@ -2051,6 +2067,10 @@ func runServer(cmd *cobra.Command, args []string) {
 		sessionAgents:                       make(map[string]*agent.LLMAgentWrapper),
 		runningAgents:                       make(map[string]*mcpagent.Agent),
 		sessionInputLanes:                   make(map[string]*sessionInputLane),
+		conversationTurnQueueOwners:         make(map[string]string),
+		conversationTurnQueueDraining:       make(map[string]bool),
+		conversationTurnQueueWaiters:        make(map[string]chan queuedConversationTurnResult),
+		conversationTurnQueueCallbacks:      make(map[string]func(event *unifiedevents.AgentEvent)),
 		completionLoopStarted:               make(map[string]bool),
 		lastWorkshopModeBySession:           make(map[string]string),
 		lastChatPolicyBySession:             make(map[string]string),
@@ -2659,6 +2679,12 @@ func runServer(cmd *cobra.Command, args []string) {
 	defer schedulerCancel()
 	schedulerSvc := NewSchedulerService(api)
 	api.scheduler = schedulerSvc
+	productScheduleSvc := NewProductScheduleService(api, profileRegistry)
+	api.productSchedules = productScheduleSvc
+	// Recover accepted conversation turns before either scheduler can compete
+	// for those same session lanes. Both services are already wired so a
+	// recovered turn sees the normal runtime capabilities.
+	api.recoverConversationTurnQueue(schedulerCtx)
 	if os.Getenv("SCHEDULER_ENABLED") == "false" {
 		log.Printf("[SCHEDULER] Disabled via SCHEDULER_ENABLED=false — skipping cron execution on this machine")
 	} else {
@@ -2670,8 +2696,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	}
 
 	// Register scheduler routes
-	productScheduleSvc := NewProductScheduleService(api, profileRegistry)
-	api.productSchedules = productScheduleSvc
 	if os.Getenv("SCHEDULER_ENABLED") != "false" {
 		go productScheduleSvc.Start(schedulerCtx)
 	}
@@ -3676,6 +3700,28 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		defer finishSubmission()
+	}
+
+	// Every external producer crosses the same durable turn boundary. A queue
+	// worker carries a private context marker because its entry was already
+	// claimed. Server-owned schedule/trigger/bot callers use the same boundary
+	// in startSessionInternalWithResult and wait for the queued result.
+	if shouldUseDurableConversationTurnQueue(req) &&
+		!conversationTurnQueueExecution(r.Context()) &&
+		api.conversationTurnOccupied(sessionID) {
+		turn, position, queueErr := api.enqueueConversationTurn(r.Context(), currentUserID, sessionID, req)
+		if queueErr != nil {
+			http.Error(w, "Cannot durably queue conversation turn: "+queueErr.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		api.recordQueuedConversationUserMessage(sessionID, turn)
+		api.kickConversationTurnQueue(sessionID)
+		_ = json.NewEncoder(w).Encode(QueryResponse{
+			QueryID: turn.ID, SessionID: sessionID, Status: "accepted",
+			Message:        "Queued behind the active conversation turn",
+			DeliveryStatus: "queued_for_turn", MessageID: turn.ID, QueuePosition: position,
+		})
+		return
 	}
 
 	// SINGLE-ENTRY ROUTING (tmux-transport coding-agent input): the frontend no
@@ -5807,8 +5853,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			for _, tool := range allTools {
 				if tool.Function != nil {
 					toolName := tool.Function.Name
-					if !primaryChatAllowsCustomTool(toolName, isWorkflowBuilderPhase) {
-						log.Printf("[CUSTOM TOOLS] Skipping execution-only tool %s for Workflow Builder chat", toolName)
+					toolCategory := toolCategories[toolName]
+					chatMode := "builder"
+					if currentUserIsReadOnly {
+						chatMode = "run"
+					}
+					if isWorkflowPhase && virtualtools.IsHumanToolCategory(toolCategory) && !agentworksproduct.ChatAllowsTool(chatMode, toolName) {
+						log.Printf("[CUSTOM TOOLS] Skipping human tool %s because AgentWorks product.yaml does not admit it in %s mode", toolName, chatMode)
 						continue
 					}
 
@@ -5833,7 +5884,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 							}
 
 							// Get tool category from the category map - REQUIRED
-							toolCategory := toolCategories[toolName]
 							if toolCategory == "" {
 								log.Printf("[CUSTOM TOOLS ERROR] Tool %s not found in toolCategories map - category is REQUIRED!", toolName)
 								// Continue to next tool instead of failing entire request
@@ -8477,6 +8527,9 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 	}
 	log.Printf("[RETAINED_TURN] Settled retained main-agent turn from structured %s event session=%s terminal=%s state=%s next_execution=%s",
 		eventType, sessionID, snapshot.TerminalID, snapshot.State, promotedExecutionID)
+	if promotedExecutionID == "" {
+		api.kickConversationTurnQueue(sessionID)
+	}
 }
 
 // deliverRetainedMainTerminalInput sends directly to a live main coding-agent
@@ -9583,6 +9636,30 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 			http.Error(w, "Unable to refresh workflow session", http.StatusConflict)
 			return
 		}
+	}
+	// /live-input is only a transport optimization; it must not bypass the
+	// conversation dispatcher. Policy compatibility is checked first because a
+	// changed Workflow authority must cancel/relaunch the stale runtime now,
+	// rather than waiting behind it.
+	if policyKnown && shouldUseDurableConversationTurnQueue(policyRequest) &&
+		api.conversationTurnOccupied(sessionID) {
+		queuedRequest := policyRequest
+		queuedRequest.Query = req.Message
+		queuedRequest.Message = ""
+		queuedRequest.TriggeredBy = "interactive"
+		queuedRequest.IsAutoNotification = false
+		turn, position, queueErr := api.enqueueConversationTurn(r.Context(), GetUserIDFromContext(r.Context()), sessionID, queuedRequest)
+		if queueErr != nil {
+			http.Error(w, "Cannot durably queue conversation turn: "+queueErr.Error(), http.StatusServiceUnavailable)
+			return
+		}
+		api.recordQueuedConversationUserMessage(sessionID, turn)
+		api.kickConversationTurnQueue(sessionID)
+		_ = json.NewEncoder(w).Encode(LiveInputResponse{
+			Success: true, Message: "Queued behind the active conversation turn",
+			DeliveryStatus: "queued_for_turn", MessageID: turn.ID, QueryID: turn.ID, QueuePosition: position,
+		})
+		return
 	}
 
 	// One durable mcpagent Session owns warm delivery across transports and

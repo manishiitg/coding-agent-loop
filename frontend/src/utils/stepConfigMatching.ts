@@ -237,6 +237,7 @@ export interface MessageSequenceItem {
 export interface MessageSequencePlanStep extends CommonStepFields {
   type: 'message_sequence';
   items?: MessageSequenceItem[];
+  predefined_routes?: PlanRoutingRoute[]; // Optional bounded specialists selected by the sequence agent at runtime
   next_step_id?: string;
 }
 

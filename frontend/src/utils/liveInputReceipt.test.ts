@@ -16,6 +16,23 @@ describe('withLiveInputReceipt', () => {
       message_id: 'steer-server-id',
     } } })
   })
+
+  it('marks a durably serialized turn as queued with its position', () => {
+    const event = withLiveInputReceipt({
+      id: 'user-message-local',
+      type: 'user_message',
+      data: { data: { content: '/daily' } },
+    }, 'queued_for_turn', 'claude-code', 'queued-turn-id', 2)
+
+    expect(event.data).toMatchObject({ data: { metadata: {
+      source: 'coding_agent_live_input',
+      delivery_status: 'queued_for_turn',
+      provider: 'claude-code',
+      message_id: 'queued-turn-id',
+      queue_position: 2,
+      confirmation: 'queued',
+    } } })
+  })
 })
 
 describe('delivery confirmation', () => {
@@ -80,6 +97,11 @@ describe('delivery confirmation', () => {
     const alreadyStamped = stampLiveInputIdentity(row, 'steer-server-other', 'sent_to_cli')
     expect(alreadyStamped).toBe(row)
     expect(alreadyStamped.data).toMatchObject({ data: { metadata: { message_id: 'steer-server-9' } } })
+
+    const queued = stampLiveInputIdentity({
+      id: 'user-message-queued', type: 'user_message', data: { data: { content: 'wait my turn' } },
+    }, 'queued-server-1', 'queued_for_turn')
+    expect(queued.data).toMatchObject({ data: { metadata: { confirmation: 'queued', delivery_status: 'queued_for_turn' } } })
   })
 
   it('parses the live_input_confirmed wire event and rejects impostors', () => {

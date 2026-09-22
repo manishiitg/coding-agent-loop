@@ -1138,39 +1138,21 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   }, [activeTabId, setTabConfig])
 
   const handleSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
-    if (!canShowSteer || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
+    if (!(canShowSteer || showProductSteerAction) || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
     const identity = composerIdentityRef.current
     const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(activeTabId)?.sessionId === tabSessionId
     setSteeringIndex(index)
     try {
-      await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => {
-        const response = await agentApi.sendLiveInput(options.sourceSessionId!, message, {
-          identity: options.identity, submissionId: options.submissionId, continuation: true,
-        })
-        return response.delivery_status === 'sent_to_cli' || response.delivery_status === 'queued_for_injection' || response.delivery_status === 'next_turn_started'
-      })
+      await sendQueuedChatMessage(activeTabId, index, msg,
+        async (message, options) => (await onSubmit(message, options)) !== false)
     } finally {
       if (owns()) setSteeringIndex(null)
     }
-  }, [activeTabId, canShowSteer, tabSessionId])
+  }, [activeTabId, canShowSteer, onSubmit, showProductSteerAction, tabSessionId])
 
-  const handleProductSteerQueuedMessage = useCallback(async (index: number, msg: string) => {
-    if (!showProductSteerAction || !tabSessionId || !activeTabId || !isChatIdentityCurrent(composerIdentityRef.current) || useChatStore.getState().getTab(activeTabId)?.sessionId !== tabSessionId) return
-    const identity = composerIdentityRef.current
-    const owns = () => isChatIdentityCurrent(identity) && useChatStore.getState().getTab(activeTabId)?.sessionId === tabSessionId
-    setSteeringIndex(index)
-    try {
-      await sendQueuedChatMessage(activeTabId, index, msg, async (message, options) => (await onSubmit(message, options)) !== false)
-    } finally {
-      if (owns()) setSteeringIndex(null)
-    }
-  }, [activeTabId, onSubmit, showProductSteerAction, tabSessionId])
-
-  const queuedSteerHandler = showProductSteerAction && tabSessionId
-    ? handleProductSteerQueuedMessage
-    : canShowSteer && tabSessionId
-      ? handleSteerQueuedMessage
-      : undefined
+  const queuedSteerHandler = (showProductSteerAction || canShowSteer) && tabSessionId
+    ? handleSteerQueuedMessage
+    : undefined
 
   const queuedDisplayItems = useMemo(() => {
     const items: Array<
@@ -1766,14 +1748,11 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     })
     if (route === 'wait') return
     const index = queuedMessages.findIndex(message => message === human[0])
-    if (route === 'steer') {
-      void handleSteerQueuedMessage(index, human[0])
-    } else {
-      // Report buttons and decision questions share the idle worker's receipt
-      // and lock. Keep each queue entry until the server acknowledges it.
-      void sendQueuedChatMessage(activeTabId, index, human[0],
-        async (message, options) => (await onSubmit(message, options)) !== false)
-    }
+    // Report buttons and decision questions share the idle worker's receipt
+    // and lock. Every message uses /api/query; the backend alone decides
+    // whether to steer the active provider, queue the next turn, or start one.
+    void sendQueuedChatMessage(activeTabId, index, human[0],
+      async (message, options) => (await onSubmit(message, options)) !== false)
   }, [
     activeTabId,
     canSteer,

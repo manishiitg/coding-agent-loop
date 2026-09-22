@@ -56,6 +56,19 @@ func TestAgentWorksProductSurfaceE2E(t *testing.T) {
 		for name := range draft.tools {
 			names = append(names, name)
 		}
+		// Human tools are installed by the shared custom-tool registration path
+		// before phase-specific tools. Include that real implementation pool in
+		// this end-to-end surface check, filtered by product.yaml admission.
+		customTools, customExecutors, customCategories := createCustomTools(true, "test-user", "surface-e2e")
+		for _, tool := range customTools {
+			if tool.Function == nil || customCategories[tool.Function.Name] != "human_tools" || !agentworksproduct.ChatAllowsTool(mode, tool.Function.Name) {
+				continue
+			}
+			if _, ok := customExecutors[tool.Function.Name]; !ok {
+				t.Fatalf("declared human tool %q has no executor", tool.Function.Name)
+			}
+			names = append(names, tool.Function.Name)
+		}
 		names = uniqueSortedToolNames(names)
 		manifest, err := agentworksproduct.AgentWorksManifest()
 		if err != nil {

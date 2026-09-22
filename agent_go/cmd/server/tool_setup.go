@@ -207,15 +207,6 @@ func normalizeAgentMode(agentMode string) string {
 	}
 }
 
-// primaryChatAllowsCustomTool keeps execution-only interaction primitives out
-// of the interactive Workflow Builder. The Builder already has a normal chat
-// response channel for questions; rendering a blocking human_feedback card in
-// that same chat is redundant and can stall the retained coding-agent turn.
-// Workflow step agents receive their own tool bundle and retain human_feedback.
-func primaryChatAllowsCustomTool(toolName string, isWorkflowBuilder bool) bool {
-	return !(isWorkflowBuilder && strings.TrimSpace(toolName) == "human_feedback")
-}
-
 // createCustomTools creates workspace and human tools for orchestrator/workflow agents
 // workflowMode: if true, includes advanced + human + todo tools for workflow mode
 //

@@ -2,9 +2,16 @@
 
 **Saved-code paths:** Read `workflow.json.code_layout_version` first. In this reference, `<script-dir>` means `code/<step-id>` for version 1, or `learnings/<step-id>` for absent/zero (legacy). Resolve the placeholder before using a path; never infer the version from folders or migrate an existing workflow implicitly. Version 1 executes and repairs canonical source directly, with shared helpers under `WORKFLOW_CODE_ROOT`; only legacy workflows copy code into runs and save it back.
 
-## MESSAGE SEQUENCE — SAME-CONTEXT CONVERSATIONAL WORK
+## MESSAGE SEQUENCE — THE AGENT STEP
 
-Use `message_sequence` for one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is turn 0; `items[]` are turns 1..N.
+Use `message_sequence` as the canonical agent step: one persistent conversation where later turns need the earlier turns' reasoning, tool output, critique, or context. Design one large sequence per coherent shared-context span. The step `description` is turn 0; `items[]` are turns 1..N.
+
+An agent step may declare `predefined_routes`. When routes exist, the agent gets
+bounded sub-agent tools and decides at runtime whether, when, and how often to
+call those specialists. Routes define available capabilities; they do not
+prescribe execution order. Without routes, the step is a single-agent sequence.
+The separate `orchestrator` plan type remains a compatibility alias while plans
+and UI consumers migrate to this unified shape.
 
 The default shape is `[complete the whole shared-context span] → [re-open authoritative evidence and prove every criterion] → [repair gaps and double-check]`, followed by the top-level deterministic validation gate. Require run-specific proof/provenance in the output so validation cannot pass a stale or self-asserted success. Do not create separate workflow steps for these checks.
 
@@ -52,14 +59,17 @@ Do not use it when:
 
 ## DELEGATION AND CONTROL
 
-The author defines the sequence's work and flow. **For now, only scripted child
-steps are in scope; do not add separate agentic sub-agents to a message sequence.**
-The sequence's own LLM conversation can reason, analyze script results, verify,
-repair, and write the report. Running ten known scripts, accounting for all ten,
-and reporting is sequence work, even if the scripts can run in parallel.
-Orchestrator is for a parent that interprets evidence and decides or revises
-strategy; it retains separate agentic delegation. Known isolated agentic tasks
-can instead be explicit message-sequence plan steps.
+The authored `items[]` define durable conversational phases. Optional
+`predefined_routes` expose bounded specialist agents, and the message-sequence
+agent decides which routes to call from evidence it sees during any turn. It may
+skip a route, call several routes, or re-enter a conversational route with new
+instructions. A fixed list of workers still belongs in explicit plan steps or a
+scripted batch; adding routes does not turn a checklist into adaptive strategy.
+
+The sequence's own conversation remains responsible for reasoning, verification,
+repair, and the final result. Scripted items are different: they are predetermined
+runtime calls with no child LLM. Running ten known scripts, accounting for every
+result, and reporting is sequence work even if those scripts run in parallel.
 
 Read `references/plan-design.md`, Step 2, for the decision rule. Ordered turns,
 script batches, and completion gates are enforced by the runtime, not merely a

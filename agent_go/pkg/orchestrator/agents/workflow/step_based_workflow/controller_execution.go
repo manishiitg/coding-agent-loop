@@ -3420,14 +3420,25 @@ func (hcpo *StepBasedWorkflowOrchestrator) runExecutionPhase(
 			continue
 		}
 
-		// Check if this is a todo task step
-		if isOrchestratorStep(step) {
+		// A message_sequence with predefined_routes is the canonical agent step:
+		// the same persistent conversation runs its authored turns and decides
+		// whether/when to call its bounded specialist routes. Adapt it to the
+		// legacy orchestrator wrapper until that compatibility type is removed.
+		orchestratorExecutionStep := step
+		delegatingSequence := false
+		if sequence, ok := step.(*MessageSequencePlanStep); ok && len(sequence.PredefinedRoutes) > 0 {
+			orchestratorExecutionStep = delegatingMessageSequenceAsOrchestrator(sequence)
+			delegatingSequence = true
+		}
+
+		// Check if this is a legacy orchestrator or a delegating agent sequence.
+		if isOrchestratorStep(step) || delegatingSequence {
 			// Execute todo task step - manages todo list and delegates to sub-agents
 			hcpo.GetLogger().Info(fmt.Sprintf("🎯 Starting todo task step execution: %s", step.GetTitle()))
 			// Generate step path for todo task step
 			orchestratorStepPath := fmt.Sprintf("step-%d", i+1)
 
-			successCriteriaMet, nextStepID, err := hcpo.executeOrchestratorStep(ctx, step, i, progress, previousContextFiles, previousExecutionResults, iteration, stepExecCtx, breakdownSteps, orchestratorStepPath)
+			successCriteriaMet, nextStepID, err := hcpo.executeOrchestratorStep(ctx, orchestratorExecutionStep, i, progress, previousContextFiles, previousExecutionResults, iteration, stepExecCtx, breakdownSteps, orchestratorStepPath)
 			if err != nil {
 				if isWorkflowCancellationErr(ctx, err) {
 					hcpo.GetLogger().Info(fmt.Sprintf("Todo task step %d canceled", i+1))

@@ -1,22 +1,24 @@
 **Plan-editing tool arguments:** Before a plan mutation, read `builder-reference/references/plan-editing-tools.md`. Step fields described below belong inside `add_step.step` or `update_step.changes`; route/group/maintenance fields belong inside `parameters`. Use the live type/action-specific schema; these field descriptions do not authorize flat arguments or extra fields.
 
-## orchestrator — Orchestrator / Sub-Workflow / Pipeline Step
+## orchestrator — Legacy Compatibility Shape
 
-`orchestrator` is the multi-task orchestration step type. Users call it
+`orchestrator` is the legacy multi-task agent shape. Users call it
 "orchestrator," "sub-workflow," or "pipeline," and the things inside it
 "sub-agents." The plan type is `orchestrator`; `todo_task` is the legacy
 alias older plans still carry, which the runtime keeps reading (contract
 v1.0.35 rewrites it via maintain_plan). Load this skill when
 designing a new orchestrator step, adding/restructuring routes, deciding
 between inline `sub_agent_step` and shared `orphan_step_ref`, or
-debugging route behavior.
+debugging route behavior. For new plans, author a `message_sequence` agent with
+optional `predefined_routes`; the agent decides which specialists to call.
 
 At runtime an orchestrator **is a `message_sequence` that owns routes**: it
 runs on the same executor (one conversation, ordered items, in-place
 prevalidation repairs, a final validation gate, a closing reflection turn),
 plus the sub-agent tools, an async child lifecycle, and a narrower folder
 guard. Everything in the `message-sequence` reference about items, foreach,
-prevalidation, and write access applies here unchanged.
+prevalidation, and write access applies here unchanged. This compatibility type
+remains readable while existing plans, events, and UI consumers migrate.
 
 For the broader plan-design framing (when to pick orchestrator vs routing
 vs message_sequence vs regular), the `plan-design` skill is the authoritative

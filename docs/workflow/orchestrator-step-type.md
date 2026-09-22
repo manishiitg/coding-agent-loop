@@ -1,12 +1,17 @@
-# Orchestrator Step Type
+# Orchestrator Compatibility Step Type
 
 ## Overview
 
-A `todo_task` step is an **orchestrator**: a conversational agent that owns a
+A legacy `orchestrator` / `todo_task` step is a conversational agent that owns a
 set of predefined routes (sub-agents) and decides at runtime what to delegate,
 what to do itself, and how to react to what comes back. Users call it
 "orchestrator", "sub-workflow", or "pipeline". The plan type is `orchestrator` since contract v1.0.35; `todo_task` is the legacy
 alias the runtime still reads (the todo list it was named for no longer exists).
+
+New plans should express this as a `message_sequence` agent with optional
+`predefined_routes`. The sequence agent decides whether and when to call those
+bounded specialists. The legacy type remains readable for plan, event, log, and
+UI compatibility during migration.
 
 Since PLAT-269 the orchestrator **runs on the message_sequence executor**. It
 is a message sequence that owns routes: one conversation, ordered items, an

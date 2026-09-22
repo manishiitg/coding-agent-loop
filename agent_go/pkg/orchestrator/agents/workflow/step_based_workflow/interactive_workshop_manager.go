@@ -1414,8 +1414,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// workflow encrypted store is writable when the corresponding tools
 		// are registered.
 		"list_secrets", "set_workflow_secret", "delete_workflow_secret", "manage_global_secret", "manage_user_access", "manage_workflow_webhook",
-		// Human tools are appended below from virtualtools.HumanToolNamesForWorkshopMode()
-		// (single source shared with registration, so the allow-list can't drift).
+		// Product chat tools, including human tools, are appended below from
+		// AgentWorks product.yaml so mode admission has one source of truth.
 		// Browser (if registered)
 		"agent_browser",
 		// mcpagent virtual tools (get_api_spec, get_prompt, get_resource)
@@ -1432,10 +1432,6 @@ func GetToolsForWorkshopMode(mode string) []string {
 		// sub-agents even though the restriction is intended only for the phase agent LLM.
 		"call_sub_agent", "call_scripted_sub_agent", "get_sub_agent_conversation", "get_route_description",
 	}
-	// Human tools from the single source shared with registration (createCustomTools),
-	// so the allow-list and what's actually registered cannot drift apart.
-	system = append(system, virtualtools.HumanToolNamesForWorkshopMode(mode)...)
-
 	// Read-only info tools — safe in all modes
 	readOnly := []string{
 		"get_goal_metrics",
@@ -1583,6 +1579,20 @@ func GetToolsForWorkshopMode(mode string) []string {
 		tools = append(tools, llmConfig...)
 		tools = append(tools, report...)
 		tools = append(tools, "debug_step")
+	}
+
+	productMode := "builder"
+	if mode == "run" {
+		productMode = "run"
+	}
+	humanImplementations := map[string]bool{}
+	for _, name := range virtualtools.HumanToolImplementationNames() {
+		humanImplementations[name] = true
+	}
+	for _, name := range agentworksproduct.ChatTools(productMode) {
+		if humanImplementations[name] {
+			tools = append(tools, name)
+		}
 	}
 
 	projected := []string{}

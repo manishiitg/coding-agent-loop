@@ -5,7 +5,6 @@ import { normalizeEventViewMode } from '../stores/useChatStore'
 import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
 import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
-import { chatSubmissionLane } from '../utils/promiseLane'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
 import { isTurnRunningConflict } from '../services/turnRunningRetry'
 import { configureChatQueueController } from '../utils/chatQueueController'
@@ -2795,7 +2794,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       tabSessionId !== options.sourceSessionId ||
       useChatStore.getState().getTab(currentTab.tabId)?.sessionId !== options.sourceSessionId
     )) return false
-    chatSubmissionLane.link(`${identity}:${sourceTab?.sessionId || currentTab.tabId}`, `${identity}:${tabSessionId}`)
     const receipt = { id: options?.submissionId ?? crypto.randomUUID(), message: trimmedQuery,
       sessionId: tabSessionId, targetTabId: currentTab.tabId }
     for (const id of new Set([sourceTab?.tabId, currentTab.tabId])) {
@@ -3159,7 +3157,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         chatStore.setSessionId(responseSessionId)
         chatStore.updateTabSessionId(currentTab.tabId, responseSessionId)
         if (options?.builderHandoff) options.builderHandoff.sessionId = responseSessionId
-        chatSubmissionLane.link(`${identity}:${tabSessionId}`, `${identity}:${responseSessionId}`)
         if (currentTab.metadata?.agentProfileRuntimeDirty) {
           chatStore.setTabMetadata(currentTab.tabId, { agentProfileRuntimeDirty: false })
         }
@@ -3215,7 +3212,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           const receiptEventID = optimisticUserEventID
           useChatStore.setState(state => ({ tabEvents: { ...state.tabEvents,
             [tabSessionId]: (state.tabEvents[tabSessionId] || []).map(event => event.id === receiptEventID
-              ? withLiveInputReceipt(event, response.delivery_status!, response.provider)
+              ? withLiveInputReceipt(event, response.delivery_status!, response.provider, response.message_id, response.queue_position)
               : event),
           } }))
         }
@@ -3263,10 +3260,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
 
   }, [correctAgentMode, selectedModeCategory, getAgentModeFromCategory, isRequiredFolderSelected, finalResponse, effectiveServers, enabledTools, processedCompletionEventsRef, activeTab, scrollToBottom, getActiveSessions, resetStreamingState, connectSSE, handleSSEMessage, handleSSEStatus, buildExecutionOptions, handleSSEFallback, fullTurnStreaming, startForegroundEventCatchUp])
 
-  // Serialize the complete submission path by durable session. A restored chat
-  // can receive a new React tab ID while an older request is still preparing;
-  // session-first keys preserve user order across that remount. New chats use
-  // their tab ID until the backend assigns a session.
+  // Submit every message immediately. The backend's durable conversation-turn
+  // dispatcher owns per-session ordering and restart recovery. A second
+  // browser-side promise lane can deadlock the entire conversation when one
+  // request never settles, leaving every later message as an optimistic
+  // single-tick row that never reaches the server.
   const submitQueryWithQuery = useCallback((query: string, executionOptions?: ExecutionOptions, options?: ChatSubmissionOptions) => {
     const sourceTab = options?.sourceTabId
       ? useChatStore.getState().chatTabs[options.sourceTabId]
@@ -3313,8 +3311,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         store.addTabEvents(sourceTab.sessionId, [optimistic])
       }
 
-      return chatSubmissionLane.enqueue(`${identity}:${laneKey}`, () =>
-        isChatIdentityCurrent(identity) ? submitQueryImmediately(query, executionOptions, captured) : Promise.resolve(false))
+      return (isChatIdentityCurrent(identity)
+        ? submitQueryImmediately(query, executionOptions, captured)
+        : Promise.resolve(false))
         .then(accepted => {
           if (!accepted && captured.optimisticUserEventId && sourceTab?.sessionId) {
             useChatStore.getState().patchTabEvents(sourceTab.sessionId!, events =>

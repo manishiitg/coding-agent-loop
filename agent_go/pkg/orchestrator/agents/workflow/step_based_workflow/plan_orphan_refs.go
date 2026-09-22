@@ -76,6 +76,15 @@ func collectOrchestratorStepIDs(step PlanStepInterface, ids map[string]bool) {
 				collectOrchestratorStepIDs(route.SubAgentStep, ids)
 			}
 		}
+	case *MessageSequencePlanStep:
+		if len(s.PredefinedRoutes) > 0 && s.GetID() != "" {
+			ids[s.GetID()] = true
+		}
+		for _, route := range s.PredefinedRoutes {
+			if route.SubAgentStep != nil {
+				collectOrchestratorStepIDs(route.SubAgentStep, ids)
+			}
+		}
 	}
 }
 
@@ -86,46 +95,54 @@ func resolveOrphanRefsInStep(step PlanStepInterface, orphanByID map[string]PlanS
 
 	switch s := step.(type) {
 	case *OrchestratorPlanStep:
-		for i := range s.PredefinedRoutes {
-			route := &s.PredefinedRoutes[i]
-			if route.OrphanStepRef != "" {
-				if route.SubAgentStep != nil {
-					return fmt.Errorf("todo_task step %q route %q cannot define both orphan_step_ref and sub_agent_step", s.GetID(), route.RouteID)
-				}
-				if containsString(orphanChain, route.OrphanStepRef) {
-					return fmt.Errorf("orphan step reference cycle detected while resolving %q via todo_task step %q route %q", route.OrphanStepRef, s.GetID(), route.RouteID)
-				}
+		return resolveOrphanRefsInAgentRoutes(s.GetID(), s.PredefinedRoutes, orphanByID, orphanChain, func(routes []PlanOrchestrationRoute) { s.PredefinedRoutes = routes })
+	case *MessageSequencePlanStep:
+		return resolveOrphanRefsInAgentRoutes(s.GetID(), s.PredefinedRoutes, orphanByID, orphanChain, func(routes []PlanOrchestrationRoute) { s.PredefinedRoutes = routes })
+	}
 
-				sourceStep, ok := orphanByID[route.OrphanStepRef]
-				if !ok {
-					return fmt.Errorf("todo_task step %q route %q references orphan_step_ref %q, but no orphan step with that ID exists", s.GetID(), route.RouteID, route.OrphanStepRef)
-				}
-				if !orphanStepSharedWithOrchestrator(sourceStep, s.GetID()) {
-					return fmt.Errorf("todo_task step %q route %q references orphan step %q, but that orphan step is not shared with this orchestrator", s.GetID(), route.RouteID, route.OrphanStepRef)
-				}
+	return nil
+}
 
-				clonedStep, err := clonePlanStep(sourceStep)
-				if err != nil {
-					return fmt.Errorf("failed to clone orphan step %q for todo_task step %q route %q: %w", route.OrphanStepRef, s.GetID(), route.RouteID, err)
-				}
-				if err := setStepIdentity(clonedStep, route.RouteID, route.RouteName); err != nil {
-					return err
-				}
-				route.SubAgentStep = clonedStep
+func resolveOrphanRefsInAgentRoutes(agentID string, routes []PlanOrchestrationRoute, orphanByID map[string]PlanStepInterface, orphanChain []string, save func([]PlanOrchestrationRoute)) error {
+	for i := range routes {
+		route := &routes[i]
+		if route.OrphanStepRef != "" {
+			if route.SubAgentStep != nil {
+				return fmt.Errorf("agent step %q route %q cannot define both orphan_step_ref and sub_agent_step", agentID, route.RouteID)
+			}
+			if containsString(orphanChain, route.OrphanStepRef) {
+				return fmt.Errorf("orphan step reference cycle detected while resolving %q via agent step %q route %q", route.OrphanStepRef, agentID, route.RouteID)
 			}
 
-			if route.SubAgentStep != nil {
-				nextChain := orphanChain
-				if route.OrphanStepRef != "" {
-					nextChain = append(append([]string{}, orphanChain...), route.OrphanStepRef)
-				}
-				if err := resolveOrphanRefsInStep(route.SubAgentStep, orphanByID, nextChain); err != nil {
-					return err
-				}
+			sourceStep, ok := orphanByID[route.OrphanStepRef]
+			if !ok {
+				return fmt.Errorf("agent step %q route %q references orphan_step_ref %q, but no orphan step with that ID exists", agentID, route.RouteID, route.OrphanStepRef)
+			}
+			if !orphanStepSharedWithOrchestrator(sourceStep, agentID) {
+				return fmt.Errorf("agent step %q route %q references orphan step %q, but that orphan step is not shared with this agent", agentID, route.RouteID, route.OrphanStepRef)
+			}
+
+			clonedStep, err := clonePlanStep(sourceStep)
+			if err != nil {
+				return fmt.Errorf("failed to clone orphan step %q for agent step %q route %q: %w", route.OrphanStepRef, agentID, route.RouteID, err)
+			}
+			if err := setStepIdentity(clonedStep, route.RouteID, route.RouteName); err != nil {
+				return err
+			}
+			route.SubAgentStep = clonedStep
+		}
+
+		if route.SubAgentStep != nil {
+			nextChain := orphanChain
+			if route.OrphanStepRef != "" {
+				nextChain = append(append([]string{}, orphanChain...), route.OrphanStepRef)
+			}
+			if err := resolveOrphanRefsInStep(route.SubAgentStep, orphanByID, nextChain); err != nil {
+				return err
 			}
 		}
 	}
-
+	save(routes)
 	return nil
 }
 

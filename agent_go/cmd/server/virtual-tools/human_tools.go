@@ -115,6 +115,11 @@ func CreateHumanTools() []llmtypes.Tool {
 			"items":       map[string]interface{}{"type": "string", "enum": []string{"gmail", "slack", "whatsapp"}},
 			"description": "Optional one-off override to SKIP delivery channels for THIS notification only, by name (\"gmail\", \"slack\", \"whatsapp\"). The DURABLE per-workflow preference belongs in workflow.json notifications.exclude_channels and is applied automatically on every send — use this arg only for a one-time skip beyond that. Suppresses the channel for this send only; never changes the account-wide configuration. Omit to deliver to every enabled channel not already excluded by workflow.json. Excluding slack suppresses BOTH account Slack and every workflow Slack webhook. A workflow Slack webhook replaces the global Slack destination; it does not send an extra copy. The always-on web UI is unaffected.",
 		},
+		"delivery_mode": map[string]interface{}{
+			"type":        "string",
+			"enum":        []string{"all", "dashboard_only", "external_only"},
+			"description": "Delivery scope for classified summaries. Use dashboard_only to record an unchanged run summary in Activity without Slack/Gmail/WhatsApp or an in-app alert. Use external_only for a material Pulse update whose current review results are already projected into Activity. Omit or use all when both Activity and configured external channels should receive the summary. Custom notification instructions may explicitly choose a different mode.",
+		},
 		"notification_kind": map[string]interface{}{
 			"type":        "string",
 			"enum":        []string{"general", "run_summary", "pulse_summary"},
@@ -212,6 +217,31 @@ func CreateHumanTools() []llmtypes.Tool {
 		},
 	}
 	humanTools = append(humanTools, notifyUserTool)
+	humanTools = append(humanTools, llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "get_notification_history",
+			Description: "Read prior channel-neutral run or Pulse summaries for the current workflow before deciding whether an external notification is new and important. This is read-only and uses the same durable Activity history shown in the Org Dashboard. Records prove that a summary was created; they are not per-provider Slack/Gmail delivery receipts.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"notification_kind": map[string]interface{}{
+						"type": "string", "enum": []string{"run_summary", "pulse_summary"},
+						"description": "Summary stream to compare against.",
+					},
+					"limit": map[string]interface{}{
+						"type": "integer", "minimum": 1, "maximum": 20, "default": 5,
+						"description": "Maximum prior summaries to return.",
+					},
+					"exclude_pulse_run_id": map[string]interface{}{
+						"type":        "string",
+						"description": "For a Pulse finalizer, pass the current pulse_run_id so the just-projected current Activity item is excluded from prior history.",
+					},
+				},
+				"required": []string{"notification_kind"},
+			}),
+		},
+	})
 	humanTools = append(humanTools, createGoogleCLITool(), createSlackMessageTool(), createSlackCLITool())
 
 	return humanTools
@@ -394,47 +424,11 @@ func IsHumanToolCategory(category string) bool {
 	return strings.TrimSpace(category) == GetHumanToolCategory()
 }
 
-// WorkshopHumanToolNames is the SINGLE SOURCE OF TRUTH for which human tools a
-// workflow-builder / workshop / run agent may use. These are all registered by
-// createCustomTools(workflowMode=true).
-//
-// This list once fed a separate workshop allow-list, and deriving that list from
-// here rather than retyping it is what kept the two in sync — the drift that made
-// notify_user invisible. That allow-list is gone: registration is now the only
-// source, so nothing can be allowed-but-unregistered.
-//
-// human_feedback belongs to running workflow agents that may need truly urgent,
-// short-lived human-only input. It is excluded from interactive Builder chat,
-// where the agent asks the user directly in its ordinary response channel.
-// notify_user is the non-blocking outbound push (Slack/WhatsApp/Gmail).
-// Pulse review Activity is projected automatically from record_pulse_result;
-// agents do not publish a second copy of the same outcome.
-// get_human_input_request, list_approved_fixer_decisions, create_human_input_request,
-// answer_human_input_request, and mark_human_input_consumed implement the
-// non-blocking Pulse/report question lifecycle stored in the workflow-local
-// db/db.sqlite.
-func WorkshopHumanToolNames() []string {
-	return []string{"human_feedback", "notify_user", "send_slack_message", "slack", "google_workspace_cli", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
-}
-
-// HumanToolNamesForWorkshopMode narrows the registered human-tool surface for
-// a specific conversation mode. A run agent may create a non-blocking question
-// and later consume an already-recorded answer, but only an interactive workshop
-// chat may record the user's answer itself.
-func HumanToolNamesForWorkshopMode(mode string) []string {
-	names := WorkshopHumanToolNames()
-	mode = strings.TrimSpace(mode)
-	filtered := make([]string, 0, len(names))
-	for _, name := range names {
-		if mode == "run" && name == "answer_human_input_request" {
-			continue
-		}
-		if mode != "run" && name == "human_feedback" {
-			continue
-		}
-		filtered = append(filtered, name)
-	}
-	return filtered
+// HumanToolImplementationNames inventories the Go implementations that may be
+// assembled into the human_tools category. It is not a chat admission list;
+// AgentWorks product.yaml owns Builder/Run admission.
+func HumanToolImplementationNames() []string {
+	return []string{"human_feedback", "notify_user", "get_notification_history", "send_slack_message", "slack", "google_workspace_cli", "get_human_input_request", "list_approved_fixer_decisions", "create_human_input_request", "answer_human_input_request", "mark_human_input_consumed", "dismiss_duplicate_human_input_request"}
 }
 
 // CreateHumanToolExecutors creates the execution functions for human tools
@@ -443,11 +437,63 @@ func CreateHumanToolExecutors() map[string]func(ctx context.Context, args map[st
 
 	executors["human_feedback"] = handleHumanFeedback
 	executors["notify_user"] = handleNotifyUser
+	executors["get_notification_history"] = handleGetNotificationHistory
 	executors["send_slack_message"] = handleSlackMessage
 	executors["slack"] = handleSlackCLI
 	executors["google_workspace_cli"] = handleGoogleWorkspaceCLI
 
 	return executors
+}
+
+func handleGetNotificationHistory(ctx context.Context, args map[string]interface{}) (string, error) {
+	dest := NotificationDestinationFromContext(ctx)
+	if dest == nil || strings.TrimSpace(dest.WorkspacePath) == "" {
+		return "", fmt.Errorf("notification history requires a workflow workspace")
+	}
+	kind, _ := args["notification_kind"].(string)
+	kind = strings.ToLower(strings.TrimSpace(kind))
+	if kind != "run_summary" && kind != "pulse_summary" {
+		return "", fmt.Errorf("notification_kind must be run_summary or pulse_summary")
+	}
+	limit := 5
+	if raw, ok := args["limit"].(float64); ok {
+		limit = int(raw)
+	} else if raw, ok := args["limit"].(int); ok {
+		limit = raw
+	}
+	if limit < 1 || limit > 20 {
+		return "", fmt.Errorf("limit must be between 1 and 20")
+	}
+	excludeID := ""
+	if pulseRunID, _ := args["exclude_pulse_run_id"].(string); strings.TrimSpace(pulseRunID) != "" {
+		var err error
+		excludeID, err = services.PulseResultActivityID(dest.WorkspacePath, pulseRunID)
+		if err != nil {
+			return "", err
+		}
+	}
+	history, err := services.ListOrgDashboardNotifications(ctx, dest.WorkspacePath, 50)
+	if err != nil {
+		return "", err
+	}
+	items := make([]services.OrgDashboardNotification, 0, limit)
+	for _, item := range history.Recent {
+		if item.Kind != kind || item.ID == excludeID {
+			continue
+		}
+		items = append(items, item)
+		if len(items) == limit {
+			break
+		}
+	}
+	payload := map[string]interface{}{
+		"workspace_path":    dest.WorkspacePath,
+		"notification_kind": kind,
+		"summaries":         items,
+		"note":              "These are durable summaries, not per-provider delivery receipts. Compare semantic status, routes, blockers, decisions, findings, and outcomes; ignore timestamps and wording-only differences.",
+	}
+	b, _ := json.Marshal(payload)
+	return string(b), nil
 }
 
 func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -520,6 +566,22 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	if notificationKind == "" {
 		notificationKind = "general"
 	}
+	deliveryMode, _ := args["delivery_mode"].(string)
+	deliveryMode = strings.ToLower(strings.TrimSpace(deliveryMode))
+	if deliveryMode == "" {
+		deliveryMode = "all"
+	}
+	if deliveryMode != "all" && deliveryMode != "dashboard_only" && deliveryMode != "external_only" {
+		return "", fmt.Errorf("delivery_mode must be all, dashboard_only, or external_only")
+	}
+	if notificationKind == "general" && deliveryMode != "all" {
+		return "", fmt.Errorf("delivery_mode %s requires run_summary or pulse_summary", deliveryMode)
+	}
+	if deliveryMode == "dashboard_only" {
+		excludeChannels = append(excludeChannels, "gmail", "slack", "whatsapp")
+	} else if deliveryMode == "external_only" {
+		excludeChannels = append(excludeChannels, "org_dashboard")
+	}
 	summary, err := notificationSummaryFromArgs(args, notificationKind, gc, slackContent)
 	if err != nil {
 		return "", err
@@ -539,9 +601,11 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	// CLI's own transcript happened to narrate the call in a shape a
 	// consumer recognizes.
 	inAppShown := false
-	if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
-		emitter.EmitProductInteraction("notify", map[string]interface{}{"title": summary.Title, "message": summaryMessage})
-		inAppShown = true
+	if deliveryMode == "all" {
+		if emitter, ok := ctx.Value(SessionEventEmitterKey).(SessionEventEmitter); ok && emitter != nil {
+			emitter.EmitProductInteraction("notify", map[string]interface{}{"title": summary.Title, "message": summaryMessage})
+			inAppShown = true
+		}
 	}
 	messageForUser = appendNotificationRouteContent(messageForUser, summary.Routes)
 	if dest.Content == nil {
@@ -598,7 +662,7 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 		results = append(results, services.ConnectorResult{Channel: "in_app", OK: true, MsgID: "shown"})
 	}
 	results = explainMissingGmail(results, expectedGmail, excludeChannels, services.GetGmailService())
-	webhookAllowed := !containsNotificationChannel(excludeChannels, "slack") &&
+	webhookAllowed := deliveryMode != "dashboard_only" && !containsNotificationChannel(excludeChannels, "slack") &&
 		(len(routedChannels) == 0 || containsNotificationChannel(routedChannels, "slack"))
 	if webhookAllowed {
 		// Each webhook is its own Slack channel, so a summary configured for two

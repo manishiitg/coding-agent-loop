@@ -1,8 +1,14 @@
-# Message Sequence Steps
+# Message Sequence Agent Steps
 
 ## Purpose
 
-A `message_sequence` is a persistent, ordered conversation with one coding agent. Use one large sequence per coherent shared-context span, when later turns must retain the reasoning and tool context from earlier turns.
+A `message_sequence` is the canonical **agent step**: a persistent, ordered conversation with one coding agent. Use one large sequence per coherent shared-context span, when later turns must retain the reasoning and tool context from earlier turns.
+
+The step may declare `predefined_routes`. Those routes are bounded specialist
+capabilities, not a prescribed checklist: the sequence agent receives
+`call_sub_agent` and decides at runtime whether, when, and how often to call a
+specialist. With no routes it remains a single-agent sequence. Legacy
+`orchestrator` steps are still read and run for compatibility.
 
 The preferred shape is: complete the whole span, re-open authoritative evidence and prove every criterion, repair verified gaps, then double-check before the top-level validation gate. Require run-specific proof/provenance in the output. Use multiple large sequences only when contexts should not be shared because of security/credentials, independently rerunnable outputs or failure domains, clean-room independence, human/routing boundaries, or context contamination.
 
@@ -26,7 +32,7 @@ Deterministic code is not a sequence item. Put code in a standalone `regular` st
     "runs/iteration-0/default/execution/generate/report.json"
   ],
   "context_output": ["report.json", "report_proof.json"],
-  "items": [
+	"items": [
     {
       "id": "prove",
       "type": "user_message",
@@ -38,7 +44,21 @@ Deterministic code is not a sequence item. Put code in a standalone `regular` st
       "message": "Repair every verified gap, update the proof record, and double-check the complete report against the sources.",
       "write_access": { "db": true }
     }
-  ],
+	],
+	"predefined_routes": [
+		{
+			"route_id": "source-checker",
+			"route_name": "Source checker",
+			"condition": "When a claim needs independent source verification",
+			"sub_agent_step": {
+				"type": "message_sequence",
+				"id": "source-checker",
+				"title": "Source checker",
+				"description": "Verify the requested claim against authoritative evidence.",
+				"items": [{"id": "verify", "type": "user_message", "message": "Double-check the evidence and report discrepancies."}]
+			}
+		}
+	],
   "validation_schema": {
     "files": [
       {"file_name": "report.json", "required": true, "validation_type": "json"},
@@ -123,6 +143,7 @@ The runtime also rejects any remaining code item with a precise v1.0.10 upgrade 
 ## Authoring Rules
 
 - Keep each user message focused on one outcome.
+- Treat the message sequence as the agent. Add `predefined_routes` only for bounded specialists the agent may choose dynamically; do not encode a fixed checklist as delegation.
 - Use the same conversation only when shared context is valuable.
 - Put the final deterministic acceptance contract in the top-level `validation_schema`. Use explicit prevalidation items only for intermediate checks, not subjective review.
 - Use `foreach` only with bounded, read-only queries.

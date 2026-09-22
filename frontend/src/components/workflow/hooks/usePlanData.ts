@@ -1,7 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from 'react'
 import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
-import { isTodoTaskStep } from '../../../utils/stepConfigMatching'
+import { isMessageSequenceStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import type { PlanChangelogEntry } from '../../../services/api-types'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
@@ -138,8 +138,9 @@ function mergeStepConfigs(
       ...(config ? { agent_configs: config } : {})
     }
     
-    // Handle todo task step - configs are now flat on the step itself
-    if (isTodoTaskStep(step)) {
+    // Agent routes may live on the canonical message_sequence shape or the
+    // legacy orchestrator/todo_task compatibility shape.
+    if (isTodoTaskStep(step) || isMessageSequenceStep(step)) {
       mergedStep = {
         ...mergedStep,
         predefined_routes: step.predefined_routes ? step.predefined_routes.map(route => ({
@@ -172,7 +173,7 @@ function resolveOrphanStepRefs(plan: PlanningResponse): PlanningResponse {
   const cloneStep = (step: PlanStep): PlanStep => JSON.parse(JSON.stringify(step)) as PlanStep
 
   const resolveStep = (step: PlanStep, orphanChain: string[] = []): PlanStep => {
-    if (isTodoTaskStep(step)) {
+    if (isTodoTaskStep(step) || isMessageSequenceStep(step)) {
       return {
         ...step,
         predefined_routes: step.predefined_routes?.map(route => {

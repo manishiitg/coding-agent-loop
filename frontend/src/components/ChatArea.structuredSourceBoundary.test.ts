@@ -9,12 +9,13 @@ describe('formatted Chat structured-source boundary', () => {
     expect(source).not.toContain('reconciledCodingCliCompletionsRef')
   })
 
-  it('shows rapid retained-chat messages before serialized delivery begins', () => {
+  it('shows rapid messages immediately and leaves session ordering to the durable backend dispatcher', () => {
     const source = readFileSync('src/components/ChatArea.tsx', 'utf8')
     const stage = source.indexOf('captured.optimisticUserEventId = optimistic.id')
-    const enqueue = source.indexOf('return chatSubmissionLane.enqueue', stage)
+    const submit = source.indexOf('submitQueryImmediately(query, executionOptions, captured)', stage)
 
     expect(stage).toBeGreaterThan(-1)
-    expect(enqueue).toBeGreaterThan(stage)
+    expect(submit).toBeGreaterThan(stage)
+    expect(source).not.toContain('chatSubmissionLane')
   })
 })

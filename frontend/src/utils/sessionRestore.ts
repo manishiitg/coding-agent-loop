@@ -299,7 +299,7 @@ function combineTranscriptTraceEvents(...sources: Array<ReadonlyArray<PollingEve
   return combined
 }
 
-const ACCEPTED_LIVE_INPUT_STATUSES = new Set(['sent_to_cli', 'next_turn_started', 'queued_for_injection'])
+const ACCEPTED_LIVE_INPUT_STATUSES = new Set(['sent_to_cli', 'next_turn_started', 'queued_for_injection', 'queued_for_turn'])
 
 function eventPayload(event: PollingEvent): Record<string, unknown> {
   const outer = event.data && typeof event.data === 'object'

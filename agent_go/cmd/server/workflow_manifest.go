@@ -487,6 +487,10 @@ type WorkflowNotificationConfig struct {
 	PulseSummaryRecipients []string `json:"pulse_summary_recipients,omitempty"`
 }
 
+const defaultRunSummaryInstructions = "Before external delivery, read prior run summaries with get_notification_history. Always record the current run summary in Activity. Send Slack, Gmail, or WhatsApp only when the current run contains a new materially important outcome, failure, recovery, blocker, decision, or threshold crossing compared with prior summaries. Ignore timestamps, routine counts, and wording-only differences. If nothing important changed, call notify_user with delivery_mode=dashboard_only."
+
+const defaultPulseSummaryInstructions = "Before external delivery, read prior Pulse summaries with get_notification_history and exclude the current pulse_run_id. The current Pulse reviewer results are already recorded in Activity. Send Slack, Gmail, or WhatsApp only for a new materially important finding, fix, recovery, blocker, unsafe backup/publish state, or decision requiring the user. Ignore timestamps and wording-only differences. When external delivery is warranted, call notify_user with notification_kind=pulse_summary and delivery_mode=external_only; otherwise do not send a Pulse notification."
+
 func (c *WorkflowNotificationConfig) EffectiveRunSummaryInstructions() string {
 	if c == nil {
 		return ""
@@ -494,7 +498,10 @@ func (c *WorkflowNotificationConfig) EffectiveRunSummaryInstructions() string {
 	if value := strings.TrimSpace(c.RunSummaryInstructions); value != "" {
 		return value
 	}
-	return strings.TrimSpace(c.Instructions)
+	if value := strings.TrimSpace(c.Instructions); value != "" {
+		return value
+	}
+	return ""
 }
 
 func (c *WorkflowNotificationConfig) EffectivePulseSummaryInstructions() string {
@@ -504,7 +511,24 @@ func (c *WorkflowNotificationConfig) EffectivePulseSummaryInstructions() string 
 	if value := strings.TrimSpace(c.PulseSummaryInstructions); value != "" {
 		return value
 	}
-	return strings.TrimSpace(c.Instructions)
+	if value := strings.TrimSpace(c.Instructions); value != "" {
+		return value
+	}
+	return ""
+}
+
+func runSummaryInstructionsOrDefault(c *WorkflowNotificationConfig) string {
+	if value := c.EffectiveRunSummaryInstructions(); value != "" {
+		return value
+	}
+	return defaultRunSummaryInstructions
+}
+
+func pulseSummaryInstructionsOrDefault(c *WorkflowNotificationConfig) string {
+	if value := c.EffectivePulseSummaryInstructions(); value != "" {
+		return value
+	}
+	return defaultPulseSummaryInstructions
 }
 
 // WorkflowExecutionDefaults stores workflow-wide execution settings. Run-folder

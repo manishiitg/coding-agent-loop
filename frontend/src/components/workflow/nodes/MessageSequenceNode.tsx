@@ -1,6 +1,6 @@
 import { memo, type ReactElement } from 'react'
 import { Handle, Position } from '@xyflow/react'
-import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, ShieldCheck, Repeat } from 'lucide-react'
+import { CheckCircle, XCircle, Loader2, Plus, RefreshCw, ListOrdered, MessageSquare, ShieldCheck, Repeat, Bot } from 'lucide-react'
 import type { MessageSequenceNodeData } from '../hooks/usePlanToFlow'
 import type { ChangeType } from '../hooks/usePlanData'
 import type { MessageSequenceItem } from '../../../utils/stepConfigMatching'
@@ -84,7 +84,7 @@ function itemPrimaryText(item: MessageSequenceItem): string {
 }
 
 export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNodeProps) => {
-  const { title, description, items, status, stepIndex, changeType, isOrphan, step } = data
+  const { title, description, items, predefined_routes, status, stepIndex, changeType, isOrphan, step } = data
   const orphanReuseCount = (data as { orphanReuseCount?: number }).orphanReuseCount ?? 0
 
   const borderColor = statusBorderColors[status] || statusBorderColors.pending
@@ -151,6 +151,12 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5">
+          {(predefined_routes?.length ?? 0) > 0 && (
+            <span className="text-[10px] font-medium text-cyan-700 dark:text-cyan-300 bg-cyan-100 dark:bg-cyan-900/30 rounded px-1.5 py-0.5 flex items-center gap-1">
+              <Bot className="w-3 h-3" />
+              {predefined_routes?.length} specialist{predefined_routes?.length === 1 ? '' : 's'}
+            </span>
+          )}
           <span className="text-[10px] font-medium text-violet-600 dark:text-violet-300 bg-violet-100 dark:bg-violet-900/30 rounded px-1.5 py-0.5 flex-shrink-0">
             {seqItems.length} {seqItems.length === 1 ? 'item' : 'items'}
           </span>
@@ -205,8 +211,24 @@ export const MessageSequenceNode = memo(({ data, selected }: MessageSequenceNode
         </div>
       )}
 
-      {/* Bottom handle — sequence is linear, single exit */}
-      <Handle type="source" position={Position.Bottom} className={`w-3 h-3 ${modeHandleColor}`} />
+      {predefined_routes?.map((route, index) => (
+        <Handle
+          key={route.route_id}
+          id={route.route_id}
+          type="source"
+          position={Position.Bottom}
+          className="w-2.5 h-2.5 !bg-cyan-500"
+          style={{ left: `${((index + 1) / (predefined_routes.length + 2)) * 80}%` }}
+        />
+      ))}
+
+      {/* Default workflow continuation handle. */}
+      <Handle
+        type="source"
+        position={Position.Bottom}
+        className={`w-3 h-3 ${modeHandleColor}`}
+        style={{ left: predefined_routes?.length ? '90%' : '50%' }}
+      />
     </div>
   )
 })

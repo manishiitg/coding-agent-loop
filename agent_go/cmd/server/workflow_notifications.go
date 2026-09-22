@@ -258,17 +258,17 @@ func (api *StreamingAPI) handleGetWorkflowNotifications(w http.ResponseWriter, r
 	accountChannels := notificationAccountChannels(r.Context())
 
 	response := WorkflowNotificationInfoResponse{
-		Success:         true,
-		Agentic:         true,
-		ScopeLabel:      manifest.Label,
-		WorkflowLabel:   manifest.Label,
-		EffectiveState:  effectiveNotificationState(slack, accountChannels),
-		Destinations:    []WorkflowNotificationDestinationInfo{slack},
-		AccountChannels: accountChannels,
+		Success:                  true,
+		Agentic:                  true,
+		ScopeLabel:               manifest.Label,
+		WorkflowLabel:            manifest.Label,
+		EffectiveState:           effectiveNotificationState(slack, accountChannels),
+		Destinations:             []WorkflowNotificationDestinationInfo{slack},
+		AccountChannels:          accountChannels,
+		RunSummaryInstructions:   runSummaryInstructionsOrDefault(manifest.Capabilities.Notifications),
+		PulseSummaryInstructions: pulseSummaryInstructionsOrDefault(manifest.Capabilities.Notifications),
 	}
 	if manifest.Capabilities.Notifications != nil {
-		response.RunSummaryInstructions = manifest.Capabilities.Notifications.EffectiveRunSummaryInstructions()
-		response.PulseSummaryInstructions = manifest.Capabilities.Notifications.EffectivePulseSummaryInstructions()
 		response.RunSummaryChannels = manifest.Capabilities.Notifications.RunSummaryChannels
 		response.PulseSummaryChannels = manifest.Capabilities.Notifications.PulseSummaryChannels
 		response.RunSummaryRecipients = manifest.Capabilities.Notifications.RunSummaryRecipients

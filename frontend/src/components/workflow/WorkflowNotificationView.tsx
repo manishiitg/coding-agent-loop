@@ -89,7 +89,9 @@ export default function WorkflowNotificationView({
     const choice = gmailSenderChoices.find(entry => entry.id === id)
     return choice ? (choice.email || choice.display_name || id) : id
   }
-  // Two summaries go out per run: the run result, then Pulse's review of it.
+  // Run and Pulse have separate content/routing policies. Both always remain
+  // visible in Activity; external delivery follows their saved instructions
+  // (the default is new-and-important changes only).
   // Read-only: /notify in chat is the one place these are set (user decision
   // 2026-09-03 -- the editable form here duplicated it and read as clutter).
   const summaries = info ? [

@@ -125,6 +125,86 @@ func TestNotifyUserDefaultsToBackendOwnedRichSlack(t *testing.T) {
 	}
 }
 
+func TestNotificationHistoryToolAndDeliveryModesAreExposed(t *testing.T) {
+	foundHistory := false
+	foundDeliveryModes := false
+	for _, tool := range CreateHumanTools() {
+		if tool.Function == nil {
+			continue
+		}
+		raw, err := json.Marshal(tool.Function.Parameters)
+		if err != nil {
+			t.Fatalf("marshal %s parameters: %v", tool.Function.Name, err)
+		}
+		parameters := string(raw)
+		switch tool.Function.Name {
+		case "get_notification_history":
+			foundHistory = strings.Contains(parameters, "exclude_pulse_run_id")
+		case "notify_user":
+			foundDeliveryModes = strings.Contains(parameters, "dashboard_only") && strings.Contains(parameters, "external_only")
+		}
+	}
+	if !foundHistory {
+		t.Fatal("get_notification_history tool or current-Pulse exclusion is missing")
+	}
+	if !foundDeliveryModes {
+		t.Fatal("notify_user delivery modes are missing")
+	}
+	if _, ok := CreateHumanToolExecutors()["get_notification_history"]; !ok {
+		t.Fatal("get_notification_history executor is not registered")
+	}
+}
+
+func TestNotifyUserDeliveryModesSeparateDashboardAndExternalChannels(t *testing.T) {
+	manager := services.GetNotificationManager()
+	slackCh := make(chan *services.NotificationDestination, 2)
+	dashboardCh := make(chan *services.NotificationDestination, 2)
+	manager.RegisterConnector(&testUserNotificationConnector{name: "slack", ch: slackCh})
+	manager.RegisterConnector(&testUserNotificationConnector{name: "org_dashboard", ch: dashboardCh})
+	t.Cleanup(func() {
+		manager.UnregisterConnector("slack")
+		manager.UnregisterConnector("org_dashboard")
+	})
+	ctx := context.WithValue(context.Background(), BotNotificationDestinationKey, &services.NotificationDestination{WorkspacePath: "Workflow/demo"})
+	base := map[string]interface{}{
+		"message_for_user":  "No material change.",
+		"notification_kind": "run_summary",
+		"summary_title":     "Daily run",
+		"summary_status":    "completed",
+	}
+
+	base["delivery_mode"] = "dashboard_only"
+	if _, err := handleNotifyUser(ctx, base); err != nil {
+		t.Fatalf("dashboard-only notification: %v", err)
+	}
+	select {
+	case <-dashboardCh:
+	default:
+		t.Fatal("dashboard_only did not reach Org Dashboard")
+	}
+	select {
+	case <-slackCh:
+		t.Fatal("dashboard_only reached Slack")
+	default:
+	}
+
+	base["delivery_mode"] = "external_only"
+	base["message_for_user"] = "A new blocker needs attention."
+	if _, err := handleNotifyUser(ctx, base); err != nil {
+		t.Fatalf("external-only notification: %v", err)
+	}
+	select {
+	case <-slackCh:
+	default:
+		t.Fatal("external_only did not reach Slack")
+	}
+	select {
+	case <-dashboardCh:
+		t.Fatal("external_only duplicated the Org Dashboard entry")
+	default:
+	}
+}
+
 func TestPublishPulseUpdateIsNotAnAgentTool(t *testing.T) {
 	for _, tool := range CreateHumanTools() {
 		if tool.Function != nil && tool.Function.Name == "publish_pulse_update" {

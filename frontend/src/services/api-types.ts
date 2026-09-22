@@ -211,8 +211,10 @@ export interface AgentQueryResponse {
   sse_endpoint?: string
   session_id?: string
   // Populated when status === 'live_input_delivered' or 'accepted'.
-  delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
+  delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'queued_for_turn' | 'next_turn_started'
   provider?: string
+  message_id?: string
+  queue_position?: number
 }
 
 // Minimal product-chat wire contract. Profile-owned prompt, tools and

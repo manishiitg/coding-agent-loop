@@ -316,8 +316,10 @@ func UpsertPulseResultActivity(ctx context.Context, rawWorkspacePath, pulseRunID
 	}
 	reviewsJSON, _ := json.Marshal(reviews)
 	fieldsJSON, _ := json.Marshal(fields)
-	hash := sha256.Sum256([]byte(workspacePath + "\x00" + pulseRunID))
-	id := fmt.Sprintf("pulse-result-%x", hash[:12])
+	id, err := PulseResultActivityID(workspacePath, pulseRunID)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(recordedAt) == "" {
 		recordedAt = time.Now().UTC().Format(time.RFC3339Nano)
 	}
@@ -342,6 +344,22 @@ func UpsertPulseResultActivity(ctx context.Context, rawWorkspacePath, pulseRunID
 		return fmt.Errorf("project Pulse results into Activity for %s: %w", workspacePath, err)
 	}
 	return nil
+}
+
+// PulseResultActivityID returns the stable Activity row ID for a Pulse run.
+// Notification-history readers use it to omit the current Pulse projection
+// while comparing the new result with earlier externally eligible updates.
+func PulseResultActivityID(rawWorkspacePath, pulseRunID string) (string, error) {
+	workspacePath, _, err := orgDashboardDBPath(rawWorkspacePath)
+	if err != nil {
+		return "", err
+	}
+	pulseRunID = strings.TrimSpace(pulseRunID)
+	if pulseRunID == "" {
+		return "", fmt.Errorf("pulse result activity requires pulse_run_id")
+	}
+	hash := sha256.Sum256([]byte(workspacePath + "\x00" + pulseRunID))
+	return fmt.Sprintf("pulse-result-%x", hash[:12]), nil
 }
 
 // ListOrgDashboardNotifications returns the newest durable notification of

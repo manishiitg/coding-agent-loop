@@ -3,6 +3,7 @@ import { Check, CheckCheck, CircleAlert, Clock } from 'lucide-react'
 import { deliveryTickState, deliveryTickTitle } from './deliveryTickState'
 
 const TICK_ICON = {
+  queued: Clock,
   confirmed: CheckCheck,
   unflushed: Clock,
   failed: CircleAlert,
@@ -20,7 +21,9 @@ export const DeliveryTick: React.FC<{ metadata: Record<string, unknown> | undefi
   // faint red whisper.
   const tone = state === 'confirmed'
     ? 'text-slate-300 dark:text-slate-500'
-    : state === 'unflushed'
+    : state === 'queued'
+      ? 'text-amber-400 dark:text-amber-500'
+      : state === 'unflushed'
       ? 'text-stone-300 dark:text-stone-600'
       : state === 'failed'
         ? 'text-red-300/70 dark:text-red-400/50'

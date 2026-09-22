@@ -24,6 +24,7 @@ function mount(metadata: Record<string, unknown> | undefined) {
 
 describe("DeliveryTick icons", () => {
   it.each([
+    [{ delivery_status: "queued_for_turn" }, "lucide-clock", "queued"],
     [{ confirmation: "confirmed" }, "lucide-check-check", "confirmed"],
     [{ delivery_status: "sent_to_cli" }, "lucide-check", "fast"],
     [{ confirmation: "accepted_but_unflushed" }, "lucide-clock", "unflushed"],

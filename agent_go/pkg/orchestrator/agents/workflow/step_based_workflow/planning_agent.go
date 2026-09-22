@@ -791,9 +791,10 @@ type MessageSequenceItem struct {
 type MessageSequencePlanStep struct {
 	Type StepType `json:"type"`
 	CommonStepFields
-	Items        []MessageSequenceItem `json:"items,omitempty"`
-	NextStepID   string                `json:"next_step_id,omitempty"`
-	AgentConfigs *AgentConfigs         `json:"-"`
+	Items            []MessageSequenceItem    `json:"items,omitempty"`
+	PredefinedRoutes []PlanOrchestrationRoute `json:"predefined_routes,omitempty"`
+	NextStepID       string                   `json:"next_step_id,omitempty"`
+	AgentConfigs     *AgentConfigs            `json:"-"`
 }
 
 func (m *MessageSequencePlanStep) GetID() string                           { return m.ID }
@@ -809,6 +810,57 @@ func (m *MessageSequencePlanStep) MarshalJSON() ([]byte, error) {
 	m.Type = StepTypeMessageSeq
 	type Alias MessageSequencePlanStep
 	return json.Marshal((*Alias)(m))
+}
+
+// UnmarshalJSON handles the interface-valued sub_agent_step fields in optional
+// delegation routes. A message sequence with predefined_routes is still a
+// message_sequence plan step; the routes only add bounded, agent-decided
+// delegation capabilities to its conversation.
+func (m *MessageSequencePlanStep) UnmarshalJSON(data []byte) error {
+	type messageSequenceAlias struct {
+		Type StepType `json:"type"`
+		CommonStepFields
+		Items               []MessageSequenceItem `json:"items,omitempty"`
+		PredefinedRoutesRaw []json.RawMessage     `json:"predefined_routes,omitempty"`
+		NextStepID          string                `json:"next_step_id,omitempty"`
+	}
+	var raw messageSequenceAlias
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return fmt.Errorf("failed to unmarshal message_sequence step: %w", err)
+	}
+
+	m.Type = StepTypeMessageSeq
+	m.CommonStepFields = raw.CommonStepFields
+	m.Items = raw.Items
+	m.NextStepID = raw.NextStepID
+	m.PredefinedRoutes = nil
+	for i, routeJSON := range raw.PredefinedRoutesRaw {
+		var route struct {
+			RouteID       string          `json:"route_id"`
+			RouteName     string          `json:"route_name"`
+			Condition     string          `json:"condition"`
+			SubAgentStep  json.RawMessage `json:"sub_agent_step"`
+			OrphanStepRef string          `json:"orphan_step_ref,omitempty"`
+		}
+		if err := json.Unmarshal(routeJSON, &route); err != nil {
+			return fmt.Errorf("failed to unmarshal message_sequence predefined_route[%d]: %w", i, err)
+		}
+		parsed := PlanOrchestrationRoute{
+			RouteID:       route.RouteID,
+			RouteName:     route.RouteName,
+			Condition:     route.Condition,
+			OrphanStepRef: route.OrphanStepRef,
+		}
+		if len(route.SubAgentStep) > 0 && string(route.SubAgentStep) != "null" {
+			step, err := unmarshalStepFromJSON(route.SubAgentStep)
+			if err != nil {
+				return fmt.Errorf("failed to unmarshal sub_agent_step in message_sequence predefined_route[%d]: %w", i, err)
+			}
+			parsed.SubAgentStep = step
+		}
+		m.PredefinedRoutes = append(m.PredefinedRoutes, parsed)
+	}
+	return nil
 }
 
 // OrchestratorPlanStep represents a todo task orchestrator step that manages a dynamic todo list
@@ -1631,6 +1683,11 @@ func getAddMessageSequenceStepSchema() string {
 					"required": ["id", "type"]
 				}
 			},
+			"predefined_routes": {
+				"type": "array",
+				"description": "OPTIONAL: Bounded specialist agents available to this message-sequence agent. The agent decides at runtime whether, when, and how often to call them. This does not prescribe execution order. Each route must provide route_id, route_name, condition, and either sub_agent_step or orphan_step_ref.",
+				"items": {"type": "object"}
+			},
 			"next_step_id": {"type": "string", "description": "Optional next step ID or end."},
 			"insert_after_step_id": {"type": "string", "description": "REQUIRED: Existing step ID to insert after, or empty string to insert first."},
 			"validation_schema": {"type": "object", "description": "OPTIONAL: Step-level final validation contract. When present, the runtime automatically runs it after the configured work turns and before learning/knowledge closing turns. Validation failures are sent back to the same conversation for repair and retried."},
@@ -1652,6 +1709,11 @@ func getUpdateMessageSequenceStepSchema() string {
 			"items": {
 				"type": "array",
 				"description": "OPTIONAL: Replaces the entire ordered queue of follow-up turns (turns 1..N; the step description is turn 0) — this is a full replacement, not a merge, so include every item you want kept. Add a user_message only for evidence-based verification, critique, repair, new external input, or a real phase change; do not create one item per checklist line or tool call. Use explicit prevalidation items only for intermediate gates; the top-level validation_schema runs automatically after the final work turn. Use a scripted item to execute saved orphan scripts as a finite batch, without agentic children. Inline code is not supported. Each referenced script needs its own typed parameters and validation contract. Plain turns inherit step-level DB/KB/learnings writes; use kind or a non-empty write_access only to narrow a turn to selected stores. Before restructuring items[] into anything beyond a single verify/repair turn, load references/message-sequence.md: read_skill(skills=[{\"name\":\"builder-reference\",\"path\":\"references/message-sequence.md\"}]).",
+				"items": {"type": "object"}
+			},
+			"predefined_routes": {
+				"type": "array",
+				"description": "OPTIONAL: Replaces the bounded specialist routes available to this agent. The agent—not the plan queue—decides which routes to call. Include every route to keep; [] removes delegation.",
 				"items": {"type": "object"}
 			},
 			"next_step_id": {"type": "string", "description": "OPTIONAL: Replaces the explicit next step ID, or 'end'. Omit to preserve sequential execution."},
@@ -3132,6 +3194,16 @@ func compareNestedStepFields(oldStep PlanStepInterface, newStep PlanStepInterfac
 					NewValue: string(newItemsJSON),
 				})
 			}
+			oldRoutesJSON, _ := json.Marshal(oldS.PredefinedRoutes)
+			newRoutesJSON, _ := json.Marshal(newS.PredefinedRoutes)
+			if string(oldRoutesJSON) != string(newRoutesJSON) {
+				*fieldChanges = append(*fieldChanges, PlanFieldChange{
+					StepID:   stepID,
+					Field:    prefix + ".predefined_routes",
+					OldValue: string(oldRoutesJSON),
+					NewValue: string(newRoutesJSON),
+				})
+			}
 		}
 
 	}
@@ -3263,6 +3335,9 @@ func mergePartialStepUpdate(existingStep PlanStepInterface, partialUpdate Partia
 		}
 		if partialUpdate.Items != nil {
 			updated.Items = partialUpdate.Items
+		}
+		if partialUpdate.PredefinedRoutes != nil {
+			updated.PredefinedRoutes = append([]PlanOrchestrationRoute(nil), partialUpdate.PredefinedRoutes...)
 		}
 		if partialUpdate.NextStepID != "" {
 			updated.NextStepID = partialUpdate.NextStepID
@@ -3469,6 +3544,14 @@ func findStepByID(steps []PlanStepInterface, id string) (PlanStepInterface, int,
 					}
 				}
 			}
+		case *MessageSequencePlanStep:
+			for _, route := range s.PredefinedRoutes {
+				if route.SubAgentStep != nil {
+					if foundStep, idx, slice := findStepByID([]PlanStepInterface{route.SubAgentStep}, id); foundStep != nil {
+						return foundStep, idx, slice
+					}
+				}
+			}
 		}
 	}
 	return nil, -1, nil
@@ -3495,6 +3578,16 @@ func updateStepRecursively(steps []PlanStepInterface, partialUpdate PartialPlanS
 					}
 				}
 			}
+		case *MessageSequencePlanStep:
+			for j := range s.PredefinedRoutes {
+				if s.PredefinedRoutes[j].SubAgentStep != nil {
+					tmpSlice := []PlanStepInterface{s.PredefinedRoutes[j].SubAgentStep}
+					if updated, _ := updateStepRecursively(tmpSlice, partialUpdate, fieldChanges); updated {
+						s.PredefinedRoutes[j].SubAgentStep = tmpSlice[0]
+						return true, i
+					}
+				}
+			}
 		}
 	}
 	return false, -1
@@ -3511,15 +3604,22 @@ func replaceStepRecursively(steps []PlanStepInterface, stepID string, replacemen
 			return true, i
 		}
 
-		if todoStep, ok := step.(*OrchestratorPlanStep); ok {
-			for routeIndex := range todoStep.PredefinedRoutes {
-				routeStep := todoStep.PredefinedRoutes[routeIndex].SubAgentStep
+		var routes *[]PlanOrchestrationRoute
+		switch agentStep := step.(type) {
+		case *OrchestratorPlanStep:
+			routes = &agentStep.PredefinedRoutes
+		case *MessageSequencePlanStep:
+			routes = &agentStep.PredefinedRoutes
+		}
+		if routes != nil {
+			for routeIndex := range *routes {
+				routeStep := (*routes)[routeIndex].SubAgentStep
 				if routeStep == nil {
 					continue
 				}
 				tmpSlice := []PlanStepInterface{routeStep}
 				if replaced, _ := replaceStepRecursively(tmpSlice, stepID, replacement); replaced {
-					todoStep.PredefinedRoutes[routeIndex].SubAgentStep = tmpSlice[0]
+					(*routes)[routeIndex].SubAgentStep = tmpSlice[0]
 					return true, i
 				}
 			}
@@ -3647,6 +3747,8 @@ func updateSingleStep(plan *PlanningResponse, partialUpdate PartialPlanStep, fie
 		var oldRoutes []PlanOrchestrationRoute
 		if orchestratorStep, ok := existingStep.(*OrchestratorPlanStep); ok {
 			oldRoutes = orchestratorStep.PredefinedRoutes
+		} else if sequenceStep, ok := existingStep.(*MessageSequencePlanStep); ok {
+			oldRoutes = sequenceStep.PredefinedRoutes
 		}
 		// Compare routes in detail
 		if !equalOrchestrationRoutes(oldRoutes, partialUpdate.PredefinedRoutes) {
@@ -5632,41 +5734,8 @@ func validateOrchestratorStepFieldsTyped(step *OrchestratorPlanStep) error {
 	if step.NextStepID == "" {
 		return fmt.Errorf("step (title: %q, ID: %s) has todo_task step type but is missing required next_step_id field. Please provide the ID of the step to connect to after all todos are complete, or 'end' to terminate the workflow", step.Title, step.ID)
 	}
-	// Predefined routes are optional (orchestrators can be generic-agent-only)
-	// If predefined routes exist, validate them
-	for i, route := range step.PredefinedRoutes {
-		if route.RouteID == "" {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with missing required route_id field", step.Title, step.ID, i)
-		}
-		if route.RouteName == "" {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required route_name field", step.Title, step.ID, i, route.RouteID)
-		}
-		if route.SubAgentStep == nil {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required sub_agent_step field", step.Title, step.ID, i, route.RouteID)
-		}
-		if route.SubAgentStep.GetID() == "" {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required ID field", step.Title, step.ID, i, route.RouteID)
-		}
-		if route.SubAgentStep.GetID() != route.RouteID {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with mismatched IDs: route_id=%q but sub_agent_step.id=%q. For todo routes, use a single canonical ID only", step.Title, step.ID, i, route.RouteID, route.SubAgentStep.GetID())
-		}
-		if route.SubAgentStep.GetTitle() == "" {
-			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required title field", step.Title, step.ID, i, route.RouteID)
-		}
-		switch subStep := route.SubAgentStep.(type) {
-		case *MessageSequencePlanStep:
-			if err := validateMessageSequenceStepFieldsTyped(subStep); err != nil {
-				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s): %w", step.Title, step.ID, i, route.RouteID, err)
-			}
-		case *OrchestratorPlanStep:
-			if err := validateOrchestratorStepFieldsTyped(subStep); err != nil {
-				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s): %w", step.Title, step.ID, i, route.RouteID, err)
-			}
-		case *RegularPlanStep:
-			if err := validateScriptParameterDefinitions(subStep.ScriptParameters); err != nil {
-				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s) has invalid script_parameters: %w", step.Title, step.ID, i, route.RouteID, err)
-			}
-		}
+	if err := validateAgentDelegationRoutes(step.Title, step.ID, step.PredefinedRoutes, false); err != nil {
+		return err
 	}
 	if err := validateOrchestratorNestingDepth(step, 0); err != nil {
 		return err
@@ -5689,8 +5758,50 @@ func validateOrchestratorStepFieldsTyped(step *OrchestratorPlanStep) error {
 			if strings.TrimSpace(m.Message) == "" {
 				return fmt.Errorf("step (title: %q, ID: %s) messages[%d] is a foreach entry but has no message (the per-row template)", step.Title, step.ID, i)
 			}
+		case "scripted":
+			if err := validateMessageSequenceScriptItem(m); err != nil {
+				return fmt.Errorf("step (title: %q, ID: %s) messages[%d]: %w", step.Title, step.ID, i, err)
+			}
 		default:
-			return fmt.Errorf("step (title: %q, ID: %s) messages[%d] has unsupported type %q (use message, prevalidation, or foreach)", step.Title, step.ID, i, mType)
+			return fmt.Errorf("step (title: %q, ID: %s) messages[%d] has unsupported type %q (use message, prevalidation, foreach, or scripted)", step.Title, step.ID, i, mType)
+		}
+	}
+	return nil
+}
+
+func validateAgentDelegationRoutes(title, stepID string, routes []PlanOrchestrationRoute, allowLegacyCode bool) error {
+	for i, route := range routes {
+		if route.RouteID == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with missing required route_id field", title, stepID, i)
+		}
+		if route.RouteName == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required route_name field", title, stepID, i, route.RouteID)
+		}
+		if route.SubAgentStep == nil {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with missing required sub_agent_step field", title, stepID, i, route.RouteID)
+		}
+		if route.SubAgentStep.GetID() == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required ID field", title, stepID, i, route.RouteID)
+		}
+		if route.SubAgentStep.GetID() != route.RouteID {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] with mismatched IDs: route_id=%q but sub_agent_step.id=%q. For agent routes, use a single canonical ID only", title, stepID, i, route.RouteID, route.SubAgentStep.GetID())
+		}
+		if route.SubAgentStep.GetTitle() == "" {
+			return fmt.Errorf("step (title: %q, ID: %s) has predefined_route[%d] (route_id: %s) with sub_agent_step missing required title field", title, stepID, i, route.RouteID)
+		}
+		switch subStep := route.SubAgentStep.(type) {
+		case *MessageSequencePlanStep:
+			if err := validateMessageSequenceStepFieldsTypedWithOptions(subStep, allowLegacyCode); err != nil {
+				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s): %w", title, stepID, i, route.RouteID, err)
+			}
+		case *OrchestratorPlanStep:
+			if err := validateOrchestratorStepFieldsTyped(subStep); err != nil {
+				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s): %w", title, stepID, i, route.RouteID, err)
+			}
+		case *RegularPlanStep:
+			if err := validateScriptParameterDefinitions(subStep.ScriptParameters); err != nil {
+				return fmt.Errorf("step (title: %q, ID: %s) predefined_route[%d] (route_id: %s) has invalid script_parameters: %w", title, stepID, i, route.RouteID, err)
+			}
 		}
 	}
 	return nil
@@ -5771,6 +5882,12 @@ func validateMessageSequenceStepFieldsTypedWithOptions(step *MessageSequencePlan
 		// item kind can auto-grant via resolveMessageSequenceItemWriteAccess. The
 		// authoring contract is carried by guidance, not a prose regex.
 	}
+	if err := validateAgentDelegationRoutes(step.Title, step.ID, step.PredefinedRoutes, allowLegacyCode); err != nil {
+		return err
+	}
+	if err := validateOrchestratorNestingDepth(step, 0); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -5818,16 +5935,22 @@ func setStepIdentity(step PlanStepInterface, id, title string) error {
 }
 
 func validateOrchestratorNestingDepth(step PlanStepInterface, todoRouteDepth int) error {
+	var routes []PlanOrchestrationRoute
 	switch s := step.(type) {
 	case *OrchestratorPlanStep:
+		routes = s.PredefinedRoutes
+	case *MessageSequencePlanStep:
+		routes = s.PredefinedRoutes
+	}
+	if len(routes) > 0 {
 		if todoRouteDepth > 1 {
 			return fmt.Errorf(
-				"todo_task step %q (ID: %s) exceeds the supported nesting depth. Only one nested todo_task layer is allowed under a todo task route",
-				s.GetTitle(),
-				s.GetID(),
+				"delegating agent step %q (ID: %s) exceeds the supported nesting depth. Only one nested delegation layer is allowed under an agent route",
+				step.GetTitle(),
+				step.GetID(),
 			)
 		}
-		for i, route := range s.PredefinedRoutes {
+		for i, route := range routes {
 			if route.SubAgentStep == nil {
 				continue
 			}
@@ -6352,7 +6475,7 @@ func registerNativePlanModificationTools(
 	}
 	if err := mcpAgent.RegisterCustomTool(
 		"add_message_sequence_step",
-		"Add a message_sequence step to the plan. Use it when one agentic step should consume persisted evidence, own a coherent reasoning outcome, and then validate, critique, or repair that work in the same conversation. Put the whole reasoning outcome in the opening description; add follow-up items only for decision-useful assurance, a real intermediate gate, new external input, or foreach iteration—not one item per routine subtask or tool call. Fixed API/SDK/CLI calls, data fetching, known pagination, stable parsing/normalization, and mechanical writes belong in upstream standalone regular scripted steps; the sequence reads their validated DB rows or artifacts. The top-level validation_schema is automatically enforced after the final work turn with same-conversation repair retries. As a todo_task predefined route, use message_sequence when the orchestrator should reuse the same specialist conversation for critique, test feedback, validation feedback, or follow-up work; restart is controlled at execution time with message_sequence_restart. Plain turns inherit step-level DB/KB/learnings permissions; kind or non-empty write_access can narrow one turn.",
+		"Add an agent step (plan type message_sequence): one persistent agent conversation with ordered turns, optional deterministic scripted batches, and optional predefined_routes for bounded specialist delegation. When routes are present, this agent decides at runtime whether, when, and how often to call them; the routes are capabilities, not a prescribed checklist. Put the coherent outcome in the opening description and add follow-up items only for useful assurance, real gates, new input, or phase changes. Fixed API/SDK/CLI work belongs in scripted steps or scripted items. The top-level validation_schema is enforced with same-conversation repair retries. Plain turns inherit step-level DB/KB/learnings permissions; kind or non-empty write_access can narrow one turn.",
 		messageSequenceParams,
 		createAddMessageSequenceStepExecutor(workspacePath, logger, readFile, writeFile, moveFile),
 		"workflow",
@@ -6850,6 +6973,17 @@ func withPlanMutationWriteAccess(workspacePath string, writeFile func(context.Co
 	}
 }
 
+func mutableAgentRoutes(step PlanStepInterface) (*[]PlanOrchestrationRoute, string, func() error, bool) {
+	switch s := step.(type) {
+	case *MessageSequencePlanStep:
+		return &s.PredefinedRoutes, s.Title, func() error { return validateMessageSequenceStepFieldsTyped(s) }, true
+	case *OrchestratorPlanStep:
+		return &s.PredefinedRoutes, s.Title, func() error { return validateOrchestratorStepFieldsTyped(s) }, true
+	default:
+		return nil, "", nil, false
+	}
+}
+
 // createAddOrchestratorRouteExecutor creates an executor function for add_todo_task_route tool
 func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Logger, readFile func(context.Context, string) (string, error), writeFile func(context.Context, string, string) error) func(context.Context, map[string]interface{}) (string, error) {
 	return func(ctx context.Context, args map[string]interface{}) (string, error) {
@@ -6933,9 +7067,9 @@ func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Lo
 			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
-		orchestratorStep, ok := parentStep.(*OrchestratorPlanStep)
+		routes, parentTitle, validateParent, ok := mutableAgentRoutes(parentStep)
 		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+			return "", fmt.Errorf("step with ID '%s' is not an agent step (message_sequence or legacy orchestrator)", parentStepID)
 		}
 
 		// Validate that the new route has a route_id
@@ -6944,7 +7078,7 @@ func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Lo
 		}
 
 		// Check if route_id already exists
-		for _, existingRoute := range orchestratorStep.PredefinedRoutes {
+		for _, existingRoute := range *routes {
 			if existingRoute.RouteID == newRoute.RouteID {
 				return "", fmt.Errorf("route with route_id '%s' already exists in todo task step '%s'", newRoute.RouteID, parentStepID)
 			}
@@ -6964,11 +7098,11 @@ func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Lo
 		}
 
 		// Add new route
-		orchestratorStep.PredefinedRoutes = append(orchestratorStep.PredefinedRoutes, newRoute)
+		*routes = append(*routes, newRoute)
 		if err := resolvePlanOrphanStepRefs(plan); err != nil {
 			return "", fmt.Errorf("failed to resolve orphan step references after adding route: %w", err)
 		}
-		if err := validateOrchestratorStepFieldsTyped(orchestratorStep); err != nil {
+		if err := validateParent(); err != nil {
 			return "", fmt.Errorf("validation failed after adding route: %w", err)
 		}
 
@@ -6985,7 +7119,7 @@ func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Lo
 		// resolution), not the pre-resolution local var, so the changelog's
 		// after_ref reflects what was really written (PLAT-074).
 		var addedRouteJSON []json.RawMessage
-		if addedRoute, err := json.Marshal(orchestratorStep.PredefinedRoutes[len(orchestratorStep.PredefinedRoutes)-1]); err == nil {
+		if addedRoute, err := json.Marshal((*routes)[len(*routes)-1]); err == nil {
 			addedRouteJSON = []json.RawMessage{addedRoute}
 		} else {
 			logger.Warn(fmt.Sprintf("⚠️ Failed to marshal added route %s for changelog: %v", newRoute.RouteID, err))
@@ -7000,8 +7134,8 @@ func createAddOrchestratorRouteExecutor(workspacePath string, logger loggerv2.Lo
 
 		routeReviewNotice := handleOrchestratorRouteArtifactReview(ctx, workspacePath, parentStepID, newRoute.RouteID, "added", readFile, writeFile, logger)
 
-		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to todo task step '%s'", newRoute.RouteName, newRoute.RouteID, orchestratorStep.Title))
-		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to todo task step '%s'%s", newRoute.RouteName, newRoute.RouteID, orchestratorStep.Title, routeReviewNotice), nil
+		logger.Info(fmt.Sprintf("✅ Added route '%s' (ID: %s) to agent step '%s'", newRoute.RouteName, newRoute.RouteID, parentTitle))
+		return fmt.Sprintf("Successfully added route '%s' (ID: %s) to agent step '%s'%s", newRoute.RouteName, newRoute.RouteID, parentTitle, routeReviewNotice), nil
 	}
 }
 
@@ -7049,22 +7183,22 @@ func createUpdateOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
-		orchestratorStep, ok := parentStep.(*OrchestratorPlanStep)
+		routes, parentTitle, validateParent, ok := mutableAgentRoutes(parentStep)
 		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+			return "", fmt.Errorf("step with ID '%s' is not an agent step (message_sequence or legacy orchestrator)", parentStepID)
 		}
 
 		// Find the route to update
 		var routeToUpdate *PlanOrchestrationRoute
-		for i := range orchestratorStep.PredefinedRoutes {
-			if orchestratorStep.PredefinedRoutes[i].RouteID == existingRouteID {
-				routeToUpdate = &orchestratorStep.PredefinedRoutes[i]
+		for i := range *routes {
+			if (*routes)[i].RouteID == existingRouteID {
+				routeToUpdate = &(*routes)[i]
 				break
 			}
 		}
 		if routeToUpdate == nil {
-			availableRouteIDs := make([]string, 0, len(orchestratorStep.PredefinedRoutes))
-			for _, route := range orchestratorStep.PredefinedRoutes {
+			availableRouteIDs := make([]string, 0, len(*routes))
+			for _, route := range *routes {
 				availableRouteIDs = append(availableRouteIDs, route.RouteID)
 			}
 			return "", fmt.Errorf("route with route_id '%s' not found in todo task step '%s'. Available route IDs: %v", existingRouteID, parentStepID, availableRouteIDs)
@@ -7143,7 +7277,7 @@ func createUpdateOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 		if err := resolvePlanOrphanStepRefs(plan); err != nil {
 			return "", fmt.Errorf("failed to resolve orphan step references after route update: %w", err)
 		}
-		if err := validateOrchestratorStepFieldsTyped(orchestratorStep); err != nil {
+		if err := validateParent(); err != nil {
 			return "", fmt.Errorf("validation failed after route update: %w", err)
 		}
 
@@ -7172,8 +7306,8 @@ func createUpdateOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 
 		routeReviewNotice := handleOrchestratorRouteArtifactReview(ctx, workspacePath, parentStepID, existingRouteID, "updated", readFile, writeFile, logger)
 
-		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in todo task step '%s'", routeToUpdate.RouteName, existingRouteID, orchestratorStep.Title))
-		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in todo task step '%s'%s", routeToUpdate.RouteName, existingRouteID, orchestratorStep.Title, routeReviewNotice), nil
+		logger.Info(fmt.Sprintf("✅ Updated route '%s' (ID: %s) in agent step '%s'", routeToUpdate.RouteName, existingRouteID, parentTitle))
+		return fmt.Sprintf("Successfully updated route '%s' (ID: %s) in agent step '%s'%s", routeToUpdate.RouteName, existingRouteID, parentTitle, routeReviewNotice), nil
 	}
 }
 
@@ -7219,24 +7353,24 @@ func createDeleteOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 			return "", fmt.Errorf("parent step ID '%s' not found in existing plan. Available top-level step IDs: %v", parentStepID, availableIDs)
 		}
 
-		orchestratorStep, ok := parentStep.(*OrchestratorPlanStep)
+		routes, parentTitle, _, ok := mutableAgentRoutes(parentStep)
 		if !ok {
-			return "", fmt.Errorf("step with ID '%s' is not a todo task step", parentStepID)
+			return "", fmt.Errorf("step with ID '%s' is not an agent step (message_sequence or legacy orchestrator)", parentStepID)
 		}
 
 		// Find the route to delete
 		var deletedRoute *PlanOrchestrationRoute
 		routeIndex := -1
-		for i, route := range orchestratorStep.PredefinedRoutes {
+		for i, route := range *routes {
 			if route.RouteID == deletedRouteID {
-				deletedRoute = &orchestratorStep.PredefinedRoutes[i]
+				deletedRoute = &(*routes)[i]
 				routeIndex = i
 				break
 			}
 		}
 		if deletedRoute == nil {
-			availableRouteIDs := make([]string, 0, len(orchestratorStep.PredefinedRoutes))
-			for _, route := range orchestratorStep.PredefinedRoutes {
+			availableRouteIDs := make([]string, 0, len(*routes))
+			for _, route := range *routes {
 				availableRouteIDs = append(availableRouteIDs, route.RouteID)
 			}
 			return "", fmt.Errorf("route with route_id '%s' not found in todo task step '%s'. Available route IDs: %v", deletedRouteID, parentStepID, availableRouteIDs)
@@ -7245,9 +7379,9 @@ func createDeleteOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 		// Note: Unlike orchestration steps, todo task steps may have 0 predefined routes (generic-agent-only)
 
 		// Remove the route
-		orchestratorStep.PredefinedRoutes = append(
-			orchestratorStep.PredefinedRoutes[:routeIndex],
-			orchestratorStep.PredefinedRoutes[routeIndex+1:]...,
+		*routes = append(
+			(*routes)[:routeIndex],
+			(*routes)[routeIndex+1:]...,
 		)
 
 		// Capture deleted route JSON before writing
@@ -7281,8 +7415,8 @@ func createDeleteOrchestratorRouteExecutor(workspacePath string, logger loggerv2
 
 		routeReviewNotice := handleOrchestratorRouteArtifactReview(ctx, workspacePath, parentStepID, deletedRouteID, "deleted", readFile, writeFile, logger)
 
-		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from todo task step '%s'", deletedRoute.RouteName, deletedRouteID, orchestratorStep.Title))
-		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from todo task step '%s'%s", deletedRoute.RouteName, deletedRouteID, orchestratorStep.Title, routeReviewNotice), nil
+		logger.Info(fmt.Sprintf("✅ Deleted route '%s' (ID: %s) from agent step '%s'", deletedRoute.RouteName, deletedRouteID, parentTitle))
+		return fmt.Sprintf("Successfully deleted route '%s' (ID: %s) from agent step '%s'%s", deletedRoute.RouteName, deletedRouteID, parentTitle, routeReviewNotice), nil
 	}
 }
 

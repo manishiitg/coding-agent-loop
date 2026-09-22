@@ -1,6 +1,9 @@
 package server
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestMergeWorkflowCapabilitiesUpdatePreservesNotificationsForOlderClients(t *testing.T) {
 	globalNames := []string{"SLACK_WEBHOOK", "GLOBAL_APP_TOKEN"}
@@ -80,5 +83,26 @@ func TestLegacyNotificationInstructionsRemainEffectiveForBothSections(t *testing
 	}
 	if got := config.EffectivePulseSummaryInstructions(); got != config.Instructions {
 		t.Fatalf("pulse instructions = %q, want legacy %q", got, config.Instructions)
+	}
+}
+
+func TestNotificationInstructionsDefaultToMaterialTransitions(t *testing.T) {
+	var config *WorkflowNotificationConfig
+	if got := runSummaryInstructionsOrDefault(config); !strings.Contains(got, "get_notification_history") || !strings.Contains(got, "dashboard_only") {
+		t.Fatalf("run default does not require history-aware quiet delivery: %q", got)
+	}
+	if got := pulseSummaryInstructionsOrDefault(config); !strings.Contains(got, "get_notification_history") || !strings.Contains(got, "external_only") {
+		t.Fatalf("Pulse default does not require history-aware external delivery: %q", got)
+	}
+
+	custom := &WorkflowNotificationConfig{
+		RunSummaryInstructions:   "Send every run.",
+		PulseSummaryInstructions: "Never send externally.",
+	}
+	if got := custom.EffectiveRunSummaryInstructions(); got != "Send every run." {
+		t.Fatalf("run custom instruction = %q", got)
+	}
+	if got := custom.EffectivePulseSummaryInstructions(); got != "Never send externally." {
+		t.Fatalf("Pulse custom instruction = %q", got)
 	}
 }

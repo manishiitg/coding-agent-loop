@@ -1362,21 +1362,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Live input - deliver a user message to a live coding-agent session.
-  sendLiveInput: async (sessionId: string, message: string, context?: ChatRequestContext): Promise<{
-    success: boolean
-    message?: string
-    delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'next_turn_started'
-    provider?: string
-    message_id?: string
-    query_id?: string
-  }> => {
-    const config = chatRequestConfig(sessionId, context)
-    const response = await api.post(`/api/sessions/${sessionId}/live-input`, { message }, config)
-    assertChatIdentityCurrent(config.chatIdentityGeneration)
-    return response.data
-  },
-
   // Send a tmux control key (e.g. "Escape", "Enter", "Up", "Down") to a running coding-agent session.
   // Only valid when the provider transport supports live input (claude-code,
   // codex-cli, cursor-cli). Used to route ESC keystrokes to the

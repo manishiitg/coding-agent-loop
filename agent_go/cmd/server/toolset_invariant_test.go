@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -129,6 +130,14 @@ func TestToolSetInvariants(t *testing.T) {
 	for n := range virtualtools.CreateHumanToolExecutors() {
 		humanNames[n] = true
 	}
+	for _, n := range virtualtools.HumanToolImplementationNames() {
+		if !pool[n] || cats[n] != "human_tools" {
+			t.Fatalf("human implementation %q is missing from the registered human_tools pool", n)
+		}
+		if !agentworksproduct.ChatAllowsTool("builder", n) && !agentworksproduct.ChatAllowsTool("run", n) {
+			t.Fatalf("human implementation %q is not admitted by AgentWorks product.yaml in any mode", n)
+		}
+	}
 	knownOutsidePool := knownWorkshopRegisteredToolNamesOutsideWorkflowPool()
 
 	for _, mode := range []string{"workshop", "run"} {
@@ -162,7 +171,14 @@ func TestToolSetInvariants(t *testing.T) {
 		}
 
 		// 3. Human interaction/notification/report tools must be usable in both modes.
-		for _, n := range virtualtools.HumanToolNamesForWorkshopMode(mode) {
+		productMode := "builder"
+		if mode == "run" {
+			productMode = "run"
+		}
+		for _, n := range agentworksproduct.ChatTools(productMode) {
+			if cats[n] != "human_tools" {
+				continue
+			}
 			if !pool[n] || cats[n] != "human_tools" {
 				t.Fatalf("workflow pool missing workshop human tool %q (in_pool=%v cat=%q)", n, pool[n], cats[n])
 			}
@@ -239,13 +255,13 @@ func TestToolSetInvariants(t *testing.T) {
 }
 
 func TestPrimaryWorkflowBuilderChatExcludesBlockingHumanFeedback(t *testing.T) {
-	if primaryChatAllowsCustomTool("human_feedback", true) {
+	if agentworksproduct.ChatAllowsTool("builder", "human_feedback") {
 		t.Fatal("Workflow Builder must not expose human_feedback")
 	}
-	if !primaryChatAllowsCustomTool("notify_user", true) {
+	if !agentworksproduct.ChatAllowsTool("builder", "notify_user") {
 		t.Fatal("Workflow Builder must retain non-blocking notify_user")
 	}
-	if !primaryChatAllowsCustomTool("human_feedback", false) {
+	if !agentworksproduct.ChatAllowsTool("run", "human_feedback") {
 		t.Fatal("non-Builder execution contexts must retain human_feedback")
 	}
 }

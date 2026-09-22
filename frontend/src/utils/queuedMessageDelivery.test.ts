@@ -19,8 +19,8 @@ describe('routeForQueuedMessage', () => {
     expect(routeForQueuedMessage({ ...running, canUseLiveQuery: true, canSteer: true })).toBe('live-query')
   })
 
-  it('steers an API provider that has a live turn', () => {
-    expect(routeForQueuedMessage({ ...running, canSteer: true })).toBe('steer')
+  it('routes an API provider with a live turn through the same query endpoint', () => {
+    expect(routeForQueuedMessage({ ...running, canSteer: true })).toBe('live-query')
   })
 
   it('waits when an API provider has no live turn to steer', () => {

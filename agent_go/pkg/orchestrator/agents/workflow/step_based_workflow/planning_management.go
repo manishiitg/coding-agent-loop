@@ -78,15 +78,20 @@ func validatePlanStepIDsAtPath(steps []PlanStepInterface, pathPrefix string) err
 		if err := validateRoutingStepTyped(step, i); err != nil {
 			return err
 		}
-		if todo, ok := step.(*OrchestratorPlanStep); ok {
-			for routeIndex, route := range todo.PredefinedRoutes {
-				if route.SubAgentStep == nil {
-					continue
-				}
-				routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
-				if err := validatePlanStepIDsAtPath([]PlanStepInterface{route.SubAgentStep}, routePath); err != nil {
-					return err
-				}
+		var agentRoutes []PlanOrchestrationRoute
+		switch agentStep := step.(type) {
+		case *OrchestratorPlanStep:
+			agentRoutes = agentStep.PredefinedRoutes
+		case *MessageSequencePlanStep:
+			agentRoutes = agentStep.PredefinedRoutes
+		}
+		for routeIndex, route := range agentRoutes {
+			if route.SubAgentStep == nil {
+				continue
+			}
+			routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
+			if err := validatePlanStepIDsAtPath([]PlanStepInterface{route.SubAgentStep}, routePath); err != nil {
+				return err
 			}
 		}
 	}
@@ -111,15 +116,20 @@ func collectStepIDsRecursive(steps []PlanStepInterface, pathPrefix string, seen 
 			}
 			seen[id] = thisLoc
 		}
-		if todo, ok := step.(*OrchestratorPlanStep); ok {
-			for routeIndex, route := range todo.PredefinedRoutes {
-				if route.SubAgentStep == nil {
-					continue
-				}
-				routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
-				if err := collectStepIDsRecursive([]PlanStepInterface{route.SubAgentStep}, routePath, seen); err != nil {
-					return err
-				}
+		var agentRoutes []PlanOrchestrationRoute
+		switch agentStep := step.(type) {
+		case *OrchestratorPlanStep:
+			agentRoutes = agentStep.PredefinedRoutes
+		case *MessageSequencePlanStep:
+			agentRoutes = agentStep.PredefinedRoutes
+		}
+		for routeIndex, route := range agentRoutes {
+			if route.SubAgentStep == nil {
+				continue
+			}
+			routePath := fmt.Sprintf("%s.predefined_routes[%d].sub_agent_step", thisLoc, routeIndex)
+			if err := collectStepIDsRecursive([]PlanStepInterface{route.SubAgentStep}, routePath, seen); err != nil {
+				return err
 			}
 		}
 	}
@@ -199,7 +209,17 @@ func validateLoadedPlanStepWithOptions(typedStep PlanStepInterface, stepIndex in
 		return validateHumanInputStepFieldsTyped(step)
 
 	case *MessageSequencePlanStep:
-		return validateMessageSequenceStepFieldsTypedWithOptions(step, allowLegacyMessageSequenceCode)
+		if err := validateMessageSequenceStepFieldsTypedWithOptions(step, allowLegacyMessageSequenceCode); err != nil {
+			return err
+		}
+		for i, route := range step.PredefinedRoutes {
+			if route.SubAgentStep != nil {
+				if err := validateLoadedPlanStepWithOptions(route.SubAgentStep, i, allowLegacyMessageSequenceCode); err != nil {
+					return fmt.Errorf("predefined_route[%d] (route_id: %s): %w", i, route.RouteID, err)
+				}
+			}
+		}
+		return nil
 
 	case *CrewPlanStep:
 		return validateCrewStepFieldsTyped(step)
@@ -412,6 +432,12 @@ func collectKnownStepIDs(plan *PlanningResponse) map[string]struct{} {
 						walk([]PlanStepInterface{route.SubAgentStep})
 					}
 				}
+			case *MessageSequencePlanStep:
+				for _, route := range s.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						walk([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
 			}
 		}
 	}
@@ -462,6 +488,11 @@ func validateNextStepIDReferences(plan *PlanningResponse) error {
 				}
 			case *MessageSequencePlanStep:
 				ref(s.GetID(), "next_step_id", s.NextStepID)
+				for _, route := range s.PredefinedRoutes {
+					if route.SubAgentStep != nil {
+						walk([]PlanStepInterface{route.SubAgentStep})
+					}
+				}
 			case *CrewPlanStep:
 				ref(s.GetID(), "next_step_id", s.NextStepID)
 			case *HumanInputPlanStep:
@@ -623,6 +654,14 @@ func populateRuntimeFields(typedStep PlanStepInterface, stepConfigs []StepConfig
 		return nil
 
 	case *MessageSequencePlanStep:
+		for i := range step.PredefinedRoutes {
+			route := &step.PredefinedRoutes[i]
+			if route.SubAgentStep != nil {
+				if err := populateRuntimeFields(route.SubAgentStep, stepConfigs); err != nil {
+					return fmt.Errorf("failed to populate sub-agent step for route '%s': %w", route.RouteID, err)
+				}
+			}
+		}
 		step.AgentConfigs = agentConfigs
 		if validationSchemaOverride != nil {
 			step.ValidationSchema = validationSchemaOverride

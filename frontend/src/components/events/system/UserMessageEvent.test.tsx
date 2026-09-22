@@ -94,6 +94,18 @@ describe('UserMessageEventDisplay', () => {
   })
 
   it('shows queued and failed ticks without touching rows that were never live-delivered', () => {
+    const queuedTurn = renderToStaticMarkup(
+      <UserMessageEventDisplay
+        event={{
+          content: 'run after the schedule',
+          role: 'user',
+          metadata: { source: 'coding_agent_live_input', confirmation: 'queued', delivery_status: 'queued_for_turn' },
+        }}
+      />,
+    )
+    expect(queuedTurn).toContain('data-state="queued"')
+    expect(queuedTurn).toContain('Queued behind the active conversation turn')
+
     const unflushed = renderToStaticMarkup(
       <UserMessageEventDisplay
         event={{

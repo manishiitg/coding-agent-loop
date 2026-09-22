@@ -32,6 +32,14 @@ func validateChatDefinitions(fsys fs.FS, m ProductManifest) error {
 		if len(seen) == 0 {
 			return fmt.Errorf("chat %s: skills are required", mode)
 		}
+		toolSeen := map[string]bool{}
+		for _, name := range def.Tools {
+			name = strings.TrimSpace(name)
+			if name == "" || toolSeen[name] {
+				return fmt.Errorf("chat %s: empty or duplicate tool %q", mode, name)
+			}
+			toolSeen[name] = true
+		}
 		// The external CLI/MCP API is run-mode access: only the run mode
 		// admits external tools, and it must admit at least one.
 		if mode == "run" {
@@ -43,6 +51,27 @@ func validateChatDefinitions(fsys fs.FS, m ProductManifest) error {
 		}
 	}
 	return nil
+}
+
+// ChatTools returns the tool admission list declared for a chat mode. Tool
+// schemas and executors remain implemented in Go; product.yaml decides which
+// of those implementations a Builder or Run conversation may receive.
+func ChatTools(mode string) []string {
+	def, ok := mustAgentWorksManifest().Chat[mode]
+	if !ok {
+		panic(fmt.Errorf("unknown AgentWorks chat mode %q", mode))
+	}
+	return append([]string(nil), def.Tools...)
+}
+
+func ChatAllowsTool(mode, toolName string) bool {
+	toolName = strings.TrimSpace(toolName)
+	for _, name := range ChatTools(mode) {
+		if name == toolName {
+			return true
+		}
+	}
+	return false
 }
 
 // RunExternalTools returns the external CLI/MCP tool admission list declared
@@ -62,11 +91,7 @@ func RunExternalTools() []string {
 // externally under the runs:execute scope. Names with an external-native
 // implementation keep that implementation (see external_tools.go).
 func RunTools() []string {
-	def, ok := mustAgentWorksManifest().Chat["run"]
-	if !ok {
-		panic(fmt.Errorf("unknown AgentWorks chat mode %q", "run"))
-	}
-	return append([]string(nil), def.Tools...)
+	return ChatTools("run")
 }
 
 // ChatPromptTemplate returns trusted template source; callers inject runtime

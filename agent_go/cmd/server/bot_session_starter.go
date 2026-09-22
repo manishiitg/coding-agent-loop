@@ -249,6 +249,30 @@ func (api *StreamingAPI) startSessionInternalWithResult(
 	if err != nil {
 		return internalSessionTurnResult{}, fmt.Errorf("failed to marshal query request: %w", err)
 	}
+	// Schedules, triggers and bots use the same durable dispatcher as browser
+	// chat. Internal callers wait for their exact queued result; the HTTP path
+	// acknowledges immediately. A claimed worker carries the bypass marker.
+	if !conversationTurnQueueExecution(ctx) {
+		var queuedRequest QueryRequest
+		if decodeErr := json.Unmarshal(body, &queuedRequest); decodeErr == nil &&
+			shouldUseDurableConversationTurnQueue(queuedRequest) &&
+			api.conversationTurnOccupied(sessionID) {
+			queueCtx := internalBotRequestContext(ctx, userID, reqMap)
+			turn, _, queueErr := api.enqueueConversationTurn(queueCtx, userID, sessionID, queuedRequest)
+			if queueErr != nil {
+				return internalSessionTurnResult{}, queueErr
+			}
+			waiter := api.registerQueuedTurnWaiter(turn.ID, eventCallback)
+			api.recordQueuedConversationUserMessage(sessionID, turn)
+			api.kickConversationTurnQueue(sessionID)
+			select {
+			case queuedResult := <-waiter:
+				return queuedResult.Result, queuedResult.Err
+			case <-ctx.Done():
+				return internalSessionTurnResult{}, ctx.Err()
+			}
+		}
+	}
 
 	// Create a fake HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, "POST", "/api/query", io.NopCloser(bytes.NewReader(body)))

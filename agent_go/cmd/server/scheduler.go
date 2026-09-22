@@ -3178,18 +3178,35 @@ type workflowNotificationContentInstructions struct {
 }
 
 func notificationInstructionsFromCapabilities(capabilities WorkflowCapabilities) workflowNotificationContentInstructions {
-	if capabilities.Notifications == nil {
-		return workflowNotificationContentInstructions{}
-	}
 	notifications := capabilities.Notifications
 	return workflowNotificationContentInstructions{
-		runSummary:             notifications.EffectiveRunSummaryInstructions(),
-		pulseSummary:           notifications.EffectivePulseSummaryInstructions(),
-		runSummaryChannels:     append([]string(nil), notifications.RunSummaryChannels...),
-		pulseSummaryChannels:   append([]string(nil), notifications.PulseSummaryChannels...),
-		runSummaryRecipients:   append([]string(nil), notifications.RunSummaryRecipients...),
-		pulseSummaryRecipients: append([]string(nil), notifications.PulseSummaryRecipients...),
+		runSummary:             runSummaryInstructionsOrDefault(notifications),
+		pulseSummary:           pulseSummaryInstructionsOrDefault(notifications),
+		runSummaryChannels:     notificationChannels(notifications, true),
+		pulseSummaryChannels:   notificationChannels(notifications, false),
+		runSummaryRecipients:   notificationRecipients(notifications, true),
+		pulseSummaryRecipients: notificationRecipients(notifications, false),
 	}
+}
+
+func notificationChannels(config *WorkflowNotificationConfig, run bool) []string {
+	if config == nil {
+		return nil
+	}
+	if run {
+		return append([]string(nil), config.RunSummaryChannels...)
+	}
+	return append([]string(nil), config.PulseSummaryChannels...)
+}
+
+func notificationRecipients(config *WorkflowNotificationConfig, run bool) []string {
+	if config == nil {
+		return nil
+	}
+	if run {
+		return append([]string(nil), config.RunSummaryRecipients...)
+	}
+	return append([]string(nil), config.PulseSummaryRecipients...)
 }
 
 // pulseSafeRunFailureReason tells the finalizer why the workflow did not run
@@ -3277,7 +3294,7 @@ func pulseLifecycleFinalSteps(pulseRunID string, instructions ...workflowNotific
 		notificationContext += "\n\nPULSE REVIEW SUMMARY INSTRUCTIONS. Apply these only to the section describing what Pulse reviewed, fixed, recommended, or needs from the user:\n" + pulseInstructions
 	}
 	if len(ownerInstructions.runSummaryChannels) > 0 || len(ownerInstructions.pulseSummaryChannels) > 0 {
-		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. Send two notify_user calls, not one combined message. Send the workflow outcome with notification_kind=\"run_summary\"; configured channels: %s. Send Pulse activity with notification_kind=\"pulse_summary\"; configured channels: %s. The backend enforces these routes.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
+		notificationContext += fmt.Sprintf("\n\nSPLIT NOTIFICATION ROUTING. Run-summary external channels: %s. Pulse-summary external channels: %s. The backend enforces these routes when the matching notification is externally eligible; dashboard-only recording remains available for a quiet run.", notificationChannelSummary(ownerInstructions.runSummaryChannels), notificationChannelSummary(ownerInstructions.pulseSummaryChannels))
 	}
 	if len(ownerInstructions.runSummaryRecipients) > 0 || len(ownerInstructions.pulseSummaryRecipients) > 0 {
 		// Stated so the finalizer does not "helpfully" pass email_to and override

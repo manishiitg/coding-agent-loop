@@ -343,6 +343,24 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeOrchestratorStep(
 	return true, orchestratorStep.NextStepID, nil
 }
 
+// delegatingMessageSequenceAsOrchestrator adapts the unified public agent step
+// to the existing delegation runtime. OrchestratorPlanStep remains a legacy
+// compatibility shape; new plans can put predefined_routes directly on a
+// message_sequence and the sequence agent decides whether and when to call them.
+func delegatingMessageSequenceAsOrchestrator(step *MessageSequencePlanStep) *OrchestratorPlanStep {
+	if step == nil {
+		return nil
+	}
+	return &OrchestratorPlanStep{
+		Type:             StepTypeOrchestrator,
+		CommonStepFields: step.CommonStepFields,
+		PredefinedRoutes: step.PredefinedRoutes,
+		NextStepID:       step.NextStepID,
+		Messages:         step.Items,
+		AgentConfigs:     step.AgentConfigs,
+	}
+}
+
 func formatMessageSequenceRoutePromptBlock(step PlanStepInterface) string {
 	if !isMessageSequenceStep(step) {
 		return ""
@@ -855,10 +873,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeRoutedSubAgentStep(
 		localExecCtx = &execCtxCopy
 	}
 
-	if isOrchestratorStep(stepToExecute) {
+	delegatingStep := stepToExecute
+	delegatingSequence := false
+	if sequence, ok := stepToExecute.(*MessageSequencePlanStep); ok && len(sequence.PredefinedRoutes) > 0 {
+		delegatingStep = delegatingMessageSequenceAsOrchestrator(sequence)
+		delegatingSequence = true
+	}
+	if isOrchestratorStep(stepToExecute) || delegatingSequence {
 		successCriteriaMet, _, err := hcpo.executeOrchestratorStep(
 			ctx,
-			stepToExecute,
+			delegatingStep,
 			stepIndex,
 			progress,
 			[]string{},

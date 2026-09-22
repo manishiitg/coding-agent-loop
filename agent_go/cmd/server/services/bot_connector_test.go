@@ -18,6 +18,7 @@ type testBotConnector struct {
 	supportsThreads bool
 	mu              sync.Mutex // guards sent; every other field here is only ever touched single-threaded
 	sent            []string
+	reactions       []string
 	sendStarted     chan struct{}
 	releaseSend     chan struct{}
 }
@@ -96,7 +97,8 @@ func (c *testBotConnector) SendThreadMessageWithBlocks(_ context.Context, _ Thre
 func (c *testBotConnector) UpdateMessage(context.Context, ThreadID, string, string) error {
 	return nil
 }
-func (c *testBotConnector) AddReaction(context.Context, string, string, string) error {
+func (c *testBotConnector) AddReaction(_ context.Context, channelID, messageTS, emoji string) error {
+	c.reactions = append(c.reactions, channelID+":"+messageTS+":"+emoji)
 	return nil
 }
 func (c *testBotConnector) RemoveReaction(context.Context, string, string, string) error {
@@ -658,6 +660,213 @@ func TestCompletedAwaitingFeedbackBypassesMentionGuard(t *testing.T) {
 	active.mu.Unlock()
 	if awaiting || requestID != "" {
 		t.Fatalf("blocking state not cleared: awaiting=%v requestID=%q", awaiting, requestID)
+	}
+}
+
+func TestCompletedSingleUserThreadOtherUserMentionStaysOut(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	base := &testBotConnector{name: "slack", supportsThreads: true}
+	connector := &historyTestConnector{
+		testBotConnector: base,
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:          "slack",
+		ChannelID:         "C123",
+		ThreadTS:          "1710000000.000100",
+		MessageTS:         "1710000000.000200",
+		UserID:            "U-alice",
+		Text:              "<@U-bob> can you take a look?",
+		IsMention:         false,
+		IsThreadReply:     true,
+		MentionsOtherUser: true,
+	}, true)
+
+	select {
+	case got := <-started:
+		t.Fatalf("other-user mention started session %q; want the bot to stay out even in single-user threads", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+	if len(base.sent) != 0 {
+		t.Fatalf("other-user mention produced replies %#v; want silence", base.sent)
+	}
+	if len(base.reactions) != 0 {
+		t.Fatalf("other-user mention produced reactions %#v; want no visible act at all", base.reactions)
+	}
+}
+
+func TestRunningSingleUserThreadOtherUserMentionNotInjected(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	followUps := make(chan string, 1)
+	manager.SetFollowUpFunc(func(_ context.Context, req map[string]interface{}, _ string, _ string) error {
+		followUps <- req["query"].(string)
+		return nil
+	})
+
+	active := &activeBotSession{
+		SessionID:    "session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusRunning,
+		Platform:     "slack",
+		ThreadID:     ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"},
+		LastActivity: time.Now(),
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:          "slack",
+		ChannelID:         "C123",
+		ThreadTS:          "1710000000.000100",
+		UserID:            "U-alice",
+		Text:              "<@U-bob> what do you think?",
+		IsMention:         false,
+		IsThreadReply:     true,
+		MentionsOtherUser: true,
+	}, true)
+
+	select {
+	case got := <-followUps:
+		t.Fatalf("other-user mention injected follow-up %q into the running session; want it ignored", got)
+	case <-time.After(300 * time.Millisecond):
+	}
+}
+
+func TestCompletedMentionWithOtherUserStillRestarts(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+			{UserID: "U-bot", Text: "done", IsBot: true},
+			{UserID: "U-bob", Text: "thanks Alice"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	started := make(chan string, 1)
+	manager.SetStartSessionFunc(func(_ context.Context, _ map[string]interface{}, sessionID string, _ string, _ func(event *events.AgentEvent)) error {
+		started <- sessionID
+		return nil
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:    "old-session-1",
+		UserID:       "user-1",
+		Status:       chathistory.BotSessionStatusCompleted,
+		Platform:     "slack",
+		ThreadID:     threadID,
+		LastActivity: time.Now(),
+		builderDone:  true,
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:          "slack",
+		ChannelID:         "C123",
+		ThreadTS:          "1710000000.000100",
+		UserID:            "U-alice",
+		Text:              "ask @bob to rerun that with last quarter",
+		IsMention:         true,
+		IsThreadReply:     true,
+		MentionsOtherUser: true,
+	}, true)
+
+	select {
+	case got := <-started:
+		if got != "old-session-1" {
+			t.Fatalf("bot mention alongside another user changed durable identity: %q", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("bot mention that also tags someone else should still restart the conversation")
+	}
+}
+
+func TestCompletedAwaitingFeedbackOtherUserMentionStillAnswers(t *testing.T) {
+	manager := NewBotConversationManager(nil, "", "")
+	connector := &historyTestConnector{
+		testBotConnector: &testBotConnector{name: "slack", supportsThreads: true},
+		history: []ThreadMessage{
+			{UserID: "U-alice", Text: "run the report"},
+		},
+	}
+	manager.RegisterConnector(connector)
+
+	submitted := make(chan struct {
+		id       string
+		response string
+	}, 1)
+	GetNotificationManager().SetFeedbackResponseFunc(func(uniqueID, response string) error {
+		submitted <- struct {
+			id       string
+			response string
+		}{id: uniqueID, response: response}
+		return nil
+	})
+	t.Cleanup(func() {
+		GetNotificationManager().SetFeedbackResponseFunc(nil)
+	})
+
+	threadID := ThreadID{Platform: "slack", ChannelID: "C123", ThreadTS: "1710000000.000100"}
+	active := &activeBotSession{
+		SessionID:         "old-session-1",
+		UserID:            "user-1",
+		Status:            chathistory.BotSessionStatusCompleted,
+		Platform:          "slack",
+		ThreadID:          threadID,
+		LastActivity:      time.Now(),
+		builderDone:       true,
+		awaitingUserInput: true,
+		blockingEventType: "blocking_human_feedback",
+		blockingRequestID: "req-1",
+	}
+
+	manager.handleExistingSession(active, BotIncomingMessage{
+		Platform:          "slack",
+		ChannelID:         "C123",
+		ThreadTS:          "1710000000.000100",
+		UserID:            "U-alice",
+		Text:              "looks good, <@U-bob> please note",
+		IsMention:         false,
+		IsThreadReply:     true,
+		MentionsOtherUser: true,
+	}, true)
+
+	select {
+	case got := <-submitted:
+		if got.id != "req-1" {
+			t.Fatalf("submitted id = %q, want req-1", got.id)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("blocking answer that also tags someone else must still resolve the prompt (D5 bypass)")
 	}
 }
 

@@ -209,6 +209,11 @@ type BotIncomingMessage struct {
 	Timestamp     time.Time
 	IsThreadReply bool
 	IsMention     bool            // true when the bot was @mentioned (vs plain thread reply)
+	// MentionsOtherUser is true when the message tags another platform user
+	// but not the bot (Slack <@U...> of someone else). Thread replies with
+	// this set are addressed to a colleague: the bot stays silent no matter
+	// how many people are in the thread.
+	MentionsOtherUser bool
 	ThreadHistory []ThreadMessage // populated when tagged in existing thread
 	// PresetWorkflow, when set, overrides channel-based workflow routing
 	// for this message. WhatsApp uses it after its @<slug> router has
@@ -1165,6 +1170,12 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 	// SQLite store. Restore it after a process restart, subject to the same
 	// one-hour inactivity boundary used by the in-memory path.
 	if !supportsThreads || msg.Platform == "slack" {
+		// A reply addressed to someone else must not revive a conversation
+		// after restart either. Status/resume commands were already matched
+		// above, and there is no live blocking state on this path.
+		if m.ignoreOtherUserMention(active, msg) {
+			return
+		}
 		if store, ok := connector.(botSessionBindingStore); ok {
 			binding, found, err := store.LoadBotSessionBinding(context.Background(), threadID, botMessageRouteKey(msg))
 			if err != nil {
@@ -1184,6 +1195,9 @@ func (m *BotConversationManager) HandleIncomingMessage(msg BotIncomingMessage) {
 		}
 	}
 
+	if m.ignoreOtherUserMention(active, msg) {
+		return
+	}
 	go m.startNewSessionDirect(msg, threadID)
 }
 
@@ -1403,6 +1417,9 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 			m.handleBlockingResponse(active, msg)
 			return
 		}
+		if m.ignoreOtherUserMention(active, msg) {
+			return
+		}
 
 		if !supportsThreads {
 			active.mu.Lock()
@@ -1443,6 +1460,9 @@ func (m *BotConversationManager) handleExistingSession(active *activeBotSession,
 		// running branch, blocking responses bypass the mention guard below.
 		if awaiting {
 			m.handleBlockingResponse(active, msg)
+			return
+		}
+		if m.ignoreOtherUserMention(active, msg) {
 			return
 		}
 		if m.ignoreMultiUserNonMention(active, msg) {
@@ -3577,6 +3597,27 @@ func (m *BotConversationManager) ignoreMultiUserNonMention(active *activeBotSess
 			log.Printf("[BOT_MANAGER] Failed to add ignore-reaction on %s: %v", active.SessionID, err)
 		}
 	}
+	return true
+}
+
+// ignoreOtherUserMention stays silent when a thread reply tags another
+// platform user but not the bot: the message is addressed to a colleague,
+// not to it. Unlike the multi-user guard above, this applies no matter how
+// few people are in the thread, and it leaves no reaction — even an ack
+// would be a visible act on someone else's conversation. Callers that may
+// hold an outstanding blocking prompt must route awaiting messages to
+// handleBlockingResponse first so an answer is never mistaken for chatter,
+// and control commands must be matched before this for the same reason.
+// active may be nil on paths without a live session (restore/fresh start).
+func (m *BotConversationManager) ignoreOtherUserMention(active *activeBotSession, msg BotIncomingMessage) bool {
+	if msg.IsMention || !msg.IsThreadReply || !msg.MentionsOtherUser {
+		return false
+	}
+	session := "none"
+	if active != nil {
+		session = active.SessionID
+	}
+	log.Printf("[BOT_MANAGER] Ignoring thread reply from %s (session %s): tags another user, not the bot", msg.UserID, session)
 	return true
 }
 

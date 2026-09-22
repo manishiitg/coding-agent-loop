@@ -26,8 +26,8 @@ import (
 const listTerminalContentMaxBytes = 64 * 1024
 const terminalTmuxActionTimeout = 5 * time.Second
 const terminalDefaultRefreshLines = 2000
-const terminalActiveDetailHistoryLines = 10000
-const terminalDefaultDetailHistoryLines = 10000
+const terminalActiveDetailHistoryLines = 1000
+const terminalDefaultDetailHistoryLines = 1000
 const terminalMaxCaptureLines = 20000
 const terminalMinResizeCols = 40
 const terminalMinResizeRows = 10
@@ -491,7 +491,16 @@ func (api *StreamingAPI) handleGetTerminal(w http.ResponseWriter, r *http.Reques
 		cancel()
 	}
 
-	response := api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	var response terminals.Snapshot
+	if isMetadataOnlyTerminalList(contentMode) {
+		response = compactTerminalSnapshotForList(
+			api.enrichTerminalSnapshotMetadata(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot),
+			contentMode,
+		)
+	} else {
+		response = api.enrichTerminalSnapshot(r.Context(), newTerminalPlanTypeResolver(r.Context()), snapshot)
+	}
 	if debugTerminal {
 		log.Printf("[TERMINAL_DEBUG] detail response source=%q terminal_id=%q active=%t state=%q chunk=%d content_lines=%d content_bytes=%d row_count=%d",
 			debugSource,
@@ -595,6 +604,9 @@ func (api *StreamingAPI) handleGetTerminalEvents(w http.ResponseWriter, r *http.
 
 func shouldCaptureTerminalPaneForDetail(snapshot terminals.Snapshot, r *http.Request) bool {
 	if strings.TrimSpace(snapshot.TmuxSession) == "" {
+		return false
+	}
+	if wantsMetadataTerminalContent(r) {
 		return false
 	}
 	if wantsStoredTerminalContent(r) {
@@ -1380,6 +1392,11 @@ func wantsDeepTerminalContent(r *http.Request) bool {
 func wantsStoredTerminalContent(r *http.Request) bool {
 	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
 	return contentMode == "stored"
+}
+
+func wantsMetadataTerminalContent(r *http.Request) bool {
+	contentMode := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("content")))
+	return contentMode == "none" || contentMode == "metadata"
 }
 
 func wantsHistoryTerminalContent(r *http.Request) bool {

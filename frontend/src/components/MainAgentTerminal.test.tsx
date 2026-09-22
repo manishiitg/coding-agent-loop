@@ -59,7 +59,53 @@ describe('MainAgentTerminal sizing', () => {
       expect(terminalGrid?.style.minWidth).toBe(`${MAIN_AGENT_TERMINAL_MIN_WIDTH_PX}px`)
       expect(MAIN_AGENT_TERMINAL_MIN_WIDTH_PX).toBe(680)
       expect(host.querySelector('[data-testid="live-terminal"]')).not.toBeNull()
-      expect(getMainTerminal).toHaveBeenCalledWith('session-1', { content: 'history', lines: 10000 })
+      expect(getMainTerminal).toHaveBeenCalledWith('session-1', { content: 'none' })
+    } finally {
+      await act(async () => root.unmount())
+      host.remove()
+    }
+  })
+
+  it('loads only 1,000 history lines once when the pane is already settled', async () => {
+    getMainTerminal
+      .mockResolvedValueOnce({
+        terminal_id: 'terminal-1',
+        session_id: 'session-1',
+        tmux_session: 'tmux-1',
+        content: '',
+        rows: [],
+        chunk_index: 2,
+        active: false,
+        state: 'completed',
+        status: {},
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:01:00Z',
+      })
+      .mockResolvedValueOnce({
+        terminal_id: 'terminal-1',
+        session_id: 'session-1',
+        tmux_session: 'tmux-1',
+        content: 'final output',
+        rows: [],
+        chunk_index: 2,
+        active: false,
+        state: 'completed',
+        status: {},
+        created_at: '2026-09-11T00:00:00Z',
+        updated_at: '2026-09-11T00:01:00Z',
+      })
+
+    const host = document.createElement('div')
+    document.body.append(host)
+    const root = createRoot(host)
+    try {
+      await act(async () => root.render(<MainAgentTerminal sessionId="session-1" />))
+      await act(async () => Promise.resolve())
+      await act(async () => Promise.resolve())
+
+      expect(getMainTerminal).toHaveBeenNthCalledWith(1, 'session-1', { content: 'none' })
+      expect(getMainTerminal).toHaveBeenNthCalledWith(2, 'session-1', { content: 'history', lines: 1000 })
+      expect(host.querySelector('[data-testid="static-terminal"]')).not.toBeNull()
     } finally {
       await act(async () => root.unmount())
       host.remove()

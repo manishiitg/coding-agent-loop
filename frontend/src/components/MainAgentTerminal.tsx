@@ -18,6 +18,7 @@ type MainAgentTerminalProps = {
 // padding. Narrow chat panes scroll the terminal horizontally instead of
 // repeatedly shrinking and reflowing the underlying tmux TUI.
 export const MAIN_AGENT_TERMINAL_MIN_WIDTH_PX = 680
+const MAIN_AGENT_TERMINAL_HISTORY_LINES = 1000
 
 // Product raw view for the one main coding-agent terminal. This intentionally
 // reuses the mature xterm renderer/live tmux attach rather than maintaining a
@@ -31,17 +32,45 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
   const [loading, setLoading] = useState(true)
   const contentRef = useRef<HTMLDivElement | null>(null)
   const requestInFlight = useRef(false)
+  const snapshotRef = useRef<TerminalSnapshot | null>(null)
+
+  useEffect(() => { snapshotRef.current = snapshot }, [snapshot])
 
   const refresh = useCallback(async () => {
     if (requestInFlight.current) return
     requestInFlight.current = true
     try {
-      // The live socket normally owns scrollback, but it can remain in the
-      // connecting/snapshot state (and alternate-screen CLIs often leave tmux
-      // with no capture-pane history). Seed that state from the bounded pipe
-      // history so the product Terminal view is scrollable while attaching.
-      const next = await agentApi.getMainTerminal(sessionId, { content: 'history', lines: 10000 })
-      setSnapshot(next)
+      // The WebSocket owns live output and its first frame already carries the
+      // tmux seed. Poll only metadata here: repeatedly downloading a growing
+      // full-history body made this 3s health check reach megabytes and could
+      // starve the socket/browser until Axios hit its 15s read timeout.
+      const metadata = await agentApi.getMainTerminal(sessionId, { content: 'none' })
+      const previous = snapshotRef.current
+      if (metadata.active && metadata.tmux_session) {
+        const next = {
+          ...metadata,
+          content: previous?.terminal_id === metadata.terminal_id && previous.tmux_session === metadata.tmux_session ? previous.content : '',
+          rows: previous?.terminal_id === metadata.terminal_id && previous.tmux_session === metadata.tmux_session ? previous.rows : [],
+        }
+        snapshotRef.current = next
+        setSnapshot(next)
+      } else {
+        // A settled pane has no stream to retain its output, so fetch its final
+        // history once instead of on every poll.
+        const needsFinalHistory = !previous ||
+          previous.terminal_id !== metadata.terminal_id ||
+          previous.active ||
+          !previous.content
+        if (needsFinalHistory) {
+          const settled = await agentApi.getMainTerminal(sessionId, { content: 'history', lines: MAIN_AGENT_TERMINAL_HISTORY_LINES })
+          snapshotRef.current = settled
+          setSnapshot(settled)
+        } else {
+          const next = { ...previous, ...metadata, content: previous.content, rows: previous.rows }
+          snapshotRef.current = next
+          setSnapshot(next)
+        }
+      }
       setError(null)
     } catch (cause: any) {
       if (cause?.response?.status === 404) {
@@ -58,6 +87,7 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
   }, [sessionId])
 
   useEffect(() => {
+    snapshotRef.current = null
     setSnapshot(null)
     setError(null)
     setLoading(true)
@@ -99,7 +129,7 @@ export function MainAgentTerminal({ sessionId, onUnavailable }: MainAgentTermina
             authoritativeVersion={`${snapshot.chunk_index}:${snapshot.updated_at}`}
             reconnectOnClose
             streamUrl={(cols, rows) => agentApi.getMainTerminalStreamUrl(sessionId, cols, rows, snapshot.tmux_session)}
-            loadSnapshot={() => agentApi.getMainTerminal(sessionId, { content: 'history', lines: 10000 })}
+            loadSnapshot={() => agentApi.getMainTerminal(sessionId, { content: 'history', lines: MAIN_AGENT_TERMINAL_HISTORY_LINES })}
           />
         ) : (
           <StaticXtermPane

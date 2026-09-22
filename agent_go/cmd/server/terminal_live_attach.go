@@ -78,7 +78,7 @@ const (
 	// toggle does not visibly truncate history, shallow enough that a seed
 	// stays well inside the transcript cap. Raising it costs a proportionally
 	// larger capture on EVERY connect, not just the first.
-	liveAttachBackfillHistoryLines = 10000
+	liveAttachBackfillHistoryLines = 1000
 	// A resize reply only confirms that tmux changed the pane geometry; the CLI
 	// still needs a brief event-loop turn to handle SIGWINCH and repaint. Seeding
 	// before that repaint captures the previous width and permanently replays

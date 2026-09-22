@@ -891,7 +891,7 @@ export const agentApi = {
   // coding-agent pane. It never enables terminal-rail enumeration.
   getMainTerminal: async (
     sessionId: string,
-    options?: { content?: 'stored' | 'screen' | 'history'; lines?: number },
+    options?: { content?: 'none' | 'stored' | 'screen' | 'history'; lines?: number },
   ): Promise<TerminalSnapshot> => {
     const params: Record<string, string | number> = {}
     if (options?.content && options.content !== 'stored') params.content = options.content

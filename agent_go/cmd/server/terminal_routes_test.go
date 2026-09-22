@@ -127,6 +127,43 @@ func TestGetMainTerminalReturnsOnlyMainAgentPane(t *testing.T) {
 	}
 }
 
+func TestGetMainTerminalMetadataOmitsContentAndTmuxCapture(t *testing.T) {
+	store := terminals.NewStore()
+	api := &StreamingAPI{terminalStore: store}
+	sessionID := "session-main-terminal-metadata"
+	main := terminalRouteChunkEvent(sessionID, "main:"+sessionID, "tmux-main", strings.Repeat("large output\n", 2000), 1)
+	main.ExecutionKind = "main_agent"
+	chunk := main.Data.Data.(*agentevents.StreamingChunkEvent)
+	chunk.Metadata["execution_kind"] = "main_agent"
+	chunk.Metadata["scope"] = "main_agent"
+	store.HandleEvent(sessionID, main)
+
+	original := runTerminalTmuxOutputCommand
+	defer func() { runTerminalTmuxOutputCommand = original }()
+	runTerminalTmuxOutputCommand = func(_ context.Context, args ...string) (string, error) {
+		t.Fatalf("metadata request unexpectedly ran tmux %s", strings.Join(args, " "))
+		return "", nil
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sessions/"+sessionID+"/main-terminal?content=none", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	rec := httptest.NewRecorder()
+	api.handleGetMainTerminal(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("main terminal metadata status = %d body=%s, want 200", rec.Code, rec.Body.String())
+	}
+	var response terminals.Snapshot
+	if err := json.NewDecoder(rec.Body).Decode(&response); err != nil {
+		t.Fatalf("decode main terminal metadata response: %v", err)
+	}
+	if response.Content != "" || len(response.Rows) != 0 {
+		t.Fatalf("metadata response carried terminal body: content=%d bytes rows=%d", len(response.Content), len(response.Rows))
+	}
+	if response.TmuxSession != "tmux-main" || !response.Active {
+		t.Fatalf("metadata lost live identity: tmux=%q active=%v", response.TmuxSession, response.Active)
+	}
+}
+
 func TestLatestOwnedCodingTmuxSessionSelectsNewestMatchingPane(t *testing.T) {
 	original := runTerminalTmuxOutputCommand
 	defer func() { runTerminalTmuxOutputCommand = original }()
@@ -1478,7 +1515,7 @@ func TestTerminalRoutesGetTerminalRecapturesCompletedActiveTmuxPane(t *testing.T
 	if rec.Code != http.StatusOK {
 		t.Fatalf("get status = %d body=%s, want 200", rec.Code, rec.Body.String())
 	}
-	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -10000" {
+	if got := strings.Join(gotArgs, " "); got != "capture-pane -p -e -J -t "+tmuxSession+" -S -1000" {
 		t.Fatalf("tmux args = %q, want completed-pane capture", got)
 	}
 	var response terminals.Snapshot

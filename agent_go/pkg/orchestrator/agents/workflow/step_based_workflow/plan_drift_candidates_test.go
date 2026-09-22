@@ -501,3 +501,19 @@ func TestCollectPlanDriftCandidatesPopulatesStepTypeForNestedRoutingStep(t *test
 		t.Fatalf("nested-router StepType = %q, want %q", nested.StepType, "routing")
 	}
 }
+
+// A missing plan.json must not fail the whole scan: candidacy derives from
+// the plan, so there is simply nothing to review -- nil candidates, nil
+// error (the tolerance half of the old step_config-derived behavior).
+func TestCollectPlanDriftCandidatesToleratesMissingPlanJSON(t *testing.T) {
+	stepConfig := `{"steps":[{"id":"step-b"}]}`
+	planDriftCandidateWorkspace(t, "Workflow/drift-candidates-no-plan", "", stepConfig)
+
+	got, err := CollectPlanDriftCandidates(context.Background(), "Workflow/drift-candidates-no-plan")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no candidates without plan.json, got %d", len(got))
+	}
+}

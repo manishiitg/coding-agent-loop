@@ -1,3 +1,15 @@
+## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
+
+[PLAT-351](pulse_platform/coding-agent-bridge/plat-351.md) fixes the false
+"running" global monitor: the retained-turn observer settled only on
+`CodingAgentPaneReady` pixels, which has no Muse case and returns false
+forever, so a quiet-but-finished Muse turn stayed busy indefinitely. After
+15s of stream quiet the observer now consults the provider durable sidecar
+(`retainedturn.FinalResponse`, at most every 5s) and settles on runner
+outcome; providers without a retained reader keep pane-only behavior, and a
+one-time 30m warning (never a forced settle) covers turns where neither
+signal fires. Implemented and pushed; live acceptance pending.
+
 ## Crew identity is role and purpose; fingerprint tracks it, not skills — PLAT-350
 
 [PLAT-350](pulse_platform/coding-agent-bridge/plat-350.md) makes Crew role and

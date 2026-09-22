@@ -85,6 +85,12 @@ confirm the failure is actually visible — otherwise a fix cannot be verified.
 |---|---|
 | [chrome_process_singleton_lock_survives_auto_recovery.md](chrome_process_singleton_lock_survives_auto_recovery.md) | A family's real SparkQuill session kept failing forever after one Chrome crash, even with only one daemon confirmed running. Chrome's own `SingletonLock`/`SingletonSocket`/`SingletonCookie` files survive an unclean exit; the existing dead-session auto-recovery path cleared agent-browser's own bookkeeping but never Chrome's lock files, and didn't even trigger for the `ProcessSingleton` error text in the first place. Fixed in `executor.go` + `browserconfig/launch.go`. **Code fixed, build clean, not yet deployed or verified against a real crash.** |
 
+## WhatsApp self-chat echo loop (2026-09-19)
+
+| Document | What it establishes |
+|---|---|
+| [whatsapp-self-chat-echo-loop.md](whatsapp-self-chat-echo-loop.md) | Right after pairing a WhatsApp "Message yourself" chat, the workflow chooser re-sent in a loop. Both user-typed and AgentWorks-sent self-chat messages arrive with `IsFromMe`, so the flag cannot be dropped wholesale — and the echo can arrive before the outbound ID is recorded, or mirrored under another ID, so it was dispatched as a new unrouted user message that generated another chooser. Fixed with short-lived SHA-256 expected-echo markers (30s expiry, counts for identical concurrent sends, failed sends cancel) plus message-ID dedup as a second guard. Also scopes WhatsApp routing to the paired account: saved slugs are destination pointers, not grants, and revoked/stale routes are hidden or cleared against the live manifest. |
+
 ## Earlier incidents
 
 - [voice_dictation_mic_captures_silence.md](voice_dictation_mic_captures_silence.md) — **OPEN**, environment-level, not yet root-caused. A dev machine's mic reads real silence through every app (not just this one) despite a correctly-granted, unmuted device; the STT pipeline itself was independently proven correct via a raw WAV file and a synthetic-tone browser test.

@@ -4,10 +4,41 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	unifiedevents "github.com/manishiitg/mcpagent/events"
 )
+
+func TestRetainedDeliveryPrecedesTurnQueueOnlyForHumanInput(t *testing.T) {
+	if liveCodingAgentDeliveryTimeout <= 300*time.Second {
+		t.Fatal("live delivery must outlast the maximum provider durable-ack budget")
+	}
+	tests := []struct {
+		name string
+		req  QueryRequest
+		ctx  context.Context
+		want bool
+	}{
+		{"ordinary chat", QueryRequest{AgentMode: "multi-agent"}, context.Background(), true},
+		{"workflow chat", QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "manual"}, context.Background(), true},
+		{"synthetic notification", QueryRequest{AgentMode: "multi-agent", IsAutoNotification: true}, context.Background(), false},
+		{"scheduled turn", QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "cron"}, context.Background(), false},
+		{"pulse with manual trigger", QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "manual", PulseLifecycleTurn: true}, context.Background(), false},
+		{"bot turn", QueryRequest{AgentMode: "multi-agent", TriggeredBy: "bot:slack", BotPlatform: "slack"}, context.Background(), false},
+		{"token caller without trigger", QueryRequest{AgentMode: "multi-agent"}, context.WithValue(context.Background(), UserContextKey, &UserClaims{AccessToken: &accesstokens.Token{ID: "token-1"}}), false},
+		{"explicit next turn", QueryRequest{AgentMode: "multi-agent", DisableLiveInputDelivery: true}, context.Background(), false},
+		{"claimed queue worker", QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "manual"}, withConversationTurnQueueExecution(context.Background()), false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := shouldTryRetainedDeliveryBeforeQueue(test.ctx, test.req, "session-1"); got != test.want {
+				t.Fatalf("prefer retained delivery=%v, want %v", got, test.want)
+			}
+		})
+	}
+}
 
 func newConversationTurnQueueTestAPI(files map[string]string) *StreamingAPI {
 	return &StreamingAPI{

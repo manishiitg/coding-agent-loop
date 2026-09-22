@@ -1408,6 +1408,40 @@ func shouldSerializeInteractiveQueryInput(req QueryRequest) bool {
 	return mode == "workflow_phase" || isToolBackedChatMode(mode)
 }
 
+// Only a person's fresh chat submission may bypass the next-turn queue to
+// steer a retained CLI. A claimed queue item must execute as its own turn, and
+// bot/scheduled/Pulse/token/synthetic producers retain their turn boundaries.
+func shouldTryRetainedDeliveryBeforeQueue(ctx context.Context, req QueryRequest, sessionID string) bool {
+	trigger := strings.ToLower(strings.TrimSpace(req.TriggeredBy))
+	claims := GetUserFromContext(ctx)
+	return !conversationTurnQueueExecution(ctx) && !req.DisableLiveInputDelivery &&
+		!req.IsAutoNotification && !req.PulseLifecycleTurn &&
+		(claims == nil || claims.AccessToken == nil) &&
+		!isScheduledSessionIdentity(sessionID, req.TriggeredBy) &&
+		strings.TrimSpace(req.BotPlatform) == "" && !strings.HasPrefix(trigger, "bot:") &&
+		(trigger == "" || trigger == "manual" || trigger == "interactive" || trigger == "workflow_builder")
+}
+
+func (api *StreamingAPI) queueOccupiedConversationTurn(w http.ResponseWriter, r *http.Request, userID, sessionID string, req QueryRequest) bool {
+	if !shouldUseDurableConversationTurnQueue(req) || conversationTurnQueueExecution(r.Context()) ||
+		!api.conversationTurnOccupied(sessionID) {
+		return false
+	}
+	turn, position, err := api.enqueueConversationTurn(r.Context(), userID, sessionID, req)
+	if err != nil {
+		http.Error(w, "Cannot durably queue conversation turn: "+err.Error(), http.StatusServiceUnavailable)
+		return true
+	}
+	api.recordQueuedConversationUserMessage(sessionID, turn)
+	api.kickConversationTurnQueue(sessionID)
+	_ = json.NewEncoder(w).Encode(QueryResponse{
+		QueryID: turn.ID, SessionID: sessionID, Status: "accepted",
+		Message:        "Queued behind the active conversation turn",
+		DeliveryStatus: "queued_for_turn", MessageID: turn.ID, QueuePosition: position,
+	})
+	return true
+}
+
 type sessionInputLane struct {
 	sem  chan struct{} // capacity 1: a waiter holds the token while its turn owns the lane
 	refs int
@@ -1566,7 +1600,10 @@ type ControlKeyResponse struct {
 	Key      string `json:"key,omitempty"`
 }
 
-const liveCodingAgentInputTimeout = 15 * time.Second
+const (
+	liveCodingAgentInputTimeout    = 15 * time.Second
+	liveCodingAgentDeliveryTimeout = 6 * time.Minute // adapter durable-ack budgets can reach 300s after a pane miss
+)
 
 // HumanFeedbackRequest represents a request to submit human feedback
 type HumanFeedbackRequest struct {
@@ -3701,26 +3738,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 		defer finishSubmission()
 	}
-
-	// Every external producer crosses the same durable turn boundary. A queue
-	// worker carries a private context marker because its entry was already
-	// claimed. Server-owned schedule/trigger/bot callers use the same boundary
-	// in startSessionInternalWithResult and wait for the queued result.
-	if shouldUseDurableConversationTurnQueue(req) &&
-		!conversationTurnQueueExecution(r.Context()) &&
-		api.conversationTurnOccupied(sessionID) {
-		turn, position, queueErr := api.enqueueConversationTurn(r.Context(), currentUserID, sessionID, req)
-		if queueErr != nil {
-			http.Error(w, "Cannot durably queue conversation turn: "+queueErr.Error(), http.StatusServiceUnavailable)
-			return
-		}
-		api.recordQueuedConversationUserMessage(sessionID, turn)
-		api.kickConversationTurnQueue(sessionID)
-		_ = json.NewEncoder(w).Encode(QueryResponse{
-			QueryID: turn.ID, SessionID: sessionID, Status: "accepted",
-			Message:        "Queued behind the active conversation turn",
-			DeliveryStatus: "queued_for_turn", MessageID: turn.ID, QueuePosition: position,
-		})
+	preferRetainedDelivery := shouldTryRetainedDeliveryBeforeQueue(r.Context(), req, sessionID)
+	if !preferRetainedDelivery && api.queueOccupiedConversationTurn(w, r, currentUserID, sessionID, req) {
 		return
 	}
 
@@ -3750,13 +3769,21 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	// and a runtime rebind closes the retained CLI before this handler runs,
 	// so a stale target surfaces as "no live target" below and starts a
 	// normal new turn instead of hanging behind one.
-	retainedDeliveryEligible := !req.DisableLiveInputDelivery && !req.IsAutoNotification && !isScheduledSessionIdentity(sessionID, req.TriggeredBy) && retainedProfileCompatible
+	retainedDeliveryEligible := preferRetainedDelivery && retainedProfileCompatible
 	retainedWorkflowCompatible, policyErr := api.prepareWorkflowRetainedDelivery(r.Context(), sessionID, req, retainedDeliveryEligible)
 	if policyErr != nil {
 		http.Error(w, policyErr.Error(), http.StatusForbidden)
 		return
 	}
 	if retainedWorkflowCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+		return
+	}
+
+	// A human message gets one attempt at a compatible retained CLI before it
+	// becomes a new turn. If no target exists, this persisted queue owns the
+	// message; an uncertain send above never falls through and double-dispatches.
+	// Claimed queue workers and non-human producers skip retained delivery.
+	if preferRetainedDelivery && api.queueOccupiedConversationTurn(w, r, currentUserID, sessionID, req) {
 		return
 	}
 
@@ -9418,7 +9445,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 			// Continue through cold-terminal compatibility and then the normal
 			// new-turn path. No send was attempted, so delivery is not uncertain.
 		} else {
-			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 			delivery, err := retainedSession.Send(sessionInputCtx, message)
 			sessionInputCancel()
 			if err != nil {
@@ -9457,7 +9484,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		// previous server process can outlive the in-memory Session registry. It
 		// also recovers a stale/closed warm Session without paying for full Agent
 		// reconstruction, preserving PLAT-102's latency guarantee.
-		fallbackCtx, fallbackCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+		fallbackCtx, fallbackCancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 		retainedProvider, handled, err := api.deliverRetainedMainTerminalInput(fallbackCtx, sessionID, message)
 		fallbackCancel()
 		if handled {
@@ -9490,7 +9517,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		return false
 	}
 
-	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 	defer cancel()
 	delivery, err := api.deliverRunningAgentUserMessage(inputCtx, runningAgent, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,
@@ -9670,7 +9697,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 			// Continue through cold-terminal compatibility and then start the
 			// resumed turn. No provider delivery was attempted.
 		} else {
-			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+			sessionInputCtx, sessionInputCancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 			delivery, err := retainedSession.Send(sessionInputCtx, req.Message)
 			sessionInputCancel()
 			if err != nil {
@@ -9693,7 +9720,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 	}
 	if tryColdRetainedFallback {
 		// Same cold-restart/stale-session compatibility as /api/query above.
-		fallbackCtx, fallbackCancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+		fallbackCtx, fallbackCancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 		retainedProvider, handled, err := api.deliverRetainedMainTerminalInput(fallbackCtx, sessionID, req.Message)
 		fallbackCancel()
 		if handled {
@@ -9760,7 +9787,7 @@ func (api *StreamingAPI) handleLiveInputMessage(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentInputTimeout)
+	inputCtx, cancel := context.WithTimeout(r.Context(), liveCodingAgentDeliveryTimeout)
 	defer cancel()
 	delivery, err := api.deliverRunningAgentUserMessage(inputCtx, runningAgent, mcpagent.UserMessageDeliveryRequest{
 		SessionID: sessionID,

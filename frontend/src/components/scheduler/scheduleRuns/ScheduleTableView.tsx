@@ -62,11 +62,11 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                   <div className="mt-0.5 truncate text-xs text-muted-foreground" title={workflow}>{workflow}</div>
                 </td>
                 <td className="max-w-56 px-3 py-3 text-xs text-muted-foreground"><span className="line-clamp-2" title={frequency}>{frequency}</span></td>
-                <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-primary' : job.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/50'}`} />{state}</span></td>
+                <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground"><span className="inline-flex items-center gap-1.5"><span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-warning' : job.enabled ? 'bg-success' : 'bg-muted-foreground/50'}`} />{state}</span></td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs">{!job.enabled ? '—' : panel.isSchedulerPaused ? <span className="text-muted-foreground">Paused globally</span> : isWebhook ? 'On request' : formatLocalScheduleTime(job.next_run_at)}</td>
                 <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground" title={formatExactDateTime(job.last_run_at)}>{formatLastRunLabel(job.last_run_at)}</td>
                 <td className="px-4 py-3"><div className="flex items-center justify-end gap-2">
-                  {isRunning && !panel.isReadOnlyUser && <button type="button" onClick={() => panel.handleStopRun(job)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-red-500 hover:bg-red-500/10"><Square className="h-3 w-3" />Stop</button>}
+                  {isRunning && !panel.isReadOnlyUser && <button type="button" onClick={() => panel.handleStopRun(job)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10"><Square className="h-3 w-3" />Stop</button>}
                   <button type="button" aria-label={`${open ? 'Hide' : 'Show'} ${name} details`} aria-expanded={open} aria-controls={open ? detailsId : undefined} onClick={toggle} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
                 </div></td>
               </tr>

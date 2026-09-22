@@ -37,7 +37,7 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
           <button
             type="button"
             onClick={() => handleStopRun(job)}
-            className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2 py-1 text-xs font-medium text-red-600 transition-colors hover:bg-red-100 dark:border-red-800 dark:bg-red-900/30 dark:text-red-400 dark:hover:bg-red-900/50"
+            className="inline-flex items-center gap-1 rounded-md border border-destructive/30 bg-destructive/10 px-2 py-1 text-xs font-medium text-destructive transition-colors hover:bg-destructive/20"
           >
             <Square className="h-3 w-3" />
             Stop
@@ -49,8 +49,8 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
             disabled={triggering === job.id}
             className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40 ${
               isMissedJob
-                ? 'border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 dark:border-amber-800 dark:bg-amber-900/30 dark:text-amber-300 dark:hover:bg-amber-900/50'
-                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-green-600'
+                ? 'border-warning/30 bg-warning/10 text-warning hover:bg-warning/20'
+                : 'border-border bg-background text-muted-foreground hover:bg-muted hover:text-success'
             }`}
           >
             <Play className="h-3 w-3" />
@@ -61,7 +61,7 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
         <button
           type="button"
           onClick={() => handleToggle(job)}
-          className="inline-flex items-center gap-1 rounded-md border border-green-200 bg-green-50 px-2 py-1 text-xs font-medium text-green-600 transition-colors hover:bg-green-100 dark:border-green-800 dark:bg-green-900/30 dark:text-green-400 dark:hover:bg-green-900/50"
+          className="inline-flex items-center gap-1 rounded-md border border-success/30 bg-success/10 px-2 py-1 text-xs font-medium text-success transition-colors hover:bg-success/20"
         >
           <Play className="h-3 w-3" />
           Resume
@@ -103,7 +103,7 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
               type="button"
               role="menuitem"
               onClick={() => { setOpenActionMenuJobId(null); handleDelete(job) }}
-              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-red-600 hover:bg-red-500/10 dark:text-red-400"
+              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-destructive hover:bg-destructive/10"
             >
               <Trash2 className="h-3.5 w-3.5" /> Delete schedule
             </button>

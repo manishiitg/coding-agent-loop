@@ -20,6 +20,7 @@ import { useWorkspaceStore } from '../stores/useWorkspaceStore'
 import { useWorkflowManifestStore } from '../stores/useWorkflowManifestStore'
 import { dedupeServerNames } from '../utils/mcpServerAlias'
 import { GlobalActivityMonitor } from './GlobalActivityMonitor'
+import { useGlobalSchedulerPaused } from '../hooks/useGlobalSchedulerPaused'
 import WorkflowWalkthrough from './workflow/WorkflowWalkthrough'
 import { ProductSurfaceSwitcher } from './ProductSurfaceSwitcher'
 import WorkspaceTopBarControls from './WorkspaceTopBarControls'
@@ -92,6 +93,7 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
   })))
   const isReadOnlyUser = useAuthStore(state => isWorkflowReadOnly(state.user, state.isMultiUserMode))
   const canCreateWorkflows = useAuthStore(state => hasWorkflowCreateAccess(state.user, state.isMultiUserMode))
+  const schedulerPaused = useGlobalSchedulerPaused()
   // Use toolList to get all available servers, not just enabled ones
   const toolList = useMCPStore(state => state.toolList)
   const availableServers = React.useMemo(() =>
@@ -731,16 +733,19 @@ export const ModePresetBar: React.FC<ModePresetBarProps> = ({ productControl, re
                       setShowSchedulesOverview(true)
                     }}
                     data-tour="global-schedules"
-                    aria-label="Schedules"
+                    aria-label={schedulerPaused ? 'Schedules (all paused)' : 'Schedules'}
                     aria-pressed={showSchedulesOverview && !showProviders && !showWorkflowsOverview}
-                    className={`rounded-md p-1.5 transition-colors ${showSchedulesOverview && !showProviders && !showWorkflowsOverview
+                    className={`relative rounded-md p-1.5 transition-colors ${showSchedulesOverview && !showProviders && !showWorkflowsOverview
                       ? 'bg-primary/10 text-primary'
                       : 'text-muted-foreground hover:bg-muted hover:text-foreground'}`}
                   >
                     <CalendarClock className="h-4 w-4" />
+                    {schedulerPaused === true && (
+                      <span aria-hidden className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-warning ring-1 ring-background" />
+                    )}
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">Schedules</TooltipContent>
+                <TooltipContent side="bottom">{schedulerPaused ? 'Schedules (all paused)' : 'Schedules'}</TooltipContent>
               </Tooltip>}
 
               <span className="mx-0.5 h-5 w-px bg-gray-200 dark:bg-gray-700" />

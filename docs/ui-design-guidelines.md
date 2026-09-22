@@ -148,10 +148,14 @@ Build every form from the kit (`frontend/src/components/ui/`):
   `Switch`/`ToggleRow`, `SecretField`, `Badge`, `ConfirmationDialog`.
 - Surfaces and text use theme tokens only: `border-border`, `bg-card`,
   `bg-muted`, `text-foreground`, `text-muted-foreground`, `text-primary`,
-  `text-destructive`, `hover:bg-muted`. No hardcoded gray/amber/red/blue
-  palettes — the one exception is a documented semantic state color
-  (e.g. the amber bot-enabled toggle, whose meaning is spelled out in
-  the adjacent copy).
+  `hover:bg-muted`. Status states use the semantic tokens — `warning`
+  (needs attention: running, missed, partly paused), `info` (waiting),
+  `success` (enabled, healthy), `destructive` (errors) — with alpha
+  modifiers for tints (e.g. `border-warning/30 bg-warning/10
+  text-warning`, paralleling the destructive banner). No hardcoded
+  gray/amber/red/blue/green/purple palettes — the one exception is a
+  documented semantic state color (e.g. the amber bot-enabled toggle,
+  whose meaning is spelled out in the adjacent copy).
 - Native elements stay only where the kit has no equivalent and the
   adoption test records the exception: radios and single selects.
 

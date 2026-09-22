@@ -321,7 +321,6 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
               emptyText="No earlier chats for this Crew member."
               recentOnly
               includeAutomationChats
-              readOnly
               allowOpen
               openOnRowClick
               runEntityType="product"

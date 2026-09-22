@@ -38,6 +38,80 @@ pending server↔chat e2e must now include rapid identical and distinct sends,
 assert immediate pending-row visibility, FIFO provider delivery, no premature
 single tick, and one distinct durable confirmation per accepted send.
 
+### Muse initial-turn false failure (2026-09-22)
+
+The workflow builder received the same auto-notification repeatedly while its
+Muse adapter reported `muse TUI never took in the prompt after submit`. The
+native `session.jsonl` actually contained `runtime.user_intent.accepted` for
+the exact text at 09:33:28 IST, after the 09:33:16 turn began. The discovery
+anchor cut the prompt at 120 **bytes**, splitting the UTF-8 em dash in
+`completed — status`; JSON matching could never find that invalid fragment.
+Blind Enter retries during the 60-second intake wait then risked duplicate
+submissions. This was a false delivery error, not a failed Muse model turn.
+
+The Muse initial-turn correction is in `multi-llm-provider-go`:
+
+* A pane submit failure is provisional. The turn checks native intake before
+  reporting a delivery error; durable intake overrides a pane mismatch.
+* The intake wait is observe-only. Neither it nor the fast submitter repeats
+  Enter after an uncertain submit. A missing durable record at the budget
+  boundary remains an *unconfirmed delivery* error, not proof tmux lost bytes.
+* Discovery uses a valid UTF-8 prefix and a new timestamped
+  `runtime.user_intent.accepted` record containing that text. A file mtime,
+  old identical prompt, assistant echo, or nested subagent log cannot confirm
+  the new send.
+
+This initial-turn intake check is distinct from the live-input receipt watcher
+below. The live path still uses the pane for a fast single tick and the native
+log for the durable double tick; its pane-failure arbiter was already
+observe-only. The live watcher now requires an exact
+`runtime.user_intent.accepted` text match above the send's pre-submit sequence:
+an assistant echo or the paired queue event cannot masquerade as another
+accepted send. The invariant for both paths is that pane string matching alone
+must never decide a user-visible *delivery failure* once submission may have
+occurred. Focused SDK regressions are green. Broad local runs had unrelated
+CLI/environment-sensitive failures (Pi wedged-process PID fixture, Claude
+paste-chip settle, Muse MCP-mount probe, and a Muse resume session dying before
+prompt readiness). The Muse resume test passed when rerun alone. This change
+has not yet been re-certified against a live Muse workflow run.
+
+### Cross-provider submit-error audit (2026-09-22)
+
+The same P0 rule now covers initial turns in Codex, Pi, Claude Code, Cursor,
+and Muse. Each adapter snapshots its provider-specific pre-send boundary and,
+when its fast pane submit check errors, waits **observe-only** for a new
+provider-owned user-acceptance record before returning that error. A matching
+rollout user row (Codex), `message_end` user marker (Pi), transcript user row
+(Claude), `user_query` store row (Cursor), or `user_intent.accepted` row
+(Muse) overrides the pane error. No match by the provider's budget means
+*delivery unconfirmed*, not proof that tmux dropped the bytes. Pi's retained
+new-turn path receives the same fallback.
+
+Claude and Cursor live-input sends also now invoke their existing durable
+watchers when the fast send returns an error; Codex, Pi, and Muse already had
+live-input arbiters. Provider-specific regression tests cover a pane error
+with an accepted durable record. Existing automatic Enter-recovery behavior
+in the non-Muse adapters remains separate from this error-arbitration change:
+its draft-only safety and duplicate risk still need live review before calling
+the full transport policy re-certified. The changes are local and have not
+yet passed live provider/server↔chat re-certification.
+
+After the 2026-09-22 main pull, `/api/query` owns steer-vs-next-turn routing.
+Human submissions now attempt a compatible retained tmux CLI once *before*
+the occupied-turn queue. A known missing target falls through to the durable
+next-turn queue; an uncertain send never falls through and risks a duplicate.
+Claimed queue workers, bot/scheduled/Pulse turns, personal-access-token API
+callers, explicit new turns, and synthetic notifications do not take this
+steer-first path. The server's live-delivery
+deadline is six minutes, beyond the adapters' maximum five-minute durable-ack
+budget, so its former 15-second cap no longer truncates the fallback. Request
+cancellation can still end an in-flight HTTP send. Chat's Axios transport has
+no request timeout (`timeout: 0` in the installed Axios defaults); the Go HTTP
+server has no write deadline and the checked-in Caddy configs have no explicit
+response timeout. Other deployed ingress/client disconnect behavior is not
+verified. A queued
+turn's `queued_for_turn` receipt is not a provider intake acknowledgment.
+
 ## Problem
 
 A tmux `send-keys` exit 0 only proves tmux accepted the keystroke. Every

@@ -14,7 +14,7 @@ vi.mock('../services/api', () => ({ agentApi: {
   listChatHistorySessions: vi.fn(),
   getChatHistoryConversation: vi.fn(),
 } }))
-vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn() } }))
+vi.mock('../api/scheduler', () => ({ schedulerApi: { listJobs: vi.fn(), getJobRuns: vi.fn(), cleanupJobRuns: vi.fn() } }))
 vi.mock('../api/workflowWebhooks', () => ({ workflowWebhooksApi: { getPayload: vi.fn() } }))
 vi.mock('../api/productWebhooks', () => ({ productWebhooksApi: { list: vi.fn(), runs: vi.fn() } }))
 vi.mock('../stores/useChatStore', () => {
@@ -75,7 +75,7 @@ async function select(host: HTMLElement, label: string) {
 }
 it('separates webhook and time-triggered runs and opens runs outside the chat-history page', async () => {
   const { host, onSelect } = await mount()
-  await select(host, 'Webhooks')
+  await select(host, 'Triggers')
   expect(host.textContent).toContain('PR reviews')
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   expect(host.textContent).toContain('pull_request')
@@ -93,14 +93,14 @@ it('separates webhook and time-triggered runs and opens runs outside the chat-hi
 it('keeps compact filters accessible and shows webhook setup guidance', async () => {
   vi.mocked(schedulerApi.listJobs).mockResolvedValue({ jobs: [cron], total: 1, limit: 100, offset: 0 })
   const { host } = await mount(true)
-  await select(host, 'Webhooks')
+  await select(host, 'Triggers')
   expect(host.textContent).toContain('workflow builder chat')
-  expect(host.querySelector('button[aria-label="Webhooks"]')?.getAttribute('aria-pressed')).toBe('true')
+  expect(host.querySelector('button[aria-label="Triggers"]')?.getAttribute('aria-pressed')).toBe('true')
 })
 it('refreshes the visible feed when a webhook finishes', async () => {
   vi.useFakeTimers()
   const { host } = await mount()
-  await select(host, 'Webhooks')
+  await select(host, 'Triggers')
   expect(host.textContent).toContain('Running')
   vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({ runs: id === hook.id ? [{ ...webhookRun, status: 'success' }] : [cronRun], total: 1, limit: 30, offset: 0 }))
   await act(async () => { await vi.advanceTimersByTimeAsync(10000) })
@@ -116,14 +116,14 @@ it('shows a read-only webhook delivery feed inside Triggers', async () => {
   expect(host.textContent).toContain('Delivery history')
   expect(host.textContent).toContain('PR reviews')
   expect(host.textContent).not.toContain('Daily audit')
-  expect(host.querySelector('button[aria-label="Webhooks"]')).toBeNull()
+  expect(host.querySelector('button[aria-label="Triggers"]')).toBeNull()
   expect(host.querySelector('button[aria-label="Schedules"]')).toBeNull()
   expect([...host.querySelectorAll('button')].some(button => button.textContent === 'Open')).toBe(false)
   expect(agentApi.listChatHistorySessions).not.toHaveBeenCalled()
   expect(schedulerApi.listJobs).toHaveBeenCalledWith({ entity_type: 'product', limit: 100 })
 })
 
-it('keeps historical Crew conversations read-only and expands them in place', async () => {
+it('keeps historical Crew conversations read-only with no inline actions', async () => {
   vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [{
     session_id: 'old-chat',
     title: 'Earlier project discussion',
@@ -149,7 +149,7 @@ it('keeps historical Crew conversations read-only and expands them in place', as
   expect(title).toBeDefined()
   await act(async () => title!.click())
   expect(onSelect).not.toHaveBeenCalled()
-  expect(agentApi.getChatHistoryConversation).toHaveBeenCalledWith('old-chat', 'Workflow/test', expect.any(Number))
+  expect(agentApi.getChatHistoryConversation).not.toHaveBeenCalled()
 })
 
 it('can open read-only Crew history in a separate tab without exposing management actions', async () => {
@@ -178,7 +178,7 @@ it('can open read-only Crew history in a separate tab without exposing managemen
   expect(agentApi.getChatHistoryConversation).not.toHaveBeenCalled()
 })
 
-it('identifies trigger, schedule, and bot origins in the Crew chat index', async () => {
+it('identifies trigger, schedule, and bot origins across the Crew chat filters', async () => {
   vi.mocked(agentApi.listChatHistorySessions).mockResolvedValue({ sessions: [
     { session_id: 'trigger-session', title: 'Triggered review', created_at: '2026-09-19T10:00:00Z' },
     { session_id: 'schedule-session', title: 'Scheduled review', created_at: '2026-09-19T09:00:00Z' },
@@ -207,12 +207,18 @@ it('identifies trigger, schedule, and bot origins in the Crew chat index', async
   />))
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
 
+  expect(host.textContent).toContain('Triggered review')
   expect(host.textContent).toContain('Trigger · PR opened')
-  expect(host.textContent).toContain('Schedule · Daily audit')
+  expect(host.textContent).not.toContain('Scheduled review')
+  expect(host.textContent).not.toContain('Slack question')
+  await select(host, 'Bots')
+  expect(host.textContent).toContain('Slack question')
   expect(host.textContent).toContain('Bot · Slack')
+  await select(host, 'Schedules')
+  expect(host.textContent).toContain('Daily audit')
 })
 
-it('keeps workflow automation transcripts and labels every source in the unified Chats index', async () => {
+it('keeps workflow chats, bots, and schedule runs behind their Chats filters', async () => {
   vi.mocked(agentApi.listChatHistorySessions).mockImplementation(async (_limit, _offset, _workspacePath, kind) => ({
     sessions: kind === 'chat' ? [{
       session_id: 'builder-chat',
@@ -251,12 +257,14 @@ it('keeps workflow automation transcripts and labels every source in the unified
 
   expect(agentApi.listChatHistorySessions).toHaveBeenCalledWith(expect.any(Number), 0, 'Workflow/test')
   expect(agentApi.listChatHistorySessions).toHaveBeenCalledWith(expect.any(Number), 0, 'Workflow/test', 'chat')
-  expect(host.textContent).toContain('Latest scheduled conversation')
   expect(host.textContent).toContain('Builder discussion')
-  expect(host.textContent).toContain('Schedule')
-  expect(host.textContent).toContain('Trigger')
-  expect(host.textContent).toContain('Bot · Slack')
   expect(host.textContent).toContain('Chat · Local user')
+  expect(host.textContent).not.toContain('Latest bot conversation')
+  await select(host, 'Bots')
+  expect(host.textContent).toContain('Latest bot conversation')
+  expect(host.textContent).toContain('Bot · Slack')
+  await select(host, 'Schedules')
+  expect(host.textContent).toContain('Daily audit')
 })
 
 it('identifies the open persistent chat even before it appears in history', async () => {
@@ -299,7 +307,7 @@ it('shows every fetched Workshop chat without a load-more control', async () => 
 
 it('loads and formats the webhook body when delivery details are opened', async () => {
   const { host } = await mount()
-  await select(host, 'Webhooks')
+  await select(host, 'Triggers')
   await act(async () => host.querySelector<HTMLButtonElement>('button[aria-expanded="false"]')!.click())
   const details = host.querySelector('details')!
   await act(async () => {
@@ -321,6 +329,39 @@ it('right-aligns header controls when the hub owns the title', async () => {
   const header = host.querySelector('.chat-history-panel > div > div')
   expect(header?.className).toContain('justify-end')
   expect(header?.className).not.toContain('justify-start')
+})
+
+it('offers run cleanup in the delivery-history feed', async () => {
+  vi.mocked(schedulerApi.getJobRuns).mockImplementation(async id => ({
+    runs: id === hook.id ? [{ ...webhookRun, status: 'success' }] : [],
+    total: id === hook.id ? 1 : 0, limit: 30, offset: 0,
+  }))
+  vi.mocked(schedulerApi.cleanupJobRuns).mockResolvedValue({ deleted_count: 1, workspace_path: 'Workflow/test' })
+  const host = document.createElement('div'); document.body.append(host)
+  const root = createRoot(host)
+  await act(async () => root.render(
+    <PreviousChatHistoryPanel
+      workspacePath="Workflow/test"
+      title="Delivery history"
+      runOnly="webhook"
+      runEntityType="workflow"
+      readOnly
+      allowOpen
+      showAll
+      onSelectSession={vi.fn()}
+    />,
+  ))
+  cleanups.push(() => { act(() => root.unmount()); host.remove() })
+  const dropdown = host.querySelector<HTMLButtonElement>('button[title="Delete old runs"]')
+  expect(dropdown).not.toBeNull()
+  await act(async () => dropdown!.click())
+  const option = [...host.querySelectorAll('button')].find(button => button.textContent?.includes('Delete >3d'))!
+  await act(async () => option.click())
+  expect(document.body.textContent).toContain('Delete 1 trigger run record older than 3 days?')
+  const confirm = [...document.body.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Delete runs')!
+  await act(async () => confirm.click())
+  await act(async () => { await Promise.resolve() })
+  expect(schedulerApi.cleanupJobRuns).toHaveBeenCalledWith({ workspace_path: 'Workflow/test', older_than_days: 3, schedule_ids: 'hook' })
 })
 
 it('reloads history when the hub bumps its refresh token', async () => {

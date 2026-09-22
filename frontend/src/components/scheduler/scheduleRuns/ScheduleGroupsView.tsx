@@ -50,25 +50,25 @@ export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel })
               const stateLabel = isRunning ? 'Running' : fullyPaused ? 'Paused' : partlyPaused ? 'Partly paused' : 'Enabled'
               return (
                 <tr key={group.key} className="transition-colors hover:bg-muted/20">
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-4">
                     <button type="button" onClick={() => openWorkflowSchedules(group.key)} className="block max-w-[320px] truncate text-left font-medium text-foreground hover:text-primary hover:underline" title={group.label}>
                       {group.label}
                     </button>
                     <div className="mt-0.5 text-xs text-muted-foreground">{group.jobs.length} schedule{group.jobs.length === 1 ? '' : 's'}</div>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-3">
+                  <td className="whitespace-nowrap px-3 py-4">
                     <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-amber-500' : fullyPaused ? 'bg-muted-foreground/50' : partlyPaused ? 'bg-amber-500' : 'bg-emerald-500'}`} />
+                      <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-warning' : fullyPaused ? 'bg-muted-foreground/50' : partlyPaused ? 'bg-warning' : 'bg-success'}`} />
                       {stateLabel}
                     </span>
                   </td>
-                  <td className="whitespace-nowrap px-3 py-3 text-xs text-foreground">
+                  <td className="whitespace-nowrap px-3 py-4 text-xs text-foreground">
                     {fullyPaused || isSchedulerPaused ? <span className="text-muted-foreground">{isSchedulerPaused && !fullyPaused ? 'Paused globally' : '—'}</span> : formatLocalScheduleTime(group.nextRunAt)}
                   </td>
-                  <td className="whitespace-nowrap px-3 py-3 text-xs text-muted-foreground" title={formatExactDateTime(group.lastRunAt)}>
+                  <td className="whitespace-nowrap px-3 py-4 text-xs text-muted-foreground" title={formatExactDateTime(group.lastRunAt)}>
                     {formatLastRunLabel(group.lastRunAt)}
                   </td>
-                  <td className="px-4 py-3">
+                  <td className="px-4 py-4">
                     <div className="flex items-center justify-end gap-3">
                       {!isReadOnlyUser && <button
                         type="button"

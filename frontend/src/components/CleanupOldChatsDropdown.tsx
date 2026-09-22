@@ -11,6 +11,7 @@ interface CleanupOldChatsDropdownProps {
   isLoading: boolean
   onSelect: (days: ChatHistoryCleanupAgeDays) => void
   label?: string
+  title?: string
   className?: string
 }
 
@@ -19,6 +20,7 @@ export const CleanupOldChatsDropdown: React.FC<CleanupOldChatsDropdownProps> = (
   isLoading,
   onSelect,
   label = 'Delete old',
+  title = 'Delete old chats',
   className = '',
 }) => {
   const [isOpen, setIsOpen] = useState(false)
@@ -66,7 +68,7 @@ export const CleanupOldChatsDropdown: React.FC<CleanupOldChatsDropdownProps> = (
         className={`inline-flex h-7 shrink-0 items-center gap-1 rounded border border-border bg-background px-2 py-1 text-xs font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground disabled:cursor-not-allowed disabled:opacity-50 ${className}`}
         aria-haspopup="menu"
         aria-expanded={isOpen}
-        title="Delete old chats"
+        title={title}
       >
         {isLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
         <span>{label}</span>

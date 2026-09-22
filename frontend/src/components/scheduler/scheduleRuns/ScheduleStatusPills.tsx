@@ -35,7 +35,7 @@ export const ScheduleStatusPills: React.FC<{ status: ScheduleStatusSnapshot }> =
         </span>
       )}
       {!isWorkflowScoped && workflowScheduleSummary.running > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <span className="rounded-full border border-warning/30 bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
           {workflowScheduleSummary.running} running
         </span>
       )}
@@ -45,19 +45,19 @@ export const ScheduleStatusPills: React.FC<{ status: ScheduleStatusSnapshot }> =
         </span>
       )}
       {!isWorkflowScoped && workflowScheduleSummary.partlyPaused > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs text-amber-700 dark:text-amber-300">
+        <span className="rounded-full border border-warning/30 bg-warning/10 px-2.5 py-0.5 text-xs text-warning">
           {workflowScheduleSummary.partlyPaused} partly paused
         </span>
       )}
       {isWorkflowScoped && summary.running > 0 && (
-        <span className="rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-700 dark:text-amber-300">
+        <span className="rounded-full border border-warning/30 bg-warning/10 px-2.5 py-0.5 text-xs font-medium text-warning">
           {summary.running} running
         </span>
       )}
       {isWorkflowScoped && (
         <span className={`rounded-full border px-2.5 py-0.5 text-xs ${
           isSchedulerPaused
-            ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+            ? 'border-warning/30 bg-warning/10 text-warning'
             : 'border-border bg-background text-muted-foreground'
         }`}
         >

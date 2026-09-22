@@ -3795,6 +3795,9 @@ func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath 
 	}
 
 	if workspacePath != "" {
+		if _, workProject := ownedWorkProjectWorkspacePath(userID, workspacePath); workProject {
+			return deleteOldWorkProjectConversations(userID, workspacePath, cutoff, result)
+		}
 		if err := deleteOldWorkflowBuilderConversations(&result, workspacePath, cutoff); err != nil {
 			return result, err
 		}
@@ -3866,6 +3869,34 @@ func DeleteChatHistoryOlderThan(userID string, olderThanDays int, workspacePath 
 		if err := removeLocalChatHistoryIndexEntries(pathpkg.Join(root, chatHistoryIndexFileName), filepath.Join(baseDir, chatHistoryIndexFileName), "", result.DeletedPaths); err != nil {
 			return result, err
 		}
+	}
+	return result, nil
+}
+
+// deleteOldWorkProjectConversations bulk-deletes a Crew project's old,
+// non-empty transcripts. Work sessions live in two places — the project dir
+// and the user's central chat history — so it enumerates through the same
+// session list the UI shows and deletes each old session with
+// DeleteChatHistorySession, which already removes both copies.
+func deleteOldWorkProjectConversations(userID, workspacePath string, cutoff time.Time, result ChatHistoryCleanupResult) (ChatHistoryCleanupResult, error) {
+	sessions, err := listChatHistorySessions(userID, 0, 0, workspacePath, "")
+	if err != nil {
+		return result, err
+	}
+	for _, session := range sessions {
+		if session.MessageCount == 0 {
+			continue
+		}
+		updatedAt, err := time.Parse(time.RFC3339, session.UpdatedAt)
+		if err != nil || !updatedAt.Before(cutoff) {
+			continue
+		}
+		deleted, err := DeleteChatHistorySession(userID, session.SessionID, workspacePath)
+		if err != nil {
+			return result, err
+		}
+		result.DeletedCount += deleted.DeletedCount
+		result.DeletedPaths = append(result.DeletedPaths, deleted.DeletedPaths...)
 	}
 	return result, nil
 }

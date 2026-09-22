@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import { Loader2, PanelLeftOpen, PanelRightOpen, Plus, Sparkles, Trash2 } from 'lucide-react'
 import { useShallow } from 'zustand/react/shallow'
-import ChatArea, { type ChatAreaRef } from '../../components/ChatArea'
+import ChatArea from '../../components/ChatArea'
 import { GlobalHumanFeedbackPrompt } from '../../components/GlobalHumanFeedbackPrompt'
 import { ModePresetBar } from '../../components/ModePresetBar'
 import LlmModalHost from '../../components/topbar/LlmModalHost'
@@ -14,6 +14,7 @@ import { useModeStore } from '../../stores/useModeStore'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { hydrateTabEvents } from '../../utils/sessionRestore'
 import { activateTab } from '../../utils/activateTab'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION, loadWorkProductCommands } from './workData'
 import { isWorkIdentityComplete } from './workIdentity'
 import { setProductCommands } from '../../commands/registry'
@@ -610,7 +611,6 @@ export function WorkSurface() {
   const [workspaceViewRefresh, setWorkspaceViewRefresh] = useState(0)
   const [enabledWorkspacePanels, setEnabledWorkspacePanels] = useState<Set<string> | undefined>()
   const splitLayoutRef = useRef<HTMLDivElement>(null)
-  const chatAreaRef = useRef<ChatAreaRef>(null)
   const [splitRatio, setSplitRatioState] = useState(() => readWorkSplitRatio(selected?.id))
   const splitRatioRef = useRef(splitRatio)
   // All split classes derive from the shared layout resolver: one decision
@@ -945,7 +945,7 @@ export function WorkSurface() {
                         onClick={() => {
                           setPanelOpen(true)
                           selectWorkspaceView('identity')
-                          chatAreaRef.current?.submitQuery('Help me set up this Crew: ask me what it is for and what role you should take, then save both.').catch(cause => {
+                          sendWorkspacePaneMessageToChat({ profileId: 'work', conversationKey: selected.id, message: 'Help me set up this Crew: ask me what it is for and what role you should take, then save both.' }).catch(cause => {
                             useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not start the setup chat.', 'error')
                           })
                         }}
@@ -958,7 +958,6 @@ export function WorkSurface() {
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea
-                          ref={chatAreaRef}
                           tabId={tabId}
                           compact
                           landingContent={<WorkNewChatGuide />}

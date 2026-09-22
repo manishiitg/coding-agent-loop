@@ -163,6 +163,15 @@ https://your-server/api/external/v1/mcp?token=aw_pat_…
 - Direct integrations should send the token in the `Authorization: Bearer`
   header instead of the URL.
 
+The Connect tab's **Assistant skill** card downloads the same guidance as an
+uploadable skill zip (`GET /api/external/v1/skill.zip`, a SKILL.md following
+the Agent Skills layout ChatGPT, Claude, and Cowork accept) or copies its
+text (`GET /api/external/v1/skill.md`). Upload it via ChatGPT's Plugins →
+Skills → Create → Upload from your computer (eligible plans), or paste the
+text into Custom Instructions / the connector's Instructions field. The skill
+names the installation but carries no credential. Both endpoints accept the
+app session or a PAT.
+
 Tools, schemas, scopes, and per-request token validation are identical to the
 REST external API and the stdio bridge: every MCP tool call runs through the
 same dispatcher, read-only tokens see no run tools, and revoking the token

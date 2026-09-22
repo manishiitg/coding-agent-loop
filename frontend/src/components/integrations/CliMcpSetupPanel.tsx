@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
+import { Check, Copy, Download, FileText, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
-import { authApi, getApiBaseUrl } from '../../services/api'
+import { authApi, externalSkillApi, getApiBaseUrl } from '../../services/api'
 
 function CopyButton({ text, label }: { text: string; label: string }) {
   const [copied, setCopied] = useState(false)
@@ -85,6 +85,8 @@ export function CliMcpSetupPanel() {
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [skillBusy, setSkillBusy] = useState<'download' | 'copy' | null>(null)
+  const [skillMsg, setSkillMsg] = useState<string | null>(null)
   const server = getApiBaseUrl() || window.location.origin
 
   useEffect(() => {
@@ -170,6 +172,44 @@ export function CliMcpSetupPanel() {
     }
   }
 
+  const downloadSkill = async () => {
+    setSkillBusy('download')
+    setSkillMsg(null)
+    try {
+      const blob = await externalSkillApi.downloadSkillZIP()
+      const url = URL.createObjectURL(blob)
+      try {
+        const anchor = document.createElement('a')
+        anchor.href = url
+        anchor.download = 'agentworks-skill.zip'
+        document.body.appendChild(anchor)
+        anchor.click()
+        anchor.remove()
+      } finally {
+        URL.revokeObjectURL(url)
+      }
+      setSkillMsg('Downloaded agentworks-skill.zip')
+    } catch {
+      setSkillMsg('Download failed — try again.')
+    } finally {
+      setSkillBusy(null)
+    }
+  }
+
+  const copySkill = async () => {
+    setSkillBusy('copy')
+    setSkillMsg(null)
+    try {
+      await navigator.clipboard.writeText(await externalSkillApi.fetchSkillMD())
+      setSkillMsg('Skill text copied')
+      window.setTimeout(() => setSkillMsg((current) => (current === 'Skill text copied' ? null : current)), 2000)
+    } catch {
+      setSkillMsg('Copy failed — try again.')
+    } finally {
+      setSkillBusy(null)
+    }
+  }
+
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const origin = server.replace(/\/+$/, '')
   const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
@@ -248,6 +288,29 @@ export function CliMcpSetupPanel() {
             </p>
           </div>
         )}
+      </SettingsCard>
+      <SettingsCard
+        icon={<FileText className="h-4 w-4 text-primary" />}
+        title="Assistant skill"
+        description="Teach the hosted assistant your workflows: upload the skill where Skills are supported, or paste its text as custom instructions."
+        actions={
+          <div className="flex gap-2">
+            <Button variant="outline" size="sm" disabled={skillBusy !== null} onClick={() => void downloadSkill()}>
+              <Download className="mr-1 h-3.5 w-3.5" />{skillBusy === 'download' ? 'Downloading…' : 'Download .zip'}
+            </Button>
+            <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}>
+              <Copy className="mr-1 h-3.5 w-3.5" />{skillBusy === 'copy' ? 'Copying…' : 'Copy text'}
+            </Button>
+          </div>
+        }
+      >
+        {skillMsg && <p className="text-xs text-muted-foreground">{skillMsg}</p>}
+        <p className="text-xs text-muted-foreground">
+          ChatGPT (eligible plans): sidebar → Plugins → Skills → Create → Upload from your computer.
+          On plans without Skills, paste the text into Settings → Personalization → Custom Instructions.
+          Claude Cowork: upload as a skill, or paste into the connector&apos;s Instructions field.
+          The skill names this installation but carries no credential.
+        </p>
       </SettingsCard>
     </div>
   )

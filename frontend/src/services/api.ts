@@ -2713,6 +2713,15 @@ export interface CreateAccessTokenInput {
   expires_in_days: number
 }
 
+export const externalSkillApi = {
+  fetchSkillMD: async (): Promise<string> => {
+    return (await api.get('/api/external/v1/skill.md', { responseType: 'text' })).data
+  },
+  downloadSkillZIP: async (): Promise<Blob> => {
+    return (await api.get('/api/external/v1/skill.zip', { responseType: 'blob' })).data
+  },
+}
+
 export const authApi = {
   listAccessTokens: async (): Promise<{ tokens: PersonalAccessToken[] }> => {
     return (await api.get('/api/auth/access-tokens')).data

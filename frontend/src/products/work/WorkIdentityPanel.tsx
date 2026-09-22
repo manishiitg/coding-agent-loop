@@ -68,6 +68,10 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
 
   const save = async () => {
     if (!dirty || saving) return
+    if (!roleDraft.trim() || !instructionsDraft.trim()) {
+      setError('Role and instructions are both required.')
+      return
+    }
     setSaving(true)
     setError(null)
     try {
@@ -121,10 +125,10 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
       <SettingsCard
         icon={<Target aria-hidden="true" className="h-4 w-4 text-primary" />}
         title="Purpose"
-        description="A short role and working preferences keep the agent consistent across chats, schedules, and bots."
+        description="Role and instructions are required. They keep the agent consistent across chats, schedules, and bots."
       >
         <div>
-          <Label className="mb-2 block">Role</Label>
+          <Label className="mb-2 block">Role (required)</Label>
           <Input
             value={roleDraft}
             onChange={event => setRoleDraft(event.target.value)}
@@ -133,7 +137,7 @@ function WorkGeneralPanel({ projectTitle, projectIdentity, onUpdateIdentity, onD
           />
         </div>
         <div>
-          <Label className="mb-2 block">Instructions</Label>
+          <Label className="mb-2 block">Instructions (required)</Label>
           <Textarea
             value={instructionsDraft}
             onChange={event => setInstructionsDraft(event.target.value)}

@@ -282,18 +282,19 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 			Category: "work_identity",
 			Description: "Set, update, or clear this Crew project's agent identity when the user asks. " +
 				"A short name, icon, role, and instructions keep the agent consistent across project chats, schedules, bots, and background work; they change presentation and behavior, never permissions. " +
+				"Role and instructions are required: ask the user for both before the first save, and refuse to clear them. " +
 				"Store it in product.json, preserve omitted fields, and never invent an identity.",
 			Parameters: map[string]interface{}{
 				"type": "object",
 				"properties": map[string]interface{}{
 					"operation": map[string]interface{}{
 						"type": "string", "enum": []string{"set", "clear"},
-						"description": "Use set to create or update the identity, or clear to remove it.",
+						"description": "Use set to create or update the identity, or clear to remove its icon and name. Role and instructions are required and clear never removes them.",
 					},
 					"icon":         map[string]interface{}{"type": "string", "maxLength": workIdentityIconLimit, "description": "One emoji or short glyph. Omit to preserve; pass empty to remove."},
-					"name":         map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Short display name. Omit to preserve."},
-					"role":         map[string]interface{}{"type": "string", "maxLength": workIdentityRoleLimit, "description": "Short role or purpose. Omit to preserve."},
-					"instructions": map[string]interface{}{"type": "string", "maxLength": workIdentityInstructionsLimit, "description": "Brief behavior, tone, or working preferences. Omit to preserve."},
+					"name":         map[string]interface{}{"type": "string", "maxLength": workIdentityNameLimit, "description": "Short display name. Omit to preserve; pass empty to remove."},
+					"role":         map[string]interface{}{"type": "string", "maxLength": workIdentityRoleLimit, "description": "Required short role or purpose. Omit to preserve."},
+					"instructions": map[string]interface{}{"type": "string", "maxLength": workIdentityInstructionsLimit, "description": "Required brief behavior, tone, or working preferences. Omit to preserve."},
 				},
 				"required": []string{"operation"},
 			},
@@ -309,7 +310,20 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 				operation, _ := args["operation"].(string)
 				operation = strings.ToLower(strings.TrimSpace(operation))
 				if operation == "clear" {
-					delete(manifest, "identity")
+					// Role and instructions are required, so clear removes
+					// presentation only. A legacy identity without them is
+					// dropped entirely instead of lingering half-empty.
+					cleared := workIdentity{}
+					if current, ok := manifest["identity"]; ok {
+						encoded, _ := json.Marshal(current)
+						_ = json.Unmarshal(encoded, &cleared)
+						cleared = normalizeWorkIdentity(cleared)
+					}
+					if cleared.Role == "" && cleared.Instructions == "" {
+						delete(manifest, "identity")
+					} else {
+						manifest["identity"] = workIdentity{Role: cleared.Role, Instructions: cleared.Instructions}
+					}
 				} else if operation == "set" {
 					identity := workIdentity{}
 					if current, ok := manifest["identity"]; ok {
@@ -332,8 +346,8 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 					if validationError := validateWorkIdentity(identity); validationError != "" {
 						return validationError, nil
 					}
-					if renderWorkIdentity(identity) == "" {
-						return "At least one of icon, name, role, or instructions is required to set the identity.", nil
+					if identity.Role == "" || identity.Instructions == "" {
+						return "Role and instructions are both required for the Crew identity. Ask the user for whichever is missing before saving.", nil
 					}
 					manifest["identity"] = identity
 				} else {
@@ -349,7 +363,7 @@ func workIdentityFactory(workspaceAPIURL string) agentprofiles.ToolFactory {
 				}
 				if operation == "clear" {
 					emitIdentityUpdated(operation)
-					return "The project agent identity was removed. Use the base Crew identity from now on.", nil
+					return "The project icon and name were removed. The required role and instructions are preserved and still apply.", nil
 				}
 				var saved workIdentity
 				encodedIdentity, _ := json.Marshal(manifest["identity"])
@@ -372,7 +386,7 @@ func createCrewProjectFactory(workspaceAPIURL string) agentprofiles.ToolFactory 
 			Category: "work_projects",
 			Description: "Create another basic Crew project for the signed-in user when they ask. " +
 				"The new Crew has its own durable conversation, files, runtime configuration, display name, and icon. " +
-				"This does not replace or rename the active Crew. After creation, tell the user to select the new Crew from the top project menu.",
+				"This does not replace or rename the active Crew. After creation, tell the user to select the new Crew from the top project menu; it asks for its required role and instructions on first chat.",
 			Parameters: map[string]interface{}{
 				"type":                 "object",
 				"additionalProperties": false,

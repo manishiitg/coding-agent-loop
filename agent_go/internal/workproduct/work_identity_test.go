@@ -66,10 +66,11 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 		t.Fatalf("build Crew identity tool: %v", err)
 	}
 	result, err := tool.Execute(context.Background(), map[string]interface{}{
-		"operation": "set",
-		"icon":      "🛠️",
-		"name":      "Nova",
-		"role":      "Engineering partner",
+		"operation":    "set",
+		"icon":         "🛠️",
+		"name":         "Nova",
+		"role":         "Engineering partner",
+		"instructions": "Be concise and concrete.",
 	})
 	if err != nil {
 		t.Fatalf("set Crew identity: %v", err)
@@ -118,8 +119,83 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload cleared Crew prompt variables: %v", err)
 	}
-	if variables["WORK_IDENTITY"] != "" {
-		t.Fatalf("identity should be empty after clear: %q", variables["WORK_IDENTITY"])
+	// Clear removes presentation only: the required role and instructions stay.
+	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Role: Engineering partner") || !strings.Contains(got, "Be concise and concrete.") || strings.Contains(got, "Nova") || strings.Contains(got, "Icon:") {
+		t.Fatalf("clear should preserve only role and instructions: %q", got)
+	}
+}
+
+func TestWorkIdentityRequiresRoleAndInstructions(t *testing.T) {
+	const projectPath = "Chats/Work/projects/required"
+	manifest := `{"schema_version":1,"product":"work","id":"required","title":"Required","capabilities":{"selected_servers":[]}}`
+	var mu sync.Mutex
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/api/documents/"+projectPath+"/product.json" {
+			http.Error(w, "unexpected path", http.StatusNotFound)
+			return
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		switch r.Method {
+		case http.MethodGet:
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{
+				"success": true,
+				"data":    map[string]interface{}{"filepath": projectPath + "/product.json", "content": manifest},
+			})
+		case http.MethodPut:
+			body, _ := io.ReadAll(r.Body)
+			var payload struct {
+				Content string `json:"content"`
+			}
+			if err := json.Unmarshal(body, &payload); err != nil {
+				http.Error(w, err.Error(), http.StatusBadRequest)
+				return
+			}
+			manifest = payload.Content
+			_ = json.NewEncoder(w).Encode(map[string]interface{}{"success": true})
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
+		}
+	}))
+	defer server.Close()
+
+	registry := agentprofiles.NewRegistry()
+	if err := RegisterAgentProfileRuntime(registry, server.URL); err != nil {
+		t.Fatalf("register Crew runtime: %v", err)
+	}
+	tool, err := registry.BuildTool(agentprofiles.ToolBinding{ID: "work.set-identity"}, agentprofiles.ToolRuntimeContext{
+		UserID: "user-1", SessionID: "session-1", WorkspacePath: projectPath, Product: "work",
+	})
+	if err != nil {
+		t.Fatalf("build Crew identity tool: %v", err)
+	}
+
+	result, err := tool.Execute(context.Background(), map[string]interface{}{
+		"operation": "set", "icon": "🤖", "name": "Helper",
+	})
+	if err != nil {
+		t.Fatalf("set without role: %v", err)
+	}
+	if !strings.Contains(result, "Role and instructions are both required") {
+		t.Fatalf("missing-fields set should be refused: %q", result)
+	}
+
+	result, err = tool.Execute(context.Background(), map[string]interface{}{
+		"operation": "set", "role": "Helper", "instructions": "Be brief.",
+	})
+	if err != nil || !strings.Contains(result, "Adopt it immediately") {
+		t.Fatalf("complete set should save: %q, %v", result, err)
+	}
+
+	// Explicitly emptying a required field on an existing identity is refused.
+	result, err = tool.Execute(context.Background(), map[string]interface{}{
+		"operation": "set", "role": "",
+	})
+	if err != nil {
+		t.Fatalf("set empty role: %v", err)
+	}
+	if !strings.Contains(result, "Role and instructions are both required") {
+		t.Fatalf("emptying role should be refused: %q", result)
 	}
 }
 

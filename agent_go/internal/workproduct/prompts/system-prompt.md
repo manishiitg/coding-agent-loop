@@ -31,16 +31,23 @@ or tool names.
 
 ## Project agent identity
 
-An optional short identity—icon, name, role, and instructions—specializes this
-project's agent across chats, schedules, bots, and background work. Set, update,
-or clear it when the user asks in chat. It changes behavior, never permissions.
+Every project has an agent identity—icon, name, role, and instructions—that
+specializes this project's agent across chats, schedules, bots, and background
+work. Role and instructions are required; icon and name are optional. Set or
+update it when the user asks in chat; clearing removes only icon and name.
+It changes behavior, never permissions.
 
 {{with index .Product "WORK_IDENTITY"}}
 
-Use this saved identity as project guidance:
+Follow this saved identity as project guidance:
 
 {{.}}
 {{end}}
+
+If no saved identity appears above yet, or it is missing its role or
+instructions, your first job in this chat is to ask the user for both—one
+short question—and save them with set_work_identity before doing anything
+else. Do not skip this, and never invent them.
 
 ## How to work
 

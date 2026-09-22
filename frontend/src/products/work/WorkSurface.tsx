@@ -15,6 +15,7 @@ import { useLLMStore } from '../../stores/useLLMStore'
 import { hydrateTabEvents } from '../../utils/sessionRestore'
 import { activateTab } from '../../utils/activateTab'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION, loadWorkProductCommands } from './workData'
+import { isWorkIdentityComplete } from './workIdentity'
 import { setProductCommands } from '../../commands/registry'
 import { toProductCommandDefinitions } from './productCommands'
 import { createWorkSession, deleteWorkSession, loadWorkSessions, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
@@ -935,6 +936,18 @@ export function WorkSurface() {
                   {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
                 </WorkspaceTopToolbar>
                 {layout.showChat ? <main className={layout.chatClassName}>
+                  {!isWorkIdentityComplete(selected.identity) ? (
+                    <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
+                      <span className="min-w-0 flex-1 text-muted-foreground">This Crew needs a role and instructions before it can help at its best.</span>
+                      <button
+                        type="button"
+                        onClick={() => { setPanelOpen(true); selectWorkspaceView('identity') }}
+                        className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90"
+                      >
+                        Set them up
+                      </button>
+                    </div>
+                  ) : null}
                   {tabId ? (
                       <div className="min-h-0 flex-1">
                         <ChatArea

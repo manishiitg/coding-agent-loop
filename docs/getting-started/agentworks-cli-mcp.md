@@ -135,11 +135,16 @@ Redirects are refused to avoid forwarding credentials to another location.
 
 ## Connect Claude Code
 
-After login, register the local MCP bridge:
+Register the local MCP bridge (copy the exact command from the Connect tab —
+it fills in your server and token):
 
 ```sh
-claude mcp add --transport stdio agentworks -- agentworks mcp serve
+claude mcp add --transport stdio --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… agentworks -- agentworks mcp serve
 ```
+
+Passing the server and token as env keeps the bridge self-sufficient: it
+works without a prior `agentworks login` on that machine. Log in as well if
+you also use the CLI directly.
 
 The bridge runs locally and calls your configured hosted server. It discovers
 all tool schemas from that server at startup. Restart the bridge after upgrading

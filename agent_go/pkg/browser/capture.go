@@ -9,8 +9,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path"
-	"strings"
 	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
@@ -25,8 +23,11 @@ func (e *Executor) handleCapture(ctx context.Context, session string, args []str
 	if cfg == nil || guard == nil || !guard.Enabled {
 		return "", fmt.Errorf("CAPTURE_ACCESS_DENIED: capture requires a workflow session with workspace permissions")
 	}
-	workspace := captureWorkspace(cfg)
-	if workspace == "" || workspace != path.Clean(workspace) || !strings.HasPrefix(workspace, "Workflow/") || len(strings.Split(workspace, "/")) != 2 {
+	// Crew projects capture into their own project root, exactly like
+	// workflows capture into Workflow/<name>. The classifier is shared so
+	// the next product cannot fall through another hand-rolled check.
+	workspace := captureWorkspace(common.SessionUserIDFromContext(ctx), cfg)
+	if workspace == "" {
 		return "", fmt.Errorf("CAPTURE_ACCESS_DENIED: no owning workflow is configured for this session")
 	}
 	owner, _ := ctx.Value(common.WorkflowSessionIDKey).(string)
@@ -70,18 +71,17 @@ func (e *Executor) handleCapture(ctx context.Context, session string, args []str
 	return string(body), nil
 }
 
-func captureWorkspace(cfg *common.SessionShellConfig) string {
+// captureWorkspace returns the session's owning root for capture binding:
+// Workflow/<name>, or the Crew project root. Older sessions may carry only
+// a trusted working directory; ownership is still never inferred from an
+// agent's arguments. Empty when the session has no capturable home.
+func captureWorkspace(userID string, cfg *common.SessionShellConfig) string {
 	if cfg == nil {
 		return ""
 	}
-	workspace := cfg.WorkflowPath
-	if workspace == "" {
-		// Older sessions have only a trusted working directory. Workflow roots
-		// are Workflow/<name>; never infer ownership from an agent's arguments.
-		parts := strings.Split(path.Clean(cfg.WorkingDir), "/")
-		if len(parts) >= 2 && parts[0] == "Workflow" && parts[1] != ".." {
-			workspace = strings.Join(parts[:2], "/")
-		}
+	if _, root := common.ClassifySessionWorkspace(userID, cfg.WorkflowPath); root != "" {
+		return root
 	}
-	return workspace
+	_, root := common.ClassifySessionWorkspace(userID, cfg.WorkingDir)
+	return root
 }

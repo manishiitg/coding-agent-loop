@@ -1,0 +1,33 @@
+package common
+
+import "testing"
+
+func TestClassifySessionWorkspace(t *testing.T) {
+	cases := []struct {
+		name     string
+		userID   string
+		path     string
+		wantKind SessionWorkspaceKind
+		wantRoot string
+	}{
+		{"workflow root", "u1", "Workflow/trading", SessionWorkspaceWorkflow, "Workflow/trading"},
+		{"workflow deep working dir collapses", "u1", "Workflow/trading/code", SessionWorkspaceWorkflow, "Workflow/trading"},
+		{"workflow bare", "u1", "Workflow", SessionWorkspaceUnknown, ""},
+		{"crew public", "u1", "Chats/Work/projects/confida-qa-480b6936", SessionWorkspaceCrewProject, "Chats/Work/projects/confida-qa-480b6936"},
+		{"crew physical", "2a0aea4e", "_users/2a0aea4e/Chats/Work/projects/rooks-8a14b84a", SessionWorkspaceCrewProject, "Chats/Work/projects/rooks-8a14b84a"},
+		{"crew deep collapses", "u1", "Chats/Work/projects/demo/db/reports", SessionWorkspaceCrewProject, "Chats/Work/projects/demo"},
+		{"crew landing is not a project", "u1", "Chats/Work/projects/", SessionWorkspaceUnknown, ""},
+		{"crew landing bare", "u1", "Chats/Work", SessionWorkspaceUnknown, ""},
+		{"other user prefix never strips", "u1", "_users/u2/Chats/Work/projects/demo", SessionWorkspaceUnknown, ""},
+		{"traversal rejected", "u1", "../Workflow/x", SessionWorkspaceUnknown, ""},
+		{"empty", "u1", "", SessionWorkspaceUnknown, ""},
+		{"unrelated", "u1", "Downloads/x", SessionWorkspaceUnknown, ""},
+		{"sloppy slashes", "u1", "/Workflow/trading/", SessionWorkspaceWorkflow, "Workflow/trading"},
+	}
+	for _, tc := range cases {
+		kind, root := ClassifySessionWorkspace(tc.userID, tc.path)
+		if kind != tc.wantKind || root != tc.wantRoot {
+			t.Fatalf("%s: got (%q,%q) want (%q,%q)", tc.name, kind, root, tc.wantKind, tc.wantRoot)
+		}
+	}
+}

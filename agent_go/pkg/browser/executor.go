@@ -559,8 +559,8 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 		defer release()
 		workspace := ""
 		for _, id := range []string{agentSessionID, workflowSessionID} {
-			if cfg := common.GetSessionShellConfig(id); captureWorkspace(cfg) != "" {
-				workspace = captureWorkspace(cfg)
+			if cfg := common.GetSessionShellConfig(id); captureWorkspace(common.SessionUserIDFromContext(ctx), cfg) != "" {
+				workspace = captureWorkspace(common.SessionUserIDFromContext(ctx), cfg)
 				break
 			}
 		}

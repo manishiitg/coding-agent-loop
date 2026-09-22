@@ -68,6 +68,48 @@ func TestCaptureUsesManagedServiceAndSessionPermissions(t *testing.T) {
 		t.Fatalf("invalid commands reached backend: %d", calls)
 	}
 }
+
+// Issue #210: Crew sessions capture into their own project root, like
+// workflows capture into Workflow/<name>. The fixture is a real Crew shape
+// (physical per-user path, browser_mode none): modeling a fixed product
+// hid the last Crew regression (PLAT-322).
+func TestCaptureAcceptsCrewProjectRoot(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
+	t.Setenv("WORKSPACE_API_TOKEN", "test-workspace-token")
+	sid := "capture-crew-test"
+	physical := "_users/u1/Chats/Work/projects/demo"
+	common.SetSessionWorkingDir(sid, physical)
+	common.SetSessionFolderGuard(sid, []string{physical}, []string{physical})
+	defer common.ClearSessionShellConfig(sid)
+	ctx := context.WithValue(context.Background(), common.ChatSessionIDKey, sid)
+	ctx = context.WithValue(ctx, common.UserIDKey, "u1")
+	var workspace string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct {
+			Workspace string `json:"workspace_path"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		workspace = req.Workspace
+		_, _ = w.Write([]byte(`{"recording":false}`))
+	}))
+	defer server.Close()
+	e := NewExecutor(NewClient(server.URL))
+	out, err := e.HandleAgentBrowser(ctx, map[string]interface{}{"command": "capture", "args": []string{"status"}, "session": "main"})
+	if err != nil || !strings.Contains(out, `"recording":false`) {
+		t.Fatalf("crew capture refused: %s %v", out, err)
+	}
+	if workspace != "Chats/Work/projects/demo" {
+		t.Fatalf("crew capture bound to %q", workspace)
+	}
+
+	// The same physical path without the owning user still denies: another
+	// user's project must never become capturable.
+	anon := context.WithValue(context.Background(), common.ChatSessionIDKey, sid)
+	if _, err := e.HandleAgentBrowser(anon, map[string]interface{}{"command": "capture", "args": []string{"status"}, "session": "main"}); err == nil || !strings.Contains(err.Error(), "CAPTURE_ACCESS_DENIED") {
+		t.Fatalf("anonymous crew capture accepted: %v", err)
+	}
+}
 func TestCaptureHonorsDisabledAndCDPModes(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "true")
 	for _, tt := range []struct {

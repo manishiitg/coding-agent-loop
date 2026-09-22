@@ -301,7 +301,11 @@ from the Browser panel. It
 also contains the merged delegation-inheritance, CDP owner/quota and server-CDP
 incident history; the three superseded source tickets were removed. The
 implementation is pushed as `a707df258`; deployment and live cross-user/
-cross-workflow verification remain pending.
+cross-workflow verification remain pending. The second 2026-09-22 follow-up
+(issue #210) routes bundled capture through a shared canonical
+session-workspace classifier so Crew sessions capture into their project
+root instead of `CAPTURE_ACCESS_DENIED`; artifact-destination denials were
+verified as correct enforcement, not a policy gap.
 
 ## Immutable scheduled-run folders and Builder `iteration-0` isolation
 

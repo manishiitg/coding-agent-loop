@@ -81,6 +81,33 @@ active-session binding, applies the same distinction to Take control, and
 canonicalizes public versus `_users/<owner>/...` paths during ownership checks.
 The regression now uses a real manifest-backed Crew with `browser_mode: none`.
 
+## Crew capture follow-up — 2026-09-22 (issue #210)
+
+Confida QA showed the same bug class at the next checkpoint: bundled
+`capture` denied every Crew session with `CAPTURE_ACCESS_DENIED`
+because `handleCapture` required exactly `Workflow/<name>`. The durable
+fix is a canonical classifier both sides share —
+`pkg/common/session_workspace.go` (`CanonicalSessionWorkspace` +
+`ClassifySessionWorkspace`) — instead of another hand-rolled prefix
+check. Capture now binds the owning root for workflows
+(`Workflow/<name>`) and Crews (`Chats/Work/projects/<id>`, physical
+`_users/<owner>/...` canonicalized with the ctx user); anything else
+still denies with the same error. A cmd/server equivalence test pins
+the mirror to `canonicalChatHistoryWorkspacePath` and
+`isActiveWorkProjectWorkspace`, and the capture regression uses a real
+Crew-shaped session (physical per-user path, owning user in ctx) plus a
+no-user denial case.
+
+Scoped out with evidence: the artifact-destination denials are correct
+enforcement — public `Chats/` holds no projects on disk (all Crew data
+lives under `_users/<id>/...`), the session guard already carries the
+physical project root, and the skill mandates workspace-relative
+destinations, so bare `code/`-style paths are agent error. The
+"Missing workspace or token" preview failure cannot come from the
+minted URL (the tool always includes both); it needs the session
+transcript to pin down. The upstream `browser_artifact.go` check is
+fully generic and needs no change.
+
 ## CDP boundary
 
 CDP is not the managed-headless persistence mechanism above. It attaches to an

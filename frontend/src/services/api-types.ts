@@ -213,6 +213,12 @@ export interface AgentQueryResponse {
   // Populated when status === 'live_input_delivered' or 'accepted'.
   delivery_status?: 'sent_to_cli' | 'queued_for_injection' | 'queued_for_turn' | 'next_turn_started'
   provider?: string
+  delivery_transport?: string
+  delivery_source?: string
+  submission_id?: string
+  server_received_at?: string
+  cli_accepted_at?: string
+  server_to_cli_ms?: number
   message_id?: string
   queue_position?: number
 }

@@ -10,6 +10,7 @@ declare module 'axios' {
 
 export interface ChatRequestContext {
   submissionId?: string
+  submittedAtClientTime?: string
   continuation?: boolean
   identity?: number
   queuedDelivery?: boolean
@@ -23,6 +24,7 @@ function chatRequestConfig(sessionId?: string, context: ChatRequestContext = {})
     headers: {
       ...(sessionId ? { 'X-Session-ID': sessionId } : {}),
       'Idempotency-Key': context.submissionId || crypto.randomUUID(),
+      ...(context.submittedAtClientTime ? { 'X-Client-Submitted-At': context.submittedAtClientTime } : {}),
       ...(context.continuation ? { 'X-Conversation-Continuation': 'true' } : {}),
       ...(context.queuedDelivery ? { 'X-Queued-Chat-Delivery': 'true' } : {}),
     },

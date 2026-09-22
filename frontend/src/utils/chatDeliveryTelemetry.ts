@@ -1,6 +1,9 @@
 import type { PollingEvent } from '../services/api-types'
 
 export type ChatDeliveryTelemetryPhase =
+  | 'submitted'
+  | 'api_acknowledged'
+  | 'api_failed'
   | 'sse_received'
   | 'poll_received'
   | 'catchup_received'
@@ -18,6 +21,14 @@ export type ChatDeliveryTelemetryEvent = {
   client_time: string
   performance_ms: number
   server_event_time?: string
+  submission_id?: string
+  elapsed_ms?: number
+  delivery_status?: string
+  provider?: string
+  delivery_source?: string
+  server_received_at?: string
+  cli_accepted_at?: string
+  server_to_cli_ms?: number
 }
 
 export type ChatDeliveryTelemetryBatch = {
@@ -98,6 +109,50 @@ function flush(): void {
     })
   }
   if (queue.length > 0) timer = window.setTimeout(flush, 100)
+}
+
+type ChatSubmissionTelemetryDetails = {
+  tabId?: string
+  observedPerformanceMS?: number
+  elapsedMS?: number
+  deliveryStatus?: string
+  provider?: string
+  deliverySource?: string
+  serverReceivedAt?: string
+  cliAcceptedAt?: string
+  serverToCLIMS?: number
+}
+
+/** Record content-free send-to-CLI milestones correlated by submission ID. */
+export function recordChatSubmissionTelemetry(
+  phase: Extract<ChatDeliveryTelemetryPhase, 'submitted' | 'api_acknowledged' | 'api_failed'>,
+  sessionId: string,
+  submissionId: string,
+  details: ChatSubmissionTelemetryDetails = {},
+): void {
+  if (typeof window === 'undefined' || !sessionId || !submissionId) return
+  const key = `${phase}:${sessionId}:${submissionId}`
+  if (seenMilestones.has(key)) return
+  seenMilestones.add(key)
+  if (queue.length >= MAX_QUEUED_EVENTS) queue.shift()
+  queue.push({
+    sequence: ++sequence,
+    phase,
+    session_id: sessionId,
+    event_type: 'chat_submission',
+    tab_id: details.tabId,
+    client_time: new Date().toISOString(),
+    performance_ms: Math.round((details.observedPerformanceMS ?? performance.now()) * 1000) / 1000,
+    submission_id: submissionId,
+    elapsed_ms: details.elapsedMS === undefined ? undefined : Math.round(details.elapsedMS * 1000) / 1000,
+    delivery_status: details.deliveryStatus,
+    provider: details.provider,
+    delivery_source: details.deliverySource,
+    server_received_at: details.serverReceivedAt,
+    cli_accepted_at: details.cliAcceptedAt,
+    server_to_cli_ms: details.serverToCLIMS,
+  })
+  if (timer === undefined) timer = window.setTimeout(flush, 100)
 }
 
 /** Record content-free browser milestones for visible chat events. */

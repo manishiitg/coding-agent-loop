@@ -21,19 +21,30 @@ type clientChatTelemetryBatch struct {
 }
 
 type clientChatTelemetryEvent struct {
-	Sequence        int64   `json:"sequence"`
-	Phase           string  `json:"phase"`
-	SessionID       string  `json:"session_id"`
-	EventID         string  `json:"event_id,omitempty"`
-	EventType       string  `json:"event_type,omitempty"`
-	Transport       string  `json:"transport,omitempty"`
-	TabID           string  `json:"tab_id,omitempty"`
-	ClientTime      string  `json:"client_time"`
-	PerformanceMS   float64 `json:"performance_ms"`
-	ServerEventTime string  `json:"server_event_time,omitempty"`
+	Sequence         int64   `json:"sequence"`
+	Phase            string  `json:"phase"`
+	SessionID        string  `json:"session_id"`
+	EventID          string  `json:"event_id,omitempty"`
+	EventType        string  `json:"event_type,omitempty"`
+	Transport        string  `json:"transport,omitempty"`
+	TabID            string  `json:"tab_id,omitempty"`
+	ClientTime       string  `json:"client_time"`
+	PerformanceMS    float64 `json:"performance_ms"`
+	ServerEventTime  string  `json:"server_event_time,omitempty"`
+	SubmissionID     string  `json:"submission_id,omitempty"`
+	ElapsedMS        float64 `json:"elapsed_ms,omitempty"`
+	DeliveryStatus   string  `json:"delivery_status,omitempty"`
+	Provider         string  `json:"provider,omitempty"`
+	DeliverySource   string  `json:"delivery_source,omitempty"`
+	ServerReceivedAt string  `json:"server_received_at,omitempty"`
+	CLIAcceptedAt    string  `json:"cli_accepted_at,omitempty"`
+	ServerToCLIMs    float64 `json:"server_to_cli_ms,omitempty"`
 }
 
 var allowedClientChatTelemetryPhases = map[string]bool{
+	"submitted":        true,
+	"api_acknowledged": true,
+	"api_failed":       true,
 	"sse_received":     true,
 	"poll_received":    true,
 	"catchup_received": true,
@@ -78,18 +89,26 @@ func (api *StreamingAPI) handleClientChatTelemetry(w http.ResponseWriter, r *htt
 			return
 		}
 		entry := map[string]interface{}{
-			"server_time":       serverTime,
-			"page_id":           pageID,
-			"sequence":          event.Sequence,
-			"phase":             event.Phase,
-			"session_id":        boundedTelemetryField(event.SessionID, 160),
-			"event_id":          boundedTelemetryField(event.EventID, 200),
-			"event_type":        boundedTelemetryField(event.EventType, 80),
-			"transport":         boundedTelemetryField(event.Transport, 32),
-			"tab_id":            boundedTelemetryField(event.TabID, 160),
-			"client_time":       boundedTelemetryField(event.ClientTime, 40),
-			"performance_ms":    event.PerformanceMS,
-			"server_event_time": boundedTelemetryField(event.ServerEventTime, 40),
+			"server_time":        serverTime,
+			"page_id":            pageID,
+			"sequence":           event.Sequence,
+			"phase":              event.Phase,
+			"session_id":         boundedTelemetryField(event.SessionID, 160),
+			"event_id":           boundedTelemetryField(event.EventID, 200),
+			"event_type":         boundedTelemetryField(event.EventType, 80),
+			"transport":          boundedTelemetryField(event.Transport, 32),
+			"tab_id":             boundedTelemetryField(event.TabID, 160),
+			"client_time":        boundedTelemetryField(event.ClientTime, 40),
+			"performance_ms":     event.PerformanceMS,
+			"server_event_time":  boundedTelemetryField(event.ServerEventTime, 40),
+			"submission_id":      boundedTelemetryField(event.SubmissionID, 256),
+			"elapsed_ms":         event.ElapsedMS,
+			"delivery_status":    boundedTelemetryField(event.DeliveryStatus, 48),
+			"provider":           boundedTelemetryField(event.Provider, 80),
+			"delivery_source":    boundedTelemetryField(event.DeliverySource, 80),
+			"server_received_at": boundedTelemetryField(event.ServerReceivedAt, 40),
+			"cli_accepted_at":    boundedTelemetryField(event.CLIAcceptedAt, 40),
+			"server_to_cli_ms":   event.ServerToCLIMs,
 		}
 		encoded, _ := json.Marshal(entry)
 		logfWithContext(api.httpRequestLogContext(r), "[CLIENT_CHAT_TIMELINE] %s", encoded)

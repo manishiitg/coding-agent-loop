@@ -63,7 +63,7 @@ import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
 import { PROJECT_SECRETS_REFRESH_EVENT, projectSecretsNeedRefresh } from '../utils/secretMutationRefresh'
 import { getDisplaySafeUserMessageContent } from '../utils/chatMessageContent'
-import { recordChatDeliveryTelemetry } from '../utils/chatDeliveryTelemetry'
+import { recordChatDeliveryTelemetry, recordChatSubmissionTelemetry } from '../utils/chatDeliveryTelemetry'
 
 // Stable empty array to avoid infinite re-render loops in Zustand selectors
 // (a new [] on every selector call breaks referential equality checks)
@@ -2857,6 +2857,12 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     )) return false
     const receipt = { id: options?.submissionId ?? crypto.randomUUID(), message: trimmedQuery,
       sessionId: tabSessionId, targetTabId: currentTab.tabId }
+    const submittedAtPerformanceMS = options?.submittedAtPerformanceMS ?? performance.now()
+    const submittedAtClientTime = options?.submittedAtClientTime ?? new Date().toISOString()
+    recordChatSubmissionTelemetry('submitted', tabSessionId, receipt.id, {
+      tabId: currentTab.tabId,
+      observedPerformanceMS: submittedAtPerformanceMS,
+    })
     for (const id of new Set([sourceTab?.tabId, currentTab.tabId])) {
       if (id) chatStore.setTabConfig(id, { pendingSubmission: receipt })
     }
@@ -3193,9 +3199,19 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             currentTab.metadata.agentProfileId,
             buildAgentProfileChatRequest(requestPayload, currentTab.metadata.agentProfileConversationKey, currentTab.metadata.agentProfileEngine, currentTab.metadata.agentProfileModelID, currentTab.metadata.agentProfileReasoningEffort),
             tabSessionId,
-            { identity, submissionId: receipt.id, continuation: hasLocalSessionEvents || Boolean(pendingRestoredConversationPath) || currentTab.metadata?.isRestored === true, queuedDelivery: options?.queuedDelivery },
+            { identity, submissionId: receipt.id, submittedAtClientTime, continuation: hasLocalSessionEvents || Boolean(pendingRestoredConversationPath) || currentTab.metadata?.isRestored === true, queuedDelivery: options?.queuedDelivery },
           )
-        : await agentApi.startQuery(requestPayload, tabSessionId, { identity, submissionId: receipt.id, queuedDelivery: options?.queuedDelivery })
+        : await agentApi.startQuery(requestPayload, tabSessionId, { identity, submissionId: receipt.id, submittedAtClientTime, queuedDelivery: options?.queuedDelivery })
+      recordChatSubmissionTelemetry('api_acknowledged', response.session_id || tabSessionId, receipt.id, {
+        tabId: currentTab.tabId,
+        elapsedMS: performance.now() - submittedAtPerformanceMS,
+        deliveryStatus: response.delivery_status,
+        provider: response.provider,
+        deliverySource: response.delivery_source,
+        serverReceivedAt: response.server_received_at,
+        cliAcceptedAt: response.cli_accepted_at,
+        serverToCLIMS: response.server_to_cli_ms,
+      })
       if (!isChatIdentityCurrent(identity)) return false
       if (!stillOwnsSubmission()) return response.status === 'started' || response.status === 'workflow_started' || response.status === 'live_input_delivered'
       console.log('[WF_DEBUG] 2. Response', { status: response.status, responseSessionId: response.session_id || response.query_id, tabSessionId, match: (response.session_id || response.query_id) === tabSessionId })
@@ -3301,6 +3317,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return false
       }
     } catch (error) {
+      recordChatSubmissionTelemetry('api_failed', tabSessionId, receipt.id, {
+        tabId: currentTab.tabId,
+        elapsedMS: performance.now() - submittedAtPerformanceMS,
+      })
       if (!isChatIdentityCurrent(identity)) return false
 
       // A reconciled, authoritative no-delivery outcome is safe to release.
@@ -3345,6 +3365,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       sourceTabId: sourceTab?.tabId,
       sourceSessionId: options?.sourceSessionId ?? (!isBuilder ? sourceTab?.sessionId ?? undefined : undefined),
       submissionId: options?.submissionId ?? retry?.id ?? crypto.randomUUID(),
+      submittedAtPerformanceMS: options?.submittedAtPerformanceMS ?? performance.now(),
+      submittedAtClientTime: options?.submittedAtClientTime ?? new Date().toISOString(),
       builderHandoff: retry ? { tabId: retry.targetTabId, sessionId: retry.sessionId } : builder?.target,
     }
     const submit = () => {

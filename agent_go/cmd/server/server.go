@@ -1372,6 +1372,13 @@ type QueryResponse struct {
 	// QueuePosition is populated when the durable conversation dispatcher
 	// accepts this request behind a turn that already owns the session lane.
 	QueuePosition int `json:"queue_position,omitempty"`
+	// Delivery timing is populated for coding-agent messages that reached a CLI.
+	// The browser uses its own monotonic clock for click-to-ack; these server
+	// values isolate request routing from the provider/tmux handoff.
+	SubmissionID     string  `json:"submission_id,omitempty"`
+	ServerReceivedAt string  `json:"server_received_at,omitempty"`
+	CLIAcceptedAt    string  `json:"cli_accepted_at,omitempty"`
+	ServerToCLIMs    float64 `json:"server_to_cli_ms,omitempty"`
 }
 
 // queryStatusLiveInputDelivered is the QueryResponse.Status returned when a
@@ -3535,6 +3542,7 @@ func requestLogPath(r *http.Request) string {
 // (A third, deprecated agent_mode="workflow" headless-run path is handled
 // separately right after the workflow_phase block.)
 func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
+	requestReceivedAt := time.Now()
 	if r.Method == "OPTIONS" {
 		w.WriteHeader(http.StatusOK)
 		return
@@ -3794,7 +3802,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, policyErr.Error(), http.StatusForbidden)
 		return
 	}
-	if retainedWorkflowCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID) {
+	if retainedWorkflowCompatible && api.tryDeliverQueryAsLiveInput(w, r, sessionID, req.Query, queryID, requestReceivedAt) {
 		return
 	}
 
@@ -9577,9 +9585,13 @@ func liveInputErrorProvesNoTarget(err error) bool {
 // the incoming /api/query message to that CLI instead of requiring a separate
 // foreground-turn/busy proof. Returns true if it handled and responded to the
 // request; false lets handleQuery start a normal new turn.
-func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string) bool {
+func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string, receivedAt ...time.Time) bool {
 	if api == nil || strings.TrimSpace(message) == "" {
 		return false
+	}
+	requestReceivedAt := time.Now()
+	if len(receivedAt) > 0 && !receivedAt[0].IsZero() {
+		requestReceivedAt = receivedAt[0]
 	}
 	// The mcpagent Session, not this host's short-lived running-Agent map or a
 	// provider-specific terminal branch, owns warm delivery. It survives the
@@ -9603,15 +9615,18 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 				return true
 			} else if delivery.Status == mcpagent.UserMessageDeliveryStatusSentToCLI {
 				provider := string(delivery.Provider)
-				api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
+				messageID := api.recordMCPAgentSessionLiveInput(sessionID, message, provider, queryID)
 				api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 				w.Header().Set("Content-Type", "application/json")
-				_ = json.NewEncoder(w).Encode(QueryResponse{
+				response := QueryResponse{
 					QueryID: queryID, SessionID: sessionID,
 					Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent session",
 					DeliveryStatus: string(delivery.Status), Provider: provider,
 					DeliveryTransport: string(delivery.Transport), DeliverySource: queryDeliverySourceMCPAgentSession,
-				})
+					MessageID: messageID,
+				}
+				api.stampCodingAgentDeliveryTiming(r, &response, requestReceivedAt)
+				_ = json.NewEncoder(w).Encode(response)
 				log.Printf("[QUERY->LIVE] Delivered /api/query through durable mcpagent session=%s provider=%s transport=%s: %.80s", sessionID, provider, delivery.Transport, message)
 				return true
 			} else {
@@ -9637,10 +9652,12 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 				writeSubmissionUncertain(w, r.Header.Get("Idempotency-Key"))
 				return true
 			}
-			api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
+			messageID := api.recordRetainedTerminalLiveInput(sessionID, message, retainedProvider, queryID)
 			api.persistLiveInputUserMessage(r.Context(), sessionID, message)
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility})
+			response := QueryResponse{QueryID: queryID, SessionID: sessionID, Status: queryStatusLiveInputDelivered, Message: "Delivered to retained coding-agent CLI", DeliveryStatus: "sent_to_cli", Provider: retainedProvider, DeliveryTransport: "tmux", DeliverySource: queryDeliverySourceRetainedCompatibility, MessageID: messageID}
+			api.stampCodingAgentDeliveryTiming(r, &response, requestReceivedAt)
+			_ = json.NewEncoder(w).Encode(response)
 			return true
 		}
 	}
@@ -9715,7 +9732,7 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 	log.Printf("[QUERY→LIVE] Delivered /api/query message to retained CLI for session %s status=%s: %.80s", sessionID, deliveryStatus, message)
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(QueryResponse{
+	response := QueryResponse{
 		QueryID:           queryID,
 		SessionID:         sessionID,
 		Status:            queryStatusLiveInputDelivered,
@@ -9725,7 +9742,9 @@ func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *ht
 		DeliveryTransport: "tmux",
 		DeliverySource:    queryDeliverySourceRunningAgent,
 		MessageID:         messageID,
-	})
+	}
+	api.stampCodingAgentDeliveryTiming(r, &response, requestReceivedAt)
+	_ = json.NewEncoder(w).Encode(response)
 	return true
 }
 

@@ -4,6 +4,7 @@ import type { PollingEvent } from '../services/api-types'
 import {
   configureChatDeliveryTelemetryTransport,
   recordChatDeliveryTelemetry,
+  recordChatSubmissionTelemetry,
   type ChatDeliveryTelemetryBatch,
 } from './chatDeliveryTelemetry'
 
@@ -80,5 +81,29 @@ describe('chat delivery telemetry', () => {
     expect(recorded).toHaveLength(20)
     expect(recorded[0].event_id).toBe('bulk-event-80')
     expect(recorded.at(-1)?.event_id).toBe('bulk-event-99')
+  })
+
+  it('correlates submission and CLI acknowledgement without message content', async () => {
+    vi.useFakeTimers()
+    const batches: ChatDeliveryTelemetryBatch[] = []
+    configureChatDeliveryTelemetryTransport(async batch => { batches.push(batch) })
+
+    recordChatSubmissionTelemetry('submitted', 'session-send', 'submission-1', {
+      tabId: 'tab-send', observedPerformanceMS: 100,
+    })
+    recordChatSubmissionTelemetry('api_acknowledged', 'session-send', 'submission-1', {
+      tabId: 'tab-send', observedPerformanceMS: 245.25, elapsedMS: 145.25,
+      deliveryStatus: 'sent_to_cli', provider: 'codex-cli', deliverySource: 'mcpagent_session',
+    })
+    await vi.advanceTimersByTimeAsync(101)
+
+    expect(batches.flatMap(batch => batch.events)).toMatchObject([
+      { phase: 'submitted', submission_id: 'submission-1', performance_ms: 100 },
+      {
+        phase: 'api_acknowledged', submission_id: 'submission-1', elapsed_ms: 145.25,
+        delivery_status: 'sent_to_cli', provider: 'codex-cli', delivery_source: 'mcpagent_session',
+      },
+    ])
+    expect(JSON.stringify(batches)).not.toContain('message')
   })
 })

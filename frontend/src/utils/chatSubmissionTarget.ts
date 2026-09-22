@@ -5,6 +5,8 @@ export interface ChatSubmissionOptions {
   sourceComposerId?: string
   identity?: number
   submissionId?: string
+  submittedAtPerformanceMS?: number
+  submittedAtClientTime?: string
   optimisticUserEventId?: string
   queuedDelivery?: boolean
   builderHandoff?: { tabId?: string; sessionId?: string }

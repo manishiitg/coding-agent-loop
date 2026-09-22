@@ -107,3 +107,39 @@ Related: [PLAT-262](plat-262.md) (workflow Run-mode seams),
 [PLAT-330](plat-330.md) (whose "private project permissions" note this
 supersedes), and [issue #205](https://github.com/manishiitg/coding-agent-loop/issues/205)
 (`BUG_ID_001`).
+
+## Post-review hardening (2026-09-22)
+
+Two P1 findings from pre-acceptance review, both fixed before live
+acceptance:
+
+1. Raw manifests excluded from the shared file surface. The mediated
+   `files`/`file` endpoints served `product.json` and `workflow.json`
+   unchanged, exposing LLM connection IDs, encrypted webhook secrets,
+   and unfiltered workflow references and bypassing the listing
+   endpoint's filtering. Root-level `product.json`/`workflow.json` now
+   404 like the excluded subtrees (nested same-named files are ordinary
+   project data and stay servable); the listing summary remains the
+   sanitized config view. Regression: endpoint tests assert the 404s
+   and sweep every reader file response for the fixture's connection
+   ID, ciphertext, and private workflow reference.
+
+2. Fail-closed proxy body inspection. The cross-user body check skipped
+   JSON bodies with unknown or over-cap lengths and stopped the
+   multipart scan after 4 MiB, so a chunked or file-first request could
+   carry an unchecked `_users/` path to the workspace server (which
+   resolves explicit paths verbatim). The proxy now spools every body
+   in full (memory to 8 MiB, temp file past it, 413 past 256 MiB),
+   inspects all JSON path fields and all multipart parts regardless of
+   order, and rejects unreadable/malformed bodies with 400 — matching
+   the workspace server's own binding behavior (first-value JSON
+   decode; file parts required). Allowed bodies replay byte-identical.
+   Regression: chunked, oversized (declared and streamed), malformed,
+   unreadable, file-first, past-memory-cap spool, and oversized
+   multipart cases.
+
+Residual risk (open follow-up, not a launch blocker): a reader's agent
+turn can still read the raw manifests through file-read tools, since
+the crew root is read-allowed for readers. Prompt-level exfiltration
+rules cover it today; a future change should deny-list the two
+manifests (or serve redacted views) in reader tool output.

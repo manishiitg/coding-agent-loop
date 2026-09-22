@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"mime"
@@ -52,14 +53,23 @@ func workspaceProxyHandler() http.Handler {
 		// server resolves explicit _users/<id>/... paths verbatim with no
 		// identity of its own, so the proxy — the one hop that knows the
 		// JWT claims — refuses any cross-user addressing in the URL, in
-		// query params, and in JSON body path fields. Crew Run mode
-		// depends on this: reader file access goes through the mediated
-		// crew endpoints, never through raw cross-user proxy reads, and
-		// no proxied call may write another user's tree.
+		// query params, and in body path fields, and refuses any body it
+		// cannot fully inspect. Crew Run mode depends on this: reader
+		// file access goes through the mediated crew endpoints, never
+		// through raw cross-user proxy reads, and no proxied call may
+		// write another user's tree.
 		if claims := GetUserFromContext(r.Context()); claims != nil {
-			if blocked, reason := workspaceProxyCrossUserBlock(r, claims.UserID); blocked {
-				log.Printf("[WORKSPACE PROXY] Denied cross-user workspace access for %q: %s", claims.UserID, reason)
-				http.Error(w, "cross-user workspace access denied", http.StatusForbidden)
+			status, detail, cleanup := workspaceProxyCrossUserBlock(r, claims.UserID)
+			if cleanup != nil {
+				defer cleanup()
+			}
+			if status != 0 {
+				log.Printf("[WORKSPACE PROXY] Denied workspace access for %q: %s (status %d)", claims.UserID, detail, status)
+				message := detail
+				if status == http.StatusForbidden {
+					message = "cross-user workspace access denied"
+				}
+				http.Error(w, message, status)
 				return
 			}
 		}
@@ -114,28 +124,31 @@ func workspaceProxyRelativePath(r *http.Request) string {
 	return strings.TrimPrefix(path, "/")
 }
 
-// workspaceProxyCrossUserBlock reports whether a proxied browser request
-// addresses another user's private tree. The check mirrors the workspace
-// server's own resolution: explicit _users/<id>/... paths resolve
-// verbatim, while logical per-user paths resolve under the stamped
-// X-User-ID and are always the caller's own.
-func workspaceProxyCrossUserBlock(r *http.Request, callerID string) (bool, string) {
+// workspaceProxyCrossUserBlock vets a proxied browser request. It returns a
+// nonzero HTTP status when the request must not reach the workspace
+// server: 403 for confirmed cross-user addressing (URL, query, or body
+// path fields, mirroring the workspace server's own resolution, where
+// explicit _users/<id>/... paths resolve verbatim and logical paths
+// resolve under the stamped X-User-ID), 413 when the body is too large to
+// fully inspect, and 400 when the body is unreadable or malformed. Zero
+// means allow; allowed requests carry a replayable body with an explicit
+// length. The cleanup func is nil unless the body spooled to disk, in
+// which case the caller must defer it: it is idempotent with the
+// transport's own body close.
+func workspaceProxyCrossUserBlock(r *http.Request, callerID string) (status int, detail string, cleanup func()) {
 	own := sanitizeUserIDForPath(callerID)
 	if workspaceProxyURLIsOtherUser(workspaceProxyRelativePath(r), own) {
-		return true, "url path"
+		return http.StatusForbidden, "url path", nil
 	}
 	query := r.URL.Query()
 	for _, key := range []string{"folder", "pattern", "db_path", "path", "filepath", "file_path", "source_path", "destination_path"} {
 		for _, value := range query[key] {
 			if workspaceProxyPathIsOtherUser(value, own) {
-				return true, "query param " + key
+				return http.StatusForbidden, "query param " + key, nil
 			}
 		}
 	}
-	if blocked, reason := workspaceProxyBodyIsOtherUser(r, own); blocked {
-		return true, reason
-	}
-	return false, ""
+	return workspaceProxyBodyVerdict(r, own)
 }
 
 // workspaceProxyRoutePathPrefixes are workspace routes whose trailing path
@@ -185,106 +198,238 @@ var workspaceProxyBodyPathFields = map[string]bool{
 	"folder": true, "folder_path": true, "filepath": true, "file_path": true,
 	"path": true, "source_path": true, "destination_path": true,
 	"source": true, "destination": true, "db_path": true,
-	"workspace_path": true,
+	"workspace_path":    true,
 	"working_directory": true, "working_dir": true,
 	"read_paths": true, "write_paths": true, "blocked_paths": true, "blocked_write_paths": true,
 }
 
 // workspaceProxyMultipartPathFields are the multipart form fields that
 // carry workspace paths (file upload destination, backup import target).
+// They mirror the workspace request models exactly: FileUploadRequest
+// binds only folder_path, the backup import binds only workspace_path,
+// and both endpoints require an actual file part, so no other field —
+// and no file part — can smuggle a path. A future path-bearing form
+// field must be added here with its model.
 var workspaceProxyMultipartPathFields = map[string]bool{
 	"folder_path": true, "workspace_path": true,
 }
 
-const workspaceProxyBodyInspectCap = 8 << 20
+// workspaceProxyBodyMemoryCap bounds the in-memory prefix of a proxied
+// request body; larger bodies spill to a temp file. workspaceProxyBodyMaxCap
+// is the hard rejection limit past it. Both are vars so tests can force
+// the spill and rejection paths with small bodies; production values
+// cover the workspace server's own traffic (10MB upload files, large
+// restores and document saves) while bounding per-request disk use.
+var workspaceProxyBodyMemoryCap = int64(8 << 20)
+var workspaceProxyBodyMaxCap = int64(256 << 20)
 
-// workspaceProxyMultipartScanCap bounds how much of a multipart body is
-// buffered while scanning its path fields. Field parts come before file
-// content, so small text fields are always seen; the scanned prefix is
-// replayed ahead of the untouched remainder, so allowed uploads stream
-// through byte-identical.
-const workspaceProxyMultipartScanCap = 4 << 20
+// workspaceProxySpooledBody holds a fully buffered request body: memory
+// for small bodies, a temp file past the memory cap. Readers are always
+// fresh at offset zero; close removes the temp file and is idempotent,
+// so the transport's body close and the handler's deferred cleanup can
+// both run.
+type workspaceProxySpooledBody struct {
+	mem  []byte
+	file *os.File
+	size int64
+}
 
-// workspaceProxyBodyIsOtherUser scans a request body for cross-user path
-// fields, restoring the body for the upstream request. JSON bodies are
-// decoded; multipart bodies are scanned part by part. Anything else — and
-// anything unreadable — is left to the URL and query checks.
-func workspaceProxyBodyIsOtherUser(r *http.Request, own string) (bool, string) {
+func (s *workspaceProxySpooledBody) open() io.Reader {
+	if s.file != nil {
+		_, _ = s.file.Seek(0, io.SeekStart)
+		return s.file
+	}
+	return bytes.NewReader(s.mem)
+}
+
+func (s *workspaceProxySpooledBody) close() {
+	if s.file == nil {
+		return
+	}
+	name := s.file.Name()
+	_ = s.file.Close()
+	_ = os.Remove(name)
+	s.file = nil
+}
+
+// workspaceProxyReplayBody replays a spooled body upstream and releases
+// its temp file on close.
+type workspaceProxyReplayBody struct {
+	io.Reader
+	spooled *workspaceProxySpooledBody
+}
+
+func (b *workspaceProxyReplayBody) Close() error {
+	b.spooled.close()
+	return nil
+}
+
+// workspaceProxySpoolBody buffers the full request body for inspection:
+// memory up to the memory cap, a temp file past it, rejection past the
+// hard cap. Unknown (chunked) lengths stream through the same writer, so
+// framing never exempts a body from inspection. Bodies past the hard cap
+// and unreadable streams fail closed with a rejection status.
+func workspaceProxySpoolBody(r *http.Request) (*workspaceProxySpooledBody, int, string) {
+	if r.ContentLength > workspaceProxyBodyMaxCap {
+		return nil, http.StatusRequestEntityTooLarge, "request body too large to inspect"
+	}
+	spooled := &workspaceProxySpooledBody{}
 	if r.Body == nil || r.ContentLength == 0 {
-		return false, ""
+		return spooled, 0, ""
+	}
+	spill := &workspaceProxySpillWriter{mem: &bytes.Buffer{}, memCap: workspaceProxyBodyMemoryCap, maxCap: workspaceProxyBodyMaxCap}
+	_, err := io.Copy(spill, r.Body)
+	_ = r.Body.Close()
+	if err != nil {
+		spill.abort()
+		if errors.Is(err, errWorkspaceProxyBodyTooLarge) {
+			return nil, http.StatusRequestEntityTooLarge, "request body too large to inspect"
+		}
+		return nil, http.StatusBadRequest, "request body could not be read"
+	}
+	if spill.file != nil {
+		spooled.file = spill.file
+	} else {
+		spooled.mem = spill.mem.Bytes()
+	}
+	spooled.size = spill.total
+	return spooled, 0, ""
+}
+
+var errWorkspaceProxyBodyTooLarge = errors.New("request body exceeds inspection cap")
+
+// workspaceProxySpillWriter buffers a body in memory up to memCap, then
+// spills to a temp file, and fails writes past maxCap.
+type workspaceProxySpillWriter struct {
+	mem    *bytes.Buffer
+	file   *os.File
+	total  int64
+	memCap int64
+	maxCap int64
+}
+
+func (w *workspaceProxySpillWriter) Write(p []byte) (int, error) {
+	if w.total+int64(len(p)) > w.maxCap {
+		return 0, errWorkspaceProxyBodyTooLarge
+	}
+	if w.file == nil && w.total+int64(len(p)) > w.memCap {
+		f, err := os.CreateTemp("", "workspace-proxy-body-*")
+		if err != nil {
+			return 0, err
+		}
+		if _, err := f.Write(w.mem.Bytes()); err != nil {
+			_ = f.Close()
+			_ = os.Remove(f.Name())
+			return 0, err
+		}
+		w.file = f
+		w.mem = nil
+	}
+	var (
+		n   int
+		err error
+	)
+	if w.file != nil {
+		n, err = w.file.Write(p)
+	} else {
+		n, err = w.mem.Write(p)
+	}
+	w.total += int64(n)
+	return n, err
+}
+
+// abort drops a partially spooled body after a failed read.
+func (w *workspaceProxySpillWriter) abort() {
+	if w.file == nil {
+		return
+	}
+	_ = w.file.Close()
+	_ = os.Remove(w.file.Name())
+	w.file = nil
+}
+
+// workspaceProxyBodyVerdict inspects a request body for cross-user path
+// fields. JSON bodies are decoded (first value, mirroring the workspace
+// server's gin binding, which also ignores trailing bytes); multipart
+// bodies are walked part by part in full, so field order — including the
+// client's own file-first uploads — never hides a path field. Anything
+// unreadable or malformed is rejected, matching the 400 the workspace
+// server would answer anyway. Bodies without field structure pass through
+// to the URL and query checks: no proxied endpoint binds paths from raw
+// bodies (JSON endpoints use ShouldBindJSON; the two multipart endpoints
+// require file parts).
+func workspaceProxyBodyVerdict(r *http.Request, own string) (status int, detail string, cleanup func()) {
+	spooled, status, detail := workspaceProxySpoolBody(r)
+	if status != 0 {
+		return status, detail, nil
+	}
+	replay := func() (int, string, func()) {
+		// The replay body closes the spool, so the transport's own body
+		// close already cleans up; the deferred cleanup is the backstop
+		// for verdicts that never reach the transport.
+		r.Body = &workspaceProxyReplayBody{Reader: spooled.open(), spooled: spooled}
+		r.ContentLength = spooled.size
+		if spooled.file == nil {
+			return 0, "", nil
+		}
+		return 0, "", spooled.close
+	}
+	if spooled.size == 0 {
+		r.Body = http.NoBody
+		r.ContentLength = 0
+		return 0, "", nil
 	}
 	contentType := strings.ToLower(r.Header.Get("Content-Type"))
 	if strings.Contains(contentType, "json") {
-		return workspaceProxyJSONBodyIsOtherUser(r, own)
+		var decoded any
+		if err := json.NewDecoder(spooled.open()).Decode(&decoded); err != nil {
+			spooled.close()
+			return http.StatusBadRequest, "request body is not valid JSON", nil
+		}
+		if workspaceProxyJSONAddressesOtherUser(decoded, own) {
+			spooled.close()
+			return http.StatusForbidden, "request body path", nil
+		}
+		return replay()
 	}
 	if strings.HasPrefix(contentType, "multipart/") {
-		return workspaceProxyMultipartBodyIsOtherUser(r, own)
-	}
-	return false, ""
-}
-
-func workspaceProxyJSONBodyIsOtherUser(r *http.Request, own string) (bool, string) {
-	if r.ContentLength < 0 || r.ContentLength > workspaceProxyBodyInspectCap {
-		return false, ""
-	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, workspaceProxyBodyInspectCap+1))
-	r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
-	r.ContentLength = int64(len(raw))
-	if err != nil || len(raw) > workspaceProxyBodyInspectCap {
-		return false, ""
-	}
-	var decoded any
-	if err := json.Unmarshal(raw, &decoded); err != nil {
-		return false, ""
-	}
-	if workspaceProxyJSONAddressesOtherUser(decoded, own) {
-		return true, "request body path"
-	}
-	return false, ""
-}
-
-func workspaceProxyMultipartBodyIsOtherUser(r *http.Request, own string) (bool, string) {
-	mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if err != nil || !strings.HasPrefix(mediaType, "multipart/") || params["boundary"] == "" {
-		return false, ""
-	}
-	recorded := &bytes.Buffer{}
-	// Tee the stream so the scanned prefix replays ahead of the untouched
-	// remainder: allowed requests forward byte-identical.
-	partReader := multipart.NewReader(io.TeeReader(r.Body, recorded), params["boundary"])
-	blocked := false
-	for recorded.Len() <= workspaceProxyMultipartScanCap {
-		part, err := partReader.NextPart()
-		if err != nil {
-			break
+		mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+		if err != nil || !strings.HasPrefix(mediaType, "multipart/") || params["boundary"] == "" {
+			spooled.close()
+			return http.StatusBadRequest, "request body is not valid multipart", nil
 		}
-		if part.FileName() == "" && workspaceProxyMultipartPathFields[part.FormName()] {
-			value, err := io.ReadAll(io.LimitReader(part, workspaceProxyMultipartScanCap+1))
+		partReader := multipart.NewReader(spooled.open(), params["boundary"])
+		for {
+			part, err := partReader.NextPart()
+			if err == io.EOF {
+				break
+			}
 			if err != nil {
-				break
+				spooled.close()
+				return http.StatusBadRequest, "request body is not valid multipart", nil
 			}
-			if workspaceProxyPathIsOtherUser(string(value), own) {
-				blocked = true
-				break
+			if part.FileName() == "" && workspaceProxyMultipartPathFields[part.FormName()] {
+				value, err := io.ReadAll(part)
+				if err != nil {
+					spooled.close()
+					return http.StatusBadRequest, "request body could not be read", nil
+				}
+				if workspaceProxyPathIsOtherUser(string(value), own) {
+					spooled.close()
+					return http.StatusForbidden, "multipart form path", nil
+				}
+				continue
 			}
-			continue
+			// File content and unrelated fields stream past; only the
+			// verdict matters, since replay re-reads the spool.
+			if _, err := io.Copy(io.Discard, part); err != nil {
+				spooled.close()
+				return http.StatusBadRequest, "request body could not be read", nil
+			}
 		}
-		// Drain anything else (file content, unrelated fields) under the
-		// same budget; the drain is recorded for replay.
-		budget := int64(workspaceProxyMultipartScanCap - recorded.Len() + 1)
-		if budget < 0 {
-			budget = 0
-		}
-		if _, err := io.CopyN(io.Discard, part, budget); err != nil && err != io.EOF {
-			break
-		}
+		return replay()
 	}
-	if blocked {
-		return true, "multipart form path"
-	}
-	r.Body = io.NopCloser(io.MultiReader(recorded, r.Body))
-	return false, ""
+	return replay()
 }
 
 func workspaceProxyJSONAddressesOtherUser(node any, own string) bool {

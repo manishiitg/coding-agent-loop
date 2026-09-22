@@ -1,12 +1,15 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"io"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -150,7 +153,11 @@ func TestConfineSharedProjectPath(t *testing.T) {
 	if !ok || full != root+"/code/main.py" {
 		t.Fatalf("confine = %q,%v", full, ok)
 	}
-	for _, bad := range []string{"", ".", "builder/session-1-conversation.json", "builder/conversation/a.json", "db/app.sqlite", "..", "../.."} {
+	for _, bad := range []string{"", ".", "builder/session-1-conversation.json", "builder/conversation/a.json", "db/app.sqlite", "..", "../..",
+		// Raw owner manifests are never servable: connection IDs,
+		// ciphertext, and unfiltered references live in them.
+		"product.json", "workflow.json", "/product.json", "../product.json", "code/../../workflow.json",
+	} {
 		if full, ok := confineSharedProjectPath(root, bad); ok {
 			t.Fatalf("confine(%q) = %q, want refusal", bad, full)
 		}
@@ -158,12 +165,17 @@ func TestConfineSharedProjectPath(t *testing.T) {
 	// Absolute inputs and .. segments collapse inside the root by
 	// construction; they must never address outside it.
 	for rel, want := range map[string]string{
-		"../product.json": "product.json", "/product.json": "product.json",
+		"../MEMORY.md": "MEMORY.md", "/MEMORY.md": "MEMORY.md",
 		"code/../../MEMORY.md": "MEMORY.md", "code/../../../secret": "secret",
 	} {
 		if full, ok := confineSharedProjectPath(root, rel); !ok || full != root+"/"+want {
 			t.Fatalf("confine(%q) = %q,%v want %q", rel, full, ok, root+"/"+want)
 		}
+	}
+	// The manifest exclusion is root-scoped: a nested same-named file is
+	// ordinary project data, not a Crew manifest.
+	if full, ok := confineSharedProjectPath(root, "code/product.json"); !ok || full != root+"/code/product.json" {
+		t.Fatalf("confine(nested manifest name) = %q,%v", full, ok)
 	}
 }
 
@@ -173,6 +185,7 @@ func TestFlattenSharedProjectFiles(t *testing.T) {
 		FilePath: root, Type: "folder",
 		Children: []virtualtools.WorkspaceFolderItem{
 			{FilePath: root + "/product.json", Type: "file"},
+			{FilePath: root + "/workflow.json", Type: "file"},
 			{FilePath: root + "/builder", Type: "folder", Children: []virtualtools.WorkspaceFolderItem{
 				{FilePath: root + "/builder/session-1-conversation.json", Type: "file"},
 			}},
@@ -181,6 +194,7 @@ func TestFlattenSharedProjectFiles(t *testing.T) {
 			}},
 			{FilePath: root + "/code", Type: "folder", Children: []virtualtools.WorkspaceFolderItem{
 				{FilePath: root + "/code/main.py", Type: "file"},
+				{FilePath: root + "/code/product.json", Type: "file"},
 			}},
 		},
 	}}
@@ -192,7 +206,7 @@ func TestFlattenSharedProjectFiles(t *testing.T) {
 	for _, entry := range entries {
 		seen[entry.Path] = entry.Type
 	}
-	for _, want := range []string{"product.json", "code", "code/main.py"} {
+	for _, want := range []string{"code", "code/main.py", "code/product.json"} {
 		if _, ok := seen[want]; !ok {
 			t.Fatalf("tree missing %q: %+v", want, entries)
 		}
@@ -201,8 +215,11 @@ func TestFlattenSharedProjectFiles(t *testing.T) {
 		if strings.HasPrefix(path, "builder") || strings.HasPrefix(path, "db") {
 			t.Fatalf("private subtree leaked into tree: %q", path)
 		}
+		if path == "product.json" || path == "workflow.json" {
+			t.Fatalf("raw manifest leaked into tree: %q", path)
+		}
 	}
-	if entries[0].Path != "code" || entries[len(entries)-1].Path != "product.json" {
+	if entries[0].Path != "code" || entries[len(entries)-1].Path != "code/product.json" {
 		t.Fatalf("tree not sorted: %+v", entries)
 	}
 	if isSharedProjectBinaryContent("plain text") || !isSharedProjectBinaryContent("ab\x00cd") {
@@ -237,11 +254,18 @@ func TestWorkspaceProxyCrossUserBlock(t *testing.T) {
 		{"body move destination", proxyRequest("POST", "/api/wp/api/documents/a/move", `{"source_path":"Chats/a","destination_path":"_users/owner/Chats/a"}`)},
 		{"body guard paths", proxyRequest("POST", "/api/wp/api/execute", `{"command":"ls","folder_guard":{"write_paths":["_users/owner/Chats"]}}`)},
 	}
+	verdict := func(req *http.Request) (int, string) {
+		status, detail, cleanup := workspaceProxyCrossUserBlock(req, "reader")
+		if cleanup != nil {
+			t.Cleanup(cleanup)
+		}
+		return status, detail
+	}
 	for _, tt := range blockedTargets {
-		if blocked, reason := workspaceProxyCrossUserBlock(tt.req, "reader"); !blocked {
-			t.Fatalf("%s: not blocked", tt.name)
-		} else if reason == "" {
-			t.Fatalf("%s: blocked without reason", tt.name)
+		if status, detail := verdict(tt.req); status != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403", tt.name, status)
+		} else if detail == "" {
+			t.Fatalf("%s: blocked without detail", tt.name)
 		}
 	}
 	allowedTargets := []struct {
@@ -256,15 +280,22 @@ func TestWorkspaceProxyCrossUserBlock(t *testing.T) {
 		{"patch text mentioning users is not a path", proxyRequest("PUT", "/api/wp/api/documents/Chats/note.md", `{"content":"see _users/owner for details"}`)},
 	}
 	for _, tt := range allowedTargets {
-		if blocked, reason := workspaceProxyCrossUserBlock(tt.req, "reader"); blocked {
-			t.Fatalf("%s: blocked (%s)", tt.name, reason)
+		if status, detail := verdict(tt.req); status != 0 {
+			t.Fatalf("%s: blocked (%d %s)", tt.name, status, detail)
 		}
 	}
-	// Unknown-length bodies cannot be inspected; URL and query checks
-	// still apply.
+	// Allowed JSON bodies replay byte-identical for the upstream.
+	replayReq := proxyRequest("PUT", "/api/wp/api/documents/Chats/note.md", `{"content":"see _users/owner for details"}`)
+	if status, _ := verdict(replayReq); status != 0 {
+		t.Fatalf("replay request blocked (%d)", status)
+	}
+	if replayed, err := io.ReadAll(replayReq.Body); err != nil || string(replayed) != `{"content":"see _users/owner for details"}` {
+		t.Fatalf("JSON body not restored after verdict: %q err=%v", replayed, err)
+	}
+	// Bodyless unknown-length requests carry nothing to inspect.
 	chunked := proxyRequest("POST", "/api/wp/api/folders", "")
 	chunked.ContentLength = -1
-	if blocked, _ := workspaceProxyCrossUserBlock(chunked, "reader"); blocked {
+	if status, _ := verdict(chunked); status != 0 {
 		t.Fatal("bodyless request blocked")
 	}
 
@@ -292,12 +323,12 @@ func TestWorkspaceProxyCrossUserBlock(t *testing.T) {
 		req.Header.Set("Content-Type", writer.FormDataContentType())
 		return req
 	}
-	if blocked, _ := workspaceProxyCrossUserBlock(multipartRequest(map[string]string{"folder_path": "_users/owner/Chats"}, "note.txt", "hi"), "reader"); !blocked {
-		t.Fatal("cross-user multipart upload not blocked")
+	if status, _ := verdict(multipartRequest(map[string]string{"folder_path": "_users/owner/Chats"}, "note.txt", "hi")); status != http.StatusForbidden {
+		t.Fatalf("cross-user multipart upload status = %d, want 403", status)
 	}
 	allowed := multipartRequest(map[string]string{"folder_path": "Chats/Work"}, "note.txt", "hi")
-	if blocked, reason := workspaceProxyCrossUserBlock(allowed, "reader"); blocked {
-		t.Fatalf("own multipart upload blocked (%s)", reason)
+	if status, detail := verdict(allowed); status != 0 {
+		t.Fatalf("own multipart upload blocked (%d %s)", status, detail)
 	}
 	// Allowed multipart bodies replay byte-identical for the upstream.
 	restored, err := io.ReadAll(allowed.Body)
@@ -311,13 +342,232 @@ func TestWorkspaceProxyCrossUserBlock(t *testing.T) {
 		"/api/wp/api/documents/glob?pattern=_users/owner/**",
 		"/api/wp/api/db/tables?db_path=_users/owner/db.sqlite",
 	} {
-		if blocked, _ := workspaceProxyCrossUserBlock(proxyRequest("GET", target, ""), "reader"); !blocked {
-			t.Fatalf("%s: not blocked", target)
+		if status, _ := verdict(proxyRequest("GET", target, "")); status != http.StatusForbidden {
+			t.Fatalf("%s: status = %d, want 403", target, status)
 		}
 	}
-	if blocked, _ := workspaceProxyCrossUserBlock(proxyRequest("POST", "/api/wp/api/workspace/export", `{"workspace_path":"_users/owner/Chats"}`), "reader"); !blocked {
-		t.Fatal("cross-user workspace export not blocked")
+	if status, _ := verdict(proxyRequest("POST", "/api/wp/api/workspace/export", `{"workspace_path":"_users/owner/Chats"}`)); status != http.StatusForbidden {
+		t.Fatalf("cross-user workspace export status = %d, want 403", status)
 	}
+}
+
+func TestWorkspaceProxyBodyFailsClosed(t *testing.T) {
+	jsonRequest := func(body string) *http.Request {
+		req := httptest.NewRequest(http.MethodPost, "/api/wp/api/folders", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		return req
+	}
+	verdict := func(req *http.Request) (int, string) {
+		status, detail, cleanup := workspaceProxyCrossUserBlock(req, "reader")
+		if cleanup != nil {
+			t.Cleanup(cleanup)
+		}
+		return status, detail
+	}
+	withProxyCaps := func(mem, max int64) func() {
+		oldMem, oldMax := workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap
+		workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap = mem, max
+		return func() { workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap = oldMem, oldMax }
+	}
+
+	// Unknown (chunked) lengths stream through the same inspection: a
+	// cross-user path is caught, a clean body is allowed and de-chunked.
+	t.Run("chunked", func(t *testing.T) {
+		bad := jsonRequest(`{"folder_path":"_users/owner/Chats/evil"}`)
+		bad.ContentLength = -1
+		if status, _ := verdict(bad); status != http.StatusForbidden {
+			t.Fatalf("chunked cross-user status = %d, want 403", status)
+		}
+		good := jsonRequest(`{"folder_path":"Chats/Work"}`)
+		good.ContentLength = -1
+		if status, _ := verdict(good); status != 0 {
+			t.Fatalf("chunked clean status = %d, want allow", status)
+		}
+		replayed, err := io.ReadAll(good.Body)
+		if err != nil || string(replayed) != `{"folder_path":"Chats/Work"}` {
+			t.Fatalf("chunked body not replayed: %q err=%v", replayed, err)
+		}
+		if good.ContentLength != int64(len(`{"folder_path":"Chats/Work"}`)) {
+			t.Fatalf("chunked length = %d, want explicit", good.ContentLength)
+		}
+	})
+
+	// Bodies past the hard cap reject whether the length is declared or
+	// only discovered mid-stream.
+	t.Run("oversized", func(t *testing.T) {
+		restore := withProxyCaps(1024, 4096)
+		defer restore()
+		big := `{"content":` + strings.Repeat(`"x",`, 2000) + `"y"}`
+		if status, _ := verdict(jsonRequest(big)); status != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized declared status = %d, want 413", status)
+		}
+		streamed := jsonRequest(big)
+		streamed.ContentLength = -1
+		if status, _ := verdict(streamed); status != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized streamed status = %d, want 413", status)
+		}
+	})
+
+	// Malformed bodies reject like the workspace server would; empty and
+	// trailing-garbage bodies mirror gin's first-value decode (nothing
+	// past the first value can smuggle a path the server would act on).
+	t.Run("malformed", func(t *testing.T) {
+		if status, _ := verdict(jsonRequest(`{"folder_path":`)); status != http.StatusBadRequest {
+			t.Fatalf("malformed JSON status = %d, want 400", status)
+		}
+		empty := jsonRequest("")
+		if status, _ := verdict(empty); status != 0 {
+			t.Fatalf("empty JSON status = %d, want allow", status)
+		}
+		if status, _ := verdict(jsonRequest(`{"folder_path":"Chats/Work"} trailing`)); status != 0 {
+			t.Fatalf("trailing-garbage JSON status = %d, want allow", status)
+		}
+		broken := httptest.NewRequest(http.MethodPost, "/api/wp/api/upload", strings.NewReader("--abc\r\nnot-a-part"))
+		broken.Header.Set("Content-Type", "multipart/form-data")
+		if status, _ := verdict(broken); status != http.StatusBadRequest {
+			t.Fatalf("boundaryless multipart status = %d, want 400", status)
+		}
+	})
+
+	// Unreadable streams reject instead of forwarding blind.
+	t.Run("unreadable", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/api/wp/api/folders", errReader{})
+		req.Header.Set("Content-Type", "application/json")
+		req.ContentLength = 64
+		if status, _ := verdict(req); status != http.StatusBadRequest {
+			t.Fatalf("unreadable body status = %d, want 400", status)
+		}
+	})
+}
+
+type errReader struct{}
+
+func (errReader) Read([]byte) (int, error) { return 0, errorsTestSentinel }
+func (errReader) Close() error             { return nil }
+
+var errorsTestSentinel = errTestReadFailure{}
+
+type errTestReadFailure struct{}
+
+func (errTestReadFailure) Error() string { return "test read failure" }
+
+func TestWorkspaceProxyMultipartFailsClosed(t *testing.T) {
+	// fileFirstRequest mirrors the client's own upload order: the file
+	// part precedes the folder_path field on the wire.
+	fileFirstRequest := func(t *testing.T, folderPath, fileBody string) *http.Request {
+		t.Helper()
+		var buf bytes.Buffer
+		writer := multipart.NewWriter(&buf)
+		part, err := writer.CreateFormFile("file", "note.txt")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := part.Write([]byte(fileBody)); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.WriteField("folder_path", folderPath); err != nil {
+			t.Fatal(err)
+		}
+		if err := writer.Close(); err != nil {
+			t.Fatal(err)
+		}
+		req := httptest.NewRequest(http.MethodPost, "/api/wp/api/upload", bytes.NewReader(buf.Bytes()))
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+		return req
+	}
+	verdict := func(t *testing.T, req *http.Request) (int, string) {
+		t.Helper()
+		status, detail, cleanup := workspaceProxyCrossUserBlock(req, "reader")
+		if cleanup != nil {
+			t.Cleanup(cleanup)
+		}
+		return status, detail
+	}
+	withProxyCaps := func(mem, max int64) func() {
+		oldMem, oldMax := workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap
+		workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap = mem, max
+		return func() { workspaceProxyBodyMemoryCap, workspaceProxyBodyMaxCap = oldMem, oldMax }
+	}
+	spoolLeftovers := func(t *testing.T) []string {
+		t.Helper()
+		matches, err := filepath.Glob(filepath.Join(os.TempDir(), "workspace-proxy-body-*"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return matches
+	}
+
+	// Field order never hides a path: the whole body is inspected.
+	t.Run("file first", func(t *testing.T) {
+		if status, _ := verdict(t, fileFirstRequest(t, "_users/owner/Chats", "hi")); status != http.StatusForbidden {
+			t.Fatalf("file-first cross-user status = %d, want 403", status)
+		}
+		allowed := fileFirstRequest(t, "Chats/Work", "hi")
+		if status, detail := verdict(t, allowed); status != 0 {
+			t.Fatalf("file-first own status = %d (%s)", status, detail)
+		}
+		replayed, err := io.ReadAll(allowed.Body)
+		if err != nil || !bytes.Contains(replayed, []byte("folder_path")) || !bytes.Contains(replayed, []byte("note.txt")) {
+			t.Fatal("file-first body not replayed intact")
+		}
+	})
+
+	// A path field after megabytes of file content is still checked:
+	// field order and file size never truncate the inspection.
+	t.Run("file first past the old scan cap", func(t *testing.T) {
+		huge := strings.Repeat("x", 5<<20)
+		if status, _ := verdict(t, fileFirstRequest(t, "_users/owner/Chats", huge)); status != http.StatusForbidden {
+			t.Fatalf("large file-first cross-user status = %d, want 403", status)
+		}
+		allowed := fileFirstRequest(t, "Chats/Work", huge)
+		if status, detail := verdict(t, allowed); status != 0 {
+			t.Fatalf("large file-first own status = %d (%s)", status, detail)
+		}
+		replayed, err := io.ReadAll(allowed.Body)
+		if err != nil || len(replayed) < 5<<20 || !bytes.Contains(replayed, []byte("folder_path")) {
+			t.Fatal("large file-first body not replayed intact")
+		}
+	})
+
+	// Bodies past the memory cap spill to disk and are still fully
+	// checked; the spool is removed afterwards.
+	t.Run("disk spool", func(t *testing.T) {
+		restore := withProxyCaps(512, 1<<20)
+		defer restore()
+		before := spoolLeftovers(t)
+		bigFile := strings.Repeat("x", 4096)
+		if status, _ := verdict(t, fileFirstRequest(t, "_users/owner/Chats", bigFile)); status != http.StatusForbidden {
+			t.Fatalf("spooled cross-user status = %d, want 403", status)
+		}
+		// The rejection above ran its own cleanup; the allowed verdict
+		// below registers its cleanup with the test.
+		allowed := fileFirstRequest(t, "Chats/Work", bigFile)
+		status, detail, cleanup := workspaceProxyCrossUserBlock(allowed, "reader")
+		if status != 0 {
+			t.Fatalf("spooled own status = %d (%s)", status, detail)
+		}
+		if cleanup == nil {
+			t.Fatal("spooled body returned no cleanup")
+		}
+		replayed, err := io.ReadAll(allowed.Body)
+		if err != nil || !bytes.Contains(replayed, []byte(bigFile)) {
+			t.Fatal("spooled body not replayed intact")
+		}
+		_ = allowed.Body.Close()
+		cleanup()
+		if leftovers := spoolLeftovers(t); len(leftovers) != len(before) {
+			t.Fatalf("spool leftovers: %v", leftovers)
+		}
+	})
+
+	// Bodies past the hard cap reject with 413.
+	t.Run("oversized", func(t *testing.T) {
+		restore := withProxyCaps(512, 4096)
+		defer restore()
+		if status, _ := verdict(t, fileFirstRequest(t, "Chats/Work", strings.Repeat("x", 8192))); status != http.StatusRequestEntityTooLarge {
+			t.Fatalf("oversized multipart status = %d, want 413", status)
+		}
+	})
 }
 
 // crewRunModeFixture is a two-user workspace: owner holds crew-aaa (with a
@@ -611,7 +861,7 @@ func TestSharedProjectFilesAndFile(t *testing.T) {
 	for _, entry := range tree.Files {
 		seen[entry.Path] = true
 	}
-	for _, want := range []string{"product.json", "workflow.json", "MEMORY.md", "code/main.py"} {
+	for _, want := range []string{"MEMORY.md", "code/main.py"} {
 		if !seen[want] {
 			t.Fatalf("tree missing %q: %+v", want, tree.Files)
 		}
@@ -619,6 +869,9 @@ func TestSharedProjectFilesAndFile(t *testing.T) {
 	for path := range seen {
 		if strings.HasPrefix(path, "builder") || strings.HasPrefix(path, "db") {
 			t.Fatalf("private subtree in tree: %q", path)
+		}
+		if path == "product.json" || path == "workflow.json" {
+			t.Fatalf("raw manifest in tree: %q", path)
 		}
 	}
 
@@ -631,14 +884,19 @@ func TestSharedProjectFilesAndFile(t *testing.T) {
 	if code, body := fileReq("reader", "code/main.py"); code != http.StatusOK || !strings.Contains(string(body), "print") {
 		t.Fatalf("file status = %d: %s", code, body)
 	}
-	for _, bad := range []string{"builder/session-1-conversation.json", "db/app.sqlite", "missing.txt"} {
+	for _, bad := range []string{
+		"builder/session-1-conversation.json", "db/app.sqlite", "missing.txt",
+		// Raw manifests carry connection IDs, ciphertext, and
+		// unfiltered references: never servable, however addressed.
+		"product.json", "workflow.json", "/product.json", "../../product.json",
+	} {
 		if code, _ := fileReq("reader", bad); code != http.StatusNotFound {
 			t.Fatalf("file(%q) status = %d, want 404", bad, code)
 		}
 	}
 	// Escape attempts collapse inside the root: they serve the root file,
 	// never anything outside it.
-	if code, body := fileReq("reader", "../../product.json"); code != http.StatusOK || !strings.Contains(string(body), "crew-aaa") {
+	if code, body := fileReq("reader", "../../MEMORY.md"); code != http.StatusOK || !strings.Contains(string(body), "Alpha brief") {
 		t.Fatalf("collapsed file status = %d: %s", code, body)
 	}
 	if code, _ := fileReq("reader", "code/blob.bin"); code != http.StatusUnsupportedMediaType {
@@ -649,6 +907,19 @@ func TestSharedProjectFilesAndFile(t *testing.T) {
 	fx.api.handleListSharedProjectFiles(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown project files status = %d", rec.Code)
+	}
+	// Sweep every response above for the fixture's manifest secrets: the
+	// connection ID, the webhook ciphertext, and the private workflow
+	// reference must reach no reader through these endpoints.
+	sweep := string(body)
+	for _, rel := range []string{"code/main.py", "MEMORY.md", "product.json", "workflow.json", "../../product.json", "missing.txt"} {
+		_, fileBody := fileReq("reader", rel)
+		sweep += string(fileBody)
+	}
+	for _, secret := range []string{"owner-conn-1", "TOP-SECRET-CIPHERTEXT", "Workflow/private"} {
+		if strings.Contains(sweep, secret) {
+			t.Fatalf("reader file surface leaks %q", secret)
+		}
 	}
 }
 

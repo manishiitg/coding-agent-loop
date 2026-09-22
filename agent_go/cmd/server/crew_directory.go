@@ -26,8 +26,9 @@ import (
 // crew's workflow references are filtered to workflows the caller may
 // open, so a crew reused across workflows never names one the caller
 // cannot see. Private crew areas (the owner's chat transcripts under
-// builder/, run databases under db/) are excluded from the tree and the
-// file reader, and trigger endpoint material, secret values, and LLM
+// builder/, run databases under db/) and the raw owner manifests
+// (product.json, workflow.json) are excluded from the tree and the file
+// reader, and trigger endpoint material, secret values, and LLM
 // connection IDs are never serialized.
 
 type sharedProjectSummary struct {
@@ -86,6 +87,13 @@ type sharedProjectFileResponse struct {
 // list or open: the owner's private chat transcripts (builder/) and run
 // databases (db/).
 var sharedProjectExcludedTopSegments = map[string]bool{"builder": true, "db": true}
+
+// sharedProjectExcludedRootFiles are crew-root files no reader may list
+// or open raw: the owner's manifests carry LLM connection IDs, encrypted
+// webhook secrets, and unfiltered workflow references. Readers still see
+// the same configuration through the listing endpoint's sanitized
+// summary, so raw access adds nothing but the secrets.
+var sharedProjectExcludedRootFiles = map[string]bool{"product.json": true, "workflow.json": true}
 
 const (
 	sharedProjectFileTreeDepth  = 4
@@ -322,7 +330,8 @@ func (api *StreamingAPI) authorizeCrewProjectRead(r *http.Request, projectID str
 }
 
 // GET /api/agent-profiles/{id}/shared-projects/{project_id}/files — the
-// crew's file tree, crew-relative, minus the excluded private subtrees.
+// crew's file tree, crew-relative, minus the excluded private subtrees
+// and the raw owner manifests.
 func (api *StreamingAPI) handleListSharedProjectFiles(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -343,6 +352,8 @@ func (api *StreamingAPI) handleListSharedProjectFiles(w http.ResponseWriter, r *
 
 // GET /api/agent-profiles/{id}/shared-projects/{project_id}/file?path=<rel> —
 // one text file from the verified crew root, truncated past the cap.
+// The raw owner manifests are not servable here; their sanitized
+// equivalent is the shared-projects listing summary.
 func (api *StreamingAPI) handleGetSharedProjectFile(w http.ResponseWriter, r *http.Request) {
 	if r.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusNoContent)
@@ -376,12 +387,17 @@ func (api *StreamingAPI) handleGetSharedProjectFile(w http.ResponseWriter, r *ht
 }
 
 // confineSharedProjectPath resolves a crew-relative file path against the
-// verified root. Absolute paths, escapes, and the excluded private
-// subtrees fail closed.
+// verified root. Absolute paths, escapes, the excluded private subtrees,
+// and the raw owner manifests fail closed. The exact-name match scopes
+// the manifest exclusion to the crew root: a nested same-named file is
+// ordinary project data, not a Crew manifest.
 func confineSharedProjectPath(root, rel string) (string, bool) {
 	rel = filepath.ToSlash(filepath.Clean("/" + strings.TrimSpace(rel)))
 	rel = strings.TrimPrefix(rel, "/")
 	if rel == "" || rel == "." || strings.HasPrefix(rel, "../") || strings.Contains(rel, "/../") {
+		return "", false
+	}
+	if sharedProjectExcludedRootFiles[rel] {
 		return "", false
 	}
 	top := rel
@@ -409,7 +425,7 @@ func flattenSharedProjectFiles(root string, listing virtualtools.WorkspaceFolder
 				if idx := strings.IndexByte(rel, '/'); idx >= 0 {
 					top = rel[:idx]
 				}
-				if !sharedProjectExcludedTopSegments[top] {
+				if !sharedProjectExcludedTopSegments[top] && !sharedProjectExcludedRootFiles[rel] {
 					kind := "file"
 					if strings.EqualFold(strings.TrimSpace(item.Type), "folder") {
 						kind = "folder"

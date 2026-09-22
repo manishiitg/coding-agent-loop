@@ -338,3 +338,80 @@ mixed journal. Implementation verification must additionally prove that
 workflow-step and scheduled-run events do not create journal rows, interactive
 chat restore survives restart, large payloads are referenced rather than
 copied, and conversation deletion removes its durable rows.
+
+## Appendix: event-type audit (2026-09-22)
+
+All 118 cataloged types were checked for backend producers (mcpagent,
+agent_go, provider repo) and frontend consumers (outside tests/generated).
+Method: const-name references plus raw wire-string grep; stale binaries
+excluded. A dispatcher branch alone does not count as live — emission was
+verified per type. Result: **6 dead consts, 10 dead handlers/renderers, 13
+produced-then-dropped, 11 telemetry demotions; ~78 remain genuinely live,
+of which ~12 families become durable canonical.**
+
+Delete outright — defined, never produced or consumed anywhere:
+
+- `step_execution_start`, `step_execution_end`, `step_execution_failed`
+- `decision_evaluated`, `prerequisite_navigation`, `context_editing_started`
+
+Delete the consts, generated TS types, and referencing tests.
+
+Dead frontend handling — rendered or retained, nothing emits them:
+
+- `live_execution_streaming` (full `EventDispatcher` renderer, dead)
+- `cache_event` (renderer, dead)
+- `phase_started`, `phase_completed` (retention-list entries only, dead)
+
+Dead renderers — dispatcher branch exists, zero emitters (verified, not
+just unreferenced):
+
+- `mcp_server_connection`, `mcp_server_discovery`,
+  `mcp_server_connection_error` (only the `_start` variant is emitted,
+  which itself has no renderer)
+- `model_change` (`NewModelChangeEvent` is never called)
+
+Never displayed — emitted but hidden or nulled before the screen:
+
+- `system_prompt` (in `HIDDEN_EVENTS`, never displayed anywhere)
+- `mcp_server_selection` (dispatcher explicitly returns null: "internal
+  per-turn routing decision, never rendered")
+
+Produced then thrown away — `SKIP_EVENTS` in `base_bridge.go` already drops
+these ("no UI component, pure waste"), but the backend still constructs and
+emits them; direct `AddEvent` paths can also bypass the bridge into the
+journal. Delete the emit calls at source, don't extend the skip list:
+
+- `tool_execution`, `tool_output`, `tool_response` (9 producing files),
+  `tool_call_progress`
+- 8 cache events (`cache_write` emitted from 17 files across the agent
+  core; `cache_hit/miss/expired/cleanup/error/operation_start`,
+  `comprehensive_cache`)
+
+Naming bug: the backend emits `comprehensive_cache`, the bridge skips
+`comprehensive_cache_event`, and the frontend renders
+`comprehensive_cache_event` — three spellings, none matching. The emitted
+event is invisible and unskipped: it rides the bus and the journal for
+nobody. Delete or fix the spelling plus the dead renderer.
+
+Write-only telemetry — emitted, never read; demote to logs/metrics, not bus
+events (consistent with the persistence boundary above):
+
+- `json_validation_start/end`, `llm_messages`, `llm_token_usage`,
+  `error_detail`, `performance`
+- `mcp_server_connection_start/end`
+- `streaming_connection_lost/error/progress`
+
+Keep as live-only — genuinely consumed by Execution Logs and live views,
+but must never enter the chat journal (~40 types: streaming, progress,
+workflow-step internals, orchestrator boundaries, MCP status, etc.).
+
+Open allowlist items from the restore inventory (not yet resolved):
+
+- `input_requested` needs kind + payload schema + requested→resolved
+  pairing, or refresh resurrects answered approvals as pending.
+- Context-lifecycle markers (summarization, max-turns/limits) need an
+  explicit home (`assistant_progress` kind vs new marker type).
+- In-chat step collapse/expand depends on orchestrator/step boundary
+  events; moving them to Execution Logs is a UI change to acknowledge.
+- `background_agent_started` schema must carry what delegation cards
+  render (id, instruction, depth, model, servers, template).

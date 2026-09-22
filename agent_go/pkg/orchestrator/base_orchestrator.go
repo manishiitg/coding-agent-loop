@@ -96,14 +96,6 @@ type BaseOrchestrator struct {
 	// Iteration folder for token persistence (workflow-specific)
 	iterationFolder string
 
-	// Context summarization configuration
-	enableContextSummarization     bool
-	summarizeOnTokenThreshold      bool
-	tokenThresholdPercent          float64
-	summarizeOnFixedTokenThreshold bool
-	fixedTokenThreshold            int
-	summaryKeepLastMessages        int
-
 	// Context offloading configuration
 	largeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
 
@@ -162,33 +154,6 @@ func NewBaseOrchestrator(
 	contextAwareBridge := NewContextAwareEventBridge(eventBridge, logger)
 
 	// Load context summarization configuration from environment variables
-	// Default to enabled (true), can be disabled via ENABLE_CONTEXT_SUMMARIZATION=false
-	enableContextSummarization := os.Getenv("ENABLE_CONTEXT_SUMMARIZATION") != "false"
-	// Default to enabled (true), can be disabled via SUMMARIZE_ON_TOKEN_THRESHOLD=false
-	summarizeOnTokenThreshold := os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD") != "false"
-	tokenThresholdPercent := 0.8 // Default to 80%
-	if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
-		if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
-			tokenThresholdPercent = threshold
-		}
-	}
-	summaryKeepLastMessages := 4 // Default to 4 messages (roughly 2 turns)
-	if envVal := os.Getenv("SUMMARY_KEEP_LAST_MESSAGES"); envVal != "" {
-		if keepLast, err := strconv.Atoi(envVal); err == nil && keepLast > 0 {
-			summaryKeepLastMessages = keepLast
-		}
-	}
-	summarizeOnFixedTokenThreshold := true // Default to enabled with 80k token threshold
-	if envVal := os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD"); envVal == "false" {
-		summarizeOnFixedTokenThreshold = false
-	}
-	fixedTokenThreshold := 80000 // Default to 80k tokens (triggers before 100k max limit)
-	if envVal := os.Getenv("FIXED_TOKEN_THRESHOLD"); envVal != "" {
-		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-			fixedTokenThreshold = threshold
-		}
-	}
-
 	// Load large output threshold for context offloading from environment
 	// Default to 0 which means use library default (10000 tokens)
 	largeOutputThreshold := 0
@@ -238,13 +203,6 @@ func NewBaseOrchestrator(
 		useCodeExecutionMode: useCodeExecutionMode, // NEW field
 		llmConfig:            llmConfig,
 		maxTurns:             maxTurns,
-		// Context summarization configuration
-		enableContextSummarization:     enableContextSummarization,
-		summarizeOnTokenThreshold:      summarizeOnTokenThreshold,
-		tokenThresholdPercent:          tokenThresholdPercent,
-		summarizeOnFixedTokenThreshold: summarizeOnFixedTokenThreshold,
-		fixedTokenThreshold:            fixedTokenThreshold,
-		summaryKeepLastMessages:        summaryKeepLastMessages,
 		// Context offloading configuration
 		largeOutputThreshold: largeOutputThreshold,
 	}

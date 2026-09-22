@@ -74,10 +74,11 @@ export const EVENT_TYPES = {
    *
    * PLAT-063/064: 'workflow_end' and 'batch_execution_end' were removed. Neither
    * is emitted by any Go code — the entire workflow_start/workflow_progress/
-   * workflow_end family is a dead parallel to the live orchestrator_* family
-   * (BaseOrchestrator.EmitOrchestratorEnd, one caller, workflow_orchestrator.go).
-   * They looked like redundant completion signals; they provided none, and their
-   * presence made this array look safer against a single-event failure than it
+   * workflow_end family was a dead parallel to the live orchestrator_* family
+   * (BaseOrchestrator.EmitOrchestratorEnd, one caller, workflow_orchestrator.go)
+   * and was deleted outright in batch 4. They looked like redundant completion
+   * signals; they provided none, and their presence made this array look
+   * safer against a single-event failure than it
    * actually is. 'orchestrator_end' is the only real signal.
    */
   COMPLETION: ['orchestrator_end'] as const,

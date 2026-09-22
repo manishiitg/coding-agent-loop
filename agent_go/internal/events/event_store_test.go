@@ -855,3 +855,55 @@ func TestShouldShowEventFiltersCorrectly(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyRemovedEventTypesExcludedFromPolling(t *testing.T) {
+	store := NewEventStore(50)
+	defer store.Stop()
+
+	now := time.Now()
+	sessionID := "session-legacy-tombstone"
+	add := func(id, eventType string) {
+		store.AddEvent(sessionID, Event{
+			ID:        id,
+			Type:      eventType,
+			Timestamp: now,
+			SessionID: sessionID,
+			Data: &pkgevents.AgentEvent{
+				Type:      pkgevents.EventType(eventType),
+				Timestamp: now,
+			},
+		})
+	}
+
+	// Every tombstoned name must fail ShouldShowEvent (fail-closed).
+	count := 0
+	for name := range LEGACY_REMOVED_EVENT_TYPES {
+		count++
+		if ShouldShowEvent(name) {
+			t.Fatalf("ShouldShowEvent(%q) = true, want false (legacy tombstone)", name)
+		}
+	}
+	if count == 0 {
+		t.Fatal("LEGACY_REMOVED_EVENT_TYPES is empty")
+	}
+
+	// A legacy row must not be returned by polling nor displace live rows.
+	add("legacy-step", "step_progress_updated")
+	add("legacy-wf", "workflow_end")
+	add("legacy-tool", "tool_response")
+	add("live-user", "user_message")
+	add("live-tool", "tool_call_start")
+
+	result := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: 0})
+	gotIDs := eventIDs(result.Events)
+	for _, legacyID := range []string{"legacy-step", "legacy-wf", "legacy-tool"} {
+		if contains(gotIDs, legacyID) {
+			t.Fatalf("polling returned tombstoned row %q, got ids %v", legacyID, gotIDs)
+		}
+	}
+	for _, liveID := range []string{"live-user", "live-tool"} {
+		if !contains(gotIDs, liveID) {
+			t.Fatalf("polling dropped live row %q, got ids %v", liveID, gotIDs)
+		}
+	}
+}

@@ -11,8 +11,6 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
   // Extract context usage from metadata
   const contextUsagePercent = event.context_usage_percent as number | undefined
   const modelContextWindow = event.metadata?.model_context_window as number | undefined
-  const fixedThresholdPercent = event.metadata?.fixed_threshold_percent as number | undefined
-  const fixedThresholdTokens = event.metadata?.fixed_threshold_tokens as number | undefined
 
   // Helper function to format token count (e.g., 1000000 -> "1M", 200000 -> "200k")
   const formatTokenCount = (tokens: number): string => {
@@ -84,7 +82,7 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
         </span>
         
         {/* Context usage */}
-        {((contextUsagePercent ?? 0) > 0 || (fixedThresholdPercent !== undefined && fixedThresholdPercent > 0)) && (
+        {(contextUsagePercent ?? 0) > 0 && (
           <>
             {contextUsagePercent !== undefined && contextUsagePercent > 0 && (
               <span className={contextUsagePercent > 80 ? 'text-red-600 dark:text-red-400' : contextUsagePercent > 50 ? 'text-yellow-600 dark:text-yellow-400' : 'text-orange-600 dark:text-orange-400'}>
@@ -95,11 +93,6 @@ export const StepTokenUsageEventDisplay: React.FC<StepTokenUsageEventDisplayProp
                     {' ('}{formatTokenCount(modelContextWindow)}{')'}
                   </span>
                 )}
-              </span>
-            )}
-            {fixedThresholdPercent !== undefined && fixedThresholdPercent > 0 && fixedThresholdTokens !== undefined && (
-              <span className="text-blue-600 dark:text-blue-400 ml-1">
-                Fixed: {fixedThresholdPercent.toFixed(1)}% ({formatTokenCount(fixedThresholdTokens)})
               </span>
             )}
           </>

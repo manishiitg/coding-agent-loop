@@ -1103,8 +1103,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
   const queuedMessages = useMemo(() => tabConfig?.queuedMessages || [], [tabConfig?.queuedMessages])
 
   
-  // State for summarization
-  const [isSummarizing, setIsSummarizing] = useState(false)
 
   // State for steer message loading
   const [steeringIndex, setSteeringIndex] = useState<number | null>(null)
@@ -1951,34 +1949,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     updateComposerPicker(e.target)
   }, [chatFileContext, chatPastedAttachments, activeTabId, setTabConfig, adjustTextareaHeight, inputText, tabConfig, updateComposerPicker, writeComposerText])
 
-  // Handle manual summarization
-  // If messageToSendAfter is provided, it will be sent as a user message after summarization completes
-  const handleSummarize = useCallback(async (messageToSendAfter?: string) => {
-    if (!tabSessionId || isSummarizing || isStreaming) {
-      return
-    }
-
-    setIsSummarizing(true)
-    try {
-      const response = await agentApi.summarizeConversation(tabSessionId)
-      addToast(`Summarized: ${response.original_count} → ${response.new_count} messages (−${response.reduced_by})`, 'success')
-      
-      // If there's a message to send after summarization, send it now
-      if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
-        // Small delay to ensure summarization is fully processed
-        setTimeout(() => {
-          onSubmit(messageToSendAfter.trim())
-        }, 500)
-      }
-    } catch (error) {
-      console.error('[SUMMARIZATION] Error:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      addToast(`Failed to summarize: ${errorMessage}`, 'error')
-    } finally {
-      setIsSummarizing(false)
-    }
-  }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
-
   const getEffectiveWorkflowModes = useCallback(() => {
     const workflowState = useWorkflowStore.getState()
     const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -2074,14 +2044,12 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       activeTabId,
       tabSessionId,
       tabConfig,
-      isSummarizing,
       isStreaming,
       onSubmit: queueAwareOnSubmit,
       setInputText,
       openDialog,
       setTabConfig,
       addToast,
-      handleSummarize,
       getAppStore: () => useAppStore.getState(),
       getWorkspaceStore: () => useWorkspaceStore.getState(),
       getWorkflowStore: () => useWorkflowStore.getState(),
@@ -2091,7 +2059,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workflowPhaseId,
       workflowWorkspacePath: commandWorkflowPath ?? undefined,
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId, commandWorkflowPath])
+  }, [activeTabId, tabSessionId, tabConfig, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId, commandWorkflowPath])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null
@@ -2835,7 +2803,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
   // Check if query is valid (view-only tabs cannot submit)
   const hasValidQuery = Boolean(inputText?.trim())
-  const inputDisabled = isSummarizing || isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
+  const inputDisabled = isViewOnly || (!tabSessionId && !canBootstrapMultiAgentTab && !canBootstrapWorkflowPhaseTab)
   // Product follow-ups are queued while a structured turn is working, including
   // the short interval before the backend has attached the live session.
   const submitButtonDisabled = !hasValidQuery || !hasSubmitTarget || isViewOnly || isCdpDisconnected || isUploadingFiles
@@ -2911,7 +2879,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       onStateChange={handleMicStateChange}
       bannerHost={micBannerHost}
       shortcutEnabled={!scopedTabId}
-      disabled={isSummarizing}
       autoSubmitOnStop={sparkQuillComposerLayout ? () => readVoiceAutoSendPref() : undefined}
     />
   )
@@ -2922,7 +2889,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           type="button"
           variant="outline"
           size="icon"
-          disabled={isSummarizing}
           onMouseDown={event => { event.preventDefault(); event.stopPropagation() }}
           onClick={openCommandMenu}
           className="h-7 w-7 p-0"
@@ -2944,7 +2910,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           type="button"
           variant="outline"
           size="icon"
-          disabled={isSummarizing || isUploadingFiles}
+          disabled={isUploadingFiles}
           onClick={() => {
             const inputEl = fileUploadInputRef.current
             if (!inputEl) {
@@ -3275,7 +3241,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       {isProductSurface && newConversationEnabled && (
                         <NewChatControl
                           engines={engineGroups.map((g) => ({ id: g.option.id, label: g.option.label || g.option.id }))}
-                          disabled={isSummarizing}
                           onStart={requestNewConversation}
                         />
                       )}
@@ -3288,7 +3253,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           reasoningLevels={currentGroup?.reasoningLevels ?? []}
                           currentReasoningEffort={currentReasoningEffort}
                           defaultReasoningEffort={defaultReasoningEffort}
-                          disabled={isSummarizing}
                           onSelect={selectProductEngine}
                         />
                       )}
@@ -3309,7 +3273,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                           setWorkspaceMinimized(true)
                         }
                       }}
-                      disabled={isStreaming || isSummarizing}
+                      disabled={isStreaming}
                       className={`group flex items-center gap-1 p-1.5 rounded-md border transition-all duration-200 ${
                         browserMode === 'cdp'
                           ? cdpConnected === false
@@ -3322,7 +3286,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                               : browserMode === 'headless'
                                 ? 'bg-blue-900/40 border-blue-600 text-blue-400'
                                 : 'bg-gray-800 border-gray-600 text-gray-500'
-                      } ${(isStreaming || isSummarizing) ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
+                      } ${isStreaming ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer hover:pr-2'}`}
                     >
                       <Globe className="w-4 h-4 flex-shrink-0" />
                       {browserMode !== 'none' ? (
@@ -3621,12 +3585,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
               {/* Show old buttons */}
               {(
                 <div className="flex items-center gap-1">
-                  {isSummarizing && !showStopButton ? (
-                    <div className="flex items-center gap-2 px-3 py-1.5 text-sm text-gray-600 dark:text-gray-400">
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      <span>Summarizing...</span>
-                    </div>
-                  ) : (
                     <div data-tour="chat-send-controls" data-testid="tour-chat-send-controls" className="flex items-center gap-1">
                       {attachmentEl}
                       {micEl}
@@ -3666,7 +3624,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         </Tooltip>
                       )}
                     </div>
-                  )}
                 </div>
               )}
             </div>
@@ -3678,7 +3635,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
           multiple
           onChange={handleUploadFilesSelected}
           className="hidden"
-          disabled={isSummarizing || isUploadingFiles}
+          disabled={isUploadingFiles}
         />
       </div>
       

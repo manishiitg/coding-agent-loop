@@ -746,13 +746,6 @@ type QueryRequest struct {
 	PinRunMode bool `json:"pin_run_mode,omitempty"`
 	// Execution options from frontend (for workflow execution phase)
 	ExecutionOptions *ExecutionOptions `json:"execution_options,omitempty"`
-	// Context summarization configuration
-	EnableContextSummarization     *bool   `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature (nil = inherit default, true/false = explicit override)
-	SummarizeOnTokenThreshold      *bool   `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (nil = inherit default, true/false = explicit override)
-	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold *bool   `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger (nil = inherit default, true/false = explicit override)
-	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (default: 200000 = 200k tokens, matches orchestrator)
-	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4, matches orchestrator)
 	// Workspace access configuration (legacy field, ignored — workspace is always enabled)
 	EnableWorkspaceAccess *bool `json:"enable_workspace_access,omitempty"`
 	// Browser automation access configuration
@@ -2512,9 +2505,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
 	apiRouter.HandleFunc("/chat/submissions/{submission_id}", api.handleChatSubmissionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
-
-	// Context Summarization API routes
-	apiRouter.HandleFunc("/sessions/{session_id}/summarize", api.handleSummarizeConversation).Methods("POST", "OPTIONS")
 
 	// Human Feedback API
 	apiRouter.HandleFunc("/human-feedback/submit", api.handleSubmitHumanFeedback).Methods("POST", "OPTIONS")
@@ -5417,9 +5407,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// enforces it, which is where this would otherwise silently break.
 			CodexNetworkAccess: nativeShellAPITransport,
 			APIKeys:            mergedAPIKeys,
-			// Tool timeout, context summarization/editing, large-output offloading,
-			// and parallel tool execution are set by applySharedLLMAgentTuning below
-			// (shared with sub-agent creation).
+			// Tool timeout, large-output offloading, and parallel tool execution
+			// are set by applySharedLLMAgentTuning below (shared with sub-agent creation).
 			// MCP session ID for stateful connection reuse.
 			// Use the chat session ID so all agents in the same session share MCP connections
 			SessionID: sessionID,
@@ -6047,6 +6036,19 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if err := api.registerWorkDashboardTools(llmAgent, resolvedProfile, sessionID, currentUserID, req.SelectedFolder); err != nil {
 					logfWithContext(queryLogCtx, "[WORK DASHBOARD] Failed to register tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register Work Dashboard tools: %v", err), true)
+					return
+				}
+			}
+			// Code-first asynchronous waits are available only in ordinary Builder
+			// chat and writable Crew chat. Workflow-phase agents already have their
+			// own execution lifecycle, and read-only Crew runs must not gain a new
+			// process/write path.
+			backgroundCodeSurface := resolvedProfile == nil ||
+				(strings.TrimSpace(resolvedProfile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(currentUserID, req.SelectedFolder))
+			if !isWorkflowPhase && !crewReadOnly && backgroundCodeSurface {
+				if err := api.registerBackgroundCodeTools(llmAgent, req, sessionID, currentUserID); err != nil {
+					logfWithContext(queryLogCtx, "[BACKGROUND CODE] Failed to register tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register background code tools: %v", err), true)
 					return
 				}
 			}

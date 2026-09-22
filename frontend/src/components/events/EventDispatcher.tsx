@@ -6,9 +6,6 @@ import { EventWithOrchestratorContext } from './common/EventWithOrchestratorCont
 import {
   isEventType,
   getEventData,
-  type WorkflowStartEventData,
-  type WorkflowProgressEventData,
-  type WorkflowEndEventData,
   type TodoTaskRouteSelectedEvent,
   type TodoTaskStepCompletedEvent,
 } from '../../generated/event-types'
@@ -51,7 +48,6 @@ import {
   OrchestratorEndEventDisplay,
   OrchestratorAgentEndEventDisplay,
   OrchestratorAgentErrorEventDisplay,
-  IndependentStepsSelectedEventDisplay,
   RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
@@ -61,9 +57,6 @@ import { StepTokenUsageEventDisplay } from './orchestrator/StepTokenUsageEvent'
 import { VariablesExtractedEventDisplay } from './orchestrator/VariablesExtractedEvent'
 
 import {
-  WorkflowStartEvent,
-  WorkflowProgressEvent,
-  WorkflowEndEvent,
   BatchExecutionCanceledEventDisplay
 } from './workflow'
 
@@ -74,10 +67,7 @@ import {
   LargeToolOutputDetectedEventDisplay,
   LargeToolOutputFileWrittenEventDisplay,
   MaxTurnsReachedEventDisplay,
-  ContextCancelledEventDisplay,
-  ContextSummarizationStartedEventDisplay,
-  ContextSummarizationCompletedEventDisplay,
-  ContextSummarizationErrorEventDisplay
+  ContextCancelledEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -555,16 +545,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     )
   }
 
-  // Workflow Events
-  if (isEventType(event, 'workflow_start')) {
-    return <CompactWrapper compact={compact}><WorkflowStartEvent event={getEventData(event) as WorkflowStartEventData} /></CompactWrapper>
-  }
-  if (isEventType(event, 'workflow_progress')) {
-    return <CompactWrapper compact={compact}><WorkflowProgressEvent event={getEventData(event) as WorkflowProgressEventData} /></CompactWrapper>
-  }
-  if (isEventType(event, 'workflow_end')) {
-    return <CompactWrapper compact={compact}><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
-  }
   // Batch execution events (only cancellation is emitted)
   if (isEventType(event, 'batch_execution_canceled')) {
     return <CompactWrapper compact={compact}><BatchExecutionCanceledEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
@@ -683,21 +663,8 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return <CompactWrapper compact={compact}><UnifiedCompletionEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
-  // Context Summarization Events
-  if (isEventType(event, 'context_summarization_started')) {
-    return <CompactWrapper compact={compact}><ContextSummarizationStartedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  if (isEventType(event, 'context_summarization_completed')) {
-    return <CompactWrapper compact={compact}><ContextSummarizationCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  if (isEventType(event, 'context_summarization_error')) {
-    return <CompactWrapper compact={compact}><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
 
   // Planning Events
-  if (isEventType(event, 'independent_steps_selected')) {
-    return <CompactWrapper compact={compact}><IndependentStepsSelectedEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
   if (isEventType(event, 'variables_extracted')) {
     return <CompactWrapper compact={compact}><VariablesExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }

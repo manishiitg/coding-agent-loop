@@ -295,7 +295,7 @@ func (s *Store) handleEvent(sessionID string, event storeevents.Event) bool {
 		}
 		s.completeStructuredExecution(sessionID, event, metadata, structuredExecutionFailed(event))
 		return true
-	case "orchestrator_agent_error", "background_agent_failed":
+	case "orchestrator_agent_error":
 		metadata := s.metadataForEvent(event)
 		if !isStructuredExecutionMetadata(sessionID, event, metadata) {
 			return false

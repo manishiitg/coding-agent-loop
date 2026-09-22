@@ -220,36 +220,6 @@ func (bo *BaseOrchestrator) GetIterationFolder() string {
 	return bo.iterationFolder
 }
 
-// GetEnableContextSummarization returns whether context summarization is enabled
-func (bo *BaseOrchestrator) GetEnableContextSummarization() bool {
-	return bo.enableContextSummarization
-}
-
-// GetSummarizeOnTokenThreshold returns whether token-based summarization is enabled
-func (bo *BaseOrchestrator) GetSummarizeOnTokenThreshold() bool {
-	return bo.summarizeOnTokenThreshold
-}
-
-// GetTokenThresholdPercent returns the token threshold percentage for summarization
-func (bo *BaseOrchestrator) GetTokenThresholdPercent() float64 {
-	return bo.tokenThresholdPercent
-}
-
-// GetSummarizeOnFixedTokenThreshold returns whether fixed token-based summarization is enabled
-func (bo *BaseOrchestrator) GetSummarizeOnFixedTokenThreshold() bool {
-	return bo.summarizeOnFixedTokenThreshold
-}
-
-// GetFixedTokenThreshold returns the fixed token threshold for summarization
-func (bo *BaseOrchestrator) GetFixedTokenThreshold() int {
-	return bo.fixedTokenThreshold
-}
-
-// GetSummaryKeepLastMessages returns the number of recent messages to keep when summarizing
-func (bo *BaseOrchestrator) GetSummaryKeepLastMessages() int {
-	return bo.summaryKeepLastMessages
-}
-
 // GetLargeOutputThreshold returns the token threshold for context offloading (0 = use default: 10000)
 func (bo *BaseOrchestrator) GetLargeOutputThreshold() int {
 	return bo.largeOutputThreshold

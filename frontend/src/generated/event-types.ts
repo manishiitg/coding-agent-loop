@@ -44,18 +44,11 @@ import type {
   ToolCallEndEvent,
   ToolCallErrorEvent,
   ToolExecutionEvent,
-  ToolOutputEvent,
-  ToolResponseEvent,
-  MCPServerConnectionEvent,
   MCPServerSelectionEvent,
   UserMessageEvent,
   TokenUsageEvent,
-  ErrorDetailEvent,
   MaxTurnsReachedEvent,
   ContextCancelledEvent,
-  ContextSummarizationStartedEvent,
-  ContextSummarizationCompletedEvent,
-  ContextSummarizationErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
@@ -69,30 +62,18 @@ import type {
   RoutingEvaluatedEvent,
   ScriptedExecutionEvent,
   VariablesExtractedEvent,
-  IndependentStepsSelectedEvent,
   RequestHumanFeedbackEvent,
   BlockingHumanFeedbackEvent,
-  HumanVerificationResponseEvent,
   // New Streaming Events
   StreamingStartEvent,
   StreamingChunkEvent,
   StreamingEndEvent,
-  StreamingErrorEvent,
-  StreamingProgressEvent,
-  StreamingConnectionLostEvent,
   // New MCP Server Connection Events
   MCPServerConnectionStartEvent,
   MCPServerConnectionEndEvent,
   // New JSON Validation Events
-  JSONValidationStartEvent,
-  JSONValidationEndEvent,
   // New Other Events
   ConversationThinkingEvent,
-  LLMMessagesEvent,
-  ToolCallProgressEvent,
-  DebugEvent,
-  PerformanceEvent,
-  LLMTokenUsageEvent,
   // Background Agent Events
   BackgroundAgentStartedEvent,
   BackgroundAgentCompletedEvent,
@@ -168,18 +149,11 @@ export type EventTypeString =
   | 'tool_call_end'
   | 'tool_call_error'
   | 'tool_execution'
-  | 'tool_output'
-  | 'tool_response'
-  | 'mcp_server_connection'
   | 'mcp_server_selection'
   | 'user_message'
   | 'token_usage'
-  | 'error_detail'
   | 'max_turns_reached'
   | 'context_cancelled'
-  | 'context_summarization_started'
-  | 'context_summarization_completed'
-  | 'context_summarization_error'
   | 'large_tool_output_detected'
   | 'large_tool_output_file_written'
   | 'large_tool_output_file_write_error'
@@ -195,34 +169,19 @@ export type EventTypeString =
   | 'pre_validation_completed'
   | 'learn_code_script_execution'
   | 'variables_extracted'
-  | 'independent_steps_selected'
   | 'request_human_feedback'
   | 'blocking_human_feedback'
-  | 'human_verification_response'
   // Streaming Events
   | 'streaming_start'
   | 'streaming_chunk'
   | 'streaming_end'
-  | 'streaming_error'
-  | 'streaming_progress'
-  | 'streaming_connection_lost'
   // MCP Server Connection Detail Events
   | 'mcp_server_connection_start'
   | 'mcp_server_connection_end'
   // JSON Validation Events
-  | 'json_validation_start'
-  | 'json_validation_end'
   // Other Events
   | 'conversation_thinking'
-  | 'llm_messages'
-  | 'tool_call_progress'
-  | 'debug'
-  | 'performance'
-  | 'llm_token_usage'
   // Workflow Events
-  | 'workflow_start'
-  | 'workflow_progress'
-  | 'workflow_end'
   // Batch Execution Events (only cancellation is emitted)
   | 'batch_execution_canceled'
   // Todo Task Events
@@ -265,18 +224,11 @@ export interface EventTypeToDataMap {
   'tool_call_end': ToolCallEndEvent;
   'tool_call_error': ToolCallErrorEvent;
   'tool_execution': ToolExecutionEvent;
-  'tool_output': ToolOutputEvent;
-  'tool_response': ToolResponseEvent;
-  'mcp_server_connection': MCPServerConnectionEvent;
   'mcp_server_selection': MCPServerSelectionEvent;
   'user_message': UserMessageEvent;
   'token_usage': TokenUsageEvent;
-  'error_detail': ErrorDetailEvent;
   'max_turns_reached': MaxTurnsReachedEvent;
   'context_cancelled': ContextCancelledEvent;
-  'context_summarization_started': ContextSummarizationStartedEvent;
-  'context_summarization_completed': ContextSummarizationCompletedEvent;
-  'context_summarization_error': ContextSummarizationErrorEvent;
   'large_tool_output_detected': LargeToolOutputDetectedEvent;
   'large_tool_output_file_written': LargeToolOutputFileWrittenEvent;
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
@@ -291,34 +243,19 @@ export interface EventTypeToDataMap {
   'pre_validation_completed': PreValidationCompletedEvent;
   'learn_code_script_execution': ScriptedExecutionEvent;
   'variables_extracted': VariablesExtractedEvent;
-  'independent_steps_selected': IndependentStepsSelectedEvent;
   'request_human_feedback': RequestHumanFeedbackEvent;
   'blocking_human_feedback': BlockingHumanFeedbackEvent;
-  'human_verification_response': HumanVerificationResponseEvent;
   // Streaming Events
   'streaming_start': StreamingStartEvent;
   'streaming_chunk': StreamingChunkEvent;
   'streaming_end': StreamingEndEvent;
-  'streaming_error': StreamingErrorEvent;
-  'streaming_progress': StreamingProgressEvent;
-  'streaming_connection_lost': StreamingConnectionLostEvent;
   // MCP Server Connection Detail Events
   'mcp_server_connection_start': MCPServerConnectionStartEvent;
   'mcp_server_connection_end': MCPServerConnectionEndEvent;
   // JSON Validation Events
-  'json_validation_start': JSONValidationStartEvent;
-  'json_validation_end': JSONValidationEndEvent;
   // Other Events
   'conversation_thinking': ConversationThinkingEvent;
-  'llm_messages': LLMMessagesEvent;
-  'tool_call_progress': ToolCallProgressEvent;
-  'debug': DebugEvent;
-  'performance': PerformanceEvent;
-  'llm_token_usage': LLMTokenUsageEvent;
   // Workflow Events
-  'workflow_start': WorkflowStartEventData;
-  'workflow_progress': WorkflowProgressEventData;
-  'workflow_end': WorkflowEndEventData;
   // Batch Execution Events (only cancellation is emitted)
   'batch_execution_canceled': BatchExecutionCanceledEvent;
   // Todo Task Events
@@ -460,28 +397,6 @@ export interface DelegationEndEvent {
 // EventTypeToDataMap, so every consumer fell back to ad-hoc `as` casts
 // regardless. The backend now emits real typed structs for these, so the
 // generated interfaces are authoritative.
-
-// Workflow event data types (not in generated schema)
-export interface WorkflowStartEventData {
-  workflow_id?: string;
-  objective?: string;
-  message?: string;
-  timestamp?: number;
-}
-
-export interface WorkflowProgressEventData {
-  phase?: string;
-  message?: string;
-  timestamp?: number;
-}
-
-export interface WorkflowEndEventData {
-  workflow_id?: string;
-  result?: string;
-  status?: string;
-  message?: string;
-  timestamp?: number;
-}
 
 // =============================================================================
 // TYPED EVENT INTERFACE
@@ -660,18 +575,11 @@ export type {
   ToolCallEndEvent,
   ToolCallErrorEvent,
   ToolExecutionEvent,
-  ToolOutputEvent,
-  ToolResponseEvent,
-  MCPServerConnectionEvent,
   MCPServerSelectionEvent,
   UserMessageEvent,
   TokenUsageEvent,
-  ErrorDetailEvent,
   MaxTurnsReachedEvent,
   ContextCancelledEvent,
-  ContextSummarizationStartedEvent,
-  ContextSummarizationCompletedEvent,
-  ContextSummarizationErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
@@ -685,30 +593,18 @@ export type {
   RoutingEvaluatedEvent,
   ScriptedExecutionEvent,
   VariablesExtractedEvent,
-  IndependentStepsSelectedEvent,
   RequestHumanFeedbackEvent,
   BlockingHumanFeedbackEvent,
-  HumanVerificationResponseEvent,
   // Streaming Events
   StreamingStartEvent,
   StreamingChunkEvent,
   StreamingEndEvent,
-  StreamingErrorEvent,
-  StreamingProgressEvent,
-  StreamingConnectionLostEvent,
   // MCP Server Connection Detail Events
   MCPServerConnectionStartEvent,
   MCPServerConnectionEndEvent,
   // JSON Validation Events
-  JSONValidationStartEvent,
-  JSONValidationEndEvent,
   // Other Events
   ConversationThinkingEvent,
-  LLMMessagesEvent,
-  ToolCallProgressEvent,
-  DebugEvent,
-  PerformanceEvent,
-  LLMTokenUsageEvent,
   // Background Agent Events
   BackgroundAgentStartedEvent,
   BackgroundAgentCompletedEvent,

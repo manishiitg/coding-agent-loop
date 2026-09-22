@@ -145,12 +145,6 @@ func NewBaseAgent(
 	cacheOnly bool,
 	enableContextOffloading *bool, // Context offloading configuration
 	largeOutputThreshold int, // Token threshold for context offloading (0 = use default: 10000)
-	enableContextSummarization bool, // Context summarization configuration
-	summarizeOnTokenThreshold bool, // Enable token-based summarization trigger
-	tokenThresholdPercent float64, // Percentage of context window to trigger summarization
-	summarizeOnFixedTokenThreshold bool, // Enable fixed token-based summarization trigger
-	fixedTokenThreshold int, // Fixed token threshold to trigger summarization
-	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
 	enableParallelToolExecution bool, // Parallel tool execution configuration
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
@@ -250,10 +244,6 @@ func NewBaseAgent(
 		},
 		Context: mcpagent.ContextRuntimeConfig{
 			Offloading: enableContextOffloading, LargeOutputThreshold: largeOutputThreshold,
-			SummarizationEnabled:      enableContextSummarization,
-			SummarizeOnTokenThreshold: summarizeOnTokenThreshold, TokenThresholdPercent: tokenThresholdPercent,
-			SummarizeOnFixedThreshold: summarizeOnFixedTokenThreshold, FixedTokenThreshold: fixedTokenThreshold,
-			SummaryKeepLastMessages: summaryKeepLastMessages,
 		},
 		Coding: mcpagent.CodingRuntimeConfig{
 			PersistentClaudeCode: codingAgentKeepAlive, PersistentCodex: codingAgentKeepAlive,

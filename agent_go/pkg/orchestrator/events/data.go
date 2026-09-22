@@ -238,19 +238,6 @@ func (e *AutoNotificationSteeredEvent) GetEventType() events.EventType {
 	return AutoNotificationSteered
 }
 
-type HumanVerificationResponseEvent struct {
-	events.BaseEventData
-	SessionID        string `json:"session_id"`
-	WorkflowID       string `json:"workflow_id"`
-	Response         string `json:"response"`          // "approved", "rejected", or revision feedback
-	Feedback         string `json:"feedback"`          // Human feedback text
-	RequiresRevision bool   `json:"requires_revision"` // Whether todo list needs revision
-}
-
-func (e *HumanVerificationResponseEvent) GetEventType() events.EventType {
-	return HumanVerificationResponse
-}
-
 type RequestHumanFeedbackEvent struct {
 	events.BaseEventData
 	Objective        string `json:"objective"`

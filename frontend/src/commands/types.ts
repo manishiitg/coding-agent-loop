@@ -40,14 +40,12 @@ export interface CommandContext {
   activeTabId: string
   tabSessionId: string | null
   tabConfig: ChatTabConfig | undefined
-  isSummarizing: boolean
   isStreaming: boolean
   onSubmit: (msg: string) => void
   setInputText: (text: string) => void
   openDialog: (name: DialogName) => void
   setTabConfig: ReturnType<typeof useChatStore.getState>['setTabConfig']
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void
-  handleSummarize: (ctx?: string) => void
   submitWithExecutionOptions?: (msg: string, executionOptions?: ExecutionOptions) => void
   getAppStore: () => AppStoreState
   getWorkspaceStore: () => WorkspaceStoreState

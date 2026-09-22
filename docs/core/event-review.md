@@ -1,41 +1,34 @@
 # Kept events — manual review checklist
 
-Generated 2026-09-22 from `event-catalog.md` after deletion batches 1+2; updated same day for batch 3.
-96 kept events (37 REMOVED tombstones excluded; counts unchanged by the batch-3 follow-up, which reclassified one line). Batch 3 removed 10 LIVE lines: `context_canceled` (misspelling), `context_editing_completed`, `context_editing_error`, `learning_completed`, `learning_failed`, `learning_skipped`, `orchestrator_error`, `orchestrator_start`, `throttling_detected`, `token_limit_exceeded`.
+Generated 2026-09-22 from `event-catalog.md` after deletion batches 1+2; updated same day for batches 3+4.
+75 kept events (60 REMOVED tombstones excluded; batch-5 removed the 3 summarization events with the whole feature). Batch 3 removed 10 LIVE lines: `context_canceled` (misspelling), `context_editing_completed`, `context_editing_error`, `learning_completed`, `learning_failed`, `learning_skipped`, `orchestrator_error`, `orchestrator_start`, `throttling_detected`, `token_limit_exceeded`.
 Full producer/consumer file lists live in the catalog; this is the condensed ballot.
 Legend: LIVE = produced and consumed; FILTERED-BY-DESIGN = dropped from transcript on purpose;
 BRIDGE-SKIPPED = produced then dropped at the event bridge; OBSERVABILITY-ONLY = tracer spans, never on the wire;
 TELEMETRY-DEMOTE = emitted, never read, should be logs; DEAD = neither produced nor consumed (kept consts — delete candidates);
 NEVER-DISPLAYED = hidden/nulled; RETENTION-ONLY = kept in store, never rendered.
 
-## LIVE (61)
+## LIVE (53)
 
 - [ ] `agent_end` — P: mcp/agent/agent.go, go/cmd/schema-gen/main.go, go/cmd/server/services/bot_event_filter.go, go/pkg/orchestrator/context_aware_bridge.go (+7 more) | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useChatStore.ts, fe/src/stores/useWorkflowStore.ts, fe/src/utils/workflowEventProcessor.ts (+3 more)
 - [ ] `agent_error` — P: go/cmd/schema-gen/main.go, go/cmd/server/event_bridge/base_bridge.go, go/cmd/server/services/bot_event_filter.go, go/pkg/agentwrapper/llm_agent.go (+6 more) | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useChatStore.ts, fe/src/stores/useWorkflowStore.ts, fe/src/utils/cleanConversation.ts (+3 more)
 - [ ] `agent_start` — P: mcp/agent/agent.go, go/cmd/schema-gen/main.go, go/cmd/server/background_agent_transcript.go, go/cmd/server/background_agents.go (+16 more) | C: fe/src/stores/useRunningWorkflowsStore.ts, fe/src/utils/workflowEventProcessor.ts, fe/src/utils/cleanConversation.ts, fe/src/components/events/EventDispatcher.tsx (+1 more)
 - [ ] `auto_notification_steered` — P: go/cmd/schema-gen/main.go, go/pkg/orchestrator/events/types.go, go/internal/events/event_store.go | C: fe/src/components/events/EventDispatcher.tsx
 - [ ] `background_agent_completed` — P: go/cmd/schema-gen/main.go, go/cmd/server/session_execution_tree.go, go/cmd/server/chat_history_routes.go, go/cmd/testing/coding_agent_background_e2e.go (+3 more) | C: fe/src/stores/useChatStore.ts, fe/src/components/ChatArea.tsx, fe/src/components/TerminalEventTranscript.tsx, fe/src/components/events/EventDispatcher.tsx (+1 more)
-- [ ] `background_agent_failed` — P: go/cmd/server/session_execution_tree.go, go/cmd/server/chat_history_routes.go, go/internal/terminals/store.go, go/internal/events/event_store.go | C: fe/src/stores/useChatStore.ts, fe/src/components/TerminalCenter.tsx
 - [ ] `background_agent_started` — P: go/cmd/schema-gen/main.go, go/cmd/server/chat_history_routes.go, go/cmd/testing/workflow_auto_notification_e2e.go, go/pkg/orchestrator/events/types.go (+2 more) | C: fe/src/stores/useChatStore.ts, fe/src/utils/cleanConversation.ts, fe/src/components/events/EventDispatcher.tsx, fe/src/components/events/eventModeUtils.ts
 - [ ] `background_agent_terminated` — P: go/cmd/schema-gen/main.go, go/cmd/server/session_execution_tree.go, go/cmd/server/chat_history_routes.go, go/pkg/orchestrator/events/types.go (+1 more) | C: fe/src/stores/useChatStore.ts, fe/src/components/events/EventDispatcher.tsx, fe/src/components/events/eventModeUtils.ts
 - [ ] `batch_execution_canceled` — P: go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_batch_execution.go, go/pkg/orchestrator/events/data.go | C: fe/src/stores/useChatStore.ts, fe/src/components/events/EventDispatcher.tsx
 - [ ] `blocking_human_feedback` — P: go/cmd/schema-gen/main.go, go/cmd/server/server.go, go/cmd/server/services/bot_connector.go, go/cmd/server/virtual-tools/human_tools.go (+4 more) | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useRunningWorkflowsStore.ts, fe/src/stores/useChatStore.ts, fe/src/utils/humanFeedbackAttention.ts (+2 more)
 - [ ] `broken_pipe` — P: mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, mcp/agent/error_handler.go | C: fe/src/components/events/EventDispatcher.tsx
 - [ ] `context_cancelled` — P: mcp/agent/llm_generation.go, mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, go/cmd/schema-gen/main.go (+2 more) | C: fe/src/stores/useChatStore.ts, fe/src/utils/cleanConversation.ts, fe/src/components/ChatArea.tsx, fe/src/components/events/EventDispatcher.tsx (+1 more)
-- [ ] `context_summarization_completed` — P: mcp/agent/context_summarization.go, go/cmd/schema-gen/main.go | C: fe/src/components/events/EventDispatcher.tsx
-- [ ] `context_summarization_error` — P: mcp/agent/context_summarization.go, go/cmd/schema-gen/main.go | C: fe/src/components/events/EventDispatcher.tsx
-- [ ] `context_summarization_started` — P: mcp/agent/context_summarization.go, go/cmd/schema-gen/main.go | C: fe/src/components/events/EventDispatcher.tsx
 - [ ] `conversation_error` — P: mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, mcp/agent/tool_loop_detector.go, go/cmd/schema-gen/main.go (+3 more) | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useChatStore.ts, fe/src/stores/useWorkflowStore.ts, fe/src/utils/cleanConversation.ts (+5 more)
 - [ ] `conversation_resumed` — P: go/internal/events/event_store.go | C: fe/src/stores/useChatStore.ts, fe/src/utils/chatSubmitHelpers.ts, fe/src/utils/sessionRestore.ts, fe/src/components/ChatArea.tsx (+2 more)
 - [ ] `conversation_thinking` — P: mcp/agent/llm_generation.go, go/cmd/schema-gen/main.go | C: fe/src/utils/thinkingDeltas.ts, fe/src/utils/cleanConversation.ts, fe/src/utils/chatDeliveryTelemetry.ts, fe/src/components/events/EventDispatcher.tsx
-- [ ] `debug` — P: mcp/agent/connection_session.go, mcp/agent/tool_filter.go, mcp/agent/session_handle.go, mcp/agent/llm_generation.go (+63 more) | C: fe/src/utils/logger.ts, fe/src/services/mcpConfigApi.ts
 - [ ] `decision_request_missing` — P: none | C: fe/src/components/workflow/pulseFindingPresentation.ts
 - [ ] `delegation_end` — P: go/cmd/server/session_execution_tree.go, go/cmd/server/delegation.go, go/cmd/server/services/bot_event_filter.go, go/internal/events/event_store.go | C: fe/src/stores/useChatStore.ts, fe/src/components/ChatArea.tsx, fe/src/components/events/EventDispatcher.tsx, fe/src/components/events/eventModeUtils.ts
 - [ ] `delegation_start` — P: go/cmd/server/delegation.go, go/cmd/server/services/bot_event_filter.go, go/internal/terminals/store.go, go/internal/events/event_store.go | C: fe/src/stores/useChatStore.ts, fe/src/components/events/EventDispatcher.tsx, fe/src/components/events/eventModeUtils.ts
 - [ ] `fix_applied` — P: go/pkg/orchestrator/agents/workflow/step_based_workflow/pulse_finding_lifecycle.go | C: fe/src/components/workflow/pulseFindingPresentation.ts
 - [ ] `human_input` — P: go/cmd/agentworks/main.go, go/cmd/server/terminal_routes.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/consolidated_plan_tools.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_agent.go (+1 more) | C: fe/src/utils/stepConfigMatching.ts, fe/src/components/ChatArea.tsx, fe/src/components/workflow/canvas/WorkflowCanvas.tsx, fe/src/components/workflow/executionLogs/helpers.tsx (+1 more)
-- [ ] `human_verification_response` — P: go/cmd/schema-gen/main.go, go/pkg/orchestrator/types/workflow_orchestrator.go, go/pkg/orchestrator/events/data.go | C: fe/src/stores/useRunningWorkflowsStore.ts
-- [ ] `independent_steps_selected` — P: go/cmd/schema-gen/main.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/workflow_events.go | C: fe/src/components/events/EventDispatcher.tsx
 - [ ] `large_tool_output_detected` — P: mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, go/cmd/schema-gen/main.go | C: fe/src/components/ChatArea.tsx, fe/src/components/events/EventDispatcher.tsx
 - [ ] `large_tool_output_file_written` — P: mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, go/cmd/schema-gen/main.go | C: fe/src/components/ChatArea.tsx, fe/src/components/events/EventDispatcher.tsx
 - [ ] `learn_code_script_execution` — P: go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_progress.go (`emitScriptedExecutionEvent`, 4 call sites), go/cmd/schema-gen/main.go, go/internal/events/event_store.go (STRUCTURAL) | C: fe/src/stores/useChatStore.ts, fe/src/components/ChatArea.tsx, fe/src/components/events/EventDispatcher.tsx, fe/src/components/events/eventModeUtils.ts
@@ -68,7 +61,6 @@ NEVER-DISPLAYED = hidden/nulled; RETENTION-ONLY = kept in store, never rendered.
 - [ ] `variables_extracted` — P: go/cmd/schema-gen/main.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/variable_management.go | C: fe/src/components/events/EventDispatcher.tsx
 - [ ] `viewer_control` — P: go/cmd/server/playwright_live.go, go/cmd/server/browser_live.go | C: fe/src/components/workflow/WorkflowLiveBrowser.tsx
 - [ ] `viewer_error` — P: go/cmd/server/playwright_live.go, go/cmd/server/browser_live.go | C: fe/src/components/workflow/WorkflowLiveBrowser.tsx
-- [ ] `workflow_end` — P: go/cmd/server/session_execution_tree.go, go/cmd/server/session_activity_tree.go, go/cmd/server/polling.go, go/internal/events/event_store.go | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useRunningWorkflowsStore.ts, fe/src/stores/useChatStore.ts, fe/src/stores/useWorkflowStore.ts (+2 more)
 - [ ] `workflow_error` — P: go/cmd/server/session_execution_tree.go, go/cmd/server/server.go, go/cmd/server/session_activity_tree.go, go/cmd/server/chat_history_routes.go (+2 more) | C: fe/src/constants/runningWorkflows.ts, fe/src/stores/useChatStore.ts, fe/src/components/TerminalCenter.tsx, fe/src/components/events/EventDispatcher.tsx (+1 more)
 - [ ] `workflow_step_completed` — P: go/cmd/server/services/bot_event_filter.go | C: fe/src/utils/cleanConversation.ts
 - [ ] `workflow_step_started` — P: go/cmd/server/services/bot_event_filter.go | C: fe/src/utils/cleanConversation.ts
@@ -100,11 +92,9 @@ NEVER-DISPLAYED = hidden/nulled; RETENTION-ONLY = kept in store, never rendered.
 
 - [ ] `orchestrator_agent_start` — P: go/pkg/orchestrator/agents/base_orchestrator_agent.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go (5 sites), go/pkg/orchestrator/llm/base_llm.go (fallback) | C: fe stores (retention/heartbeat/restore), go bot narration + planning match, STRUCTURAL. Card removed 2026-09-22 (dispatcher returns null); never painted anywhere.
 
-## BRIDGE-SKIPPED (3)
+## BRIDGE-SKIPPED (1)
 
-- [ ] `tool_call_progress` — P: go/cmd/schema-gen/main.go | C: none
 - [ ] `tool_execution` — P: mcp/agent/tool_registry.go, mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, mcp/agent/definition.go (+22 more) | C: fe/src/utils/decisionRefresh.ts, fe/src/utils/secretMutationRefresh.ts, fe/src/components/ChatArea.tsx
-- [ ] `tool_response` — P: mcp/agent/conversation.go, go/cmd/schema-gen/main.go, go/cmd/server/user_access_tools.go (+4 more; batch-3 update: context_editing producers deleted with the feature) | C: none
 
 ## BRIDGE-SKIPPED, FILTERED-BY-DESIGN (1)
 
@@ -116,24 +106,11 @@ NEVER-DISPLAYED = hidden/nulled; RETENTION-ONLY = kept in store, never rendered.
 - [ ] `mcp_server_connection_end` — P: mcp/agent/connection_session.go, go/cmd/schema-gen/main.go | C: mcp/observability/langfuse_tracer.go`, `langsmith_tracer.go` (connection spans)
 - [ ] `mcp_server_connection_start` — P: mcp/agent/connection_session.go, go/cmd/schema-gen/main.go | C: mcp/observability/langfuse_tracer.go`, `langsmith_tracer.go` (connection spans)
 
-## TELEMETRY-DEMOTE (10)
+## TELEMETRY-DEMOTE (1)
 
-- [ ] `error_detail` — P: go/cmd/schema-gen/main.go, prov/pkg/adapters/bedrock/bedrock_adapter.go, prov/pkg/adapters/anthropic/anthropic_adapter.go, prov/pkg/adapters/vertex/google_genai_adapter.go (+1 more) | C: none
-- [ ] `json_validation_end` — P: go/cmd/schema-gen/main.go | C: none
-- [ ] `json_validation_start` — P: go/cmd/schema-gen/main.go | C: none
 - [ ] `large_tool_output_file_write_error` — P: mcp/agent/parallel_tool_execution.go, mcp/agent/conversation.go, go/cmd/schema-gen/main.go | C: none
-- [ ] `llm_messages` — P: mcp/agent/conversation.go, go/cmd/schema-gen/main.go | C: none
-- [ ] `llm_token_usage` — P: go/cmd/schema-gen/main.go | C: none
-- [ ] `performance` — P: go/cmd/schema-gen/main.go, go/cmd/server/client_chat_telemetry.go, go/cmd/testing/sse.go, go/pkg/orchestrator/agents/workflow/step_based_workflow/report_html_tools.go | C: none
-- [ ] `streaming_connection_lost` — P: go/cmd/schema-gen/main.go | C: none
-- [ ] `streaming_error` — P: go/cmd/schema-gen/main.go | C: none
-- [ ] `streaming_progress` — P: go/cmd/schema-gen/main.go | C: none
 
 ## NEVER-DISPLAYED (1)
 
 - [ ] `mcp_server_selection` — P: go/cmd/schema-gen/main.go, go/cmd/server/work_mcp_selection_tools.go, go/pkg/agentwrapper/llm_agent.go | C: fe/src/components/events/EventDispatcher.tsx
 
-## DEAD (2)
-
-- [ ] `mcp_server_connection` — P: none | C: none
-- [ ] `tool_output` — P: none | C: none

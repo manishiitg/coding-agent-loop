@@ -2396,7 +2396,6 @@ function logTerminalScrollDebug(
 // otherwise be invisible when the rail only contains terminal snapshots.
 const TERMINAL_ERROR_EVENT_TYPES = new Set<string>([
   'orchestrator_agent_error',
-  'background_agent_failed',
   'conversation_error',
   'workflow_error',
   'agent_error',

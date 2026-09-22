@@ -395,9 +395,10 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
             const response = await agentApi.getSessionEvents(bg.sessionId, lastIndex)
 
             // Check session status from response
-            // For workflows, we prioritize workflow_end events over session_status
-            // because session_status might be 'completed' when a single agent finishes,
-            // not when the whole workflow finishes
+            // For workflows, we prioritize completion events (orchestrator_end via
+            // hasWorkflowCompletion) over session_status because session_status
+            // might be 'completed' when a single agent finishes, not when the
+            // whole workflow finishes
             let shouldMarkCompleted = false
             let shouldMarkPaused = false
             let shouldMarkFailed = false
@@ -421,7 +422,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
               shouldMarkFailed = true
             }
             // Note: We don't mark as completed based on session_status alone for workflows
-            // We'll check events first to see if there's a workflow_end event
+            // We'll check events first for a completion signal (hasWorkflowCompletion)
 
             if (response.events && response.events.length > 0) {
               // Add events to store (for later restore)
@@ -440,8 +441,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                   'tool_call_end',
                   'llm_generation_end',
                   'orchestrator_agent_start',
-                  'orchestrator_agent_end',
-                  'workflow_start'
+                  'orchestrator_agent_end'
                 ]
                 if (event.type && runningEventTypes.includes(event.type)) {
                   hasRunningEvents = true
@@ -462,7 +462,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 }
 
                 // Resume events — workflow got a response or ended
-                if (event.type === 'human_verification_response' || event.type === 'workflow_end' || event.type === 'conversation_end' || event.type === 'context_cancelled') {
+                if (event.type === 'conversation_end' || event.type === 'context_cancelled') {
                   shouldResumeFromWaiting = true
                   shouldMarkWaitingForInput = false
                 }

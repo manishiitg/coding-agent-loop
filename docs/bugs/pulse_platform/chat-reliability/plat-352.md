@@ -858,6 +858,16 @@ deletion batches 1-3 plus the 23 names above when batch 4 lands. Test
 that each tombstoned historical event is excluded from polling and does
 not consume the structural-event window.
 
+Landed 2026-09-22 (batch 4, 20 names, 57 total): the tombstone set is
+server-side — `LEGACY_REMOVED_EVENT_TYPES` in
+`agent_go/internal/events/event_store.go`, enforced by `ShouldShowEvent`
+(fail-closed), so tombstoned rows are excluded from polling and never
+consume the structural-event window. Guarded by
+`TestLegacyRemovedEventTypesExcludedFromPolling`, which asserts every
+tombstoned name fails `ShouldShowEvent` and that legacy
+`step_progress_updated` / `workflow_end` / `tool_response` rows are not
+returned by polling. Batch 5 added the 3 summarization names (60 total).
+
 ### Diagnostics-rail correction found during review
 
 The minimal-rail comment says content-bearing errors remain visible, but
@@ -882,3 +892,67 @@ For every proposed removal:
    suites; and
 5. restore a fixture containing every legacy name and verify that no row
    is returned or rendered.
+
+## Appendix: deletion batch 4 (2026-09-22, uncommitted)
+
+Accepted the external review's safe-to-delete list (17 + 3 conditional)
+with per-event producer verification, not reference matching. Deleted 20
+events (57 REMOVED total across 133 -> 135 catalog entries):
+
+- False-positive class, confirmed unproduced: `debug` (60-file producer
+  list was logger-`Debug()` calls), `error_detail` (provider logging
+  helpers), `llm_messages` (`compactedInLLMMessages` counter variable),
+  `performance` (telemetry-field/SSE-flag strings), `tool_response`
+  (message-part-namespace matches).
+- Schema/Langfuse-only: `json_validation_start/end`, `llm_token_usage`,
+  `streaming_progress`, `streaming_error`, `streaming_connection_lost`
+  (tracer handlers with no emitter), `tool_call_progress`, `tool_output`.
+- Ghost/phantom: `background_agent_failed` (const never defined),
+  `human_verification_response` (no constructor either side;
+  `HumanVerificationDisplay` renders `request_human_feedback`).
+- Trio: `workflow_start`/`workflow_progress`/`workflow_end` (never
+  emitted; `orchestrator_end` is the live completion signal,
+  `workflow_error` separately live and kept).
+- Bare name only: `mcp_server_connection` (carrier struct + ctor stay as
+  the payload for the live `mcp_server_connection_start/end` tracer
+  events; const kept as the payload tag).
+
+Verification per the review's 5 steps: raw wire strings + typed
+constructors searched across builder/mcpagent/provider; no emit,
+listener, bridge, or envelope path for any of the 20; file-log and
+bot-notification namespaces (`logErrorDetails*`, `case "tool_response"`)
+left untouched; schemas + generated types regenerated with `tsc -b`
+clean; server-side tombstone extended to 57 with
+`TestLegacyRemovedEventTypesExcludedFromPolling` (see note under Required
+historical compatibility). Full-suite failures observed during the batch
+were proved pre-existing via a HEAD worktree and isolation runs.
+
+## Appendix: deletion batch 5 — context summarization feature removed (2026-09-22, uncommitted)
+
+3 more REMOVED (60 total). Unlike batch 4's dead wire names, this deletes
+a whole feature: `context_summarization_started/completed/error` plus
+everything that produced, configured, or displayed them.
+
+Why it was dead: the automatic path (`mcpagent/agent/conversation.go`)
+requires `enableContextSummarization`, which defaults false everywhere
+and is force-disabled for every coding-agent CLI provider ("handled
+natively by CLI") — and only coding agents run now. The manual path
+(`POST /sessions/{id}/summarize`) had a route, handler, API client, and
+`ChatInput.handleSummarize`, but zero UI callers: no slash command, no
+button.
+
+Removed: `mcpagent/agent/context_summarization.go` + doc + README entry,
+agent fields/options/defaults/provider-disable blocks, conversation
+auto-trigger, event consts/structs/ctors, Langfuse consts/arms/handlers,
+grpc config field + mapping (generated `pb/agent.pb.go` field left;
+harmless), `summarization_routes.go` + route, store `AddSummarization*`
+methods + payload structs, config plumbing
+(server/agent_tuning/llm_agent/interfaces/base_agent/factory/orchestrator/
+preset), `fixed_threshold_*` metadata + the 3 token displays that read
+it, frontend client/request/response/preset/query/request fields,
+`isSummarizing` state + indicator + `handleSummarize`, command-context
+fields, EventDispatcher branches + 3 debug components, rail-denylist
+entries; schemas + generated types regenerated. Tombstone extended to 60
+(existing polling-exclusion test covers the new names by iterating the
+map). `agent_tuning_test.go` rewritten for the surviving knobs; mcpagent
+golden surface test updated.

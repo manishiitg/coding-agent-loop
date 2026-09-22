@@ -830,7 +830,7 @@ func isFormattedResumeUIEventType(eventType string) bool {
 	switch eventType {
 	case "user_message", "llm_generation_end", "llm_generation_error", "unified_completion",
 		"tool_call_start", "tool_call_end", "tool_call_error",
-		"background_agent_started", "background_agent_completed", "background_agent_failed", "background_agent_terminated",
+		"background_agent_started", "background_agent_completed", "background_agent_terminated",
 		"orchestrator_agent_start", "orchestrator_agent_end",
 		"agent_start", "agent_end", "agent_error", "conversation_error", "workflow_error",
 		"request_human_feedback", "blocking_human_feedback", "plan_approval":

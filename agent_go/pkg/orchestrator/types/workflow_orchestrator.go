@@ -206,13 +206,7 @@ type HumanVerificationRequest struct {
 	Status           string    `json:"status"` // "pending", "approved", "modified", "rejected"
 }
 
-type HumanVerificationResponse struct {
-	VerificationID           string    `json:"verification_id"`
-	Status                   string    `json:"status"` // "approved", "modified", "rejected"
-	ModifiedTodoListMarkdown string    `json:"modified_todo_list_markdown,omitempty"`
-	Comments                 string    `json:"comments,omitempty"`
-	ApprovedAt               time.Time `json:"approved_at"`
-}
+
 
 // LLM verification check
 type LLMVerificationCheck struct {

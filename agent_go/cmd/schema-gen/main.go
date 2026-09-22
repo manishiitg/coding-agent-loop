@@ -83,12 +83,9 @@ type EventDataUnion struct {
 	ToolCallEnd   *events.ToolCallEndEvent   `json:"tool_call_end,omitempty"`
 	ToolCallError *events.ToolCallErrorEvent `json:"tool_call_error,omitempty"`
 	ToolExecution *events.ToolExecutionEvent `json:"tool_execution,omitempty"`
-	ToolOutput    *events.ToolOutputEvent    `json:"tool_output,omitempty"`
-	ToolResponse  *events.ToolResponseEvent  `json:"tool_response,omitempty"`
 
 	// MCP Server Events
-	MCPServerConnection *events.MCPServerConnectionEvent `json:"mcp_server_connection,omitempty"`
-	MCPServerSelection  *events.MCPServerSelectionEvent  `json:"mcp_server_selection,omitempty"`
+	MCPServerSelection *events.MCPServerSelectionEvent `json:"mcp_server_selection,omitempty"`
 
 	// System Events
 	SystemPrompt *events.SystemPromptEvent `json:"system_prompt,omitempty"`
@@ -96,14 +93,8 @@ type EventDataUnion struct {
 
 	// Token & Usage Events
 	TokenUsage       *events.TokenUsageEvent       `json:"token_usage,omitempty"`
-	ErrorDetail      *events.ErrorDetailEvent      `json:"error_detail,omitempty"`
 	MaxTurnsReached  *events.MaxTurnsReachedEvent  `json:"max_turns_reached,omitempty"`
 	ContextCancelled *events.ContextCancelledEvent `json:"context_cancelled,omitempty"`
-
-	// Context Summarization Events
-	ContextSummarizationStarted   *events.ContextSummarizationStartedEvent   `json:"context_summarization_started,omitempty"`
-	ContextSummarizationCompleted *events.ContextSummarizationCompletedEvent `json:"context_summarization_completed,omitempty"`
-	ContextSummarizationError     *events.ContextSummarizationErrorEvent     `json:"context_summarization_error,omitempty"`
 
 	// Large Output Events
 	LargeToolOutputDetected       *events.LargeToolOutputDetectedEvent       `json:"large_tool_output_detected,omitempty"`
@@ -142,37 +133,25 @@ type EventDataUnion struct {
 	ScriptedExecution      *orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
-	VariablesExtracted       *todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted,omitempty"`
-	IndependentStepsSelected *todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected,omitempty"`
+	VariablesExtracted *todo_creation_human.VariablesExtractedEvent `json:"variables_extracted,omitempty"`
 
 	// Human Feedback Events
-	RequestHumanFeedback      *orchestrator_events.RequestHumanFeedbackEvent      `json:"request_human_feedback,omitempty"`
-	BlockingHumanFeedback     *orchestrator_events.BlockingHumanFeedbackEvent     `json:"blocking_human_feedback,omitempty"`
-	HumanVerificationResponse *orchestrator_events.HumanVerificationResponseEvent `json:"human_verification_response,omitempty"`
+	RequestHumanFeedback  *orchestrator_events.RequestHumanFeedbackEvent  `json:"request_human_feedback,omitempty"`
+	BlockingHumanFeedback *orchestrator_events.BlockingHumanFeedbackEvent `json:"blocking_human_feedback,omitempty"`
 
 	// Streaming Events
-	StreamingStart          *events.StreamingStartEvent          `json:"streaming_start,omitempty"`
-	StreamingChunk          *events.StreamingChunkEvent          `json:"streaming_chunk,omitempty"`
-	StreamingEnd            *events.StreamingEndEvent            `json:"streaming_end,omitempty"`
-	StreamingError          *events.StreamingErrorEvent          `json:"streaming_error,omitempty"`
-	StreamingProgress       *events.StreamingProgressEvent       `json:"streaming_progress,omitempty"`
-	StreamingConnectionLost *events.StreamingConnectionLostEvent `json:"streaming_connection_lost,omitempty"`
+	StreamingStart *events.StreamingStartEvent `json:"streaming_start,omitempty"`
+	StreamingChunk *events.StreamingChunkEvent `json:"streaming_chunk,omitempty"`
+	StreamingEnd   *events.StreamingEndEvent   `json:"streaming_end,omitempty"`
 
 	// MCP Server Connection Detail Events
 	MCPServerConnectionStart *events.MCPServerConnectionStartEvent `json:"mcp_server_connection_start,omitempty"`
 	MCPServerConnectionEnd   *events.MCPServerConnectionEndEvent   `json:"mcp_server_connection_end,omitempty"`
 
 	// JSON Validation Events
-	JSONValidationStart *events.JSONValidationStartEvent `json:"json_validation_start,omitempty"`
-	JSONValidationEnd   *events.JSONValidationEndEvent   `json:"json_validation_end,omitempty"`
 
 	// Other Events
 	ConversationThinking *events.ConversationThinkingEvent `json:"conversation_thinking,omitempty"`
-	LLMMessages          *events.LLMMessagesEvent          `json:"llm_messages,omitempty"`
-	ToolCallProgress     *events.ToolCallProgressEvent     `json:"tool_call_progress,omitempty"`
-	Debug                *events.DebugEvent                `json:"debug,omitempty"`
-	Performance          *events.PerformanceEvent          `json:"performance,omitempty"`
-	LLMTokenUsage        *events.LLMTokenUsageEvent        `json:"llm_token_usage,omitempty"`
 }
 
 // =============================================================================
@@ -205,12 +184,9 @@ var EventRegistry = map[events.EventType]string{
 	events.ToolCallEnd:   "tool_call_end",
 	events.ToolCallError: "tool_call_error",
 	events.ToolExecution: "tool_execution",
-	events.ToolOutput:    "tool_output",
-	events.ToolResponse:  "tool_response",
 
 	// MCP Server Events
-	events.MCPServerConnection: "mcp_server_connection",
-	events.MCPServerSelection:  "mcp_server_selection",
+	events.MCPServerSelection: "mcp_server_selection",
 
 	// System Events
 	events.SystemPrompt: "system_prompt",
@@ -218,14 +194,8 @@ var EventRegistry = map[events.EventType]string{
 
 	// Token & Usage Events
 	events.TokenUsage:       "token_usage",
-	events.ErrorDetail:      "error_detail",
 	events.MaxTurnsReached:  "max_turns_reached",
 	events.ContextCancelled: "context_cancelled",
-
-	// Context Summarization Events
-	events.ContextSummarizationStarted:   "context_summarization_started",
-	events.ContextSummarizationCompleted: "context_summarization_completed",
-	events.ContextSummarizationError:     "context_summarization_error",
 
 	// Large Output Events
 	events.LargeToolOutputDetected:       "large_tool_output_detected",
@@ -264,37 +234,25 @@ var EventRegistry = map[events.EventType]string{
 	orchestrator_events.ScriptedExecution:      "learn_code_script_execution",
 
 	// Todo/Planning Events
-	orchestrator_events.VariablesExtracted:       "variables_extracted",
-	orchestrator_events.IndependentStepsSelected: "independent_steps_selected",
+	orchestrator_events.VariablesExtracted: "variables_extracted",
 
 	// Human Feedback Events
-	orchestrator_events.RequestHumanFeedback:      "request_human_feedback",
-	orchestrator_events.BlockingHumanFeedback:     "blocking_human_feedback",
-	orchestrator_events.HumanVerificationResponse: "human_verification_response",
+	orchestrator_events.RequestHumanFeedback:  "request_human_feedback",
+	orchestrator_events.BlockingHumanFeedback: "blocking_human_feedback",
 
 	// Streaming Events
-	events.StreamingStart:          "streaming_start",
-	events.StreamingChunk:          "streaming_chunk",
-	events.StreamingEnd:            "streaming_end",
-	events.StreamingError:          "streaming_error",
-	events.StreamingProgress:       "streaming_progress",
-	events.StreamingConnectionLost: "streaming_connection_lost",
+	events.StreamingStart: "streaming_start",
+	events.StreamingChunk: "streaming_chunk",
+	events.StreamingEnd:   "streaming_end",
 
 	// MCP Server Connection Detail Events
 	events.MCPServerConnectionStart: "mcp_server_connection_start",
 	events.MCPServerConnectionEnd:   "mcp_server_connection_end",
 
 	// JSON Validation Events
-	events.JSONValidationStart: "json_validation_start",
-	events.JSONValidationEnd:   "json_validation_end",
 
 	// Other Events
 	events.ConversationThinking: "conversation_thinking",
-	events.LLMMessages:          "llm_messages",
-	events.ToolCallProgress:     "tool_call_progress",
-	events.Debug:                "debug",
-	events.Performance:          "performance",
-	events.LLMTokenUsage:        "llm_token_usage",
 }
 
 // =============================================================================
@@ -461,21 +419,20 @@ func generateDiscriminatedUnionSchema(filename string) error {
 // UnifiedEvent represents a container for all event types (legacy, for unified-events-complete.schema.json)
 type UnifiedEvent struct {
 	// MCP Agent Events (from unified events package)
-	ToolCallStartEvent       events.ToolCallStartEvent       `json:"tool_call_start"`
-	ToolCallEndEvent         events.ToolCallEndEvent         `json:"tool_call_end"`
-	ToolCallErrorEvent       events.ToolCallErrorEvent       `json:"tool_call_error"`
-	LLMGenerationStartEvent  events.LLMGenerationStartEvent  `json:"llm_generation_start"`
-	LLMGenerationEndEvent    events.LLMGenerationEndEvent    `json:"llm_generation_end"`
-	MCPAgentStartEvent       events.AgentStartEvent          `json:"agent_start"`
-	MCPAgentEndEvent         events.AgentEndEvent            `json:"agent_end"`
-	MCPAgentErrorEvent       events.AgentErrorEvent          `json:"mcp_agent_error"`
-	ConversationErrorEvent   events.ConversationErrorEvent   `json:"conversation_error"`
-	LLMGenerationErrorEvent  events.LLMGenerationErrorEvent  `json:"llm_generation_error"`
-	MCPServerConnectionEvent events.MCPServerConnectionEvent `json:"mcp_server_connection"`
-	MCPServerSelectionEvent  events.MCPServerSelectionEvent  `json:"mcp_server_selection"`
-	ConversationStartEvent   events.ConversationStartEvent   `json:"conversation_start"`
-	ConversationEndEvent     events.ConversationEndEvent     `json:"conversation_end"`
-	ConversationTurnEvent    events.ConversationTurnEvent    `json:"conversation_turn"`
+	ToolCallStartEvent      events.ToolCallStartEvent      `json:"tool_call_start"`
+	ToolCallEndEvent        events.ToolCallEndEvent        `json:"tool_call_end"`
+	ToolCallErrorEvent      events.ToolCallErrorEvent      `json:"tool_call_error"`
+	LLMGenerationStartEvent events.LLMGenerationStartEvent `json:"llm_generation_start"`
+	LLMGenerationEndEvent   events.LLMGenerationEndEvent   `json:"llm_generation_end"`
+	MCPAgentStartEvent      events.AgentStartEvent         `json:"agent_start"`
+	MCPAgentEndEvent        events.AgentEndEvent           `json:"agent_end"`
+	MCPAgentErrorEvent      events.AgentErrorEvent         `json:"mcp_agent_error"`
+	ConversationErrorEvent  events.ConversationErrorEvent  `json:"conversation_error"`
+	LLMGenerationErrorEvent events.LLMGenerationErrorEvent `json:"llm_generation_error"`
+	MCPServerSelectionEvent events.MCPServerSelectionEvent `json:"mcp_server_selection"`
+	ConversationStartEvent  events.ConversationStartEvent  `json:"conversation_start"`
+	ConversationEndEvent    events.ConversationEndEvent    `json:"conversation_end"`
+	ConversationTurnEvent   events.ConversationTurnEvent   `json:"conversation_turn"`
 
 	SystemPromptEvent events.SystemPromptEvent `json:"system_prompt"`
 	UserMessageEvent  events.UserMessageEvent  `json:"user_message"`
@@ -486,14 +443,7 @@ type UnifiedEvent struct {
 	MaxTurnsReachedEvent            events.MaxTurnsReachedEvent            `json:"max_turns_reached"`
 	ContextCancelledEvent           events.ContextCancelledEvent           `json:"context_cancelled"`
 
-	// Context Summarization Events
-	ContextSummarizationStartedEvent   events.ContextSummarizationStartedEvent   `json:"context_summarization_started"`
-	ContextSummarizationCompletedEvent events.ContextSummarizationCompletedEvent `json:"context_summarization_completed"`
-	ContextSummarizationErrorEvent     events.ContextSummarizationErrorEvent     `json:"context_summarization_error"`
-
 	// Additional MCP Agent Events that exist in backend
-	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`
-	ToolResponseEvent events.ToolResponseEvent `json:"tool_response"`
 
 	RetryAttemptEvent           events.RetryAttemptEvent           `json:"retry_attempt"`
 	ToolExecutionEvent          events.ToolExecutionEvent          `json:"tool_execution"`
@@ -523,8 +473,7 @@ type UnifiedEvent struct {
 	ScriptedExecutionEvent      orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events
-	VariablesExtractedEvent       todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted"`
-	IndependentStepsSelectedEvent todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected"`
+	VariablesExtractedEvent todo_creation_human.VariablesExtractedEvent `json:"variables_extracted"`
 
 	// Large Output Error Events
 	LargeToolOutputFileWriteErrorEvent events.LargeToolOutputFileWriteErrorEvent `json:"large_tool_output_file_write_error"`

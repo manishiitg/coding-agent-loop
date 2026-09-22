@@ -64,8 +64,6 @@ import type {
   LLMGuidanceRequest,
   HumanFeedbackResponse,
   PendingHumanFeedbackResponse,
-  SummarizeConversationRequest,
-  SummarizeConversationResponse,
   RunFoldersResponse,
   RunFolderInfo,
   RunMetadataModels,
@@ -152,8 +150,6 @@ export type {
   SessionExecutionTreeResponse,
   LLMGuidanceResponse,
   HumanFeedbackResponse,
-  SummarizeConversationRequest,
-  SummarizeConversationResponse,
   RunFoldersResponse,
   CreateRunFolderResponse,
   ExecutionLogsResponse,
@@ -1419,16 +1415,6 @@ export const agentApi = {
     return response.data
   },
 
-  // Context Summarization Management
-  // Summarize conversation history for a session
-  summarizeConversation: async (sessionId: string, request?: SummarizeConversationRequest): Promise<SummarizeConversationResponse> => {
-    const response = await api.post(`/api/sessions/${sessionId}/summarize`, request || {}, {
-      headers: {
-        'X-Session-ID': sessionId
-      }
-    })
-    return response.data
-  },
 
   // Human Feedback Management
   // Submit human feedback response

@@ -96,13 +96,7 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 			Timeout: config.ToolTimeout, AdditionalBridge: config.AdditionalBridgeTools,
 		},
 		Context: mcpagent.ContextRuntimeConfig{
-			LargeOutputThreshold:      config.LargeOutputThreshold,
-			SummarizationEnabled:      config.EnableContextSummarization,
-			SummarizeOnTokenThreshold: config.SummarizeOnTokenThreshold,
-			TokenThresholdPercent:     config.TokenThresholdPercent,
-			SummarizeOnFixedThreshold: config.SummarizeOnFixedTokenThreshold,
-			FixedTokenThreshold:       config.FixedTokenThreshold,
-			SummaryKeepLastMessages:   config.SummaryKeepLastMessages,
+			LargeOutputThreshold: config.LargeOutputThreshold,
 		},
 		Coding: mcpagent.CodingRuntimeConfig{
 			ClaudeCodeTransport:               config.ClaudeCodeTransport,
@@ -358,14 +352,6 @@ type LLMAgentConfig struct {
 	CodexNetworkAccess bool
 	APIKeys            *llm.ProviderAPIKeys // API keys for providers
 
-	// Context summarization configuration
-	EnableContextSummarization     bool    // Enable context summarization feature
-	SummarizeOnTokenThreshold      bool    // Enable token-based summarization trigger (percentage-based)
-	TokenThresholdPercent          float64 // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    // Enable fixed token-based summarization trigger
-	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
-	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default: 4)
-
 	// Context offloading configuration
 	LargeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
 
@@ -448,12 +434,6 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 	}
 	sort.Strings(secretNames)
 	logger.Info(fmt.Sprintf("NewLLMAgentWrapper config: name=%s provider=%s model=%s code_execution=%t coding_agent_tools=%s approvals=%s secret_names=%v session=%s", config.Name, config.Provider, config.ModelID, config.UseCodeExecutionMode, config.CodingAgentToolsMode, config.CodingAgentApprovalsMode, secretNames, config.SessionID))
-	if providerUsesNativeContextManagement(config.Provider) {
-		if config.EnableContextSummarization {
-			logger.Info(fmt.Sprintf("📝 Context summarization disabled for %s - CLI provider manages context natively", config.Provider))
-			config.EnableContextSummarization = false
-		}
-	}
 	if config.Name == "" {
 		config.Name = "mcp-agent"
 	}

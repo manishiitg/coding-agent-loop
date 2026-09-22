@@ -106,8 +106,9 @@ const NON_TRANSCRIPT_TYPES = new Set([
 // tool, result, or error content. Deliberately a denylist (fail-open) so a
 // future content-bearing type stays visible until someone classifies it.
 const TERMINAL_RAIL_HIDDEN_TYPES = new Set([
-  // Sub-agent lifecycle (dispatcher also returns null for these; the event
-  // stays live for stores, retention, bots, and backend consumers).
+  // Sub-agent lifecycle (hidden from the rail only; product-chat branches
+  // stay intact and the events stay live for stores, retention, bots, and
+  // backend consumers).
   'delegation_start',
   'delegation_end',
   'orchestrator_agent_start',
@@ -122,17 +123,10 @@ const TERMINAL_RAIL_HIDDEN_TYPES = new Set([
   'orchestrator_end',
   'todo_task_route_selected',
   'todo_task_step_completed',
-  'workflow_start',
-  'workflow_progress',
-  'workflow_end',
   // Context/usage diagnostics.
-  'context_summarization_started',
-  'context_summarization_completed',
-  'context_summarization_error',
   'step_token_usage',
   'routing_evaluated',
   'variables_extracted',
-  'independent_steps_selected',
   // Transient resilience status.
   'retry_attempt',
   'broken_pipe',
@@ -193,7 +187,6 @@ const LIFECYCLE_EVENT_FAMILIES: Record<string, { start?: boolean; terminal?: boo
   orchestrator_agent_error: { terminal: true, family: 'orchestrator-agent' },
   background_agent_started: { start: true, family: 'background-agent' },
   background_agent_completed: { terminal: true, family: 'background-agent' },
-  background_agent_failed: { terminal: true, family: 'background-agent' },
   background_agent_terminated: { terminal: true, family: 'background-agent' },
 }
 

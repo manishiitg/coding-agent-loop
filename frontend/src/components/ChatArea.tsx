@@ -2916,7 +2916,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       execution_strategy: 'start_from_beginning_no_human',
       workshop_mode: currentTab.metadata?.workshopMode ?? 'workshop',
       enable_knowledgebase: freshWorkflowPreset?.llmConfig?.use_knowledgebase,
-      enable_context_summarization: freshWorkflowPreset?.llmConfig?.enable_context_summarization,
     }
     const baseExecutionOptions = executionOptions ?? (
       submitModeCategory === 'workflow' && currentTab?.metadata?.phaseId ? ownedExecutionOptions : undefined

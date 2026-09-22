@@ -326,7 +326,7 @@ func TestEventDerivedExecutionStatusTreatsWorkflowLifecycleAsTerminal(t *testing
 		want      string
 		failed    bool
 	}{
-		{eventType: "workflow_end", want: trackedExecutionStatusCompleted},
+		// workflow_end was removed (batch 4): never emitted; orchestrator_end is the live completion signal.
 		// batch_execution_end / batch_group_end were removed: never emitted, consts deleted.
 		{eventType: "todo_task_step_completed", want: trackedExecutionStatusCompleted},
 		{eventType: "workflow_error", want: trackedExecutionStatusFailed, failed: true},

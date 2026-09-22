@@ -234,7 +234,7 @@ function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
   // Check if any event is "important" (completion, error, human feedback) — flush immediately
   const hasImportant = events.some(e => {
     const t = e.type
-    return t === 'unified_completion' || t === 'conversation_end' || t === 'workflow_end' ||
+    return t === 'unified_completion' || t === 'conversation_end' ||
       t === 'agent_error' || t === 'conversation_error' ||
       t === 'orchestrator_agent_error' || t === 'workflow_error' ||
       t === 'request_human_feedback' || t === 'blocking_human_feedback' ||
@@ -279,12 +279,10 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Completion/end events - always keep
     'unified_completion',
     'conversation_end',
-    'workflow_end',
     'context_cancelled',
     'orchestrator_end',
     'agent_end',
     // Start events - keep for context
-    'workflow_start',
     'conversation_start',
     // Human feedback events - critical for workflow
     'request_human_feedback',
@@ -313,7 +311,6 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Background owners - required by tree event continuity
     'background_agent_started',
     'background_agent_completed',
-    'background_agent_failed',
     'background_agent_terminated'
   ]
   return importantTypes.includes(event.type)
@@ -348,7 +345,6 @@ export interface ChatTabConfig {
   selectedSecrets: string[]  // Selected secret IDs to inject into chat
   llmConfig: ExtendedLLMConfiguration  // LLM configuration (provider, model, etc.)
   fileContext: FileContextItem[]  // Files/folders in context
-  enableContextSummarization?: boolean  // Context summarization setting
   browserMode?: 'none' | 'auto' | 'headless' | 'cdp'  // Browser access mode (default: 'auto')
   enableBrowserAccess?: boolean  // Enable/disable browser automation tool (auto-enables workspace when true)
   useCdp?: boolean  // Whether CDP mode is enabled (connect to local Chrome)
@@ -511,7 +507,6 @@ const getDefaultTabConfig = (mode: 'workflow' | 'multi-agent' = 'multi-agent'): 
     // CRITICAL: Don't copy global chatFileContext - chat tabs should have independent file context
     // Workflow mode uses global chatFileContext, but chat mode uses tab-specific fileContext
     fileContext: [],
-    enableContextSummarization: false,
     browserMode: appStore?.lastBrowserMode ?? 'auto',
     enableBrowserAccess: ['auto', 'headless', 'cdp'].includes(appStore?.lastBrowserMode ?? 'auto'),
     selectedSkills: appStore?.lastSelectedSkills ?? [],
@@ -2989,12 +2984,10 @@ export const useChatStore = create<ChatState>()(
         const mode = tab.metadata?.mode || 'multi-agent'
         
         // Check if any events are completion events.
-        // PLAT-064: 'workflow_end' is never emitted by any Go code — the real
-        // signal is 'orchestrator_end' (BaseOrchestrator.EmitOrchestratorEnd).
-        // Before this fix a workflow that completed without ever requesting
-        // human feedback would never satisfy this check.
+        // The signal is 'orchestrator_end' (BaseOrchestrator.EmitOrchestratorEnd);
+        // 'workflow_end' was deleted in batch 4 (never emitted).
         const completionEventTypes = mode === 'workflow'
-          ? ['orchestrator_end', 'workflow_end', 'request_human_feedback']
+          ? ['orchestrator_end', 'request_human_feedback']
           : ['unified_completion', 'agent_end', 'conversation_end', 'conversation_error', 'agent_error']
         
         return events.some(event => completionEventTypes.includes(event.type))

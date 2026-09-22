@@ -39,8 +39,6 @@ export const SUMMARY_MODE_EVENTS = new Set([
   'pre_validation_completed',
 
   // Workflow lifecycle
-  'workflow_start',
-  'workflow_end',
   'workflow_error',
 
   // User interaction — must always be visible so user can respond

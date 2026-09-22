@@ -13,14 +13,10 @@ export interface UnifiedEventsComplete {
   background_agent_started?: BackgroundAgentStartedEvent;
   background_agent_terminated?: BackgroundAgentTerminatedEvent;
   context_cancelled?: ContextCancelledEvent;
-  context_summarization_completed?: ContextSummarizationCompletedEvent;
-  context_summarization_error?: ContextSummarizationErrorEvent;
-  context_summarization_started?: ContextSummarizationStartedEvent;
   conversation_end?: ConversationEndEvent;
   conversation_error?: ConversationErrorEvent;
   conversation_start?: ConversationStartEvent;
   conversation_turn?: ConversationTurnEvent;
-  independent_steps_selected?: IndependentStepsSelectedEvent;
   large_tool_output_detected?: LargeToolOutputDetectedEvent;
   large_tool_output_file_write_error?: LargeToolOutputFileWriteErrorEvent;
   large_tool_output_file_written?: LargeToolOutputFileWrittenEvent;
@@ -31,7 +27,6 @@ export interface UnifiedEventsComplete {
   llm_generation_with_retry?: LLMGenerationWithRetryEvent;
   max_turns_reached?: MaxTurnsReachedEvent;
   mcp_agent_error?: AgentErrorEvent;
-  mcp_server_connection?: MCPServerConnectionEvent;
   mcp_server_selection?: MCPServerSelectionEvent;
   orchestrator_agent_end?: OrchestratorAgentEndEvent;
   orchestrator_agent_error?: OrchestratorAgentErrorEvent;
@@ -51,8 +46,6 @@ export interface UnifiedEventsComplete {
   tool_call_error?: ToolCallErrorEvent;
   tool_call_start?: ToolCallStartEvent;
   tool_execution?: ToolExecutionEvent;
-  tool_output?: ToolOutputEvent;
-  tool_response?: ToolResponseEvent;
   user_message?: UserMessageEvent;
   variables_extracted?: VariablesExtractedEvent;
 }
@@ -200,70 +193,6 @@ export interface ContextCancelledEvent {
   trace_id?: string;
   turn?: number;
 }
-export interface ContextSummarizationCompletedEvent {
-  cache_tokens?: number;
-  completion_tokens?: number;
-  component?: string;
-  correlation_id?: string;
-  desired_split_index?: number;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  new_message_count?: number;
-  old_messages_count?: number;
-  original_message_count?: number;
-  parent_id?: string;
-  prompt_tokens?: number;
-  reasoning_tokens?: number;
-  recent_messages_count?: number;
-  safe_split_index?: number;
-  session_id?: string;
-  span_id?: string;
-  summary?: string;
-  summary_length?: number;
-  timestamp?: string;
-  total_tokens?: number;
-  trace_id?: string;
-}
-export interface ContextSummarizationErrorEvent {
-  component?: string;
-  correlation_id?: string;
-  error?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  keep_last_messages?: number;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  original_message_count?: number;
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  timestamp?: string;
-  trace_id?: string;
-}
-export interface ContextSummarizationStartedEvent {
-  component?: string;
-  correlation_id?: string;
-  desired_split_index?: number;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  keep_last_messages?: number;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  original_message_count?: number;
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  timestamp?: string;
-  trace_id?: string;
-}
 export interface ConversationEndEvent {
   component?: string;
   correlation_id?: string;
@@ -358,25 +287,6 @@ export interface ToolInfo {
   description?: string;
   name?: string;
   server?: string;
-}
-export interface IndependentStepsSelectedEvent {
-  component?: string;
-  correlation_id?: string;
-  event_id?: string;
-  execution_batch?: number;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  session_id?: string;
-  span_id?: string;
-  step_indices?: number[];
-  step_titles?: string[];
-  timestamp?: string;
-  total_steps?: number;
-  trace_id?: string;
 }
 export interface LargeToolOutputDetectedEvent {
   component?: string;
@@ -599,32 +509,6 @@ export interface AgentErrorEvent {
   timestamp?: string;
   trace_id?: string;
   turn?: number;
-}
-export interface MCPServerConnectionEvent {
-  component?: string;
-  config_path?: string;
-  connection_time?: number;
-  correlation_id?: string;
-  error?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  operation?: string;
-  parent_id?: string;
-  server_info?: {
-    [k: string]: unknown;
-  };
-  server_name?: string;
-  session_id?: string;
-  span_id?: string;
-  status?: string;
-  timeout?: string;
-  timestamp?: string;
-  tools_count?: number;
-  trace_id?: string;
 }
 export interface MCPServerSelectionEvent {
   component?: string;
@@ -1125,47 +1009,6 @@ export interface ToolExecutionEvent {
   timeout?: string;
   timestamp?: string;
   tool_call_id?: string;
-  tool_name?: string;
-  trace_id?: string;
-  turn?: number;
-}
-export interface ToolOutputEvent {
-  component?: string;
-  correlation_id?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  output?: string;
-  parent_id?: string;
-  server_name?: string;
-  session_id?: string;
-  size?: number;
-  span_id?: string;
-  timestamp?: string;
-  tool_name?: string;
-  trace_id?: string;
-  turn?: number;
-}
-export interface ToolResponseEvent {
-  component?: string;
-  correlation_id?: string;
-  error?: string;
-  event_id?: string;
-  hierarchy_level?: number;
-  is_end_event?: boolean;
-  metadata?: {
-    [k: string]: unknown;
-  };
-  parent_id?: string;
-  response?: string;
-  server_name?: string;
-  session_id?: string;
-  span_id?: string;
-  status?: string;
-  timestamp?: string;
   tool_name?: string;
   trace_id?: string;
   turn?: number;

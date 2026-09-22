@@ -17,10 +17,7 @@ import (
 // This catches events that were stored before SKIP_EVENTS was added to the event bridge
 var NEVER_SHOW_EVENTS = map[string]bool{
 	// Tool extras - no UI component
-	"tool_execution":     true,
-	"tool_output":        true,
-	"tool_response":      true,
-	"tool_call_progress": true,
+	"tool_execution": true,
 	// Cache events - all 9 (no UI needed)
 	"cache_event":               true,
 	"comprehensive_cache_event": true,
@@ -89,7 +86,6 @@ var STRUCTURAL_EVENTS = map[string]bool{
 	"agent_end":                   true,
 	"agent_error":                 true,
 	"background_agent_completed":  true,
-	"background_agent_failed":     true,
 	"background_agent_started":    true,
 	"background_agent_terminated": true,
 	"batch_execution_canceled":    true,
@@ -113,9 +109,41 @@ var STRUCTURAL_EVENTS = map[string]bool{
 	"todo_task_step_completed":    true,
 	"unified_completion":          true,
 	"user_message":                true,
-	"workflow_end":                true,
 	"workflow_error":              true,
-	"workflow_start":              true,
+}
+
+// LEGACY_REMOVED_EVENT_TYPES tombstones wire names deleted in event-deletion
+// batches 1-5. Rows already persisted in structured-chat-events.sqlite keep
+// their old discriminator; without this filter they would consume the
+// InitialEventsLimit window and render as Unknown Event Type cards after
+// their renderer was deleted. Every name here was verified to have no
+// current producer before tombstoning. Add future deletions here.
+var LEGACY_REMOVED_EVENT_TYPES = map[string]bool{
+	// Batches 1-3 (37).
+	"agent_processing": true, "batch_execution_end": true, "batch_execution_start": true,
+	"batch_group_end": true, "batch_group_start": true, "cache_cleanup": true,
+	"cache_error": true, "cache_expired": true, "cache_hit": true, "cache_miss": true,
+	"cache_operation_start": true, "cache_write": true, "comprehensive_cache": true,
+	"context_canceled": true, "context_editing_completed": true, "context_editing_error": true,
+	"decision_evaluated": true, "large_tool_output_server_unavailable": true,
+	"learning_completed": true, "learning_failed": true, "learning_skipped": true,
+	"live_execution_streaming": true, "mcp_server_connection_error": true,
+	"mcp_server_discovery": true, "model_change": true, "orchestrator_error": true,
+	"orchestrator_start": true, "phase_completed": true, "phase_started": true,
+	"prerequisite_navigation": true, "step_execution_end": true, "step_execution_failed": true,
+	"step_execution_start": true, "step_progress_updated": true, "throttling_detected": true,
+	"todo_steps_extracted": true, "token_limit_exceeded": true,
+	// Batch 4 (20).
+	"error_detail": true, "json_validation_start": true, "json_validation_end": true,
+	"llm_messages": true, "llm_token_usage": true, "performance": true,
+	"streaming_error": true, "streaming_progress": true, "streaming_connection_lost": true,
+	"tool_output": true, "tool_response": true, "tool_call_progress": true, "debug": true,
+	"mcp_server_connection": true, "independent_steps_selected": true,
+	"human_verification_response": true, "background_agent_failed": true,
+	"workflow_start": true, "workflow_progress": true, "workflow_end": true,
+	// Batch 5 (3): context summarization feature removed entirely.
+	"context_summarization_started": true, "context_summarization_completed": true,
+	"context_summarization_error": true,
 }
 
 // ShouldShowEvent checks if an event should be shown in the UI
@@ -125,6 +153,10 @@ func ShouldShowEvent(eventType string) bool {
 	}
 	// First check: NEVER show these events
 	if NEVER_SHOW_EVENTS[eventType] {
+		return false
+	}
+	// Legacy tombstones: deleted wire names still present in old persisted rows
+	if LEGACY_REMOVED_EVENT_TYPES[eventType] {
 		return false
 	}
 	// Filter out hidden events
@@ -1495,105 +1527,6 @@ func (es *EventStore) GetStats() map[string]interface{} {
 		"total_events":   totalEvents,
 		"max_events":     es.maxEvents,
 	}
-}
-
-// SummarizationStartedEventData implements events.EventData for context_summarization_started
-type SummarizationStartedEventData struct {
-	OriginalMessageCount int    `json:"original_message_count"`
-	KeepLastMessages     int    `json:"keep_last_messages"`
-	Timestamp            string `json:"timestamp"`
-}
-
-func (s *SummarizationStartedEventData) GetEventType() events.EventType {
-	return events.EventType("context_summarization_started")
-}
-
-// SummarizationCompletedEventData implements events.EventData for context_summarization_completed
-type SummarizationCompletedEventData struct {
-	OriginalMessageCount int    `json:"original_message_count"`
-	NewMessageCount      int    `json:"new_message_count"`
-	Summary              string `json:"summary"`
-	Timestamp            string `json:"timestamp"`
-}
-
-func (s *SummarizationCompletedEventData) GetEventType() events.EventType {
-	return events.EventType("context_summarization_completed")
-}
-
-// SummarizationErrorEventData implements events.EventData for context_summarization_error
-type SummarizationErrorEventData struct {
-	Error     string `json:"error"`
-	Timestamp string `json:"timestamp"`
-}
-
-func (s *SummarizationErrorEventData) GetEventType() events.EventType {
-	return events.EventType("context_summarization_error")
-}
-
-// AddSummarizationStartedEvent adds a context_summarization_started event
-func (es *EventStore) AddSummarizationStartedEvent(sessionID string, originalMessageCount int, keepLastMessages int) {
-	now := time.Now()
-	eventData := &SummarizationStartedEventData{
-		OriginalMessageCount: originalMessageCount,
-		KeepLastMessages:     keepLastMessages,
-		Timestamp:            now.Format(time.RFC3339),
-	}
-	event := Event{
-		ID:        sessionID + "_context_summarization_started_" + now.Format("20060102150405.000"),
-		Type:      "context_summarization_started",
-		Timestamp: now,
-		SessionID: sessionID,
-		Data: &events.AgentEvent{
-			Type:      events.EventType("context_summarization_started"),
-			Timestamp: now,
-			Data:      eventData,
-		},
-	}
-	es.AddEvent(sessionID, event)
-}
-
-// AddSummarizationCompletedEvent adds a context_summarization_completed event
-func (es *EventStore) AddSummarizationCompletedEvent(sessionID string, originalCount int, newCount int, summary string) {
-	now := time.Now()
-	eventData := &SummarizationCompletedEventData{
-		OriginalMessageCount: originalCount,
-		NewMessageCount:      newCount,
-		Summary:              summary,
-		Timestamp:            now.Format(time.RFC3339),
-	}
-	event := Event{
-		ID:        sessionID + "_context_summarization_completed_" + now.Format("20060102150405.000"),
-		Type:      "context_summarization_completed",
-		Timestamp: now,
-		SessionID: sessionID,
-		Data: &events.AgentEvent{
-			Type:      events.EventType("context_summarization_completed"),
-			Timestamp: now,
-			Data:      eventData,
-		},
-	}
-	es.AddEvent(sessionID, event)
-}
-
-// AddSummarizationErrorEvent adds a context_summarization_error event
-func (es *EventStore) AddSummarizationErrorEvent(sessionID string, errorMessage string) {
-	now := time.Now()
-	eventData := &SummarizationErrorEventData{
-		Error:     errorMessage,
-		Timestamp: now.Format(time.RFC3339),
-	}
-	event := Event{
-		ID:        sessionID + "_context_summarization_error_" + now.Format("20060102150405.000"),
-		Type:      "context_summarization_error",
-		Timestamp: now,
-		SessionID: sessionID,
-		Data: &events.AgentEvent{
-			Type:      events.EventType("context_summarization_error"),
-			Timestamp: now,
-			Data:      eventData,
-		},
-	}
-	es.AddEvent(sessionID, event)
 }
 
 // DelegationStartEventData implements events.EventData for delegation_start

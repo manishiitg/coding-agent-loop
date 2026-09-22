@@ -126,7 +126,7 @@ export function buildQueryRequestPayload(params: {
   const isWorkflowPhaseChat = selectedModeCategory === 'workflow'
     && currentTab?.metadata?.phaseId
     && CHAT_COMPATIBLE_PHASES.has(currentTab.metadata.phaseId)
-  // isChatLikeMode: includes phase chat for basic settings (context summarization, workspace access)
+  // isChatLikeMode: includes phase chat for basic settings (workspace access)
   const isChatLikeMode = isMultiAgentMode || isWorkflowPhaseChat
   // isChatWithExtras: only multi-agent mode gets optional extras (browser, skills, secrets, etc.)
   const isChatWithExtras = isMultiAgentMode
@@ -166,9 +166,6 @@ export function buildQueryRequestPayload(params: {
     preset_query_id: workflowPresetId || chatPresetId || undefined,
     use_code_execution_mode: correctAgentMode === 'multi-agent' ? (useCodeExecutionMode ?? false) : useCodeExecutionMode,
     execution_options: executionOptions as AgentQueryRequest['execution_options'],
-    enable_context_summarization: isChatLikeMode ? true : undefined,
-    summarize_on_max_turns: isChatLikeMode ? true : undefined,
-    summary_keep_last_messages: isChatLikeMode ? 4 : undefined,
     enable_browser_access: isChatWithExtras
       ? isBrowserAccessMode
       : undefined,

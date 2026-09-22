@@ -88,19 +88,6 @@ func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptToke
 	}
 }
 
-// IndependentStepsSelectedEvent represents the event when independent steps are selected for parallel execution
-type IndependentStepsSelectedEvent struct {
-	baseevents.BaseEventData
-	StepIndices    []int    `json:"step_indices"`    // Indices of steps selected for parallel execution
-	StepTitles     []string `json:"step_titles"`     // Titles of selected steps
-	TotalSteps     int      `json:"total_steps"`     // Total number of steps in plan
-	ExecutionBatch int      `json:"execution_batch"` // Which batch of parallel execution this is
-}
-
-func (e *IndependentStepsSelectedEvent) GetEventType() baseevents.EventType {
-	return events.IndependentStepsSelected
-}
-
 // PreValidationCompletedEvent represents the event when pre-validation completes
 type PreValidationCompletedEvent struct {
 	baseevents.BaseEventData

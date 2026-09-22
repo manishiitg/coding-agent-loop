@@ -144,14 +144,6 @@ func (bo *BaseOrchestrator) createAgentConfigWithLLM(agentName string, maxTurns 
 	}
 	config.MCPSessionID = bo.mcpSessionID
 
-	// Context summarization configuration from orchestrator
-	config.EnableContextSummarization = bo.GetEnableContextSummarization()
-	config.SummarizeOnTokenThreshold = bo.GetSummarizeOnTokenThreshold()
-	config.TokenThresholdPercent = bo.GetTokenThresholdPercent()
-	config.SummarizeOnFixedTokenThreshold = bo.GetSummarizeOnFixedTokenThreshold()
-	config.FixedTokenThreshold = bo.GetFixedTokenThreshold()
-	config.SummaryKeepLastMessages = bo.GetSummaryKeepLastMessages()
-
 	// Context offloading configuration from orchestrator
 	config.LargeOutputThreshold = bo.GetLargeOutputThreshold()
 

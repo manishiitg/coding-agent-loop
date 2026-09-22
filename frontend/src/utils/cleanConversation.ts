@@ -442,8 +442,6 @@ export function cleanConversationActivity(events: PollingEvent[], fallback: stri
       case 'routing_evaluated':
       case 'todo_task_route_selected':
         return 'Choosing the best production path'
-      case 'workflow_start':
-      case 'workflow_progress':
       case 'background_agent_started':
         return 'Working through the production steps'
       case 'pre_validation_start':

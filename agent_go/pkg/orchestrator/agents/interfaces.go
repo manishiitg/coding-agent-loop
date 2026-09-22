@@ -158,14 +158,6 @@ type OrchestratorAgentConfig struct {
 	// System prompt configuration
 	OverwriteSystemPrompt *bool `json:"overwrite_system_prompt,omitempty"` // Overwrite (true) or append (false) system prompt during execution (default: false if nil)
 
-	// Context summarization configuration
-	EnableContextSummarization     bool    `json:"enable_context_summarization,omitempty"`       // Enable context summarization feature
-	SummarizeOnTokenThreshold      bool    `json:"summarize_on_token_threshold,omitempty"`       // Enable token-based summarization trigger (percentage-based)
-	TokenThresholdPercent          float64 `json:"token_threshold_percent,omitempty"`            // Percentage of context window to trigger summarization (0.0-1.0, default: 0.8 = 80%)
-	SummarizeOnFixedTokenThreshold bool    `json:"summarize_on_fixed_token_threshold,omitempty"` // Enable fixed token-based summarization trigger
-	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens, default: 200k)
-	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4)
-
 	// Parallel tool execution: When enabled, multiple tool calls in a single LLM response
 	// are executed concurrently using a fork-join pattern instead of sequentially
 	EnableParallelToolExecution bool `json:"enable_parallel_tool_execution,omitempty"`

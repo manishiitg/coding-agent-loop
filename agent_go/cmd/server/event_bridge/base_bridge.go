@@ -19,10 +19,7 @@ type EventBridge interface {
 // SKIP_EVENTS contains event types that should NOT be emitted (no UI component, pure waste)
 var SKIP_EVENTS = map[string]bool{
 	// Tool extras - no UI component
-	"tool_execution":     true,
-	"tool_output":        true,
-	"tool_response":      true,
-	"tool_call_progress": true,
+	"tool_execution": true,
 	// Cache events - all 9 (only 2 had UI, disabling all for now)
 	"cache_event":               true,
 	"comprehensive_cache_event": true,

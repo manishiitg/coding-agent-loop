@@ -122,10 +122,6 @@ export interface AgentQueryRequest {
   use_code_execution_mode?: boolean
   // Execution options from frontend (for workflow execution phase)
   execution_options?: ExecutionOptions
-  // Context summarization configuration
-  enable_context_summarization?: boolean // Enable context summarization feature
-  summarize_on_max_turns?: boolean // Automatically summarize when max turns is reached
-  summary_keep_last_messages?: number // Number of recent messages to keep when summarizing (default: 8)
   // Browser automation access configuration
   enable_browser_access?: boolean // Enable/disable browser automation tool (auto-enables workspace when true)
   // Explicit browser mode for prompt/runtime selection
@@ -925,21 +921,6 @@ export interface PulseAgentMetricsResponse {
   error?: string
 }
 
-// Context Summarization types
-export interface SummarizeConversationRequest {
-  keep_last_messages?: number // Optional: number of recent messages to keep (default: 8)
-}
-
-export interface SummarizeConversationResponse {
-  session_id: string
-  status: string
-  message?: string
-  original_count?: number
-  new_count?: number
-  reduced_by?: number
-  summary?: string
-}
-
 // Slack Feedback Configuration types
 
 // ChannelRoute maps a Slack channel ID to a specific workflow, including the workspace path
@@ -1458,7 +1439,6 @@ export interface ChatSessionConfig {
   selected_servers?: string[];
   enabled_servers?: string[];
   use_code_execution_mode?: boolean;
-  enable_context_summarization?: boolean;
   llm_config?: {
     provider?: string;
     model_id?: string;
@@ -1808,7 +1788,6 @@ export interface PresetLLMConfig {
   pulse_llm?: AgentLLMConfig
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
-  enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
 
   tiered_config?: {
     tier_1: AgentLLMConfig
@@ -1953,7 +1932,6 @@ export interface ExecutionOptions {
 
   // Feature toggles (runtime configuration)
   enable_knowledgebase?: boolean;  // Enable knowledgebase (default: true)
-  enable_context_summarization?: boolean;  // Enable context summarization (default: true)
 
   // Workshop mode override. Reporting remains accepted for backend compatibility,
   // but the visible UI maps report authoring to builder.

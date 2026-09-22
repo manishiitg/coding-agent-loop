@@ -104,10 +104,6 @@ func activityEventTitle(eventType string, payload map[string]interface{}) string
 		return firstSessionExecutionString(stringValue(payload["step_title"]), "Routing evaluated")
 	case "todo_task_item_created", "todo_task_item_updated", "todo_task_item_completed":
 		return firstSessionExecutionString(stringValue(payload["title"]), stringValue(payload["todo_title"]), eventType)
-	case "workflow_start":
-		return "Workflow started"
-	case "workflow_end":
-		return "Workflow completed"
 	case "workflow_error":
 		return "Workflow failed"
 	default:

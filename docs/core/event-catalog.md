@@ -8,6 +8,10 @@ Update 2026-09-22 (minimal diagnostics rail): `selectTerminalEvents` gained `TER
 
 Update 2026-09-22 (deletion batch 3, same rule): 10 more REMOVED (37 total) — `context_editing_completed`/`context_editing_error` (whole context-editing feature removed: `mcpagent/agent/context_editing.go`, `/compact` route + handler, `compactContext` client, `handleCompact`, `enable_context_editing` request/preset fields), `learning_completed`/`learning_failed`/`learning_skipped` (legacy eval-subsystem leftovers; consts/structs never constructed), `orchestrator_start`/`orchestrator_error` (never emitted; only `orchestrator_end` ever was), `throttling_detected`/`token_limit_exceeded` (schema-only; zero backend refs outside schema-gen at HEAD), `context_canceled` (single-L misspelling, never on the wire; match arms fixed to `context_cancelled`). Kept deliberately: `learn_code_script_execution` (emitted 4x in `controller_execution.go`, consumed by `useChatStore`/`ChatArea`/`EventDispatcher`, STRUCTURAL), `orchestrator_end`, `variables_extracted`, `workflow_error`. Also fixed live contract bugs found during deletion: `session_execution_tree_test.go` asserted terminal status for deleted `batch_*` events and misspelled `context_canceled` (wire is `context_cancelled`); `session_execution_tree.go` already used the correct spelling.
 
+Update 2026-09-22 (batch 5, feature removal): 3 more REMOVED (60 total) — the `context_summarization_started/completed/error` trio with the entire summarization feature: auto path force-disabled for all coding-agent CLI providers, manual `/summarize` route uncalled from any UI, `fixed_threshold_*` metadata + displays gone with it. Historical rows excluded server-side by the tombstone (60 names).
+
+Update 2026-09-22 (external review acceptance, batch 4, same rule): 20 more REMOVED (57 total) — the reviewer's safe-to-delete list, verified per event at the producer level: the false-positive class (logger-`Debug()`, `logErrorDetails*`, `compactedInLLMMessages` counter, telemetry strings) and schema/Langfuse-only types (`json_validation_*`, `llm_token_usage`, `streaming_progress`, tracer consts with no emitter). Also deleted the whole `workflow_start/progress/end` trio (never emitted; `orchestrator_end`/`workflow_error` are the live signals), the `background_agent_failed` ghost (const never defined), `human_verification_response` (phantom; `HumanVerificationDisplay` renders `request_human_feedback`), and `tool_output`/`tool_response`/`tool_call_progress` (never produced on the chat wire). `mcp_server_connection` REMOVED bare-name only: the carrier struct + ctor stay as the payload for the live `mcp_server_connection_start/end` tracer events. Historical rows for all 57 are excluded server-side by the `LEGACY_REMOVED_EVENT_TYPES` tombstone in `agent_go/internal/events/event_store.go` (`ShouldShowEvent` fails closed; polling never returns them and they don't consume the window), guarded by `TestLegacyRemovedEventTypesExcludedFromPolling`.
+
 Update 2026-09-22 (deletion batch 2, same rule): 13 more REMOVED (27 total) — `step_progress_updated` (emitted, read nowhere), the 7 per-operation cache wire strings (structs never constructed), `todo_steps_extracted` (emit path uncalled), and the 4 batch wrappers (deliberately never emitted; `batch_execution_canceled` survives as the only live batch event). Kept with new guards: `mcp_server_connection_start/end` are OBSERVABILITY-ONLY (Langfuse/LangSmith spans) and were added to bridge SKIP + NEVER_SHOW + NON_TRANSCRIPT_TYPES. Also removed downstream-only machinery with no event source left: `stepStatusMap`/`currentStepId` store + canvas coloring, `BatchProgressHeader`, `extractWorkflowInfo`, batch restore.
 
 ## `agent_end` — LIVE
@@ -115,16 +119,9 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
 
-## `background_agent_failed` — LIVE
+## `background_agent_failed` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/server/session_execution_tree.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/chat_history_routes.go`
-- `mcp-agent-builder-go/agent_go/internal/terminals/store.go`
-- `mcp-agent-builder-go/agent_go/internal/events/event_store.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/stores/useChatStore.ts`
-- `mcp-agent-builder-go/frontend/src/components/TerminalCenter.tsx`
+Deleted 2026-09-22 (batch 4): const intentionally never defined (`types.go`: "handled via terminal-state normalization"), zero constructors, zero emitters — 4 dead consumer match arms only. Removed: STRUCTURAL entry, session_execution_tree failed arm, session_activity_tree label, chat_history_routes resume-list entry, terminals/store case, useChatStore retention + TerminalCenter error-set entries, LIFECYCLE family entry.
 
 ## `background_agent_started` — LIVE
 
@@ -286,29 +283,17 @@ Deleted 2026-09-22 (batch 3): the entire context-editing feature was removed, no
 
 Deleted 2026-09-22 (batch 3): same feature removal as `context_editing_completed`. Backend: const/struct/constructor, schema-gen entries. Frontend: `ContextEditingErrorEvent.tsx`, dispatcher branch, union/map entries.
 
-## `context_summarization_completed` — LIVE
+## `context_summarization_completed` — REMOVED
 
-Producers:
-- `mcpagent/agent/context_summarization.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
+Deleted 2026-09-22 (batch 5) with the summarization feature (see `context_summarization_started`). Historical rows covered by the `LEGACY_REMOVED_EVENT_TYPES` tombstone.
 
-## `context_summarization_error` — LIVE
+## `context_summarization_error` — REMOVED
 
-Producers:
-- `mcpagent/agent/context_summarization.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
+Deleted 2026-09-22 (batch 5) with the summarization feature (see `context_summarization_started`). Historical rows covered by the `LEGACY_REMOVED_EVENT_TYPES` tombstone.
 
-## `context_summarization_started` — LIVE
+## `context_summarization_started` — REMOVED
 
-Producers:
-- `mcpagent/agent/context_summarization.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
+Deleted 2026-09-22 (batch 5): whole context-summarization feature removed. Auto path was force-disabled for every coding-agent CLI provider ("handled natively by CLI") with default-false everywhere; manual `/summarize` route had zero UI callers. Removed: `mcpagent/agent/context_summarization.go`, agent fields/options/defaults, conversation auto-trigger, events, Langfuse handlers, `summarization_routes.go` + route, store Add* methods, config plumbing (server/agent_tuning/llm_agent/interfaces/base_agent/orchestrator/preset), frontend client/UI/renderers, schemas + generated types.
 
 ## `conversation_end` — FILTERED-BY-DESIGN
 
@@ -405,79 +390,9 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
 
-## `debug` — LIVE
+## `debug` — REMOVED
 
-Producers:
-- `mcpagent/agent/connection_session.go`
-- `mcpagent/agent/tool_filter.go`
-- `mcpagent/agent/session_handle.go`
-- `mcpagent/agent/llm_generation.go`
-- `mcpagent/agent/parallel_tool_execution.go`
-- `mcpagent/agent/conversation.go`
-- `mcpagent/agent/agent.go`
-- `mcpagent/agent/code_execution_tools.go`
-- `mcpagent/agent/coding_agents_bridge.go`
-- `mcpagent/agent/coding_agent_options.go`
-- `mcpagent/agent/turn_session.go`
-- `mcpagent/agent/context_editing.go`
-- `mcpagent/agent/codeexec/registry.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/builder_contract.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/static_routes.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/guidance/guidance.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/mcp_config_routes.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/tools.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/terminal_pipe_recorder.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/oauth_routes.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/services/whatsapp_service.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/services/slack_service.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/terminal_routes.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/polling.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/workflow.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/shell_security.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/claude_resume_after_cancel.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/codex_mcp_tool_call.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/agent_browse_cdp_diagnose.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/codex_resume_after_cancel.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/coding_agent_final_judge.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/claude_experimental.go`
-- `mcp-agent-builder-go/agent_go/pkg/instructions/browser.go`
-- `mcp-agent-builder-go/agent_go/pkg/logger/factory.go`
-- `mcp-agent-builder-go/agent_go/pkg/logger/required_fields.go`
-- `mcp-agent-builder-go/agent_go/pkg/workspace/execute_shell_command.go`
-- `mcp-agent-builder-go/agent_go/pkg/skills/builtin_browser_skills.go`
-- `mcp-agent-builder-go/agent_go/pkg/agentwrapper/llm_agent.go`
-- `mcp-agent-builder-go/agent_go/pkg/whatsappbot/connector.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/context_aware_bridge.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_execution.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/planning_exports.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/interactive_workshop_manager.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/controller_workshop.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/base_orchestrator_agent.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator_tokens.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/base_orchestrator_workspace.go`
-- `mcp-agent-builder-go/agent_go/internal/events/event_observer.go`
-- `multi-llm-provider-go/pkg/adapters/codexcli/codexcli_interactive_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/codexcli/codexcli_structured_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/azure/azure_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/claudecode/claudecode_interactive_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/internal/procshutdown/procshutdown.go`
-- `multi-llm-provider-go/pkg/adapters/picli/picli_structured_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/minimax/minimax_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/bedrock/bedrock_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/anthropic/anthropic_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/vertex/google_genai_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/vertex/auth.go`
-- `multi-llm-provider-go/pkg/adapters/vertex/vertex_anthropic_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/cursorcli/cursorcli_structured_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/cursorcli/cursorcli_interactive_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/openai/openai_adapter.go`
-- `multi-llm-provider-go/pkg/codingagentjob/provider_runner.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/utils/logger.ts`
-- `mcp-agent-builder-go/frontend/src/services/mcpConfigApi.ts`
+Deleted 2026-09-22 (batch 4): the 60-file "producer" list was logger-`Debug()` false positives — `DebugEvent` was never constructed and the bare wire type never produced. Removed: const, struct, schema-gen entries, generated/union entries.
 
 ## `decision_evaluated` — REMOVED
 
@@ -514,15 +429,9 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
 
-## `error_detail` — TELEMETRY-DEMOTE
+## `error_detail` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `multi-llm-provider-go/pkg/adapters/bedrock/bedrock_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/anthropic/anthropic_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/vertex/google_genai_adapter.go`
-- `multi-llm-provider-go/pkg/adapters/openai/openai_adapter.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): provider "producers" were `logErrorDetails*` logging helpers, not the event; `NewErrorDetailEvent` uncalled. Removed: const, struct + ctor, schema-gen entries, generated/union entries, orphaned `ErrorDetailEvent.tsx` + index export (no dispatcher branch ever referenced it).
 
 ## `fix_applied` — LIVE
 
@@ -546,34 +455,21 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/workflow/executionLogs/helpers.tsx`
 - `mcp-agent-builder-go/frontend/src/components/workflow/hooks/usePlanToFlow.ts`
 
-## `human_verification_response` — LIVE
+## `human_verification_response` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/types/workflow_orchestrator.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/events/data.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/stores/useRunningWorkflowsStore.ts`
+Deleted 2026-09-22 (batch 4): phantom event — `HumanVerificationDisplay` renders `request_human_feedback`, never this type; no backend/frontend constructor. Removed: consts (both repos), event struct, dead payload struct (`workflow_orchestrator.go`, zero refs), schema-gen entries, generated/union entries, polling arm, store attention-check.
 
-## `independent_steps_selected` — LIVE
+## `independent_steps_selected` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/workflow_events.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
+Deleted 2026-09-22 (batch 4): full renderer for a never-constructed struct. Removed: consts (both repos), struct, schema-gen entries, generated/union entries, dispatcher branch + `IndependentStepsSelectedEventDisplay.tsx`, rail-denylist entry.
 
-## `json_validation_end` — TELEMETRY-DEMOTE
+## `json_validation_end` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4) with its start twin: schema-only, zero emitters. Removed: const, struct, schema-gen entries, generated/union entries, component-switch arms.
 
-## `json_validation_start` — TELEMETRY-DEMOTE
+## `json_validation_start` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4) with its end twin: schema-only, zero emitters. Removed: const, struct, schema-gen entries, generated/union entries, component-switch arms.
 
 ## `large_tool_output_detected` — LIVE
 
@@ -696,18 +592,13 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
 
-## `llm_messages` — TELEMETRY-DEMOTE
+## `llm_messages` — REMOVED
 
-Producers:
-- `mcpagent/agent/conversation.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): the `conversation.go` "producer" was a `compactedInLLMMessages` counter variable, not the event. Removed: const, struct + `LLMMessage` helper (sole consumer), schema-gen entries, generated/union entries.
 
-## `llm_token_usage` — TELEMETRY-DEMOTE
+## `llm_token_usage` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): schema-only, zero emitters. Removed: const, struct, schema-gen entries, generated/union entries.
 
 ## `max_turns_reached` — LIVE
 
@@ -717,9 +608,9 @@ Producers:
 Consumers:
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 
-## `mcp_server_connection` — DEAD
+## `mcp_server_connection` — REMOVED
 
-Dispatcher branch + `MCPServerConnectionEvent.tsx` deleted 2026-09-22. Never on the wire: `MCPServerConnectionEvent.GetEventType()` returns `MCPServerConnectionStart` (re-typed before emit), and the bare `MCPServerConnection` const has zero references outside its own definition. Const intentionally kept as a documented nominal anchor (`events/types.go` NOTE); wire traffic uses `mcp_server_connection_start/end`.
+Deleted 2026-09-22 (batch 4, bare name only): the carrier struct + constructor stay live as the payload for the separately typed `mcp_server_connection_start/end` tracer events (both call sites re-type before emit). Removed: schema-gen bare entries, generated/union bare entries (renderer already gone in batch 1). Const kept as the payload tag for `GetEventType` — see `events/types.go` NOTE.
 
 ## `mcp_server_connection_end` — OBSERVABILITY-ONLY
 
@@ -835,14 +726,9 @@ Deleted 2026-09-22 (batch 3): never emitted (only `orchestrator_end` ever was; `
 
 Deleted 2026-09-22 (batch 3): never emitted. Removed: const + struct, schema-gen entries, `OrchestratorStartEvent.tsx`, dispatcher branch, union/map entries. (`orchestrator_end` is the only live member of this family.)
 
-## `performance` — TELEMETRY-DEMOTE
+## `performance` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/client_chat_telemetry.go`
-- `mcp-agent-builder-go/agent_go/cmd/testing/sse.go`
-- `mcp-agent-builder-go/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow/report_html_tools.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): "producer" hits were telemetry-field/SSE-flag/HTML-key strings, not the event. Removed: const, struct, schema-gen entries, generated/union entries.
 
 ## `phase_completed` — REMOVED
 
@@ -1004,11 +890,9 @@ Producers:
 Consumers:
 - `mcp-agent-builder-go/frontend/src/components/ChatArea.tsx`
 
-## `streaming_connection_lost` — TELEMETRY-DEMOTE
+## `streaming_connection_lost` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): Langfuse handler + case + const with no emitter. Removed: const, struct, schema-gen entries, generated/union entries, tracer handler/arms/consts.
 
 ## `streaming_end` — FILTERED-BY-DESIGN
 
@@ -1021,17 +905,13 @@ Producers:
 Consumers:
 - `mcp-agent-builder-go/frontend/src/components/ChatArea.tsx`
 
-## `streaming_error` — TELEMETRY-DEMOTE
+## `streaming_error` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): Langfuse handler + case + const with no emitter. Removed: const, struct, schema-gen entries, generated/union entries, tracer handler/arms/consts.
 
-## `streaming_progress` — TELEMETRY-DEMOTE
+## `streaming_progress` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): schema-only, zero emitters. Removed: const, struct, schema-gen entries, generated/union entries.
 
 ## `streaming_start` — FILTERED-BY-DESIGN
 
@@ -1264,11 +1144,9 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/TerminalCenter.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 
-## `tool_call_progress` — BRIDGE-SKIPPED
+## `tool_call_progress` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): bridge-SKIP entry for a never-produced type. Removed: const, struct, schema-gen entries, generated/union entries, bridge SKIP + NEVER_SHOW entries.
 
 ## `tool_call_start` — LIVE
 
@@ -1340,21 +1218,13 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/utils/secretMutationRefresh.ts`
 - `mcp-agent-builder-go/frontend/src/components/ChatArea.tsx`
 
-## `tool_output` — DEAD
+## `tool_output` — REMOVED
 
-Corrected 2026-09-22: the reference audit matched "tool output" handler code, but no code path ever constructs a `ToolOutputEvent` — the constructor in `mcpagent/events/data.go` has zero callers, so the wire string is never produced (the bridge `SKIP_EVENTS` entry for it is therefore moot). Retention-allowlist entry removed 2026-09-22. Const + struct + schema kept for now; follow-up candidate for const/struct deletion like the REMOVED family above.
+Deleted 2026-09-22 (batch 4): constructor uncalled, wire string never produced. Removed: const, struct + ctor, schema-gen entries, generated/union entries, bridge SKIP + NEVER_SHOW entries.
 
-## `tool_response` — BRIDGE-SKIPPED
+## `tool_response` — REMOVED
 
-Producers (batch-3 update: `mcpagent/agent/context_editing.go` and `context_editing_routes.go` deleted with the context-editing feature):
-- `mcpagent/agent/conversation.go`
-- `mcp-agent-builder-go/agent_go/cmd/schema-gen/main.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/user_access_tools.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/crew_workflow_tools.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/webhook_tools.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/background_agents.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/delegation.go`
-Consumers: none found
+Deleted 2026-09-22 (batch 4): listed "producers" were message-part-namespace matches (`case "tool_response"` in message reconstruction is live and untouched); the chat event was never produced. Removed: const, struct + ctor, schema-gen entries, generated/union entries, bridge SKIP + NEVER_SHOW entries.
 
 ## `tool_result` — LIVE
 
@@ -1491,20 +1361,9 @@ Producers:
 Consumers:
 - `mcp-agent-builder-go/frontend/src/products/work/WorkSurface.tsx`
 
-## `workflow_end` — LIVE
+## `workflow_end` — REMOVED
 
-Producers:
-- `mcp-agent-builder-go/agent_go/cmd/server/session_execution_tree.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/session_activity_tree.go`
-- `mcp-agent-builder-go/agent_go/cmd/server/polling.go`
-- `mcp-agent-builder-go/agent_go/internal/events/event_store.go`
-Consumers:
-- `mcp-agent-builder-go/frontend/src/constants/runningWorkflows.ts`
-- `mcp-agent-builder-go/frontend/src/stores/useRunningWorkflowsStore.ts`
-- `mcp-agent-builder-go/frontend/src/stores/useChatStore.ts`
-- `mcp-agent-builder-go/frontend/src/stores/useWorkflowStore.ts`
-- `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
-- `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
+Deleted 2026-09-22 (batch 4) with the workflow_start/progress/end trio: never emitted (`orchestrator_end` is the live completion signal; `workflow_error` is separately live and kept). Removed: STRUCTURAL entry, tree labels/arms, polling arm, dispatcher branch + `WorkflowEndEvent.tsx`, hand-written data interface, union entries, store completion/retention lists, rail-denylist entry. Historical rows covered by the `LEGACY_REMOVED_EVENT_TYPES` tombstone.
 
 ## `workflow_error` — LIVE
 
@@ -1521,6 +1380,14 @@ Consumers:
 - `mcp-agent-builder-go/frontend/src/components/TerminalCenter.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/EventDispatcher.tsx`
 - `mcp-agent-builder-go/frontend/src/components/events/eventModeUtils.ts`
+
+## `workflow_progress` — REMOVED
+
+Deleted 2026-09-22 (batch 4) with the workflow_start/progress/end trio: never emitted (no struct, no constructor, no emit call). Removed: const, STRUCTURAL + LIFECYCLE-family entries, terminal-status + title/label match arms, progress % extraction, dispatcher branch + `WorkflowProgressEvent.tsx`, RunningWorkflows store arm (no store wired the type), union entries, rail-denylist entry. Historical rows covered by the `LEGACY_REMOVED_EVENT_TYPES` tombstone.
+
+## `workflow_start` — REMOVED
+
+Deleted 2026-09-22 (batch 4) with the workflow_start/progress/end trio: never emitted (no struct, no constructor, no emit call). Removed: const, STRUCTURAL + LIFECYCLE-family entries, terminal-status + title/label match arms, dispatcher branch + `WorkflowStartEvent.tsx`, store start-detection/retention arms, union entries, rail-denylist entry. Historical rows covered by the `LEGACY_REMOVED_EVENT_TYPES` tombstone.
 
 ## `workflow_step_completed` — LIVE
 

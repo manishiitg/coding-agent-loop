@@ -76,9 +76,6 @@ const (
 	// scene -- without a durable presentation row. See ProductInteractionEvent.
 	ProductInteraction events.EventType = "product_interaction"
 
-	// Parallel execution events
-	IndependentStepsSelected events.EventType = "independent_steps_selected"
-
 	// Todo planning events
 	VariablesExtracted events.EventType = "variables_extracted"
 
@@ -87,10 +84,9 @@ const (
 	BatchExecutionCanceled events.EventType = "batch_execution_canceled"
 
 	// Human Verification events
-	HumanVerificationResponse events.EventType = "human_verification_response"
-	RequestHumanFeedback      events.EventType = "request_human_feedback"
-	BlockingHumanFeedback     events.EventType = "blocking_human_feedback"
-	PlanApproval              events.EventType = "plan_approval"
+	RequestHumanFeedback  events.EventType = "request_human_feedback"
+	BlockingHumanFeedback events.EventType = "blocking_human_feedback"
+	PlanApproval          events.EventType = "plan_approval"
 
 	// Step token usage event
 	StepTokenUsage events.EventType = "step_token_usage"
@@ -119,10 +115,10 @@ func GetComponentFromEventType(eventType events.EventType) string {
 	switch eventType {
 	case OrchestratorEnd,
 		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
-		IndependentStepsSelected, VariablesExtracted,
+		VariablesExtracted,
 		StepTokenUsage,
 		BatchExecutionCanceled,
-		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, PlanApproval,
+		RequestHumanFeedback, BlockingHumanFeedback, PlanApproval,
 		RoutingEvaluated, PreValidationCompleted,
 		OrchestratorRouteSelected, OrchestratorStepCompleted:
 		return "orchestrator"

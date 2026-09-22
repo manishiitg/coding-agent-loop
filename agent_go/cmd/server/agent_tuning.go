@@ -35,52 +35,6 @@ func applySharedLLMAgentTuning(cfg *agent.LLMAgentConfig, req *QueryRequest, pre
 	}
 	cfg.ToolTimeout = resolveToolTimeout()
 
-	// Context summarization
-	cfg.EnableContextSummarization = func() bool {
-		if req.EnableContextSummarization != nil {
-			return *req.EnableContextSummarization
-		}
-		if preset != nil && preset.EnableContextSummarization != nil {
-			return *preset.EnableContextSummarization
-		}
-		return os.Getenv("ENABLE_CONTEXT_SUMMARIZATION") != "false"
-	}()
-	cfg.SummarizeOnTokenThreshold = func() bool {
-		if req.SummarizeOnTokenThreshold != nil {
-			return *req.SummarizeOnTokenThreshold
-		}
-		return os.Getenv("SUMMARIZE_ON_TOKEN_THRESHOLD") != "false"
-	}()
-	cfg.TokenThresholdPercent = func() float64 {
-		if req.TokenThresholdPercent > 0 {
-			return req.TokenThresholdPercent
-		}
-		if envVal := os.Getenv("TOKEN_THRESHOLD_PERCENT"); envVal != "" {
-			if threshold, err := strconv.ParseFloat(envVal, 64); err == nil && threshold > 0 && threshold <= 1.0 {
-				return threshold
-			}
-		}
-		return 0.8
-	}()
-	cfg.SummarizeOnFixedTokenThreshold = func() bool {
-		if req.SummarizeOnFixedTokenThreshold != nil {
-			return *req.SummarizeOnFixedTokenThreshold
-		}
-		return os.Getenv("SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD") != "false"
-	}()
-	cfg.FixedTokenThreshold = func() int {
-		if req.FixedTokenThreshold > 0 {
-			return req.FixedTokenThreshold
-		}
-		return envPositiveInt("FIXED_TOKEN_THRESHOLD", 200000)
-	}()
-	cfg.SummaryKeepLastMessages = func() int {
-		if req.SummaryKeepLastMessages > 0 {
-			return req.SummaryKeepLastMessages
-		}
-		return envPositiveInt("SUMMARY_KEEP_LAST_MESSAGES", 4)
-	}()
-
 	// Context offloading: tool outputs larger than this (tokens) go to the filesystem.
 	cfg.LargeOutputThreshold = envPositiveInt("LARGE_OUTPUT_THRESHOLD", 0) // 0 = library default (10000)
 

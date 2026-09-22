@@ -79,6 +79,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
       'large-workflow-chat',
       { hasMore: true, nextOffset: 1 },
     )
+    expect(mocks.setTabLastEventIndex).not.toHaveBeenCalled()
   })
 
   it('does not reuse a restored row identity for different reply text', () => {

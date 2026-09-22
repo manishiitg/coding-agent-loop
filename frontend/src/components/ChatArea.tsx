@@ -51,7 +51,10 @@ import {
   isChatCompatiblePhase,
   remainingWorkflowContextAfterSubmission,
 } from '../utils/chatSubmitHelpers'
-import { shouldKeepWorkflowSessionSubscribed } from '../utils/workflowSessionSubscription'
+import {
+  shouldKeepChatSessionSubscribed,
+  shouldKeepWorkflowSessionSubscribed,
+} from '../utils/workflowSessionSubscription'
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
@@ -1044,6 +1047,13 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   const activeSessionsCache = useChatStore((state) => state.activeSessionsCache)
   const activeSessionIds = useMemo(() => {
     return new Set(activeSessionsCache.map(s => s.session_id))
+  }, [activeSessionsCache])
+  const activeRuntimeSessionIds = useMemo(() => {
+    return new Set(
+      activeSessionsCache
+        .filter(session => sessionStreamingState(session).isActive)
+        .map(session => session.session_id),
+    )
   }, [activeSessionsCache])
   // A tab observing a specific scheduled/bot run is a read-only view of THAT
   // run, never a fresh chat. The chat-surface resolver keeps such tabs in
@@ -2179,22 +2189,31 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // CRITICAL: Only poll tabs that are:
     // 1. Actively streaming (query in progress)
     // 2. Have session ID in backend's active sessions list (backend determines activity based on events)
-    // 3. Multi-agent tabs (always poll — bg agents can produce events after orchestrator completes)
+    // 3. The visible chat (so a completed transcript stays immediately usable)
     // We don't poll completed sessions - they're done and won't have new events
     // We also don't poll uninitialized sessions (no query submitted yet)
     //
     // Read activeSessionIds fresh from the store to avoid stale closure from setInterval capture
-    const freshActiveIds = new Set(chatStore.activeSessionsCache.map(s => s.session_id))
+    const freshActiveIds = new Set(
+      chatStore.activeSessionsCache
+        .filter(session => sessionStreamingState(session).isActive)
+        .map(session => session.session_id),
+    )
     const tabsToPoll = allTabs.filter(tab => {
       const currentTab = chatStore.getTab(tab.tabId)
       if (!currentTab?.sessionId) {
         return false
       }
 
-      // Multi-agent tabs always get polled — bg agents can produce events
-      // after the orchestrator completes (session_status='completed')
+      // Hidden completed chats must not replay their durable history forever.
+      // Real background work remains connected through the activity signals.
       if (currentTab.metadata?.mode === 'multi-agent') {
-        return true
+        return shouldKeepChatSessionSubscribed({
+          isVisible: chatStore.activeTabId === currentTab.tabId,
+          isStreaming: currentTab.isStreaming,
+          hasRunningBackgroundAgents: currentTab.hasRunningBgAgents,
+          isBackendActive: freshActiveIds.has(currentTab.sessionId),
+        })
       }
 
       // Check if session is in backend's active sessions list (source of truth)
@@ -2509,7 +2528,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // CRITICAL: Also include tabs that are streaming (user just submitted a query)
   // This ensures restored sessions start polling immediately when replying
   const tabsWithActiveSessions = useMemo(() => {
-    const activeIds = activeSessionIds // Capture in closure
+    const activeIds = activeRuntimeSessionIds // Completed rows remain listed for restore; only runtime activity owns a transport.
     const chatStore = useChatStore.getState() // Get fresh store state to check streaming status
 
     const filtered = tabsWithSessions.filter(tab => {
@@ -2535,8 +2554,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         })
       }
 
-      // Skip completed sessions (definitely done) — unless bg agents are still running
-      // In multi-agent mode, always keep polling (background agents can restart the session)
+      // Skip completed sessions (definitely done) — unless bg agents are still running.
       const freshTab = chatStore.getTab(tab.tabId)
       if (tab.isCompleted && !(freshTab?.hasRunningBgAgents) && tab.metadata?.mode !== 'multi-agent') {
         return false
@@ -2559,9 +2577,15 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         return true
       }
 
-      // In multi-agent mode, always keep polling (background agents can restart session at any time)
+      // Keep the visible multi-agent chat available, but do not keep every
+      // hidden completed chat subscribed indefinitely.
       if (tab.metadata?.mode === 'multi-agent') {
-        return true
+        return shouldKeepChatSessionSubscribed({
+          isVisible: activeTabIdFromStore === tab.tabId,
+          isStreaming,
+          hasRunningBackgroundAgents: currentTab?.hasRunningBgAgents ?? false,
+          isBackendActive: activeIds.has(tab.sessionId),
+        })
       }
 
       // Must be in backend's active sessions list
@@ -2579,7 +2603,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // every setTabStreaming/setTabCompleted/setTabConfig because `chatTabs` changed reference.
     // The function already uses getState() for fresh tab data (lines above), so the memo
     // only needs to recompute when tabsWithSessions or activeSessionIds actually change.
-  }, [tabsWithSessions, activeSessionIds])
+  }, [tabsWithSessions, activeRuntimeSessionIds, activeTabIdFromStore])
 
   // Also heal turns that were already running when this component mounted or
   // hot-reloaded. Submission starts the loop immediately, but restored tabs

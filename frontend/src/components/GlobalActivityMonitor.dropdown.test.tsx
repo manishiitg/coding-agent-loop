@@ -123,6 +123,7 @@ describe('global activity monitor dropdown', () => {
       expect(openGlobalActivitySession).toHaveBeenCalledTimes(1)
       expect(openGlobalActivitySession).toHaveBeenCalledWith(
         expect.objectContaining({ session_id: 'wf-session' }),
+        expect.objectContaining({ source: 'global-activity-monitor' }),
       )
       expect(host.querySelector('[role="menu"]')).toBeNull()
     } finally {

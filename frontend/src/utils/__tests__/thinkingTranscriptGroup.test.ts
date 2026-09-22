@@ -47,4 +47,22 @@ describe('thinking transcript grouping', () => {
     ])
     expect(completedItems.map(item => item.kind)).toEqual(['event', 'event'])
   })
+
+  it('does not let stale empty thinking markers split one tool batch', () => {
+    const emptyThinking = (id: string) => mk(id, 'conversation_thinking', {
+      thinking: '', turn: 1, metadata: { thinking_active: true },
+    })
+    const items = buildTranscriptItems([
+      mk('t1-start', 'tool_call_start', { tool_call_id: 'call-1', tool_name: 'read_file' }),
+      mk('t1-end', 'tool_call_end', { tool_call_id: 'call-1', tool_name: 'read_file' }),
+      emptyThinking('thinking-1'),
+      mk('t2-start', 'tool_call_start', { tool_call_id: 'call-2', tool_name: 'read_file' }),
+      mk('t2-end', 'tool_call_end', { tool_call_id: 'call-2', tool_name: 'read_file' }),
+      emptyThinking('thinking-2'),
+      mk('answer', 'llm_generation_end', { content: 'Done.' }),
+    ])
+
+    expect(items.map(item => item.kind)).toEqual(['tools', 'event'])
+    expect(items[0]?.kind === 'tools' && items[0].events).toHaveLength(4)
+  })
 })

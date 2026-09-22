@@ -35,7 +35,11 @@ const CHAT_DELIVERY_EVENT_TYPES = new Set([
   'conversation_error',
   'agent_error',
 ])
+const MAX_EVENTS_PER_OBSERVATION = 20
+const MAX_QUEUED_EVENTS = 500
+const MAX_SEEN_MILESTONES = 5000
 const queue: ChatDeliveryTelemetryEvent[] = []
+const seenMilestones = new Set<string>()
 let timer: number | undefined
 let sequence = 0
 let pageID = ''
@@ -56,6 +60,31 @@ export function configureChatDeliveryTelemetryTransport(transport: TelemetryTran
 
 export function isChatDeliveryTelemetryEvent(event: Pick<PollingEvent, 'type'>): boolean {
   return typeof event.type === 'string' && CHAT_DELIVERY_EVENT_TYPES.has(event.type)
+}
+
+function milestoneGroup(phase: ChatDeliveryTelemetryPhase): string {
+  if (phase === 'sse_received' || phase === 'poll_received' || phase === 'catchup_received') {
+    return 'received'
+  }
+  return phase
+}
+
+function shouldRecordMilestone(
+  phase: ChatDeliveryTelemetryPhase,
+  sessionId: string,
+  event: PollingEvent,
+): boolean {
+  // Legacy events without IDs cannot be safely deduplicated without inspecting
+  // content, which this content-free diagnostic intentionally never does.
+  if (!event.id) return true
+  const key = `${milestoneGroup(phase)}:${sessionId}:${event.id}`
+  if (seenMilestones.has(key)) return false
+  seenMilestones.add(key)
+  if (seenMilestones.size > MAX_SEEN_MILESTONES) {
+    const oldest = seenMilestones.values().next().value
+    if (oldest) seenMilestones.delete(oldest)
+  }
+  return true
 }
 
 function flush(): void {
@@ -80,8 +109,15 @@ export function recordChatDeliveryTelemetry(
   tabId?: string,
 ): void {
   if (typeof window === 'undefined' || !sessionId) return
-  for (const event of events) {
-    if (!isChatDeliveryTelemetryEvent(event)) continue
+  // Catch-up can return a 1,500-event durable tail. Timing diagnostics only
+  // need the newest relevant milestones; processing every historical event
+  // competes with the chat renderer on the browser's main thread.
+  const relevantEvents = events
+    .filter(isChatDeliveryTelemetryEvent)
+    .slice(-MAX_EVENTS_PER_OBSERVATION)
+  for (const event of relevantEvents) {
+    if (!shouldRecordMilestone(phase, sessionId, event)) continue
+    if (queue.length >= MAX_QUEUED_EVENTS) queue.shift()
     queue.push({
       sequence: ++sequence,
       phase,

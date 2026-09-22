@@ -4,6 +4,10 @@ export type WorkflowSessionActivity = {
   isBackendActive: boolean
 }
 
+export type ChatSessionActivity = WorkflowSessionActivity & {
+  isVisible: boolean
+}
+
 /**
  * Keep a workflow transcript connected while any authoritative activity signal
  * remains. In particular, the backend can still deliver child completions after
@@ -15,4 +19,13 @@ export function shouldKeepWorkflowSessionSubscribed(activity: WorkflowSessionAct
     activity.hasRunningBackgroundAgents ||
     activity.isBackendActive
   )
+}
+
+/**
+ * A normal chat only needs a transport while it is visible or genuinely
+ * active. Keeping every restored chat connected forever causes hidden,
+ * completed transcripts to replay their durable journal on each reconnect.
+ */
+export function shouldKeepChatSessionSubscribed(activity: ChatSessionActivity): boolean {
+  return activity.isVisible || shouldKeepWorkflowSessionSubscribed(activity)
 }

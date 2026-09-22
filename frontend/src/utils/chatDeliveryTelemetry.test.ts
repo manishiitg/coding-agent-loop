@@ -37,4 +37,48 @@ describe('chat delivery telemetry', () => {
     })
     expect(JSON.stringify(batches[0])).not.toContain('sensitive reply text')
   })
+
+  it('records one receipt when the same event arrives through replay and SSE', async () => {
+    vi.useFakeTimers()
+    const batches: ChatDeliveryTelemetryBatch[] = []
+    configureChatDeliveryTelemetryTransport(async batch => { batches.push(batch) })
+    const event = {
+      id: 'dedupe-event-1',
+      type: 'unified_completion',
+      timestamp: '2026-09-22T07:11:20.597Z',
+      data: {},
+    } as PollingEvent
+
+    recordChatDeliveryTelemetry('catchup_received', 'dedupe-session', [event], 'catchup')
+    recordChatDeliveryTelemetry('sse_received', 'dedupe-session', [event], 'sse')
+    recordChatDeliveryTelemetry('processed', 'dedupe-session', [event], 'processor')
+    recordChatDeliveryTelemetry('painted', 'dedupe-session', [event], 'renderer')
+    await vi.advanceTimersByTimeAsync(101)
+
+    expect(batches.flatMap(batch => batch.events).map(item => item.phase)).toEqual([
+      'catchup_received',
+      'processed',
+      'painted',
+    ])
+  })
+
+  it('bounds telemetry work for a large historical replay', async () => {
+    vi.useFakeTimers()
+    const batches: ChatDeliveryTelemetryBatch[] = []
+    configureChatDeliveryTelemetryTransport(async batch => { batches.push(batch) })
+    const events = Array.from({ length: 100 }, (_, index) => ({
+      id: `bulk-event-${index}`,
+      type: 'unified_completion',
+      timestamp: `2026-09-22T07:12:${String(index % 60).padStart(2, '0')}.000Z`,
+      data: {},
+    })) as PollingEvent[]
+
+    recordChatDeliveryTelemetry('catchup_received', 'bulk-session', events, 'catchup')
+    await vi.advanceTimersByTimeAsync(101)
+
+    const recorded = batches.flatMap(batch => batch.events)
+    expect(recorded).toHaveLength(20)
+    expect(recorded[0].event_id).toBe('bulk-event-80')
+    expect(recorded.at(-1)?.event_id).toBe('bulk-event-99')
+  })
 })

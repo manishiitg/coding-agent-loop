@@ -737,6 +737,18 @@ function isEmptyThinkingActivity(event: PollingEvent): boolean {
   return Boolean(metadata && typeof metadata === 'object' && (metadata as Record<string, unknown>).thinking_active === true)
 }
 
+function dropStaleEmptyThinkingActivity(events: PollingEvent[]): PollingEvent[] {
+  const newestIndex = events.length - 1
+  return events.filter((event, index) => {
+    if (event.type !== 'conversation_thinking') return true
+    if (transcriptThinkingText(event)) return true
+    // An empty Claude thinking block is only a transient live-state marker.
+    // Remove it before grouping once anything follows; otherwise invisible
+    // markers split one consecutive tool run into many "1 tool call" batches.
+    return index === newestIndex && isEmptyThinkingActivity(event)
+  })
+}
+
 /**
  * selectTerminalEvents scopes the session's event stream to ONE terminal.
  *
@@ -979,9 +991,9 @@ export function buildTranscriptItems(events: PollingEvent[]): TranscriptItem[] {
   // completion can supersede the richer delegated completion and then be
   // removed itself, accidentally hiding both records.
   const transcriptEvents = events.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(isTranscriptEvent)
-  const visibleEvents = dropAdjacentFrontendUserEchoes(dropAnswersRepeatedByCompletionCard(
+  const visibleEvents = dropStaleEmptyThinkingActivity(dropAdjacentFrontendUserEchoes(dropAnswersRepeatedByCompletionCard(
     dropDuplicateExecutionPromptMessages(collapseCompletedLifecycleStarts(transcriptEvents)),
-  ))
+  )))
   const items: TranscriptItem[] = []
   let cursor = 0
 

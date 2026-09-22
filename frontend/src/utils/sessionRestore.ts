@@ -508,10 +508,10 @@ function hydrateTabEventsFromConversation(
   chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(withIdentity))
   // Restored conversation rows are synthesized from durable history, while
   // tabEventIndices is a cursor into the backend's volatile raw event store.
-  // Those sequences are unrelated. Using history.length here can put the
-  // cursor ahead of a newly restarted coding-agent stream and permanently
-  // hide its tool calls and responses from the formatted view.
-  chatStore.setTabLastEventIndex(sessionId, -1)
+  // Do not derive or reset that cursor here: a live SSE/catch-up request may
+  // have advanced it while durable history was loading. The caller applies
+  // the backend's authoritative cursor after both reads complete; preview-only
+  // hydration keeps the store's existing default/current cursor untouched.
   chatStore.setTabHasMoreOlderEvents(sessionId, conversation.history_pagination?.has_more ?? false)
   chatStore.setTabHistoryPagination(
     sessionId,

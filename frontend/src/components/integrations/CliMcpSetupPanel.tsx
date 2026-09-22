@@ -232,8 +232,9 @@ export function CliMcpSetupPanel() {
       return false
     }
   })()
-  const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
-  const mcpJson = connection ? JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_TOKEN: connection.token } } } }, null, 2) : ''
+  const displayToken = connection ? connection.token : 'YOUR_TOKEN'
+  const installer = `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(displayToken)}`
+  const mcpJson = JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_TOKEN: displayToken } } } }, null, 2)
 
   return (
     <div className="space-y-4">
@@ -272,10 +273,9 @@ export function CliMcpSetupPanel() {
         )}
         {checking ? (
           <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
-        ) : !connection ? (
-          <p className="text-sm text-muted-foreground">The command appears here with the token filled in. Nothing is created until you generate.</p>
         ) : (
           <div className="space-y-2">
+            {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection to fill in a live token. Nothing is created until you generate.</p>}
             <CommandRow label="Install and log in command" command={installer} />
           </div>
         )}
@@ -285,36 +285,30 @@ export function CliMcpSetupPanel() {
         title="AI assistants"
         description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. Install the CLI above first — the bridge runs through it."
       >
-        {!connection ? (
-          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
-        ) : (
-          <div className="space-y-2">
-            <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
-            <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
-            <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
-          </div>
-        )}
+        <div className="space-y-2">
+          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live token.</p>}
+          <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
+          <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
+          <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
+        </div>
       </SettingsCard>
       <SettingsCard
         icon={<Globe className="h-4 w-4 text-primary" />}
         title="Hosted AI assistants"
         description="ChatGPT and Claude Cowork connect over HTTPS — no local install. Paste this URL as a custom MCP server."
       >
-        {!connection ? (
-          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
-        ) : (
-          <div className="space-y-2">
-            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(connection.token)}`} />
-            {isLoopbackOrigin && (
-              <p className="text-xs text-amber-500">This installation is only reachable on your machine — ChatGPT and Cowork need a public server URL. Deploy first, then open that server&apos;s Connect tab.</p>
-            )}
-            <p className="text-xs text-muted-foreground">
-              ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
-              Claude Cowork: Settings → Connectors → Add custom connector.
-              Anyone with this URL can use the token — revoke it here when done.
-            </p>
-          </div>
-        )}
+        <div className="space-y-2">
+          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live URL.</p>}
+          <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(displayToken)}`} />
+          {isLoopbackOrigin && (
+            <p className="text-xs text-amber-500">This installation is only reachable on your machine — ChatGPT and Cowork need a public server URL. Deploy first, then open that server&apos;s Connect tab.</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
+            Claude Cowork: Settings → Connectors → Add custom connector.
+            Anyone with this URL can use the token — revoke it here when done.
+          </p>
+        </div>
       </SettingsCard>
       <SettingsCard
         icon={<FileText className="h-4 w-4 text-primary" />}

@@ -358,7 +358,13 @@ func TestUserBrowserDiscoveryShowsOnlyTheSelectedCrewBrowser(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":["work"]}]}`)
 	workspaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
+		// Real Crew projects have a workflow.json. The discovery path must not
+		// mistake that shared project manifest for a Workflow whose browser is
+		// disabled by capabilities.browser_mode.
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]string{"content": `{"version":"1","id":"crew-a","capabilities":{"browser_mode":"none"}}`},
+		})
 	}))
 	defer workspaceServer.Close()
 	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
@@ -379,6 +385,34 @@ func TestUserBrowserDiscoveryShowsOnlyTheSelectedCrewBrowser(t *testing.T) {
 	items := api.liveBrowserSessions(r)
 	if len(items) != 1 || items[0]["browser_session"] != crewA {
 		t.Fatalf("expected only selected Crew browser %q, got %v", crewA, items)
+	}
+}
+
+func TestCanControlLiveBrowserTreatsManifestBackedCrewAsProductWorkspace(t *testing.T) {
+	t.Setenv("MULTI_USER_MODE", "true")
+	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":["work"]}]}`)
+	workspaceServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"success": true,
+			"data":    map[string]string{"content": `{"version":"1","id":"crew-a","capabilities":{"browser_mode":"none"}}`},
+		})
+	}))
+	defer workspaceServer.Close()
+	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
+
+	const publicWorkspace = "Chats/Work/projects/crew-a"
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
+		"crew-a-chat": {
+			SessionID:     "crew-a-chat",
+			UserID:        "alice",
+			WorkspacePath: "_users/alice/Chats/Work/projects/crew-a",
+		},
+	}}
+	if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, publicWorkspace) {
+		t.Fatal("expected the owner to control the active Crew browser even though the Crew has workflow.json")
+	}
+	if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "bob"}, publicWorkspace) {
+		t.Fatal("another user must not control the Crew browser")
 	}
 }
 

@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `implemented and pushed; deployment/live verification pending` |
-| Last synchronized | `2026-09-14` |
+| Ticket state | `Crew live-discovery follow-up fixed locally; deployment/live verification pending` |
+| Last synchronized | `2026-09-22` |
 
 - **Priority:** P1 — browser login state is workflow data and must neither split
   across the workflow's users/runs nor leak into another workflow.
@@ -53,6 +53,33 @@ login is workflow-specific state, not personal user state and not per-run state.
    alter the workflow contract.
 8. Browser live-view discovery, input and recording remain gated by current
    workflow authorization. Sharing browser state does not bypass workflow access.
+9. Each Crew project has one durable managed-headless browser scoped to both
+   its signed-in owner and normalized Crew workspace. Different Crew projects
+   do not share cookies or tabs, and Crew never adopts a Workflow browser merely
+   because its shared project manifest is named `workflow.json`.
+
+## Crew live-discovery follow-up — 2026-09-22
+
+RTS production showed a Crew successfully executing `agent_browser` while the
+manually opened Browser panel remained empty. The managed daemon, Chrome process,
+`.stream` metadata and local HTTP stream were all healthy. The Crew executed 27
+browser calls; the failure was exclusively in agent-server discovery.
+
+`liveBrowserSessions` called `workflowAccessForWorkspacePath` before identifying
+the workspace kind. Real Crew projects persist `workflow.json`, so the non-nil
+manifest sent them through the real-Workflow branch. That branch accepts only the
+workflow-shared session identity and requires Workflow `browser_mode` to be
+`auto` or `headless`; Crew correctly uses a user-plus-workspace identity and its
+manifest reported `browser_mode: none`. The valid Crew session was therefore
+filtered out before the frontend could open its WebSocket stream. The existing
+Crew discovery test returned HTTP 404 for `workflow.json`, modelling a fixed
+workspace product rather than an actual Crew and hiding the regression.
+
+The correction classifies `Chats/Work/projects/...` before Workflow manifest
+handling, admits only the exact owner-scoped Crew browser identity with a tracked
+active-session binding, applies the same distinction to Take control, and
+canonicalizes public versus `_users/<owner>/...` paths during ownership checks.
+The regression now uses a real manifest-backed Crew with `browser_mode: none`.
 
 ## CDP boundary
 
@@ -154,6 +181,8 @@ The retained platform decision and implementation are:
 - [x] Persistent profile tests resolve workflow identities below
       `<base>-workflows/` and retain legacy user profiles below `<base>-users/`.
 - [x] Live browser discovery returns only the authorized workflow browser.
+- [x] A manifest-backed Crew exposes only its owner's dedicated Crew browser.
+- [x] Take control uses Crew ownership rather than Workflow ACL classification.
 - [x] Trigger/schedule preset fallback resolves the workflow path before binding.
 - [x] Browser, common, orchestrator, workspace and focused server tests pass.
 - [ ] Restart/deploy each environment with a persistent base and verify login

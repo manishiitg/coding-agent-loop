@@ -35,6 +35,19 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 			userWorkspaceSession := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace(userID, "", workspace) + "--browser")
 			productSession := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
 			if userID != "" && (item["browser_session"] == expected || item["browser_session"] == userWorkspaceSession || item["browser_session"] == productSession) {
+				// Crew projects have workflow.json because they reuse the shared
+				// project manifest, but they are not workflows and do not use the
+				// workflow-shared browser namespace or workflow browser_mode gate.
+				// Classify the path before reading the manifest; otherwise every
+				// real Crew browser is mistaken for a disabled Workflow browser and
+				// disappears from the Browser panel.
+				if isActiveWorkProjectWorkspace(userID, workspace) {
+					if item["browser_session"] == userWorkspaceSession && api.userOwnsActiveSessionAtWorkspace(userID, workspace) {
+						item["label"] = "Crew browser"
+						result = append(result, item)
+					}
+					continue
+				}
 				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
 				if manifest != nil {
 					// A real Workflow/ folder: its own capabilities.browser_mode
@@ -91,7 +104,7 @@ func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace stri
 	api.activeSessionsMux.RLock()
 	defer api.activeSessionsMux.RUnlock()
 	for _, owner := range api.activeSessions {
-		if owner != nil && strings.TrimRight(owner.WorkspacePath, "/") == workspace && owner.UserID == userID {
+		if owner != nil && owner.UserID == userID && workspacePathsMatchForUser(userID, owner.WorkspacePath, workspace) {
 			return true
 		}
 	}
@@ -102,6 +115,16 @@ func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace stri
 // live browser at workspace. Split out from handleLiveBrowserStream's closure
 // so it's directly unit-testable without the websocket harness.
 func (api *StreamingAPI) canControlLiveBrowser(ctx context.Context, claims *UserClaims, workspace string) bool {
+	userID := ""
+	if claims != nil {
+		userID = claims.UserID
+	}
+	// Crew is a manifest-backed product workspace, not a Workflow. Its browser
+	// belongs to the signed-in project owner and is authorized by the active
+	// Crew binding rather than workflow ACLs.
+	if isActiveWorkProjectWorkspace(userID, workspace) {
+		return api.userOwnsActiveSessionAtWorkspace(userID, workspace)
+	}
 	level, manifest := workflowAccessForWorkspacePath(ctx, claims, workspace)
 	if manifest != nil {
 		return level == WorkflowAccessOwner || level == WorkflowAccessWrite
@@ -111,10 +134,6 @@ func (api *StreamingAPI) canControlLiveBrowser(ctx context.Context, claims *User
 	// liveBrowserSessions' same fallback -- without it, nobody could ever
 	// take control of one of these live browsers, since manifest is always
 	// nil for them.
-	userID := ""
-	if claims != nil {
-		userID = claims.UserID
-	}
 	return !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace)
 }
 

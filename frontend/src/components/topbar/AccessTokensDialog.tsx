@@ -113,14 +113,14 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
               <label className="text-sm">Name<input required maxLength={80} value={name} onChange={e => setName(e.target.value)} placeholder="Claude Code on my laptop" className={inputClass} /></label>
               <label className="text-sm">Expires in<select value={days} onChange={e => setDays(Number(e.target.value))} className={inputClass}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label>
             </div>
-            <p className="text-sm text-muted-foreground">Reads workflows, plans, run logs, documents and skills. Nothing is created, edited, or authored.</p>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowRun} onChange={e => setAllowRun(e.target.checked)} />Allow running workflows (steps, full runs, schedules)</label>
-            <label className="block text-sm">Workflow access<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => setAllWorkflows(e.target.value === 'all')}><option value="all">All workflows I can access, including future workflows</option><option value="selected">Selected workflows</option></select></label>
+            <p className="text-sm text-muted-foreground">Reads workflows, plans, run logs, documents and skills. A token can never create or edit workflows, plans, or files.</p>
+            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowRun} onChange={e => setAllowRun(e.target.checked)} />Allow running workflows (execute steps, trigger schedules) — running never edits plans or files</label>
+            <label className="block text-sm">Which workflows can this token see?<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => setAllWorkflows(e.target.value === 'all')}><option value="all">All workflows I can see, including future ones</option><option value="selected">Selected workflows</option></select></label>
             {!allWorkflows && <fieldset className="space-y-2 border border-border rounded-md p-3 max-h-40 overflow-auto"><legend className="text-sm">Select workflows</legend>
               {workflows.map(w => <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={workflowIDs.includes(w.id)} onChange={e => setWorkflowIDs(ids => e.target.checked ? [...ids, w.id] : ids.filter(id => id !== w.id))} />{w.label}</label>)}
               {!workflows.length && <p className="text-sm text-muted-foreground">No accessible workflows.</p>}
             </fieldset>}
-            <p className="text-xs text-muted-foreground">A token can never grant more access than your account has.</p>
+            <p className="text-xs text-muted-foreground">Visibility only: a token sees at most the workflows your account can already see.</p>
             <button type="submit" disabled={loading || busy || !name.trim() || (!allWorkflows && !workflowIDs.length)} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50">{busy ? 'Saving…' : 'Generate token'}</button>
           </form>}
           <section className="border-t border-border pt-4 space-y-3" aria-label="Existing access tokens"><h3 className="font-medium">Your tokens</h3>

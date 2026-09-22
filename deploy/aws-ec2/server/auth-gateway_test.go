@@ -1,10 +1,12 @@
 package main
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"net/http/httputil"
@@ -14,6 +16,76 @@ import (
 	"testing"
 	"time"
 )
+
+func TestMain(m *testing.M) {
+	_ = os.Setenv("GATEWAY_REQUEST_LOG", "false")
+	os.Exit(m.Run())
+}
+
+func TestGatewayRequestLogCapturesPublicTimingAndCorrelationWithoutQuerySecrets(t *testing.T) {
+	t.Setenv("GATEWAY_REQUEST_LOG", "true")
+	var upstreamRequestID string
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamRequestID = r.Header.Get(requestIDHeader)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer upstream.Close()
+
+	var logs bytes.Buffer
+	previousOutput := log.Writer()
+	log.SetOutput(&logs)
+	defer log.SetOutput(previousOutput)
+
+	gw := &gateway{
+		agent:               proxyFor(upstream.URL),
+		disablePasswordGate: true,
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/health?token=must-not-appear", nil)
+	req.Header.Set(requestIDHeader, "edge-request-123")
+	req.Header.Set("X-Forwarded-For", "203.0.113.7, 127.0.0.1")
+	rec := httptest.NewRecorder()
+
+	gw.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusNoContent)
+	}
+	if upstreamRequestID != "edge-request-123" {
+		t.Fatalf("upstream request id = %q", upstreamRequestID)
+	}
+	if got := rec.Header().Get(requestIDHeader); got != "edge-request-123" {
+		t.Fatalf("response request id = %q", got)
+	}
+	output := logs.String()
+	for _, want := range []string{
+		"[GATEWAY] --> request_id=edge-request-123",
+		"[GATEWAY] <-- request_id=edge-request-123",
+		`path="/api/health"`,
+		"route=agent",
+		"status=204",
+		"ttfb_ms=",
+		"duration_ms=",
+		"slow=false",
+		`client_ip="203.0.113.7"`,
+	} {
+		if !strings.Contains(output, want) {
+			t.Fatalf("request log missing %q:\n%s", want, output)
+		}
+	}
+	if strings.Contains(output, "must-not-appear") || strings.Contains(output, "token=") {
+		t.Fatalf("request log exposed query credentials:\n%s", output)
+	}
+}
+
+func TestGatewayRequestIDRejectsUnsafeClientValue(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.Header.Set(requestIDHeader, "unsafe request id")
+
+	requestID := gatewayRequestID(req)
+	if requestID == "unsafe request id" || !safeRequestID(requestID) {
+		t.Fatalf("generated request id = %q", requestID)
+	}
+}
 
 func TestAgentTokenIsShortLivedAndSignedWithGatewaySecret(t *testing.T) {
 	gateway := &gateway{secret: []byte("test-secret-that-is-long-enough")}

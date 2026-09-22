@@ -1,13 +1,18 @@
 package main
 
 import (
+	"bufio"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
 	"crypto/subtle"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
@@ -22,7 +27,86 @@ const (
 	sessionDuration      = 12 * time.Hour
 	sessionRefreshWindow = 6 * time.Hour
 	authRequiredHeader   = "X-AgentWorks-Login"
+	requestIDHeader      = "X-Request-ID"
+	slowRequestThreshold = time.Second
 )
+
+type gatewayResponseRecorder struct {
+	http.ResponseWriter
+	status        int
+	bytes         int64
+	firstWriteAt  time.Time
+	firstWriteErr error
+}
+
+func (w *gatewayResponseRecorder) WriteHeader(status int) {
+	if w.status != 0 {
+		return
+	}
+	w.status = status
+	w.firstWriteAt = time.Now()
+	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *gatewayResponseRecorder) Write(data []byte) (int, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	n, err := w.ResponseWriter.Write(data)
+	w.bytes += int64(n)
+	if err != nil && w.firstWriteErr == nil {
+		w.firstWriteErr = err
+	}
+	return n, err
+}
+
+func (w *gatewayResponseRecorder) Flush() {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	if flusher, ok := w.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
+}
+
+func (w *gatewayResponseRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := w.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("underlying ResponseWriter does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+func (w *gatewayResponseRecorder) ReadFrom(src io.Reader) (int64, error) {
+	if w.status == 0 {
+		w.WriteHeader(http.StatusOK)
+	}
+	var (
+		n   int64
+		err error
+	)
+	if readerFrom, ok := w.ResponseWriter.(io.ReaderFrom); ok {
+		n, err = readerFrom.ReadFrom(src)
+	} else {
+		n, err = io.Copy(struct{ io.Writer }{w.ResponseWriter}, src)
+	}
+	w.bytes += n
+	if err != nil && w.firstWriteErr == nil {
+		w.firstWriteErr = err
+	}
+	return n, err
+}
+
+func (w *gatewayResponseRecorder) Push(target string, options *http.PushOptions) error {
+	if pusher, ok := w.ResponseWriter.(http.Pusher); ok {
+		return pusher.Push(target, options)
+	}
+	return http.ErrNotSupported
+}
+
+func (w *gatewayResponseRecorder) Unwrap() http.ResponseWriter {
+	return w.ResponseWriter
+}
 
 type gateway struct {
 	secret        []byte
@@ -85,6 +169,63 @@ func gatewayEnv(name, fallback string) string {
 func gatewayBoolEnv(name string) bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv(name)))
 	return value == "true" || value == "1"
+}
+
+func gatewayRequestLoggingEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("GATEWAY_REQUEST_LOG")))
+	return value != "false" && value != "0" && value != "off"
+}
+
+func safeRequestID(value string) bool {
+	if value == "" || len(value) > 128 {
+		return false
+	}
+	for _, r := range value {
+		if (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '-' || r == '_' || r == '.' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func gatewayRequestID(r *http.Request) string {
+	if existing := strings.TrimSpace(r.Header.Get(requestIDHeader)); safeRequestID(existing) {
+		return existing
+	}
+	random := make([]byte, 12)
+	if _, err := rand.Read(random); err == nil {
+		return hex.EncodeToString(random)
+	}
+	return fmt.Sprintf("fallback-%x", time.Now().UnixNano())
+}
+
+func gatewayRoute(path string) string {
+	switch {
+	case path == "/login" || path == "/logout":
+		return "gateway-auth"
+	case strings.HasPrefix(path, "/api/wp"):
+		return "workspace"
+	case strings.HasPrefix(path, "/api"), strings.HasPrefix(path, "/ws"):
+		return "agent"
+	default:
+		return "frontend"
+	}
+}
+
+func gatewayStreamRequest(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("Upgrade"), "websocket") || strings.Contains(strings.ToLower(r.Header.Get("Accept")), "text/event-stream")
+}
+
+func gatewayClientIP(r *http.Request) string {
+	if forwarded := strings.TrimSpace(strings.Split(r.Header.Get("X-Forwarded-For"), ",")[0]); forwarded != "" {
+		return forwarded
+	}
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return r.RemoteAddr
 }
 
 func newGateway() *gateway {
@@ -408,6 +549,57 @@ func isWebhookRequest(r *http.Request) bool {
 }
 
 func (g *gateway) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if !gatewayRequestLoggingEnabled() {
+		g.serveHTTP(w, r)
+		return
+	}
+
+	start := time.Now()
+	requestID := gatewayRequestID(r)
+	r.Header.Set(requestIDHeader, requestID)
+	w.Header().Set(requestIDHeader, requestID)
+	recorder := &gatewayResponseRecorder{ResponseWriter: w}
+	route := gatewayRoute(r.URL.Path)
+	stream := gatewayStreamRequest(r)
+	log.Printf("[GATEWAY] --> request_id=%s method=%s path=%q route=%s stream=%t client_ip=%q", requestID, r.Method, r.URL.EscapedPath(), route, stream, gatewayClientIP(r))
+
+	defer func() {
+		status := recorder.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		duration := time.Since(start)
+		ttfb := time.Duration(-1)
+		ttfbMillis := int64(-1)
+		if !recorder.firstWriteAt.IsZero() {
+			ttfb = recorder.firstWriteAt.Sub(start)
+			ttfbMillis = ttfb.Milliseconds()
+		}
+		writeError := "-"
+		if recorder.firstWriteErr != nil {
+			writeError = recorder.firstWriteErr.Error()
+		}
+		log.Printf("[GATEWAY] <-- request_id=%s method=%s path=%q route=%s status=%d bytes=%d ttfb_ms=%d duration_ms=%d ttfb=%s duration=%s stream=%t slow=%t write_error=%q",
+			requestID,
+			r.Method,
+			r.URL.EscapedPath(),
+			route,
+			status,
+			recorder.bytes,
+			ttfbMillis,
+			duration.Milliseconds(),
+			ttfb.Round(time.Millisecond),
+			duration.Round(time.Millisecond),
+			stream,
+			!stream && duration >= slowRequestThreshold,
+			writeError,
+		)
+	}()
+
+	g.serveHTTP(recorder, r)
+}
+
+func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	if isWebhookRequest(r) {
 		r.Header.Del("X-User-ID")
 		g.agent.ServeHTTP(w, r)

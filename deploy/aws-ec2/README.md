@@ -218,6 +218,27 @@ curl -sS -H "Accept-Encoding: gzip" -D - -o /dev/null \
 
 An unauthenticated HTTP `303` redirect to `/login` is expected.
 
+### Trace public request latency
+
+The gateway logs a start and completion record for every public request by
+default. Completion records include the route (`frontend`, `agent`, or
+`workspace`), response status and bytes, time to first byte, total duration,
+stream classification, and `slow=true` for non-streaming requests taking at
+least one second. `X-Request-ID` is returned to the client and forwarded to the
+agent API, whose `[API]` lines include the same ID for cross-layer correlation.
+Gateway logs record only the escaped URL path, never the query string, so SSE
+and media bearer tokens are not written to the request timing log.
+
+```text
+[GATEWAY] --> request_id=... method=GET path="/api/..." route=agent stream=false client_ip="..."
+[GATEWAY] <-- request_id=... method=GET path="/api/..." route=agent status=200 bytes=... ttfb_ms=... duration_ms=... slow=false ...
+```
+
+Use `GATEWAY_REQUEST_LOG=false` only when this diagnostic stream must be
+disabled. Long-lived SSE and WebSocket requests are marked `stream=true`; their
+total duration is connection lifetime and is intentionally excluded from the
+slow-request flag.
+
 The gateway treats browser pages and API calls differently when the shared
 login session expires: pages redirect to `/login`, while `/api` and `/ws`
 return `401` with an `X-AgentWorks-Login` header. The shared frontend follows

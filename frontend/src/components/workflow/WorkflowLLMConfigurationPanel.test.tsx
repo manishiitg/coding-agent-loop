@@ -18,17 +18,6 @@ const { storeState } = vi.hoisted(() => ({
     llmConfigLocked: false,
     lockedProviders: [],
     savedLLMs: [] as SavedLLM[],
-    bedrockConfig: {},
-    openaiConfig: {},
-    vertexConfig: {},
-    anthropicConfig: {},
-    azureConfig: {},
-    setBedrockConfig: vi.fn(),
-    setOpenaiConfig: vi.fn(),
-    setVertexConfig: vi.fn(),
-    setAnthropicConfig: vi.fn(),
-    setAzureConfig: vi.fn(),
-    testAPIKey: vi.fn(),
     setShowLLMModal: vi.fn(),
   },
 }))
@@ -44,7 +33,6 @@ vi.mock('../../services/llm-config-api', () => ({
   llmConfigService: { getModelMetadata: vi.fn(async () => ({ models: [] })), getProviderConnections: vi.fn(async () => [] as import('../../services/llm-config-api').ProviderConnection[]) },
 }))
 vi.mock('../llm/CodingAgentSection', () => ({ CodingAgentSection: () => null }))
-vi.mock('../llm/APIProviderSection', () => ({ APIProviderSection: () => null }))
 vi.mock('../WorkflowProviderCredentialField', () => ({ WorkflowProviderCredentialField: () => null }))
 
 import WorkflowLLMConfigurationPanel from './WorkflowLLMConfigurationPanel'

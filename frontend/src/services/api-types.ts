@@ -4,25 +4,14 @@ import type { EventTypeString } from '../generated/event-types'
 import type { PollingEvent, RuntimeSnapshot, TerminalSnapshot } from '../../shared/session/types'
 export type { PollingEvent, RuntimePhase, RuntimeSnapshot, GetEventsResponse, TerminalEventsResponse, TerminalSnapshot, TerminalSnapshotRow, TerminalStatus, SSEEventMessage, SSEStatusMessage } from '../../shared/session/types'
 
+// Coding-agent CLIs are the only runnable providers.
 export type LLMProvider =
-  | 'openrouter'
-  | 'bedrock'
-  | 'openai'
-  | 'vertex'
-  | 'anthropic'
-  | 'azure'
-  | 'z-ai'
-  | 'kimi'
   | 'claude-code'
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
   | 'pi-cli'
   | 'muse-cli'
-  | 'minimax'
-  | 'minimax-coding-plan'
-  | 'elevenlabs'
-  | 'deepgram'
 
 // New LLM Configuration types (Tiered Model Selection)
 export interface LLMModel {
@@ -315,24 +304,8 @@ export interface SharedProjectFileEntry {
 // LLM Defaults Configuration Response
 export interface LLMDefaultsResponse {
   primary_config: LLMConfiguration
-  openrouter_config?: ExtendedLLMConfiguration
-  bedrock_config: ExtendedLLMConfiguration
-  openai_config: ExtendedLLMConfiguration
-  vertex_config?: ExtendedLLMConfiguration
-  anthropic_config?: ExtendedLLMConfiguration
-  azure_config?: ExtendedLLMConfiguration
-  zai_config?: ExtendedLLMConfiguration
-  kimi_config?: ExtendedLLMConfiguration
   pi_cli_config?: ExtendedLLMConfiguration
   available_models: {
-    bedrock: string[]
-    openrouter?: string[]
-    openai: string[]
-    vertex?: string[]
-    anthropic?: string[]
-    azure?: string[]
-    'z-ai'?: string[]
-    kimi?: string[]
     'pi-cli'?: string[]
   }
   provider_capabilities?: Partial<Record<LLMProvider, string[]>>

@@ -18,9 +18,6 @@ vi.mock('./ToolCallSpecialRender', () => ({
   WorkspaceToolCallEndDisplay: () => null,
   CodeExecutionToolCallEndDisplay: () => null,
 }))
-vi.mock('./ToolCallSpecialRender/ImageGenToolCallEndDisplay', () => ({
-  ImageGenToolCallEndDisplay: () => null,
-}))
 
 import type { ToolCallEndEvent } from '../../../generated/events'
 import { ToolCallEndEventDisplay } from './ToolCallEndEvent'

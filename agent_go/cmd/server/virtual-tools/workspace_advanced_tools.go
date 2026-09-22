@@ -13,6 +13,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/services"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workspace"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/llm"
@@ -598,6 +599,8 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 		return nil
 	}
 
+	// Top-level upstream keys (openai, anthropic, vertex, ...) are Pi CLI's
+	// provider credentials; nothing calls those APIs directly.
 	keys := &llm.ProviderAPIKeys{}
 	if value, ok := rawKeys["openai"].(string); ok && strings.TrimSpace(value) != "" {
 		v := value
@@ -661,39 +664,17 @@ func loadWorkspaceProviderAPIKeys(ctx context.Context, workspaceURL string) *llm
 			keys.PiProviderKeys = nil
 		}
 	}
-	if value, ok := rawKeys["bedrock"].(map[string]interface{}); ok {
-		if region, ok := value["region"].(string); ok && strings.TrimSpace(region) != "" {
-			keys.Bedrock = &llm.BedrockConfig{Region: region}
-		}
-	}
-	if value, ok := rawKeys["azure"].(map[string]interface{}); ok {
-		cfg := &llm.AzureAPIConfig{}
-		if endpoint, ok := value["endpoint"].(string); ok {
-			cfg.Endpoint = endpoint
-		}
-		if apiKey, ok := value["api_key"].(string); ok {
-			cfg.APIKey = apiKey
-		}
-		if apiVersion, ok := value["api_version"].(string); ok {
-			cfg.APIVersion = apiVersion
-		}
-		if region, ok := value["region"].(string); ok {
-			cfg.Region = region
-		}
-		if cfg.Endpoint != "" || cfg.APIKey != "" || cfg.APIVersion != "" || cfg.Region != "" {
-			keys.Azure = cfg
-		}
-	}
-
 	return keys
 }
 
 func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.ProviderAPIKeys) (llmtypes.Model, error) {
-	provider := llm.Provider(model.Provider)
+	if err := llmguard.RequireCodingAgentProvider(model.Provider); err != nil {
+		return nil, err
+	}
 	llmCfg := llm.Config{
-		Provider:     provider,
+		Provider:     llm.Provider(model.Provider),
 		ConnectionID: model.ConnectionID,
-		ModelID:      resolveRuntimeModelIDForVirtualTool(provider, model.ModelID),
+		ModelID:      model.ModelID,
 		Context:      ctx,
 		APIKeys:      apiKeys,
 		MaxRetries:   3,
@@ -704,8 +685,7 @@ func createLLMFromTierModel(ctx context.Context, model *TierModel, apiKeys *llm.
 
 // structuredOneShotCallOptions keeps generate_text_llm out of every coding
 // CLI's interactive/tmux path. The tool is a bounded one-shot operation, so a
-// provider-native structured stream is the only valid CLI transport. Ordinary
-// HTTP/API providers have no CLI transport option and receive no extra option.
+// provider-native structured stream is the only valid CLI transport.
 func structuredOneShotCallOptions(provider llm.Provider) []llmtypes.CallOption {
 	options := make([]llmtypes.CallOption, 0, 2)
 	switch provider {
@@ -727,15 +707,6 @@ func structuredOneShotCallOptions(provider llm.Provider) []llmtypes.CallOption {
 		options = append(options, workingDir)
 	}
 	return options
-}
-
-func resolveRuntimeModelIDForVirtualTool(provider llm.Provider, modelID string) string {
-	normalizedProvider := strings.ToLower(strings.TrimSpace(string(provider)))
-	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
-	if normalizedProvider == string(llm.ProviderMiniMaxCodingPlan) && normalizedModelID == "minimax" {
-		return "claude-sonnet-4-5"
-	}
-	return modelID
 }
 
 // wrapReadImageExecutor wraps the read_image executor in the map with LLM analysis.
@@ -1030,21 +1001,6 @@ func imageAnalysisAPIKeysWithEnv(apiKeys *llm.ProviderAPIKeys) *llm.ProviderAPIK
 			merged.ClaudeCodeOAuthToken = &value
 		}
 	}
-	if merged.Vertex == nil {
-		if value := firstNonEmptyEnv("VERTEX_API_KEY", "GOOGLE_API_KEY", "GEMINI_API_KEY"); value != "" {
-			merged.Vertex = &value
-		}
-	}
-	if merged.ZAI == nil {
-		if value := firstNonEmptyEnv("Z_AI_API_KEY", "ZAI_API_KEY"); value != "" {
-			merged.ZAI = &value
-		}
-	}
-	if merged.Kimi == nil {
-		if value := firstNonEmptyEnv("KIMI_API_KEY", "MOONSHOT_API_KEY"); value != "" {
-			merged.Kimi = &value
-		}
-	}
 	return merged
 }
 
@@ -1063,13 +1019,6 @@ func hasWorkspaceDefaultImageAnalysisAuth(provider string, apiKeys *llm.Provider
 		_, err := exec.LookPath("cursor-agent")
 		return err == nil
 	}
-	if hasImageAnalysisProviderAuth(provider, apiKeys) {
-		return true
-	}
-	if strings.EqualFold(strings.TrimSpace(provider), string(llm.ProviderVertex)) {
-		return strings.TrimSpace(os.Getenv("GOOGLE_APPLICATION_CREDENTIALS")) != "" ||
-			strings.TrimSpace(os.Getenv("GOOGLE_CLOUD_PROJECT")) != ""
-	}
 	return false
 }
 
@@ -1085,26 +1034,19 @@ func firstNonEmptyEnv(names ...string) string {
 // createLLMFromConfig creates an LLM model instance using multi-llm-provider-go
 // from the agent's LLMModel config (extracted from context).
 func createLLMFromConfig(ctx context.Context, config mcpagent.LLMModel) (llmtypes.Model, error) {
+	if err := llmguard.RequireCodingAgentProvider(config.Provider); err != nil {
+		return nil, err
+	}
 	var apiKeys *llm.ProviderAPIKeys
 	if config.APIKey != nil {
 		apiKeys = &llm.ProviderAPIKeys{}
 		switch llm.Provider(config.Provider) {
-		case llm.ProviderAnthropic:
-			apiKeys.Anthropic = config.APIKey
-		case llm.ProviderOpenAI:
-			apiKeys.OpenAI = config.APIKey
-		case llm.ProviderZAI:
-			apiKeys.ZAI = config.APIKey
-		case llm.ProviderVertex:
-			apiKeys.Vertex = config.APIKey
 		case llm.ProviderCodexCLI:
 			apiKeys.CodexCLI = config.APIKey
 		case llm.ProviderCursorCLI:
 			apiKeys.CursorCLI = config.APIKey
 		case llm.ProviderPiCLI:
 			apiKeys.PiCLI = config.APIKey
-		case llm.ProviderMiniMax:
-			apiKeys.MiniMax = config.APIKey
 		}
 	}
 

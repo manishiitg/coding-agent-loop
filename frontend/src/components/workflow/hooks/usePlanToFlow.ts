@@ -126,7 +126,7 @@ export interface ValidationNodeData extends Record<string, unknown> {
   parentStepId: string
   parentStepTitle: string
   status: 'pending' | 'running' | 'passed' | 'failed'
-  llmProvider?: string  // LLM provider (e.g., 'openai', 'bedrock')
+  llmProvider?: string  // LLM provider (e.g., 'claude-code', 'codex-cli')
   llmModel?: string  // LLM model name
 }
 
@@ -135,7 +135,7 @@ export interface LearningNodeData extends Record<string, unknown> {
   parentStepId: string
   parentStepTitle: string
   status: 'pending' | 'running' | 'completed' | 'skipped'
-  llmProvider?: string  // LLM provider (e.g., 'openai', 'bedrock')
+  llmProvider?: string  // LLM provider (e.g., 'claude-code', 'codex-cli')
   llmModel?: string  // LLM model name
 }
 

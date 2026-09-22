@@ -759,7 +759,7 @@ The following tools are NOT available as direct function calls — call them via
 
 - **Delegation tools**: delegate, query_agent, terminate_agent, list_agents
 - **Human tools**: notify_user
-- **LLM config tools**: list_published_llms, list_provider_models, test_llm, save_published_llm, set_provider_auth, list_llm_capabilities, estimate_llm_cost
+- **LLM config tools**: list_published_llms, list_provider_models, test_llm, save_published_llm, set_provider_auth, list_llm_capabilities
 
 **Pattern:**
 ` + "```" + `bash

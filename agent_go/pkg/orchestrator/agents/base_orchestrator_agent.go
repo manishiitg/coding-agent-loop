@@ -15,6 +15,7 @@ import (
 	"github.com/manishiitg/mcpagent/observability"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 
 	agentlogger "github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
@@ -434,7 +435,9 @@ func (boa *BaseOrchestratorAgent) createLLM() (llmtypes.Model, error) {
 		ClaudeCodeTransport: boa.config.ClaudeCodeTransport,
 	}
 
-	// Initialize LLM using the existing factory
+	if err := llmguard.RequireCodingAgentProvider(primaryProvider); err != nil {
+		return nil, err
+	}
 	llmInstance, err := llm.InitializeLLM(config)
 	if err != nil {
 		return nil, fmt.Errorf("failed to initialize LLM: %w", err)

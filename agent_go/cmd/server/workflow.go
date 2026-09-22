@@ -728,7 +728,7 @@ func validatedWorkflowExecutionMode(options *ExecutionOptions) string {
 // AgentLLMConfig represents LLM configuration for an agent (matches controller type)
 type AgentLLMConfig struct {
 	PublishedLLMID string                 `json:"published_llm_id,omitempty"`
-	Provider       string                 `json:"provider,omitempty"` // e.g., "openai", "bedrock", "vertex", "anthropic"
+	Provider       string                 `json:"provider,omitempty"` // coding-agent CLI, e.g. "claude-code", "codex-cli", "pi-cli"
 	ModelID        string                 `json:"model_id,omitempty"` // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 	Options        map[string]interface{} `json:"options,omitempty"`
 }

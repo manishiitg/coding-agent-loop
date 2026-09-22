@@ -3,10 +3,9 @@ import { X, Settings, Lock } from 'lucide-react'
 import { Button } from './ui/Button'
 import { TooltipProvider } from './ui/tooltip'
 import { useLLMStore, useAppStore } from '../stores'
-import type { LLMConfiguration, ExtendedLLMConfiguration, AgentLLMConfiguration, LLMProvider } from '../services/api-types'
+import type { AgentLLMConfiguration, LLMProvider } from '../services/api-types'
 import { CodingAgentSection } from './llm/CodingAgentSection'
-import { APIProviderSection } from './llm/APIProviderSection'
-import { llmConfigService, type ModelMetadata, type ProviderManifestEntry } from '../services/llm-config-api'
+import type { ProviderManifestEntry } from '../services/llm-config-api'
 import { LibraryTab } from './llm/LibraryTab'
 import ModalPortal from './ui/ModalPortal'
 import { useCanWriteWorkflow } from '../hooks/useCanWriteWorkflow'
@@ -16,15 +15,6 @@ interface LLMConfigurationModalProps {
   isOpen: boolean
   onClose: () => void
 }
-
-// Providers that use API keys in this modal (excludes local CLIs and hidden legacy chat providers)
-type APIKeyProviderType = 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
-
-type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
-
-type APIKeyStatus = Record<APIKeyProviderType, APIKeyStatusValue>
-
-type APIKeyError = Record<APIKeyProviderType, string | null>
 
 // Pi CLI routes through several distinct model backends (Gemini, OpenRouter,
 // Z.AI, ...); each gets its own sidebar tab under a synthetic id rather than
@@ -36,11 +26,6 @@ type TabType = 'library' | LLMProvider | PiCliGroupTab
 
 const piCliGroupTabId = (group: string): PiCliGroupTab => `pi-cli::${group}`
 
-const CHAT_CAPABILITIES = new Set(['chat', 'text'])
-const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
-  'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram'
-])
-const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure'])
 const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const CODING_AGENT_PROVIDER_RANK = new Map<string, number>(
   CODING_AGENT_PROVIDER_ORDER.map((provider, index) => [provider, index])
@@ -57,25 +42,10 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   const {
     // Legacy configs (kept for backward compatibility)
     setAgentConfig,
-    setPrimaryConfig,
     // Mode-specific configs
     getConfigForMode,
-    setChatPrimaryConfig,
     setChatAgentConfig,
-    setWorkflowPrimaryConfig,
     setWorkflowAgentConfig,
-    // Provider configs (shared across modes)
-    bedrockConfig,
-    openaiConfig,
-    vertexConfig,
-    anthropicConfig,
-    azureConfig,
-    setBedrockConfig,
-    setOpenaiConfig,
-    setVertexConfig,
-    setAnthropicConfig,
-    setAzureConfig,
-    testAPIKey,
     defaultsLoaded,
     loadDefaultsFromBackend,
     getProviderDynamicModels,
@@ -96,39 +66,16 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   const isProviderLocked = (provider: string) =>
     lockedProviders.includes('all') || lockedProviders.includes(provider)
 
-  const getProviderForTab = (tab: TabType): APIKeyProviderType | null => {
-    if (tab === 'library') return null
-    const entry = providerManifest.find(provider => provider.id === tab)
-    if (entry?.integration_kind === 'coding_agent') return null
-    if (HIDDEN_CHAT_PROVIDER_TABS.has(tab)) return null
-    if (!API_KEY_PROVIDER_IDS.has(tab)) return null
-    return tab as APIKeyProviderType
-  }
-
-  const entryHasCapability = useCallback((entry: ProviderManifestEntry, capabilities: Set<string>) => {
-    return (entry.capabilities || []).some(capability => capabilities.has(capability))
-  }, [])
-
+  // Only coding-agent CLIs are configurable; direct API providers are retired.
   const manifestProviderEntries = useMemo(() => (
-    providerManifest.filter(entry => {
-      if (entry.deprecated) return false
-      if (HIDDEN_CHAT_PROVIDER_TABS.has(entry.id)) return false
-      return isProviderSupported(entry.id as LLMProvider)
-    })
+    providerManifest.filter(entry =>
+      entry.integration_kind === 'coding_agent' &&
+      isProviderSupported(entry.id as LLMProvider)
+    )
   ), [isProviderSupported, providerManifest])
 
-  const apiProviderEntries = useMemo(
-    () => manifestProviderEntries.filter(entry =>
-      entry.integration_kind === 'api_model' &&
-      API_KEY_PROVIDER_IDS.has(entry.id) &&
-      entryHasCapability(entry, CHAT_CAPABILITIES)
-    ),
-    [entryHasCapability, manifestProviderEntries]
-  )
-
   const codingAgentProviderEntries = useMemo(
-    () => manifestProviderEntries
-      .filter(entry => entry.integration_kind === 'coding_agent')
+    () => [...manifestProviderEntries]
       .sort((a, b) =>
         codingAgentProviderRank(a.id) - codingAgentProviderRank(b.id) ||
         a.display_name.localeCompare(b.display_name)
@@ -174,17 +121,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
   const modePrimaryConfig = modeConfig.primaryConfig
   const modeAgentConfig = modeConfig.agentConfig
 
-  // Mode-specific setters
-  const setModePrimaryConfig = useCallback((config: LLMConfiguration) => {
-    if (currentMode === 'workflow') {
-      setWorkflowPrimaryConfig(config)
-    } else {
-      setChatPrimaryConfig(config)
-    }
-    // Also update legacy config for backward compatibility
-    setPrimaryConfig(config)
-  }, [currentMode, setChatPrimaryConfig, setWorkflowPrimaryConfig, setPrimaryConfig])
-
   const setModeAgentConfig = useCallback((config: AgentLLMConfiguration | null) => {
     if (currentMode === 'workflow') {
       setWorkflowAgentConfig(config)
@@ -194,40 +130,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     // Also update legacy config for backward compatibility
     setAgentConfig(config)
   }, [currentMode, setChatAgentConfig, setWorkflowAgentConfig, setAgentConfig])
-
-  // Provider config map for reducing duplication
-  const providerConfigMap = useMemo(() => ({
-    bedrock: { config: bedrockConfig, setConfig: setBedrockConfig },
-    openai: { config: openaiConfig, setConfig: setOpenaiConfig },
-    vertex: { config: vertexConfig, setConfig: setVertexConfig },
-    anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
-    azure: { config: azureConfig, setConfig: setAzureConfig }
-  }), [bedrockConfig, openaiConfig, vertexConfig, anthropicConfig, azureConfig,
-      setBedrockConfig, setOpenaiConfig, setVertexConfig, setAnthropicConfig, setAzureConfig])
-
-  // Metadata state - Driven purely by backend
-  const [metadata, setMetadata] = useState<ModelMetadata[]>([])
-  const [, setIsLoadingMetadata] = useState(false)
-
-  // Fetch metadata on mount
-  useEffect(() => {
-    if (isOpen) {
-      const fetchMetadata = async () => {
-        setIsLoadingMetadata(true)
-        try {
-          const response = await llmConfigService.getModelMetadata()
-          if (response.models && response.models.length > 0) {
-            setMetadata(response.models)
-          }
-        } catch (err) {
-          console.error('Failed to fetch model metadata', err)
-        } finally {
-          setIsLoadingMetadata(false)
-        }
-      }
-      fetchMetadata()
-    }
-  }, [isOpen])
 
   // Initialize/Migrate agentConfig for current mode
   useEffect(() => {
@@ -242,24 +144,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
       setModeAgentConfig(newConfig)
     }
   }, [isOpen, modeAgentConfig, modePrimaryConfig, setModeAgentConfig])
-
-  // Models are now accessed directly from metadata or store in each provider section
-
-  const [apiKeyStatus, setApiKeyStatus] = useState<APIKeyStatus>({
-    openai: 'idle',
-    bedrock: 'idle',
-    vertex: 'idle',
-    anthropic: 'idle',
-    azure: 'idle'
-  })
-
-  const [apiKeyErrors, setApiKeyErrors] = useState<APIKeyError>({
-    openai: null,
-    bedrock: null,
-    vertex: null,
-    anthropic: null,
-    azure: null
-  })
 
   const [activeTab, setActiveTab] = useState<TabType>('library')
 
@@ -288,37 +172,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     return providerManifest.find(p => p.id === providerId)
   }, [providerManifest])
 
-  // Handle API key testing
-  const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>) => {
-    // Allow testing without API key for Bedrock and Vertex (they support OAuth/credentials)
-    if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
-      return
-    }
-
-    setApiKeyStatus(prev => ({ ...prev, [provider]: 'testing' }))
-    setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
-
-    try {
-      const result = await testAPIKey(provider, apiKey, modelId, options)
-      if (result.valid) {
-        setApiKeyStatus(prev => ({ ...prev, [provider]: 'valid' }))
-        setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
-      } else {
-        setApiKeyStatus(prev => ({ ...prev, [provider]: 'invalid' }))
-        setApiKeyErrors(prev => ({ ...prev, [provider]: result.error || 'API key validation failed' }))
-      }
-    } catch (err) {
-      // Check if it's a timeout error
-      if (err instanceof Error && err.message.includes('timeout')) {
-        setApiKeyStatus(prev => ({ ...prev, [provider]: 'timeout' }))
-        setApiKeyErrors(prev => ({ ...prev, [provider]: 'Request timed out. Please check your connection.' }))
-      } else {
-        setApiKeyStatus(prev => ({ ...prev, [provider]: 'invalid' }))
-        setApiKeyErrors(prev => ({ ...prev, [provider]: err instanceof Error ? err.message : 'Unknown error occurred' }))
-      }
-    }
-  }, [testAPIKey])
-
   // Handle Escape key
   useEffect(() => {
     const handleKeyDown = (event: KeyboardEvent) => {
@@ -329,35 +182,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
     if (isOpen) document.addEventListener('keydown', handleKeyDown)
     return () => document.removeEventListener('keydown', handleKeyDown)
   }, [isOpen, onClose])
-
-  // Sync primary config when provider config changes (mode-specific)
-  const syncPrimaryConfig = useCallback((provider: LLMProvider, config: ExtendedLLMConfiguration) => {
-    // Also sync agentConfig primary (mode-specific)
-    if (modeAgentConfig && modeAgentConfig.primary.provider === provider) {
-      setModeAgentConfig({
-        ...modeAgentConfig,
-        primary: {
-          ...modeAgentConfig.primary,
-          model_id: config.model_id,
-          options: config.options
-        }
-      })
-    }
-
-    if (modePrimaryConfig.provider === provider) {
-      const updatedPrimaryConfig: LLMConfiguration = {
-        provider: provider,
-        model_id: config.model_id,
-      }
-      setModePrimaryConfig(updatedPrimaryConfig)
-    }
-  }, [modeAgentConfig, modePrimaryConfig.provider, setModeAgentConfig, setModePrimaryConfig])
-
-  // Generic handler for provider config updates
-  const handleProviderConfigUpdate = useCallback((provider: APIKeyProviderType, config: ExtendedLLMConfiguration) => {
-    providerConfigMap[provider].setConfig(config)
-    syncPrimaryConfig(provider, config)
-  }, [providerConfigMap, syncPrimaryConfig])
 
   if (!isOpen) return null
 
@@ -376,7 +200,7 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
               const effective = effectiveLLMUnderLock(modePrimaryConfig, true, publishedLLMs)
               const name = effective ? (providerManifest.find(p => p.id === effective.provider)?.display_name ?? effective.provider) : null
               const others = providerManifest
-                .filter(p => !p.deprecated && p.id !== effective?.provider)
+                .filter(p => p.integration_kind === 'coding_agent' && p.id !== effective?.provider)
                 .map(p => p.display_name)
                 .sort((a, b) => a.localeCompare(b))
               return (
@@ -476,29 +300,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   </>
                 )}
 
-                {apiProviderEntries.length > 0 && (
-                  <>
-                    <h3 className="text-sm font-medium text-muted-foreground mb-3 mt-6">API Providers</h3>
-                    {apiProviderEntries.map((entry) => (
-                      <button
-                        key={entry.id}
-                        onClick={() => setActiveTab(entry.id as typeof activeTab)}
-                        className={`w-full flex items-center gap-3 p-3 rounded-md text-left transition-colors ${
-                          activeTab === entry.id ? 'bg-primary text-primary-foreground' : 'hover:bg-secondary'
-                        }`}
-                      >
-                        <div className="flex-1">
-                          <div className="font-medium">{entry.display_name}</div>
-                          <div className="text-xs opacity-75">
-                            {isProviderLocked(entry.id) ? 'Configured by admin' : entry.auth_description}
-                          </div>
-                        </div>
-                        {isProviderLocked(entry.id) && <Lock className="w-4 h-4 opacity-60" />}
-                      </button>
-                    ))}
-                  </>
-                )}
-
               </div>
             </div>
 
@@ -511,47 +312,6 @@ export default function LLMConfigurationModal({ isOpen, onClose }: LLMConfigurat
                   isProviderLocked={isProviderLocked}
                 />
               )}
-
-              {/* Locked provider read-only banner */}
-              {(() => {
-                const lockedProvider = getProviderForTab(activeTab)
-                if (!lockedProvider || !(lockedProvider in providerConfigMap) || !isProviderLocked(lockedProvider)) return null
-                return (
-                <div className="flex flex-col items-center justify-center h-full min-h-[300px] text-center px-6">
-                  <Lock className="w-12 h-12 text-muted-foreground/50 mb-4" />
-                  <h3 className="text-lg font-semibold text-foreground mb-2">Configured by admin</h3>
-                  <p className="text-sm text-muted-foreground max-w-sm">
-                    The API key for this provider is set server-side. Contact your administrator to change it.
-                  </p>
-                  {providerConfigMap[lockedProvider]?.config.model_id && (
-                    <p className="text-sm text-muted-foreground mt-4">
-                      Current model: <span className="font-mono text-foreground">{providerConfigMap[lockedProvider].config.model_id}</span>
-                    </p>
-                  )}
-                </div>
-                )
-              })()}
-
-              {/* Editable provider sections (only when not locked) */}
-              {/* API provider sections — unified component driven by manifest */}
-              {apiProviderEntries.some(entry => entry.id === activeTab) && !isProviderLocked(activeTab) && (() => {
-                const entry = getManifestEntry(activeTab as string)
-                const providerKey = activeTab as APIKeyProviderType
-                const configEntry = providerConfigMap[providerKey]
-                if (!entry || !configEntry) return <div className="text-sm text-muted-foreground py-8 text-center">Loading provider info...</div>
-                return (
-                  <APIProviderSection
-                    provider={entry}
-                    config={configEntry.config}
-                    onUpdate={(config) => handleProviderConfigUpdate(providerKey, config)}
-                    onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey(providerKey, apiKey, modelId, options)}
-                    apiKeyStatus={apiKeyStatus[providerKey]}
-                    apiKeyError={apiKeyErrors[providerKey]}
-                    metadata={metadata}
-                    readOnly={readOnly}
-                  />
-                )
-              })()}
 
               {/* Coding agent sections — unified component driven by manifest */}
               {(() => {

@@ -3,6 +3,7 @@ package llm
 import (
 	"context"
 	"fmt"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	agentlogger "github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
@@ -111,19 +112,12 @@ func CreateLLMInstance(
 		if llmAPIKeys == nil {
 			llmAPIKeys = &llm.ProviderAPIKeys{}
 		}
-		// Azure needs special handling (endpoint/version config)
-		if primaryProvider == "azure" {
-			if llmAPIKeys.Azure != nil {
-				llmAPIKeys.Azure.APIKey = *config.LLMConfig.Primary.APIKey
-			} else {
-				llmAPIKeys.Azure = &llm.AzureAPIConfig{
-					APIKey: *config.LLMConfig.Primary.APIKey,
-				}
-			}
-		} else {
-			llmAPIKeys.SetKeyForProvider(llm.Provider(primaryProvider), config.LLMConfig.Primary.APIKey)
-		}
+		llmAPIKeys.SetKeyForProvider(llm.Provider(primaryProvider), config.LLMConfig.Primary.APIKey)
 		logger.Info(fmt.Sprintf("🔑 Using per-model API key for %s provider", primaryProvider))
+	}
+
+	if err := llmguard.RequireCodingAgentProvider(primaryProvider); err != nil {
+		return nil, fmt.Errorf("failed to create %s LLM: %w", llmType, err)
 	}
 
 	// Create LLM configuration using unified LLMConfig

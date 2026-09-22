@@ -13,7 +13,7 @@ func GetSpecialWorkspaceToolsInstructions() string {
 Provider-backed text generation uses the configured ` + "`tier`" + ` (low, medium, high). Hosted-MCP web search uses ` + "`provider`" + ` (parallel, exa, firecrawl). Do not pass provider/model overrides to text generation or a ` + "`model_id`" + ` to search. File-path arguments must be absolute paths under the workspace docs root.
 
 Available tools:
-- **Discovery + cost**: ` + "`list_llm_capabilities`" + `, ` + "`estimate_llm_cost`" + `, ` + "`set_provider_auth`" + ` (always use this for API keys — never paste into shell, scripts, or config files).
+- **Discovery + auth**: ` + "`list_llm_capabilities`" + `, ` + "`set_provider_auth`" + ` (always use this for API keys — never paste into shell, scripts, or config files).
 - **Text + search**: ` + "`generate_text_llm(user_message, tier)`" + ` · ` + "`search_web_llm(query, provider)`" + `.
 
 Provider-setup essentials (do not hand-edit provider-auth storage — it's encrypted and managed via ` + "`set_provider_auth`" + `; audio/video/image/music providers are workspace **tool** capabilities, not published-LLM entries — call ` + "`list_llm_capabilities(capability=\"...\")`" + ` for the authoritative availability answer).

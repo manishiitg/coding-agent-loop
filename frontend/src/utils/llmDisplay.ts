@@ -3,26 +3,16 @@ import type { ModelMetadata } from '../services/llm-config-api'
 import type { LLMOption } from '../types/llm'
 
 export type ProviderType =
-  | 'openrouter'
-  | 'bedrock'
-  | 'openai'
-  | 'vertex'
-  | 'anthropic'
-  | 'azure'
-  | 'z-ai'
-  | 'kimi'
   | 'claude-code'
   | 'codex-cli'
   | 'cursor-cli'
   | 'agy-cli'
   | 'pi-cli'
   | 'muse-cli'
-  | 'minimax'
-  | 'minimax-coding-plan'
-  | 'elevenlabs'
-  | 'deepgram'
 
-export type LLMIntegrationKind = 'coding_agent' | 'api_model' | 'audio_provider'
+// 'api_model' is only the fallback bucket for an unrecognized provider id;
+// every runnable provider is a coding-agent CLI.
+export type LLMIntegrationKind = 'coding_agent' | 'api_model'
 
 type ProviderDisplayInfo = {
   name: string
@@ -39,7 +29,6 @@ export type LLMIntegrationDisplayInfo = {
 export const LLM_INTEGRATION_ORDER: LLMIntegrationKind[] = [
   'coding_agent',
   'api_model',
-  'audio_provider',
 ]
 
 export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegrationDisplayInfo> = {
@@ -49,27 +38,17 @@ export const LLM_INTEGRATION_DISPLAY_INFO: Record<LLMIntegrationKind, LLMIntegra
     toneClass: 'text-amber-700 dark:text-amber-300',
   },
   api_model: {
-    label: 'API Providers',
-    description: 'Provider-hosted chat models',
+    label: 'Other',
+    description: 'Unrecognized provider',
     toneClass: 'text-blue-700 dark:text-blue-300',
-  },
-  audio_provider: {
-    label: 'Audio Providers',
-    description: 'Speech, voice, and media models',
-    toneClass: 'text-violet-700 dark:text-violet-300',
   },
 }
 
 export const CODING_AGENT_PROVIDERS = new Set(['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli'])
-const AUDIO_PROVIDER_PROVIDERS = new Set(['elevenlabs', 'deepgram'])
 
 // Pi CLI routes to several different model backends via a `<backend>/<model>`
 // model id. Mirrors agent_go/cmd/server/llm_provider_manifest.go's
-// piModelGroup -- kept as a small, separate table (not merged into
-// PROVIDER_DISPLAY_INFO's real, independent 'openrouter'/'z-ai'/'kimi'
-// direct-API provider entries) so a Pi-routed "OpenRouter" model and the
-// actual direct-API OpenRouter provider stay distinct concepts even though
-// their display text can coincide.
+// piModelGroup.
 const PI_MODEL_GROUP_BY_PREFIX: Record<string, string> = {
   google: 'Gemini',
   'google-vertex': 'Google Vertex',
@@ -107,46 +86,6 @@ export function resolvePiModelGroup(modelId?: string): string | null {
 }
 
 const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
-  openrouter: {
-    name: 'OpenRouter',
-    authDescription: 'API Key',
-    colorClass: 'text-blue-600 dark:text-blue-400',
-  },
-  bedrock: {
-    name: 'AWS Bedrock',
-    authDescription: 'AWS IAM',
-    colorClass: 'text-orange-600 dark:text-orange-400',
-  },
-  openai: {
-    name: 'OpenAI',
-    authDescription: 'API Key',
-    colorClass: 'text-green-600 dark:text-green-400',
-  },
-  vertex: {
-    name: 'Google Vertex',
-    authDescription: 'API Key',
-    colorClass: 'text-purple-600 dark:text-purple-400',
-  },
-  anthropic: {
-    name: 'Anthropic',
-    authDescription: 'API Key',
-    colorClass: 'text-red-600 dark:text-red-400',
-  },
-  azure: {
-    name: 'Azure OpenAI',
-    authDescription: 'Endpoint + API Key',
-    colorClass: 'text-sky-600 dark:text-sky-400',
-  },
-  'z-ai': {
-    name: 'Z.AI',
-    authDescription: 'API Key',
-    colorClass: 'text-fuchsia-600 dark:text-fuchsia-400',
-  },
-  kimi: {
-    name: 'Kimi',
-    authDescription: 'API Key',
-    colorClass: 'text-rose-600 dark:text-rose-400',
-  },
   'claude-code': {
     name: 'Claude Code',
     authDescription: 'Local CLI (no API key)',
@@ -177,26 +116,6 @@ const PROVIDER_DISPLAY_INFO: Record<ProviderType, ProviderDisplayInfo> = {
     authDescription: 'Local CLI (Meta login or API key)',
     colorClass: 'text-orange-600 dark:text-orange-400',
   },
-  minimax: {
-    name: 'MiniMax',
-    authDescription: 'API Key',
-    colorClass: 'text-cyan-600 dark:text-cyan-400',
-  },
-  elevenlabs: {
-    name: 'ElevenLabs',
-    authDescription: 'API Key',
-    colorClass: 'text-violet-600 dark:text-violet-400',
-  },
-  deepgram: {
-    name: 'Deepgram',
-    authDescription: 'API Key',
-    colorClass: 'text-emerald-600 dark:text-emerald-400',
-  },
-  'minimax-coding-plan': {
-    name: 'MiniMax Coding Plan',
-    authDescription: 'Coding Plan Key (sk-cp-)',
-    colorClass: 'text-teal-600 dark:text-teal-400',
-  },
 }
 
 export const PROVIDER_ORDER: ProviderType[] = [
@@ -205,14 +124,6 @@ export const PROVIDER_ORDER: ProviderType[] = [
   'pi-cli',
   'muse-cli',
   'claude-code',
-  'bedrock',
-  'openai',
-  'vertex',
-  'anthropic',
-  'azure',
-  'minimax',
-  'elevenlabs',
-  'deepgram',
 ]
 
 export function getProviderDisplayInfo(provider?: string, modelId?: string): ProviderDisplayInfo {
@@ -244,16 +155,9 @@ export function getProviderDisplayInfo(provider?: string, modelId?: string): Pro
 
 export function getProviderIntegrationKind(provider?: string, modelId?: string): LLMIntegrationKind {
   const normalizedProvider = (provider || '').trim().toLowerCase()
-  const normalizedModel = (modelId || '').trim().toLowerCase()
 
   if (CODING_AGENT_PROVIDERS.has(normalizedProvider)) {
     return 'coding_agent'
-  }
-  if (AUDIO_PROVIDER_PROVIDERS.has(normalizedProvider)) {
-    return 'audio_provider'
-  }
-  if (normalizedProvider === 'minimax' && /^(speech|music|audio|voice)[-_]/.test(normalizedModel)) {
-    return 'audio_provider'
   }
   return 'api_model'
 }
@@ -263,10 +167,6 @@ export function getProviderIntegrationInfo(provider?: string, modelId?: string):
 }
 
 export function shouldShowLLMPricing(provider?: string, modelId?: string): boolean {
-  const normalizedProvider = (provider || '').trim().toLowerCase()
-  if (normalizedProvider === 'minimax-coding-plan') {
-    return false
-  }
   return getProviderIntegrationKind(provider, modelId) !== 'coding_agent'
 }
 
@@ -286,10 +186,6 @@ export function getModelDisplayName({
   availableLLMs = [],
 }: ModelDisplayNameOptions): string {
   if (!modelId) return 'Unknown'
-
-  if (provider === 'minimax' || provider === 'minimax-coding-plan') {
-    return 'MiniMax'
-  }
 
   const publishedLLM = savedLLMs.find(
     (llm) => llm.provider === provider && llm.model_id === modelId

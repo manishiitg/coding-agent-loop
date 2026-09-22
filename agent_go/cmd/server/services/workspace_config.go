@@ -353,15 +353,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		PiCLI          string            `json:"pi_cli,omitempty"`
 		MiniMax        string            `json:"minimax,omitempty"`
 		PiProviderKeys map[string]string `json:"pi_provider_keys,omitempty"`
-		Bedrock        *struct {
-			Region string `json:"region"`
-		} `json:"bedrock,omitempty"`
-		Azure *struct {
-			Endpoint   string `json:"endpoint"`
-			APIKey     string `json:"api_key"`
-			APIVersion string `json:"api_version,omitempty"`
-			Region     string `json:"region,omitempty"`
-		} `json:"azure,omitempty"`
 	}
 	if err := json.Unmarshal(plaintext, &stored); err != nil {
 		return nil, false, fmt.Errorf("failed to parse provider keys: %w", err)
@@ -403,17 +394,6 @@ func LoadProviderKeys(ctx context.Context, workspaceURL string) (map[string]inte
 		}
 		if len(clean) > 0 {
 			m["pi_provider_keys"] = clean
-		}
-	}
-	if stored.Bedrock != nil {
-		m["bedrock"] = map[string]interface{}{"region": stored.Bedrock.Region}
-	}
-	if stored.Azure != nil {
-		m["azure"] = map[string]interface{}{
-			"endpoint":    stored.Azure.Endpoint,
-			"api_key":     stored.Azure.APIKey,
-			"api_version": stored.Azure.APIVersion,
-			"region":      stored.Azure.Region,
 		}
 	}
 	return m, true, nil

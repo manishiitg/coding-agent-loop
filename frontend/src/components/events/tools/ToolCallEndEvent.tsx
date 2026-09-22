@@ -3,7 +3,6 @@ import type { ToolCallEndEvent } from '../../../generated/events'
 import { MarkdownRenderer } from '../../ui/MarkdownRenderer'
 import { CsvRenderer } from '../../ui/CsvRenderer'
 import { WorkspaceToolCallEndDisplay, CodeExecutionToolCallEndDisplay } from './ToolCallSpecialRender'
-import { ImageGenToolCallEndDisplay } from './ToolCallSpecialRender/ImageGenToolCallEndDisplay'
 import { CircularProgress, type ContextOnlyTokenUsage } from '../../ui/CircularProgress'
 import { TooltipProvider } from '../../ui/tooltip'
 import { useExpandable } from '../useExpandable'
@@ -72,10 +71,6 @@ function isCodeExecutionTool(name: string): boolean {
   return name === 'discover_code_structure' || name === 'discover_code_files' || name === 'write_code' || name === 'get_api_spec' || name === 'execute_shell_command'
 }
 
-function isImageGenTool(name: string): boolean {
-  return name === 'image_gen' || name === 'image_edit'
-}
-
 export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event }) => {
   const normalizedToolName = event.tool_name ? normalizeMCPToolName(event.tool_name) : event.tool_name
 
@@ -85,10 +80,6 @@ export const ToolCallEndEventDisplay: React.FC<ToolCallEndEventProps> = ({ event
 
   if (normalizedToolName && isCodeExecutionTool(normalizedToolName)) {
     return <ToolCallFailureFrame event={event}><CodeExecutionToolCallEndDisplay event={{ ...event, tool_name: normalizedToolName }} /></ToolCallFailureFrame>
-  }
-
-  if (normalizedToolName && isImageGenTool(normalizedToolName)) {
-    return <ToolCallFailureFrame event={event}><ImageGenToolCallEndDisplay event={event} /></ToolCallFailureFrame>
   }
 
   return <GenericToolCallEndEventDisplay event={event} />

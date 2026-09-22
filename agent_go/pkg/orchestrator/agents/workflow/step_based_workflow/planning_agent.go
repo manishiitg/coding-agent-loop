@@ -136,7 +136,7 @@ func (f FlexibleContextOutput) String() string {
 type AgentLLMConfig struct {
 	ConnectionID   string                 `json:"connection_id,omitempty"`
 	PublishedLLMID string                 `json:"published_llm_id,omitempty"` // Optional published LLM registry reference
-	Provider       string                 `json:"provider,omitempty"`         // e.g., "openai", "bedrock", "openrouter", "vertex"
+	Provider       string                 `json:"provider,omitempty"`         // coding-agent CLI, e.g. "claude-code", "codex-cli", "pi-cli"
 	ModelID        string                 `json:"model_id,omitempty"`         // e.g., "gpt-4o", "claude-3-5-sonnet-20241022"
 	Options        map[string]interface{} `json:"options,omitempty"`          // Provider-specific runtime options
 }

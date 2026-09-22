@@ -2,29 +2,21 @@ package virtualtools
 
 import "testing"
 
-func TestNormalizeImageAnalysisProviderAndModelVertexDefault(t *testing.T) {
-	provider, modelID, err := normalizeImageAnalysisProviderAndModel("vertex", "")
-	if err != nil {
-		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
-	}
-	if provider != "vertex" {
-		t.Fatalf("provider = %q, want vertex", provider)
-	}
-	if modelID != "gemini-3-pro-preview" {
-		t.Fatalf("modelID = %q, want gemini-3-pro-preview", modelID)
+func TestNormalizeImageAnalysisProviderAndModelRejectsDirectAPIProviders(t *testing.T) {
+	for _, provider := range []string{"vertex", "kimi", "z-ai", "openai", "anthropic"} {
+		if _, _, err := normalizeImageAnalysisProviderAndModel(provider, ""); err == nil {
+			t.Fatalf("normalizeImageAnalysisProviderAndModel(%q) returned nil error", provider)
+		}
 	}
 }
 
-func TestNormalizeImageAnalysisProviderAndModelKimiDefault(t *testing.T) {
-	provider, modelID, err := normalizeImageAnalysisProviderAndModel("kimi", "")
+func TestNormalizeImageAnalysisProviderAndModelDefaultsToCodex(t *testing.T) {
+	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "")
 	if err != nil {
 		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
 	}
-	if provider != "kimi" {
-		t.Fatalf("provider = %q, want kimi", provider)
-	}
-	if modelID != "kimi-k2.6" {
-		t.Fatalf("modelID = %q, want kimi-k2.6", modelID)
+	if provider != "codex-cli" || modelID != "gpt-5.4-mini" {
+		t.Fatalf("got %s/%s, want codex-cli/gpt-5.4-mini", provider, modelID)
 	}
 }
 
@@ -113,16 +105,9 @@ func TestNormalizeImageAnalysisProviderAndModelInfersClaudeCodeFromSonnet5(t *te
 	}
 }
 
-func TestNormalizeImageAnalysisProviderAndModelInfersKimiFromVisionModel(t *testing.T) {
-	provider, modelID, err := normalizeImageAnalysisProviderAndModel("", "kimi-k2.6")
-	if err != nil {
-		t.Fatalf("normalizeImageAnalysisProviderAndModel returned error: %v", err)
-	}
-	if provider != "kimi" {
-		t.Fatalf("provider = %q, want kimi", provider)
-	}
-	if modelID != "kimi-k2.6" {
-		t.Fatalf("modelID = %q, want kimi-k2.6", modelID)
+func TestNormalizeImageAnalysisProviderAndModelRejectsUnknownModel(t *testing.T) {
+	if _, _, err := normalizeImageAnalysisProviderAndModel("", "kimi-k2.6"); err == nil {
+		t.Fatal("normalizeImageAnalysisProviderAndModel returned nil error for a non-CLI vision model")
 	}
 }
 

@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
-import { Brain, ChevronDown, Check, RefreshCw, Search, Box, DollarSign, Terminal, KeyRound, AudioLines } from 'lucide-react';
+import { Brain, ChevronDown, Check, RefreshCw, Search, Box, DollarSign, Terminal, KeyRound } from 'lucide-react';
 import { Button } from './ui/Button';
 import { Card } from './ui/Card';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from './ui/tooltip';
@@ -160,7 +160,6 @@ export default function LLMSelectionDropdown({
   const integrationIcons: Record<LLMIntegrationKind, typeof Terminal> = {
     coding_agent: Terminal,
     api_model: KeyRound,
-    audio_provider: AudioLines,
   };
 
   const usesCustomSections = filteredLLMs.some((llm) => llm.section);

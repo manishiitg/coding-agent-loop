@@ -20,6 +20,7 @@ import (
 	"github.com/manishiitg/mcpagent/toolcalllog"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	agentlogger "github.com/manishiitg/coding-agent-loop/agent_go/pkg/logger"
 
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
@@ -262,15 +263,6 @@ func truncateForHistory(s string, max int) string {
 		return s
 	}
 	return s[:max] + "...[truncated]"
-}
-
-func resolveRuntimeModelID(provider llm.Provider, modelID string) string {
-	normalizedProvider := strings.ToLower(strings.TrimSpace(string(provider)))
-	normalizedModelID := strings.ToLower(strings.TrimSpace(modelID))
-	if normalizedProvider == "minimax-coding-plan" && normalizedModelID == "minimax" {
-		return "claude-sonnet-4-5"
-	}
-	return modelID
 }
 
 // LLMAgentConfig holds configuration for the LLM agent wrapper
@@ -996,7 +988,9 @@ func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger 
 	if err != nil {
 		return nil, fmt.Errorf("invalid LLM provider '%s': %w", config.Provider, err)
 	}
-	runtimeModelID := resolveRuntimeModelID(config.Provider, config.ModelID)
+	if err := llmguard.RequireCodingAgentProvider(string(llmProvider)); err != nil {
+		return nil, err
+	}
 
 	// Create a separate LLM logger that writes to llm_debug.log
 	// This separates LLM logs (including [GEMINI] logs from multi-llm-provider-go) from server logs
@@ -1017,7 +1011,7 @@ func initializeLLMWithConfig(ctx context.Context, config LLMAgentConfig, logger 
 	llmConfig := llm.Config{
 		ConnectionID: config.ConnectionID,
 		Provider:     llmProvider,
-		ModelID:      runtimeModelID,
+		ModelID:      config.ModelID,
 		Temperature:  config.Temperature,
 		TraceID:      traceID, // Pass the trace ID for proper span hierarchy
 

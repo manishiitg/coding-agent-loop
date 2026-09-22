@@ -12,20 +12,18 @@ import (
 	"strings"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 	"github.com/manishiitg/mcpagent/llm"
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
-	"github.com/manishiitg/multi-llm-provider-go/pkg/adapters/azure"
 )
 
+// supportedLLMProviders is the product offering: coding-agent CLIs only.
+// Direct API transports (openai, anthropic, vertex, bedrock, azure, ...) were
+// removed; SUPPORTED_LLM_PROVIDERS can only narrow this list.
 var supportedLLMProviders = []string{
-	"bedrock",
-	"openai",
-	"vertex",
-	"anthropic",
-	"azure",
 	"claude-code",
 	"codex-cli",
 	"cursor-cli",
@@ -33,69 +31,12 @@ var supportedLLMProviders = []string{
 	"muse-cli",
 }
 
-// deprecatedAPIModelProviders were deprecated 2026-08-20: see
-// docs/design/api_transport_vs_pi_tradeoff.md. Direct API transport
-// duplicates per-provider tool-calling translation that MCP already solves
-// once (pi and the other coding CLIs); the day's own certification work
-// showed the duplication wasn't keeping pace (for example, Azure had no live
-// E2E at that point).
-//
-// Soft deprecation, not removal: `Deprecated: true` hides these from new
-// setup in the LLM config modal (LLMConfigurationModal.tsx already filters on
-// this field); an existing configuration keeps working exactly as before.
-var deprecatedAPIModelProviders = map[string]bool{
-	"openai":    true,
-	"anthropic": true,
-	"vertex":    true,
-	"bedrock":   true,
-	"azure":     true,
-}
-
-func isDeprecatedLLMProvider(provider string) bool {
-	return deprecatedAPIModelProviders[strings.ToLower(strings.TrimSpace(provider))]
-}
-
-func providerDeprecationReason(provider string) string {
-	if !isDeprecatedLLMProvider(provider) {
-		return ""
-	}
-	return "Direct API transport is being phased out in favor of MCP-routed coding CLIs. See docs/design/api_transport_vs_pi_tradeoff.md. Existing configurations remain runnable."
-}
-
-func providerReplacementProvider(provider string) string {
-	if !isDeprecatedLLMProvider(provider) {
-		return ""
-	}
-	return "pi-cli"
-}
-
-// isPublishedLLMProviderAllowed reports whether provider names a real
-// provider in the shared registry (multi-llm-provider-go ValidateProvider,
-// via mcpagent/llm). The allowed set is derived, not listed here, so new
-// coding CLIs validate automatically once their contract lands upstream.
-// Product offering/visibility stays governed by supportedLLMProviders (and
-// the SUPPORTED_LLM_PROVIDERS env override); deprecated API transports are
-// filtered separately by isDeprecatedLLMProvider.
 func isPublishedLLMProviderAllowed(provider string) bool {
-	_, err := llm.ValidateProvider(strings.ToLower(strings.TrimSpace(provider)))
-	return err == nil
+	return llmguard.IsCodingAgentProvider(provider)
 }
 
 func defaultPublishedLLMProviderAndModel() (string, string) {
-	for _, provider := range []string{
-		"codex-cli",
-		"cursor-cli",
-		"pi-cli",
-		"claude-code",
-		"bedrock",
-		"openai",
-		"anthropic",
-		"vertex",
-		"azure",
-	} {
-		if !isPublishedLLMProviderAllowed(provider) {
-			continue
-		}
+	for _, provider := range []string{"codex-cli", "cursor-cli", "pi-cli", "claude-code"} {
 		modelID := strings.TrimSpace(llm.GetDefaultModel(llm.Provider(provider)))
 		if modelID != "" {
 			return provider, modelID
@@ -333,6 +274,7 @@ func getPrimaryProviderAndModelFromDefaults() (provider, modelID string) {
 }
 
 // buildProviderAPIKeysFromEnv builds llm.ProviderAPIKeys from environment variables (for locked mode).
+// Top-level upstream keys (OpenAI, Anthropic, Vertex, ...) are Pi CLI credentials.
 func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	keys := &llm.ProviderAPIKeys{}
 	setProviderKeyFromEnv := func(provider llm.Provider, envNames ...string) {
@@ -364,9 +306,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 	} else if s := os.Getenv("GOOGLE_APPLICATION_CREDENTIALS"); s != "" {
 		keys.Vertex = &s
 	}
-	if region := os.Getenv("BEDROCK_REGION"); region != "" {
-		keys.Bedrock = &llm.BedrockConfig{Region: region}
-	}
 	// Codex CLI: only use explicit CODEX_API_KEY (not OPENAI_API_KEY).
 	// Codex CLI has its own stored auth via `codex login`.
 	if s := os.Getenv("CODEX_API_KEY"); s != "" {
@@ -391,17 +330,6 @@ func buildProviderAPIKeysFromEnv() *llm.ProviderAPIKeys {
 		keys.MuseCLI = &s
 	}
 	keys.PiProviderKeys = buildPiProviderKeysFromEnv()
-	if endpoint := os.Getenv("AZURE_AI_ENDPOINT"); endpoint != "" {
-		apiKey := os.Getenv("AZURE_AI_API_KEY")
-		apiVer := os.Getenv("AZURE_AI_API_VERSION")
-		region := os.Getenv("AZURE_AI_REGION")
-		keys.Azure = &llm.AzureAPIConfig{
-			Endpoint:   endpoint,
-			APIKey:     apiKey,
-			APIVersion: apiVer,
-			Region:     region,
-		}
-	}
 	return keys
 }
 
@@ -447,25 +375,22 @@ func buildPiProviderKeysFromEnv() map[string]string {
 }
 
 type llmDiscoveryCandidate struct {
-	ID                  string   `json:"id"`
-	Provider            string   `json:"provider"`
-	ModelID             string   `json:"model_id"`
-	ModelName           string   `json:"model_name,omitempty"`
-	Label               string   `json:"label"`
-	Kind                string   `json:"kind"`
-	DetectionSource     string   `json:"detection_source"`
-	AuthSource          string   `json:"auth_source,omitempty"`
-	AuthConfigured      bool     `json:"auth_configured"`
-	RuntimeCommand      string   `json:"runtime_command,omitempty"`
-	RuntimeAvailable    *bool    `json:"runtime_available,omitempty"`
-	Usable              bool     `json:"usable"`
-	Recommended         bool     `json:"recommended"`
-	Reason              string   `json:"reason"`
-	SetupHint           string   `json:"setup_hint,omitempty"`
-	Deprecated          bool     `json:"deprecated,omitempty"`
-	DeprecationReason   string   `json:"deprecation_reason,omitempty"`
-	ReplacementProvider string   `json:"replacement_provider,omitempty"`
-	Options             []string `json:"options,omitempty"`
+	ID               string   `json:"id"`
+	Provider         string   `json:"provider"`
+	ModelID          string   `json:"model_id"`
+	ModelName        string   `json:"model_name,omitempty"`
+	Label            string   `json:"label"`
+	Kind             string   `json:"kind"`
+	DetectionSource  string   `json:"detection_source"`
+	AuthSource       string   `json:"auth_source,omitempty"`
+	AuthConfigured   bool     `json:"auth_configured"`
+	RuntimeCommand   string   `json:"runtime_command,omitempty"`
+	RuntimeAvailable *bool    `json:"runtime_available,omitempty"`
+	Usable           bool     `json:"usable"`
+	Recommended      bool     `json:"recommended"`
+	Reason           string   `json:"reason"`
+	SetupHint        string   `json:"setup_hint,omitempty"`
+	Options          []string `json:"options,omitempty"`
 }
 
 type llmDiscoveryResponse struct {
@@ -485,22 +410,6 @@ func providerDisplayLabel(provider string) string {
 		return "Muse"
 	case "claude-code":
 		return "Claude Code"
-	case "openai":
-		return "OpenAI API"
-	case "anthropic":
-		return "Anthropic API"
-	case "vertex":
-		return "Gemini / Vertex"
-	case "bedrock":
-		return "Amazon Bedrock"
-	case "azure":
-		return "Azure AI"
-	case "z-ai":
-		return "Z.AI"
-	case "kimi":
-		return "Kimi"
-	case "minimax":
-		return "MiniMax"
 	default:
 		return provider
 	}
@@ -605,11 +514,6 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		"cursor-cli",
 		"pi-cli",
 		"muse-cli",
-		"openai",
-		"anthropic",
-		"vertex",
-		"bedrock",
-		"azure",
 	}
 
 	candidates := make([]llmDiscoveryCandidate, 0, len(providerOrder))
@@ -629,7 +533,6 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		if modelID == "" {
 			continue
 		}
-		deprecated := isDeprecatedLLMProvider(provider)
 
 		kind := discoveryCandidateKind(provider)
 		discovered := authConfigured || usable
@@ -658,25 +561,22 @@ func buildLLMDiscovery(ctx context.Context) llmDiscoveryResponse {
 		}
 
 		candidates = append(candidates, llmDiscoveryCandidate{
-			ID:                  provider + ":" + modelID,
-			Provider:            provider,
-			ModelID:             modelID,
-			ModelName:           modelNameForProviderModel(provider, modelID),
-			Label:               providerDisplayLabel(provider),
-			Kind:                kind,
-			DetectionSource:     source,
-			AuthSource:          authSource,
-			AuthConfigured:      authConfigured,
-			RuntimeCommand:      runtimeCommand,
-			RuntimeAvailable:    runtimeOK,
-			Usable:              usable,
-			Recommended:         usable && !deprecated,
-			Reason:              reason,
-			SetupHint:           setupHint,
-			Deprecated:          deprecated,
-			DeprecationReason:   providerDeprecationReason(provider),
-			ReplacementProvider: providerReplacementProvider(provider),
-			Options:             discoveryModelOptions(provider),
+			ID:               provider + ":" + modelID,
+			Provider:         provider,
+			ModelID:          modelID,
+			ModelName:        modelNameForProviderModel(provider, modelID),
+			Label:            providerDisplayLabel(provider),
+			Kind:             kind,
+			DetectionSource:  source,
+			AuthSource:       authSource,
+			AuthConfigured:   authConfigured,
+			RuntimeCommand:   runtimeCommand,
+			RuntimeAvailable: runtimeOK,
+			Usable:           usable,
+			Recommended:      usable,
+			Reason:           reason,
+			SetupHint:        setupHint,
+			Options:          discoveryModelOptions(provider),
 		})
 	}
 
@@ -701,7 +601,6 @@ func (api *StreamingAPI) handleDiscoverLLMSetup(w http.ResponseWriter, r *http.R
 }
 
 // stripSecretsFromMap recursively removes api_key, endpoint, and other sensitive fields from m (for locked mode).
-// endpoint is stripped so Azure tenant URLs (e.g. https://tenant-name.openai.azure.com/) are not sent to the client.
 func stripSecretsFromMap(m map[string]interface{}) {
 	delete(m, "api_key")
 	delete(m, "endpoint")
@@ -753,7 +652,7 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 	// 3) Auto-generate defaults from AvailableModels for locked providers
 	var entries []map[string]interface{}
 	defaults := llm.GetLLMDefaults()
-	providers := []string{"codex-cli", "cursor-cli", "pi-cli", "muse-cli", "claude-code", "azure", "bedrock", "openai", "anthropic", "vertex"}
+	providers := append([]string(nil), supportedLLMProviders...)
 
 	for _, p := range providers {
 		// If provider is locked (or global lock is on), include its available models
@@ -807,16 +706,6 @@ func getDefaultPublishedLLMs(locked bool, primaryConfig interface{}) []map[strin
 		"provider": provider,
 		"model_id": modelID,
 	}
-
-	isLocked := locked || isProviderLocked(provider)
-
-	if !isLocked {
-		if key := os.Getenv("OPENAI_API_KEY"); provider == "openai" && key != "" {
-			entry["api_key"] = key
-		} else if key := os.Getenv("ANTHROPIC_API_KEY"); provider == "anthropic" && key != "" {
-			entry["api_key"] = key
-		}
-	}
 	return []map[string]interface{}{entry}
 }
 
@@ -842,19 +731,10 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 		if !isPublishedLLMProviderAllowed(provider) {
 			continue
 		}
-		switch strings.ToLower(strings.TrimSpace(provider)) {
-		case "openrouter", "z-ai", "kimi", "minimax-coding-plan":
-			continue
-		default:
-			availableModels[provider] = models
-		}
+		availableModels[provider] = models
 	}
 	for _, provider := range getSupportedProviders() {
 		if _, exists := availableModels[provider]; exists || !isPublishedLLMProviderAllowed(provider) {
-			continue
-		}
-		switch strings.ToLower(strings.TrimSpace(provider)) {
-		case "openrouter", "z-ai", "kimi", "minimax-coding-plan":
 			continue
 		}
 		if models := discoveryModelOptions(provider); len(models) > 0 {
@@ -873,51 +753,14 @@ func (api *StreamingAPI) handleGetLLMDefaults(w http.ResponseWriter, r *http.Req
 	// Build response (same shape as before)
 	response := map[string]interface{}{
 		"primary_config":        primaryConfig,
-		"bedrock_config":        defaults.BedrockConfig,
-		"openai_config":         defaults.OpenaiConfig,
-		"anthropic_config":      defaults.AnthropicConfig,
-		"azure_config":          defaults.AzureConfig,
-		"zai_config":            defaults.ZAIConfig,
-		"kimi_config":           defaults.KimiConfig,
 		"available_models":      availableModels,
 		"provider_capabilities": buildProviderCapabilities(r.Context()),
 		"supported_providers":   getSupportedProviders(),
 		"locked_providers":      lockedProviders,
 	}
 
-	// Helper to safely strip secrets from a specific config map
-	stripSecrets := func(configKey string) {
-		if cfg, ok := response[configKey].(map[string]interface{}); ok {
-			delete(cfg, "api_key")
-			delete(cfg, "endpoint")
-			response[configKey] = cfg
-		}
-	}
-
-	// Strip secrets based on locking status
 	if globalLocked {
-		// Strip from all
 		stripSecretsFromMap(response)
-	} else {
-		// Strip from specifically locked providers
-		for _, p := range lockedProviders {
-			switch p {
-			case "bedrock":
-				stripSecrets("bedrock_config")
-			case "openai":
-				stripSecrets("openai_config")
-			case "anthropic":
-				stripSecrets("anthropic_config")
-			case "azure":
-				stripSecrets("azure_config")
-			case "z-ai":
-				stripSecrets("zai_config")
-			case "kimi":
-				stripSecrets("kimi_config")
-			case "vertex":
-				stripSecrets("vertex_config")
-			}
-		}
 	}
 
 	response["llm_config_locked"] = globalLocked
@@ -963,12 +806,6 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 	}
 
 	switch provider {
-	case "openai":
-		setAPIKey(keys.OpenAI)
-	case "anthropic":
-		setAPIKey(keys.Anthropic)
-	case "vertex":
-		setAPIKey(keys.Vertex)
 	case "codex-cli":
 		setAPIKey(keys.CodexCLI)
 	case "cursor-cli":
@@ -979,39 +816,11 @@ func (api *StreamingAPI) populateValidationCredentialsFromMergedKeys(ctx context
 		if req.APIKey == "" {
 			req.APIKey = selectPiAPIKeyForModel(keys, req.ModelID)
 		}
-	case "minimax":
-		setAPIKey(keys.MiniMax)
-	case "z-ai":
-		setAPIKey(keys.ZAI)
-	case "kimi":
-		setAPIKey(keys.Kimi)
-	case "azure":
-		if keys.Azure != nil {
-			if req.APIKey == "" {
-				req.APIKey = strings.TrimSpace(keys.Azure.APIKey)
-			}
-			if strings.TrimSpace(keys.Azure.Endpoint) != "" {
-				if req.Options == nil {
-					req.Options = map[string]interface{}{}
-				}
-				if _, ok := req.Options["endpoint"]; !ok {
-					req.Options["endpoint"] = strings.TrimSpace(keys.Azure.Endpoint)
-				}
-			}
-		}
 	}
 }
 
 func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidationResponse {
 	provider := strings.ToLower(strings.TrimSpace(req.Provider))
-	switch provider {
-	case "openrouter", "minimax-coding-plan":
-		return llm.APIKeyValidationResponse{
-			Valid:   false,
-			Message: fmt.Sprintf("Provider %s is no longer available as a direct LLM provider.", req.Provider),
-		}
-	}
-
 	switch provider {
 	case "claude-code":
 		return validateClaudeCodeCLI()
@@ -1023,10 +832,11 @@ func validateProviderConfig(req llm.APIKeyValidationRequest) llm.APIKeyValidatio
 		return validateMuseCLI(req.APIKey)
 	case "pi-cli":
 		return validatePiCLI(req.APIKey, req.ModelID, req.Options)
-	case "kimi":
-		return llm.ValidateAPIKey(req)
 	default:
-		return llm.ValidateAPIKey(req)
+		return llm.APIKeyValidationResponse{
+			Valid:   false,
+			Message: unsupportedCodingAgentProviderMessage("LLM", req.Provider),
+		}
 	}
 }
 
@@ -1503,52 +1313,10 @@ func (api *StreamingAPI) handleGetModelMetadata(w http.ResponseWriter, r *http.R
 	}
 }
 
-// AzureDeployedModelsRequest represents the request body for fetching Azure deployed models
-type AzureDeployedModelsRequest struct {
-	Endpoint string `json:"endpoint"`
-	APIKey   string `json:"api_key"`
-}
-
-// handleGetAzureDeployedModels returns only the models deployed in the user's Azure resource
+// handleGetAzureDeployedModels is retained only because its route is still
+// registered; Azure is no longer an offered provider.
 func (api *StreamingAPI) handleGetAzureDeployedModels(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
-		return
-	}
-
-	var req AzureDeployedModelsRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "Invalid request body", http.StatusBadRequest)
-		return
-	}
-
-	if req.Endpoint == "" || req.APIKey == "" {
-		http.Error(w, "endpoint and api_key are required", http.StatusBadRequest)
-		return
-	}
-
-	// Fetch deployed models from Azure
-	models, err := azure.GetAzureDeployedModels(req.Endpoint, req.APIKey)
-	if err != nil {
-		// Return error response - allows frontend to fall back to manual entry
-		response := map[string]interface{}{
-			"models": []interface{}{},
-			"error":  err.Error(),
-		}
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(response)
-		return
-	}
-
-	response := map[string]interface{}{
-		"models": models,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	if err := json.NewEncoder(w).Encode(response); err != nil {
-		http.Error(w, "Failed to encode response", http.StatusInternalServerError)
-		return
-	}
+	http.Error(w, unsupportedCodingAgentProviderMessage("LLM", "azure"), http.StatusGone)
 }
 
 // lockedPresetLLMConfig is a workflow's saved LLM config as it actually runs

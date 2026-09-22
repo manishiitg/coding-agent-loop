@@ -29,6 +29,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	mcpagent "github.com/manishiitg/mcpagent/agent"
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/llm"
@@ -238,6 +239,9 @@ func New(ctx context.Context, cfg Config) (*Session, error) {
 	modelID := cfg.ModelID
 	if strings.TrimSpace(modelID) == "" {
 		modelID = llm.GetDefaultModel(cfg.Provider)
+	}
+	if err := llmguard.RequireCodingAgentProvider(string(cfg.Provider)); err != nil {
+		return nil, err
 	}
 	model, err := llm.InitializeLLM(llm.Config{
 		Provider: cfg.Provider,

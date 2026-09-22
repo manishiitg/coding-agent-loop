@@ -85,7 +85,7 @@ func (api *StreamingAPI) handleCapabilities(w http.ResponseWriter, r *http.Reque
 	}
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"providers":   []string{"bedrock", "openai", "anthropic"},
+		"providers":   append([]string(nil), supportedLLMProviders...),
 		"streaming":   true,
 		"sse":         true,
 		"agent_modes": []string{"multi-agent", "workflow"},

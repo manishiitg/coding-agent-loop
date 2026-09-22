@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { useShallow } from 'zustand/react/shallow'
 import {
-  AudioLines,
   Box,
   ChevronRight,
   DollarSign,
@@ -58,7 +57,7 @@ type LibraryTabProps = {
   isProviderLocked: (provider: string) => boolean
 }
 
-const providerSectionOrder: LLMIntegrationKind[] = ['coding_agent', 'api_model', 'audio_provider']
+const providerSectionOrder: LLMIntegrationKind[] = ['coding_agent', 'api_model']
 
 
 const providerTierSummary = (provider: ProviderManifestEntry): string => {
@@ -128,7 +127,6 @@ export function LibraryTab({ providers, onSelectProvider, isProviderLocked }: Li
   const integrationIcons: Record<LLMIntegrationKind, typeof Terminal> = {
     coding_agent: Terminal,
     api_model: KeyRound,
-    audio_provider: AudioLines,
   }
 
   useEffect(() => {

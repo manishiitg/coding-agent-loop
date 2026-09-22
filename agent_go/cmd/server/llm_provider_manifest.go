@@ -42,9 +42,6 @@ type providerManifestEntry struct {
 	AuthSource            string                            `json:"auth_source,omitempty"`
 	Usable                bool                              `json:"usable"`
 	SetupHint             string                            `json:"setup_hint,omitempty"`
-	Deprecated            bool                              `json:"deprecated,omitempty"`
-	DeprecationReason     string                            `json:"deprecation_reason,omitempty"`
-	ReplacementProvider   string                            `json:"replacement_provider,omitempty"`
 	RequiresAPIKey        bool                              `json:"requires_api_key"`
 	SupportsDynamicModels bool                              `json:"supports_dynamic_models"`
 	DefaultModelID        string                            `json:"default_model_id"`
@@ -152,49 +149,6 @@ var providerStaticInfoMap = map[string]providerStaticInfo{
 		integrationKind: "coding_agent",
 		authDescription: "Local CLI (no API key)",
 		requiresAPIKey:  false,
-	},
-	"openai": {
-		displayName:     "OpenAI API",
-		description:     "Direct OpenAI API access for GPT models.",
-		integrationKind: "api_model",
-		authDescription: "API key required",
-		requiresAPIKey:  true,
-		apiKeyEnv:       "OPENAI_API_KEY",
-		apiKeyURL:       "https://platform.openai.com/api-keys",
-	},
-	"anthropic": {
-		displayName:     "Anthropic API",
-		description:     "Direct Anthropic API access for Claude models.",
-		integrationKind: "api_model",
-		authDescription: "API key required",
-		requiresAPIKey:  true,
-		apiKeyEnv:       "ANTHROPIC_API_KEY",
-		apiKeyURL:       "https://console.anthropic.com/settings/keys",
-	},
-	"vertex": {
-		displayName:     "Gemini / Vertex",
-		description:     "Google Vertex AI or Gemini API for Google models.",
-		integrationKind: "api_model",
-		authDescription: "API key or ADC required",
-		requiresAPIKey:  true,
-		apiKeyEnv:       "VERTEX_API_KEY",
-		apiKeyURL:       "https://aistudio.google.com/apikey",
-	},
-	"bedrock": {
-		displayName:     "Amazon Bedrock",
-		description:     "AWS Bedrock for Claude, Titan, and other models.",
-		integrationKind: "api_model",
-		authDescription: "AWS region + credentials",
-		requiresAPIKey:  true,
-		apiKeyEnv:       "BEDROCK_REGION",
-	},
-	"azure": {
-		displayName:     "Azure AI",
-		description:     "Azure OpenAI Service for GPT and other deployed models.",
-		integrationKind: "api_model",
-		authDescription: "Endpoint + API key required",
-		requiresAPIKey:  true,
-		apiKeyEnv:       "AZURE_AI_API_KEY",
 	},
 }
 
@@ -388,7 +342,6 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 
 	providerOrder := []string{
 		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli",
-		"openai", "anthropic", "vertex", "bedrock", "azure",
 	}
 
 	supported := getSupportedProviders()
@@ -458,9 +411,6 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 			AuthSource:            authSource,
 			Usable:                usable,
 			SetupHint:             setupHint,
-			Deprecated:            isDeprecatedLLMProvider(provider),
-			DeprecationReason:     providerDeprecationReason(provider),
-			ReplacementProvider:   providerReplacementProvider(provider),
 			RequiresAPIKey:        info.requiresAPIKey,
 			SupportsDynamicModels: selectionMode == "dynamic",
 			DefaultModelID:        defaultModel,
@@ -478,7 +428,6 @@ func (api *StreamingAPI) handleGetProviderManifest(w http.ResponseWriter, r *htt
 		Providers: entries,
 		IntegrationKinds: map[string]integrationKindInfo{
 			"coding_agent": {Label: "Coding Agents", Description: "Local agent CLI runtimes"},
-			"api_model":    {Label: "API Providers", Description: "Cloud-hosted LLM APIs"},
 		},
 		ProviderOrder: providerOrder,
 	}

@@ -6,6 +6,7 @@ package workflowtypes
 
 import (
 	"fmt"
+	"strings"
 
 	llmproviders "github.com/manishiitg/multi-llm-provider-go"
 )
@@ -332,8 +333,8 @@ func ValidatePresetLLMConfigPublic(config *PresetLLMConfig) error {
 			if tierConfig.config.Provider == "" {
 				return fmt.Errorf("provider is required for %s", tierConfig.name)
 			}
-			if _, err := llmproviders.ValidateProvider(tierConfig.config.Provider); err != nil {
-				return fmt.Errorf("invalid provider for %s: %w", tierConfig.name, err)
+			if err := validateCodingAgentProvider(tierConfig.config.Provider, tierConfig.name); err != nil {
+				return err
 			}
 		}
 	}
@@ -357,8 +358,17 @@ func validatePresetAgentLLMConfig(config *AgentLLMConfig, name string) error {
 	if config.ModelID == "" {
 		return fmt.Errorf("model_id is required for %s", name)
 	}
-	if _, err := llmproviders.ValidateProvider(config.Provider); err != nil {
+	return validateCodingAgentProvider(config.Provider, name)
+}
+
+// validateCodingAgentProvider accepts only coding-agent CLI providers; direct
+// API transports are no longer supported.
+func validateCodingAgentProvider(provider, name string) error {
+	if _, err := llmproviders.ValidateProvider(provider); err != nil {
 		return fmt.Errorf("invalid provider for %s: %w", name, err)
+	}
+	if !llmproviders.IsCodingAgentProvider(llmproviders.Provider(strings.ToLower(strings.TrimSpace(provider))), "") {
+		return fmt.Errorf("provider %q for %s is not supported: only coding-agent CLIs can run agents", provider, name)
 	}
 	return nil
 }

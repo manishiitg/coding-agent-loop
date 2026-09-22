@@ -33,8 +33,8 @@ var workspaceToolNamesCache = struct {
 }{}
 
 // CreateWorkspaceToolRegistry returns the active workspace tool bundle. Basic
-// workspace and git tools are intentionally excluded. image_gen/image_edit are
-// active; video/audio/music generation remain deprecated and not agent-exposed.
+// workspace and git tools are intentionally excluded. image_gen/image_edit run
+// through codex-cli.
 func CreateWorkspaceToolRegistry(cfg WorkspaceToolRegistryConfig) WorkspaceToolRegistry {
 	workspaceURL := strings.TrimSpace(cfg.WorkspaceAPIURL)
 	if workspaceURL == "" {

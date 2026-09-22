@@ -95,7 +95,6 @@ Set via `update_step_config(step_id, ...)`:
 
 - `review_workflow_costs(iteration?, group_name?, focus?)` — read-only cost analysis with safe-reduction recommendations (which steps could drop a tier).
 - `get_cost_summary` — current spend snapshot.
-- `estimate_llm_cost(...)` — estimate priced (media) generation before high-volume runs.
 
 ### Installing / authorizing providers
 

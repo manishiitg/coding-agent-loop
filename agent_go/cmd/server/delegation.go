@@ -548,12 +548,16 @@ func (api *StreamingAPI) executeDelegatedTask(ctx context.Context, parentReq Que
 	// Build sub-agent config from parent request
 	// Get provider and model from parent request
 	provider := llm.Provider(parentReq.Provider)
-	if provider == "" {
-		provider = llm.Provider("anthropic")
-	}
 	modelID := parentReq.ModelID
+	if provider == "" {
+		defaultProvider, defaultModelID := defaultPublishedLLMProviderAndModel()
+		provider = llm.Provider(defaultProvider)
+		if modelID == "" {
+			modelID = defaultModelID
+		}
+	}
 	if modelID == "" {
-		modelID = "claude-sonnet-4-20250514"
+		modelID = llm.GetDefaultModel(provider)
 	}
 
 	// Load sub-agent template if specified

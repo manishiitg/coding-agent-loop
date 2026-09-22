@@ -19,8 +19,11 @@ import (
 const providerKeysFilePath = "config/provider-api-keys.json"
 const maskedProviderKeyPrefix = "********"
 
-// StoredProviderKeys holds all LLM provider API keys in a single encrypted
-// structure stored in the workspace config folder.
+// StoredProviderKeys holds workspace provider credentials in a single encrypted
+// file in the workspace config folder. The top-level
+// upstream keys (OpenAI, Anthropic, Vertex, ...) are Pi CLI sub-provider keys.
+// Bedrock, Azure and MiniMaxCodingPlan are legacy and only kept so existing
+// files still decode.
 type StoredProviderKeys struct {
 	OpenRouter        string               `json:"openrouter,omitempty"`
 	OpenAI            string               `json:"openai,omitempty"`
@@ -202,17 +205,6 @@ func ProviderKeysToAPIKeysMap(keys *StoredProviderKeys) map[string]interface{} {
 			m["pi_provider_keys"] = clean
 		}
 	}
-	if keys.Bedrock != nil {
-		m["bedrock"] = map[string]interface{}{"region": keys.Bedrock.Region}
-	}
-	if keys.Azure != nil {
-		m["azure"] = map[string]interface{}{
-			"endpoint":    keys.Azure.Endpoint,
-			"api_key":     keys.Azure.APIKey,
-			"api_version": keys.Azure.APIVersion,
-			"region":      keys.Azure.Region,
-		}
-	}
 	return m
 }
 
@@ -269,17 +261,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 			result.PiProviderKeys[provider] = strings.TrimSpace(key)
 		}
 	}
-	if keys.Bedrock != nil {
-		result.Bedrock = &llm.BedrockConfig{Region: keys.Bedrock.Region}
-	}
-	if keys.Azure != nil {
-		result.Azure = &llm.AzureAPIConfig{
-			Endpoint:   keys.Azure.Endpoint,
-			APIKey:     keys.Azure.APIKey,
-			APIVersion: keys.Azure.APIVersion,
-			Region:     keys.Azure.Region,
-		}
-	}
 	// Log which providers have keys loaded
 	var loaded []string
 	if result.OpenRouter != nil {
@@ -316,12 +297,6 @@ func LoadProviderKeysAsLLMKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		for provider := range result.PiProviderKeys {
 			loaded = append(loaded, "pi:"+provider)
 		}
-	}
-	if result.Bedrock != nil {
-		loaded = append(loaded, "bedrock")
-	}
-	if result.Azure != nil {
-		loaded = append(loaded, "azure")
 	}
 	log.Printf("[PROVIDER_KEYS] Loaded workspace keys for providers: %v", loaded)
 
@@ -367,17 +342,6 @@ func MergedProviderAPIKeys(ctx context.Context) *llm.ProviderAPIKeys {
 		MiniMax:              pick(envKeys.MiniMax, wsKeys.MiniMax),
 	}
 	result.PiProviderKeys = mergePiProviderKeyMaps(envKeys.PiProviderKeys, wsKeys.PiProviderKeys)
-	// Bedrock / Azure: workspace wins if present, else env
-	if wsKeys.Bedrock != nil {
-		result.Bedrock = wsKeys.Bedrock
-	} else if envKeys.Bedrock != nil {
-		result.Bedrock = envKeys.Bedrock
-	}
-	if wsKeys.Azure != nil {
-		result.Azure = wsKeys.Azure
-	} else if envKeys.Azure != nil {
-		result.Azure = envKeys.Azure
-	}
 
 	return result
 }
@@ -449,6 +413,11 @@ func (api *StreamingAPI) handleSaveProviderKeys(w http.ResponseWriter, r *http.R
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
+	// Bedrock, Azure and MiniMax coding-plan were direct-API agent providers;
+	// they are no longer accepted. Top-level upstream keys stay: Pi uses them.
+	incoming.Bedrock = nil
+	incoming.Azure = nil
+	incoming.MiniMaxCodingPlan = ""
 
 	// Merge: load existing keys first, then overlay non-empty incoming fields.
 	// This prevents the frontend from wiping keys it didn't send.

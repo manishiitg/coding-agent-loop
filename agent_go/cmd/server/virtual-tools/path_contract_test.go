@@ -50,39 +50,6 @@ func TestNormalizeRequiredAbsoluteWorkspaceDocumentPathRejectsOutsideWorkspaceDo
 	}
 }
 
-// image_gen and image_edit are deliberately excluded here: codex-cli is
-// their only generation provider, so they don't take provider/model_id
-// arguments and there is nothing to discover via list_llm_capabilities.
-// See TestImageGenAndImageEditHaveNoProviderOrModelIDArgs.
-func TestLLMMediaToolDefinitionsReferenceCapabilityDiscovery(t *testing.T) {
-	tests := []struct {
-		name       string
-		tool       func() llmtypes.Tool
-		capability string
-	}{
-		{name: generateVideoToolName, tool: GetGenerateVideoToolDefinition, capability: "generate_video"},
-		{name: textToSpeechToolName, tool: GetTextToSpeechToolDefinition, capability: "text_to_speech"},
-		{name: speechToTextToolName, tool: GetSpeechToTextToolDefinition, capability: "speech_to_text"},
-		{name: generateMusicToolName, tool: GetGenerateMusicToolDefinition, capability: "generate_music"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			encoded, err := json.Marshal(tt.tool())
-			if err != nil {
-				t.Fatalf("marshal tool definition: %v", err)
-			}
-			text := string(encoded)
-			if !strings.Contains(text, `list_llm_capabilities(capability=\"`+tt.capability+`\", include_models=true)`) {
-				t.Fatalf("tool definition missing capability discovery instruction for %s: %s", tt.capability, text)
-			}
-			if !strings.Contains(text, `"provider"`) || !strings.Contains(text, `"model_id"`) {
-				t.Fatalf("tool definition should expose both provider and model_id: %s", text)
-			}
-		})
-	}
-}
-
 func TestImageGenAndImageEditHaveNoProviderOrModelIDArgs(t *testing.T) {
 	for _, tool := range []func() llmtypes.Tool{GetImageGenToolDefinition, GetImageEditToolDefinition} {
 		encoded, err := json.Marshal(tool())
@@ -98,21 +65,5 @@ func TestImageGenAndImageEditHaveNoProviderOrModelIDArgs(t *testing.T) {
 		if strings.Contains(text, "list_llm_capabilities") {
 			t.Fatalf("nothing to discover with only one provider; tool definition should not mention list_llm_capabilities: %s", text)
 		}
-	}
-}
-
-func TestGenerateVideoToolDefinitionIncludesLastFrameInputs(t *testing.T) {
-	encoded, err := json.Marshal(GetGenerateVideoToolDefinition())
-	if err != nil {
-		t.Fatalf("marshal generate_video tool definition: %v", err)
-	}
-	text := string(encoded)
-	for _, field := range []string{`"last_frame"`, `"last_frame_path"`, `"last_frame_mime_type"`} {
-		if !strings.Contains(text, field) {
-			t.Fatalf("generate_video definition missing %s: %s", field, text)
-		}
-	}
-	if !strings.Contains(text, "first-frame/last-frame") {
-		t.Fatalf("generate_video definition should describe first-frame/last-frame interpolation: %s", text)
 	}
 }

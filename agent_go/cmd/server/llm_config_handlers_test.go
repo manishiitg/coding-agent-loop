@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/llmguard"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -235,14 +236,16 @@ func TestProviderManifestPublishesCodexTierDefaults(t *testing.T) {
 	t.Fatal("manifest missing codex-cli")
 }
 
-func TestBuildLLMDiscoveryHidesMissingAPIProvider(t *testing.T) {
+func TestBuildLLMDiscoveryNeverOffersDirectAPIProviders(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
-	t.Setenv("SUPPORTED_LLM_PROVIDERS", "openai")
-	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("SUPPORTED_LLM_PROVIDERS", "openai,anthropic,vertex")
+	t.Setenv("OPENAI_API_KEY", "sk-test")
 
 	response := buildLLMDiscovery(context.Background())
-	if len(response.Candidates) != 0 {
-		t.Fatalf("candidate count = %d, want 0: %+v", len(response.Candidates), response.Candidates)
+	for _, candidate := range response.Candidates {
+		if !llmguard.IsCodingAgentProvider(candidate.Provider) {
+			t.Fatalf("discovery offered non-CLI provider %q", candidate.Provider)
+		}
 	}
 }
 
@@ -353,17 +356,17 @@ func TestPiCLIIsPublishedAsCodingAgent(t *testing.T) {
 // migration: the gate must accept exactly the shared ValidateProvider set
 // (so new coding CLIs validate without an agent_go edit) while still
 // rejecting retired media providers, empty, and unknown names.
-func TestIsPublishedLLMProviderAllowedDerivesFromRegistry(t *testing.T) {
-	for _, provider := range []string{
-		"bedrock", "openai", "vertex", "anthropic", "azure",
-		"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli",
-		"openrouter", "z-ai", "kimi", "minimax", "minimax-coding-plan",
-	} {
+func TestIsPublishedLLMProviderAllowedCodingAgentsOnly(t *testing.T) {
+	for _, provider := range []string{"claude-code", "codex-cli", "cursor-cli", "pi-cli", "muse-cli"} {
 		if !isPublishedLLMProviderAllowed(provider) {
-			t.Errorf("%q should be allowed (shared registry provider)", provider)
+			t.Errorf("%q should be allowed", provider)
 		}
 	}
-	for _, provider := range []string{"", "  ", "nope", "elevenlabs", "deepgram"} {
+	for _, provider := range []string{
+		"", "  ", "nope", "elevenlabs", "deepgram",
+		"bedrock", "openai", "vertex", "anthropic", "azure",
+		"openrouter", "z-ai", "kimi", "minimax", "minimax-coding-plan",
+	} {
 		if isPublishedLLMProviderAllowed(provider) {
 			t.Errorf("%q should be rejected", provider)
 		}
@@ -377,7 +380,7 @@ func TestIsPublishedLLMProviderAllowedDerivesFromRegistry(t *testing.T) {
 // the 2026-08-20 direct-API-transport deprecation
 // (docs/design/api_transport_vs_pi_tradeoff.md). Uses the real HTTP handler,
 // matching TestProviderManifestMarksDeprecatedCodingAgents's pattern.
-func TestProviderManifestMarksDeprecatedAPIModelProviders(t *testing.T) {
+func TestProviderManifestOmitsDirectAPIProviders(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	t.Setenv("SUPPORTED_LLM_PROVIDERS", "openai,anthropic,vertex,bedrock,azure,minimax,elevenlabs,deepgram,pi-cli")
 	t.Setenv("PATH", t.TempDir())
@@ -392,60 +395,22 @@ func TestProviderManifestMarksDeprecatedAPIModelProviders(t *testing.T) {
 
 	var resp struct {
 		Providers []struct {
-			ID                  string `json:"id"`
-			Deprecated          bool   `json:"deprecated"`
-			DeprecationReason   string `json:"deprecation_reason"`
-			ReplacementProvider string `json:"replacement_provider"`
-			IntegrationKind     string `json:"integration_kind"`
+			ID string `json:"id"`
 		} `json:"providers"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-
-	byID := map[string]struct {
-		Deprecated          bool
-		DeprecationReason   string
-		ReplacementProvider string
-		IntegrationKind     string
-	}{}
+	sawPi := false
 	for _, p := range resp.Providers {
-		byID[p.ID] = struct {
-			Deprecated          bool
-			DeprecationReason   string
-			ReplacementProvider string
-			IntegrationKind     string
-		}{p.Deprecated, p.DeprecationReason, p.ReplacementProvider, p.IntegrationKind}
-	}
-
-	for _, id := range []string{"openai", "anthropic", "vertex", "bedrock", "azure"} {
-		got, ok := byID[id]
-		if !ok {
-			t.Fatalf("%s missing from manifest entirely", id)
+		if !llmguard.IsCodingAgentProvider(p.ID) {
+			t.Errorf("manifest lists non-CLI provider %q", p.ID)
 		}
-		if !got.Deprecated {
-			t.Errorf("%s deprecated = false, want true", id)
-		}
-		if got.ReplacementProvider != "pi-cli" {
-			t.Errorf("%s replacement_provider = %q, want %q", id, got.ReplacementProvider, "pi-cli")
-		}
-		if strings.TrimSpace(got.DeprecationReason) == "" {
-			t.Errorf("%s deprecation_reason is empty", id)
+		if p.ID == "pi-cli" {
+			sawPi = true
 		}
 	}
-
-	// These were media-tool-only direct providers. They must not come back into
-	// the setup manifest just because an older deployment still lists them in
-	// SUPPORTED_LLM_PROVIDERS. MiniMax remains available as a Pi sub-provider,
-	// not as a top-level provider entry.
-	for _, id := range []string{"minimax", "elevenlabs", "deepgram"} {
-		if _, ok := byID[id]; ok {
-			t.Errorf("retired media provider %q appeared in the setup manifest", id)
-		}
-	}
-
-	// pi-cli is the replacement, not another casualty.
-	if got, ok := byID["pi-cli"]; ok && got.Deprecated {
-		t.Error("pi-cli unexpectedly marked deprecated")
+	if !sawPi {
+		t.Error("pi-cli missing from manifest")
 	}
 }

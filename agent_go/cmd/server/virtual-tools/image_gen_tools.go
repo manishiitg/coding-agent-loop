@@ -134,11 +134,6 @@ type imageGenResult struct {
 const (
 	defaultImageGenProvider = "codex-cli"
 	defaultImageGenModelID  = "codex-cli"
-	// defaultImageAnalysisProvider is generate_image's own default and is
-	// deliberately separate from defaultImageGenProvider above: image
-	// generation dropped Vertex, but image *analysis* (read_image) still
-	// supports it and must keep defaulting to it.
-	defaultImageAnalysisProvider = "vertex"
 )
 
 // imageRequirementsSuffix folds quality/size/background into the prompt text
@@ -193,48 +188,13 @@ func isSupportedImageModel(provider, modelID string) bool {
 	return false
 }
 
-func defaultImageAnalysisModelForProvider(provider string) string {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "z-ai":
-		return "glm-4.6v"
-	case "kimi":
-		return "kimi-k2.6"
-	case "codex-cli":
-		return "gpt-5.4-mini"
-	case "cursor-cli":
-		return "cursor-cli"
-	case "claude-code":
-		return "claude-code"
-	default:
-		return "gemini-3-pro-preview"
-	}
-}
-
 func inferImageProviderFromModel(modelID string) string {
 	modelID = strings.ToLower(strings.TrimSpace(modelID))
 	switch {
-	case strings.HasPrefix(modelID, "gemini-"), strings.HasPrefix(modelID, "imagen-"):
-		return "vertex"
 	case modelID == "codex-cli", modelID == "gpt-5.4", modelID == "gpt-5.4-mini", modelID == "gpt-5.3-codex", modelID == "gpt-5.3-codex-spark":
 		return "codex-cli"
 	default:
 		return ""
-	}
-}
-
-func inferImageAnalysisProviderFromModel(modelID string) string {
-	modelID = strings.ToLower(strings.TrimSpace(modelID))
-	switch {
-	case strings.HasPrefix(modelID, "glm-"):
-		return "z-ai"
-	case strings.HasPrefix(modelID, "kimi-"):
-		return "kimi"
-	case modelID == "claude-code", modelID == "claude-sonnet-5", modelID == "claude-sonnet-4-6":
-		return "claude-code"
-	case modelID == "cursor-cli", modelID == "gpt-5", modelID == "sonnet-4", modelID == "sonnet-4-thinking":
-		return "cursor-cli"
-	default:
-		return inferImageProviderFromModel(modelID)
 	}
 }
 
@@ -261,28 +221,6 @@ func normalizeImageProviderAndModel(provider, modelID string) (string, string, e
 	}
 }
 
-func normalizeImageAnalysisProviderAndModel(provider, modelID string) (string, string, error) {
-	provider = strings.ToLower(strings.TrimSpace(provider))
-	modelID = strings.TrimSpace(modelID)
-
-	if provider == "" && modelID != "" {
-		provider = inferImageAnalysisProviderFromModel(modelID)
-	}
-	if provider == "" {
-		provider = defaultImageAnalysisProvider
-	}
-	if modelID == "" {
-		modelID = defaultImageAnalysisModelForProvider(provider)
-	}
-
-	switch provider {
-	case "vertex", "z-ai", "kimi", "codex-cli", "cursor-cli", "claude-code":
-		return provider, modelID, nil
-	default:
-		return "", "", fmt.Errorf("unsupported image analysis provider %q. %s", provider, supportedImageAnalysisProviderSummary())
-	}
-}
-
 func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	switch strings.ToLower(strings.TrimSpace(provider)) {
 	case "codex-cli":
@@ -292,36 +230,8 @@ func hasImageProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
 	}
 }
 
-func hasImageAnalysisProviderAuth(provider string, apiKeys *llm.ProviderAPIKeys) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex-cli", "cursor-cli", "claude-code":
-		return true
-	case "z-ai":
-		return apiKeys != nil && apiKeys.ZAI != nil && strings.TrimSpace(*apiKeys.ZAI) != ""
-	case "kimi":
-		return apiKeys != nil && apiKeys.Kimi != nil && strings.TrimSpace(*apiKeys.Kimi) != ""
-	case "vertex":
-		return apiKeys != nil && apiKeys.Vertex != nil && strings.TrimSpace(*apiKeys.Vertex) != ""
-	default:
-		return hasImageProviderAuth(provider, apiKeys)
-	}
-}
-
 func supportedImageProviderSummary() string {
 	return "Supported image provider: codex-cli"
-}
-
-func supportedImageAnalysisProviderSummary() string {
-	return "Supported image analysis providers: vertex (Gemini vision models), codex-cli (codex-cli, gpt-5.4, gpt-5.4-mini, gpt-5.3-codex, gpt-5.3-codex-spark), cursor-cli (cursor-cli, gpt-5, sonnet-4-thinking, sonnet-4), claude-code (claude-code, claude-sonnet-5, claude-sonnet-4-6)"
-}
-
-func pathBasedImageAnalysisProvider(provider string) bool {
-	switch strings.ToLower(strings.TrimSpace(provider)) {
-	case "codex-cli", "cursor-cli", "claude-code":
-		return true
-	default:
-		return false
-	}
 }
 
 func imageModelsSummaryForProvider(provider string) string {

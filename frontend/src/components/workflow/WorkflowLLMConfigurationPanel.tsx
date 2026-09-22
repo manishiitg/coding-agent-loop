@@ -8,10 +8,9 @@ import { ArrowLeft, CheckCircle2, ChevronDown, ChevronRight, Loader2, Lock, Refr
 import LLMRoleSelector from '../LLMRoleSelector'
 import { WorkflowProviderCredentialField } from '../WorkflowProviderCredentialField'
 import { CodingAgentSection } from '../llm/CodingAgentSection'
-import { APIProviderSection } from '../llm/APIProviderSection'
 import { providerStatus } from '../llm/providerStatus'
 import type { AgentLLMConfig, LLMProvider, PresetLLMConfig } from '../../services/api-types'
-import { llmConfigService, type DynamicModelEntry, type ModelMetadata, type ProviderManifestEntry } from '../../services/llm-config-api'
+import { llmConfigService, type DynamicModelEntry, type ProviderManifestEntry } from '../../services/llm-config-api'
 import { useLLMStore } from '../../stores/useLLMStore'
 import { READ_ONLY_TITLE, useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import type { LLMOption } from '../../types/llm'
@@ -38,14 +37,6 @@ const ROLE_ROWS: RoleRow[] = [
   { key: 'pulse_llm', label: 'Pulse', description: 'Background review agents Pulse launches (plan drift, technical, strategic) and KB maintenance.', group: 'Workflow agents' },
 ]
 
-// Providers that use API keys (excludes local CLIs and hidden legacy chat providers)
-type APIKeyProviderType = 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure'
-type APIKeyStatusValue = 'idle' | 'testing' | 'valid' | 'invalid' | 'timeout'
-
-const API_KEY_PROVIDER_IDS = new Set<string>(['bedrock', 'openai', 'vertex', 'anthropic', 'azure'])
-const HIDDEN_CHAT_PROVIDER_TABS = new Set<string>([
-  'openrouter', 'z-ai', 'kimi', 'minimax', 'minimax-coding-plan', 'elevenlabs', 'deepgram',
-])
 const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']
 const codingAgentProviderRank = (provider: string) => {
   const index = CODING_AGENT_PROVIDER_ORDER.indexOf(provider)
@@ -190,17 +181,6 @@ export default function WorkflowLLMConfigurationPanel({
     llmConfigLocked,
     lockedProviders,
     publishedLLMs,
-    bedrockConfig,
-    openaiConfig,
-    vertexConfig,
-    anthropicConfig,
-    azureConfig,
-    setBedrockConfig,
-    setOpenaiConfig,
-    setVertexConfig,
-    setAnthropicConfig,
-    setAzureConfig,
-    testAPIKey,
     setShowLLMModal,
   } = useLLMStore(useShallow(state => ({
     availableLLMs: state.availableLLMs,
@@ -214,17 +194,6 @@ export default function WorkflowLLMConfigurationPanel({
     llmConfigLocked: state.llmConfigLocked,
     lockedProviders: state.lockedProviders,
     publishedLLMs: state.savedLLMs,
-    bedrockConfig: state.bedrockConfig,
-    openaiConfig: state.openaiConfig,
-    vertexConfig: state.vertexConfig,
-    anthropicConfig: state.anthropicConfig,
-    azureConfig: state.azureConfig,
-    setBedrockConfig: state.setBedrockConfig,
-    setOpenaiConfig: state.setOpenaiConfig,
-    setVertexConfig: state.setVertexConfig,
-    setAnthropicConfig: state.setAnthropicConfig,
-    setAzureConfig: state.setAzureConfig,
-    testAPIKey: state.testAPIKey,
     setShowLLMModal: state.setShowLLMModal,
   })))
 
@@ -248,22 +217,12 @@ export default function WorkflowLLMConfigurationPanel({
   const [rowUsing, setRowUsing] = useState<string | null>(null)
   const [piCliModels, setPiCliModels] = useState<DynamicModelEntry[]>([])
   const [piCliGroups, setPiCliGroups] = useState<string[]>([])
-  const [metadata, setMetadata] = useState<ModelMetadata[]>([])
-  const [apiKeyStatus, setApiKeyStatus] = useState<Record<APIKeyProviderType, APIKeyStatusValue>>({
-    openai: 'idle', bedrock: 'idle', vertex: 'idle', anthropic: 'idle', azure: 'idle',
-  })
-  const [apiKeyErrors, setApiKeyErrors] = useState<Record<APIKeyProviderType, string | null>>({
-    openai: null, bedrock: null, vertex: null, anthropic: null, azure: null,
-  })
 
   const advanced = llmConfig?.mode === 'explicit'
   // A workflow that already runs on a provider opens on the compact "runs on
   // X" line; the provider list only appears on "Change provider".
   const [changing, setChanging] = useState(false)
   const [rolesOpen, setRolesOpen] = useState<boolean>(() => readRolesOpen())
-  // Direct API providers are not selectable for a workflow, so they stay
-  // behind a toggle; the sign-in CLIs and Pi backends are always listed.
-  const [moreProviders, setMoreProviders] = useState(false)
   // Pi backends list one company row each; its models unfold underneath on
   // click. The backend the workflow runs on is always unfolded.
   const [openPiGroups, setOpenPiGroups] = useState<Set<string>>(() => new Set())
@@ -279,16 +238,6 @@ export default function WorkflowLLMConfigurationPanel({
     if (!providerManifestLoaded) void loadProviderManifest()
     if (!defaultsLoaded) void loadDefaultsFromBackend()
   }, [defaultsLoaded, loadDefaultsFromBackend, loadProviderManifest, providerManifestLoaded])
-
-  useEffect(() => {
-    let cancelled = false
-    llmConfigService.getModelMetadata()
-      .then(response => {
-        if (!cancelled && response.models?.length) setMetadata(response.models)
-      })
-      .catch(err => console.error('Failed to fetch model metadata', err))
-    return () => { cancelled = true }
-  }, [])
 
   const isProviderLocked = useCallback((provider: string) => {
     const base = piGroupFromRowId(provider) ? 'pi-cli' : provider
@@ -313,8 +262,7 @@ export default function WorkflowLLMConfigurationPanel({
   }, [isProviderLocked, privateProviderIds])
 
   const manifestEntries = useMemo(() => providerManifest.filter(entry => {
-    if (entry.deprecated) return false
-    if (HIDDEN_CHAT_PROVIDER_TABS.has(entry.id)) return false
+    if (entry.integration_kind !== 'coding_agent') return false
     if (allowedProviderIds && !allowedProviderIds.includes(entry.id)) return false
     return isProviderSupported(entry.id as LLMProvider)
   }), [allowedProviderIds, isProviderSupported, providerManifest])
@@ -348,7 +296,6 @@ export default function WorkflowLLMConfigurationPanel({
     const codingAgents = manifestEntries
       .filter(entry => entry.integration_kind === 'coding_agent')
       .sort((a, b) => codingAgentProviderRank(a.id) - codingAgentProviderRank(b.id) || a.display_name.localeCompare(b.display_name))
-    const apiProviders = manifestEntries.filter(entry => entry.integration_kind === 'api_model' && API_KEY_PROVIDER_IDS.has(entry.id))
 
     const result: ProviderRow[] = []
     codingAgents.forEach(entry => {
@@ -384,9 +331,6 @@ export default function WorkflowLLMConfigurationPanel({
         modelId: entry.default_tier_models?.high.model_id || entry.default_model_id || null,
         selectable,
       })
-    })
-    apiProviders.forEach(entry => {
-      result.push({ id: entry.id, entry, name: entry.display_name, modelId: null, selectable: false })
     })
     return result
   }, [availableLLMs, manifestEntries, piCliGroups, piCliModels, piGroupDefaultModel, providerOptions, splitPiProviders])
@@ -624,42 +568,11 @@ export default function WorkflowLLMConfigurationPanel({
     }
   }
 
-  const providerConfigMap = useMemo(() => ({
-    bedrock: { config: bedrockConfig, setConfig: setBedrockConfig },
-    openai: { config: openaiConfig, setConfig: setOpenaiConfig },
-    vertex: { config: vertexConfig, setConfig: setVertexConfig },
-    anthropic: { config: anthropicConfig, setConfig: setAnthropicConfig },
-    azure: { config: azureConfig, setConfig: setAzureConfig },
-  }), [anthropicConfig, azureConfig, bedrockConfig, openaiConfig, vertexConfig,
-    setAnthropicConfig, setAzureConfig, setBedrockConfig, setOpenaiConfig, setVertexConfig])
-
-  const handleTestAPIKey = useCallback(async (provider: APIKeyProviderType, apiKey: string, modelId?: string, options?: Record<string, unknown>) => {
-    // Bedrock and Vertex can validate without a pasted key (IAM / ADC).
-    if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) return
-    setApiKeyStatus(prev => ({ ...prev, [provider]: 'testing' }))
-    setApiKeyErrors(prev => ({ ...prev, [provider]: null }))
-    try {
-      const result = await testAPIKey(provider, apiKey, modelId, options)
-      setApiKeyStatus(prev => ({ ...prev, [provider]: result.valid ? 'valid' : 'invalid' }))
-      setApiKeyErrors(prev => ({ ...prev, [provider]: result.valid ? null : (result.error || 'API key validation failed') }))
-    } catch (err) {
-      const timeout = err instanceof Error && err.message.includes('timeout')
-      setApiKeyStatus(prev => ({ ...prev, [provider]: timeout ? 'timeout' : 'invalid' }))
-      setApiKeyErrors(prev => ({
-        ...prev,
-        [provider]: timeout
-          ? 'Request timed out. Please check your connection.'
-          : err instanceof Error ? err.message : 'Unknown error occurred',
-      }))
-    }
-  }, [testAPIKey])
-
   const activeRow = useMemo(() => rows.find(row => row.id === activeProviderId) ?? null, [activeProviderId, rows])
 
   // ---- Drill-in: connect / configure one provider ------------------------
 
   if (activeProviderId !== null) {
-    const activeBaseId = activeRow ? (activeRow.groupFilter ? 'pi-cli' : activeRow.id) : activeProviderId
     const locked = isProviderLocked(activeProviderId)
     return (
       <div className="space-y-4">
@@ -685,23 +598,6 @@ export default function WorkflowLLMConfigurationPanel({
               <div className="mt-0.5 text-xs">The credentials for this provider are set server-side. Contact your administrator to change them.</div>
             </div>
           </div>
-        ) : API_KEY_PROVIDER_IDS.has(activeBaseId) ? (
-          (() => {
-            const providerKey = activeBaseId as APIKeyProviderType
-            const configEntry = providerConfigMap[providerKey]
-            return (
-              <APIProviderSection
-                provider={activeRow.entry}
-                config={configEntry.config}
-                onUpdate={config => configEntry.setConfig(config)}
-                onTestAPIKey={(apiKey, modelId, options) => handleTestAPIKey(providerKey, apiKey, modelId, options)}
-                apiKeyStatus={apiKeyStatus[providerKey]}
-                apiKeyError={apiKeyErrors[providerKey]}
-                metadata={metadata}
-                readOnly={readOnly}
-              />
-            )
-          })()
         ) : (
           <CodingAgentSection
             key={activeProviderId}
@@ -1247,22 +1143,6 @@ export default function WorkflowLLMConfigurationPanel({
               'Each provider needs its own API key saved. Set up the key, then open a provider and pick the model to use.',
               visibleRows.filter(row => Boolean(row.groupFilter)),
               renderPiGroups,
-            )}
-            {!allowedProviderIds && <div className="bg-muted/20 px-3 py-1.5">
-              <button
-                type="button"
-                onClick={() => setMoreProviders(open => !open)}
-                aria-expanded={moreProviders}
-                className="inline-flex items-center gap-1 text-[11px] font-medium text-muted-foreground transition-colors hover:text-foreground"
-              >
-                <ChevronRight className={`h-3 w-3 transition-transform ${moreProviders ? 'rotate-90' : ''}`} />
-                {moreProviders ? 'Hide direct API providers' : 'Direct API providers (chat only)'}
-              </button>
-            </div>}
-            {!allowedProviderIds && (moreProviders || query.trim()) && renderGroup(
-              'Direct API providers',
-              'Chat and library use only; not selectable for a workflow.',
-              visibleRows.filter(row => row.entry.integration_kind !== 'coding_agent' && !row.groupFilter),
             )}
           </>
         )}

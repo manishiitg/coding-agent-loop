@@ -1,13 +1,12 @@
 import { stripRetiredLLMFallbacks } from '../utils/retiredLLMFallbacks'
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { LLMConfiguration, ExtendedLLMConfiguration, APIKeyValidationRequest, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
+import type { LLMConfiguration, AgentLLMConfiguration, SavedLLM, LLMModel, DelegationTierConfig, LLMProvider } from '../services/api-types'
 import type { DelegationTierDefaultsStatus } from '../utils/llmOnboarding'
 import type { LLMOption } from '../types/llm'
 import type { StoreActions } from './types'
 import { llmConfigService, type ModelMetadata, type ProviderManifestEntry, type DynamicModelsResponse } from '../services/llm-config-api'
 import { agentApi } from '../services/api'
-import { providerKeysApi, type StoredProviderKeys } from '../api/scheduler'
 
 type PublishedLLMMetadataSnapshot = {
   context_window?: number
@@ -20,9 +19,9 @@ type PublishedLLMMetadataSnapshot = {
 
 const DEFAULT_CHAT_PROVIDER: LLMProvider = 'codex-cli'
 const DEFAULT_CHAT_MODEL = 'codex-cli'
-// Direct API transport is limited to text LLM providers. MiniMax remains
-// available only through Pi's text-model sub-provider routing; no separate
-// MiniMax, ElevenLabs, or Deepgram frontend provider configuration remains.
+// Only coding-agent CLIs run agents. Direct API providers (and the retired
+// media providers) are dropped wherever they appear in saved or persisted
+// config; their models are reachable only through Pi's sub-provider routing.
 const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>([
   'agy-cli',
   'openai',
@@ -30,14 +29,15 @@ const FRONTEND_DEPRECATED_PROVIDER_IDS = new Set<string>([
   'vertex',
   'bedrock',
   'azure',
+  'openrouter',
+  'z-ai',
+  'kimi',
+  'minimax',
+  'minimax-coding-plan',
+  'elevenlabs',
+  'deepgram',
 ])
-const MASKED_PROVIDER_KEY_PREFIX = '********'
 const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
-  'bedrock',
-  'openai',
-  'vertex',
-  'anthropic',
-  'azure',
   'claude-code',
   'codex-cli',
   'cursor-cli',
@@ -47,16 +47,6 @@ const SUPPORTED_PROVIDERS_FALLBACK: LLMProvider[] = [
 
 function isFrontendDeprecatedProvider(provider?: string): boolean {
   return !!provider && FRONTEND_DEPRECATED_PROVIDER_IDS.has(provider)
-}
-
-function isMaskedProviderKey(value?: string): boolean {
-  return !!value?.trim().startsWith(MASKED_PROVIDER_KEY_PREFIX)
-}
-
-function unmaskedProviderKey(value?: string): string | undefined {
-  const trimmed = value?.trim()
-  if (!trimmed || isMaskedProviderKey(trimmed)) return undefined
-  return trimmed
 }
 
 function hasUsableLLMIdentity(model?: { provider?: string; model_id?: string }): model is { provider: LLMProvider; model_id: string } {
@@ -134,81 +124,6 @@ function sanitizeAgentConfig(config: AgentLLMConfiguration | null): AgentLLMConf
   }
 }
 
-function sanitizeProviderConfigForPersistence(config: ExtendedLLMConfiguration): ExtendedLLMConfiguration {
-  const sanitized = stripRetiredLLMFallbacks({ ...config }) as ExtendedLLMConfiguration & { temperature?: number }
-  delete sanitized.api_key
-  delete sanitized.endpoint
-  delete sanitized.temperature
-  return sanitized
-}
-
-function hasStoredProviderKeys(keys?: StoredProviderKeys | null): boolean {
-  return !!(
-    keys?.openai ||
-    keys?.anthropic ||
-    keys?.zai ||
-    keys?.kimi ||
-    keys?.vertex ||
-    keys?.codex_cli ||
-    keys?.cursor_cli ||
-    keys?.pi_cli ||
-    (keys?.pi_provider_keys && Object.values(keys.pi_provider_keys).some(key => !!key?.trim())) ||
-    keys?.bedrock?.region ||
-    (keys?.azure?.endpoint && keys?.azure?.api_key)
-  )
-}
-
-function extractStoredProviderKeysFromState(state: {
-  openrouterConfig: ExtendedLLMConfiguration
-  openaiConfig: ExtendedLLMConfiguration
-  anthropicConfig: ExtendedLLMConfiguration
-  zaiConfig: ExtendedLLMConfiguration
-  kimiConfig: ExtendedLLMConfiguration
-  vertexConfig: ExtendedLLMConfiguration
-  bedrockConfig: ExtendedLLMConfiguration
-  azureConfig: ExtendedLLMConfiguration
-  savedLLMs: SavedLLM[]
-}): StoredProviderKeys {
-  const keys: StoredProviderKeys = {
-    openai: unmaskedProviderKey(state.openaiConfig?.api_key),
-    anthropic: unmaskedProviderKey(state.anthropicConfig?.api_key),
-    zai: unmaskedProviderKey(state.zaiConfig?.api_key),
-    kimi: unmaskedProviderKey(state.kimiConfig?.api_key),
-    vertex: unmaskedProviderKey(state.vertexConfig?.api_key),
-    bedrock: state.bedrockConfig?.region ? { region: state.bedrockConfig.region } : undefined,
-    azure: state.azureConfig?.endpoint && unmaskedProviderKey(state.azureConfig?.api_key)
-      ? {
-          endpoint: state.azureConfig.endpoint,
-          api_key: unmaskedProviderKey(state.azureConfig.api_key)!,
-          api_version: (state.azureConfig.options?.api_version as string) || undefined,
-          region: state.azureConfig.region || undefined,
-        }
-      : undefined,
-  }
-
-  for (const llm of state.savedLLMs || []) {
-    const apiKey = unmaskedProviderKey(llm.api_key)
-    if (llm.provider === 'openai' && apiKey && !keys.openai) keys.openai = apiKey
-    if (llm.provider === 'anthropic' && apiKey && !keys.anthropic) keys.anthropic = apiKey
-    if (llm.provider === 'z-ai' && apiKey && !keys.zai) keys.zai = apiKey
-    if (llm.provider === 'kimi' && apiKey && !keys.kimi) keys.kimi = apiKey
-    if (llm.provider === 'vertex' && apiKey && !keys.vertex) keys.vertex = apiKey
-    if (llm.provider === 'codex-cli' && apiKey && !keys.codex_cli) keys.codex_cli = apiKey
-    if (llm.provider === 'pi-cli' && apiKey && !keys.pi_cli) keys.pi_cli = apiKey
-    if (llm.provider === 'bedrock' && llm.region && !keys.bedrock) keys.bedrock = { region: llm.region }
-    if (llm.provider === 'azure' && llm.endpoint && apiKey && !keys.azure) {
-      keys.azure = {
-        endpoint: llm.endpoint,
-        api_key: apiKey,
-        api_version: (llm.options?.api_version as string) || undefined,
-        region: llm.region || undefined,
-      }
-    }
-  }
-
-  return keys
-}
-
 interface LLMState extends StoreActions {
   // Primary LLM configuration (unified from sidebar and chat input)
   // LEGACY: kept for backward compatibility, use mode-specific configs instead
@@ -227,33 +142,6 @@ interface LLMState extends StoreActions {
   // Saved/Published LLM Library
   savedLLMs: SavedLLM[]
   
-  // Provider-specific configurations with API keys
-  openrouterConfig: ExtendedLLMConfiguration
-  bedrockConfig: ExtendedLLMConfiguration
-  openaiConfig: ExtendedLLMConfiguration
-  vertexConfig: ExtendedLLMConfiguration
-  anthropicConfig: ExtendedLLMConfiguration
-  azureConfig: ExtendedLLMConfiguration
-  zaiConfig: ExtendedLLMConfiguration
-  kimiConfig: ExtendedLLMConfiguration
-
-  // Custom models for each provider
-  customBedrockModels: string[]
-  customOpenRouterModels: string[]
-  customOpenAIModels: string[]
-  customVertexModels: string[]
-  customAzureModels: string[]
-
-  // Available models from backend
-  availableBedrockModels: string[]
-  availableOpenRouterModels: string[]
-  availableOpenAIModels: string[]
-  availableVertexModels: string[]
-  availableAnthropicModels: string[]
-  availableAzureModels: string[]
-  availableZAIModels: string[]
-  availableKimiModels: string[]
-
   // Modal state
   showLLMModal: boolean
 
@@ -300,14 +188,6 @@ interface LLMState extends StoreActions {
   setWorkflowPrimaryConfig: (config: LLMConfiguration) => void
   setWorkflowAgentConfig: (config: AgentLLMConfiguration | null) => void
   getConfigForMode: (mode: 'multi-agent' | 'workflow') => { primaryConfig: LLMConfiguration; agentConfig: AgentLLMConfiguration | null }
-  setOpenrouterConfig: (config: ExtendedLLMConfiguration) => void
-  setBedrockConfig: (config: ExtendedLLMConfiguration) => void
-  setOpenaiConfig: (config: ExtendedLLMConfiguration) => void
-  setVertexConfig: (config: ExtendedLLMConfiguration) => void
-  setAnthropicConfig: (config: ExtendedLLMConfiguration) => void
-  setAzureConfig: (config: ExtendedLLMConfiguration) => void
-  setZaiConfig: (config: ExtendedLLMConfiguration) => void
-  setKimiConfig: (config: ExtendedLLMConfiguration) => void
   setShowLLMModal: (show: boolean) => void
   loadDefaultsFromBackend: () => Promise<void>
   
@@ -315,25 +195,9 @@ interface LLMState extends StoreActions {
   saveLLM: (llm: LLMModel, name: string, modelName?: string, authMethod?: 'api_key' | 'oauth' | 'none', metadata?: PublishedLLMMetadataSnapshot) => Promise<void>
   deleteSavedLLM: (id: string) => Promise<void>
 
-  // Custom model management
-  addCustomBedrockModel: (model: string) => void
-  removeCustomBedrockModel: (model: string) => void
-  addCustomOpenRouterModel: (model: string) => void
-  removeCustomOpenRouterModel: (model: string) => void
-  addCustomOpenAIModel: (model: string) => void
-  removeCustomOpenAIModel: (model: string) => void
-  addCustomVertexModel: (model: string) => void
-  removeCustomVertexModel: (model: string) => void
-  addCustomAzureModel: (model: string) => void
-  removeCustomAzureModel: (model: string) => void
-
   // Legacy actions (for backward compatibility)
-  updateProvider: (provider: 'bedrock' | 'openai' | 'vertex' | 'anthropic' | 'azure') => void
   updateModel: (modelId: string) => void
   refreshAvailableLLMs: () => Promise<void>
-  
-  // API key management
-  testAPIKey: (provider: 'openrouter' | 'openai' | 'bedrock' | 'vertex' | 'anthropic' | 'azure' | 'z-ai' | 'kimi', apiKey: string, modelId?: string, options?: Record<string, unknown>) => Promise<{valid: boolean, error: string | null, correctedOptions?: Record<string, unknown>}>
   
   // Helper methods
   getCurrentLLMOption: () => LLMOption | null
@@ -359,65 +223,6 @@ export const useLLMStore = create<LLMState>()(
         // Saved/Published LLM Library
         savedLLMs: [],
         
-        // Provider-specific configurations - will be loaded from backend
-        openrouterConfig: {
-          provider: 'openrouter',
-          model_id: '',
-          api_key: ''
-        },
-        bedrockConfig: {
-          provider: 'bedrock',
-          model_id: '',
-          region: 'us-east-1'
-        },
-        openaiConfig: {
-          provider: 'openai',
-          model_id: '',
-          api_key: ''
-        },
-        vertexConfig: {
-          provider: 'vertex',
-          model_id: '',
-          api_key: ''
-        },
-        anthropicConfig: {
-          provider: 'anthropic',
-          model_id: '',
-          api_key: ''
-        },
-        azureConfig: {
-          provider: 'azure',
-          model_id: '',
-          api_key: '',
-          endpoint: ''
-        },
-        zaiConfig: {
-          provider: 'z-ai',
-          model_id: '',
-          api_key: ''
-        },
-        kimiConfig: {
-          provider: 'kimi',
-          model_id: '',
-          api_key: ''
-        },
-        // Custom models for each provider
-        customBedrockModels: [],
-        customOpenRouterModels: [],
-        customOpenAIModels: [],
-        customVertexModels: [],
-        customAzureModels: [],
-
-        // Available models from backend
-        availableBedrockModels: [],
-        availableOpenRouterModels: [],
-        availableOpenAIModels: [],
-        availableVertexModels: [],
-        availableAnthropicModels: [],
-        availableAzureModels: [],
-        availableZAIModels: [],
-        availableKimiModels: [],
-
         // Modal state
         showLLMModal: false,
 
@@ -519,39 +324,6 @@ export const useLLMStore = create<LLMState>()(
           }
         },
 
-        setOpenrouterConfig: (config) => {
-          set({ openrouterConfig: config, error: null })
-        },
-
-        setBedrockConfig: (config) => {
-          set({ bedrockConfig: config, error: null })
-        },
-
-        setOpenaiConfig: (config) => {
-          set({ openaiConfig: config, error: null })
-        },
-
-        setVertexConfig: (config) => {
-          set({ vertexConfig: config, error: null })
-        },
-
-        setAnthropicConfig: (config) => {
-          set({ anthropicConfig: config, error: null })
-        },
-
-        setAzureConfig: (config) => {
-          set({ azureConfig: config, error: null })
-        },
-
-        setZaiConfig: (config) => {
-          set({ zaiConfig: config, error: null })
-        },
-
-        setKimiConfig: (config) => {
-          set({ kimiConfig: config, error: null })
-        },
-
-
         setShowLLMModal: (show) => {
           set({ showLLMModal: show })
         },
@@ -560,35 +332,8 @@ export const useLLMStore = create<LLMState>()(
           set({ delegationTierConfig: config })
           // Fire-and-forget sync to server so bot sessions can use it
           if (config) {
-            // Collect API keys for each tier's provider so the server can use them
-            const state = get()
-            const providerKeys: Record<string, string> = {}
-            const providerConfigs: Record<string, { api_key?: string }> = {
-              openai: state.openaiConfig,
-              anthropic: state.anthropicConfig,
-              vertex: state.vertexConfig,
-              bedrock: state.bedrockConfig,
-              azure: state.azureConfig,
-            }
-            const tierConfig = config as unknown as Record<string, { provider?: string }>
-            for (const tier of ['main', 'high', 'medium', 'low']) {
-              const provider = tierConfig[tier]?.provider
-              if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
-                providerKeys[provider] = providerConfigs[provider].api_key!
-              }
-            }
-            // Also collect keys from custom tiers
-            if (config.custom) {
-              for (const slug of Object.keys(config.custom)) {
-                const provider = config.custom[slug]?.provider
-                if (provider && providerConfigs[provider]?.api_key && !providerKeys[provider]) {
-                  providerKeys[provider] = providerConfigs[provider].api_key!
-                }
-              }
-            }
             agentApi.saveDelegationTierConfig(
               config as unknown as Record<string, unknown>,
-              Object.keys(providerKeys).length > 0 ? providerKeys : undefined
             ).catch(() => {})
           }
         },
@@ -664,75 +409,12 @@ export const useLLMStore = create<LLMState>()(
           await refreshAvailableLLMs()
         },
 
-        // Custom model management
-        addCustomBedrockModel: (model) => {
-          const { customBedrockModels } = get()
-          if (!customBedrockModels.includes(model)) {
-            set({ customBedrockModels: [...customBedrockModels, model] })
-          }
-        }, 
-        
-        removeCustomBedrockModel: (model) => {
-          const { customBedrockModels } = get()
-          set({ customBedrockModels: customBedrockModels.filter(m => m !== model) })
-        },
-        
-        addCustomOpenRouterModel: (model) => {
-          const { customOpenRouterModels } = get()
-          if (!customOpenRouterModels.includes(model)) {
-            set({ customOpenRouterModels: [...customOpenRouterModels, model] })
-          }
-        },
-        
-        removeCustomOpenRouterModel: (model) => {
-          const { customOpenRouterModels } = get()
-          set({ customOpenRouterModels: customOpenRouterModels.filter(m => m !== model) })
-        },
-        
-        addCustomOpenAIModel: (model) => {
-          const { customOpenAIModels } = get()
-          if (!customOpenAIModels.includes(model)) {
-            set({ customOpenAIModels: [...customOpenAIModels, model] })
-          }
-        },
-        
-        removeCustomOpenAIModel: (model) => {
-          const { customOpenAIModels } = get()
-          set({ customOpenAIModels: customOpenAIModels.filter(m => m !== model) })
-        },
-        
-        addCustomVertexModel: (model) => {
-          const { customVertexModels } = get()
-          if (!customVertexModels.includes(model)) {
-            set({ customVertexModels: [...customVertexModels, model] })
-          }
-        },
-        
-        removeCustomVertexModel: (model) => {
-          const { customVertexModels } = get()
-          set({ customVertexModels: customVertexModels.filter(m => m !== model) })
-        },
-
-        addCustomAzureModel: (model) => {
-          const { customAzureModels } = get()
-          if (!customAzureModels.includes(model)) {
-            set({ customAzureModels: [...customAzureModels, model] })
-          }
-        },
-
-        removeCustomAzureModel: (model) => {
-          const { customAzureModels } = get()
-          set({ customAzureModels: customAzureModels.filter(m => m !== model) })
-        },
-
-
         // Load defaults from backend
         loadDefaultsFromBackend: async () => {
           try {
             set({ isLoadingLLMs: true })
-            const [defaults, loadedProviderKeys, loadedPublishedLLMs] = await Promise.all([
+            const [defaults, loadedPublishedLLMs] = await Promise.all([
               llmConfigService.getLLMDefaults(),
-              providerKeysApi.load().catch(() => undefined),
               llmConfigService.getPublishedLLMs().catch(() => undefined),
             ])
 
@@ -743,41 +425,6 @@ export const useLLMStore = create<LLMState>()(
                                      currentState.primaryConfig.model_id && 
                                      currentState.primaryConfig.model_id.trim() !== ''
             
-            // Preserve user configurations from current state (loaded from localStorage)
-            // Merge backend defaults with saved config, prioritizing saved values
-            const preserveUserConfig = (savedConfig: ExtendedLLMConfiguration, defaultConfig?: ExtendedLLMConfiguration): ExtendedLLMConfiguration => {
-              // Use saved config as base, only fill in missing fields from defaults
-              // Check if savedConfig has meaningful values (not just initial empty state)
-              const hasSavedModel = savedConfig?.model_id && savedConfig.model_id.trim() !== ''
-
-              return {
-                provider: savedConfig?.provider || defaultConfig?.provider || DEFAULT_CHAT_PROVIDER,
-                // Preserve model_id from saved config (including custom models) if it exists
-                // Otherwise use default
-                model_id: hasSavedModel ? savedConfig.model_id : (defaultConfig?.model_id || ''),
-                // Preserve API key if it exists in saved config
-                api_key: savedConfig?.api_key || defaultConfig?.api_key || '',
-                // Preserve region for Bedrock and Azure
-                region: savedConfig?.region || defaultConfig?.region,
-	                // Preserve endpoint for Azure
-	                endpoint: savedConfig?.endpoint || defaultConfig?.endpoint,
-	                // Preserve options (includes api_version for Azure, reasoning settings, etc.)
-	                options: savedConfig?.options || defaultConfig?.options
-              }
-            }
-
-            const localProviderKeys = extractStoredProviderKeysFromState(currentState)
-            let workspaceProviderKeys = loadedProviderKeys
-            if (!hasStoredProviderKeys(workspaceProviderKeys) && hasStoredProviderKeys(localProviderKeys)) {
-              try {
-                await providerKeysApi.save(localProviderKeys)
-                workspaceProviderKeys = localProviderKeys
-              } catch (error) {
-                console.warn('Failed to migrate provider keys from legacy local storage:', error)
-                workspaceProviderKeys = localProviderKeys
-              }
-            }
-
             const localPublishedLLMs = filterPublishedLLMs((currentState.savedLLMs || []).map(sanitizeSavedLLM))
             const localPersistedPublishedLLMs = persistablePublishedLLMs(localPublishedLLMs)
             const loadedSanitizedPublishedLLMs = Array.isArray(loadedPublishedLLMs)
@@ -839,68 +486,6 @@ export const useLLMStore = create<LLMState>()(
               }
             }
 
-            const openrouterConfig = preserveUserConfig(currentState.openrouterConfig, defaults.openrouter_config)
-            const bedrockConfig = preserveUserConfig(currentState.bedrockConfig, defaults.bedrock_config)
-            const openaiConfig = preserveUserConfig(currentState.openaiConfig, defaults.openai_config)
-            const vertexConfig = preserveUserConfig(
-              currentState.vertexConfig,
-              defaults.vertex_config || {
-                provider: 'vertex',
-                model_id: '',
-                api_key: ''
-              }
-            )
-            const anthropicConfig = preserveUserConfig(
-              currentState.anthropicConfig,
-              defaults.anthropic_config || {
-                provider: 'anthropic',
-                model_id: '',
-                api_key: ''
-              }
-            )
-            const azureConfig = preserveUserConfig(
-              currentState.azureConfig,
-              defaults.azure_config || {
-                provider: 'azure',
-                model_id: '',
-                api_key: '',
-                endpoint: ''
-              }
-            )
-            const zaiConfig = preserveUserConfig(
-              currentState.zaiConfig,
-              defaults.zai_config || {
-                provider: 'z-ai',
-                model_id: '',
-                api_key: ''
-              }
-            )
-            const kimiConfig = preserveUserConfig(
-              currentState.kimiConfig,
-              defaults.kimi_config || {
-                provider: 'kimi',
-                model_id: '',
-                api_key: ''
-              }
-            )
-            if (workspaceProviderKeys?.openai) openaiConfig.api_key = workspaceProviderKeys.openai
-            if (workspaceProviderKeys?.anthropic) anthropicConfig.api_key = workspaceProviderKeys.anthropic
-            if (workspaceProviderKeys?.zai) zaiConfig.api_key = workspaceProviderKeys.zai
-            if (workspaceProviderKeys?.kimi) kimiConfig.api_key = workspaceProviderKeys.kimi
-            if (workspaceProviderKeys?.vertex) vertexConfig.api_key = workspaceProviderKeys.vertex
-            if (workspaceProviderKeys?.bedrock?.region) {
-              bedrockConfig.region = workspaceProviderKeys.bedrock.region
-            }
-            if (workspaceProviderKeys?.azure) {
-              azureConfig.api_key = workspaceProviderKeys.azure.api_key
-              azureConfig.endpoint = workspaceProviderKeys.azure.endpoint
-              azureConfig.region = workspaceProviderKeys.azure.region || azureConfig.region
-              azureConfig.options = {
-                ...(azureConfig.options || {}),
-                ...(workspaceProviderKeys.azure.api_version ? { api_version: workspaceProviderKeys.azure.api_version } : {}),
-              }
-            }
-
             let newPrimaryConfig = normalizePrimaryConfig(hasUserSelection ? currentState.primaryConfig : defaults.primary_config)
             if (locked && defaultList.length > 0) {
               const first = defaultList[0]
@@ -912,28 +497,10 @@ export const useLLMStore = create<LLMState>()(
 
             set({
               primaryConfig: newPrimaryConfig,
-              openrouterConfig,
-              bedrockConfig,
-              openaiConfig,
-              vertexConfig,
-              anthropicConfig,
-              azureConfig,
-              zaiConfig,
-              kimiConfig,
               savedLLMs: newSavedLLMs,
-              availableBedrockModels: defaults.available_models.bedrock,
-              availableOpenRouterModels: defaults.available_models.openrouter || [],
-              availableOpenAIModels: defaults.available_models.openai,
-              availableVertexModels: defaults.available_models.vertex || [],
-              availableAnthropicModels: defaults.available_models.anthropic || [],
-              availableAzureModels: defaults.available_models.azure || [],
-              availableZAIModels: defaults.available_models['z-ai'] || [],
-              availableKimiModels: defaults.available_models.kimi || [],
               supportedProviders: (() => {
                 const sp = (defaults.supported_providers || SUPPORTED_PROVIDERS_FALLBACK).filter(provider =>
-                  provider !== 'openrouter' && provider !== 'z-ai' && provider !== 'kimi' &&
-                  provider !== 'minimax' && provider !== 'minimax-coding-plan' &&
-                  provider !== 'elevenlabs' && provider !== 'deepgram'
+                  !isFrontendDeprecatedProvider(provider)
                 )
                 console.log('[useLLMStore] supported_providers from backend:', defaults.supported_providers, '→ using:', sp)
                 return sp
@@ -967,86 +534,6 @@ export const useLLMStore = create<LLMState>()(
               isLoadingLLMs: false
             })
           }
-        },
-
-        // API key testing
-        testAPIKey: async (provider, apiKey, modelId?: string, options?: Record<string, unknown>) => {
-          try {
-            // Only check for empty API key for providers that require it (not bedrock, not vertex)
-            // Vertex supports OAuth fallback, so API key is optional
-            if (provider !== 'bedrock' && provider !== 'vertex' && !apiKey.trim()) {
-              return { valid: false, error: 'API key is empty', correctedOptions: undefined }
-            }
-
-            const request: APIKeyValidationRequest = {
-              provider,
-              options
-            }
-
-            // Only include api_key for providers that need it (not bedrock, optional for vertex)
-            if (provider !== 'bedrock') {
-              // For vertex, only include api_key if provided (OAuth fallback will be used if not)
-              if (provider === 'vertex' && apiKey.trim()) {
-                request.api_key = apiKey
-              } else if (provider !== 'vertex') {
-              request.api_key = apiKey
-              }
-            }
-
-            // Add model ID for all providers when validating
-            if (modelId) {
-              request.model_id = modelId
-            }
-
-            const response = await llmConfigService.validateAPIKey(request)
-
-            return {
-              valid: response.valid,
-              error: response.valid ? null : (response.message || response.error || 'Validation failed'),
-              correctedOptions: response.corrected_options,
-              message: response.message
-            }
-          } catch (error) {
-            console.error('API key validation failed:', error)
-            return {
-              valid: false,
-              error: error instanceof Error ? error.message : 'Unknown error occurred',
-              correctedOptions: undefined
-            }
-          }
-        },
-
-        updateProvider: (provider) => {
-          const state = get()
-          let availableModels: string[] = []
-          
-          switch(provider) {
-            case 'bedrock':
-              availableModels = [...state.availableBedrockModels, ...state.customBedrockModels];
-              break;
-            case 'openai':
-              availableModels = [...state.availableOpenAIModels, ...state.customOpenAIModels];
-              break;
-            case 'vertex':
-              availableModels = [...state.availableVertexModels, ...state.customVertexModels];
-              break;
-            case 'anthropic':
-              availableModels = state.availableAnthropicModels;
-              break;
-            case 'azure':
-              availableModels = [...state.availableAzureModels, ...state.customAzureModels];
-              break;
-          }
-          
-          // Set the first model for the explicitly selected provider
-          set({
-            primaryConfig: {
-              ...state.primaryConfig,
-              provider,
-              model_id: availableModels[0] || '',
-            },
-            error: null
-          })
         },
 
         updateModel: (modelId) => {
@@ -1182,42 +669,6 @@ export const useLLMStore = create<LLMState>()(
           set({
             primaryConfig: defaultLLMConfiguration(),
             agentConfig: null,
-            openrouterConfig: {
-              provider: 'openrouter',
-              model_id: '',
-              api_key: ''
-            },
-            bedrockConfig: {
-              provider: 'bedrock',
-              model_id: '',
-              region: 'us-east-1'
-            },
-            openaiConfig: {
-              provider: 'openai',
-              model_id: '',
-              api_key: ''
-            },
-            vertexConfig: {
-              provider: 'vertex',
-              model_id: '',
-              api_key: ''
-            },
-            azureConfig: {
-              provider: 'azure',
-              model_id: '',
-              api_key: '',
-              endpoint: ''
-            },
-            zaiConfig: {
-              provider: 'z-ai',
-              model_id: '',
-              api_key: ''
-            },
-            kimiConfig: {
-              provider: 'kimi',
-              model_id: '',
-              api_key: ''
-            },
             savedLLMs: [],
             showLLMModal: false,
             availableLLMs: [],
@@ -1249,21 +700,8 @@ export const useLLMStore = create<LLMState>()(
           workflowPrimaryConfig: stripRetiredLLMFallbacks(state.workflowPrimaryConfig),
           workflowAgentConfig: sanitizeAgentConfig(state.workflowAgentConfig),
           // Other persisted state
-          bedrockConfig: sanitizeProviderConfigForPersistence(state.bedrockConfig),
-          openaiConfig: sanitizeProviderConfigForPersistence(state.openaiConfig),
-          vertexConfig: sanitizeProviderConfigForPersistence(state.vertexConfig),
-          anthropicConfig: sanitizeProviderConfigForPersistence(state.anthropicConfig),
-          azureConfig: sanitizeProviderConfigForPersistence(state.azureConfig),
-          zaiConfig: sanitizeProviderConfigForPersistence(state.zaiConfig),
-          kimiConfig: sanitizeProviderConfigForPersistence(state.kimiConfig),
-          customBedrockModels: state.customBedrockModels,
-          customOpenAIModels: state.customOpenAIModels,
-          customVertexModels: state.customVertexModels,
-          customAzureModels: state.customAzureModels,
           showLLMModal: state.showLLMModal,
           delegationTierConfig: stripRetiredLLMFallbacks(state.delegationTierConfig),
-          // DO NOT persist availableBedrockModels, availableOpenRouterModels, availableOpenAIModels
-          // These should always be loaded fresh from backend
           // DO NOT persist defaultsLoaded - this should be reset on each app load
         }),
         // Migration: copy legacy config to mode-specific configs on first load
@@ -1294,57 +732,3 @@ export const useLLMStore = create<LLMState>()(
       }
     )
 )
-
-// --- Auto-sync provider API keys to server (workspace-backed storage) ---
-// Debounced: saves 2 seconds after the last key change to avoid spamming on every keystroke.
-let _syncTimer: ReturnType<typeof setTimeout> | null = null
-
-function syncProviderKeysToServer() {
-  if (_syncTimer) clearTimeout(_syncTimer)
-  _syncTimer = setTimeout(async () => {
-    try {
-      const s = useLLMStore.getState()
-      const piSavedKey = unmaskedProviderKey(s.savedLLMs.find(llm => llm.provider === 'pi-cli' && unmaskedProviderKey(llm.api_key))?.api_key)
-      const azureApiKey = unmaskedProviderKey(s.azureConfig?.api_key)
-      await providerKeysApi.save({
-        openai: unmaskedProviderKey(s.openaiConfig?.api_key),
-        anthropic: unmaskedProviderKey(s.anthropicConfig?.api_key),
-        zai: unmaskedProviderKey(s.zaiConfig?.api_key),
-        kimi: unmaskedProviderKey(s.kimiConfig?.api_key),
-        vertex: unmaskedProviderKey(s.vertexConfig?.api_key),
-        pi_cli: piSavedKey,
-        bedrock: s.bedrockConfig?.region ? { region: s.bedrockConfig.region } : undefined,
-        azure: s.azureConfig?.endpoint && azureApiKey
-          ? {
-              endpoint: s.azureConfig.endpoint,
-              api_key: azureApiKey,
-              api_version: (s.azureConfig.options?.api_version as string) || undefined,
-              region: s.azureConfig.region || undefined,
-            }
-          : undefined,
-      })
-    } catch (error) {
-      console.warn('Failed to sync provider keys to workspace config:', error)
-    }
-  }, 2000)
-}
-
-const getProviderKeySnapshot = (state: LLMState) => ([
-  state.openaiConfig?.api_key,
-  state.anthropicConfig?.api_key,
-  state.zaiConfig?.api_key,
-  state.kimiConfig?.api_key,
-  state.vertexConfig?.api_key,
-  state.azureConfig?.api_key,
-  state.azureConfig?.endpoint,
-  state.bedrockConfig?.region,
-])
-
-// Watch for changes to any provider config or API key
-useLLMStore.subscribe((state, prevState) => {
-  const nextSnapshot = getProviderKeySnapshot(state)
-  const prevSnapshot = getProviderKeySnapshot(prevState)
-  if (JSON.stringify(nextSnapshot) !== JSON.stringify(prevSnapshot)) {
-    syncProviderKeysToServer()
-  }
-})

@@ -258,7 +258,7 @@ export function CliMcpSetupPanel() {
               <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
             </div>
           ) : (
-            <Button size="sm" disabled={busy || checking} onClick={() => void generate()}>
+            <Button variant="outline" size="sm" disabled={busy || checking} onClick={() => void generate()}>
               <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Generating…' : 'Generate connection'}
             </Button>
           )
@@ -302,7 +302,7 @@ export function CliMcpSetupPanel() {
           {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live token.</p>}
           <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
           <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
-          <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
+          <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client. If it reports the command was not found, replace agentworks with its full path (run `which agentworks` in a terminal — GUI apps often miss ~/.local/bin on PATH)." />
         </div>
       </SettingsCard>
       <SettingsCard

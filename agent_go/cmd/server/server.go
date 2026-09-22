@@ -6044,10 +6044,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// chat and writable Crew chat. Workflow-phase agents already have their
 			// own execution lifecycle, and read-only Crew runs must not gain a new
 			// process/write path.
-			triggerAutoNotifyAvailable := !isWorkflowPhase && !crewReadOnly && toolGate.Allows("trigger_and_auto_notify") &&
-				(resolvedProfile == nil ||
-					(strings.TrimSpace(resolvedProfile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(currentUserID, req.SelectedFolder)))
-			if triggerAutoNotifyAvailable {
+			canTriggerAutoNotify := triggerAutoNotifyAvailable(resolvedProfile, currentUserID, req.SelectedFolder, isWorkflowPhase, crewReadOnly, toolGate)
+			if canTriggerAutoNotify {
 				if err := api.registerBackgroundCodeTools(llmAgent, req, sessionID, currentUserID); err != nil {
 					logfWithContext(queryLogCtx, "[BACKGROUND CODE] Failed to register tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register background code tools: %v", err), true)
@@ -6279,7 +6277,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				Provider:                 req.Provider,
 				HasProfile:               resolvedProfile != nil,
 				IsWorkflowPhase:          isWorkflowPhase,
-				HasTriggerAutoNotifyTool: triggerAutoNotifyAvailable,
+				HasTriggerAutoNotifyTool: canTriggerAutoNotify,
 				ShellRoot:                shellRoot,
 				PerUserChatsFolder:       perUserChatsFolder,
 				WorkflowPhaseFolder:      workflowPhaseFolder,

@@ -90,6 +90,16 @@ func triggerAndAutoNotifySchema() map[string]interface{} {
 	}
 }
 
+func triggerAutoNotifyAvailable(profile *resolvedAgentProfile, userID, workspace string, workflowPhase, crewReadOnly bool, gate *productToolGate) bool {
+	if workflowPhase || crewReadOnly || !gate.Allows("trigger_and_auto_notify") {
+		return false
+	}
+	if profile == nil {
+		return true
+	}
+	return strings.TrimSpace(profile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(userID, workspace)
+}
+
 // registerBackgroundCodeTools exposes one public trigger tool. Python is only
 // the trigger body; this does not add a script API to workflow steps.
 func (api *StreamingAPI) registerBackgroundCodeTools(

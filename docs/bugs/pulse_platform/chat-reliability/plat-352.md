@@ -128,6 +128,82 @@ growing conversation snapshot into each `conversation_turn` or
 and files belong in separate artifacts; the event stores a bounded summary and
 stable reference.
 
+## Canonical meaningful chat events
+
+"Meaningful" is an explicit schema decision, not a runtime guess based on an
+event name. A durable chat event must satisfy all of these conditions:
+
+1. it changes the conversation state visible to the user;
+2. that state must still be visible after refresh or server restart;
+3. it has a stable event ID, turn ID, and ordered sequence position; and
+4. its stored payload is bounded.
+
+The initial durable allowlist is:
+
+| Canonical type | Durable meaning |
+|---|---|
+| `user_message` | A user message accepted by the server |
+| `assistant_message` | The consolidated assistant text for a turn |
+| `assistant_progress` | A useful consolidated progress update, not a token chunk |
+| `tool_call_started` | Tool name plus bounded/sanitized arguments |
+| `tool_call_completed` | Result summary plus an optional artifact reference |
+| `tool_call_failed` | Bounded tool error summary |
+| `input_requested` | The chat is durably waiting for user input |
+| `background_agent_started` | Compact child-agent identity and purpose |
+| `background_agent_completed` | Compact child-agent outcome/reference |
+| `turn_completed` | Successful terminal state for a turn |
+| `turn_failed` | Failed terminal state for a turn |
+| `turn_cancelled` | User/system cancellation terminal state |
+
+The following remain live-only or go to their existing execution/diagnostic
+stores and must not enter durable chat history:
+
+- individual streaming tokens/chunks;
+- terminal lines, frames, and repeated status-line updates;
+- heartbeats, polling events, and token counters;
+- system prompts and raw provider traces;
+- complete conversation snapshots;
+- internal workflow-step/message-sequence events;
+- repeated copies of tool arguments or results.
+
+Providers and execution engines may continue producing their existing raw
+events. A single **chat-event projector** maps them onto the canonical
+allowlist or classifies them as live-only/ignored. For example, hundreds of
+assistant chunks become one `assistant_message`; terminal updates remain live;
+a tool start/result pair becomes two canonical tool events; workflow-step
+details remain in the execution log. Frontend code must consume the canonical
+contract and must not repeat provider-specific interpretation.
+
+Every canonical row uses one versioned envelope:
+
+```json
+{
+  "schema_version": 1,
+  "id": "stable-event-id",
+  "session_id": "chat-id",
+  "turn_id": "turn-id",
+  "sequence": 145,
+  "type": "tool_call_completed",
+  "timestamp": "2026-09-22T12:00:00Z",
+  "data": {
+    "tool_name": "exec",
+    "summary": "Tests passed",
+    "artifact_id": "artifact-42"
+  }
+}
+```
+
+Set a hard encoded-row limit (initial proposal: 64 KiB, with stricter limits
+for individual text fields). Payloads above the limit are rejected from the
+journal until the producer writes the large content to a private artifact and
+emits a bounded summary/reference. The projector must never silently truncate
+content without marking the event and retaining a way to inspect the complete
+artifact.
+
+Adding another durable event type requires an explicit schema change plus
+tests covering projection, restart restore, ordering, deduplication, payload
+bounds, and redaction. Unknown raw types fail closed to live-only delivery.
+
 ## Retention and migration requirements
 
 - Deleting a conversation deletes its journal rows and referenced private
@@ -145,7 +221,7 @@ stable reference.
 
 1. Add the explicit session persistence class and stop journaling execution,
    workflow-step, message-sequence, and internal sub-agent streams.
-2. Define the compact canonical chat-event schema and move large payloads to
+2. Implement the canonical chat-event projector and move large payloads to
    referenced artifacts.
 3. Archive/rotate the existing mixed journal, then retain/checkpoint the new
    chat-only journal under an explicit size policy.

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Exercise built CLI + stdio MCP against isolated real AgentWorks services.
+"""Exercise built CLI + stdio/remote MCP against isolated real AgentWorks services.
 Uses only design inputs from Workflow/testing; never runs the retained workflow.
 Writes an evidence receipt and stops only the processes started by this script.
 """
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
@@ -15,8 +16,10 @@ import tempfile
 import time
 import urllib.request
 import urllib.error
+import urllib.parse
 import selectors
 import wave
+import zipfile
 
 REPO = Path(__file__).resolve().parents[1]
 SOURCE = REPO / 'workspace-docs/Workflow/testing'
@@ -117,6 +120,7 @@ class Probe:
         self.pat_id=issued['access_token']['id']
         self.command('login','--token-stdin',input=issued['token']+'\n')
         self.token=json.loads(self.config.read_text())['token']
+        self.pat_token=issued['token']
         assert self.config.stat().st_mode&0o077==0
         self.record('App-generated PAT login and private CLI credentials')
         # Authoring scopes are not issued; runs:execute is a separate grant.
@@ -129,6 +133,7 @@ class Probe:
         assert not ({'update_message_sequence_step','write_file','patch_file','builder_chat'}&names)
         assert not ({'execute_step','run_full_workflow','trigger_schedule'}&names)
         runner=http(self.server+'/api/auth/access-tokens',{'name':'Runner','scopes':['workflows:read','files:read','runs:execute'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        self.runner_token=runner['token']
         run_tools=http(self.server+'/api/external/v1/tools',token=runner['token'])
         run_names={t['name'] for t in run_tools['tools']}
         assert {'execute_step','run_full_workflow','run_status','trigger_schedule','list_schedules'}<=run_names
@@ -196,6 +201,62 @@ class Probe:
         assert denied['error']['code']=='insufficient_scope'
         http(self.server+'/api/external/v1/tools',expected=401)
         self.record('narrow token denied file reads; unauthenticated discovery denied')
+    def test_remote_mcp(self):
+        seq=0
+        def rpc(method,params,token,query_token=False):
+            nonlocal seq;seq+=1
+            url=self.server+'/api/external/v1/mcp'
+            headers={'Content-Type':'application/json','Accept':'application/json, text/event-stream'}
+            if query_token:url+='?token='+urllib.parse.quote(token)
+            elif token:headers['Authorization']='Bearer '+token
+            req=urllib.request.Request(url,json.dumps({'jsonrpc':'2.0','id':seq,'method':method,'params':params}).encode(),headers=headers)
+            try:
+                with urllib.request.urlopen(req,timeout=45) as r:status,raw=r.status,r.read()
+            except urllib.error.HTTPError as e:status,raw=e.code,e.read()
+            if status!=200:raise RuntimeError(f'remote MCP {method} HTTP {status}: {raw[:1000]}')
+            text=raw.decode()
+            try:response=json.loads(text)
+            except json.JSONDecodeError:
+                events=[line[5:].strip() for line in text.splitlines() if line.startswith('data:') and line.strip()!='data: [DONE]']
+                if not events:raise RuntimeError(f'remote MCP {method} unparseable response: {text[:1000]}')
+                response=json.loads(events[-1])
+            if response.get('id')!=seq or 'error' in response:raise RuntimeError(f'remote MCP {method} error: {response}')
+            return response['result']
+        def remote_call(name,args,token):
+            result=rpc('tools/call',{'name':name,'arguments':args},token)
+            if result.get('isError'):raise RuntimeError(str(result)[:2000])
+            return result.get('structuredContent') or json.loads(result['content'][0]['text'])
+        rpc('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'agentworks-local-smoke','version':'1'}},self.pat_token)
+        catalog=rpc('tools/list',{},self.pat_token)
+        assert {t['name'] for t in catalog['tools']}=={'get_api_spec','call_tool'},catalog
+        spec=remote_call('get_api_spec',{},self.pat_token)
+        rest=http(self.server+'/api/external/v1/tools',token=self.pat_token)
+        assert spec['count']==len(rest['tools']) and any(t['name']=='list_workflows' for t in spec['tools'])
+        assert not any(t['name']=='execute_step' for t in spec['tools'])
+        schemas=remote_call('get_api_spec',{'names':['get_plan']},self.pat_token)
+        assert 'workflow_id' in json.dumps(schemas['schemas']['get_plan'])
+        run_spec=remote_call('get_api_spec',{},self.runner_token)
+        assert any(t['name']=='execute_step' for t in run_spec['tools'])
+        plan=remote_call('call_tool',{'name':'get_plan','arguments':{'workflow_id':self.wid}},self.pat_token)
+        assert plan['revision']
+        denied=rpc('tools/call',{'name':'call_tool','arguments':{'name':'execute_step','arguments':{'workflow_id':self.wid}}},self.pat_token)
+        assert denied.get('isError') and 'insufficient_scope' in json.dumps(denied)
+        self.record('remote MCP initialize/list/spec/call over Streamable HTTP with scope filtering')
+        rpc('tools/list',{},self.pat_token,query_token=True)
+        anon=urllib.request.Request(self.server+'/api/external/v1/mcp',json.dumps({'jsonrpc':'2.0','id':999,'method':'tools/list','params':{}}).encode(),headers={'Content-Type':'application/json'})
+        try:
+            urllib.request.urlopen(anon,timeout=10);raise RuntimeError('unauthenticated remote MCP unexpectedly allowed')
+        except urllib.error.HTTPError as e:assert e.code==401
+        self.record('remote MCP accepts ?token= and denies anonymous calls')
+        mdreq=urllib.request.Request(self.server+'/api/external/v1/skill.md',headers={'Authorization':'Bearer '+self.pat_token})
+        with urllib.request.urlopen(mdreq,timeout=10) as r:markdown=r.read().decode()
+        assert 'name: agentworks' in markdown and 'get_api_spec' in markdown and 'aw_pat_' not in markdown
+        zipreq=urllib.request.Request(self.server+'/api/external/v1/skill.zip',headers={'Authorization':'Bearer '+self.pat_token})
+        with urllib.request.urlopen(zipreq,timeout=10) as r:payload=r.read()
+        archive=zipfile.ZipFile(io.BytesIO(payload))
+        assert archive.namelist()==['agentworks/SKILL.md']
+        assert archive.read('agentworks/SKILL.md').decode()==markdown
+        self.record('hosted skill text and zip match')
     def test_mcp(self):
         errlog=(self.root/'logs/mcp-stderr.log').open('w');self.logs.append(errlog)
         proc=subprocess.Popen([str(self.cli),'--config',str(self.config),'mcp','serve'],env=self.env,cwd=self.root/'runtime',stdin=subprocess.PIPE,stdout=subprocess.PIPE,stderr=errlog,text=True,bufsize=1,start_new_session=True)
@@ -235,7 +296,9 @@ class Probe:
         with urllib.request.urlopen(req,timeout=10) as response: assert response.status==204
         denial=self.command('tools','list',expected=3);assert denial['error']['code']=='invalid_token'
         denied=rpc('tools/call',{'name':'get_plan','arguments':{'workflow_id':self.wid}});assert denied.get('isError')
-        self.record('Revocation rejects saved CLI credentials and an already-connected MCP bridge')
+        revoked_remote=http(self.server+'/api/external/v1/mcp',{'jsonrpc':'2.0','id':1,'method':'tools/list','params':{}},self.token,expected=401)
+        assert revoked_remote['error']['code']=='invalid_token'
+        self.record('Revocation rejects saved CLI credentials and already-connected stdio and remote MCP sessions')
     def finish(self,error=None):
         for proc in reversed(self.processes):
             if proc.poll() is None:
@@ -246,7 +309,7 @@ class Probe:
         for log in self.logs:log.close()
         unchanged={p:digest(SOURCE/p)==v for p,v in self.before.items()}
         receipt={'source':str(SOURCE),'source_hashes':self.before,'source_inputs_unchanged':all(unchanged.values()),
-         'fixture':str(self.fixture),'scope':'built CLI and stdio MCP against real isolated services; no workflow/model execution',
+         'fixture':str(self.fixture),'scope':'built CLI and stdio/remote MCP against real isolated services; no workflow/model execution',
          'model_calls':0,'workflow_runs':0,'services_stopped':all(p.poll() is not None for p in self.processes),
          'results':self.results,'passed':error is None and all(unchanged.values()),'error':None if error is None else str(error)}
         (self.root/'receipt.json').write_text(json.dumps(receipt,indent=2)+'\n')
@@ -257,7 +320,7 @@ class Probe:
 
 def main():
     probe=Probe();print('Artifacts:',probe.root,flush=True);error=None
-    try:probe.prepare();probe.build();probe.launch();probe.test_cli();probe.test_mcp()
+    try:probe.prepare();probe.build();probe.launch();probe.test_cli();probe.test_remote_mcp();probe.test_mcp()
     except Exception as e:error=e;print('FAIL:',e,flush=True)
     finally:probe.finish(error)
     if error:raise SystemExit(1)

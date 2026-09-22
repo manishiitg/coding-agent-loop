@@ -9,12 +9,16 @@ paths stay in the server for a future write-enabled API version.
 
 ## Install the CLI
 
-Open Setup → Integrations → Connect on your server (server installs only)
+Open Setup → Integrations → Connect on any installation — server or local —
 and paste the one command: it downloads the CLI build matching that server,
 verifies its checksum, installs it to `~/.local/bin`, and logs in with the
 generated token, which reads and runs. macOS and Linux on arm64/amd64 are
 supported.
-The same token is reused on every visit until it is revoked or expires.
+One token per account: generating a new one replaces the current token
+everywhere it was pasted.
+Local installs can drive the CLI and local MCP bridges, but ChatGPT and
+Cowork need a public server URL — deploy first, then open that server's
+Connect tab for the remote URL.
 
 The binaries and installer are served by the server itself at
 `/api/downloads/cli/` (public, like the existing launcher downloads), so

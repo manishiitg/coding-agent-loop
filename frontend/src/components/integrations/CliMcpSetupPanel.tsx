@@ -224,6 +224,14 @@ export function CliMcpSetupPanel() {
 
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const origin = server.replace(/\/+$/, '')
+  const isLoopbackOrigin = (() => {
+    try {
+      const host = new URL(origin).hostname
+      return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1'
+    } catch {
+      return false
+    }
+  })()
   const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
   const mcpJson = connection ? JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_TOKEN: connection.token } } } }, null, 2) : ''
 
@@ -297,6 +305,9 @@ export function CliMcpSetupPanel() {
         ) : (
           <div className="space-y-2">
             <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(connection.token)}`} />
+            {isLoopbackOrigin && (
+              <p className="text-xs text-amber-500">This installation is only reachable on your machine — ChatGPT and Cowork need a public server URL. Deploy first, then open that server&apos;s Connect tab.</p>
+            )}
             <p className="text-xs text-muted-foreground">
               ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
               Claude Cowork: Settings → Connectors → Add custom connector.

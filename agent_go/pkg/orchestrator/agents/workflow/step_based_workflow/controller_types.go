@@ -1,12 +1,8 @@
 package step_based_workflow
 
 import (
-	"encoding/json"
-	"fmt"
 	"time"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
-	baseevents "github.com/manishiitg/mcpagent/events"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 )
 
@@ -148,43 +144,3 @@ const (
 
 // TodoStep has been removed - use PlanStepInterface instead
 // All execution code now uses PlanStepInterface directly for type safety
-
-// TodoStepsExtractedEvent represents the event when todo steps are extracted from a plan
-type TodoStepsExtractedEvent struct {
-	baseevents.BaseEventData
-	TotalStepsExtracted int                 `json:"total_steps_extracted"`
-	ExtractedSteps      []PlanStepInterface `json:"extracted_steps"`
-	ExtractionMethod    string              `json:"extraction_method"`
-	PlanSource          string              `json:"plan_source"`          // "existing_plan" or "new_plan"
-	WorkspacePath       string              `json:"workspace_path"`       // Workspace path for file operations (required)
-	RunFolder           string              `json:"run_folder,omitempty"` // Run folder name for run-specific configs
-}
-
-// MarshalJSON implements custom JSON marshaling for TodoStepsExtractedEvent
-// This is needed because PlanStepInterface is an interface and needs special handling
-func (e *TodoStepsExtractedEvent) MarshalJSON() ([]byte, error) {
-	type Alias TodoStepsExtractedEvent
-	aux := &struct {
-		ExtractedSteps []json.RawMessage `json:"extracted_steps"`
-		*Alias
-	}{
-		Alias: (*Alias)(e),
-	}
-
-	// Marshal each step to JSON
-	aux.ExtractedSteps = make([]json.RawMessage, len(e.ExtractedSteps))
-	for i, step := range e.ExtractedSteps {
-		stepJSON, err := json.Marshal(step)
-		if err != nil {
-			return nil, fmt.Errorf("failed to marshal step %d: %w", i, err)
-		}
-		aux.ExtractedSteps[i] = stepJSON
-	}
-
-	return json.Marshal(aux)
-}
-
-// GetEventType returns the event type for TodoStepsExtractedEvent
-func (e *TodoStepsExtractedEvent) GetEventType() baseevents.EventType {
-	return events.TodoStepsExtracted
-}

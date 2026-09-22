@@ -625,7 +625,7 @@ func (api *StreamingAPI) deriveSessionUserInputState(sessionID string) (bool, st
 	for i, scanned := len(events)-1, 0; i >= 0 && scanned < 300; i, scanned = i-1, scanned+1 {
 		event := events[i]
 		switch event.Type {
-		case "human_verification_response", "workflow_end", "workflow_error", "conversation_end", "context_canceled":
+		case "human_verification_response", "workflow_end", "workflow_error", "conversation_end", "context_cancelled":
 			return false, "", nil, ""
 		case "request_human_feedback", "blocking_human_feedback", "plan_approval":
 			waitingSince := event.Timestamp

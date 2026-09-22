@@ -7388,7 +7388,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 			}
 			for _, key := range []string{
 				"use_knowledgebase", "kb_shape",
-				"enable_context_summarization", "enable_context_editing",
+				"enable_context_summarization",
 				"enable_image_generation", "image_gen_provider", "image_gen_model_id",
 			} {
 				if value, ok := existingLLMCfg[key]; ok {

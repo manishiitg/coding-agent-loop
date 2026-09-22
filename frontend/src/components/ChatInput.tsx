@@ -1979,34 +1979,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }
   }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
 
-  // Handle manual context compaction (context editing)
-  // If messageToSendAfter is provided, it will be sent as a user message after compaction completes
-  const handleCompact = useCallback(async (messageToSendAfter?: string) => {
-    if (!tabSessionId || isSummarizing || isStreaming) {
-      return
-    }
-
-    setIsSummarizing(true) // Reuse the same loading state
-    try {
-      const response = await agentApi.compactContext(tabSessionId)
-      addToast(`Compacted ${response.compacted_count} responses, saved ${response.total_tokens_saved?.toLocaleString() || 0} tokens`, 'success')
-      
-      // If there's a message to send after compaction, send it now
-      if (messageToSendAfter && messageToSendAfter.trim() && tabSessionId) {
-        // Small delay to ensure compaction is fully processed
-        setTimeout(() => {
-          onSubmit(messageToSendAfter.trim())
-        }, 500)
-      }
-    } catch (error) {
-      console.error('[CONTEXT_EDITING] Error:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
-      addToast(`Failed to compact: ${errorMessage}`, 'error')
-    } finally {
-      setIsSummarizing(false)
-    }
-  }, [tabSessionId, isSummarizing, isStreaming, onSubmit, addToast])
-
   const getEffectiveWorkflowModes = useCallback(() => {
     const workflowState = useWorkflowStore.getState()
     const presetId = useGlobalPresetStore.getState().activePresetIds.workflow
@@ -2110,7 +2082,6 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       setTabConfig,
       addToast,
       handleSummarize,
-      handleCompact,
       getAppStore: () => useAppStore.getState(),
       getWorkspaceStore: () => useWorkspaceStore.getState(),
       getWorkflowStore: () => useWorkflowStore.getState(),
@@ -2120,7 +2091,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
       workflowPhaseId,
       workflowWorkspacePath: commandWorkflowPath ?? undefined,
     }
-  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, handleCompact, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId, commandWorkflowPath])
+  }, [activeTabId, tabSessionId, tabConfig, isSummarizing, isStreaming, routeLiveInputToCLI, onSubmit, openDialog, setTabConfig, addToast, handleSummarize, getEffectiveWorkflowModes, selectedModeCategory, workflowPhaseId, commandWorkflowPath])
 
   const getCommandValidationError = useCallback((cmd: CommandDefinition, beforeSlash: string) => {
     if (!cmd.validate) return null

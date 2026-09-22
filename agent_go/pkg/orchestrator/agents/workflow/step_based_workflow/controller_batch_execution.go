@@ -362,7 +362,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) runBatchExecution(
 			browser.ReleaseCDPTabOwnerLease(browserSessionID, cdpPorts, browser.NewClient(getWorkspaceAPIURL()), browser.DefaultCDPTabCleanupDelay)
 		}()
 
-		// Update batch context for step_progress_updated events
+		// Update batch context for the current group
 		hcpo.currentGroupName = group.Name
 		hcpo.currentGroupIdx = groupIndex
 		hcpo.totalGroups = totalGroups

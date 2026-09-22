@@ -47,9 +47,7 @@ import type {
   ToolOutputEvent,
   ToolResponseEvent,
   MCPServerConnectionEvent,
-  MCPServerDiscoveryEvent,
   MCPServerSelectionEvent,
-  SystemPromptEvent,
   UserMessageEvent,
   TokenUsageEvent,
   ErrorDetailEvent,
@@ -58,30 +56,18 @@ import type {
   ContextSummarizationStartedEvent,
   ContextSummarizationCompletedEvent,
   ContextSummarizationErrorEvent,
-  ContextEditingCompletedEvent,
-  ContextEditingErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
-  LargeToolOutputServerUnavailableEvent,
-  ModelChangeEvent,
   RetryAttemptEvent,
-  ThrottlingDetectedEvent,
-  TokenLimitExceededEvent,
-  CacheEvent,
-  ComprehensiveCacheEvent,
   UnifiedCompletionEvent,
-  OrchestratorStartEvent,
   OrchestratorEndEvent,
-  OrchestratorErrorEvent,
   OrchestratorAgentStartEvent,
   OrchestratorAgentEndEvent,
   OrchestratorAgentErrorEvent,
   StepTokenUsageEvent,
-  StepProgressUpdatedEvent,
   RoutingEvaluatedEvent,
   ScriptedExecutionEvent,
-  TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
   RequestHumanFeedbackEvent,
@@ -94,18 +80,9 @@ import type {
   StreamingErrorEvent,
   StreamingProgressEvent,
   StreamingConnectionLostEvent,
-  // New Cache Detail Events
-  CacheHitEvent,
-  CacheMissEvent,
-  CacheWriteEvent,
-  CacheExpiredEvent,
-  CacheCleanupEvent,
-  CacheErrorEvent,
-  CacheOperationStartEvent,
   // New MCP Server Connection Events
   MCPServerConnectionStartEvent,
   MCPServerConnectionEndEvent,
-  MCPServerConnectionErrorEvent,
   // New JSON Validation Events
   JSONValidationStartEvent,
   JSONValidationEndEvent,
@@ -116,12 +93,6 @@ import type {
   DebugEvent,
   PerformanceEvent,
   LLMTokenUsageEvent,
-  AgentProcessingEvent,
-  // Batch Execution Events
-  BatchExecutionStartEvent,
-  BatchGroupStartEvent,
-  BatchGroupEndEvent,
-  BatchExecutionEndEvent,
   // Background Agent Events
   BackgroundAgentStartedEvent,
   BackgroundAgentCompletedEvent,
@@ -200,10 +171,7 @@ export type EventTypeString =
   | 'tool_output'
   | 'tool_response'
   | 'mcp_server_connection'
-  | 'mcp_server_connection_error'
-  | 'mcp_server_discovery'
   | 'mcp_server_selection'
-  | 'system_prompt'
   | 'user_message'
   | 'token_usage'
   | 'error_detail'
@@ -212,32 +180,20 @@ export type EventTypeString =
   | 'context_summarization_started'
   | 'context_summarization_completed'
   | 'context_summarization_error'
-  | 'context_editing_completed'
-  | 'context_editing_error'
   | 'large_tool_output_detected'
   | 'large_tool_output_file_written'
   | 'large_tool_output_file_write_error'
-  | 'large_tool_output_server_unavailable'
-  | 'model_change'
   | 'retry_attempt'
   | 'broken_pipe'
-  | 'throttling_detected'
-  | 'token_limit_exceeded'
-  | 'cache_event'
-  | 'comprehensive_cache_event'
   | 'unified_completion'
-  | 'orchestrator_start'
   | 'orchestrator_end'
-  | 'orchestrator_error'
   | 'orchestrator_agent_start'
   | 'orchestrator_agent_end'
   | 'orchestrator_agent_error'
   | 'step_token_usage'
-  | 'step_progress_updated'
   | 'routing_evaluated'
   | 'pre_validation_completed'
   | 'learn_code_script_execution'
-  | 'todo_steps_extracted'
   | 'variables_extracted'
   | 'independent_steps_selected'
   | 'request_human_feedback'
@@ -250,18 +206,9 @@ export type EventTypeString =
   | 'streaming_error'
   | 'streaming_progress'
   | 'streaming_connection_lost'
-  // Cache Detail Events
-  | 'cache_hit'
-  | 'cache_miss'
-  | 'cache_write'
-  | 'cache_expired'
-  | 'cache_cleanup'
-  | 'cache_error'
-  | 'cache_operation_start'
   // MCP Server Connection Detail Events
   | 'mcp_server_connection_start'
   | 'mcp_server_connection_end'
-  // Note: mcp_server_connection_error already exists above
   // JSON Validation Events
   | 'json_validation_start'
   | 'json_validation_end'
@@ -272,16 +219,11 @@ export type EventTypeString =
   | 'debug'
   | 'performance'
   | 'llm_token_usage'
-  | 'agent_processing'
   // Workflow Events
   | 'workflow_start'
   | 'workflow_progress'
   | 'workflow_end'
-  // Batch Execution Events
-  | 'batch_execution_start'
-  | 'batch_group_start'
-  | 'batch_group_end'
-  | 'batch_execution_end'
+  // Batch Execution Events (only cancellation is emitted)
   | 'batch_execution_canceled'
   // Todo Task Events
   | 'todo_task_route_selected'
@@ -326,10 +268,7 @@ export interface EventTypeToDataMap {
   'tool_output': ToolOutputEvent;
   'tool_response': ToolResponseEvent;
   'mcp_server_connection': MCPServerConnectionEvent;
-  'mcp_server_connection_error': MCPServerConnectionErrorEvent;
-  'mcp_server_discovery': MCPServerDiscoveryEvent;
   'mcp_server_selection': MCPServerSelectionEvent;
-  'system_prompt': SystemPromptEvent;
   'user_message': UserMessageEvent;
   'token_usage': TokenUsageEvent;
   'error_detail': ErrorDetailEvent;
@@ -338,31 +277,19 @@ export interface EventTypeToDataMap {
   'context_summarization_started': ContextSummarizationStartedEvent;
   'context_summarization_completed': ContextSummarizationCompletedEvent;
   'context_summarization_error': ContextSummarizationErrorEvent;
-  'context_editing_completed': ContextEditingCompletedEvent;
-  'context_editing_error': ContextEditingErrorEvent;
   'large_tool_output_detected': LargeToolOutputDetectedEvent;
   'large_tool_output_file_written': LargeToolOutputFileWrittenEvent;
   'large_tool_output_file_write_error': LargeToolOutputFileWriteErrorEvent;
-  'large_tool_output_server_unavailable': LargeToolOutputServerUnavailableEvent;
-  'model_change': ModelChangeEvent;
   'retry_attempt': RetryAttemptEvent;
-  'throttling_detected': ThrottlingDetectedEvent;
-  'token_limit_exceeded': TokenLimitExceededEvent;
-  'cache_event': CacheEvent;
-  'comprehensive_cache_event': ComprehensiveCacheEvent;
   'unified_completion': UnifiedCompletionEvent;
-  'orchestrator_start': OrchestratorStartEvent;
   'orchestrator_end': OrchestratorEndEvent;
-  'orchestrator_error': OrchestratorErrorEvent;
   'orchestrator_agent_start': OrchestratorAgentStartEvent;
   'orchestrator_agent_end': OrchestratorAgentEndEvent;
   'orchestrator_agent_error': OrchestratorAgentErrorEvent;
   'step_token_usage': StepTokenUsageEvent;
-  'step_progress_updated': StepProgressUpdatedEvent;
   'routing_evaluated': RoutingEvaluatedEvent;
   'pre_validation_completed': PreValidationCompletedEvent;
   'learn_code_script_execution': ScriptedExecutionEvent;
-  'todo_steps_extracted': TodoStepsExtractedEvent;
   'variables_extracted': VariablesExtractedEvent;
   'independent_steps_selected': IndependentStepsSelectedEvent;
   'request_human_feedback': RequestHumanFeedbackEvent;
@@ -375,14 +302,6 @@ export interface EventTypeToDataMap {
   'streaming_error': StreamingErrorEvent;
   'streaming_progress': StreamingProgressEvent;
   'streaming_connection_lost': StreamingConnectionLostEvent;
-  // Cache Detail Events
-  'cache_hit': CacheHitEvent;
-  'cache_miss': CacheMissEvent;
-  'cache_write': CacheWriteEvent;
-  'cache_expired': CacheExpiredEvent;
-  'cache_cleanup': CacheCleanupEvent;
-  'cache_error': CacheErrorEvent;
-  'cache_operation_start': CacheOperationStartEvent;
   // MCP Server Connection Detail Events
   'mcp_server_connection_start': MCPServerConnectionStartEvent;
   'mcp_server_connection_end': MCPServerConnectionEndEvent;
@@ -396,16 +315,11 @@ export interface EventTypeToDataMap {
   'debug': DebugEvent;
   'performance': PerformanceEvent;
   'llm_token_usage': LLMTokenUsageEvent;
-  'agent_processing': AgentProcessingEvent;
   // Workflow Events
   'workflow_start': WorkflowStartEventData;
   'workflow_progress': WorkflowProgressEventData;
   'workflow_end': WorkflowEndEventData;
-  // Batch Execution Events
-  'batch_execution_start': BatchExecutionStartEvent;
-  'batch_group_start': BatchGroupStartEvent;
-  'batch_group_end': BatchGroupEndEvent;
-  'batch_execution_end': BatchExecutionEndEvent;
+  // Batch Execution Events (only cancellation is emitted)
   'batch_execution_canceled': BatchExecutionCanceledEvent;
   // Todo Task Events
   'todo_task_route_selected': TodoTaskRouteSelectedEvent;
@@ -749,9 +663,7 @@ export type {
   ToolOutputEvent,
   ToolResponseEvent,
   MCPServerConnectionEvent,
-  MCPServerDiscoveryEvent,
   MCPServerSelectionEvent,
-  SystemPromptEvent,
   UserMessageEvent,
   TokenUsageEvent,
   ErrorDetailEvent,
@@ -760,30 +672,18 @@ export type {
   ContextSummarizationStartedEvent,
   ContextSummarizationCompletedEvent,
   ContextSummarizationErrorEvent,
-  ContextEditingCompletedEvent,
-  ContextEditingErrorEvent,
   LargeToolOutputDetectedEvent,
   LargeToolOutputFileWrittenEvent,
   LargeToolOutputFileWriteErrorEvent,
-  LargeToolOutputServerUnavailableEvent,
-  ModelChangeEvent,
   RetryAttemptEvent,
-  ThrottlingDetectedEvent,
-  TokenLimitExceededEvent,
-  CacheEvent,
-  ComprehensiveCacheEvent,
   UnifiedCompletionEvent,
-  OrchestratorStartEvent,
   OrchestratorEndEvent,
-  OrchestratorErrorEvent,
   OrchestratorAgentStartEvent,
   OrchestratorAgentEndEvent,
   OrchestratorAgentErrorEvent,
   StepTokenUsageEvent,
-  StepProgressUpdatedEvent,
   RoutingEvaluatedEvent,
   ScriptedExecutionEvent,
-  TodoStepsExtractedEvent,
   VariablesExtractedEvent,
   IndependentStepsSelectedEvent,
   RequestHumanFeedbackEvent,
@@ -796,18 +696,9 @@ export type {
   StreamingErrorEvent,
   StreamingProgressEvent,
   StreamingConnectionLostEvent,
-  // Cache Detail Events
-  CacheHitEvent,
-  CacheMissEvent,
-  CacheWriteEvent,
-  CacheExpiredEvent,
-  CacheCleanupEvent,
-  CacheErrorEvent,
-  CacheOperationStartEvent,
   // MCP Server Connection Detail Events
   MCPServerConnectionStartEvent,
   MCPServerConnectionEndEvent,
-  MCPServerConnectionErrorEvent,
   // JSON Validation Events
   JSONValidationStartEvent,
   JSONValidationEndEvent,
@@ -818,12 +709,6 @@ export type {
   DebugEvent,
   PerformanceEvent,
   LLMTokenUsageEvent,
-  AgentProcessingEvent,
-  // Batch Execution Events
-  BatchExecutionStartEvent,
-  BatchGroupStartEvent,
-  BatchGroupEndEvent,
-  BatchExecutionEndEvent,
   // Background Agent Events
   BackgroundAgentStartedEvent,
   BackgroundAgentCompletedEvent,

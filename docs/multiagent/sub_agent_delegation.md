@@ -102,7 +102,6 @@ Sub-agents inherit most configuration from the parent request:
 | MaxTurns | Parent request | 100 |
 | ToolTimeout | `TOOL_EXECUTION_TIMEOUT` env var | No library default; desktop runtime sets a 90-minute final backstop |
 | Summarization | All parent summarization fields | Parent defaults |
-| Context Editing | All parent context-editing fields | Parent defaults |
 | LargeOutputThreshold | `LARGE_OUTPUT_THRESHOLD` env var | Default |
 | MCP servers | Parent's enabled servers (or the `servers` override from the delegate call) | — |
 | Browser session | Inherited from the parent workflow | — |

@@ -49,10 +49,8 @@ type MessageSequenceItemContext struct {
 // Orchestrator Event Types
 // These events are specific to the orchestrator application and are not part of the core mcpagent library
 const (
-	// Orchestrator events
-	OrchestratorStart events.EventType = "orchestrator_start"
-	OrchestratorEnd   events.EventType = "orchestrator_end"
-	OrchestratorError events.EventType = "orchestrator_error"
+	// Orchestrator events (only End is emitted; Start/Error never were)
+	OrchestratorEnd events.EventType = "orchestrator_end"
 
 	// Orchestrator Agent lifecycle events
 	OrchestratorAgentStart events.EventType = "orchestrator_agent_start"
@@ -82,15 +80,10 @@ const (
 	IndependentStepsSelected events.EventType = "independent_steps_selected"
 
 	// Todo planning events
-	TodoStepsExtracted  events.EventType = "todo_steps_extracted"
-	VariablesExtracted  events.EventType = "variables_extracted"
-	StepProgressUpdated events.EventType = "step_progress_updated"
+	VariablesExtracted events.EventType = "variables_extracted"
 
-	// Batch execution events (for variable groups)
-	BatchExecutionStart    events.EventType = "batch_execution_start"
-	BatchGroupStart        events.EventType = "batch_group_start"
-	BatchGroupEnd          events.EventType = "batch_group_end"
-	BatchExecutionEnd      events.EventType = "batch_execution_end"
+	// Batch execution events: only cancellation is emitted (user-visible
+	// terminal signal); the start/end/group wrappers were never produced.
 	BatchExecutionCanceled events.EventType = "batch_execution_canceled"
 
 	// Human Verification events
@@ -101,9 +94,6 @@ const (
 
 	// Step token usage event
 	StepTokenUsage events.EventType = "step_token_usage"
-
-	// Learning events
-	LearningSkipped events.EventType = "learning_skipped"
 
 	// Routing step evaluation events
 	RoutingEvaluated events.EventType = "routing_evaluated"
@@ -127,29 +117,16 @@ const (
 // Helper function to get component from orchestrator event type
 func GetComponentFromEventType(eventType events.EventType) string {
 	switch eventType {
-	case OrchestratorStart, OrchestratorEnd, OrchestratorError,
+	case OrchestratorEnd,
 		OrchestratorAgentStart, OrchestratorAgentEnd, OrchestratorAgentError,
-		IndependentStepsSelected, TodoStepsExtracted, VariablesExtracted,
-		StepTokenUsage, StepProgressUpdated,
-		BatchExecutionStart, BatchGroupStart, BatchGroupEnd, BatchExecutionEnd, BatchExecutionCanceled,
+		IndependentStepsSelected, VariablesExtracted,
+		StepTokenUsage,
+		BatchExecutionCanceled,
 		HumanVerificationResponse, RequestHumanFeedback, BlockingHumanFeedback, PlanApproval,
-		LearningSkipped,
 		RoutingEvaluated, PreValidationCompleted,
 		OrchestratorRouteSelected, OrchestratorStepCompleted:
 		return "orchestrator"
 	default:
 		return "system"
 	}
-}
-
-// Helper function to check if event is a start event
-func IsStartEvent(eventType events.EventType) bool {
-	return eventType == OrchestratorStart ||
-		eventType == OrchestratorAgentStart
-}
-
-// Helper function to check if event is an end event
-func IsEndEvent(eventType events.EventType) bool {
-	return eventType == OrchestratorEnd ||
-		eventType == OrchestratorAgentEnd
 }

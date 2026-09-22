@@ -462,7 +462,7 @@ export const useRunningWorkflowsStore = create<RunningWorkflowsStore>()(
                 }
 
                 // Resume events — workflow got a response or ended
-                if (event.type === 'human_verification_response' || event.type === 'workflow_end' || event.type === 'conversation_end' || event.type === 'context_canceled') {
+                if (event.type === 'human_verification_response' || event.type === 'workflow_end' || event.type === 'conversation_end' || event.type === 'context_cancelled') {
                   shouldResumeFromWaiting = true
                   shouldMarkWaitingForInput = false
                 }

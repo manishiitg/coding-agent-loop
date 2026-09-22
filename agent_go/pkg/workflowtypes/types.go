@@ -79,7 +79,6 @@ type PresetLLMConfig struct {
 	UseKnowledgebase           *bool  `json:"use_knowledgebase,omitempty"`
 	KBShape                    string `json:"kb_shape,omitempty"` // "graph+notes" (default) | "notes-only"
 	EnableContextSummarization *bool  `json:"enable_context_summarization,omitempty"`
-	EnableContextEditing       *bool  `json:"enable_context_editing,omitempty"`
 
 	TieredConfig *TieredLLMConfig `json:"tiered_config,omitempty"`
 

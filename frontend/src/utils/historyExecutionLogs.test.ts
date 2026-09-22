@@ -4,7 +4,7 @@ const mocks = vi.hoisted(() => ({ getTabEvents: vi.fn(), setSelectedRunFolder: v
 vi.mock('../stores/useChatStore', () => ({ useChatStore: { getState: () => ({ getTabEvents: mocks.getTabEvents }) } }))
 vi.mock('../stores/useWorkflowStore', () => ({ useWorkflowStore: { getState: () => mocks } }))
 import { historyExecutionRunFolder, openHistoryExecutionLogs } from './historyExecutionLogs'
-const event = (folder: string): PollingEvent => ({ type: 'batch_group_start', data: { data: { run_folder: folder } } } as PollingEvent)
+const event = (folder: string): PollingEvent => ({ type: 'todo_task_step_completed', data: { data: { run_folder: folder } } } as PollingEvent)
 
 describe('history execution logs navigation', () => {
   beforeEach(() => { vi.clearAllMocks(); mocks.getTabEvents.mockReturnValue([]) })

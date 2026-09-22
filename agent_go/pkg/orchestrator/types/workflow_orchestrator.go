@@ -353,12 +353,6 @@ func NewWorkflowOrchestrator(
 		kbShape = presetLLMConfig.KBShape
 	}
 
-	// Override context editing from preset config (base orchestrator defaults to env var)
-	if presetLLMConfig != nil && presetLLMConfig.EnableContextEditing != nil {
-		baseOrchestrator.SetEnableContextEditing(*presetLLMConfig.EnableContextEditing)
-		log.Printf("[CONTEXT_EDITING] Preset override: enable_context_editing=%v", *presetLLMConfig.EnableContextEditing)
-	}
-
 	// Create workflow orchestrator instance
 	wo := &WorkflowOrchestrator{
 		BaseOrchestrator: baseOrchestrator,

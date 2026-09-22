@@ -105,7 +105,7 @@ type StepBasedWorkflowOrchestrator struct {
 	// Run folder management
 	selectedRunFolder string // Current run folder name (iteration-0 for full workflow runs)
 
-	// Batch execution context (tracked for step_progress_updated events)
+	// Batch execution context (current group identity for env refs, logs, event metadata)
 	currentGroupName string // Current group name being executed
 	currentGroupIdx  int    // 0-based index of current group
 	totalGroups      int    // Total number of groups in batch
@@ -1131,7 +1131,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) CreateTodoList(ctx context.Context, o
 
 	// NOTE: Progress initialization is skipped here because batch execution will handle it per group
 	// Each group has its own run folder and progress file, initialized by ApplyCleanup in runBatchExecution
-	// This prevents duplicate "Step Progress Updated" events before batch_execution_start
+	// This prevents duplicate progress initialization before batch execution starts
 
 	if len(enabledGroups) == 0 {
 		return "", fmt.Errorf("no enabled variable groups found for execution")

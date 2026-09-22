@@ -102,8 +102,6 @@ func activityEventTitle(eventType string, payload map[string]interface{}) string
 		return firstSessionExecutionString(stringValue(payload["step_title"]), "Pre-validation completed")
 	case "routing_evaluated":
 		return firstSessionExecutionString(stringValue(payload["step_title"]), "Routing evaluated")
-	case "todo_steps_extracted":
-		return "Todo steps extracted"
 	case "todo_task_item_created", "todo_task_item_updated", "todo_task_item_completed":
 		return firstSessionExecutionString(stringValue(payload["title"]), stringValue(payload["todo_title"]), eventType)
 	case "workflow_start":
@@ -112,14 +110,6 @@ func activityEventTitle(eventType string, payload map[string]interface{}) string
 		return "Workflow completed"
 	case "workflow_error":
 		return "Workflow failed"
-	case "batch_execution_start":
-		return "Batch started"
-	case "batch_execution_end":
-		return "Batch completed"
-	case "batch_group_start":
-		return firstSessionExecutionString(stringValue(payload["group_name"]), "Group started")
-	case "batch_group_end":
-		return firstSessionExecutionString(stringValue(payload["group_name"]), "Group completed")
 	default:
 		return eventType
 	}

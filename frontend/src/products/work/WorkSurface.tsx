@@ -656,7 +656,7 @@ export function WorkSurface() {
       const interaction = parseProductInteraction(event)
       return (interaction?.product === 'work' && projectRefreshInteractionKinds.has(interaction.kind)) ||
         // Backward compatibility for events persisted before typed product interactions.
-        event.type === 'work_identity_updated' || event.type === 'work_workflow_references_updated'
+        event.type === 'work_workflow_references_updated'
     })
     .map(event => event.id || event.timestamp || '')
     .join('|')

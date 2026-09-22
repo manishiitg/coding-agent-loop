@@ -151,9 +151,6 @@ func NewBaseAgent(
 	summarizeOnFixedTokenThreshold bool, // Enable fixed token-based summarization trigger
 	fixedTokenThreshold int, // Fixed token threshold to trigger summarization
 	summaryKeepLastMessages int, // Number of recent messages to keep when summarizing
-	enableContextEditing bool, // Context editing configuration
-	contextEditingThreshold int, // Token threshold for context editing (0 = use default)
-	contextEditingTurnThreshold int, // Turn age threshold for context editing (0 = use default)
 	enableParallelToolExecution bool, // Parallel tool execution configuration
 	llmConfig *LLMConfig, // NEW: Full LLM configuration
 	apiKeys *AgentAPIKeys, // API keys for providers
@@ -257,8 +254,6 @@ func NewBaseAgent(
 			SummarizeOnTokenThreshold: summarizeOnTokenThreshold, TokenThresholdPercent: tokenThresholdPercent,
 			SummarizeOnFixedThreshold: summarizeOnFixedTokenThreshold, FixedTokenThreshold: fixedTokenThreshold,
 			SummaryKeepLastMessages: summaryKeepLastMessages,
-			EditingEnabled:          enableContextEditing, EditingThreshold: contextEditingThreshold,
-			EditingTurnThreshold: contextEditingTurnThreshold,
 		},
 		Coding: mcpagent.CodingRuntimeConfig{
 			PersistentClaudeCode: codingAgentKeepAlive, PersistentCodex: codingAgentKeepAlive,

@@ -134,8 +134,6 @@ export interface AgentQueryRequest {
   cdp_port?: number
   // Specialized multi-profile CDP testing. Each port uses a distinct Chrome profile.
   cdp_ports?: number[]
-  // Context editing configuration
-  enable_context_editing?: boolean // Enable context editing (dynamic context reduction)
   // Selected skills to include in the chat context
   selected_skills?: string[] // Array of skill folder names
   // Delegation tier configuration: Maps reasoning levels to specific provider/model pairs
@@ -940,20 +938,6 @@ export interface SummarizeConversationResponse {
   new_count?: number
   reduced_by?: number
   summary?: string
-}
-
-export interface CompactContextRequest {
-  token_threshold?: number // Optional: token threshold (default: 1000)
-  turn_threshold?: number  // Optional: turn age threshold (default: 10)
-}
-
-export interface CompactContextResponse {
-  session_id: string
-  status: string
-  message?: string
-  total_messages?: number
-  compacted_count?: number
-  total_tokens_saved?: number
 }
 
 // Slack Feedback Configuration types
@@ -1825,7 +1809,6 @@ export interface PresetLLMConfig {
   // Feature toggles
   use_knowledgebase?: boolean           // nil/true = enabled (default), false = disabled
   enable_context_summarization?: boolean // nil/true = enabled (default), false = disabled
-  enable_context_editing?: boolean       // nil/false = disabled (default), true = enabled
 
   tiered_config?: {
     tier_1: AgentLLMConfig

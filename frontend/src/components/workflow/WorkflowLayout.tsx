@@ -543,12 +543,10 @@ function withWorkflowRestoreTimeout<T>(promise: Promise<T>, label: string, timeo
 }
 
 /**
- * Helper function to restore workflow state from loaded events
- * Called during workflow reconnection to restore:
- * - Current running step ID
- * - Step statuses (running, completed, failed)
- * - Batch progress (for BatchProgressHeader)
- * This ensures the UI shows the correct state immediately after page refresh
+ * Helper function to hydrate a workflow tab's transcript from loaded events.
+ * Called during workflow reconnection. (Canvas step-status restoration was
+ * removed with the step-status machinery on 2026-09-22; activeTabOnly is
+ * kept for call-site compatibility.)
  */
 async function restoreWorkflowStateFromEvents(
   sessionId: string,
@@ -557,18 +555,8 @@ async function restoreWorkflowStateFromEvents(
   activeTabOnly = false,
 ): Promise<void> {
   try {
+    void activeTabOnly
     const { setTabEvents, setTabLastEventIndex, getTabLastEventIndex, getTabEvents } = useChatStore.getState()
-    const workflowStore = useWorkflowStore.getState()
-
-    // Transcript hydration and canvas-state restoration are separate concerns.
-    // Another workflow may already own the singleton canvas batch-progress
-    // state, but that must never prevent this session's conversation events
-    // from being loaded into its tab.
-    const shouldRestoreCanvasState = () => {
-      const store = useChatStore.getState()
-      const activeSession = store.activeTabId ? store.chatTabs[store.activeTabId]?.sessionId : undefined
-      return !useWorkflowStore.getState().batchProgress?.isActive && (!activeTabOnly || activeSession === sessionId)
-    }
 
     let events: PollingEvent[] = []
     let lastIndex = -1
@@ -610,124 +598,8 @@ async function restoreWorkflowStateFromEvents(
     if (lastIndex > currentIndex) {
       setTabLastEventIndex(sessionId, lastIndex)
     }
-
-    if (!shouldRestoreCanvasState()) {
-      logger.debug('WorkflowLayout', 'Hydrated workflow transcript without replacing active batch progress', {
-        sessionId,
-        eventCount: events.length,
-      })
-      return
-    }
-
-    // Scan events to find batch context, current step, and step statuses
-    let latestBatchContext: {
-      groupName: string
-      groupIndex: number
-      totalGroups: number
-      runFolder: string
-    } | null = null
-    let completedCount = 0
-    let failedCount = 0
-
-    // Track current step and step statuses
-    let latestRunningStepId: string | null = null
-    const stepStatuses = new Map<string, 'pending' | 'running' | 'completed' | 'failed'>()
-
-    for (const event of events) {
-      // Extract from todo_task_step_completed
-      if (event.type === 'todo_task_step_completed') {
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const stepId = data?.step_id as string
-        if (stepId) {
-          stepStatuses.set(stepId, 'completed')
-          if (latestRunningStepId === stepId) {
-            latestRunningStepId = null
-          }
-        }
-      }
-
-      // Extract from batch_group_start
-      if (event.type === 'batch_group_start') {
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const groupName = data?.group_name as string
-        const groupIndex = data?.group_index as number
-        const totalGroups = data?.total_groups as number
-        const runFolder = data?.run_folder as string
-
-        if (groupName && totalGroups > 0) {
-          latestBatchContext = { groupName, groupIndex, totalGroups, runFolder }
-        }
-      }
-
-      // Count completed/failed from batch_group_end
-      if (event.type === 'batch_group_end') {
-        const eventData = event.data as Record<string, unknown>
-        const data = (eventData?.data as Record<string, unknown>) || eventData
-        const success = data?.success as boolean
-        if (success === true) completedCount++
-        else if (success === false) failedCount++
-      }
-
-    }
-
-    // Restore current step ID if we found a running step
-    if (latestRunningStepId) {
-      logger.debug('WorkflowLayout', `Restoring currentStepId: ${latestRunningStepId}`)
-      workflowStore.setCurrentStepId(latestRunningStepId)
-    }
-
-    // Restore step statuses
-    if (stepStatuses.size > 0) {
-      logger.debug('WorkflowLayout', `Restoring ${stepStatuses.size} step statuses`)
-      stepStatuses.forEach((status, stepId) => {
-        workflowStore.setStepStatus(stepId, status)
-      })
-    }
-
-    // Restore batch progress if we found batch context with multiple groups
-    if (latestBatchContext && latestBatchContext.totalGroups > 1) {
-      const remaining = latestBatchContext.totalGroups - completedCount - failedCount
-
-      // Only restore if batch is still active (has remaining groups)
-      if (remaining > 0) {
-        workflowStore.handleBatchGroupStart(
-          latestBatchContext.groupName,
-          latestBatchContext.runFolder || '',
-          undefined,
-          latestBatchContext.groupIndex,
-          latestBatchContext.totalGroups
-        )
-
-        // Update completed/failed counts if we have them
-        if (completedCount > 0 || failedCount > 0) {
-          const state = useWorkflowStore.getState()
-          if (state.batchProgress) {
-            useWorkflowStore.setState({
-              batchProgress: {
-                ...state.batchProgress,
-                completedCount,
-                failedCount,
-                remainingCount: remaining
-              }
-            })
-          }
-        }
-
-        logger.debug('WorkflowLayout', 'Restored batch progress from events:', {
-          sessionId,
-          groupName: latestBatchContext.groupName,
-          groupIndex: latestBatchContext.groupIndex,
-          totalGroups: latestBatchContext.totalGroups,
-          completedCount,
-          failedCount,
-          remaining
-        })
-      }
-    }
   } catch (error) {
-    logger.warn('WorkflowLayout', 'Failed to restore batch progress:', error)
+    logger.warn('WorkflowLayout', 'Failed to restore workflow state:', error)
   }
 }
 

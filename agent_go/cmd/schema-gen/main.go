@@ -13,7 +13,6 @@ import (
 	todo_creation_human "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	orchestrator_events "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/events"
 	"github.com/manishiitg/mcpagent/events"
-	"github.com/manishiitg/mcpagent/mcpcache"
 
 	"github.com/invopop/jsonschema"
 )
@@ -89,7 +88,6 @@ type EventDataUnion struct {
 
 	// MCP Server Events
 	MCPServerConnection *events.MCPServerConnectionEvent `json:"mcp_server_connection,omitempty"`
-	MCPServerDiscovery  *events.MCPServerDiscoveryEvent  `json:"mcp_server_discovery,omitempty"`
 	MCPServerSelection  *events.MCPServerSelectionEvent  `json:"mcp_server_selection,omitempty"`
 
 	// System Events
@@ -107,33 +105,21 @@ type EventDataUnion struct {
 	ContextSummarizationCompleted *events.ContextSummarizationCompletedEvent `json:"context_summarization_completed,omitempty"`
 	ContextSummarizationError     *events.ContextSummarizationErrorEvent     `json:"context_summarization_error,omitempty"`
 
-	// Context Editing Events
-	ContextEditingCompleted *events.ContextEditingCompletedEvent `json:"context_editing_completed,omitempty"`
-	ContextEditingError     *events.ContextEditingErrorEvent     `json:"context_editing_error,omitempty"`
-
 	// Large Output Events
-	LargeToolOutputDetected          *events.LargeToolOutputDetectedEvent          `json:"large_tool_output_detected,omitempty"`
-	LargeToolOutputFileWritten       *events.LargeToolOutputFileWrittenEvent       `json:"large_tool_output_file_written,omitempty"`
-	LargeToolOutputFileWriteError    *events.LargeToolOutputFileWriteErrorEvent    `json:"large_tool_output_file_write_error,omitempty"`
-	LargeToolOutputServerUnavailable *events.LargeToolOutputServerUnavailableEvent `json:"large_tool_output_server_unavailable,omitempty"`
+	LargeToolOutputDetected       *events.LargeToolOutputDetectedEvent       `json:"large_tool_output_detected,omitempty"`
+	LargeToolOutputFileWritten    *events.LargeToolOutputFileWrittenEvent    `json:"large_tool_output_file_written,omitempty"`
+	LargeToolOutputFileWriteError *events.LargeToolOutputFileWriteErrorEvent `json:"large_tool_output_file_write_error,omitempty"`
 
 	// Fallback & Resilience Events
-	ModelChange        *events.ModelChangeEvent        `json:"model_change,omitempty"`
-	RetryAttempt       *events.RetryAttemptEvent       `json:"retry_attempt,omitempty"`
-	ThrottlingDetected *events.ThrottlingDetectedEvent `json:"throttling_detected,omitempty"`
-	TokenLimitExceeded *events.TokenLimitExceededEvent `json:"token_limit_exceeded,omitempty"`
+	RetryAttempt *events.RetryAttemptEvent `json:"retry_attempt,omitempty"`
 
 	// Cache Events
-	CacheEvent         *events.CacheEvent                `json:"cache_event,omitempty"`
-	ComprehensiveCache *mcpcache.ComprehensiveCacheEvent `json:"comprehensive_cache_event,omitempty"`
 
 	// Unified Completion Event
 	UnifiedCompletion *events.UnifiedCompletionEvent `json:"unified_completion,omitempty"`
 
-	// Orchestrator Events
-	OrchestratorStart      *orchestrator_events.OrchestratorStartEvent      `json:"orchestrator_start,omitempty"`
+	// Orchestrator Events (only End is emitted)
 	OrchestratorEnd        *orchestrator_events.OrchestratorEndEvent        `json:"orchestrator_end,omitempty"`
-	OrchestratorError      *orchestrator_events.OrchestratorErrorEvent      `json:"orchestrator_error,omitempty"`
 	OrchestratorAgentStart *orchestrator_events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start,omitempty"`
 	OrchestratorAgentEnd   *orchestrator_events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end,omitempty"`
 	OrchestratorAgentError *orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error,omitempty"`
@@ -151,13 +137,11 @@ type EventDataUnion struct {
 
 	// Step Execution Events
 	StepTokenUsage         *todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage,omitempty"`
-	StepProgressUpdated    *todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated,omitempty"`
 	RoutingEvaluated       *todo_creation_human.RoutingEvaluatedEvent       `json:"routing_evaluated,omitempty"`
 	PreValidationCompleted *todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed,omitempty"`
 	ScriptedExecution      *orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution,omitempty"`
 
 	// Todo/Planning Events
-	TodoStepsExtracted       *todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted,omitempty"`
 	VariablesExtracted       *todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted,omitempty"`
 	IndependentStepsSelected *todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected,omitempty"`
 
@@ -174,19 +158,9 @@ type EventDataUnion struct {
 	StreamingProgress       *events.StreamingProgressEvent       `json:"streaming_progress,omitempty"`
 	StreamingConnectionLost *events.StreamingConnectionLostEvent `json:"streaming_connection_lost,omitempty"`
 
-	// Cache Detail Events
-	CacheHit            *events.CacheHitEvent            `json:"cache_hit,omitempty"`
-	CacheMiss           *events.CacheMissEvent           `json:"cache_miss,omitempty"`
-	CacheWrite          *events.CacheWriteEvent          `json:"cache_write,omitempty"`
-	CacheExpired        *events.CacheExpiredEvent        `json:"cache_expired,omitempty"`
-	CacheCleanup        *events.CacheCleanupEvent        `json:"cache_cleanup,omitempty"`
-	CacheError          *events.CacheErrorEvent          `json:"cache_error,omitempty"`
-	CacheOperationStart *events.CacheOperationStartEvent `json:"cache_operation_start,omitempty"`
-
 	// MCP Server Connection Detail Events
 	MCPServerConnectionStart *events.MCPServerConnectionStartEvent `json:"mcp_server_connection_start,omitempty"`
 	MCPServerConnectionEnd   *events.MCPServerConnectionEndEvent   `json:"mcp_server_connection_end,omitempty"`
-	MCPServerConnectionError *events.MCPServerConnectionErrorEvent `json:"mcp_server_connection_error,omitempty"`
 
 	// JSON Validation Events
 	JSONValidationStart *events.JSONValidationStartEvent `json:"json_validation_start,omitempty"`
@@ -199,13 +173,6 @@ type EventDataUnion struct {
 	Debug                *events.DebugEvent                `json:"debug,omitempty"`
 	Performance          *events.PerformanceEvent          `json:"performance,omitempty"`
 	LLMTokenUsage        *events.LLMTokenUsageEvent        `json:"llm_token_usage,omitempty"`
-	AgentProcessing      *events.AgentProcessingEvent      `json:"agent_processing,omitempty"`
-
-	// Batch Execution Events
-	BatchExecutionStart *orchestrator_events.BatchExecutionStartEvent `json:"batch_execution_start,omitempty"`
-	BatchGroupStart     *orchestrator_events.BatchGroupStartEvent     `json:"batch_group_start,omitempty"`
-	BatchGroupEnd       *orchestrator_events.BatchGroupEndEvent       `json:"batch_group_end,omitempty"`
-	BatchExecutionEnd   *orchestrator_events.BatchExecutionEndEvent   `json:"batch_execution_end,omitempty"`
 }
 
 // =============================================================================
@@ -243,7 +210,6 @@ var EventRegistry = map[events.EventType]string{
 
 	// MCP Server Events
 	events.MCPServerConnection: "mcp_server_connection",
-	events.MCPServerDiscovery:  "mcp_server_discovery",
 	events.MCPServerSelection:  "mcp_server_selection",
 
 	// System Events
@@ -261,32 +227,21 @@ var EventRegistry = map[events.EventType]string{
 	events.ContextSummarizationCompleted: "context_summarization_completed",
 	events.ContextSummarizationError:     "context_summarization_error",
 
-	// Context Editing Events
-	events.ContextEditingCompleted: "context_editing_completed",
-	events.ContextEditingError:     "context_editing_error",
-
 	// Large Output Events
-	events.LargeToolOutputDetected:          "large_tool_output_detected",
-	events.LargeToolOutputFileWritten:       "large_tool_output_file_written",
-	events.LargeToolOutputFileWriteError:    "large_tool_output_file_write_error",
-	events.LargeToolOutputServerUnavailable: "large_tool_output_server_unavailable",
+	events.LargeToolOutputDetected:       "large_tool_output_detected",
+	events.LargeToolOutputFileWritten:    "large_tool_output_file_written",
+	events.LargeToolOutputFileWriteError: "large_tool_output_file_write_error",
 
 	// Fallback & Resilience Events
-	events.ModelChange:        "model_change",
-	events.RetryAttempt:       "retry_attempt",
-	events.ThrottlingDetected: "throttling_detected",
-	events.TokenLimitExceeded: "token_limit_exceeded",
+	events.RetryAttempt: "retry_attempt",
 
 	// Cache Events (comprehensive only - specific cache events are below)
-	events.ComprehensiveCache: "comprehensive_cache_event",
 
 	// Unified Completion Event
 	events.EventTypeUnifiedCompletion: "unified_completion",
 
-	// Orchestrator Events
-	orchestrator_events.OrchestratorStart:      "orchestrator_start",
+	// Orchestrator Events (only End is emitted)
 	orchestrator_events.OrchestratorEnd:        "orchestrator_end",
-	orchestrator_events.OrchestratorError:      "orchestrator_error",
 	orchestrator_events.OrchestratorAgentStart: "orchestrator_agent_start",
 	orchestrator_events.OrchestratorAgentEnd:   "orchestrator_agent_end",
 	orchestrator_events.OrchestratorAgentError: "orchestrator_agent_error",
@@ -304,13 +259,11 @@ var EventRegistry = map[events.EventType]string{
 
 	// Step Execution Events
 	orchestrator_events.StepTokenUsage:         "step_token_usage",
-	orchestrator_events.StepProgressUpdated:    "step_progress_updated",
 	orchestrator_events.RoutingEvaluated:       "routing_evaluated",
 	orchestrator_events.PreValidationCompleted: "pre_validation_completed",
 	orchestrator_events.ScriptedExecution:      "learn_code_script_execution",
 
 	// Todo/Planning Events
-	orchestrator_events.TodoStepsExtracted:       "todo_steps_extracted",
 	orchestrator_events.VariablesExtracted:       "variables_extracted",
 	orchestrator_events.IndependentStepsSelected: "independent_steps_selected",
 
@@ -327,19 +280,9 @@ var EventRegistry = map[events.EventType]string{
 	events.StreamingProgress:       "streaming_progress",
 	events.StreamingConnectionLost: "streaming_connection_lost",
 
-	// Cache Detail Events
-	events.CacheHit:            "cache_hit",
-	events.CacheMiss:           "cache_miss",
-	events.CacheWrite:          "cache_write",
-	events.CacheExpired:        "cache_expired",
-	events.CacheCleanup:        "cache_cleanup",
-	events.CacheError:          "cache_error",
-	events.CacheOperationStart: "cache_operation_start",
-
 	// MCP Server Connection Detail Events
 	events.MCPServerConnectionStart: "mcp_server_connection_start",
 	events.MCPServerConnectionEnd:   "mcp_server_connection_end",
-	events.MCPServerConnectionError: "mcp_server_connection_error",
 
 	// JSON Validation Events
 	events.JSONValidationStart: "json_validation_start",
@@ -352,13 +295,6 @@ var EventRegistry = map[events.EventType]string{
 	events.Debug:                "debug",
 	events.Performance:          "performance",
 	events.LLMTokenUsage:        "llm_token_usage",
-	events.AgentProcessing:      "agent_processing",
-
-	// Batch Execution Events
-	orchestrator_events.BatchExecutionStart: "batch_execution_start",
-	orchestrator_events.BatchGroupStart:     "batch_group_start",
-	orchestrator_events.BatchGroupEnd:       "batch_group_end",
-	orchestrator_events.BatchExecutionEnd:   "batch_execution_end",
 }
 
 // =============================================================================
@@ -367,9 +303,7 @@ var EventRegistry = map[events.EventType]string{
 
 // schemaOnlyPayloadKeys are represented in the legacy schema but deliberately
 // have no standalone wire event discriminator.
-var schemaOnlyPayloadKeys = map[string]struct{}{
-	"cache_event": {},
-}
+var schemaOnlyPayloadKeys = map[string]struct{}{}
 
 func eventPayloadKeys() (map[string]struct{}, error) {
 	keys := make(map[string]struct{})
@@ -538,7 +472,6 @@ type UnifiedEvent struct {
 	ConversationErrorEvent   events.ConversationErrorEvent   `json:"conversation_error"`
 	LLMGenerationErrorEvent  events.LLMGenerationErrorEvent  `json:"llm_generation_error"`
 	MCPServerConnectionEvent events.MCPServerConnectionEvent `json:"mcp_server_connection"`
-	MCPServerDiscoveryEvent  events.MCPServerDiscoveryEvent  `json:"mcp_server_discovery"`
 	MCPServerSelectionEvent  events.MCPServerSelectionEvent  `json:"mcp_server_selection"`
 	ConversationStartEvent   events.ConversationStartEvent   `json:"conversation_start"`
 	ConversationEndEvent     events.ConversationEndEvent     `json:"conversation_end"`
@@ -549,8 +482,6 @@ type UnifiedEvent struct {
 
 	LargeToolOutputDetectedEvent    events.LargeToolOutputDetectedEvent    `json:"large_tool_output_detected"`
 	LargeToolOutputFileWrittenEvent events.LargeToolOutputFileWrittenEvent `json:"large_tool_output_file_written"`
-	ThrottlingDetectedEvent         events.ThrottlingDetectedEvent         `json:"throttling_detected"`
-	TokenLimitExceededEvent         events.TokenLimitExceededEvent         `json:"token_limit_exceeded"`
 	TokenUsageEvent                 events.TokenUsageEvent                 `json:"token_usage"`
 	MaxTurnsReachedEvent            events.MaxTurnsReachedEvent            `json:"max_turns_reached"`
 	ContextCancelledEvent           events.ContextCancelledEvent           `json:"context_cancelled"`
@@ -560,25 +491,16 @@ type UnifiedEvent struct {
 	ContextSummarizationCompletedEvent events.ContextSummarizationCompletedEvent `json:"context_summarization_completed"`
 	ContextSummarizationErrorEvent     events.ContextSummarizationErrorEvent     `json:"context_summarization_error"`
 
-	// Context Editing Events
-	ContextEditingCompletedEvent events.ContextEditingCompletedEvent `json:"context_editing_completed"`
-	ContextEditingErrorEvent     events.ContextEditingErrorEvent     `json:"context_editing_error"`
-
 	// Additional MCP Agent Events that exist in backend
 	ToolOutputEvent   events.ToolOutputEvent   `json:"tool_output"`
 	ToolResponseEvent events.ToolResponseEvent `json:"tool_response"`
 
-	ModelChangeEvent            events.ModelChangeEvent            `json:"model_change"`
 	RetryAttemptEvent           events.RetryAttemptEvent           `json:"retry_attempt"`
-	CacheEvent                  events.CacheEvent                  `json:"cache_event"`
-	ComprehensiveCacheEvent     mcpcache.ComprehensiveCacheEvent   `json:"comprehensive_cache_event"`
 	ToolExecutionEvent          events.ToolExecutionEvent          `json:"tool_execution"`
 	LLMGenerationWithRetryEvent events.LLMGenerationWithRetryEvent `json:"llm_generation_with_retry"`
 
-	// Orchestrator Events - now handled by unified events system
-	OrchestratorStartEvent      orchestrator_events.OrchestratorStartEvent      `json:"orchestrator_start"`
+	// Orchestrator Events - now handled by unified events system (only End is emitted)
 	OrchestratorEndEvent        orchestrator_events.OrchestratorEndEvent        `json:"orchestrator_end"`
-	OrchestratorErrorEvent      orchestrator_events.OrchestratorErrorEvent      `json:"orchestrator_error"`
 	OrchestratorAgentStartEvent orchestrator_events.OrchestratorAgentStartEvent `json:"orchestrator_agent_start"`
 	OrchestratorAgentEndEvent   orchestrator_events.OrchestratorAgentEndEvent   `json:"orchestrator_agent_end"`
 	OrchestratorAgentErrorEvent orchestrator_events.OrchestratorAgentErrorEvent `json:"orchestrator_agent_error"`
@@ -597,18 +519,15 @@ type UnifiedEvent struct {
 
 	// Step Execution Events
 	StepTokenUsageEvent         todo_creation_human.StepTokenUsageEvent         `json:"step_token_usage"`
-	StepProgressUpdatedEvent    todo_creation_human.StepProgressUpdatedEvent    `json:"step_progress_updated"`
 	PreValidationCompletedEvent todo_creation_human.PreValidationCompletedEvent `json:"pre_validation_completed"`
 	ScriptedExecutionEvent      orchestrator_events.ScriptedExecutionEvent      `json:"learn_code_script_execution"`
 
 	// Todo/Planning Events
-	TodoStepsExtractedEvent       todo_creation_human.TodoStepsExtractedEvent       `json:"todo_steps_extracted"`
 	VariablesExtractedEvent       todo_creation_human.VariablesExtractedEvent       `json:"variables_extracted"`
 	IndependentStepsSelectedEvent todo_creation_human.IndependentStepsSelectedEvent `json:"independent_steps_selected"`
 
 	// Large Output Error Events
-	LargeToolOutputFileWriteErrorEvent    events.LargeToolOutputFileWriteErrorEvent    `json:"large_tool_output_file_write_error"`
-	LargeToolOutputServerUnavailableEvent events.LargeToolOutputServerUnavailableEvent `json:"large_tool_output_server_unavailable"`
+	LargeToolOutputFileWriteErrorEvent events.LargeToolOutputFileWriteErrorEvent `json:"large_tool_output_file_write_error"`
 
 	// Nested types that need to be included in schema (not events themselves)
 	// TodoStep is used by frontend but not directly in events, so we include it here to ensure it's generated

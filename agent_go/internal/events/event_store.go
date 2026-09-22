@@ -31,6 +31,9 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 	"cache_cleanup":             true,
 	"cache_error":               true,
 	"cache_operation_start":     true,
+	// MCP connection lifecycle - tracer spans only, never shown
+	"mcp_server_connection_start": true,
+	"mcp_server_connection_end":   true,
 	// Streaming chunks — ephemeral, only useful in real-time via subscriber.
 	// Excluding from GetEvents/polling prevents them from consuming the InitialEventsLimit (300)
 	// and pushing important events (request_human_feedback, tool calls) out of range.
@@ -53,13 +56,10 @@ var NEVER_SHOW_EVENTS = map[string]bool{
 // The frontend hides it from the event list display via its own HIDDEN_EVENTS.
 // NOTE: agent_error and batch_execution_canceled are NOT filtered — both are
 // user-visible terminal signals for flat and tree event views.
-// step_progress_updated is NOT in this list because it's required for React Flow canvas
-// node highlighting - it must always be sent to frontend for workflow mode to function correctly.
+// NOTE: step_progress_updated was removed on 2026-09-22 (emitted but never
+// read anywhere; canvas step status is restored from todo_task_step_completed
+// by WorkflowLayout, not from this event).
 var HIDDEN_EVENTS = map[string]bool{
-	"batch_execution_end":       true,
-	"batch_execution_start":     true,
-	"batch_group_end":           true,
-	"batch_group_start":         true,
 	"llm_generation_start":      true,
 	"llm_generation_with_retry": true,
 	"conversation_start":        true,
@@ -105,8 +105,6 @@ var STRUCTURAL_EVENTS = map[string]bool{
 	"orchestrator_agent_error":    true,
 	"orchestrator_agent_start":    true,
 	"orchestrator_end":            true,
-	"orchestrator_error":          true,
-	"orchestrator_start":          true,
 	"plan_approval":               true,
 	"pre_validation_completed":    true,
 	"request_human_feedback":      true,

@@ -33,6 +33,9 @@ var SKIP_EVENTS = map[string]bool{
 	"cache_cleanup":             true,
 	"cache_error":               true,
 	"cache_operation_start":     true,
+	// MCP connection lifecycle - tracer spans only (Langfuse/LangSmith), no UI
+	"mcp_server_connection_start": true,
+	"mcp_server_connection_end":   true,
 }
 
 // BaseEventBridge contains the common functionality for all event bridges.

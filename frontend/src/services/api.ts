@@ -66,8 +66,6 @@ import type {
   PendingHumanFeedbackResponse,
   SummarizeConversationRequest,
   SummarizeConversationResponse,
-  CompactContextRequest,
-  CompactContextResponse,
   RunFoldersResponse,
   RunFolderInfo,
   RunMetadataModels,
@@ -1425,16 +1423,6 @@ export const agentApi = {
   // Summarize conversation history for a session
   summarizeConversation: async (sessionId: string, request?: SummarizeConversationRequest): Promise<SummarizeConversationResponse> => {
     const response = await api.post(`/api/sessions/${sessionId}/summarize`, request || {}, {
-      headers: {
-        'X-Session-ID': sessionId
-      }
-    })
-    return response.data
-  },
-
-  // Compact context (edit stale tool responses) for a session
-  compactContext: async (sessionId: string, request?: CompactContextRequest): Promise<CompactContextResponse> => {
-    const response = await api.post(`/api/sessions/${sessionId}/compact`, request || {}, {
       headers: {
         'X-Session-ID': sessionId
       }

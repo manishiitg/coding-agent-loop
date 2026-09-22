@@ -177,7 +177,6 @@ interface UsePlanToFlowOptions {
   showDependencyEdges?: boolean // Default: false (hide dependency edges for cleaner view)
   changes?: PlanChanges | null  // Optional: highlight changes on nodes
   completedStepIndices?: number[]  // 0-based indices of completed steps (from steps_done.json)
-  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'> | Record<string, 'pending' | 'running' | 'completed' | 'failed'> | null  // Step status from events (Map or serialized object for stable comparison)
   workspacePath?: string | null  // Workspace path for file opening
   selectedRunFolder?: string  // Selected iteration folder for file opening
   variablesManifest?: VariablesManifest | null  // Variables manifest for Variables node
@@ -1039,7 +1038,6 @@ function stepToNode(
   step: PlanStep,
   stepIndex: number,
   changes?: PlanChanges | null,
-  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string,
   completedStepIds?: Set<string> // Set of completed step IDs (converted from indices for step_id-based matching)
@@ -1049,15 +1047,12 @@ function stepToNode(
   // Determine change type for highlighting
   const changeType = getChangeType(step.id || nodeId, changes)
 
-  // Determine status: Use step_id as primary matching method (stepStatusMap > completedStepIds > pending)
+  // Determine status: completedStepIds (from steps_done.json) > pending.
+  // Event-driven step status was removed on 2026-09-22 (no readers need it).
   let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
   const stepId = step.id || nodeId
 
-  // Primary: Check stepStatusMap (from events) - this is the most up-to-date and uses step_id
-  if (stepStatusMap && stepStatusMap.has(stepId)) {
-    status = stepStatusMap.get(stepId)!
-  } else if (completedStepIds && completedStepIds.has(stepId)) {
-    // Primary: Check completedStepIds (converted from completedStepIndices) - uses step_id for matching
+  if (completedStepIds && completedStepIds.has(stepId)) {
     status = 'completed' as const
   } else {
     // Default: pending
@@ -1215,7 +1210,6 @@ function processSteps(
   presetUseCodeExecutionMode: boolean,
   presetLLMConfig: AgentLLMConfig | undefined,
   availableLLMs: Array<{ provider: string; model: string; label: string }>,
-  stepStatusMap?: Map<string, 'pending' | 'running' | 'completed' | 'failed'>,
   workspacePath?: string | null,
   selectedRunFolder?: string,
   stepIdToNodeIdMap?: Map<string, string>, // Map of step ID to node ID for next_step_id lookups
@@ -1288,10 +1282,7 @@ function processSteps(
         const subAgentStep = route.sub_agent_step
         const stepId = subAgentStep.id || subAgentNodeId
 
-        let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
-        if (stepStatusMap && stepStatusMap.has(stepId)) {
-          status = stepStatusMap.get(stepId)!
-        }
+        const status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
 
         const changeType = getChangeType(stepId, changes)
 
@@ -1413,10 +1404,7 @@ function processSteps(
       const routeId = 'generic'
       const subAgentNodeId = `${todoTaskNodeId}-sub-agent-${routeId}`
 
-      let status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
-      if (stepStatusMap && stepStatusMap.has(subAgentNodeId)) {
-        status = stepStatusMap.get(subAgentNodeId)!
-      }
+      const status: 'pending' | 'running' | 'completed' | 'failed' = 'pending'
 
       const subAgentNode: WorkflowNode = {
         id: subAgentNodeId,
@@ -1492,7 +1480,7 @@ function processSteps(
   }
 
   steps.forEach((step, index) => {
-    const node = stepToNode(step, index, changes, stepStatusMap, workspacePath, selectedRunFolder, completedStepIds)
+    const node = stepToNode(step, index, changes, workspacePath, selectedRunFolder, completedStepIds)
     nodes.push(node)
 
     // Array order supplies the normal sequential edge. Explicit route targets
@@ -1858,7 +1846,6 @@ export function usePlanToFlow(
     showDependencyEdges = false,
     changes = null,
     completedStepIndices = [],
-    stepStatusMap,
     variablesManifest = null,
     onOpenVariablesSidebar,
     isLoadingVariables = false,
@@ -1875,34 +1862,6 @@ export function usePlanToFlow(
   const presetLLMConfig = activePreset?.llmConfig || undefined
   // Get available LLMs for model name formatting
   const availableLLMs = useLLMStore(state => state.availableLLMs)
-
-  // Convert serialized stepStatusMap to Map if needed, and create stable reference for dependency comparison
-  const stepStatusMapSerialized = useMemo(() => {
-    if (!stepStatusMap) return null
-    // If it's already a Map, serialize it for stable comparison
-    if (stepStatusMap instanceof Map) {
-      return Object.fromEntries(stepStatusMap)
-    }
-    // If it's already an object, return as-is
-    return stepStatusMap
-  }, [stepStatusMap])
-
-  // Use a ref for stepStatusMap so status changes don't trigger full node recalculation.
-  // Status updates are handled by the fast-path effect in WorkflowCanvas (setNodes in-place).
-  const stepStatusMapRef = useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'> | undefined>(undefined)
-  useEffect(() => {
-    if (!stepStatusMapSerialized) {
-      stepStatusMapRef.current = undefined
-    } else {
-      stepStatusMapRef.current = new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
-    }
-  }, [stepStatusMapSerialized])
-  // Also keep a computed value for initial render (ref won't be set yet on first render)
-  const stepStatusMapAsMap = stepStatusMapRef.current ?? (
-    stepStatusMapSerialized
-      ? new Map(Object.entries(stepStatusMapSerialized)) as Map<string, 'pending' | 'running' | 'completed' | 'failed'>
-      : undefined
-  )
 
   const lastComputedFlowRef = useRef<UsePlanToFlowResult>({ nodes: [], edges: [] })
 
@@ -1962,7 +1921,6 @@ export function usePlanToFlow(
       presetUseCodeExecutionMode,
       presetLLMConfig,
       availableLLMs,
-      stepStatusMapAsMap,
       options.workspacePath,
       options.selectedRunFolder,
       stepIdToNodeIdMap,
@@ -1978,7 +1936,6 @@ export function usePlanToFlow(
         presetUseCodeExecutionMode,
         presetLLMConfig,
         availableLLMs,
-        stepStatusMapAsMap,
         options.workspacePath,
         options.selectedRunFolder,
         stepIdToNodeIdMap,
@@ -2578,9 +2535,6 @@ export function usePlanToFlow(
 
     lastComputedFlowRef.current = layoutedResult
     return layoutedResult
-  // Note: stepStatusMapAsMap is intentionally NOT a dependency here.
-  // Status updates are handled by the fast-path effect in WorkflowCanvas (surgical node updates),
-  // so we avoid recalculating the entire node/edge layout on every status change.
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [disabled, plan, showDependencyEdges, changes, presetUseCodeExecutionMode, presetLLMConfig, availableLLMs, completedStepIndices, options.workspacePath, options.selectedRunFolder, variablesManifest, onOpenVariablesSidebar, isLoadingVariables, layoutDirection])
 }

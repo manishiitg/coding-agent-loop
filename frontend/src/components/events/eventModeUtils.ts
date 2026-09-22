@@ -1,16 +1,9 @@
-// Events that are never displayed in any mode (they drive non-chat UI like canvas node status)
-export const NEVER_DISPLAY_EVENTS = new Set([
-  'step_progress_updated',
-]);
-
 // Hidden events - events hidden in chat view
 export const HIDDEN_EVENTS = new Set([
   'llm_generation_start',
   'llm_generation_with_retry',
   'conversation_start',
   'conversation_turn',
-  'cache_event',
-  'comprehensive_cache_event',
   'system_prompt',
   'agent_start',
   'llm_generation_end',
@@ -23,7 +16,6 @@ export const HIDDEN_EVENTS = new Set([
 // Categories:
 //   Agent lifecycle:    orchestrator start/end, delegation start/end, background agents
 //   Task progress:      todo items (created/updated/completed), step completion, status updates
-//   Batch progress:     batch group start/end
 //   Workflow lifecycle:  workflow start/end/error
 //   User interaction:   user messages, human feedback, plan approval
 //   Errors/completion:  conversation end/error, context cancelled, unified completion
@@ -44,9 +36,6 @@ export const SUMMARY_MODE_EVENTS = new Set([
   // Task & step progress
   'todo_task_route_selected',
   'todo_task_step_completed',
-  'step_progress_updated',
-  'batch_group_start',
-  'batch_group_end',
   'pre_validation_completed',
 
   // Workflow lifecycle
@@ -71,7 +60,6 @@ export const SUMMARY_MODE_EVENTS = new Set([
 // Helper function to check if an event should be shown
 export const shouldShowEventByMode = (eventType: string, _mode?: unknown): boolean => {
   if (!eventType) return false
-  if (NEVER_DISPLAY_EVENTS.has(eventType)) return false
 
   return !HIDDEN_EVENTS.has(eventType)
 }

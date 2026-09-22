@@ -418,7 +418,6 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
    *   - Initial step config creation (when setting up a new workspace)
    *   - One-time migrations or bulk imports
    *   - Edge cases where backend API is unavailable
-   *   - TodoStepsExtractedEvent handler (if needed for backward compatibility)
    * 
    * ❌ DO NOT USE THIS METHOD FOR:
    *   - Normal step config updates (use updateStepConfig API instead)

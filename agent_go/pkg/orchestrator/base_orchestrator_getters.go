@@ -250,26 +250,6 @@ func (bo *BaseOrchestrator) GetSummaryKeepLastMessages() int {
 	return bo.summaryKeepLastMessages
 }
 
-// GetEnableContextEditing returns whether context editing is enabled
-func (bo *BaseOrchestrator) GetEnableContextEditing() bool {
-	return bo.enableContextEditing
-}
-
-// SetEnableContextEditing overrides the context editing enabled flag (e.g. from preset config)
-func (bo *BaseOrchestrator) SetEnableContextEditing(enabled bool) {
-	bo.enableContextEditing = enabled
-}
-
-// GetContextEditingThreshold returns the token threshold for context editing (0 = use default)
-func (bo *BaseOrchestrator) GetContextEditingThreshold() int {
-	return bo.contextEditingThreshold
-}
-
-// GetContextEditingTurnThreshold returns the turn age threshold for context editing (0 = use default)
-func (bo *BaseOrchestrator) GetContextEditingTurnThreshold() int {
-	return bo.contextEditingTurnThreshold
-}
-
 // GetLargeOutputThreshold returns the token threshold for context offloading (0 = use default: 10000)
 func (bo *BaseOrchestrator) GetLargeOutputThreshold() int {
 	return bo.largeOutputThreshold

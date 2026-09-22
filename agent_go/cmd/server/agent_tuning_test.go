@@ -23,9 +23,6 @@ func clearTuningEnv(t *testing.T) {
 		"SUMMARIZE_ON_FIXED_TOKEN_THRESHOLD",
 		"FIXED_TOKEN_THRESHOLD",
 		"SUMMARY_KEEP_LAST_MESSAGES",
-		"ENABLE_CONTEXT_EDITING",
-		"CONTEXT_EDITING_THRESHOLD",
-		"CONTEXT_EDITING_TURN_THRESHOLD",
 		"LARGE_OUTPUT_THRESHOLD",
 		"ENABLE_PARALLEL_TOOL_EXECUTION",
 	} {
@@ -53,11 +50,8 @@ func TestApplySharedLLMAgentTuningDefaults(t *testing.T) {
 	if cfg.SummaryKeepLastMessages != 4 {
 		t.Errorf("SummaryKeepLastMessages default = %d, want 4", cfg.SummaryKeepLastMessages)
 	}
-	if cfg.EnableContextEditing {
-		t.Error("context editing should default to disabled")
-	}
-	if cfg.ContextEditingThreshold != 0 || cfg.ContextEditingTurnThreshold != 0 || cfg.LargeOutputThreshold != 0 {
-		t.Error("editing/offload thresholds should default to 0 (library defaults)")
+	if cfg.LargeOutputThreshold != 0 {
+		t.Error("offload thresholds should default to 0 (library defaults)")
 	}
 	if !cfg.EnableParallelToolExecution {
 		t.Error("parallel tool execution should default to enabled")
@@ -94,7 +88,6 @@ func TestApplySharedLLMAgentTuningPriority(t *testing.T) {
 	t.Setenv("ENABLE_CONTEXT_SUMMARIZATION", "false")
 	t.Setenv("TOKEN_THRESHOLD_PERCENT", "0.5")
 	t.Setenv("FIXED_TOKEN_THRESHOLD", "100000")
-	t.Setenv("ENABLE_CONTEXT_EDITING", "true")
 	t.Setenv("ENABLE_PARALLEL_TOOL_EXECUTION", "false")
 	t.Setenv("TOOL_EXECUTION_TIMEOUT", "90s")
 
@@ -107,9 +100,6 @@ func TestApplySharedLLMAgentTuningPriority(t *testing.T) {
 	if envCfg.TokenThresholdPercent != 0.5 || envCfg.FixedTokenThreshold != 100000 {
 		t.Errorf("env thresholds not applied: %v / %d", envCfg.TokenThresholdPercent, envCfg.FixedTokenThreshold)
 	}
-	if !envCfg.EnableContextEditing {
-		t.Error("env should enable context editing")
-	}
 	if envCfg.EnableParallelToolExecution {
 		t.Error("env should disable parallel tool execution")
 	}
@@ -120,21 +110,16 @@ func TestApplySharedLLMAgentTuningPriority(t *testing.T) {
 	// Preset beats env (root chat agents only).
 	preset := &workflowtypes.PresetLLMConfig{
 		EnableContextSummarization: boolPtr(true),
-		EnableContextEditing:       boolPtr(false),
 	}
 	var presetCfg agent.LLMAgentConfig
 	applySharedLLMAgentTuning(&presetCfg, &QueryRequest{}, preset)
 	if !presetCfg.EnableContextSummarization {
 		t.Error("preset should override env for summarization")
 	}
-	if presetCfg.EnableContextEditing {
-		t.Error("preset should override env for context editing")
-	}
 
 	// Request beats preset and env.
 	req := &QueryRequest{
 		EnableContextSummarization: boolPtr(false),
-		EnableContextEditing:       boolPtr(true),
 		TokenThresholdPercent:      0.9,
 		FixedTokenThreshold:        300000,
 	}
@@ -142,9 +127,6 @@ func TestApplySharedLLMAgentTuningPriority(t *testing.T) {
 	applySharedLLMAgentTuning(&reqCfg, req, preset)
 	if reqCfg.EnableContextSummarization {
 		t.Error("request should override preset for summarization")
-	}
-	if !reqCfg.EnableContextEditing {
-		t.Error("request should override preset for context editing")
 	}
 	if reqCfg.TokenThresholdPercent != 0.9 || reqCfg.FixedTokenThreshold != 300000 {
 		t.Errorf("request thresholds not applied: %v / %d", reqCfg.TokenThresholdPercent, reqCfg.FixedTokenThreshold)
@@ -160,9 +142,7 @@ func TestRootAndSubAgentTuningMatch(t *testing.T) {
 	t.Setenv("SUMMARY_KEEP_LAST_MESSAGES", "6")
 
 	req := &QueryRequest{
-		SummarizeOnTokenThreshold:   boolPtr(false),
-		ContextEditingThreshold:     42,
-		ContextEditingTurnThreshold: 7,
+		SummarizeOnTokenThreshold: boolPtr(false),
 	}
 
 	var rootCfg, subCfg agent.LLMAgentConfig
@@ -175,9 +155,6 @@ func TestRootAndSubAgentTuningMatch(t *testing.T) {
 		rootCfg.SummarizeOnFixedTokenThreshold != subCfg.SummarizeOnFixedTokenThreshold ||
 		rootCfg.FixedTokenThreshold != subCfg.FixedTokenThreshold ||
 		rootCfg.SummaryKeepLastMessages != subCfg.SummaryKeepLastMessages ||
-		rootCfg.EnableContextEditing != subCfg.EnableContextEditing ||
-		rootCfg.ContextEditingThreshold != subCfg.ContextEditingThreshold ||
-		rootCfg.ContextEditingTurnThreshold != subCfg.ContextEditingTurnThreshold ||
 		rootCfg.LargeOutputThreshold != subCfg.LargeOutputThreshold ||
 		rootCfg.EnableParallelToolExecution != subCfg.EnableParallelToolExecution ||
 		rootCfg.ToolTimeout != subCfg.ToolTimeout {
@@ -185,9 +162,6 @@ func TestRootAndSubAgentTuningMatch(t *testing.T) {
 	}
 	if subCfg.FixedTokenThreshold != 150000 || subCfg.SummaryKeepLastMessages != 6 {
 		t.Errorf("env values not applied: %d / %d", subCfg.FixedTokenThreshold, subCfg.SummaryKeepLastMessages)
-	}
-	if subCfg.ContextEditingThreshold != 42 || subCfg.ContextEditingTurnThreshold != 7 {
-		t.Errorf("request values not applied: %d / %d", subCfg.ContextEditingThreshold, subCfg.ContextEditingTurnThreshold)
 	}
 }
 

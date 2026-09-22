@@ -205,7 +205,7 @@ func firstSessionExecutionString(values ...string) string {
 
 func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]interface{}) (status string, completed bool, failed bool) {
 	switch event.Type {
-	case "agent_end", "conversation_end", "unified_completion", "workflow_end", "batch_execution_end", "batch_group_end", "todo_task_step_completed":
+	case "agent_end", "conversation_end", "unified_completion", "workflow_end", "todo_task_step_completed":
 		if stringValue(payload["error"]) != "" || event.Error != "" {
 			return trackedExecutionStatusFailed, true, true
 		}
@@ -225,7 +225,7 @@ func eventDerivedExecutionStatus(event internalevents.Event, payload map[string]
 		return trackedExecutionStatusCompleted, true, false
 	case "orchestrator_agent_error", "background_agent_failed":
 		return trackedExecutionStatusFailed, true, true
-	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled", "context_canceled":
+	case "background_agent_terminated", "background_agent_canceled", "batch_execution_canceled", "context_cancelled":
 		return trackedExecutionStatusCanceled, true, false
 	default:
 		return trackedExecutionStatusRunning, false, false

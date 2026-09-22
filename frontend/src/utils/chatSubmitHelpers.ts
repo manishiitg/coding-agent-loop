@@ -7,7 +7,6 @@ import type { PollingEvent, ExtendedLLMConfiguration, AgentProfileChatRequest, A
 import type { ChatTab } from '../stores/useChatStore'
 import type { ModeCategory } from '../stores/useModeStore'
 import { useChatStore } from '../stores/useChatStore'
-import { useGlobalPresetStore } from '../stores/useGlobalPresetStore'
 import { useWorkflowStore } from '../stores/useWorkflowStore'
 import { logger } from './logger'
 
@@ -132,19 +131,6 @@ export function buildQueryRequestPayload(params: {
   // isChatWithExtras: only multi-agent mode gets optional extras (browser, skills, secrets, etc.)
   const isChatWithExtras = isMultiAgentMode
 
-  // Context editing from workflow preset
-  let enableContextEditing: boolean | undefined = undefined
-  if (selectedModeCategory === 'workflow') {
-    const presetStore = useGlobalPresetStore.getState()
-    const presetId = workflowPresetId || currentTab?.metadata?.presetQueryId
-    const preset = presetId
-      ? presetStore.workflowPresets.find(p => p.id === presetId)
-      : null
-    if (preset?.llmConfig?.enable_context_editing === false) {
-      enableContextEditing = false
-    }
-  }
-
   // Browser mode can drift on resumed/migrated tabs when older fields exist.
   // Derive a robust effective mode so request payloads are consistent.
   const rawBrowserMode = currentTab?.config?.browserMode
@@ -196,7 +182,6 @@ export function buildQueryRequestPayload(params: {
     selected_skills: isChatWithExtras && currentTab?.config?.selectedSkills?.length
       ? currentTab.config.selectedSkills
       : undefined,
-    enable_context_editing: enableContextEditing,
     decrypted_secrets: (isChatWithExtras || selectedModeCategory === 'workflow') && decryptedSecrets?.length ? decryptedSecrets : undefined,
     selected_global_secrets: (isChatWithExtras || selectedModeCategory === 'workflow')
       ? (selectedGlobalSecrets ?? undefined)

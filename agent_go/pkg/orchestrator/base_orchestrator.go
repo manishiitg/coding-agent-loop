@@ -104,11 +104,6 @@ type BaseOrchestrator struct {
 	fixedTokenThreshold            int
 	summaryKeepLastMessages        int
 
-	// Context editing configuration
-	enableContextEditing        bool // Enable context editing (dynamic context reduction)
-	contextEditingThreshold     int  // Token threshold for context editing
-	contextEditingTurnThreshold int  // Turn age threshold for context editing
-
 	// Context offloading configuration
 	largeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
 
@@ -194,22 +189,6 @@ func NewBaseOrchestrator(
 		}
 	}
 
-	// Load context editing configuration from environment variables
-	// Default to disabled (false), can be enabled via ENABLE_CONTEXT_EDITING=true
-	enableContextEditing := os.Getenv("ENABLE_CONTEXT_EDITING") == "true"
-	contextEditingThreshold := 10000 // Default to 10k tokens - compact outputs larger than this (matches library default)
-	if envVal := os.Getenv("CONTEXT_EDITING_THRESHOLD"); envVal != "" {
-		if threshold, err := strconv.Atoi(envVal); err == nil && threshold > 0 {
-			contextEditingThreshold = threshold
-		}
-	}
-	contextEditingTurnThreshold := 20 // Default to 20 turns - compact outputs older than this
-	if envVal := os.Getenv("CONTEXT_EDITING_TURN_THRESHOLD"); envVal != "" {
-		if turnThreshold, err := strconv.Atoi(envVal); err == nil && turnThreshold > 0 {
-			contextEditingTurnThreshold = turnThreshold
-		}
-	}
-
 	// Load large output threshold for context offloading from environment
 	// Default to 0 which means use library default (10000 tokens)
 	largeOutputThreshold := 0
@@ -266,10 +245,6 @@ func NewBaseOrchestrator(
 		summarizeOnFixedTokenThreshold: summarizeOnFixedTokenThreshold,
 		fixedTokenThreshold:            fixedTokenThreshold,
 		summaryKeepLastMessages:        summaryKeepLastMessages,
-		// Context editing configuration
-		enableContextEditing:        enableContextEditing,
-		contextEditingThreshold:     contextEditingThreshold,
-		contextEditingTurnThreshold: contextEditingTurnThreshold,
 		// Context offloading configuration
 		largeOutputThreshold: largeOutputThreshold,
 	}

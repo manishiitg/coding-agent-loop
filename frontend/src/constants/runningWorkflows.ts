@@ -81,20 +81,18 @@ export const EVENT_TYPES = {
    * actually is. 'orchestrator_end' is the only real signal.
    */
   COMPLETION: ['orchestrator_end'] as const,
-  /** Events that indicate workflow errors (fatal) */
-  ERROR: ['orchestrator_error', 'workflow_error'] as const,
+  /** Events that indicate workflow errors (fatal). orchestrator_error was removed: never emitted. */
+  ERROR: ['workflow_error'] as const,
   /** Important events that should always be retained during cleanup */
   IMPORTANT: [
     'agent_error',
     'conversation_error',
-    'orchestrator_error',
     'unified_completion',
     'conversation_end',
     'request_human_feedback',
     'blocking_human_feedback',
     'orchestrator_end',
-    'agent_end',
-    'step_progress_updated'
+    'agent_end'
   ] as const,
 } as const
 

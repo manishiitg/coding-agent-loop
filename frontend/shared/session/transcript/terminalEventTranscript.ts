@@ -87,6 +87,64 @@ const NON_TRANSCRIPT_TYPES = new Set([
   'work_identity_updated',
   'work_workflow_references_updated',
   'streaming_end',
+  // Cache diagnostics are still emitted on the wire (one cache_event per
+  // cached MCP connection per tool call) for observability tracers, but they
+  // are not part of the readable conversation and must not fall through
+  // EventDispatcher as noisy "Unknown Event Type" JSON cards.
+  'cache_event',
+  // MCP connection lifecycle likewise exists only as Langfuse/LangSmith
+  // tracer spans; the bridge already skips it, this keeps stored history
+  // from rendering it as an unknown card.
+  'mcp_server_connection_start',
+  'mcp_server_connection_end',
+])
+
+// The developer diagnostics rail shows the conversation, not the trace:
+// user/assistant/tool rows plus content-bearing gates, errors, and results.
+// Pure lifecycle/status banners are hidden here (they never showed in product
+// chats either). Rule: hide status banners, keep anything carrying message,
+// tool, result, or error content. Deliberately a denylist (fail-open) so a
+// future content-bearing type stays visible until someone classifies it.
+const TERMINAL_RAIL_HIDDEN_TYPES = new Set([
+  // Sub-agent lifecycle (dispatcher also returns null for these; the event
+  // stays live for stores, retention, bots, and backend consumers).
+  'delegation_start',
+  'delegation_end',
+  'orchestrator_agent_start',
+  'orchestrator_agent_end',
+  'orchestrator_agent_error',
+  'background_agent_started',
+  'background_agent_completed',
+  'background_agent_terminated',
+  // Workflow/orchestrator status (completion is still visible via
+  // unified_completion / agent_end; orchestrator_end keeps its product-chat
+  // renderer and is hidden from the rail only).
+  'orchestrator_end',
+  'todo_task_route_selected',
+  'todo_task_step_completed',
+  'workflow_start',
+  'workflow_progress',
+  'workflow_end',
+  // Context/usage diagnostics.
+  'context_summarization_started',
+  'context_summarization_completed',
+  'context_summarization_error',
+  'step_token_usage',
+  'routing_evaluated',
+  'variables_extracted',
+  'independent_steps_selected',
+  // Transient resilience status.
+  'retry_attempt',
+  'broken_pipe',
+  'max_turns_reached',
+  // Scripted-mode execution output (store still consumes it for purge/dedup;
+  // just not painted in the rail).
+  'learn_code_script_execution',
+  // Selection + delivery mechanics.
+  'mcp_server_selection',
+  'synthetic_turn_ready',
+  'auto_notification_steered',
+  'conversation_resumed',
 ])
 
 // A full run is a CONTAINER, not an agent: it has no conversation of its own,
@@ -891,7 +949,7 @@ export function selectTerminalEvents(
   // reflect their persisted sequence; sorting those timestamp-first made a
   // completion appear above the task work it completed.
   return matched
-    .filter(event => isTranscriptEvent(event) || isKeptInteraction(event, keepInteractionKinds))
+    .filter(event => (isTranscriptEvent(event) && !TERMINAL_RAIL_HIDDEN_TYPES.has(event.type || '')) || isKeptInteraction(event, keepInteractionKinds))
     .filter(event => !isOwnTerminalLifecycleStart(event, terminal))
     .map((event, index) => ({ event, index }))
     .sort((a, b) => {

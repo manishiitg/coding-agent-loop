@@ -178,25 +178,6 @@ function blockSeparator(currentText: string, incoming: string): string {
   return '\n\n'
 }
 
-export function formatLiveStreamingPreview(value: string, maxLength = 140): string {
-  if (!value) return ''
-  if (looksLikeTerminalScreenText(value)) return ''
-
-  const cleaned = stripAnsiControlCodes(value)
-    // eslint-disable-next-line no-control-regex -- Remaining terminal control bytes are intentionally removed.
-    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '')
-    .split(/\r?\n/)
-    .map(line => line.trim())
-    .filter(line => line && !getStreamingStatusText(line))
-    .join(' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-
-  if (!cleaned) return ''
-  if (cleaned.length <= maxLength) return cleaned
-  return `${cleaned.slice(0, Math.max(0, maxLength - 3)).trimEnd()}...`
-}
-
 export function sanitizeStreamingDisplayText(value: string): string {
   if (!value) return ''
   return value

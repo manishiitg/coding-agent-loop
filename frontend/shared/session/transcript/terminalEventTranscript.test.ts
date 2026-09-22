@@ -164,12 +164,15 @@ describe('selectTerminalEvents — owned terminal (workflow step, message-sequen
     expect(selectTerminalEvents(events, t).map(e => e.id)).toEqual(['early', 'late'])
   })
 
-  it('uses durable sequence before misleading lifecycle timestamps', () => {
+  it('uses durable sequence before misleading timestamps', () => {
     const t = terminal({ session_id: 's1', owner_id: 'exec-1' })
     const events = [
+      // Fixture uses tool_call_end: the rail hides lifecycle banners
+      // (background_agent_completed included) since the 2026-09-22 minimal-rail
+      // change, so a lifecycle type can no longer exercise ordering here.
       evt({
         id: 'completion', session_id: 's1', execution_id: 'exec-1',
-        sequence: 12, timestamp: '2026-07-25T10:00:01Z', type: 'background_agent_completed',
+        sequence: 12, timestamp: '2026-07-25T10:00:01Z', type: 'tool_call_end',
       }),
       evt({
         id: 'task-work', session_id: 's1', execution_id: 'exec-1',
@@ -1223,6 +1226,25 @@ describe('formatted view for a tmux terminal', () => {
     expect(items.map(item => item.kind === 'event' ? (item as any).event.id : item.key)).toEqual(['answer'])
   })
 
+  it('does not render live cache diagnostics as unknown-event cards', () => {
+    const items = buildTranscriptItems([
+      ev('cache', 'cache_event', { operation: 'hit', server_name: 'github' }),
+      ev('answer', 'llm_generation_end', { content: 'Durable final answer.' }),
+    ])
+
+    expect(items.map(item => item.kind === 'event' ? (item as any).event.id : item.key)).toEqual(['answer'])
+  })
+
+  it('does not render tracer-only MCP connection lifecycle as unknown-event cards', () => {
+    const items = buildTranscriptItems([
+      ev('conn-start', 'mcp_server_connection_start', { server_name: 'github' }),
+      ev('conn-end', 'mcp_server_connection_end', { server_name: 'github' }),
+      ev('answer', 'llm_generation_end', { content: 'Durable final answer.' }),
+    ])
+
+    expect(items.map(item => item.kind === 'event' ? (item as any).event.id : item.key)).toEqual(['answer'])
+  })
+
   it('keeps the human conversation and removes provider setup diagnostics', () => {
     const items = buildTranscriptItems([
       ev('user', 'user_message', { content: 'Is the schedule fixed?' }),
@@ -1272,33 +1294,28 @@ describe('a terminal does not repeat its own name as an opening card', () => {
     expect(events.map(e => e.id)).toEqual(['msg'])
   })
 
-  it('keeps the terminal\'s own start card when it contains the task', () => {
+  // Minimal rail (2026-09-22): lifecycle banners are hidden from the rail
+  // even when they carry content -- the rail shows user/assistant/tool rows
+  // plus content-bearing gates, errors, and results.
+  it('drops the terminal\'s own start card even when it contains the task', () => {
     const start = evt({
       id: 'start', type: 'background_agent_started', session_id: 's1', execution_id: 'exec-1',
       data: { data: { name: 'Review Artifact Drift Review', instruction: 'Inspect the report and verify every claim.' } } as never,
     })
     const events = selectTerminalEvents([start, ev('done', 'background_agent_completed', 'exec-1')], t)
 
-    expect(events.map(e => e.id)).toEqual(['start', 'done'])
+    expect(events.map(e => e.id)).toEqual([])
   })
 
-  // The completion card is kept: it carries the outcome, which the header
-  // does not show, unlike the start card which only repeats the name.
-  it('keeps the terminal\'s own completion card', () => {
+  it('drops the terminal\'s own completion card', () => {
     const events = selectTerminalEvents(
       [ev('start', 'background_agent_started', 'exec-1'), ev('done', 'background_agent_completed', 'exec-1')],
       t,
     )
-    expect(events.map(e => e.id)).toEqual(['done'])
+    expect(events.map(e => e.id)).toEqual([])
   })
 
-  // A CHILD's start card must survive -- it announces new work, not a
-  // restatement of the terminal the reader already opened. Modeled on the
-  // MAIN-agent transcript, where a background/sub-agent's start is rendered
-  // inline alongside the main terminal's own (this terminal's own start is
-  // an agent_start with the main terminal's OWN execution_id; the child's is
-  // a background_agent_started with its own, different, execution_id).
-  it('keeps a child agent\'s start card inline in the main-agent transcript', () => {
+  it('drops a child agent\'s start card from the main-agent transcript', () => {
     const mainTerminal = terminal({
       session_id: 's1', owner_id: '', execution_id: 'main:s1',
       execution_kind: 'main_agent',
@@ -1310,7 +1327,7 @@ describe('a terminal does not repeat its own name as an opening card', () => {
       ],
       mainTerminal,
     )
-    expect(events.map(e => e.id)).toEqual(['child'])
+    expect(events.map(e => e.id)).toEqual([])
   })
 })
 

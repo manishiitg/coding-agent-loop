@@ -31,7 +31,6 @@ import { usePlanTriggers } from './usePlanTriggers'
 import { appendTriggerCards, traceTriggerGraph } from './triggerLayout'
 import { WorkflowTriggerNode, WorkflowTriggerHeading } from '../nodes/WorkflowTriggerNodes'
 import { VariablesSidebar } from './VariablesSidebar'
-import { BatchProgressHeader } from '../BatchProgressHeader'
 import {
   REPORT_PREVIEW_PREFERENCE_CHANGED_EVENT,
   isReportPreviewDevice,
@@ -1359,13 +1358,11 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [isRefreshingPlan, loadPlanRefresh, setIsRefreshingPlan, refreshTriggers])
 
-  // Current step and status from store (set by ChatArea polling when step_progress_updated events arrive)
   const [selectedTrigger, setSelectedTrigger] = React.useState<{ workspace: string | null; id: string } | null>(null)
   const selectedTriggerJob = selectedTrigger?.workspace === workspacePath ? triggers.jobs.find(job => job.id === selectedTrigger.id) : undefined
   const openTriggerSettings = useCallback((section: 'schedules' | 'webhooks') => {
     useWorkflowStore.getState().openWorkspaceView(section === 'webhooks' ? 'webhooks' : 'schedules')
   }, [])
-  const stepStatusMap = useWorkflowStore(state => state.stepStatusMap)
 
   // React Flow state (need to define before usePlanToFlow to use in callbacks)
   const [nodes, setNodes, onNodesChangeBase] = useNodesState<WorkflowNode>([])
@@ -1781,21 +1778,9 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }, delay)
   }, [getNode, setViewport])
 
-  // Stabilize stepStatusMap by serializing it - Maps are compared by reference, so we need to serialize
-  // to detect actual content changes. This prevents unnecessary recalculations in usePlanToFlow.
-  const stableStepStatusMap = React.useMemo(() => {
-    if (!stepStatusMap || stepStatusMap.size === 0) {
-      return null // Return null instead of the Map to ensure stable reference
-    }
-    // Serialize Map to object for stable comparison
-    const serialized = Object.fromEntries(stepStatusMap)
-    return serialized
-  }, [stepStatusMap])
-
   // Convert plan to React Flow nodes and edges (with change highlights and run callback)
   const planFlow = usePlanToFlow(plan, {
     changes,  // Pass changes to highlight modified nodes
-    stepStatusMap: stableStepStatusMap,  // Pass stabilized step status map
     workspacePath,  // Pass workspace path for file opening
     selectedRunFolder: selectedRunFolder ?? undefined,  // Pass selected run folder for file opening (convert null to undefined)
     variablesManifest,  // Pass variables manifest for Variables node
@@ -2407,58 +2392,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
     }
   }, [embeddedPlanOnly, nodes, fitView, getViewport, getViewportStorageKey, previewDevice, setViewport, toolbarOnly, triggers.loading, triggers.jobs.length, focusTriggers])
 
-  // Track previous stepStatusMap to detect actual changes
-  const prevStepStatusMapRef = React.useRef<Map<string, 'pending' | 'running' | 'completed' | 'failed'>>(new Map())
-
-  // Update node status based on maps from events (only when stepStatusMap actually changes)
-  React.useEffect(() => {
-    if (toolbarOnly) return // Skip when canvas is hidden
-
-    // Check if stepStatusMap actually changed by comparing entries
-    const hasChanged = stepStatusMap.size !== prevStepStatusMapRef.current.size ||
-      Array.from(stepStatusMap.entries()).some(([stepId, status]) => 
-        prevStepStatusMapRef.current.get(stepId) !== status
-      )
-
-    if (!hasChanged) {
-      return // No actual changes, skip update
-    }
-
-    setNodes(nds => {
-      let hasUpdates = false
-      const updatedNodes = nds.map(node => {
-        // Only update status for regular step nodes.
-        // Validation and learning nodes have different status types
-        if (node.type === 'step') {
-          const nodeData = node.data as StepNodeData
-          const stepId = nodeData?.step?.id || node.id
-          const stepStatus = stepStatusMap.get(stepId)
-          const currentStatus = nodeData?.status
-
-          // Only update if status actually changed
-          if (stepStatus && stepStatus !== currentStatus) {
-            hasUpdates = true
-            return {
-              ...node,
-              data: {
-                ...node.data,
-                status: stepStatus
-              } as StepNodeData
-            } as WorkflowNode
-          }
-        }
-        return node
-      })
-
-      // Only return new array if there were actual updates
-      return hasUpdates ? updatedNodes : nds
-    })
-    
-    // Update previous status map (for tracking changes)
-    prevStepStatusMapRef.current = new Map(stepStatusMap)
-  }, [stepStatusMap, setNodes, toolbarOnly])
-
-
   useEffect(() => {
     if (!selectedFlowNode && !activeTrace && !selectedTriggerJob) return
 
@@ -2696,9 +2629,6 @@ const WorkflowCanvasInner = forwardRef<WorkflowCanvasRef, WorkflowCanvasProps>((
             className="dark:!bg-gray-900"
           />
         </ReactFlow>
-
-        {/* Batch Progress Header */}
-        <BatchProgressHeader position="canvas" />
 
         {/* Plan-specific controls live inside the canvas; shared navigation and
             workflow actions remain in the workflow-level toolbar. */}

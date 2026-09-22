@@ -24,24 +24,6 @@ func (bo *BaseOrchestrator) emitEvent(ctx context.Context, eventType baseevents.
 	}
 }
 
-// EmitOrchestratorStart emits an orchestrator start event
-func (bo *BaseOrchestrator) EmitOrchestratorStart(ctx context.Context, objective string, agentsCount int, executionMode string) {
-	// Removed verbose logging
-
-	eventData := &orchestrator_events.OrchestratorStartEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		Objective:        objective,
-		AgentsCount:      agentsCount,
-		ServersCount:     len(bo.selectedServers),
-		OrchestratorType: bo.GetType(),
-		ExecutionMode:    executionMode,
-	}
-
-	bo.emitEvent(ctx, orchestrator_events.OrchestratorStart, eventData)
-}
-
 // EmitOrchestratorEnd emits an orchestrator end event
 func (bo *BaseOrchestrator) EmitOrchestratorEnd(ctx context.Context, objective, result, status, message string, executionMode string) {
 	// Removed verbose logging

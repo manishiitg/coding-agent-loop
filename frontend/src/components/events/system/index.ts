@@ -1,6 +1,4 @@
-export { SystemPromptEventDisplay } from './SystemPromptEvent'
 export { UserMessageEventDisplay } from './UserMessageEvent'
 export { StatusLineEventDisplay } from './StatusLineEvent'
-export { OrchestratorAgentStartEventDisplay } from './OrchestratorAgentStartEvent'
 export { OrchestratorAgentEndEventDisplay } from './OrchestratorAgentEndEvent'
 export { OrchestratorAgentErrorEventDisplay } from './OrchestratorAgentErrorEvent'

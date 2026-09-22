@@ -138,10 +138,8 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
     return 'idle'
   }, [isStreaming, isCompleted, events, manualStatus])
 
-  // NOTE: Step status events (step_progress_updated, step_execution_end, step_execution_failed)
-  // are now handled in ChatArea.tsx polling layer which updates useWorkflowStore directly.
-  // This is more reliable than useEffect here because the events array from useMemo
-  // doesn't update when new events arrive (the getTabEvents function reference doesn't change).
+  // NOTE: Event-driven step status was removed on 2026-09-22 (stepStatusMap,
+  // step_progress_updated/step_execution_* — nothing maintained or read it).
 
   // Start workflow - CRITICAL: Always use tab's observer ID, never fall back to global
   const startWorkflow = useCallback(async (presetQueryId: string) => {
@@ -340,8 +338,6 @@ export function useWorkflowExecution(): UseWorkflowExecutionReturn {
 
     // Reset event polling index so next workflow/chat starts fresh
     useChatStore.getState().setLastEventIndex(-1)
-    // Clear current step tracking in store
-    useWorkflowStore.getState().setCurrentStepId(null)
 
     // Call backend to stop the session using session ID
     let sessionId: string | null = null

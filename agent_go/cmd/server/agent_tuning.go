@@ -81,29 +81,6 @@ func applySharedLLMAgentTuning(cfg *agent.LLMAgentConfig, req *QueryRequest, pre
 		return envPositiveInt("SUMMARY_KEEP_LAST_MESSAGES", 4)
 	}()
 
-	// Context editing
-	cfg.EnableContextEditing = func() bool {
-		if req.EnableContextEditing != nil {
-			return *req.EnableContextEditing
-		}
-		if preset != nil && preset.EnableContextEditing != nil {
-			return *preset.EnableContextEditing
-		}
-		return os.Getenv("ENABLE_CONTEXT_EDITING") == "true"
-	}()
-	cfg.ContextEditingThreshold = func() int {
-		if req.ContextEditingThreshold > 0 {
-			return req.ContextEditingThreshold
-		}
-		return envPositiveInt("CONTEXT_EDITING_THRESHOLD", 0) // 0 = library default (100)
-	}()
-	cfg.ContextEditingTurnThreshold = func() int {
-		if req.ContextEditingTurnThreshold > 0 {
-			return req.ContextEditingTurnThreshold
-		}
-		return envPositiveInt("CONTEXT_EDITING_TURN_THRESHOLD", 0) // 0 = library default (5)
-	}()
-
 	// Context offloading: tool outputs larger than this (tokens) go to the filesystem.
 	cfg.LargeOutputThreshold = envPositiveInt("LARGE_OUTPUT_THRESHOLD", 0) // 0 = library default (10000)
 

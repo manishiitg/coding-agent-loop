@@ -22,145 +22,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveStepProgress(ctx context.Context,
 	return nil
 }
 
-// emitStepStartedEvent emits a step started event via step_progress_updated
+// emitStepStartedEvent records a step start for webhook progress consumers.
+// It formerly also emitted step_progress_updated; that event was removed on
+// 2026-09-22 (emitted but never read anywhere).
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepStartedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string) {
 	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "running")
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	stepTitle := step.GetTitle()
-	if stepTitle == "" {
-		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
-	}
-	stepId := step.GetID()
-	if stepId == "" {
-		stepId = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-
-	// Emit progress event with "start" status
-	progress, err := hcpo.loadStepProgress(ctx)
-	if err == nil && progress != nil {
-		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "start", stepId, "")
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (start) for step %d: %s", stepIndex+1, stepTitle))
 }
 
-// emitStepFinishedEvent emits a step finished event via step_progress_updated
+// emitStepFinishedEvent records a step finish for webhook progress consumers.
+// It formerly also emitted step_progress_updated; that event was removed on
+// 2026-09-22 (emitted but never read anywhere).
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepFinishedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string) {
 	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "completed")
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	stepTitle := step.GetTitle()
-	if stepTitle == "" {
-		stepTitle = fmt.Sprintf("Step %d", stepIndex+1)
-	}
-	stepId := step.GetID()
-	if stepId == "" {
-		stepId = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-
-	// Emit progress event with "end" status
-	progress, err := hcpo.loadStepProgress(ctx)
-	if err == nil && progress != nil {
-		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "end", stepId, "")
-	}
-
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (end) for step %d: %s", stepIndex+1, stepTitle))
 }
 
-// emitStepFailedEvent emits a step "failed" progress event so the UI moves the
-// step out of "running" when a step ends in error. Mirrors emitStepFinishedEvent
-// but with status "failed" + the error message.
+// emitStepFailedEvent records a step failure for webhook progress consumers.
+// It formerly also emitted step_progress_updated; that event was removed on
+// 2026-09-22 (emitted but never read anywhere). errorMsg is kept for call-site
+// compatibility.
 func (hcpo *StepBasedWorkflowOrchestrator) emitStepFailedEvent(ctx context.Context, step PlanStepInterface, stepIndex int, stepPath string, errorMsg string) {
+	_ = errorMsg
 	hcpo.persistWebhookProgress(ctx, step, stepIndex, stepPath, "failed")
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-	stepId := step.GetID()
-	if stepId == "" {
-		stepId = fmt.Sprintf("step-%d", stepIndex+1)
-	}
-	progress, err := hcpo.loadStepProgress(ctx)
-	if err == nil && progress != nil {
-		hcpo.emitStepProgressUpdatedEvent(ctx, progress, "failed", stepId, errorMsg)
-	}
-	hcpo.GetLogger().Info(fmt.Sprintf("📤 Emitted step_progress_updated (failed) for step %d: %s", stepIndex+1, step.GetTitle()))
-}
-
-// emitStepProgressUpdatedEvent emits an event when step progress is updated
-// status can be "start" (step started), "stop" (step stopped), "end" (step ended), "failed" (step failed), or empty (regular progress update)
-// errorMsg is populated when status is "failed"
-func (hcpo *StepBasedWorkflowOrchestrator) emitStepProgressUpdatedEvent(ctx context.Context, progress *StepProgress, status string, stepId string, errorMsg string) {
-	bridge := hcpo.GetContextAwareBridge()
-	if bridge == nil {
-		return
-	}
-
-	// Determine the current step ID
-	var currentStepId string
-	if stepId != "" {
-		// Use provided step ID (for start/stop/end events)
-		currentStepId = stepId
-	} else if len(progress.CompletedStepIndices) > 0 {
-		// Determine the last completed step (highest index in the completed list)
-		lastCompletedStep := -1
-		for _, idx := range progress.CompletedStepIndices {
-			if idx > lastCompletedStep {
-				lastCompletedStep = idx
-			}
-		}
-		// Get step ID from the approved plan if available
-		if lastCompletedStep >= 0 && executionPlanFromContext(ctx) != nil && lastCompletedStep < len(executionPlanFromContext(ctx).Steps) {
-			step := executionPlanFromContext(ctx).Steps[lastCompletedStep]
-			currentStepId = step.GetID()
-		}
-	}
-
-	eventData := &StepProgressUpdatedEvent{
-		BaseEventData: baseevents.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		WorkspacePath: hcpo.GetWorkspacePath(),
-		RunFolder:     hcpo.selectedRunFolder,
-		CurrentStepId: currentStepId,
-		Status:        status,
-		Error:         errorMsg,
-		// Include batch context for frontend batch progress tracking
-		GroupName:   hcpo.currentGroupName,
-		GroupIndex:  hcpo.currentGroupIdx,
-		TotalGroups: hcpo.totalGroups,
-	}
-
-	// Add tier info when in tiered mode (for "start" events with a step ID)
-	if hcpo.tierResolver != nil && currentStepId != "" && status == "start" {
-		_, tier := hcpo.tierResolver.ResolveForExecution()
-		eventData.UsedTier = int(tier)
-		eventData.UsedTierLabel = TierLevelLabel(tier)
-	}
-
-	// Create unified event wrapper
-	unifiedEvent := &baseevents.AgentEvent{
-		Type:      events.StepProgressUpdated,
-		Timestamp: time.Now(),
-		Data:      eventData,
-	}
-
-	if err := bridge.HandleEvent(ctx, unifiedEvent); err != nil {
-		hcpo.GetLogger().Warn(fmt.Sprintf("⚠️ Failed to emit step progress updated event: %v", err))
-	} else {
-		if status != "" {
-			hcpo.GetLogger().Info(fmt.Sprintf("📊 Emitted step progress updated event: status=%s, current_step_id=%s", status, currentStepId))
-		} else {
-			hcpo.GetLogger().Info(fmt.Sprintf("📊 Emitted step progress updated event: current_step_id=%s", currentStepId))
-		}
-	}
 }
 
 // emitPreValidationCompletedEvent emits a pre-validation completed event

@@ -48,7 +48,6 @@ export interface CommandContext {
   setTabConfig: ReturnType<typeof useChatStore.getState>['setTabConfig']
   addToast: (msg: string, type: 'success' | 'error' | 'info') => void
   handleSummarize: (ctx?: string) => void
-  handleCompact: (ctx?: string) => void
   submitWithExecutionOptions?: (msg: string, executionOptions?: ExecutionOptions) => void
   getAppStore: () => AppStoreState
   getWorkspaceStore: () => WorkspaceStoreState

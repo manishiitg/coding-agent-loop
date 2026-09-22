@@ -22,11 +22,6 @@ import {
 } from './agents'
 
 import {
-  MCPServerDiscoveryEventDisplay,
-  MCPServerConnectionEventDisplay
-} from './mcp'
-
-import {
   ConversationStartEventDisplay,
   ConversationEndEventDisplay,
   ConversationErrorEventDisplay,
@@ -47,21 +42,16 @@ import {
 } from './tools'
 
 import {
-  SystemPromptEventDisplay,
   StatusLineEventDisplay,
   UserMessageEventDisplay
 } from './system'
 import type { UserMessageEvent } from '../../generated/events'
 
 import {
-  OrchestratorStartEventDisplay,
   OrchestratorEndEventDisplay,
-  OrchestratorErrorEventDisplay,
-  OrchestratorAgentStartEventDisplay,
   OrchestratorAgentEndEventDisplay,
   OrchestratorAgentErrorEventDisplay,
   IndependentStepsSelectedEventDisplay,
-  TodoStepsExtractedEventDisplay,
   RoutingEvaluatedEventDisplay,
   PreValidationCompletedEventDisplay,
   TodoTaskRouteSelectedEventDisplay,
@@ -74,31 +64,20 @@ import {
   WorkflowStartEvent,
   WorkflowProgressEvent,
   WorkflowEndEvent,
-  BatchGroupStartEvent,
-  BatchGroupEndEvent,
-  BatchExecutionStartEventDisplay,
-  BatchExecutionEndEventDisplay,
   BatchExecutionCanceledEventDisplay
 } from './workflow'
 
 import {
   TokenUsageEventDisplay,
-  ThrottlingDetectedEventDisplay,
   RetryAttemptEventDisplay,
   BrokenPipeEventDisplay,
-  TokenLimitExceededEventDisplay,
   LargeToolOutputDetectedEventDisplay,
   LargeToolOutputFileWrittenEventDisplay,
-  ModelChangeEventDisplay,
   MaxTurnsReachedEventDisplay,
   ContextCancelledEventDisplay,
-  CacheEventDisplay,
-  ComprehensiveCacheEventDisplay,
   ContextSummarizationStartedEventDisplay,
   ContextSummarizationCompletedEventDisplay,
-  ContextSummarizationErrorEventDisplay,
-  ContextEditingCompletedEventDisplay,
-  ContextEditingErrorEventDisplay
+  ContextSummarizationErrorEventDisplay
 } from './debug'
 import { UnifiedCompletionEventDisplay } from './debug/UnifiedCompletionEvent'
 import { HumanVerificationDisplay } from './HumanVerificationDisplay'
@@ -106,7 +85,6 @@ import { BlockingHumanFeedbackDisplay } from './BlockingHumanFeedbackDisplay'
 import { PlanApprovalDisplay } from './PlanApprovalDisplay'
 import { useChatStore } from '../../stores/useChatStore'
 import { MarkdownRenderer } from '../ui/MarkdownRenderer'
-import { formatLiveStreamingPreview } from '../../utils/streamingStatus'
 import { backgroundAgentCompletionSummary } from '../../utils/backgroundAgentSummary'
 // getTerminalOwnerPayload / getOwnedTerminalOwnerKeys moved to
 // utils/eventOwnership.ts (pure, no React/store imports) so anything that only
@@ -129,33 +107,6 @@ const DelegationStreamingCard: React.FC<{ delegationId: string }> = ({ delegatio
       <div className="text-xs max-h-60 overflow-y-auto custom-scrollbar overscroll-y-contain">
         <MarkdownRenderer content={text} className="text-xs" />
         <span className="inline-block w-1.5 h-3 bg-blue-500 animate-pulse ml-0.5" />
-      </div>
-    </div>
-  )
-}
-
-const LiveExecutionStreamingEventCard: React.FC<{ event: PollingEvent; compact?: boolean }> = ({ event, compact }) => {
-  const agentEvent = event.data as Record<string, unknown> | undefined
-  const payload = (agentEvent?.data && typeof agentEvent.data === 'object')
-    ? agentEvent.data as Record<string, unknown>
-    : agentEvent
-  const text = typeof payload?.text === 'string' ? payload.text : ''
-  const status = typeof payload?.status === 'string' ? payload.status : ''
-  if (!text && !status) return null
-  const preview = formatLiveStreamingPreview(status || text)
-
-  return (
-    <div className={`border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-900/20 rounded ${compact ? 'px-2 py-1.5' : 'px-3 py-2'}`}>
-      <div className="flex min-w-0 items-center gap-2">
-        <div className="h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500 animate-pulse" />
-        <span className={`${compact ? 'text-[10px]' : 'text-xs'} text-blue-600 dark:text-blue-400 font-medium`}>
-          Generating...
-        </span>
-        {preview && (
-          <span className={`${compact ? 'text-[9px]' : 'text-[10px]'} min-w-0 truncate text-blue-500 dark:text-blue-400 opacity-80`}>
-            {preview}
-          </span>
-        )}
       </div>
     </div>
   )
@@ -374,9 +325,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
 
   // Type-safe event rendering using discriminated unions
   // Each case uses isEventType for type narrowing, then getEventData for typed access
-  if (event.type === 'live_execution_streaming') {
-    return <CompactWrapper compact={compact}><LiveExecutionStreamingEventCard event={event} compact={compact} /></CompactWrapper>
-  }
 
   // Agent Events
   if (isEventType(event, 'agent_error')) {
@@ -402,15 +350,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   // transcript is looking for — never rendered.
   if (isEventType(event, 'mcp_server_selection')) {
     return null
-  }
-  if (isEventType(event, 'mcp_server_discovery')) {
-    return <CompactWrapper compact={compact}><WithContext Component={MCPServerDiscoveryEventDisplay} data={getEventData(event)} compact={compact} hideContext={hideOrchestratorContext} /></CompactWrapper>
-  }
-  if (isEventType(event, 'mcp_server_connection')) {
-    return <CompactWrapper compact={compact}><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} hideContext={hideOrchestratorContext} /></CompactWrapper>
-  }
-  if (isEventType(event, 'mcp_server_connection_error')) {
-    return <CompactWrapper compact={compact}><WithContext Component={MCPServerConnectionEventDisplay} data={getEventData(event)} compact={compact} hideContext={hideOrchestratorContext} /></CompactWrapper>
   }
 
   // Conversation Events
@@ -475,9 +414,6 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   }
 
   // System Events
-  if (isEventType(event, 'system_prompt')) {
-    return <CompactWrapper compact={compact}><WithContext Component={SystemPromptEventDisplay} data={getEventData(event)} compact={compact} hideContext={hideOrchestratorContext} /></CompactWrapper>
-  }
   if (event.type === 'status_line') {
     const agentEvent = event.data as { data?: Record<string, unknown> } | undefined
     const data = (agentEvent?.data || event.data || {}) as Record<string, unknown>
@@ -525,25 +461,18 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     }
   }
 
-  // Orchestrator Events
-  if (isEventType(event, 'orchestrator_start')) {
-    return <CompactWrapper compact={compact}><OrchestratorStartEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
+  // Orchestrator Events (only orchestrator_end is emitted; start/error never were)
   if (isEventType(event, 'orchestrator_end')) {
     return <CompactWrapper compact={compact}><OrchestratorEndEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
-  if (isEventType(event, 'orchestrator_error')) {
-    return <CompactWrapper compact={compact}><OrchestratorErrorEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
+  // Sub-agent start rows are intentionally never painted: the main-conversation
+  // filter already excludes child-execution starts from product chats, and the
+  // diagnostics rail does not need a lifecycle banner per spawn (the end card
+  // carries the result). Returning null (not falling through) so this never
+  // renders as an "Unknown Event Type" JSON card. The event itself stays live
+  // for stores, retention, bot narration, and backend consumers.
   if (isEventType(event, 'orchestrator_agent_start')) {
-    return (
-      <CompactWrapper compact={compact}>
-        <OrchestratorAgentStartEventDisplay
-          event={getEventData(event)}
-          compact={compact || hideOrchestratorContext}
-        />
-      </CompactWrapper>
-    )
+    return null
   }
   if (isEventType(event, 'orchestrator_agent_end')) {
     return (
@@ -636,24 +565,7 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'workflow_end')) {
     return <CompactWrapper compact={compact}><WorkflowEndEvent event={getEventData(event) as WorkflowEndEventData} /></CompactWrapper>
   }
-  // Batch execution events
-  if (isEventType(event, 'batch_group_start')) {
-    return <CompactWrapper compact={compact}><BatchGroupStartEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  if (isEventType(event, 'batch_group_end')) {
-    return <CompactWrapper compact={compact}><BatchGroupEndEvent event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  if (isEventType(event, 'batch_execution_start')) {
-    const data = getEventData(event) as Record<string, unknown>
-    return (
-      <CompactWrapper compact={compact}>
-        <BatchExecutionStartEventDisplay event={data} compact={compact} />
-      </CompactWrapper>
-    )
-  }
-  if (isEventType(event, 'batch_execution_end')) {
-    return <CompactWrapper compact={compact}><BatchExecutionEndEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
+  // Batch execution events (only cancellation is emitted)
   if (isEventType(event, 'batch_execution_canceled')) {
     return <CompactWrapper compact={compact}><BatchExecutionCanceledEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
@@ -747,17 +659,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'token_usage')) {
     return <CompactWrapper compact={compact}><TokenUsageEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
-  if (isEventType(event, 'throttling_detected')) {
-    return <CompactWrapper compact={compact}><ThrottlingDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
   if (isEventType(event, 'retry_attempt')) {
     return <CompactWrapper compact={compact}><RetryAttemptEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'broken_pipe')) {
     return <CompactWrapper compact={compact}><BrokenPipeEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-  if (isEventType(event, 'token_limit_exceeded')) {
-    return <CompactWrapper compact={compact}><TokenLimitExceededEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'large_tool_output_detected')) {
     return <CompactWrapper compact={compact}><LargeToolOutputDetectedEventDisplay event={getEventData(event)} /></CompactWrapper>
@@ -765,22 +671,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'large_tool_output_file_written')) {
     return <CompactWrapper compact={compact}><LargeToolOutputFileWrittenEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
-  if (isEventType(event, 'model_change')) {
-    return <CompactWrapper compact={compact}><ModelChangeEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
   if (isEventType(event, 'max_turns_reached')) {
     return <CompactWrapper compact={compact}><MaxTurnsReachedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'context_cancelled')) {
     return <CompactWrapper compact={compact}><ContextCancelledEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-
-  // Cache Events
-  if (isEventType(event, 'cache_event')) {
-    return <CompactWrapper compact={compact}><CacheEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-  if (isEventType(event, 'comprehensive_cache_event')) {
-    return <CompactWrapper compact={compact}><ComprehensiveCacheEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
 
   // Unified Completion Events
@@ -799,20 +694,9 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
     return <CompactWrapper compact={compact}><ContextSummarizationErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
   }
 
-  // Context Editing Events
-  if (isEventType(event, 'context_editing_completed')) {
-    return <CompactWrapper compact={compact}><ContextEditingCompletedEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-  if (isEventType(event, 'context_editing_error')) {
-    return <CompactWrapper compact={compact}><ContextEditingErrorEventDisplay event={getEventData(event)} compact={compact} /></CompactWrapper>
-  }
-
   // Planning Events
   if (isEventType(event, 'independent_steps_selected')) {
     return <CompactWrapper compact={compact}><IndependentStepsSelectedEventDisplay event={getEventData(event)} /></CompactWrapper>
-  }
-  if (isEventType(event, 'todo_steps_extracted')) {
-    return <CompactWrapper compact={compact}><TodoStepsExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>
   }
   if (isEventType(event, 'variables_extracted')) {
     return <CompactWrapper compact={compact}><VariablesExtractedEventDisplay event={getEventData(event)} /></CompactWrapper>

@@ -341,6 +341,11 @@ copied, and conversation deletion removes its durable rows.
 
 ## Appendix: event-type audit (2026-09-22)
 
+Per-type producer/consumer file lists live in
+[docs/core/event-catalog.md](../../../core/event-catalog.md) (133 types
+after the deletion batch below added `comprehensive_cache_event` and
+tombstoned 14 REMOVED, same method). Summary findings:
+
 All cataloged types were checked for backend producers (mcpagent,
 agent_go, provider repo) and frontend consumers (outside tests/generated).
 Method: const-name references plus raw wire-string grep; stale binaries
@@ -349,17 +354,21 @@ verified per type. The catalog grew during review from 118 to **~130**:
 branching on `event.type` surfaced `workflow_step_started/completed`,
 `workflow_end/error`, `human_input`, `take_control`, `viewer_control/error`,
 `work_workflow_references_updated`, `fix_applied`, and `context_canceled`
-(all with backend emitters). Result: **6 dead consts, 10 dead
-handlers/renderers, 13 produced-then-dropped, 11 telemetry demotions; the
-rest remain genuinely live, of which ~12 families become durable
-canonical.** Three more frontend-only strings (`decision_request_missing`,
+(all with backend emitters). Result: **8 dead consts, 11 dead
+handlers/renderers, 13 produced-then-dropped, 12 telemetry demotions, 15
+filtered by design; the rest remain genuinely live, of which ~12 families
+become durable canonical.** (`context_editing_started` appeared in an
+early draft of this audit by assumed symmetry and exists nowhere — not a
+type at all.) Three more frontend-only strings (`decision_request_missing`,
 `work_identity_updated`, `learning_completed/failed`) are not yet
 classified (client-synthesized vs dead handling).
 
 Delete outright — defined, never produced or consumed anywhere:
 
 - `step_execution_start`, `step_execution_end`, `step_execution_failed`
-- `decision_evaluated`, `prerequisite_navigation`, `context_editing_started`
+- `decision_evaluated`, `prerequisite_navigation`
+- `agent_processing`, `large_tool_output_server_unavailable` (sole
+  reference is the schema-gen registry, not an emitter)
 
 Delete the consts, generated TS types, and referencing tests.
 
@@ -368,6 +377,21 @@ Dead frontend handling — rendered or retained, nothing emits them:
 - `live_execution_streaming` (full `EventDispatcher` renderer, dead)
 - `cache_event` (renderer, dead)
 - `phase_started`, `phase_completed` (retention-list entries only, dead)
+- `work_identity_updated` (checked in `WorkSurface`, zero emitters in any
+  repo; its sibling `work_workflow_references_updated` is live)
+
+Not dead but filtered — `NON_TRANSCRIPT_TYPES` in
+`shared/session/transcript/terminalEventTranscript.ts` drops these from
+the displayed transcript by design (delivery-assembled, diagnostics, or
+product side-channels read by their own surfaces):
+
+- `token_usage`, `status_line`, `system_prompt`
+- `conversation_start/end/turn`, `llm_generation_start/with_retry`
+- `streaming_start/chunk/end`, `product_interaction`
+- `work_identity_updated`, `work_workflow_references_updated`
+
+The canonical allowlist should align with this: if the transcript never
+shows a type, the journal has no reason to keep it for chat restore.
 
 Dead renderers — dispatcher branch exists, zero emitters (verified, not
 just unreferenced):
@@ -419,6 +443,8 @@ events (consistent with the persistence boundary above):
   `error_detail`, `performance`
 - `mcp_server_connection_start/end`
 - `streaming_connection_lost/error/progress`
+- `large_tool_output_file_write_error` (emitted from the parallel-tool
+  and conversation paths, never read)
 
 Keep as live-only — genuinely consumed by Execution Logs and live views,
 but must never enter the chat journal (~40 types: streaming, progress,
@@ -456,3 +482,239 @@ renderer even in the new transcript and join the delete/demote list, not
 the canonical one. Token/context widgets have reachable renderers but no
 events arrive on retained-CLI tabs (CLIs report no per-turn usage), which
 confirms keeping them out of the journal as ledger/diagnostics data.
+
+## Appendix: deletion batch 1 (2026-09-22, uncommitted)
+
+Rule applied: every event must serve a frontend or backend purpose;
+emission verified per type (a dispatcher branch alone does not prove
+live). Deleted, all with zero remaining references in either repo:
+
+- Backend consts + structs + ctors (`mcpagent/events/`):
+  `mcp_server_discovery`, `mcp_server_connection_error`,
+  `comprehensive_cache`, `step_execution_start/end/failed`,
+  `prerequisite_navigation`, `agent_processing`, `model_change`,
+  `large_tool_output_server_unavailable`, `decision_evaluated`.
+- Langfuse/LangSmith handler cases + span functions for
+  `mcp_server_discovery` / `mcp_server_connection_error`, plus the
+  `docs/tracing.md` mention.
+- schema-gen registry/union entries + regenerated
+  `agent_go/schemas/*.schema.json` and frontend `src/generated/*`
+  (`cache_event` payload key dropped; unused `mcpcache` import removed).
+- Frontend renderers + dispatcher branches: `MCPServerDiscoveryEvent`,
+  `MCPServerConnectionEvent` (all three branches incl. the bare
+  `mcp_server_connection`, which is never on the wire — the struct
+  re-types to `_start` before emit), `SystemPromptEvent`,
+  `ModelChangeEvent`, `CacheEvent`, `ComprehensiveCacheEvent`,
+  `LiveExecutionStreamingEventCard` (+ `formatLiveStreamingPreview`),
+  and the dead union literals in `generated/event-types.ts`.
+- Retention-allowlist entries: `tool_output`, `phase_started`,
+  `phase_completed`.
+- `cache_event` added to `NON_TRANSCRIPT_TYPES` (defense-in-depth
+  beside the bridge skip; covered by a new
+  `terminalEventTranscript.test.ts` case).
+
+Corrections to the audit above, found while verifying emission:
+
+- `cache_event` is NOT dead: it is emitted on the wire from
+  `agent/parallel_tool_execution.go` and `agent/conversation.go`
+  (3 sites; every `CacheEvent` constructor returns wire type
+  `cache_event`). It is bridge-skipped (`SKIP_EVENTS` +
+  `NEVER_SHOW_EVENTS`), so still correctly out of the journal.
+  The `cache_hit/miss/write/expired/cleanup/error/operation_start`
+  wire strings, conversely, are never produced — the "17 producing
+  files" were handler/code references, not emitters.
+- There is no three-way `comprehensive_cache` spelling split: the
+  backend never emitted bare `comprehensive_cache` (dead const,
+  deleted). `comprehensive_cache_event` is a `*mcpcache.ComprehensiveCacheEvent`
+  sent to observability tracers only — the streaming tracer forwards
+  solely `*events.AgentEvent`, so it never reaches polling/SSE.
+  The `context_canceled`/`context_cancelled` split is real and stands.
+- `tool_output` is never produced either (constructor has zero
+  callers); its bridge skip entry is moot. Const/struct/schema kept
+  as a follow-up deletion candidate, not part of this batch.
+- `system_prompt` hiding works via backend `HIDDEN_EVENTS` + frontend
+  `NON_TRANSCRIPT_TYPES`, not via the frontend `HIDDEN_EVENTS` set
+  (which only feeds counts in `useChatStore`, no render path).
+
+Verification: `go build ./...` clean in both `mcpagent` and `agent_go`
+(the one `libonnxruntime` link warning pre-exists), `go vet` +
+`go test ./events/` pass, `npm run types:events` + `npx tsc -b` clean,
+vitest 26/26 in `components/events` + `shared/session/transcript` and
+95/95 in `terminalEventTranscript.test.ts`. Not committed or pushed —
+awaiting explicit instruction.
+
+## Appendix: deletion batch 2 (2026-09-22, uncommitted)
+
+Same rule (every event serves a frontend or backend purpose; emission
+verified per type). Prompted by "why do we need/keep/have these" review
+of `step_progress_updated`, the cache consts, the MCP connection
+structs, `todo_steps_extracted`, `batch_group_start`, and
+`stepStatusMap`. Result: 13 more REMOVED (27 total in the catalog).
+
+Deleted as never-produced (no emitters anywhere, dead handling only):
+
+- The 7 per-operation cache wire strings (`cache_hit/miss/write/
+  expired/cleanup/error/operation_start`): consts, distinct structs,
+  5 uncalled ctors, unreachable Langfuse handlers. Kept: unified
+  `CacheEvent` + `GenericCache` + the 2 called ctors (live
+  `cache_event` tracer traffic, bridge-skipped).
+- The 4 batch wrappers (`batch_execution_start/end`,
+  `batch_group_start/end`): consts (both repos), structs + ctors,
+  schema-gen entries, `planning_exports.go` reader + notify func (+
+  its test), tree labels, HIDDEN entries, 4 dispatcher branches,
+  renderers, `extractWorkflowInfo`, WorkflowLayout batch restore,
+  `useWorkflowStore` batch slice, `BatchProgressHeader`, retention +
+  SUMMARY entries.
+- `todo_steps_extracted`: sole emit path uncalled; emit funcs + 7
+  exclusive helpers + struct + consts + schema + renderer +
+  activity-tree label.
+
+Deleted as produced-but-unread:
+
+- `step_progress_updated` (5 emit sites, zero readers; the "required
+  for canvas" comment was stale — ChatArea had removed processing and
+  WorkflowLayout never read it). Emit wrappers kept as
+  webhook-persistence hooks for their 13 call sites.
+
+Deleted as downstream-only machinery with no source left:
+
+- `stepStatusMap` / `currentStepId` store slice + setters, canvas
+  node-coloring (subscription, stabilization, sync effect,
+  `usePlanToFlow` status branches), WorkflowLayout step scan.
+
+Kept, with the leak closed:
+
+- `mcp_server_connection_start/end`: genuinely emitted per connect
+  and consumed by Langfuse/LangSmith span handlers (backend purpose).
+  Added to bridge `SKIP_EVENTS`, store `NEVER_SHOW_EVENTS`, and
+  frontend `NON_TRANSCRIPT_TYPES` (+ test) so they stop reaching the
+  transcript as "Unknown Event Type" cards. Tracers get them before
+  the bridge, so spans are unaffected.
+- `batch_execution_canceled`: the only live batch event (context-cancel
+  path); survives with renderer + retention + STRUCTURAL intact. Found
+  only because the build broke when the batch deletion briefly removed
+  its struct — the batch sweep initially missed the canceled ctor.
+
+Verification: `go build ./...` clean in both repos, `npm run
+types:events` + `npx tsc -b` clean (hand-fixed `event-types.ts` union
+again for the removed types), vitest 144/144 across transcript +
+events + history-log suites and 96/96 in
+`terminalEventTranscript.test.ts` (2 new filter cases). Not committed
+or pushed — awaiting explicit instruction.
+
+## Appendix: deletion batch 3 (2026-09-22, uncommitted)
+
+Same rule (every event serves a frontend or backend purpose; emission
+verified per type). Prompted by "where are these used / is this used
+anywhere" review of the Learning, Delegation, Context & limits, and
+context-editing families. Result: 10 more REMOVED (37 total in the
+catalog: 133 entries, 96 kept).
+
+Deleted as never-produced:
+
+- `learning_completed` / `learning_failed`: legacy eval-subsystem
+  leftovers (eval retired 2026-09-19); no constructor ever existed,
+  zero producers. `learning_skipped`: const + struct + `GetEventType`
+  removed; struct never constructed. All three schema-gen entries
+  removed. NOTE: `StepContent.tsx` badge matches on these strings are
+  a separate *file-log* namespace (`learning-execution.json` run
+  files via `/workflow/logs`) and are kept for historical run data.
+- `orchestrator_start` / `orchestrator_error`: never emitted (only
+  `orchestrator_end` ever was). Removed consts + structs, schema-gen
+  entries, both renderers + dispatcher branches, `runningWorkflows.ts`
+  ERROR/IMPORTANT entries (`ERROR` is now `['workflow_error']`),
+  `useChatStore` important/retain matches, union/map entries.
+- `throttling_detected` / `token_limit_exceeded`: schema-only — at
+  HEAD the only backend references were schema-gen itself. Removed
+  schema entries, renderers, dispatcher branches, exports, union/map
+  entries. These were exposed by regen: stale generated types had
+  masked the dead components until `types:events` re-ran; `tsc -b`
+  now passes.
+- `context_canceled` (single L): never a real wire event — a
+  misspelling in two backend match arms that could never match the
+  actual `context_cancelled` wire string. Both arms fixed.
+
+Deleted as a whole dead feature, not just events:
+
+- Context editing end-to-end: `mcpagent/agent/context_editing.go`,
+  `context_editing_routes.go` (`/compact` route + handler),
+  `agent_tuning.go` flags/thresholds, `ContextEditing*`
+  consts/structs/constructors, `enable_context_editing` request +
+  preset fields, `ContextEditingCompleted/ErrorEvent.tsx`, dispatcher
+  branches, `agentApi.compactContext` + request/response types,
+  `handleCompact` (dead: no `/compact` command or button ever called
+  it), `chatSubmitHelpers` preset override. `context_editing_completed`
+  / `context_editing_error` tombstoned.
+
+Kept deliberately (producer + consumer verified):
+
+- `learn_code_script_execution`: emitted at 4 call sites
+  (`controller_execution.go` via `emitScriptedExecutionEvent`),
+  consumed by `useChatStore` (purge/dedup), `ChatArea`,
+  `EventDispatcher`, `eventModeUtils`; STRUCTURAL retention. The
+  `learn_*` name is legacy; the signal is live scripted-mode
+  execution. Not the same family as the deleted `learning_*` events.
+- `orchestrator_end`, `variables_extracted`, `workflow_error`: all
+  have live emitters and consumers (verified before keeping).
+
+Contract bugs fixed along the way:
+
+- `session_execution_tree_test.go` asserted terminal status for the
+  deleted `batch_execution_end`/`batch_group_end` and used the
+  misspelled `context_canceled`; updated to the live contract
+  (`context_cancelled`, deleted rows removed with a tombstone
+  comment). Production code already had the correct spelling.
+- Stale comments reworded (`controller.go`, `controller_batch_execution.go`
+  still referenced `step_progress_updated` for live batch-context fields).
+
+Verification: `go build ./...` + `go vet` clean (builder + mcpagent),
+`go test` clean for `pkg/orchestrator/events`, `internal/events`,
+mcpagent `events`, and the fixed `session_execution_tree` test;
+`npm run types:events` + `npx tsc -b` clean; vitest 203/203 across the
+touched suites (transcript, commands, history-logs, execution-logs,
+stores, workflow utils). Full `cmd/server` suite has 3 failures also
+present without these changes (tmux CLI-lifecycle timing fails
+identically against pristine HEAD mcpagent; slack-allocator and tool-
+topology pass in isolation — flaky under full runs). Not committed or
+pushed — awaiting explicit instruction.
+
+## Appendix: batch-3 follow-up — `orchestrator_agent_start` card removed (2026-09-22, uncommitted)
+
+Prompted by "which card is this / I never see it / it should not be
+visible anywhere". Verified: product chats never painted it
+(`isProductMainConversationEvent` excludes child-execution starts);
+the only render path was the diagnostics rail. Removed the card from
+code: dispatcher branch now returns null (explicit, so it cannot fall
+through as an "Unknown Event Type" JSON card) and
+`OrchestratorAgentStartEventDisplay.tsx` + both index exports deleted.
+The wire event stays live for non-rendering consumers (store
+retention/heartbeat/restore, STRUCTURAL window, bot text narration,
+planning match); catalog reclassified LIVE -> RETENTION-ONLY. End/error
+cards untouched (end carries the result). No test changes needed:
+`tsc -b` clean, transcript suites 112/112. Not committed or pushed —
+awaiting explicit instruction.
+
+## Appendix: minimal diagnostics rail (2026-09-22, uncommitted)
+
+Prompted by "the dev rail should mainly have user/assistant and tools
+plus very important things" + "product chats are perfect [leave them]".
+`selectTerminalEvents` (terminal path only — product path untouched)
+gained `TERMINAL_RAIL_HIDDEN_TYPES`, a fail-open denylist hiding
+lifecycle/status banners from the rail: 8 sub-agent types,
+`orchestrator_end`, todo/workflow status, summarization trio, usage/
+routing/variables, retry/broken-pipe/max-turns, `mcp_server_selection`,
+`synthetic_turn_ready`, `auto_notification_steered`,
+`conversation_resumed`, `learn_code_script_execution`. Rail keeps:
+user/assistant/tool rows, human gates, errors, completions, and
+content-bearing results (`pre_validation_completed`,
+`batch_execution_canceled`, thinking). No dispatcher changes in this
+step (the `orchestrator_agent_start` null + component deletion from the
+prior follow-up stands alone); no backend changes — all hidden types
+are still emitted, stored, and retained.
+Tests: 4 rail-visibility cases in `terminalEventTranscript.test.ts`
+rewrote old "keeps lifecycle card" assertions to the mandated
+hide-behavior (explicit contract change per above); ordering test kept
+its assertion with a rail-visible fixture swap. `tsc -b` clean, 96/96
+transcript, full frontend suite 1786/1788 (sole failure is the
+pre-existing `formsKitAdoption` settings-kit case, untouched files).
+Not committed or pushed — awaiting explicit instruction.

@@ -103,9 +103,6 @@ func runtimeConfigForLLMAgent(config LLMAgentConfig, model llmtypes.Model, trace
 			SummarizeOnFixedThreshold: config.SummarizeOnFixedTokenThreshold,
 			FixedTokenThreshold:       config.FixedTokenThreshold,
 			SummaryKeepLastMessages:   config.SummaryKeepLastMessages,
-			EditingEnabled:            config.EnableContextEditing,
-			EditingThreshold:          config.ContextEditingThreshold,
-			EditingTurnThreshold:      config.ContextEditingTurnThreshold,
 		},
 		Coding: mcpagent.CodingRuntimeConfig{
 			ClaudeCodeTransport:               config.ClaudeCodeTransport,
@@ -369,11 +366,6 @@ type LLMAgentConfig struct {
 	FixedTokenThreshold            int     // Fixed token threshold to trigger summarization (e.g., 100000 = 100k tokens, default: 100k)
 	SummaryKeepLastMessages        int     // Number of recent messages to keep when summarizing (0 = use default: 4)
 
-	// Context editing configuration
-	EnableContextEditing        bool // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  // Token threshold for context editing (0 = use default: 100)
-	ContextEditingTurnThreshold int  // Turn age threshold for context editing (0 = use default: 5)
-
 	// Context offloading configuration
 	LargeOutputThreshold int // Token threshold for context offloading (0 = use default: 10000)
 
@@ -460,10 +452,6 @@ func NewLLMAgentWrapperWithTrace(ctx context.Context, config LLMAgentConfig, tra
 		if config.EnableContextSummarization {
 			logger.Info(fmt.Sprintf("📝 Context summarization disabled for %s - CLI provider manages context natively", config.Provider))
 			config.EnableContextSummarization = false
-		}
-		if config.EnableContextEditing {
-			logger.Info(fmt.Sprintf("✂️ Context editing disabled for %s - CLI provider manages context natively", config.Provider))
-			config.EnableContextEditing = false
 		}
 	}
 	if config.Name == "" {

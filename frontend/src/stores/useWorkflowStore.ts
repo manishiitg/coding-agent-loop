@@ -198,18 +198,6 @@ export interface PresetWorkflowState {
   activeWorkflowTabId: string | null
   selectedGroupIds: string[]
   currentRunningGroupId: string | null
-  currentStepId: string | null
-  stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
-  batchProgress: {
-    isActive: boolean
-    totalGroups: number
-    currentGroupIndex: number
-    currentGroupName: string | null
-    completedCount: number
-    failedCount: number
-    remainingCount: number
-    startTime: number | null
-  } | null
 }
 
 function createDefaultPresetState(): PresetWorkflowState {
@@ -229,9 +217,6 @@ function createDefaultPresetState(): PresetWorkflowState {
     activeWorkflowTabId: null,
     selectedGroupIds: [],
     currentRunningGroupId: null,
-    currentStepId: null,
-    stepStatusMap: new Map(),
-    batchProgress: null,
   }
 }
 
@@ -249,9 +234,6 @@ function snapshotPresetState(state: WorkflowStore): PresetWorkflowState {
     activeWorkflowTabId: state.activeWorkflowTabId,
     selectedGroupIds: state.selectedGroupIds,
     currentRunningGroupId: state.currentRunningGroupId,
-    currentStepId: state.currentStepId,
-    stepStatusMap: new Map(state.stepStatusMap),
-    batchProgress: state.batchProgress,
   }
 }
 
@@ -287,24 +269,6 @@ interface WorkflowStore {
 
   // Current running group (for batch execution)
   currentRunningGroupId: string | null
-
-  // Current step being executed (for auto-focus on canvas)
-  currentStepId: string | null
-
-  // Step execution status map (stepId -> status)
-  stepStatusMap: Map<string, 'pending' | 'running' | 'completed' | 'failed'>
-
-  // Batch execution progress (for progress header display)
-  batchProgress: {
-    isActive: boolean
-    totalGroups: number
-    currentGroupIndex: number
-    currentGroupName: string | null
-    completedCount: number
-    failedCount: number
-    remainingCount: number
-    startTime: number | null
-  } | null
 
   // UI state
   activePhase: string | null // Currently running phase
@@ -367,21 +331,6 @@ interface WorkflowStore {
 
   // Current running group
   setCurrentRunningGroupId: (groupName: string | null) => void
-
-  // Current step (for auto-focus on canvas)
-  setCurrentStepId: (stepId: string | null) => void
-
-  // Step status updates
-  setStepStatus: (stepId: string, status: 'pending' | 'running' | 'completed' | 'failed') => void
-  clearStepStatusMap: () => void
-
-  // Consolidated batch group switching handler
-  // Handles group start/end events and updates state atomically
-  handleBatchGroupStart: (groupName: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => void
-  handleBatchGroupEnd: (groupName: string, success?: boolean, remainingGroups?: number) => void
-
-  // Reset batch progress (called when batch completes or is canceled)
-  resetBatchProgress: () => void
 
   // UI
   setActivePhase: (phase: string | null) => void
@@ -519,15 +468,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         }
         return null
       })(),
-
-      // Current step being executed (for auto-focus)
-      currentStepId: null,
-
-      // Step execution status map
-      stepStatusMap: new Map(),
-
-      // Batch execution progress
-      batchProgress: null,
 
       // UI state
       activePhase: null,
@@ -1009,162 +949,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
         } catch (error) {
           console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
         }
-      },
-
-      setCurrentStepId: (stepId: string | null) => {
-        // Only update if value actually changed (prevents unnecessary re-renders and canvas refocus)
-        const current = get().currentStepId
-        if (current !== stepId) {
-          set({ currentStepId: stepId })
-        }
-      },
-
-      setStepStatus: (stepId: string, status: 'pending' | 'running' | 'completed' | 'failed') => {
-        // Only update if status actually changed (prevents unnecessary re-renders)
-        const currentStatus = get().stepStatusMap.get(stepId)
-        if (currentStatus === status) {
-          return // No change, skip update
-        }
-        set(state => {
-          const newMap = new Map(state.stepStatusMap)
-          newMap.set(stepId, status)
-          return { stepStatusMap: newMap }
-        })
-      },
-
-      clearStepStatusMap: () => {
-        set({ stepStatusMap: new Map() })
-      },
-
-      // Consolidated batch group switching handler
-      // Handles group start: sets currentRunningGroupId, updates selectedRunFolder, and updates batchProgress
-      handleBatchGroupStart: (groupName: string, runFolder: string, workspacePath?: string, groupIndex?: number, totalGroups?: number) => {
-        const state = get()
-
-        // Set current running group ID
-        set({ currentRunningGroupId: groupName })
-
-        // Persist currentRunningGroupId to localStorage
-        try {
-          setWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY, groupName)
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save currentRunningGroupId to localStorage:', error)
-        }
-
-        // Normalize and update selected run folder
-        const normalizedFolder = normalizeRunFolder(runFolder, state.variablesManifest)
-        set({ selectedRunFolder: normalizedFolder })
-
-        // Persist selectedRunFolder to localStorage
-        try {
-          if (normalizedFolder) {
-            setWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY, normalizedFolder)
-          } else {
-            removeWorkflowStorageItem(SELECTED_RUN_FOLDER_KEY)
-          }
-        } catch (error) {
-          console.error('[WorkflowStore] Failed to save selectedRunFolder to localStorage:', error)
-        }
-
-        // Update batch progress if index/total provided
-        if (groupIndex !== undefined && totalGroups !== undefined) {
-          // Initialize batch progress on first group or update existing
-          if (!state.batchProgress?.isActive) {
-            set({
-              batchProgress: {
-                isActive: true,
-                totalGroups,
-                currentGroupIndex: groupIndex,
-                currentGroupName: groupName,
-                completedCount: 0,
-                failedCount: 0,
-                remainingCount: totalGroups,
-                startTime: Date.now()
-              }
-            })
-          } else {
-            set({
-              batchProgress: {
-                ...state.batchProgress,
-                currentGroupIndex: groupIndex,
-                currentGroupName: groupName,
-                totalGroups // Update in case it changed
-              }
-            })
-          }
-        }
-
-        console.log('[WorkflowStore] Batch group started:', {
-          groupName,
-          runFolder,
-          normalizedFolder,
-          workspacePath,
-          groupIndex,
-          totalGroups,
-          batchProgress: get().batchProgress
-        })
-
-        // Reload run folders and progress if workspace path provided
-        if (workspacePath) {
-          state.loadRunFolders(workspacePath).catch(err => {
-            console.warn('[WorkflowStore] Failed to reload run folders:', err)
-          })
-        }
-      },
-
-      // Consolidated batch group end handler
-      // Clears currentRunningGroupId if it matches, and updates batch progress counts
-      handleBatchGroupEnd: (groupName: string, success?: boolean, remainingGroups?: number) => {
-        const state = get()
-
-        // Only clear if this is the currently running group
-        // This prevents clearing when events arrive out of order
-        if (state.currentRunningGroupId === groupName) {
-          set({ currentRunningGroupId: null })
-
-          // Clear from localStorage
-          try {
-            removeWorkflowStorageItem(CURRENT_RUNNING_GROUP_ID_KEY)
-          } catch (error) {
-            console.error('[WorkflowStore] Failed to clear currentRunningGroupId from localStorage:', error)
-          }
-        }
-
-        // Update batch progress if we have active batch progress
-        if (state.batchProgress && success !== undefined) {
-          const newCompleted = success
-            ? state.batchProgress.completedCount + 1
-            : state.batchProgress.completedCount
-          const newFailed = !success
-            ? state.batchProgress.failedCount + 1
-            : state.batchProgress.failedCount
-          const remaining = remainingGroups ?? Math.max(0, state.batchProgress.remainingCount - 1)
-
-          set({
-            batchProgress: {
-              ...state.batchProgress,
-              completedCount: newCompleted,
-              failedCount: newFailed,
-              remainingCount: remaining,
-              // Keep batch active if there are remaining groups
-              isActive: remaining > 0,
-              // Clear current group ID if batch is done
-              currentGroupName: remaining > 0 ? state.batchProgress.currentGroupName : null
-            }
-          })
-        }
-
-        console.log('[WorkflowStore] Batch group ended:', {
-          groupName,
-          success,
-          remainingGroups,
-          batchProgress: get().batchProgress
-        })
-      },
-
-      // Reset batch progress (called when batch completes or is canceled)
-      resetBatchProgress: () => {
-        set({ batchProgress: null })
       },
 
       setActivePhase: (phase: string | null) => {
@@ -1649,9 +1433,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             set({
               runFolders: [],
               variablesManifest: null,
-              currentStepId: null,
-              stepStatusMap: new Map(),
-              batchProgress: null,
               workflowChatTabs: {},
               activeWorkflowTabId: null,
               showChatArea: true,
@@ -1714,9 +1495,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
             activeWorkflowTabId: restored.activeWorkflowTabId,
             selectedGroupIds: restored.selectedGroupIds,
             currentRunningGroupId: restored.currentRunningGroupId,
-            currentStepId: restored.currentStepId,
-            stepStatusMap: new Map(restored.stepStatusMap),
-            batchProgress: restored.batchProgress,
             workshopMode: restoredWorkshopMode,
             workflowMode: 'plan',
             _currentPresetId: presetId
@@ -1748,9 +1526,6 @@ export const useWorkflowStore = create<WorkflowStore>()(
           variablesManifest: null,
           selectedGroupIds: [],
           currentRunningGroupId: null,
-          currentStepId: null,
-          stepStatusMap: new Map(),
-          batchProgress: null,
           workflowWorkspaceView: null,
           // activePhase is saved/loaded per-preset, don't reset here
           workflowChatTabs: {},

@@ -166,11 +166,6 @@ type OrchestratorAgentConfig struct {
 	FixedTokenThreshold            int     `json:"fixed_token_threshold,omitempty"`              // Fixed token threshold to trigger summarization (e.g., 200000 = 200k tokens, default: 200k)
 	SummaryKeepLastMessages        int     `json:"summary_keep_last_messages,omitempty"`         // Number of recent messages to keep when summarizing (default: 4)
 
-	// Context editing configuration
-	EnableContextEditing        bool `json:"enable_context_editing,omitempty"`         // Enable context editing (dynamic context reduction)
-	ContextEditingThreshold     int  `json:"context_editing_threshold,omitempty"`      // Token threshold for context editing (0 = use default: 100)
-	ContextEditingTurnThreshold int  `json:"context_editing_turn_threshold,omitempty"` // Turn age threshold for context editing (0 = use default: 20)
-
 	// Parallel tool execution: When enabled, multiple tool calls in a single LLM response
 	// are executed concurrently using a fork-join pattern instead of sequentially
 	EnableParallelToolExecution bool `json:"enable_parallel_tool_execution,omitempty"`

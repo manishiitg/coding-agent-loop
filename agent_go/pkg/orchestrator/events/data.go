@@ -7,20 +7,6 @@ import (
 )
 
 // Orchestrator Events
-type OrchestratorStartEvent struct {
-	events.BaseEventData
-	Objective        string `json:"objective"`
-	AgentsCount      int    `json:"agents_count"`
-	ServersCount     int    `json:"servers_count"`
-	Configuration    string `json:"configuration,omitempty"`
-	OrchestratorType string `json:"orchestrator_type,omitempty"`
-	ExecutionMode    string `json:"execution_mode,omitempty"`
-}
-
-func (e *OrchestratorStartEvent) GetEventType() events.EventType {
-	return OrchestratorStart
-}
-
 type OrchestratorEndEvent struct {
 	events.BaseEventData
 	Objective        string        `json:"objective"`
@@ -34,19 +20,6 @@ type OrchestratorEndEvent struct {
 
 func (e *OrchestratorEndEvent) GetEventType() events.EventType {
 	return OrchestratorEnd
-}
-
-type OrchestratorErrorEvent struct {
-	events.BaseEventData
-	Context          string        `json:"context"`
-	Error            string        `json:"error"`
-	Duration         time.Duration `json:"duration"`
-	OrchestratorType string        `json:"orchestrator_type,omitempty"`
-	ExecutionMode    string        `json:"execution_mode,omitempty"`
-}
-
-func (e *OrchestratorErrorEvent) GetEventType() events.EventType {
-	return OrchestratorError
 }
 
 // Orchestrator Agent Events
@@ -412,163 +385,9 @@ func NewStepTokenUsageEventWithPricing(phase string, step int, stepTitle string,
 	}
 }
 
-// LearningSkippedEvent represents the event when learning is skipped.
-type LearningSkippedEvent struct {
-	events.BaseEventData
-	StepID        string `json:"step_id"`        // Step ID from plan
-	StepIndex     int    `json:"step_index"`     // 0-based step index
-	StepTitle     string `json:"step_title"`     // Step title
-	StepPath      string `json:"step_path"`      // Step path (e.g., "step-1" or "step-2-sub-login")
-	Reason        string `json:"reason"`         // Reason for skipping
-	RunFolder     string `json:"run_folder"`     // Run folder name (e.g., "iteration-1")
-	WorkspacePath string `json:"workspace_path"` // Workspace path
-}
-
-func (e *LearningSkippedEvent) GetEventType() events.EventType {
-	return LearningSkipped
-}
-
-// =============================================================================
-// BATCH EXECUTION EVENTS (for variable groups)
-// =============================================================================
-
-// BatchExecutionStartEvent represents the start of batch execution across multiple variable groups
-type BatchExecutionStartEvent struct {
-	events.BaseEventData
-	TotalGroups       int                    `json:"total_groups"`        // Total number of enabled groups
-	EnabledGroupNames []string               `json:"enabled_group_names"` // List of group names to execute
-	IterationNumber   int                    `json:"iteration_number"`    // Current iteration number
-	WorkspacePath     string                 `json:"workspace_path"`
-	ExecutionOptions  map[string]interface{} `json:"execution_options,omitempty"` // Execution options (run_mode, execution_strategy, etc.)
-}
-
-func (e *BatchExecutionStartEvent) GetEventType() events.EventType {
-	return BatchExecutionStart
-}
-
-// NewBatchExecutionStartEvent creates a new BatchExecutionStartEvent
-func NewBatchExecutionStartEvent(totalGroups int, enabledGroupNames []string, iterationNumber int, workspacePath string, executionOptions map[string]interface{}) *BatchExecutionStartEvent {
-	return &BatchExecutionStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalGroups:       totalGroups,
-		EnabledGroupNames: enabledGroupNames,
-		IterationNumber:   iterationNumber,
-		WorkspacePath:     workspacePath,
-		ExecutionOptions:  executionOptions,
-	}
-}
-
-// BatchGroupStartEvent represents the start of execution for a specific variable group
-type BatchGroupStartEvent struct {
-	events.BaseEventData
-	GroupName       string            `json:"group_name"`       // Current group name
-	GroupIndex      int               `json:"group_index"`      // 0-based index in enabled groups
-	TotalGroups     int               `json:"total_groups"`     // Total number of enabled groups
-	VariableValues  map[string]string `json:"variable_values"`  // Values for this group
-	RunFolder       string            `json:"run_folder"`       // e.g., "iteration-1-group-1"
-	IterationNumber int               `json:"iteration_number"` // Current iteration number
-	WorkspacePath   string            `json:"workspace_path"`
-}
-
-func (e *BatchGroupStartEvent) GetEventType() events.EventType {
-	return BatchGroupStart
-}
-
-// NewBatchGroupStartEvent creates a new BatchGroupStartEvent
-func NewBatchGroupStartEvent(groupName string, groupIndex, totalGroups int, variableValues map[string]string, runFolder string, iterationNumber int, workspacePath string) *BatchGroupStartEvent {
-	return &BatchGroupStartEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		GroupName:       groupName,
-		GroupIndex:      groupIndex,
-		TotalGroups:     totalGroups,
-		VariableValues:  variableValues,
-		RunFolder:       runFolder,
-		IterationNumber: iterationNumber,
-		WorkspacePath:   workspacePath,
-	}
-}
-
-// BatchGroupEndEvent represents the completion of execution for a specific variable group
-type BatchGroupEndEvent struct {
-	events.BaseEventData
-	GroupName       string        `json:"group_name"`       // Current group name
-	GroupIndex      int           `json:"group_index"`      // 0-based index in enabled groups
-	TotalGroups     int           `json:"total_groups"`     // Total number of enabled groups
-	Success         bool          `json:"success"`          // Whether this group completed successfully
-	Error           string        `json:"error,omitempty"`  // Error message if failed
-	Duration        time.Duration `json:"duration"`         // How long this group took
-	CompletedSteps  int           `json:"completed_steps"`  // Number of steps completed
-	TotalSteps      int           `json:"total_steps"`      // Total number of steps
-	RunFolder       string        `json:"run_folder"`       // e.g., "iteration-1-group-1"
-	RemainingGroups int           `json:"remaining_groups"` // How many groups are left
-}
-
-func (e *BatchGroupEndEvent) GetEventType() events.EventType {
-	return BatchGroupEnd
-}
-
-// NewBatchGroupEndEvent creates a new BatchGroupEndEvent
-func NewBatchGroupEndEvent(groupName string, groupIndex, totalGroups int, success bool, errorMsg string, duration time.Duration, completedSteps, totalSteps int, runFolder string, remainingGroups int) *BatchGroupEndEvent {
-	return &BatchGroupEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		GroupName:       groupName,
-		GroupIndex:      groupIndex,
-		TotalGroups:     totalGroups,
-		Success:         success,
-		Error:           errorMsg,
-		Duration:        duration,
-		CompletedSteps:  completedSteps,
-		TotalSteps:      totalSteps,
-		RunFolder:       runFolder,
-		RemainingGroups: remainingGroups,
-	}
-}
-
-// BatchExecutionEndEvent represents the completion of all batch execution
-type BatchExecutionEndEvent struct {
-	events.BaseEventData
-	TotalGroups         int           `json:"total_groups"`          // Total number of enabled groups
-	CompletedGroups     int           `json:"completed_groups"`      // Number of groups that completed
-	FailedGroups        int           `json:"failed_groups"`         // Number of groups that failed
-	CanceledGroups      int           `json:"canceled_groups"`       // Number of groups that were canceled
-	Duration            time.Duration `json:"duration"`              // Total batch execution time
-	Success             bool          `json:"success"`               // Whether all groups succeeded
-	Error               string        `json:"error,omitempty"`       // Error message if batch failed
-	IterationNumber     int           `json:"iteration_number"`      // Current iteration number
-	CompletedGroupNames []string      `json:"completed_group_names"` // Names of completed groups
-	FailedGroupNames    []string      `json:"failed_group_names"`    // Names of failed groups
-}
-
-func (e *BatchExecutionEndEvent) GetEventType() events.EventType {
-	return BatchExecutionEnd
-}
-
-// NewBatchExecutionEndEvent creates a new BatchExecutionEndEvent
-func NewBatchExecutionEndEvent(totalGroups, completedGroups, failedGroups, canceledGroups int, duration time.Duration, success bool, errorMsg string, iterationNumber int, completedGroupNames, failedGroupNames []string) *BatchExecutionEndEvent {
-	return &BatchExecutionEndEvent{
-		BaseEventData: events.BaseEventData{
-			Timestamp: time.Now(),
-		},
-		TotalGroups:         totalGroups,
-		CompletedGroups:     completedGroups,
-		FailedGroups:        failedGroups,
-		CanceledGroups:      canceledGroups,
-		Duration:            duration,
-		Success:             success,
-		Error:               errorMsg,
-		IterationNumber:     iterationNumber,
-		CompletedGroupNames: completedGroupNames,
-		FailedGroupNames:    failedGroupNames,
-	}
-}
-
-// BatchExecutionCanceledEvent represents when batch execution is canceled by user
+// BatchExecutionCanceledEvent represents when batch execution is canceled by user.
+// It is the only batch lifecycle event still emitted (the start/end/group
+// wrappers were removed on 2026-09-22: never produced anywhere).
 type BatchExecutionCanceledEvent struct {
 	events.BaseEventData
 	TotalGroups         int      `json:"total_groups"`          // Total number of enabled groups

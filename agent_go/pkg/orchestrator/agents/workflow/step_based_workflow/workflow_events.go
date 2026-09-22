@@ -88,27 +88,6 @@ func NewStepTokenUsageEvent(phase string, step int, stepTitle string, promptToke
 	}
 }
 
-// StepProgressUpdatedEvent represents the event when in-memory workflow step progress changes.
-type StepProgressUpdatedEvent struct {
-	baseevents.BaseEventData
-	WorkspacePath string `json:"workspace_path"`            // Workspace path for file operations
-	RunFolder     string `json:"run_folder"`                // Run folder name (e.g., "iteration-1")
-	CurrentStepId string `json:"current_step_id,omitempty"` // Step ID of the current step (starting, running, or completed)
-	Status        string `json:"status,omitempty"`          // Step status: "start", "end", "failed", or empty (for progress updates)
-	Error         string `json:"error,omitempty"`           // Error message (populated when status is "failed")
-	// Batch execution info (always present since backend always runs in batch context)
-	GroupName   string `json:"group_name,omitempty"` // Current group name being executed
-	GroupIndex  int    `json:"group_index"`          // 0-based index of current group
-	TotalGroups int    `json:"total_groups"`         // Total number of groups in batch
-	// Tiered LLM allocation info (only populated in tiered mode)
-	UsedTier      int    `json:"used_tier,omitempty"`       // Tier number (1, 2, or 3)
-	UsedTierLabel string `json:"used_tier_label,omitempty"` // Human-readable tier label ("High", "Medium", "Low")
-}
-
-func (e *StepProgressUpdatedEvent) GetEventType() baseevents.EventType {
-	return events.StepProgressUpdated
-}
-
 // IndependentStepsSelectedEvent represents the event when independent steps are selected for parallel execution
 type IndependentStepsSelectedEvent struct {
 	baseevents.BaseEventData

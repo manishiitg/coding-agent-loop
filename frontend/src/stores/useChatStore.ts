@@ -235,7 +235,7 @@ function addTabEventsBatched(sessionId: string, events: PollingEvent[]) {
   const hasImportant = events.some(e => {
     const t = e.type
     return t === 'unified_completion' || t === 'conversation_end' || t === 'workflow_end' ||
-      t === 'agent_error' || t === 'conversation_error' || t === 'orchestrator_error' ||
+      t === 'agent_error' || t === 'conversation_error' ||
       t === 'orchestrator_agent_error' || t === 'workflow_error' ||
       t === 'request_human_feedback' || t === 'blocking_human_feedback' ||
       t === 'plan_approval' || t === 'pre_validation_completed' ||
@@ -274,7 +274,6 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Error events - always keep for debugging
     'agent_error',
     'conversation_error',
-    'orchestrator_error',
     'orchestrator_agent_error',
     'workflow_error',
     // Completion/end events - always keep
@@ -296,19 +295,11 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Tool events - keep for understanding what happened
     'tool_call',
     'tool_result',
-    'tool_output',
     // LLM output - keep final generation results
     'llm_generation_end',
     // Workflow execution events
-    'step_progress_updated',
-    'phase_started',
-    'phase_completed',
     'pre_validation_completed',
     'routing_evaluated',
-    'batch_group_start',
-    'batch_group_end',
-    'batch_execution_start',
-    'batch_execution_end',
     'batch_execution_canceled',
     'todo_task_route_selected',
     'todo_task_step_completed',

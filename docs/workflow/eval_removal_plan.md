@@ -332,7 +332,8 @@ or route is required.
 4. Allowed survivors: `routing-evaluation.json`, `RoutingEvaluatedEvent`,
    `routeTrace.ts` / `triggerLayout.ts` routing logic,
    `RoutingEvaluationCounts`, cron "evaluation" wording in `scheduler.go`,
-   `ToolResponseEvaluation` (external mcpagent context-editing type),
+   `ToolResponseEvaluation` (external mcpagent context-editing type —
+   later removed 2026-09-22 with the whole context-editing feature),
    pulse-review `evaluation` argument aliases (legacy compat).
 5. End-to-end: full workflow run, scheduled run, and webhook run complete with
    no eval phase; review/costs/timing pages render without an eval section;

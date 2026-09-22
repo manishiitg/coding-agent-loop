@@ -27,7 +27,7 @@ func TestWorkManifestDeclaresProjectScopeAndCodingAllowlist(t *testing.T) {
 	if manifest.Profile.Scope != agentprofiles.ProfileScopeProject {
 		t.Fatalf("work must declare scope: project, got %q", manifest.Profile.Scope)
 	}
-	for _, want := range []string{"agent-browser", "code-reviewer", "work-integrations", "work-workflow-files", "work-skills", "work-schedules-and-bots", "work-dashboard", "ui-ux-pro-max", "background-work"} {
+	for _, want := range []string{"agent-browser", "code-reviewer", "work-integrations", "work-workflow-files", "work-skills", "work-schedules-and-bots", "work-dashboard", "work-ui-control", "ui-ux-pro-max", "background-work"} {
 		if !contains(manifest.Profile.Skills, want) {
 			t.Fatalf("work feature bundles omitted skill %q: %v", want, manifest.Profile.Skills)
 		}
@@ -212,6 +212,7 @@ func TestWorkPlatformSkillsRegisterAndLoad(t *testing.T) {
 		"work-skills":             {"list_skills", "search_skills", "update_project_skill_selection", "skills/<skill-name>/SKILL.md", "account-wide `skills/custom/`", "Crew should remember that", "When asked to do X, Crew should", "link them rather than duplicating", "same topic", "independently reusable topics", "catch-all", "150 lines or fewer", "references/", "scripts/", "skill authoring is a capability", "Setup > Skills"},
 		"work-schedules-and-bots": {"list_project_schedules", "five-field cron", "list_project_triggers", "Project webhook triggers", "Setup > Bots", "Slack", "WhatsApp", "list_gmail_connections", "google_workspace_cli", "gmail.readonly"},
 		"work-dashboard":          {"db/reports/index.html", "window.report.sendChatMessage", "query_workflow_db", "validate_report_html", "get_report_link"},
+		"work-ui-control":         {"list_ui_capabilities", "perform_ui_action", "`memory`", "`workshop`", "`identity`", "`mcp`", "Do not use Workflow-only views", "Scheduled, webhook, bot"},
 		"background-work":         {"run_in_background", "[AUTO-NOTIFICATION]", "query_agent"},
 	}
 	for name, required := range checks {

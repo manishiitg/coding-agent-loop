@@ -1,87 +1,91 @@
-## WORKSPACE VIEWS
+## WORKFLOW UI CONTROL
 
-UI-control tools belong only to interactive Workflow Builder chats (including
-read-only Builders). Scheduled runs, manually triggered schedules, Pulse/child
-agents and bot conversations do not receive them. Schedules still use the shared
-workflow tools and selected skills; this is an interactive-host capability gate,
-not a separate schedule skill profile. Do not ask a schedule to open or manipulate
-the foreground workspace. Observing a scheduled conversation does not promote it;
-an explicit supported interactive continuation is required.
+UI-control tools belong only to supported interactive Workflow Builder chats,
+including read-only Builders. Scheduled runs, manually triggered schedules,
+Pulse/child agents, and bot conversations do not manipulate the foreground
+workspace. Observing one of those conversations does not promote it; an
+explicit supported interactive continuation is required.
 
-The right-hand pane of the workflow page shows one view at a time; the toolbar above the chat switches between them. `perform_ui_action(view, action="open")` uses acknowledged UI control; only an `applied` receipt confirms that the view opened. `perform_ui_action(view, action="refresh")` returns a browser receipt after invoking a reload. Request the view that holds what you are talking about instead of describing where to click, but report only what the receipt actually confirms.
+The right-hand pane shows one Workflow view at a time.
+`perform_ui_action(view, action="open")` requests a view and
+`perform_ui_action(view, action="refresh")` invokes that view's reload. Only an
+`applied` receipt confirms that the visible shell acknowledged the action; it
+does not prove every data request inside the view completed or that the user
+read it. Prefer one open per reply and do not repeatedly override a view the
+user selected.
 
-### Views cluster
-| View id | Shows | Open it when |
-|---------|-------|--------------|
-| `report` | The workflow's live HTML report: `db/reports/index.html` rendered against `db/db.sqlite` through `window.report` | You built or edited the report, or the user asks to see results, numbers, the dashboard |
-| `flow` | The plan as a canvas: steps, routes, branches, sub-agents, with each step's status for the selected run | You added, removed or reordered steps, or the user asks how the workflow is structured |
-| `costs` | Token and cost usage per run, per group and per step, from the cost ledger | The user asks what a run cost or which step is expensive |
-| `execution-logs` | The run log for the selected run folder: per-step outputs, pre-validation, timing | A step failed or the user asks what happened during a run |
-| `learnings` | `learnings/_global/SKILL.md` and per-step learnings: the HOW the workflow has accumulated | You updated learnings, or the user asks what the workflow has learned |
-| `knowledgebase` | `knowledgebase/context/` (user-provided rules) and `knowledgebase/notes/` (what the workflow found) | You captured context or wrote notes, or the user asks what the workflow knows |
-| `database` | The tables in `db/db.sqlite` with their rows, and `db/README.md` contracts | You wrote or changed rows, or the user asks about stored data |
-| `schedules` | Scheduled runs: cadence, next run, last run, run history | You created or changed a schedule |
-| `files` | The workspace file browser | The user wants to open a specific file, or you wrote a file they should see |
-| `browser` | Live agent-browser with Take control, or watch-only Playwright test sessions; settings behind the gear button | You browse with `agent_browser`, start tests using `@agentworks/playwright`, or the user asks to watch a browser |
+## Workflow views
 
+| View ID | Shows | Open it when |
+|---|---|---|
+| `report` | The workflow's live HTML Dashboard | You built or edited the report, or the user asks to see results or metrics. |
+| `flow` | The workflow plan canvas | You changed steps or routes, or the user asks how the workflow is structured. |
+| `costs` | Token and cost usage by run, group, and step | The user asks what a run cost or which step is expensive. |
+| `execution-logs` | Outputs, validation, and timing for the selected run | A step failed or the user asks what happened during execution. |
+| `knowledge` | Consolidated Learnings, Knowledgebase, and Database inspector | You changed or need to inspect one of those stores; use an advertised section target. |
+| `webhooks` | Authenticated workflow webhook endpoints | You created or changed a webhook. |
+| `schedules` | Scheduled runs and compatibility access to webhooks | You created or changed a schedule; use an advertised section target. |
+| `files` | Workflow files | The user should inspect a file or folder. |
+| `browser` | Live managed browser or watch-only Playwright test stream | Browser work begins or the user asks to watch it. The stream updates without repeated refreshes. |
+| `workshop` | Automation chats, schedules, triggers, and bots | The user should inspect automation activity or configuration; use an advertised section target. |
 
-### Pulse cluster
-| View id | Shows | Open it when |
-|---------|-------|--------------|
-| `pulse` | Needs your decision cards, saved answers and application history, work areas, open findings, gate decisions | The user asks about a pending decision, their saved answer, or what Pulse found |
-| `backup` | Backup status and history | You set up or ran a backup |
-| `publish` | The published page and its status | You published or refreshed the public report |
-| `notify` | Notification settings and recent deliveries | You changed how the workflow notifies people |
+## Pulse and delivery views
 
-“Needs your decision” belongs to `pulse`; it is not a separate workspace view
-or part of the workflow-owned HTML report. “Ask in chat” supplies the exact
-workspace, decision ID, and option IDs. Read the current record with
-`get_human_input_request` before explaining or answering it. Discussion alone
-does not choose an option. Once the user gives a clear final answer, save it
-with `answer_human_input_request` in that turn; do not require a second “mark
-it” instruction. Saving means answered, not applied or consumed.
-The visible decision cards reload automatically after a successful decision
-tool receipt, with turn completion as a fallback. Do not ask the user to press
-Refresh or claim an answer was applied just because it disappeared from pending.
+| View ID | Shows | Open it when |
+|---|---|---|
+| `pulse` | Decisions, saved answers, findings, work areas, and gate state | The user asks about a decision or what Pulse found. |
+| `backup` | Backup configuration and history | You configured or ran a backup. |
+| `publish` | Published Dashboard state | You published or refreshed the public report. |
+| `notify` | Notification settings and recent deliveries | You changed notification behavior; `expand` may expose an advertised instruction section. |
 
-### Setup cluster
-| View id | Shows | Open it when |
-|---------|-------|--------------|
-| `skills` | Skills attached to the workflow | You installed or attached a skill |
-| `secrets` | Secret names attached to the workflow (never values) | You set or attached a secret |
-| `mcp` | MCP servers and tool allowlists for the workflow | You added or changed a server |
-| `llm` | The workflow's LLM configuration: tiers and per-step models | You changed which model runs what |
-| `bots` | Slack and WhatsApp cards with workflow routes; Open shows shared connection settings | You connected or changed a channel |
-| `email` | Gmail accounts, default recipients, and email access settings (Setup > Gmail) | You changed a Gmail connection or email settings |
-| `folders` | Folders attached to the workflow | You attached a folder |
+“Needs your decision” belongs to `pulse`; it is not part of the HTML Dashboard.
+Read the current request before explaining it. Discussion alone does not choose
+an option. Once the user gives a clear final answer, save it with the dedicated
+decision tool; saving means answered, not applied or consumed.
 
-### Focusing something inside a view: `target`
+## Workflow setup views
 
-Both tools take an optional `target` — what to focus once the view is up. A view with nothing to focus ignores it, so passing one is always safe.
+| View ID | Shows | Open it when |
+|---|---|---|
+| `access` | Workflow sharing and user access | You changed or need to explain who can access the workflow. |
+| `identity` | Workflow identity and identity-owned setup | You changed the workflow's identity or related settings. |
+| `mcp` | Consolidated Integrations surface | You changed MCP, skills, secrets, provider connections, bots, email, or attached integrations represented there. |
+| `playbooks` | Workflow playbook catalog and installed playbooks | The user wants to inspect, install, or update a playbook. |
 
-| View | `target` means |
-|------|----------------|
-| `report` | The top-level tab to switch to, named as the report's own HTML labels it. Delivered to the report as `report.focus` plus a `report:focus` event; a report that does not listen stays where it is. |
-| `flow` | A step id, scrolled to and highlighted on the canvas. |
-| `files` | A workspace-relative file path, opened in the pane instead of just showing the tree. |
-| `database` | A table name. |
-| `execution-logs` | A step id. |
-| `schedules` | A schedule id or name. |
+## Targets
 
-Views are independent of the chat: opening one changes nothing in the workflow. Prefer one open per reply, the view that best answers what the user asked.
-# Acknowledged UI actions (PLAT-292 baseline)
+Use a target only where the live capability contract advertises one:
 
-Prefer `list_ui_capabilities`, `get_ui_state`, and `perform_ui_action` when available. Discover first; only advertise the
-actions in the returned contract. Initial coverage is AgentWorks workspace
-view-shell opening and Notify instruction expansion (`run_summary` or
-`pulse_review`). Refresh invokes the view reload and waits for its visible shell; data-load completion is not guaranteed. Crew uses this same protocol with its own supported views.
+| View/action | Target meaning |
+|---|---|
+| `report` open/refresh | Top-level tab label from the report itself. |
+| `flow` open/refresh | Exact plan step ID. |
+| `files` open/refresh | Safe workflow-relative file path. |
+| `knowledge` open/refresh | `learnings`, `knowledgebase`, or `database`. |
+| `schedules` open/refresh | `schedules` or `webhooks`. |
+| `workshop` open/refresh | `chats`, `schedules`, `triggers`, or `bots`. |
+| `notify` expand | `run_summary` or `pulse_review`. |
 
-`applied` means the browser acknowledged the presentation, not that a human
-read it. Opening acknowledges the mounted shell, not all underlying data.
-`accepted`, `applying`, `expired`, and legacy `requested` are not success.
-Actions return their completion receipt directly. When a result is uncertain,
-repeat the same action with the same idempotency key to inspect its retained
-receipt; never blindly replay with a new key. Reuse a key only for the same intended action.
-Disconnected or ambiguous browsers require user attention, not broadcasting.
+Do not use retired direct view IDs such as `learnings`, `knowledgebase`,
+`database`, `skills`, `secrets`, `llm`, `bots`, `email`, or `folders` unless a
+future live contract advertises them again. Do not use Crew-only `memory` or
+Crew's direct `database` panel; Workflow database content is
+`view="knowledge", target="database"`.
 
-When starting managed browser work for the user, call `perform_ui_action(action="open", view="browser")` alongside `agent_browser status` and navigation. Also open this view once when starting live tests through `@agentworks/playwright`; see `references/playwright-scripted.md` for supported runtime and fixture setup. Playwright sessions are watch-only and use runner-owned recordings. This opens the viewer, not a new browser session. Let the stream update naturally; do not refresh it after each browser command or repeatedly override a view the user selected. The UI shows a small “Builder opened Browser” toast when a builder action changes the visible view.
+## Safe operation
+
+- Call `list_ui_capabilities` when the available action or target is uncertain;
+  never infer support from this document alone.
+- `accepted`, `applying`, `expired`, `browser_disconnected`, and other failures
+  are not success. Report the bounded receipt.
+- Reuse an idempotency key only for the exact same action after an uncertain
+  result; never blindly replay with a new key.
+- Opening a view changes no workflow state. Use the relevant workflow tool for
+  mutations and UI control only to present the result.
+- When starting managed browser work, open `browser` once. For Playwright
+  fixture rules, read
+  `builder-reference/references/playwright-scripted.md`. Playwright sessions
+  are watch-only.
+
+Crew uses the same protocol through its separate `work-ui-control` skill and a
+different view contract.

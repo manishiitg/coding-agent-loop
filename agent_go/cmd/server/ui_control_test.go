@@ -3,7 +3,12 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"github.com/gorilla/mux"
+	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
+	platformskills "github.com/manishiitg/coding-agent-loop/agent_go/pkg/skills"
+	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"io"
 	"net/http/httptest"
 	"strings"
@@ -75,6 +80,66 @@ func TestUIControlHTTPRejectsForeignAndOwnerlessSessions(t *testing.T) {
 		if w.Code != 403 {
 			t.Fatalf("owner %q: %d", owner, w.Code)
 		}
+	}
+}
+
+func TestUIControlHTTPRestoresCrewScopeAndAcceptsCrewViews(t *testing.T) {
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
+		"work:project:crew-1": {
+			SessionID:     "work:project:crew-1",
+			UserID:        "user-a",
+			WorkspacePath: "_users/user-a/Chats/Work/projects/crew-1",
+		},
+	}}
+	call := func(body map[string]interface{}) *httptest.ResponseRecorder {
+		t.Helper()
+		raw, _ := json.Marshal(body)
+		r := mux.SetURLVars(requestWithUserForSessionAccess("user-a"), map[string]string{"session_id": "work:project:crew-1"})
+		r.Body = io.NopCloser(strings.NewReader(string(raw)))
+		w := httptest.NewRecorder()
+		api.handleUIControl(w, r)
+		return w
+	}
+
+	w := call(map[string]interface{}{"operation": "bind", "version": 1})
+	if w.Code != 200 {
+		t.Fatalf("bind: %d %s", w.Code, w.Body.String())
+	}
+	var binding map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &binding); err != nil {
+		t.Fatal(err)
+	}
+	if binding["workspace"] != "Chats/Work/projects/crew-1" {
+		t.Fatalf("restored workspace = %#v", binding["workspace"])
+	}
+
+	a, _, err := api.uiBroker().submitForContract("work:project:crew-1", workUIControlContract, "memory", "open", "", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w = call(map[string]interface{}{
+		"operation": "sync", "version": 1, "binding": binding["binding"], "token": binding["token"],
+		"state": map[string]interface{}{"view": "memory", "revision": 1, "visible": true},
+	})
+	if w.Code != 200 || !strings.Contains(w.Body.String(), a.RequestID) {
+		t.Fatalf("memory sync: %d %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUIControlHTTPDoesNotRestoreAutomatedCrewScope(t *testing.T) {
+	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
+		"work:project:crew-1": {
+			SessionID: "work:project:crew-1", UserID: "user-a",
+			WorkspacePath: "Chats/Work/projects/crew-1", TriggeredBy: "cron",
+		},
+	}}
+	raw, _ := json.Marshal(map[string]interface{}{"operation": "bind", "version": 1})
+	r := mux.SetURLVars(requestWithUserForSessionAccess("user-a"), map[string]string{"session_id": "work:project:crew-1"})
+	r.Body = io.NopCloser(strings.NewReader(string(raw)))
+	w := httptest.NewRecorder()
+	api.handleUIControl(w, r)
+	if w.Code != 409 || strings.TrimSpace(w.Body.String()) != "unsupported_surface" {
+		t.Fatalf("automated Crew bind: %d %s", w.Code, w.Body.String())
 	}
 }
 
@@ -155,6 +220,55 @@ func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 	}
 	if validateUIAction("notify", "expand", "pulse_review") != nil {
 		t.Fatal("notify disclosure missing")
+	}
+}
+
+func TestProductUIControlSkillsCoverTheirOwnContracts(t *testing.T) {
+	if err := workproduct.RegisterProductSkills(); err != nil {
+		t.Fatal(err)
+	}
+	crewSkills := platformskills.LoadAttachable("", []string{"work-ui-control"})
+	if len(crewSkills) != 1 {
+		t.Fatalf("Crew UI skills = %d, want 1", len(crewSkills))
+	}
+
+	var workflowSkill *llmtypes.Skill
+	if err := guidance.AttachConfiguredReferenceSurface("workshop", true, []string{"workflow-ui-control"}, func(skill *llmtypes.Skill) error {
+		if workflowSkill != nil {
+			return fmt.Errorf("multiple workflow UI skills")
+		}
+		workflowSkill = skill
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if workflowSkill == nil {
+		t.Fatal("workflow-ui-control was not materialized")
+	}
+
+	for _, tc := range []struct {
+		name     string
+		contract uiContract
+		content  string
+	}{
+		{name: "Crew", contract: workUIControlContract, content: crewSkills[0].Content},
+		{name: "Workflow", contract: uiControlContract, content: workflowSkill.Content},
+	} {
+		for _, view := range tc.contract.Views {
+			if !strings.Contains(tc.content, "`"+view.ID+"`") {
+				t.Errorf("%s UI skill does not document contract view %q", tc.name, view.ID)
+			}
+		}
+	}
+
+	workflowReference := guidance.MaterializeReferenceSkill("workshop")
+	if workflowReference == nil {
+		t.Fatal("builder-reference was not materialized")
+	}
+	for _, file := range workflowReference.SupportingFiles {
+		if file.RelPath == "references/workspace-views.md" {
+			t.Fatal("Workflow UI guidance is still duplicated inside builder-reference")
+		}
 	}
 }
 func TestUIControlDisconnectedAndAmbiguousClients(t *testing.T) {

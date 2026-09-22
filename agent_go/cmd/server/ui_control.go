@@ -168,13 +168,20 @@ func (b *uiControlBroker) unbind(session, id, token string) error {
 	}
 	return nil
 }
-func validUIView(view string) bool {
-	for _, v := range uiControlContract.Views {
+func validUIViewForContract(contract uiContract, view string) bool {
+	for _, v := range contract.Views {
 		if v.ID == view {
 			return true
 		}
 	}
 	return false
+}
+
+func uiContractForScope(scope string) uiContract {
+	if strings.HasPrefix(path.Clean(strings.Trim(strings.TrimSpace(scope), "/")), "Chats/Work/projects/") {
+		return workUIControlContract
+	}
+	return uiControlContract
 }
 func validateUIAction(view, action, target string) error {
 	return validateUIActionForContract(uiControlContract, view, action, target)
@@ -251,7 +258,11 @@ func (b *uiControlBroker) onlyClient(session string) (*uiBinding, error) {
 	return found, nil
 }
 func (b *uiControlBroker) submit(session, view, action, target, key string, revision *int64) (uiAction, bool, error) {
-	if err := validateUIAction(view, action, target); err != nil {
+	return b.submitForContract(session, uiControlContract, view, action, target, key, revision)
+}
+
+func (b *uiControlBroker) submitForContract(session string, contract uiContract, view, action, target, key string, revision *int64) (uiAction, bool, error) {
+	if err := validateUIActionForContract(contract, view, action, target); err != nil {
 		return uiAction{}, false, err
 	}
 	if len(key) > 128 {
@@ -294,12 +305,12 @@ func (b *uiControlBroker) submit(session, view, action, target, key string, revi
 // Sync atomically claims accepted commands. SSE is a wake-up only; historical
 // presentations and duplicate events cannot re-execute an already claimed action.
 func (b *uiControlBroker) syncClient(session, id, token string, state uiSnapshot) ([]uiAction, error) {
-	if state.Revision < 0 || (state.View != "" && !validUIView(state.View)) {
-		return nil, fmt.Errorf("invalid_state")
-	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.prune()
+	if state.Revision < 0 || (state.View != "" && !validUIViewForContract(uiContractForScope(b.scopes[session]), state.View)) {
+		return nil, fmt.Errorf("invalid_state")
+	}
 	c, err := b.client(session, id, token)
 	if err != nil {
 		return nil, err
@@ -324,12 +335,12 @@ func (b *uiControlBroker) syncClient(session, id, token string, state uiSnapshot
 	return result, nil
 }
 func (b *uiControlBroker) ack(session, id, token, request, status, code string, state uiSnapshot) error {
-	if state.Revision < 0 || (state.View != "" && !validUIView(state.View)) {
-		return fmt.Errorf("invalid_state")
-	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.prune()
+	if state.Revision < 0 || (state.View != "" && !validUIViewForContract(uiContractForScope(b.scopes[session]), state.View)) {
+		return fmt.Errorf("invalid_state")
+	}
 	c, err := b.client(session, id, token)
 	if err != nil {
 		return err

@@ -203,7 +203,8 @@ var featureCatalog = map[string]featureDefinition{
 	},
 	"workspace-ui": {
 		Tools:           []string{"list_ui_capabilities", "get_ui_state", "perform_ui_action"},
-		PromptExtension: "The interactive Work chat can present its right-side workspace views. Use perform_ui_action with action=open after creating or discussing something the user should inspect, and trust only an applied browser acknowledgement.",
+		Skills:          []string{"work-ui-control"},
+		PromptExtension: "The interactive Crew chat can present its right-side project views. Read the attached `work-ui-control` skill before choosing a view; Crew and Workflow view IDs are different. Trust only an applied browser acknowledgement.",
 	},
 }
 

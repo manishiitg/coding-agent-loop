@@ -95,7 +95,7 @@ func (api *StreamingAPI) performUIActionForContract(ctx context.Context, session
 		v := int64(n)
 		revision = &v
 	}
-	a, fresh, err := b.submit(session, view, action, target, key, revision)
+	a, fresh, err := b.submitForContract(session, contract, view, action, target, key, revision)
 	if err != nil {
 		return uiError(err), nil
 	}

@@ -37,9 +37,26 @@ func materializeReferenceSkillWithMCP(mode string, mcpManagement bool) *llmtypes
 		Intro:            spec.Intro,
 		Render:           renderReferenceKind,
 		Select: func(kind string, meta kindMeta) bool {
-			return (mcpManagement || kind != "integration-discovery") && (mode == "" || modeAllowedIn(kind, mode, referenceKinds))
+			return kind != "workspace-views" && (mcpManagement || kind != "integration-discovery") && (mode == "" || modeAllowedIn(kind, mode, referenceKinds))
 		},
 	})
+}
+
+func materializeWorkflowUIControlSkill(mode string) (*llmtypes.Skill, error) {
+	if !modeAllowedIn("workspace-views", mode, referenceKinds) {
+		return nil, nil
+	}
+	content, err := renderReferenceKind("workspace-views", tmplData{WorkshopMode: mode})
+	if err != nil {
+		return nil, fmt.Errorf("render workflow UI control skill: %w", err)
+	}
+	return &llmtypes.Skill{
+		Name:        "workflow-ui-control",
+		Description: "Present the correct AgentWorks Workflow view with acknowledged UI control. Use for Workflow Builder or Run workspace navigation; do not use Crew panel IDs or semantics.",
+		Content:     content,
+		Metadata:    map[string]string{"mode": mode, "kind": "workspace-views"},
+		Source:      llmtypes.SkillSource{Origin: "builtin"},
+	}, nil
 }
 
 type referenceSkillSpec struct {
@@ -100,13 +117,14 @@ func MaterializeGuidanceSkill(mode string) *llmtypes.Skill {
 }
 
 // AttachReferenceSurface attaches the consolidated reference surface to the
-// agent — at most three skills:
+// agent:
 //
 //   - system-tools (existing meta-skill: explains the tool surface and
 //     read_skill)
 //   - builder-reference (mode-filtered mega-skill bundling every
 //     reference doc allowed in the current mode; SKILL.md TOC +
 //     references/<kind>.md per topic)
+//   - workflow-ui-control (the Workflow-only view and receipt contract)
 //   - workflow-commands (mega-skill bundling every procedural flow)
 //
 // Why three folders instead of one per kind: ~25 individual skill folders
@@ -164,7 +182,7 @@ func AttachReferenceSurface(mode string, attach func(*llmtypes.Skill) error) err
 }
 
 func AttachReferenceSurfaceWithMCP(mode string, mcpManagement bool, attach func(*llmtypes.Skill) error) error {
-	return AttachConfiguredReferenceSurface(mode, mcpManagement, []string{"system-tools", "builder-reference", "workflow-commands"}, attach)
+	return AttachConfiguredReferenceSurface(mode, mcpManagement, []string{"system-tools", "builder-reference", "workflow-ui-control", "workflow-commands"}, attach)
 }
 
 // AttachConfiguredReferenceSurface honors the product's ordered bundle list.
@@ -180,7 +198,7 @@ func AttachConfiguredReferenceSurface(mode string, mcpManagement bool, names []s
 		}
 		seen[name] = true
 		switch name {
-		case "system-tools", "builder-reference", "workflow-commands", "ui-ux-pro-max":
+		case "system-tools", "builder-reference", "workflow-ui-control", "workflow-commands", "ui-ux-pro-max":
 		default:
 			return fmt.Errorf("unknown reference skill %q", name)
 		}
@@ -195,6 +213,12 @@ func AttachConfiguredReferenceSurface(mode string, mcpManagement bool, names []s
 			}
 		case "builder-reference":
 			skill = materializeReferenceSkillWithMCP(mode, mcpManagement)
+		case "workflow-ui-control":
+			var err error
+			skill, err = materializeWorkflowUIControlSkill(mode)
+			if err != nil {
+				return err
+			}
 		case "workflow-commands":
 			skill = MaterializeGuidanceSkill(mode)
 		case "ui-ux-pro-max":

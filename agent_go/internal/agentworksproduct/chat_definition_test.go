@@ -26,6 +26,11 @@ func TestChatDefinitions(t *testing.T) {
 		t.Fatal("UI/UX Pro Max must be available to Builder only")
 	}
 	for _, mode := range []string{"builder", "run"} {
+		if !containsChatSkill(ChatSkills(mode), "workflow-ui-control") {
+			t.Fatalf("%s chat is missing workflow-ui-control", mode)
+		}
+	}
+	for _, mode := range []string{"builder", "run"} {
 		prompt := ChatPromptTemplate(mode)
 		for _, want := range []string{
 			"Workflow-producing schedules are sequential by default",

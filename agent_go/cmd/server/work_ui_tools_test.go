@@ -37,6 +37,11 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	if !strings.Contains(capabilities, `"targets":["chats","schedules","triggers","bots"]`) {
 		t.Fatalf("Crew Automation center sections missing from capabilities: %s", capabilities)
 	}
+	for _, currentPanel := range []string{`"id":"memory"`, `"id":"identity"`} {
+		if !strings.Contains(capabilities, currentPanel) {
+			t.Fatalf("Crew current panel missing from capabilities: %s", currentPanel)
+		}
+	}
 	for _, workflowOnly := range []string{`"id":"flow"`, `"id":"pulse"`, `"id":"evaluation"`, `"id":"playbooks"`} {
 		if strings.Contains(capabilities, workflowOnly) {
 			t.Fatalf("Work advertised workflow-only capability %s: %s", workflowOnly, capabilities)
@@ -44,6 +49,9 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "report", "action": "open"}); err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("report open=%s err=%v", out, err)
+	}
+	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "memory", "action": "open"}); err != nil || !strings.Contains(out, "browser_disconnected") {
+		t.Fatalf("memory open=%s err=%v", out, err)
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "schedules", "action": "open", "target": "webhooks"}); err != nil || !strings.Contains(out, "browser_disconnected") {
 		t.Fatalf("webhooks open=%s err=%v", out, err)
@@ -53,6 +61,14 @@ func TestWorkUIRegistersSamePresentationToolFamilyWithWorkViews(t *testing.T) {
 	}
 	if out, err := reg.tools["perform_ui_action"].exec(context.Background(), map[string]interface{}{"view": "flow", "action": "open"}); err != nil || !strings.Contains(out, "unsupported_view") {
 		t.Fatalf("workflow-only view was accepted: %s err=%v", out, err)
+	}
+}
+
+func TestWorkUIContractCoversCurrentCrewPanels(t *testing.T) {
+	for _, view := range []string{"report", "memory", "database", "browser", "costs", "workshop", "schedules", "files", "identity", "mcp"} {
+		if !validUIViewForContract(workUIControlContract, view) {
+			t.Errorf("Crew UI contract does not accept current panel %q", view)
+		}
 	}
 }
 

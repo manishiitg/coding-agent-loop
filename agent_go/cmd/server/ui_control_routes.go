@@ -32,6 +32,12 @@ func (api *StreamingAPI) handleUIControl(w http.ResponseWriter, r *http.Request)
 	}
 	b := api.uiBroker()
 	workspace := b.scope(session)
+	if workspace == "" {
+		if restored := restoredWorkUIScope(user, session, active); restored != "" {
+			b.setScope(session, restored)
+			workspace = restored
+		}
+	}
 	isWorkflow := strings.HasPrefix(workspace, "Workflow/")
 	cleanWorkspace := path.Clean(strings.Trim(strings.TrimSpace(workspace), "/"))
 	workPrefix := "Chats/Work/projects/"

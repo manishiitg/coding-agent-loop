@@ -204,6 +204,55 @@ Adding another durable event type requires an explicit schema change plus
 tests covering projection, restart restore, ordering, deduplication, payload
 bounds, and redaction. Unknown raw types fail closed to live-only delivery.
 
+## Step and agent developer diagnostics
+
+Removing workflow-step internals from the main chat journal must not make them
+uninspectable. Their durable home remains the workflow/run execution artifacts,
+including per-step conversation JSON, tool calls/results, errors, outputs, and
+metrics. The normal product surface remains **Execution Logs**; the existing
+child/step terminal rail remains available only when server runtime diagnostics
+are explicitly enabled.
+
+Add a Crew-style developer diagnostics view over those existing artifacts:
+
+```text
+┌ Agents / steps ───────┬ Selected step ────────────────────┐
+│ Main agent      ●     │ Conversation | Tools | Terminal   │
+│ Research step   ✓     │ Raw JSON | Costs | Artifacts      │
+│ Writer step     ●     │                                   │
+│ Reviewer        !     │ User instruction                  │
+│   Sub-agent     ✓     │ Assistant progress                │
+│                       │ Tool call and result               │
+│                       │ Final response                     │
+└───────────────────────┴───────────────────────────────────┘
+```
+
+The view should reuse the existing execution-log API, `ConversationViewer`,
+step status/metrics, artifact loader, and terminal renderer rather than create
+another persistence format. Its left rail groups the main agent, workflow
+steps, Crew members, and sub-agents; the detail pane provides formatted
+conversation, tool calls, terminal, raw JSON, cost/token metrics, artifacts,
+errors, and per-step search.
+
+Durable step JSON is checkpoint-oriented and can lag while an execution is
+running. The diagnostics view may overlay the existing live terminal/SSE feed
+for current activity, then converge on the execution JSON when the step
+completes. Live transport data must not be written into the main chat journal
+to support this view.
+
+The user-facing separation is therefore:
+
+- main chat SQLite: the user's conversation plus compact run/child summaries
+  and links;
+- workflow execution JSON/logs: complete step and agent diagnostics;
+- terminal/SSE: live low-level inspection;
+- cost ledger: authoritative usage and cost data.
+
+PLAT-352 only needs to preserve the data contract and links required by this
+diagnostics surface. Shipping or promoting the diagnostics UI beyond the
+existing runtime-debug capability can land separately without blocking the
+single-source chat migration.
+
 ## Retention and migration requirements
 
 - Deleting a conversation deletes its journal rows and referenced private

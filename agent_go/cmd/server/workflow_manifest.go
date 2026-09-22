@@ -26,8 +26,8 @@ const WorkflowManifestSchemaVersion = 1
 
 // WorkflowContractCurrentVersion is the product-managed workflow behavior
 // contract version. Unlike schema_version, this gates agent-run workflow
-// upgrades: Pulse can add version-specific messages and stamp this value only
-// after the workflow has been checked or migrated.
+// upgrades. An operator starts pending migrations from the workflow chat, and
+// the version is stamped only after the workflow has been checked or migrated.
 const WorkflowContractCurrentVersion = workflowContractNestedAgentArtifactsVersion
 
 const workflowContractExplicitSchedulePulseVersion = schedulepolicy.ExplicitPulseContractVersion

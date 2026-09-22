@@ -1,9 +1,6 @@
 // Package contractupgrade bounds when a workflow contract version may be stamped.
-//
-// A contract upgrade is a blocking preflight: the scheduler opens a turn asking
-// the agent to perform one migration, then advances the ladder only once
-// workflow.json carries that target version. Nothing used to bound *when* the
-// stamp could be written.
+// Scheduled runs may execute an older saved contract, but they never own or
+// authorize migrations; those remain operator-started work in workflow chat.
 //
 // Observed on confida-login 2026-08-12: the scheduler adjudicated the 1.0.21
 // turn as failed at 08:01:35 (the agent had correctly declined — the improve
@@ -41,7 +38,8 @@ var (
 )
 
 // MarkScheduled records that the scheduler owns this session for the whole of
-// a scheduled run — upgrade preflight, schedule messages, and Pulse.
+// a scheduled run — schedule messages and Pulse. The marker prevents that
+// unattended session from stamping a contract version.
 //
 // The fence exists because a *scheduled* session stamped a version ten minutes
 // after its upgrade turn had been adjudicated, and the next preflight trusted
@@ -84,9 +82,8 @@ func IsScheduled(sessionID string) bool {
 }
 
 // Mint authorizes sessionID to stamp exactly target, replacing any previous
-// authorization for that session. One turn, one version: the scheduler opens a
-// single upgrade rung at a time and re-reads the manifest to verify that exact
-// target before advancing.
+// authorization for that session. It is retained as a narrow compatibility
+// primitive; normal scheduled runs never mint an upgrade grant.
 //
 // This used to take a set, because Pulse folded every outstanding rung into one
 // Review+Fix turn and that turn could owe several stamps. Pulse no longer

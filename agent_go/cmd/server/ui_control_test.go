@@ -168,8 +168,9 @@ func boundUI(t *testing.T) (*uiControlBroker, *uiBinding) {
 }
 func TestUIControlOnlyAdvertisesActualActions(t *testing.T) {
 	// 25 views before the knowledge/bots/llm consolidation; the bulk commit
-	// miscounted its own update as 19. The contract below holds 18.
-	if len(uiControlContract.Views) != 18 {
+	// miscounted its own update as 19. The Updates inspector brings the
+	// current contract back to 19 registered views.
+	if len(uiControlContract.Views) != 19 {
 		t.Fatal("registry coverage changed")
 	}
 	for _, v := range uiControlContract.Views {

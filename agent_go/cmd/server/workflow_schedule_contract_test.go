@@ -299,7 +299,7 @@ func TestRetiredPulseMigrationUpgradeTurnsDoNotExposeMigrationTool(t *testing.T)
 
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			turns, err := scheduledWorkshopTurns(&WorkflowManifest{Version: tt.version}, nil, workspacePath)
+			turns, err := manualWorkflowUpgradeTurns(&WorkflowManifest{Version: tt.version}, nil, workspacePath)
 			if err != nil {
 				t.Fatalf("scheduledWorkshopTurns: %v", err)
 			}

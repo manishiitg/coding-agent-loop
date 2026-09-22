@@ -8,8 +8,8 @@ import (
 )
 
 // workflowContractExecutionGuardRegistrar blocks manual workflow execution on
-// an old platform contract. Scheduled runs have their own migration preflight;
-// direct webhooks have directWebhookPreflight. Keeping this at tool execution
+// an old platform contract. Scheduled runs deliberately bypass this interactive
+// boundary; direct webhooks have directWebhookPreflight. Keeping this at tool execution
 // time also covers restored chats and every UI/chat path that invokes these
 // tools.
 type workflowContractExecutionGuardRegistrar struct {

@@ -135,6 +135,7 @@ import {
   type ExecutionOptions,
   type PollingEvent,
   type RunningWorkflowInfo,
+  type WorkflowContractUpgradeStatus,
 } from '../../services/api-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
@@ -147,6 +148,7 @@ import {
   workflowTabsNeedingHydration,
 } from '../../utils/workflowTabHydration'
 import { isVisibleActivitySession } from '../../utils/activitySessions'
+import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
 // Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
 
@@ -962,6 +964,55 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
+
+  const [contractUpgrade, setContractUpgrade] = useState<WorkflowContractUpgradeStatus | null>(null)
+  const [startingContractUpgrade, setStartingContractUpgrade] = useState(false)
+  const activeWorkflowAccess = useMemo(() => (
+    workflowManifests.find(workflow => workflow.manifest.id === activePresetId || workflow.workspace_path === workspacePath)?.my_access
+  ), [activePresetId, workflowManifests, workspacePath])
+  const canStartContractUpgrade = activeWorkflowAccess !== 'read'
+
+  const refreshContractUpgrade = useCallback(async () => {
+    if (!workspacePath) {
+      setContractUpgrade(null)
+      return
+    }
+    try {
+      const response = await workflowManifestApi.getWorkflowManifest(workspacePath)
+      setContractUpgrade(response.contract_upgrade ?? null)
+    } catch {
+      setContractUpgrade(null)
+    }
+  }, [workspacePath])
+
+  useEffect(() => {
+    void refreshContractUpgrade()
+    window.addEventListener('focus', refreshContractUpgrade)
+    return () => {
+      window.removeEventListener('focus', refreshContractUpgrade)
+    }
+  }, [refreshContractUpgrade])
+
+  useEffect(() => {
+    if (!contractUpgrade?.required) return
+    const interval = window.setInterval(() => void refreshContractUpgrade(), 10_000)
+    return () => window.clearInterval(interval)
+  }, [contractUpgrade?.required, refreshContractUpgrade])
+
+  const startManualContractUpgrade = useCallback(async () => {
+    if (!workspacePath || startingContractUpgrade) return
+    setStartingContractUpgrade(true)
+    try {
+      await sendWorkspacePaneMessageToChat({
+        workspacePath,
+        message: 'Update this workflow to the current platform contract now. Use get_contract_upgrades, complete and verify each pending migration in order, and stamp each completed version before continuing to the next. Do not run the workflow as part of the migration. If a migration requires a genuine product, business, or safety choice, stop and ask me in this chat instead of guessing. When all migrations are complete, confirm the final workflow contract version.',
+      })
+    } catch (cause) {
+      useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not start the workflow update.', 'error')
+    } finally {
+      setStartingContractUpgrade(false)
+    }
+  }, [startingContractUpgrade, workspacePath])
 
   // Never expose the previous workflow's messages or a false first-time chat
   // while the durable conversation for a newly selected workflow is resolving.
@@ -2363,6 +2414,30 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
               <div className="flex items-center gap-2 border-b border-blue-100 bg-blue-50 px-3 py-1.5 dark:border-blue-800/50 dark:bg-blue-900/20">
                 <div className="h-3 w-3 animate-spin rounded-full border-2 border-gray-300 border-t-blue-600 dark:border-gray-600 dark:border-t-blue-400"></div>
                 <span className="text-xs text-blue-600 dark:text-blue-400">Loading conversation...</span>
+              </div>
+            )}
+
+            {contractUpgrade?.required && (
+              <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
+                <span className="min-w-0 flex-1 text-muted-foreground">
+                  This workflow needs a manual platform update before you can start it from chat
+                  {contractUpgrade.current_version && contractUpgrade.platform_version
+                    ? contractUpgrade.current_version === contractUpgrade.platform_version
+                      ? ' (code layout update required).'
+                      : ` (v${contractUpgrade.current_version} → v${contractUpgrade.platform_version}).`
+                    : '.'}
+                  {' '}Schedules keep running the saved version and will not update it automatically.
+                </span>
+                {canStartContractUpgrade ? (
+                  <button
+                    type="button"
+                    onClick={() => void startManualContractUpgrade()}
+                    disabled={startingContractUpgrade}
+                    className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
+                  >
+                    {startingContractUpgrade ? 'Opening…' : 'Update workflow'}
+                  </button>
+                ) : null}
               </div>
             )}
 

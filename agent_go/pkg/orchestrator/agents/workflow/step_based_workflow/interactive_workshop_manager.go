@@ -6210,7 +6210,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		// PLAT-262: skip set_workflow_contract_version registration for read-only access
 	} else if err := mcpAgent.RegisterCustomTool(
 		"set_workflow_contract_version",
-		"Stamp workflow.json with a completed workflow contract version, after that migration's work is actually done and verified. Two callers: the final action of a scheduler-requested WORKFLOW CONTRACT UPGRADE turn, or an operator-led upgrade in this chat — use get_contract_upgrades to see what is pending, do the migration the instruction describes, then stamp that same version. Stamp one version at a time, in order; the version is the record that the migration happened, so never stamp work that was not performed. This changes only workflow.json.version and updated_at; it cannot change plans, schedules, capabilities, or notifications.",
+		"Stamp workflow.json with a completed workflow contract version after the operator started a manual upgrade in this chat and that migration's work has been verified. Use get_contract_upgrades to see what is pending, do the migration the instruction describes, then stamp that same version. Stamp one version at a time, in order; the version is the record that the migration happened, so never stamp work that was not performed. Schedules never authorize or perform migrations. This changes only workflow.json.version and updated_at; it cannot change plans, schedules, capabilities, or notifications.",
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{

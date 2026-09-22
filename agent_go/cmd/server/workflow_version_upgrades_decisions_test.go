@@ -5,11 +5,9 @@ import (
 	"testing"
 )
 
-// confida-login stalled on the 1.0.21 rung three times: each turn found history
-// in the retired improve archive that SQLite did not have, correctly refused to
-// destroy it, and asked the owner — who was asleep, because these turns are
-// fired by the scheduler. The disposition now lives in the instruction, and the
-// archive is moved rather than deleted so deciding autonomously costs nothing.
+// The disposition lives in the instruction and the archive is moved rather
+// than deleted, so the manual migration does not manufacture a destructive
+// choice for the operator.
 func TestArtifactContractUpgradeDecidesTheArchiveItself(t *testing.T) {
 	for _, want := range []string{
 		// The refusal this replaced read "retire" as "delete". Lead with the
@@ -33,9 +31,9 @@ func TestArtifactContractUpgradeDecidesTheArchiveItself(t *testing.T) {
 	}
 }
 
-// Every upgrade turn is scheduler-fired with nobody reading it, so each one has
-// to say so — as a fact about the execution context, not as pressure.
-func TestEveryUpgradeQueryCarriesTheUnattendedContract(t *testing.T) {
+// Every upgrade is operator-started in Workshop. Each instruction must preserve
+// that live decision boundary instead of claiming it is unattended maintenance.
+func TestEveryUpgradeQueryCarriesTheManualContract(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: "1.0.9"})
 	if len(plan) < 2 {
 		t.Fatalf("expected a multi-rung plan from 1.0.9, got %+v", plan)
@@ -43,16 +41,10 @@ func TestEveryUpgradeQueryCarriesTheUnattendedContract(t *testing.T) {
 	for _, step := range plan {
 		for _, want := range []string{
 			"EXECUTION CONTEXT",
-			// Naming what this is matters: an agent that reads the turn as a
-			// third party relaying a previously-rejected request treats it as
-			// something to resist, rather than as its own maintenance work.
-			"automated platform migration",
-			"not a user request relayed through the scheduler",
-			"take the best action to complete the migration properly",
-			"create_human_input_request",
-			// Refusing has to stay plainly available, or the note reads as
-			// coercion and a correctly-cautious agent refuses the whole turn.
-			"stopping without stamping, are both acceptable outcomes",
+			"manual platform migration",
+			"started by the workflow operator in Workshop chat",
+			"do not guess and do not stamp",
+			"ask the operator",
 		} {
 			if !strings.Contains(step.query, want) {
 				t.Errorf("%s query missing %q", step.label, want)
@@ -65,6 +57,8 @@ func TestEveryUpgradeQueryCarriesTheUnattendedContract(t *testing.T) {
 			"do not re-open it as a judgement call",
 			"reaches nobody",
 			"is not an available move",
+			"automated platform migration",
+			"relayed through the scheduler",
 		} {
 			if strings.Contains(step.query, coercive) {
 				t.Errorf("%s query pressures the agent (%q); state the context, leave refusing available", step.label, coercive)
@@ -73,10 +67,8 @@ func TestEveryUpgradeQueryCarriesTheUnattendedContract(t *testing.T) {
 	}
 }
 
-// Blocked upgrades route through the existing operator-decision lifecycle
-// (create_human_input_request, drained pre-run by scheduledDecisionDrainTurn).
-// A second, upgrade-specific answer channel in workflow.json was built and then
-// removed as a duplicate; this pins that it stays gone.
+// Manual upgrades use the live Workshop conversation. A second,
+// upgrade-specific answer channel in workflow.json remains unnecessary.
 func TestNoParallelContractUpgradeDecisionChannel(t *testing.T) {
 	plan := workflowVersionUpgradePlan(&WorkflowManifest{Version: "1.0.20"})
 	for _, step := range plan {

@@ -8,10 +8,8 @@ import (
 	"testing"
 )
 
-// Before this the upgrade instructions were Go constants only the scheduler
-// delivered, so a blocked workflow showed its owner one run-history line naming
-// a version and nothing else. confida-login sat stuck for days and diagnosing
-// it meant reading server logs and session transcripts by hand.
+// Upgrade instructions are visible to the operator who starts the migration;
+// schedules neither own nor execute them.
 func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.T) {
 	const workspacePath = "Workflow/confida-login"
 	manifestJSON, err := json.Marshal(map[string]interface{}{
@@ -56,8 +54,8 @@ func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.
 		// The full instruction text, not a summary of it — an owner judging
 		// whether a stalled migration is safe needs the actual words.
 		"NOTHING IS DELETED IN THIS MIGRATION",
-		// A stalled rung blocks the workflow itself; say so.
-		"blocking preflight",
+		"Run them manually from this workflow's Workshop chat",
+		"schedules never perform contract migrations",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("status output missing %q", want)
@@ -71,12 +69,13 @@ func TestContractUpgradeStatusShowsWhatIsOwedAndTheActualInstruction(t *testing.
 func TestContractUpgradeStatusIsQuietWhenNothingIsOwed(t *testing.T) {
 	const workspacePath = "Workflow/current"
 	manifestJSON, _ := json.Marshal(map[string]interface{}{
-		"schema_version": 1,
-		"id":             "wf_current",
-		"version":        WorkflowContractCurrentVersion,
-		"label":          "current",
-		"capabilities":   map[string]interface{}{},
-		"schedules":      []interface{}{},
+		"schema_version":      1,
+		"id":                  "wf_current",
+		"version":             WorkflowContractCurrentVersion,
+		"code_layout_version": 1,
+		"label":               "current",
+		"capabilities":        map[string]interface{}{},
+		"schedules":           []interface{}{},
 	})
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		workspacePath + "/workflow.json": string(manifestJSON),
@@ -94,6 +93,34 @@ func TestContractUpgradeStatusIsQuietWhenNothingIsOwed(t *testing.T) {
 	}
 	if strings.Contains(out, "WORKFLOW CONTRACT UPGRADE") {
 		t.Errorf("a current workflow should not be shown migration instructions:\n%s", out)
+	}
+}
+
+func TestContractUpgradeStatusExplainsCurrentVersionWithLegacyCodeLayout(t *testing.T) {
+	const workspacePath = "Workflow/current-legacy-code"
+	manifestJSON, _ := json.Marshal(map[string]interface{}{
+		"schema_version": 1,
+		"id":             "wf_current_legacy_code",
+		"version":        WorkflowContractCurrentVersion,
+		"label":          "current legacy code",
+		"capabilities":   map[string]interface{}{},
+		"schedules":      []interface{}{},
+	})
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": string(manifestJSON),
+	}}
+	server := httptest.NewServer(workspace)
+	defer server.Close()
+	t.Setenv("WORKSPACE_API_URL", server.URL)
+
+	out, err := describeWorkflowContractUpgrades(context.Background(), workspacePath)
+	if err != nil {
+		t.Fatalf("describeWorkflowContractUpgrades: %v", err)
+	}
+	for _, want := range []string{"Manual code-layout migration required", "code/<step-id>/", "set_code_layout_version(code_layout_version=1)", "Do not stamp another contract version"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("code-layout status missing %q:\n%s", want, out)
+		}
 	}
 }
 

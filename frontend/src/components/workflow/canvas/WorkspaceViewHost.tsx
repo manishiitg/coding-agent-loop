@@ -15,7 +15,6 @@ import { ReactFlowProvider } from '@xyflow/react'
 import { useChatStore } from '../../../stores/useChatStore'
 import { WorkflowToolbar } from './WorkflowToolbar'
 import { AskAIButton } from '../AskAIButton'
-import { WorkspaceViewActions } from '../WorkspaceViewActions'
 import { getWorkspaceAskAIMessage } from '../workspaceAskAI'
 import { ReportView } from '../ReportViewer'
 import { usePlanData } from '../hooks/usePlanData'
@@ -62,6 +61,7 @@ const NO_DISABLED_PULSE_REVIEWERS: PulseReviewerModule[] = []
 const CostsPopup = lazy(() => import('../CostsPopup'))
 const ExecutionLogsPopup = lazy(() => import('../ExecutionLogsPopup'))
 const KnowledgeView = lazy(() => import('../KnowledgeView'))
+const WorkflowUpdatesView = lazy(() => import('../WorkflowUpdatesView'))
 const WorkflowScheduleRunsPanel = lazy(() => import('../../scheduler/WorkflowScheduleRunsPanel'))
 const WorkflowAPITriggersView = lazy(() => import('../WorkflowAPITriggersView'))
 const WorkflowCapabilitiesPanel = lazy(() => import('../WorkflowCapabilitiesPanel'))
@@ -163,6 +163,8 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
         )
       case 'knowledge':
         return <KnowledgeView workspacePath={workspacePath} plan={plan} />
+      case 'updates':
+        return <WorkflowUpdatesView workspacePath={workspacePath} headerAction={askAI('updates')} />
       case 'schedules':
         return (
           <WorkflowScheduleRunsPanel

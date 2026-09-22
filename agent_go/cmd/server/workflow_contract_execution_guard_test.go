@@ -107,3 +107,21 @@ func TestWorkflowContractExecutionGuardWrapsBothManualRunTools(t *testing.T) {
 		t.Fatalf("guarded executors ran %d time(s)", called)
 	}
 }
+
+func TestWorkflowContractGuardAppliesOnlyToInteractiveRuns(t *testing.T) {
+	for _, tc := range []struct {
+		name, sessionID, triggeredBy string
+		wantGuard                    bool
+	}{
+		{name: "interactive chat", sessionID: "builder-chat", wantGuard: true},
+		{name: "manual workflow chat", sessionID: "workflow-run", triggeredBy: "manual", wantGuard: true},
+		{name: "cron schedule", sessionID: "opaque", triggeredBy: "cron"},
+		{name: "scheduled session identity", sessionID: "schedule-daily-123"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldGuardWorkflowContractForRun(tc.sessionID, tc.triggeredBy); got != tc.wantGuard {
+				t.Fatalf("guard=%v want=%v", got, tc.wantGuard)
+			}
+		})
+	}
+}

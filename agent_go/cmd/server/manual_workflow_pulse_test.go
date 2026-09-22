@@ -38,7 +38,7 @@ func TestManualPulseScheduleContract(t *testing.T) {
 	if messages := scheduledWorkshopMessages(sctx); len(messages) != 0 {
 		t.Fatalf("Pulse-only action must not enqueue a workflow message: %v", messages)
 	}
-	turns, err := scheduledWorkshopTurns(manifest, scheduledWorkshopMessages(sctx), sctx.WorkspacePath)
+	turns, err := manualWorkflowUpgradeTurns(manifest, scheduledWorkshopMessages(sctx), sctx.WorkspacePath)
 	if err != nil {
 		t.Fatalf("build Pulse preflight turns: %v", err)
 	}

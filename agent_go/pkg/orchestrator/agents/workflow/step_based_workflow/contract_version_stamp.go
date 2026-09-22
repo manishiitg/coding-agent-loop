@@ -43,8 +43,8 @@ func authorizeContractVersionStamp(sessionID, version string, nextPending func()
 	// unblock a stalled upgrade by hand — which is exactly what a workflow that
 	// keeps declining its own migration needs.
 	//
-	// What still has to hold is the ladder. Without a scheduler grant pinning
-	// the target, nothing otherwise stops a stamp jumping straight to the
+	// What still has to hold is the ladder. Without checking the next pending
+	// target, nothing otherwise stops a stamp jumping straight to the
 	// newest version and skipping three migrations whose work was never done.
 	if !contractupgrade.IsScheduled(sessionID) {
 		if nextPending == nil {
@@ -76,8 +76,6 @@ func authorizeContractVersionStamp(sessionID, version string, nextPending func()
 			granted, version,
 		), false
 	}
-	return "Refused: no contract upgrade turn is open for this session, so there is no version to stamp. " +
-		"This tool is accepted only inside the scheduler's upgrade turn, for the version that turn asked for. " +
-		"If an earlier upgrade turn reported a blocker, resolve the blocker and let the next preflight re-run that turn — " +
-		"stamping from a later turn does not complete the migration, it makes the scheduler skip it.", false
+	return "Refused: schedules may run an older workflow contract, but they never authorize or perform migrations. " +
+		"Open the workflow chat and use Update workflow so an operator can supervise each migration in order.", false
 }

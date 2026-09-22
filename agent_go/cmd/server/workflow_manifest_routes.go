@@ -80,10 +80,31 @@ func (api *StreamingAPI) handleGetWorkflowManifest(w http.ResponseWriter, r *htt
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
+	currentVersion := workflowContractVersionForUpgrade(manifest)
+	pendingUpgrades := workflowVersionUpgradePlan(manifest)
+	pendingUpgradeItems, appliedUpgradeItems := workflowContractUpgradeLists(manifest)
+	upgradeRequired := !workflowContractVersionIsExecutionCompatible(currentVersion) || manifest.CodeLayoutVersion != 1
+	upgradeStatus := map[string]interface{}{
+		"required":         upgradeRequired,
+		"current_version":  currentVersion,
+		"platform_version": WorkflowContractCurrentVersion,
+		"pending_count":    len(pendingUpgradeItems),
+		"pending":          pendingUpgradeItems,
+		"applied":          appliedUpgradeItems,
+		"history_basis":    "contract_version",
+	}
+	if len(pendingUpgrades) > 0 {
+		upgradeStatus["next_label"] = pendingUpgrades[0].label
+		upgradeStatus["next_version"] = pendingUpgrades[0].to
+	} else if len(pendingUpgradeItems) > 0 {
+		upgradeStatus["next_label"] = pendingUpgradeItems[0].Label
+		upgradeStatus["next_version"] = pendingUpgradeItems[0].TargetVersion
+	}
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"success":        true,
-		"manifest":       manifest,
-		"workspace_path": workspacePath,
+		"success":          true,
+		"manifest":         manifest,
+		"workspace_path":   workspacePath,
+		"contract_upgrade": upgradeStatus,
 	})
 }
 

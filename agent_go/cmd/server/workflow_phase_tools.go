@@ -55,10 +55,10 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	if check := api.scheduleCollisionCheck(phaseWorkspacePath, sessionID, syntheticReq.TriggeredBy); check != nil {
 		definitionAgent = scheduleGuardRegistrar{definitionAgent, todo_creation_human.GuardScheduleTools(definitionAgent, check)}
 	}
-	// Schedules already run their own blocking contract-upgrade turns. Manual
-	// Run Workflow / Run Step requests must enforce the same prerequisite even
-	// when the workflow has no schedule at all.
-	if !isScheduledSessionIdentity(sessionID, syntheticReq.TriggeredBy) {
+	// Contract upgrades are an interactive boundary: manual Run Workflow / Run
+	// Step requests wait for operator approval, while saved schedules keep
+	// running their existing contract until the operator upgrades it separately.
+	if shouldGuardWorkflowContractForRun(sessionID, syntheticReq.TriggeredBy) {
 		definitionAgent = workflowContractExecutionGuardRegistrar{
 			definitionRegistrar: definitionAgent,
 			workspacePath:       phaseWorkspacePath,
@@ -488,4 +488,8 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	// — at the executor, and at construction for tool agents.
 
 	return nil
+}
+
+func shouldGuardWorkflowContractForRun(sessionID, triggeredBy string) bool {
+	return !isScheduledSessionIdentity(sessionID, triggeredBy)
 }

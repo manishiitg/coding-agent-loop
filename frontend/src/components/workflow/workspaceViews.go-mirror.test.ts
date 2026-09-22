@@ -25,6 +25,7 @@ describe('primary workspace toolbar views', () => {
       'costs',
       'execution-logs',
       'knowledge',
+      'updates',
       'webhooks',
       'files',
       'browser',

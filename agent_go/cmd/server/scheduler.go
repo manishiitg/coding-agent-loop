@@ -2448,17 +2448,17 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	// schedule pulse_mode can explicitly override it. There is no independent cron.
 	// Manual one-off Pulse explicitly forces the same lifecycle.
 	// Never affects the run's recorded result.
-	// A blocked contract-upgrade preflight is the one failure where Pulse has
-	// nothing to steward: the workflow never executed, so there is no
+	// An automated lane that still requires a current contract (currently a
+	// direct webhook) can return the migration sentinel. Pulse then has nothing
+	// to steward: the workflow never executed, so there is no
 	// evidence to gate on, nothing to review, and nothing to publish. All a
-	// pass can do is spend an LLM turn restating the blocker the upgrade turn
-	// already reported — on every trigger, for as long as the workflow waits
-	// on an owner decision. Skip it and let the preflight error be the record.
-	upgradeBlocked := errors.Is(execErr, errWorkflowUpgradePreflightBlocked)
-	if upgradeBlocked {
-		s.sessionLogf(sctx, sessionID, "[PULSE] skipped for %s: the contract-upgrade preflight blocked, so the workflow did not run and there is no evidence to review", schedID)
+	// pass can do is repeat the banner's instruction. Skip it and leave the
+	// workflow upgrade to the operator's Workshop chat.
+	migrationRequired := errors.Is(execErr, errWorkflowContractMigrationRequired)
+	if migrationRequired {
+		s.sessionLogf(sctx, sessionID, "[PULSE] skipped for %s: this workflow requires a manual contract migration, so it did not run and there is no evidence to review", schedID)
 	}
-	if !upgradeBlocked && !userInterrupted && runFolder != "" {
+	if !migrationRequired && !userInterrupted && runFolder != "" {
 		if manifest, found, mErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath); mErr == nil && found && shouldRunPulseLifecycle(sctx, manifest) {
 			pulseMode := effectiveSchedulePulseMode(sctx, manifest)
 			pulseEvidenceStatus := status
@@ -3224,10 +3224,8 @@ func notificationRecipients(config *WorkflowNotificationConfig, run bool) []stri
 // The preflight label survives, because naming which migration stalled is real
 // diagnostic value. The target version and the stamp verb do not.
 //
-// Since a declined stamp now skips Pulse outright
-// (errWorkflowUpgradePreflightBlocked), this is belt-and-braces rather than the
-// primary defense: it still covers any future path that routes an upgrade
-// reason into a live session, which is the shape that caused the damage.
+// Scheduled migrations are now retired. This sanitizer remains only for old
+// persisted run failures that can still be rendered by the no-run finalizer.
 func pulseSafeRunFailureReason(reason string) string {
 	reason = strings.TrimSpace(reason)
 	if !strings.HasPrefix(reason, "workflow upgrade preflight") {
@@ -3589,9 +3587,9 @@ func scheduledTargetedDecisionFixerTurn(input ReportHumanInput) scheduledWorksho
 // Applying is deliberately an agent turn rather than Go: the decision's own
 // context field carries a prose "what happens next if you approve" section
 // written for the operator, not a machine-readable patch, and the typed plan,
-// config, eval and schedule tools it needs already exist. This mirrors the
-// contract-upgrade preflight, which is the proven precedent for mutating plan
-// artifacts before the first schedule message.
+// config, eval and schedule tools it needs already exist. This remains a
+// schedule-owned decision application path; workflow contract migrations are
+// separately operator-owned in Workshop chat.
 func scheduledDecisionDrainTurn(pending []ReportHumanInput) (scheduledWorkshopTurn, bool) {
 	if len(pending) == 0 {
 		return scheduledWorkshopTurn{}, false
@@ -3672,40 +3670,6 @@ func attachScheduledPendingDecisionNotice(turns []scheduledWorkshopTurn, pending
 		break
 	}
 	return turns
-}
-
-func scheduledWorkshopTurns(manifest *WorkflowManifest, messages []string, workspacePath string) ([]scheduledWorkshopTurn, error) {
-	upgradePlan := workflowVersionUpgradePlan(manifest)
-	manifestVersion := workflowContractVersionForUpgrade(manifest)
-	if !workflowContractVersionIsExecutionCompatible(manifestVersion) &&
-		(len(upgradePlan) == 0 || !workflowContractVersionIsExecutionCompatible(upgradePlan[len(upgradePlan)-1].to)) {
-		return nil, fmt.Errorf(
-			"workflow upgrade preflight has no complete upgrade path from version %q to %q; normal schedule message was not started: %w",
-			manifestVersion,
-			WorkflowContractCurrentVersion,
-			errWorkflowUpgradePreflightBlocked,
-		)
-	}
-
-	turns := make([]scheduledWorkshopTurn, 0, len(upgradePlan)+len(messages))
-	for _, upgrade := range upgradePlan {
-		query := bindWorkflowUpgradeWorkspacePath(upgrade.query, workspacePath)
-		if strings.Contains(query, workflowUpgradeWorkspacePathPlaceholder) {
-			return nil, fmt.Errorf("workflow upgrade preflight %s requires a workspace path", upgrade.label)
-		}
-		turns = append(turns, scheduledWorkshopTurn{
-			label:         upgrade.label,
-			query:         query,
-			upgradeTarget: upgrade.to,
-		})
-	}
-	for i, message := range messages {
-		turns = append(turns, scheduledWorkshopTurn{
-			label: fmt.Sprintf("schedule-message-%d", i+1),
-			query: message,
-		})
-	}
-	return turns, nil
 }
 
 func scheduledWorkshopMessages(sctx *ScheduleContext) []string {
@@ -3853,47 +3817,27 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		}
 	}
 
-	// Workflow contract upgrades are a blocking preflight, not post-run cleanup.
-	// A breaking runtime migration (for example message_sequence code items to
-	// standalone scripted steps) must finish before the schedule's first normal
-	// message can execute. The same builder session is reused so the upgrade is
-	// visible in the schedule terminal and the normal run starts only after the
-	// on-disk manifest confirms each target version.
-	manifest, found, err := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
-	if err != nil {
-		return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight could not read manifest: %w", err)
+	// Scheduled runs deliberately keep executing the saved workflow contract.
+	// Contract upgrades are operator-owned and remain blocked from this session
+	// by the contractupgrade fence above, but a pending upgrade is not allowed to
+	// interrupt an automation that was already running unattended.
+	turns := make([]scheduledWorkshopTurn, 0, len(messages))
+	for i, message := range messages {
+		turns = append(turns, scheduledWorkshopTurn{
+			label: fmt.Sprintf("schedule-message-%d", i+1),
+			query: message,
+		})
 	}
-	if !found {
-		return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight: workflow manifest not found at %s", sctx.WorkspacePath)
-	}
-	turns, err := scheduledWorkshopTurns(manifest, messages, sctx.WorkspacePath)
-	if err != nil {
-		return sessionID, runFolder, err
-	}
-	upgradeCount := len(turns) - len(messages)
-	if upgradeCount > 0 {
-		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Running %d blocking workflow upgrade preflight turn(s) before %d schedule message(s)", upgradeCount, len(messages))
-	}
-	// Backstop for the paths that leave this loop without reaching adjudication
-	// — a session that fails to start, or an idle wait that expires. Neither
-	// may leave a live stamp authorization behind for the schedule messages
-	// that follow, or for Pulse afterwards.
-	defer contractupgrade.Revoke(sessionID)
 
 	// Apply answered operator decisions before the run, not after it, so this
-	// run behaves the way the operator already asked (PLAT-093). Inserted after
-	// any contract upgrade — an upgrade can change the very artifacts a decision
-	// edits — and before the first schedule message. Failure to read the store
+	// run behaves the way the operator already asked (PLAT-093), before the first
+	// schedule message. Failure to read the store
 	// is not a reason to skip the run: log it and continue unchanged.
 	if sctx.WebhookInput == nil {
 		if pending, listErr := listReportHumanInputs(ctx, sctx.WorkspacePath, "answered", ""); listErr != nil {
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Could not read answered decisions for the pre-run drain (continuing): %v", listErr)
 		} else if decisionTurns := scheduledDecisionPreflightTurns(pending); len(decisionTurns) > 0 {
-			insertAt := upgradeCount
-			if insertAt < 0 || insertAt > len(turns) {
-				insertAt = 0
-			}
-			turns = append(turns[:insertAt], append(decisionTurns, turns[insertAt:]...)...)
+			turns = append(decisionTurns, turns...)
 			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Running %d structured answered-decision preflight turn(s) before this run's first schedule message", len(decisionTurns))
 		}
 	}
@@ -3908,30 +3852,11 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Surfaced %d unanswered operator decision(s) to the first schedule message", len(pending))
 	}
 
-	// Once a preflight upgrade turn has failed open (see below), any FURTHER
-	// upgrade turn in this same run is skipped without attempting it — later
-	// migrations may assume the skipped one already ran. Message turns still
-	// run normally; the next scheduled run recomputes the upgrade plan from
-	// scratch and tries the preflight again.
-	preflightFailedOpen := false
 	for i, turn := range turns {
-		if preflightFailedOpen && turn.upgradeTarget != "" {
-			s.sessionLogf(sctx, sessionID, "[SCHEDULER] Skipping workshop turn %d/%d (%s): a prior upgrade preflight failed open this run", i+1, len(turns), turn.label)
-			continue
-		}
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s): %q", i+1, len(turns), turn.label, turn.query)
 
 		reqMap := requestWithWorkshopMode(baseReqMap, turn.workshopMode())
 		reqMap["query"] = turn.query
-		if turn.upgradeTarget != "" || turn.decisionDrain {
-			// The stamp is authorized for the life of this turn and no longer.
-			// Revoking at adjudication below is what stops a later turn in the
-			// same session from stamping a version this turn declined — the
-			// confida-login 2026-08-12 case, where the stamp arrived ten
-			// minutes after the verdict and the next preflight skipped the
-			// migration it certified. See pkg/contractupgrade.
-			contractupgrade.Mint(sessionID, turn.upgradeTarget)
-		}
 
 		// Resume the workflow's latest thread (same CLI) on the first message
 		// only — later messages already share this run's live session.
@@ -3976,39 +3901,6 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		// the session for frontend tab labeling. Subsequent calls are
 		// no-ops (helper guards against overwriting an existing Title).
 		s.stampScheduleNameOnSession(sessionID, sctx)
-
-		if turn.upgradeTarget != "" {
-			// Adjudicating the turn closes it. A turn that has been judged must
-			// not be able to change the thing it was judged on, so the stamp
-			// stops being accepted here — on the passing path as much as the
-			// failing one.
-			contractupgrade.Revoke(sessionID)
-			updatedManifest, updatedFound, readErr := ReadWorkflowManifest(ctx, sctx.WorkspacePath)
-			if readErr != nil {
-				return sessionID, runFolder, fmt.Errorf("workflow upgrade preflight %s completed but manifest could not be re-read: %w", turn.label, readErr)
-			}
-			if !updatedFound || workflowContractVersionForUpgrade(updatedManifest) != turn.upgradeTarget {
-				actual := "missing"
-				if updatedFound {
-					actual = workflowContractVersionForUpgrade(updatedManifest)
-				}
-				failOpen, failureCount, recordErr := RecordWorkflowSchedulePreflightFailure(ctx, sctx.WorkspacePath, sctx.Schedule, turn.upgradeTarget, time.Now())
-				if recordErr != nil {
-					s.sessionLogf(sctx, sessionID, "[SCHEDULER] WARNING: failed to persist preflight failure count for %s: %v", turn.label, recordErr)
-				}
-				if !failOpen {
-					return sessionID, runFolder, workflowUpgradePreflightStampError(turn.label, turn.upgradeTarget, actual, failureCount)
-				}
-				s.sessionLogf(sctx, sessionID,
-					"[SCHEDULER] WARNING: workflow upgrade preflight %s failed to stamp %q %d consecutive times (found %q). Failing OPEN: running the normal schedule message on the unstamped contract. This workflow needs owner attention — a supported configuration control could not complete this migration. Retrying the preflight fresh next scheduled run.",
-					turn.label, turn.upgradeTarget, failureCount, actual)
-				preflightFailedOpen = true
-				continue
-			}
-			if clearErr := ClearWorkflowSchedulePreflightFailures(ctx, sctx.WorkspacePath, sctx.Schedule); clearErr != nil {
-				s.sessionLogf(sctx, sessionID, "[SCHEDULER] WARNING: failed to clear preflight failure count for %s: %v", turn.label, clearErr)
-			}
-		}
 
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Workshop turn %d/%d (%s) completed", i+1, len(turns), turn.label)
 	}
@@ -4597,26 +4489,10 @@ var errWorkshopIdleWaitTimeout = errors.New("workshop idle wait timed out")
 var errWorkshopSequenceInterrupted = errors.New("workshop sequence interrupted by user")
 var errWorkshopSessionFailed = errors.New("workshop session failed")
 
-// errWorkflowUpgradePreflightBlocked marks a run that never started because a
-// blocking contract-upgrade turn declined to stamp. Pulse is a post-run
-// steward, and there is no run to steward here: the workflow did not execute,
-// no evidence was produced, and the only honest thing a Pulse pass can do is
-// spend an LLM turn saying so. Repeating that on every trigger of a workflow
-// waiting on an owner decision is noise, so the caller skips Pulse entirely on
-// this error.
-var errWorkflowUpgradePreflightBlocked = errors.New("workflow upgrade preflight blocked")
-
-// workflowUpgradePreflightStampError reports an upgrade turn that ran and
-// declined to stamp. It wraps errWorkflowUpgradePreflightBlocked so the caller
-// can tell this apart from a workflow that ran and failed — the difference
-// decides whether Pulse has anything to do.
-func workflowUpgradePreflightStampError(label, target, actual string, failureCount int) error {
-	return fmt.Errorf(
-		"workflow upgrade preflight %s did not stamp required version %q (found %q, failure %d/%d consecutive); normal schedule message was not started: %w",
-		label, target, actual, failureCount, workflowSchedulePreflightFailOpenThreshold,
-		errWorkflowUpgradePreflightBlocked,
-	)
-}
+// errWorkflowContractMigrationRequired marks an automated invocation whose
+// lane still requires a current contract (currently direct webhooks). Normal
+// schedules are allowed to keep running their saved contract.
+var errWorkflowContractMigrationRequired = errors.New("workflow contract migration required")
 
 func (s *SchedulerService) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Context, sessionID string) error {
 	if s == nil || s.api == nil {

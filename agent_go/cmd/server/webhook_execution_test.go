@@ -62,7 +62,7 @@ func TestDirectWebhookRequestPreservesBindingWithoutBuilder(t *testing.T) {
 
 func TestDirectWebhookRequiresPreparedWorkflow(t *testing.T) {
 	for _, manifest := range []*WorkflowManifest{nil, {}, {Version: "1.0.1"}} {
-		if err := directWebhookPreflight(manifest); !errors.Is(err, errWorkflowUpgradePreflightBlocked) {
+		if err := directWebhookPreflight(manifest); !errors.Is(err, errWorkflowContractMigrationRequired) {
 			t.Fatalf("unprepared workflow allowed: %v", err)
 		}
 	}
@@ -71,7 +71,7 @@ func TestDirectWebhookRequiresPreparedWorkflow(t *testing.T) {
 		workflowContractRunScopedRoutesVersion,
 		workflowContractEvalRetirementVersion,
 	} {
-		if err := directWebhookPreflight(&WorkflowManifest{Version: version}); !errors.Is(err, errWorkflowUpgradePreflightBlocked) {
+		if err := directWebhookPreflight(&WorkflowManifest{Version: version}); !errors.Is(err, errWorkflowContractMigrationRequired) {
 			t.Fatalf("older contract %s bypassed the nested-artifact migration: %v", version, err)
 		}
 	}

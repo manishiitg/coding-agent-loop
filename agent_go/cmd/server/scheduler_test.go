@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -18,6 +19,42 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 	"github.com/robfig/cron/v3"
 )
+
+// manualWorkflowUpgradeTurns is test-only rendering for the manual Workshop
+// migration contract. Production scheduling never constructs upgrade turns.
+func manualWorkflowUpgradeTurns(manifest *WorkflowManifest, messages []string, workspacePath string) ([]scheduledWorkshopTurn, error) {
+	upgradePlan := workflowVersionUpgradePlan(manifest)
+	manifestVersion := workflowContractVersionForUpgrade(manifest)
+	if !workflowContractVersionIsExecutionCompatible(manifestVersion) &&
+		(len(upgradePlan) == 0 || !workflowContractVersionIsExecutionCompatible(upgradePlan[len(upgradePlan)-1].to)) {
+		return nil, fmt.Errorf(
+			"workflow has no complete upgrade path from version %q to %q for manual migration: %w",
+			manifestVersion,
+			WorkflowContractCurrentVersion,
+			errWorkflowContractMigrationRequired,
+		)
+	}
+
+	turns := make([]scheduledWorkshopTurn, 0, len(upgradePlan)+len(messages))
+	for _, upgrade := range upgradePlan {
+		query := bindWorkflowUpgradeWorkspacePath(upgrade.query, workspacePath)
+		if strings.Contains(query, workflowUpgradeWorkspacePathPlaceholder) {
+			return nil, fmt.Errorf("manual workflow upgrade %s requires a workspace path", upgrade.label)
+		}
+		turns = append(turns, scheduledWorkshopTurn{
+			label:         upgrade.label,
+			query:         query,
+			upgradeTarget: upgrade.to,
+		})
+	}
+	for i, message := range messages {
+		turns = append(turns, scheduledWorkshopTurn{
+			label: fmt.Sprintf("schedule-message-%d", i+1),
+			query: message,
+		})
+	}
+	return turns, nil
+}
 
 func TestBuildScheduleCronExpressionAlwaysSetsTimezone(t *testing.T) {
 	tests := []struct {
@@ -1329,7 +1366,7 @@ func TestPostRunMonitorPrependsWorkflowVersionUpgradeForOldManifest(t *testing.T
 }
 
 func TestScheduledWorkshopTurnsCurrentWorkflowStartsWithScheduleMessage(t *testing.T) {
-	turns, err := scheduledWorkshopTurns(&WorkflowManifest{Version: WorkflowContractCurrentVersion}, []string{"first", "second"}, "Workflow/test")
+	turns, err := manualWorkflowUpgradeTurns(&WorkflowManifest{Version: WorkflowContractCurrentVersion}, []string{"first", "second"}, "Workflow/test")
 	if err != nil {
 		t.Fatalf("scheduledWorkshopTurns: %v", err)
 	}
@@ -1339,7 +1376,7 @@ func TestScheduledWorkshopTurnsCurrentWorkflowStartsWithScheduleMessage(t *testi
 }
 
 func TestScheduledWorkshopTurnsRejectsUnknownVersionBeforeScheduleMessage(t *testing.T) {
-	turns, err := scheduledWorkshopTurns(&WorkflowManifest{Version: "9.9.9"}, []string{"must not run"}, "Workflow/test")
+	turns, err := manualWorkflowUpgradeTurns(&WorkflowManifest{Version: "9.9.9"}, []string{"must not run"}, "Workflow/test")
 	if err == nil || !strings.Contains(err.Error(), "no complete upgrade path") {
 		t.Fatalf("error = %v, want no complete upgrade path", err)
 	}
@@ -1396,9 +1433,9 @@ func TestPostRunMonitorPrependsPulseHistoryContractUpgradeForVersion110Manifest(
 // Review+Fix turn.
 func assertDirectContractUpgrade(t *testing.T, manifest *WorkflowManifest, from string) {
 	t.Helper()
-	turns, err := scheduledWorkshopTurns(manifest, nil, "Workflow/test")
+	turns, err := manualWorkflowUpgradeTurns(manifest, nil, "Workflow/test")
 	if err != nil {
-		t.Fatalf("scheduledWorkshopTurns(%s): %v", from, err)
+		t.Fatalf("manualWorkflowUpgradeTurns(%s): %v", from, err)
 	}
 	upgrades := workflowVersionUpgradePlan(&WorkflowManifest{Version: from})
 	if got, want := len(turns), len(upgrades); got != want {
@@ -1415,7 +1452,7 @@ func assertDirectContractUpgrade(t *testing.T, manifest *WorkflowManifest, from 
 		// the preflight never told the agent what it was migrating between.
 		for _, want := range []string{
 			"WORKFLOW CONTRACT UPGRADE",
-			`Current workflow.json version seen by scheduler: "` + from + `"`,
+			`Current workflow.json version: "` + from + `"`,
 			`Target workflow contract version: "` + upgrade.to + `"`,
 		} {
 			if !strings.Contains(turns[index].query, want) {
@@ -1426,7 +1463,7 @@ func assertDirectContractUpgrade(t *testing.T, manifest *WorkflowManifest, from 
 }
 
 func TestNoUpgradeTurnsForAWorkflowAlreadyAtTheCurrentContract(t *testing.T) {
-	turns, err := scheduledWorkshopTurns(&WorkflowManifest{Version: WorkflowContractCurrentVersion}, []string{"run the workflow"}, "Workflow/test")
+	turns, err := manualWorkflowUpgradeTurns(&WorkflowManifest{Version: WorkflowContractCurrentVersion}, []string{"run the workflow"}, "Workflow/test")
 	if err != nil {
 		t.Fatalf("scheduledWorkshopTurns: %v", err)
 	}

@@ -32,7 +32,7 @@ func workflowContractVersionIsExecutionCompatible(version string) bool {
 
 // workflowContractVersionRank is intentionally a closed set. A workflow made
 // by a newer server must never be silently "upgraded" backwards by an older
-// server: scheduledWorkshopTurns treats an unknown version as having no path.
+// server: manualWorkflowUpgradeTurns treats an unknown version as having no path.
 func workflowContractVersionRank(version string) (int, bool) {
 	known := []string{
 		"1.0.0", "1.0.1", "1.0.2", "1.0.3", "1.0.4", "1.0.5", "1.0.6", "1.0.7", "1.0.8", "1.0.9",
@@ -468,36 +468,17 @@ func workflowVersionUpgradePlan(manifest *WorkflowManifest) []workflowVersionUpg
 	// from or to. That path is gone; the context it carried is not.
 	for i := range steps {
 		steps[i].query += fmt.Sprintf(
-			"\n\nCurrent workflow.json version seen by scheduler: %q. Target workflow contract version: %q.",
+			"\n\nCurrent workflow.json version: %q. Target workflow contract version: %q.",
 			version, steps[i].to,
-		) + upgradeTurnAutonomyNote
+		) + manualUpgradeTurnNote
 	}
 	return steps
 }
 
-// upgradeTurnAutonomyNote is appended to every upgrade query.
-//
-// These turns are fired by the scheduler, usually outside working hours, and
-// nobody reads their output. An upgrade turn that ends by asking the owner a
-// question in its reply text is not waiting for an answer — it is stalling, and
-// the stall repeats on every future trigger while the workflow never runs.
-// confida-login sat at 1.0.20 that way: three separate turns each correctly
-// identified the same blocker, each ended with "Which would you like?", and its
-// QA had not executed since.
-//
-// The wording matters more than it looks. An earlier draft said "do not
-// re-open it as a judgement call" and "a question reaches nobody", which reads
-// as pressure to override a safety pause — the exact shape of an injection
-// attempt. An agent that had correctly blocked this migration refused again,
-// and cited the urgency framing as its reason. It was right to.
-//
-// So this states a fact about the execution context and leaves refusing fully
-// available. What it removes is only the *ineffective* form of stopping:
-// a question in reply text that no one receives. create_human_input_request is
-// durable, surfaces to the owner, and scheduledDecisionDrainTurn applies the
-// answer before the next run.
-const upgradeTurnAutonomyNote = `
+// manualUpgradeTurnNote is appended to every upgrade instruction returned to
+// Workshop. Contract migrations are operator-started work: schedules never own
+// them. The operator can therefore answer a genuine product or safety question
+// in the same conversation; the agent must not guess merely to obtain a stamp.
+const manualUpgradeTurnNote = `
 
-EXECUTION CONTEXT. This is an automated platform migration — the platform's own scheduled maintenance on this workflow, not a user request relayed through the scheduler. It runs unattended, and this turn is the one that owns the decision. Use your engineering judgment and take the best action to complete the migration properly, the same way you would if you had found this work yourself.
-
-Completing it and stamping, or stopping without stamping, are both acceptable outcomes. What does not work is asking a question in your reply: the reply is not delivered to anyone, so the run simply ends and the same turn repeats unchanged on the next schedule. If you find something the instruction above does not cover, raise it with create_human_input_request — durable, reaches the workflow owner, and their answer is applied before the next run — then stop without stamping.`
+EXECUTION CONTEXT. This is a manual platform migration started by the workflow operator in Workshop chat. Complete and verify this migration before stamping it. If a genuine product, business, or safety choice is required, do not guess and do not stamp: explain the exact choice in this conversation and ask the operator.`

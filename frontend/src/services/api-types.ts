@@ -3346,6 +3346,26 @@ export interface GetWorkflowManifestResponse {
   success: boolean
   manifest: WorkflowManifest
   workspace_path: string
+  contract_upgrade?: WorkflowContractUpgradeStatus
+}
+
+export interface WorkflowContractUpgradeStatus {
+  required: boolean
+  current_version: string
+  platform_version: string
+  pending_count: number
+  next_label?: string
+  next_version?: string
+  pending: WorkflowContractUpgradeItem[]
+  applied: WorkflowContractUpgradeItem[]
+  /** Older workflows have no per-migration timestamps; completed entries are
+   * inferred from the manifest's monotonic contract version. */
+  history_basis: 'contract_version'
+}
+
+export interface WorkflowContractUpgradeItem {
+  label: string
+  target_version: string
 }
 
 export interface CreateWorkflowManifestRequest {

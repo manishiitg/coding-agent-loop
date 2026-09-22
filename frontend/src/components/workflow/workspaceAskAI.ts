@@ -15,6 +15,7 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   costs: "Help me understand what my helper costs to run — and bring it down if I want. Explain in plain words where the money goes and what's costing the most, then ask what I want to change.",
   'execution-logs': "Help me investigate this workflow's execution logs. Identify failures or unusual behavior, explain the evidence, and ask which run or issue I want to examine.",
   knowledge: "Help me use what my helper knows — what it has learned, its background notes, and its stored records. Explain in plain words and ask what I want to find, add, or change.",
+  updates: "Help me understand this workflow's platform updates. Explain what is pending, what the workflow already satisfies, and help me start pending updates only if I ask.",
   schedules: "Help me set up or change a schedule for this workflow. Ask what should run, when it should run, and any route requirements.",
   webhooks: "Help me set up or change a webhook for this workflow. Ask which external event should trigger it, what should run, and which authentication and routing it needs.",
   files: "Help me work with this workflow's files. Ask what I want to find, understand, create, or change before modifying anything.",

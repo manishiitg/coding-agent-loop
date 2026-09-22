@@ -44,7 +44,7 @@ func TestStampFromAClosedTurnIsRefused(t *testing.T) {
 	}
 	// The refusal has to tell the agent what actually resolves this, or it will
 	// read as a platform fault and get retried or worked around.
-	for _, want := range []string{"no contract upgrade turn is open", "resolve the blocker", "makes the scheduler skip it"} {
+	for _, want := range []string{"schedules may run", "never authorize or perform migrations", "Update workflow"} {
 		if !strings.Contains(refusal, want) {
 			t.Fatalf("refusal missing %q: %s", want, refusal)
 		}

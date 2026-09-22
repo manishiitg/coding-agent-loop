@@ -18,17 +18,6 @@ const (
 	workflowScheduleMatchTolerance          = 5 * time.Minute
 
 	workflowScheduleMissedReasonNoExecution = "no_execution_recorded"
-
-	// workflowSchedulePreflightFailOpenThreshold: a contract-upgrade preflight
-	// step that can't complete (e.g. a retired field with no supported setter,
-	// see workflow_version_upgrades.go) must not block a workflow's scheduled
-	// runs forever. After this many CONSECUTIVE failures targeting the same
-	// version, the scheduler fails open: it skips that (and any later) upgrade
-	// turn for this run and executes the normal schedule message on the
-	// unstamped contract. The next scheduled run tries the preflight again
-	// from scratch — this only bounds how long normal work stays blocked, it
-	// does not abandon the migration.
-	workflowSchedulePreflightFailOpenThreshold = 3
 )
 
 var workflowScheduleExecutionHistoryMu sync.Mutex
@@ -46,13 +35,6 @@ type WorkflowScheduleExecutionTrack struct {
 	WindowStartAt  time.Time                         `json:"window_start_at"`
 	UpdatedAt      time.Time                         `json:"updated_at"`
 	Executions     []WorkflowScheduleExecutionRecord `json:"executions,omitempty"`
-
-	// Consecutive contract-upgrade preflight failures targeting the same
-	// version. Reset whenever the target version changes (a different, or
-	// since-resolved, migration) or a matching stamp finally succeeds.
-	PreflightFailureTarget string    `json:"preflight_failure_target,omitempty"`
-	PreflightFailureCount  int       `json:"preflight_failure_count,omitempty"`
-	PreflightFailureAt     time.Time `json:"preflight_failure_at,omitempty"`
 }
 
 type WorkflowScheduleExecutionRecord struct {
@@ -160,63 +142,6 @@ func RecordWorkflowScheduleExecution(ctx context.Context, workspacePath string, 
 	tracker.Executions = append(tracker.Executions, WorkflowScheduleExecutionRecord{StartedAt: startedAt.UTC()})
 	tracker.UpdatedAt = startedAt.UTC()
 	normalizeWorkflowScheduleExecutionTrack(&tracker, startedAt.UTC())
-	history.Schedules[sched.ID] = tracker
-	return WriteWorkflowScheduleExecutionHistory(ctx, workspacePath, history)
-}
-
-// RecordWorkflowSchedulePreflightFailure records one failed attempt to stamp
-// targetVersion for this schedule's contract-upgrade preflight. The counter
-// resets when targetVersion differs from the last recorded failure (a
-// different or already-resolved migration). Returns whether the caller
-// should now fail open (skip blocking on this migration for this run) and
-// the resulting consecutive-failure count.
-func RecordWorkflowSchedulePreflightFailure(ctx context.Context, workspacePath string, sched WorkflowSchedule, targetVersion string, now time.Time) (failOpen bool, failureCount int, err error) {
-	workflowScheduleExecutionHistoryMu.Lock()
-	defer workflowScheduleExecutionHistoryMu.Unlock()
-
-	history, readErr := ReadWorkflowScheduleExecutionHistory(ctx, workspacePath)
-	if readErr != nil {
-		history = &WorkflowScheduleExecutionHistoryFile{
-			Version:   workflowScheduleExecutionHistoryVersion,
-			Schedules: map[string]WorkflowScheduleExecutionTrack{},
-		}
-	}
-
-	tracker, _ := ensureWorkflowScheduleExecutionTracker(history, sched, now.UTC())
-	if tracker.PreflightFailureTarget != targetVersion {
-		tracker.PreflightFailureTarget = targetVersion
-		tracker.PreflightFailureCount = 0
-	}
-	tracker.PreflightFailureCount++
-	tracker.PreflightFailureAt = now.UTC()
-	tracker.UpdatedAt = now.UTC()
-	history.Schedules[sched.ID] = tracker
-
-	if writeErr := WriteWorkflowScheduleExecutionHistory(ctx, workspacePath, history); writeErr != nil {
-		return false, tracker.PreflightFailureCount, writeErr
-	}
-	return tracker.PreflightFailureCount >= workflowSchedulePreflightFailOpenThreshold, tracker.PreflightFailureCount, nil
-}
-
-// ClearWorkflowSchedulePreflightFailures resets the consecutive-failure
-// counter for a schedule, e.g. once its contract-upgrade preflight finally
-// stamps the expected version. Defensive: a successful stamp also changes
-// the version compared on the next failure, which independently resets the
-// counter, but clearing explicitly avoids a stale count lingering on disk.
-func ClearWorkflowSchedulePreflightFailures(ctx context.Context, workspacePath string, sched WorkflowSchedule) error {
-	workflowScheduleExecutionHistoryMu.Lock()
-	defer workflowScheduleExecutionHistoryMu.Unlock()
-
-	history, err := ReadWorkflowScheduleExecutionHistory(ctx, workspacePath)
-	if err != nil {
-		return nil
-	}
-	tracker, exists := history.Schedules[sched.ID]
-	if !exists || (tracker.PreflightFailureCount == 0 && tracker.PreflightFailureTarget == "") {
-		return nil
-	}
-	tracker.PreflightFailureCount = 0
-	tracker.PreflightFailureTarget = ""
 	history.Schedules[sched.ID] = tracker
 	return WriteWorkflowScheduleExecutionHistory(ctx, workspacePath, history)
 }

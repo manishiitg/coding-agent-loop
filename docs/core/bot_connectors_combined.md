@@ -176,6 +176,14 @@ Non-mention messages require an existing session or a valid durable binding
 before entering the manager. A channel route alone does not make every ordinary
 message start a conversational session.
 
+A thread reply that tags another user but not the bot is addressed to a
+colleague: the bot stays silent (no reply, no run, no reaction) no matter how
+few people are in the thread, and such a reply never revives a conversation
+after restart. Blocking answers and control commands still bypass this rule,
+and a message that tags the bot (even alongside others) is processed. Other
+users' tags on processed messages are rewritten to @DisplayName so model
+turns read names instead of opaque IDs.
+
 ### Persistence and thread-less conversations
 
 Slack saves per-thread bindings under `config/slack-threads/<hash>.json`.

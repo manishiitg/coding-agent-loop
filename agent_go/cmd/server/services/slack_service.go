@@ -238,6 +238,11 @@ type SlackService struct {
 	seenMessages   map[string]time.Time
 	seenMessagesMu sync.Mutex
 
+	// Display-name cache for <@U...> tags rewritten before model turns.
+	// Bounded by workspace size; no TTL (restarts clear it).
+	userDisplayNames   map[string]string
+	userDisplayNamesMu sync.Mutex
+
 	// connectionID names the registry entry this instance serves. Empty on
 	// the root (which serves the default connection); set on children.
 	connectionID string
@@ -343,7 +348,8 @@ func GetSlackService() *SlackService {
 // when the config is valid and enabled.
 func InitSlackService() (*SlackService, error) {
 	service := &SlackService{
-		seenMessages: make(map[string]time.Time),
+		seenMessages:     make(map[string]time.Time),
+		userDisplayNames: make(map[string]string),
 	}
 
 	// Load config first
@@ -1502,6 +1508,7 @@ func (s *SlackService) reconcileChildren(ctx context.Context) {
 			connectionID:       id,
 			config:             s.childConfigSnapshot(),
 			seenMessages:       make(map[string]time.Time),
+			userDisplayNames:   make(map[string]string),
 			messageHandler:     s.messageHandler,
 			interactionHandler: s.interactionHandler,
 			triggerHandler:     s.triggerHandler,
@@ -1642,6 +1649,9 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 		return
 	}
 
+	// Detect colleague tags on the raw text: route/file enrichment below
+	// may append text, and stripping (mention path) removes tags.
+	tagsAnotherUser := slackMessageTagsAnotherUser(text, s.botUserID)
 	userEmail := s.resolveUserEmail(userID)
 	text, presetRoute, handled := s.routeSlackWorkflowMessage(context.Background(), userID, userEmail, channelID, threadTS, text, isThreadReply)
 	if handled {
@@ -1650,19 +1660,20 @@ func (s *SlackService) handleSlackBotMessage(userID, channelID, threadTS, messag
 	text = s.appendSlackFileContext(context.Background(), text, msg, channelID, userEmail, presetRoute)
 
 	s.messageHandler(BotIncomingMessage{
-		Platform:       "slack",
-		UserID:         userID,
-		UserName:       userID,
-		UserEmail:      userEmail,
-		ChannelID:      channelID,
-		ConnectionID:   s.connectionID,
-		ThreadTS:       threadTS,
-		Text:           text,
-		MessageTS:      messageTS,
-		Timestamp:      time.Now(),
-		IsThreadReply:  isThreadReply,
-		IsMention:      isMention,
-		PresetWorkflow: presetRoute,
+		Platform:          "slack",
+		UserID:            userID,
+		UserName:          userID,
+		UserEmail:         userEmail,
+		ChannelID:         channelID,
+		ConnectionID:      s.connectionID,
+		ThreadTS:          threadTS,
+		Text:              text,
+		MessageTS:         messageTS,
+		Timestamp:         time.Now(),
+		IsThreadReply:     isThreadReply,
+		IsMention:         isMention,
+		MentionsOtherUser: tagsAnotherUser,
+		PresetWorkflow:    presetRoute,
 	})
 
 	if isMention {
@@ -2223,16 +2234,86 @@ func (s *SlackService) handleAppMentionEvent(ev *slackevents.AppMentionEvent) {
 	})
 }
 
-// stripMention removes <@BOTID> from message text
+// slackUserMentionTag matches Slack user tags (<@U123>, <@U123|label>).
+// Channel-wide pings (<!channel>, <!here>) are not person tags and never match.
+var slackUserMentionTag = regexp.MustCompile(`<@([A-Z0-9]+)(\|[^>]+)?>`)
+
+// slackMessageTagsAnotherUser reports whether text tags a platform user
+// other than the bot. Unknown bot identity fails open: without our own ID
+// a colleague's tag is indistinguishable from ours, so nothing is ignored.
+func slackMessageTagsAnotherUser(text, botUserID string) bool {
+	if botUserID == "" {
+		return false
+	}
+	for _, match := range slackUserMentionTag.FindAllStringSubmatch(text, -1) {
+		if len(match) >= 2 && match[1] != "" && match[1] != botUserID {
+			return true
+		}
+	}
+	return false
+}
+
+// rewriteMentionTags replaces Slack <@U...> user tags with @DisplayName via
+// resolve so model turns read names, not opaque IDs. Tags that cannot be
+// resolved are dropped (the previous behavior for every tag). The bot's own
+// tag must already be removed by the caller.
+func rewriteMentionTags(text string, resolve func(userID string) string) string {
+	return slackUserMentionTag.ReplaceAllStringFunc(text, func(tag string) string {
+		parts := slackUserMentionTag.FindStringSubmatch(tag)
+		if len(parts) < 2 || parts[1] == "" {
+			return tag
+		}
+		if name := strings.TrimSpace(resolve(parts[1])); name != "" {
+			return "@" + name
+		}
+		return ""
+	})
+}
+
+// stripMention removes <@BOTID> from message text and rewrites any other
+// user's tag to @DisplayName so the model can tell who was addressed.
 func (s *SlackService) stripMention(text string) string {
 	if s.botUserID != "" {
 		mention := fmt.Sprintf("<@%s>", s.botUserID)
 		text = strings.Replace(text, mention, "", -1)
 	}
-	// Also strip any remaining <@...> patterns
-	mentionRegex := regexp.MustCompile(`<@[A-Z0-9]+>`)
-	text = mentionRegex.ReplaceAllString(text, "")
+	text = rewriteMentionTags(text, s.slackUserDisplayName)
 	return strings.TrimSpace(text)
+}
+
+// slackUserDisplayName resolves a Slack user ID to a display name for
+// mention rewriting. Results are cached per service; "" means unknown.
+func (s *SlackService) slackUserDisplayName(userID string) string {
+	if userID == "" || s.client == nil {
+		return ""
+	}
+	s.userDisplayNamesMu.Lock()
+	if s.userDisplayNames == nil {
+		s.userDisplayNames = make(map[string]string)
+	}
+	if name, ok := s.userDisplayNames[userID]; ok {
+		s.userDisplayNamesMu.Unlock()
+		return name
+	}
+	s.userDisplayNamesMu.Unlock()
+	user, err := s.client.GetUserInfo(userID)
+	if err != nil {
+		return ""
+	}
+	name := strings.TrimSpace(user.Profile.DisplayName)
+	if name == "" {
+		name = strings.TrimSpace(user.Profile.RealName)
+	}
+	if name == "" {
+		name = strings.TrimSpace(user.Name)
+	}
+	if name == "" {
+		return ""
+	}
+	s.userDisplayNamesMu.Lock()
+	s.userDisplayNames[userID] = name
+	s.userDisplayNamesMu.Unlock()
+	return name
 }
 
 // resolveUserEmail looks up a Slack user's email via users.info API.

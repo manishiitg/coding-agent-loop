@@ -111,6 +111,21 @@ supplied only for an intentional rollback or bisect. The deterministic Coding
 CLI workflow verifies those defaults so a pinned-production/local-main split
 cannot be reintroduced silently.
 
+### Double-submit key transport policy (2026-09-22)
+
+Production showed that tmux can accept a submit keystroke while the provider
+TUI fails to act on it. Every tmux coding-agent adapter now sends two submit
+keys for the initial submission after writing the draft (`Enter Enter` for
+Codex, Pi, and Muse; `C-m C-m` for Cursor; `C-e Enter Enter` for Claude Code).
+The pair is emitted by one `tmux send-keys` command and is covered by an exact
+key-sequence regression in each provider package (`multi-llm-provider-go`
+commit `bcaff33`).
+
+This redundancy does not elevate terminal text scraping into the source of
+truth. Provider-owned rollout/transcript/marker/database evidence remains the
+authoritative durable acknowledgement. Pane matching remains secondary for
+blocking-state detection and bounded stuck-draft recovery.
+
 After the 2026-09-22 main pull, `/api/query` owns steer-vs-next-turn routing.
 Human submissions now attempt a compatible retained tmux CLI once *before*
 the occupied-turn queue. A known missing target falls through to the durable

@@ -43,7 +43,7 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("llm: 'identity'")
     expect(source).toContain("bots: 'mcp'")
     expect(source).toContain("email: 'mcp'")
-    expect(source).toContain('landingContent={<WorkNewChatGuide />}')
+    expect(source).toContain('landingContent={<WorkNewChatGuide sharedBy={')
     expect(source).toContain('This is the persistent conversation for this Crew project.')
   })
 
@@ -54,6 +54,6 @@ describe('WorkWorkspaceToolbar', () => {
     expect(source).toContain("if (saved === 'history') return 'schedules'")
     expect(source).toContain('if (saved && saved in WORK_UI_PRESENTATION_VIEWS) return WORK_UI_PRESENTATION_VIEWS[saved as WorkUIPresentationView]')
     expect(source).toContain('writeWorkWorkspaceView(selected?.id, view)')
-    expect(source).toContain('setWorkspaceView(readWorkWorkspaceView(selected?.id))')
+    expect(source).toContain('const savedView = readWorkWorkspaceView(selected?.id)')
   })
 })

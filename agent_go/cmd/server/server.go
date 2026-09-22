@@ -2261,6 +2261,9 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations", api.handleListAgentProfileConversations).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/conversations/{session_id}", api.handleDeleteAgentProfileConversation).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/projects/{project_id}", api.handleDeleteAgentProfileProject).Methods("DELETE", "OPTIONS")
+	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects", api.handleListSharedProjects).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/files", api.handleListSharedProjectFiles).Methods("GET", "OPTIONS")
+	apiRouter.HandleFunc("/agent-profiles/{id}/shared-projects/{project_id}/file", api.handleGetSharedProjectFile).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/agent-profiles/{id}/presentations/{presentationID}", api.handleAgentProfilePresentationDelete).Methods("DELETE", "OPTIONS")
 	apiRouter.HandleFunc("/work/folders", api.handleListWorkFolders).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/work/folders", api.handleAddWorkFolder).Methods("POST", "OPTIONS")
@@ -5338,6 +5341,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		// how a real enabled: list gets seeded from a live session rather than
 		// guessed.
 		toolGate := newProductToolGate(resolvedProfile)
+		if currentUserIsReadOnly && resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
+			toolGate.DenyReaderTools(crewReaderDeniedTools()...)
+		}
 		defer toolGate.logSurface(sessionID)
 		platformBridgeTools := []string{}
 		if toolGate.Admit("read_image") {
@@ -5660,20 +5666,41 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						}
 						log.Printf("[WORK FOLDER GUARD] Applied %d attached folder(s) (write=%v)", len(grantRead), grantWrite)
 					}
+					// Crew Run mode: a reader turn keeps the project root
+					// readable but drops it from every write set, with an
+					// explicit blocked-write entry (the same shape as crew
+					// attachment roots). The caller's own chat-history
+					// folder stays writable — conversation persistence,
+					// not project mutation — as do the caller's own
+					// attached folders. Scoped to the work profile so
+					// other products keep today's behavior.
+					crewReadOnlyTurn := currentUserIsReadOnly && resolvedProfile.Definition.ID == "work"
+					guardWriteRoot := profileRoot
+					guardReadOnly := profileReadOnly
+					guardWrite := []string{profileWrite}
+					guardBlocked := []string(nil)
+					if crewReadOnlyTurn {
+						guardWriteRoot = ""
+						guardReadOnly = append([]string{profileWrite}, profileReadOnly...)
+						guardWrite = nil
+						guardBlocked = append(guardBlocked, profileWrite)
+					}
 					executorWrite := append(append([]string{}, chatHistoryGrants...), workGrantWrite...)
-					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, profileRoot, profileReadOnly, executorWrite...)
+					workspaceExecutors = wrapExecutorsWithPlanFolderGuard(workspaceExecutors, guardWriteRoot, guardReadOnly, executorWrite...)
 					workspace.SetSessionWorkingDir(sessionID, profileRoot)
 					workspace.SetSessionFolderGuard(sessionID,
 						append(append([]string{profileWrite}, chatHistoryGrants...), profileReadOnly...),
-						append(append([]string{profileWrite}, chatHistoryGrants...), workGrantWrite...),
+						append(append(guardWrite, chatHistoryGrants...), workGrantWrite...),
 					)
-					if len(workGrantReadOnly) > 0 {
-						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, workGrantReadOnly)
+					guardBlocked = append(guardBlocked, workGrantReadOnly...)
+					if len(guardBlocked) > 0 {
+						workspace.SetSessionFolderGuardBlockedWritePaths(sessionID, guardBlocked)
 					}
 					if resolvedProfile.Definition.ID == "work" {
 						// Work uses the shared managed database boundary: migrations and
 						// row tools are allowed, while raw SQLite/WAL/SHM access is denied.
-						todo_creation_human.ConfigureManagedWorkflowDBSession(sessionID, profileRoot, true)
+						// Readers get the read side of that boundary.
+						todo_creation_human.ConfigureManagedWorkflowDBSession(sessionID, profileRoot, !crewReadOnlyTurn)
 					}
 					if sandbox.IsStrict() {
 						// The profile asked for the deny-by-default shell: only the
@@ -5847,6 +5874,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						if resolvedProfile != nil && !isGlobalScopedProfile(resolvedProfile) {
 							profileRoot := agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder)
 							profileReadOnly := agentProfileReadOnlyFolders(resolvedProfile.Definition.Runtime.Sandbox, workflowReadOnlyFolders)
+							// Crew Run mode: browser tools in a reader turn
+							// keep the project readable but unwritable,
+							// matching the session guard above.
+							if currentUserIsReadOnly && resolvedProfile.Definition.ID == "work" {
+								profileReadOnly = append([]string{strings.TrimSuffix(profileRoot, "/") + "/"}, profileReadOnly...)
+								profileRoot = ""
+							}
 							return wrapExecutorsWithPlanFolderGuard(execs, profileRoot, profileReadOnly)
 						}
 						additionalFolders := append([]string{}, resolvedGrants.WriteFolders...)
@@ -5966,7 +6000,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			}
 			log.Printf("[CUSTOM TOOLS] Registered %d custom tools with agent", registeredCount)
 
-			if err := api.registerAgentProfileTools(llmAgent, toolGate, resolvedProfile, currentUserID, sessionID, req.SelectedFolder, req); err != nil {
+			crewReadOnly := currentUserIsReadOnly && resolvedProfile != nil && resolvedProfile.Definition.ID == "work"
+			if err := api.registerAgentProfileTools(llmAgent, toolGate, resolvedProfile, currentUserID, sessionID, req.SelectedFolder, crewReadOnly, req); err != nil {
 				logfWithContext(queryLogCtx, "[AGENT PROFILE] Failed to register tools: %v", err)
 				sendError(fmt.Sprintf("Failed to register agent profile tools: %v", err), true)
 				return
@@ -5986,15 +6021,20 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				sendError(fmt.Sprintf("Failed to register agent profile workflow runtime: %v", err), true)
 				return
 			}
-			if err := api.registerWorkBackgroundTools(llmAgent, resolvedProfile, req, sessionID, currentUserID); err != nil {
-				logfWithContext(queryLogCtx, "[WORK BACKGROUND] Failed to register tools: %v", err)
-				sendError(fmt.Sprintf("Failed to register Work background tools: %v", err), true)
-				return
-			}
-			if err := api.registerWorkDashboardTools(llmAgent, resolvedProfile, sessionID, currentUserID, req.SelectedFolder); err != nil {
-				logfWithContext(queryLogCtx, "[WORK DASHBOARD] Failed to register tools: %v", err)
-				sendError(fmt.Sprintf("Failed to register Work Dashboard tools: %v", err), true)
-				return
+			// Crew Run mode: readers get foreground-only turns (background
+			// delegates would need their own guard inheritance proof) and
+			// no dashboard authoring.
+			if !crewReadOnly {
+				if err := api.registerWorkBackgroundTools(llmAgent, resolvedProfile, req, sessionID, currentUserID); err != nil {
+					logfWithContext(queryLogCtx, "[WORK BACKGROUND] Failed to register tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register Work background tools: %v", err), true)
+					return
+				}
+				if err := api.registerWorkDashboardTools(llmAgent, resolvedProfile, sessionID, currentUserID, req.SelectedFolder); err != nil {
+					logfWithContext(queryLogCtx, "[WORK DASHBOARD] Failed to register tools: %v", err)
+					sendError(fmt.Sprintf("Failed to register Work Dashboard tools: %v", err), true)
+					return
+				}
 			}
 
 			isToolBackedChat := !isWorkflowPhase
@@ -6146,6 +6186,13 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 				logfWithContext(queryLogCtx, "[AGENT PROFILE] Applied %s@%d system prompt", resolvedProfile.Definition.ID, resolvedProfile.Definition.Version)
+				// Crew Run mode: readers chat under a read-only operating
+				// mode on top of the crew's own prompt. Tools and guards
+				// enforce it; the prompt states it so refusals are
+				// coherent instead of confused retries.
+				if isCrewReaderTurn(req, currentUserID) {
+					_ = llmAgent.AddInstructions(crewReaderSystemPrompt(req.SelectedFolder))
+				}
 			} else if !isWorkflowPhase {
 				_ = llmAgent.AddInstructions(virtualtools.GetAgentWorksChatInstructionsWithUser(perUserChatsFolder, currentUserID))
 				logfWithContext(queryLogCtx, "[CHAT] Added direct-chat instructions to system prompt")

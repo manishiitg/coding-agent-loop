@@ -149,6 +149,11 @@ func agentProfileRuntimeWorkspace(userID, workspacePath string) string {
 // schedules) or gives the model tools that cannot operate without a project manifest.
 func isActiveWorkProjectWorkspace(userID, workspacePath string) bool {
 	canonical := canonicalChatHistoryWorkspacePath(userID, workspacePath)
+	// Crew Run mode: a work project is a work project whoever owns it.
+	// Strip any owner's physical prefix before the shape check, so a
+	// reader turn in someone else's crew still counts as project-scoped
+	// (tool registration, guards) rather than landing-chat-scoped.
+	canonical = normalizeConversationWorkspace(canonical)
 	const prefix = "Chats/Work/projects/"
 	if !strings.HasPrefix(canonical, prefix) {
 		return false
@@ -281,21 +286,44 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 		// profile-less multi-agent turn already uses today.
 		selectedFolder = "Chats"
 	}
-	workspacePath, err := cleanAgentProfileWorkspace(selectedFolder, userID)
-	if err != nil {
-		return nil, err
-	}
-	req.SelectedFolder = workspacePath
-	if profile.ID == "work" {
+	// Crew Run mode resolves the binding before folder validation: a
+	// reader's folder is another owner's physical crew root, which the
+	// ownership check in cleanAgentProfileWorkspace must keep rejecting
+	// for every path except the freshly verified binding root.
+	crewOwned := true
+	crewRoot := ""
+	folderForClean := selectedFolder
+	if strings.EqualFold(strings.TrimSpace(profile.ID), "work") {
 		conversationKey := strings.TrimSpace(req.AgentProfileConversationKey)
 		if conversationKey == "" {
 			return nil, fmt.Errorf("agent_profile_conversation_key is required for Work")
 		}
-		binding, bindingErr := resolveProductConversationBinding(ctx, userID, profile, conversationKey)
-		if bindingErr != nil {
-			return nil, fmt.Errorf("resolve Work workspace: %w", bindingErr)
+		crew, crewErr := resolveCrewProjectBinding(ctx, userID, profile, conversationKey, selectedFolder)
+		if crewErr != nil {
+			return nil, fmt.Errorf("resolve Work workspace: %w", crewErr)
 		}
-		if !workspacePathsMatchForUser(userID, binding.WorkspacePath, workspacePath) {
+		crewOwned = crew.OwnedByCaller
+		crewRoot = crew.Binding.WorkspacePath
+		if !crewOwned {
+			if canonicalCrewWorkspaceRoot(selectedFolder) != canonicalCrewWorkspaceRoot(crewRoot) {
+				return nil, fmt.Errorf("Work conversation does not match the selected session")
+			}
+			folderForClean = crewRoot
+		}
+	}
+	workspacePath, err := cleanAgentProfileWorkspace(folderForClean, userID)
+	if err != nil {
+		// The verified non-owned binding root is the one cross-owner path
+		// a turn may address; its shape was verified by the projects-root
+		// scan that produced it.
+		if crewOwned || !isCrewProjectPath(folderForClean) {
+			return nil, err
+		}
+		workspacePath = strings.Trim(filepath.ToSlash(strings.TrimSpace(folderForClean)), "/")
+	}
+	req.SelectedFolder = workspacePath
+	if strings.EqualFold(strings.TrimSpace(profile.ID), "work") && crewOwned {
+		if !workspacePathsMatchForUser(userID, crewRoot, workspacePath) {
 			return nil, fmt.Errorf("Work conversation does not match the selected session")
 		}
 	}
@@ -377,8 +405,13 @@ func (api *StreamingAPI) resolveAgentProfileForQuery(ctx context.Context, req *Q
 				for _, secret := range stored {
 					selectedNames = appendUniqueStrings(selectedNames, secret.Name)
 				}
-				if writeErr := updateProductSelectedSecrets(ctx, profile.ID, workspacePath, func([]string) []string { return selectedNames }); writeErr != nil {
-					log.Printf("[SECRETS] Failed to persist migrated product secret attachments for %s (%s): %v", userID, workspacePath, writeErr)
+				// Crew Run mode: a reader's turn attaches the stored names
+				// in memory only. Persisting the migration would write the
+				// owner's manifest from someone else's turn.
+				if crewOwned {
+					if writeErr := updateProductSelectedSecrets(ctx, profile.ID, workspacePath, func([]string) []string { return selectedNames }); writeErr != nil {
+						log.Printf("[SECRETS] Failed to persist migrated product secret attachments for %s (%s): %v", userID, workspacePath, writeErr)
+					}
 				}
 			}
 		}
@@ -555,11 +588,18 @@ func stampEventData(data unifiedevents.EventData, now time.Time) {
 	}
 }
 
-func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string, req ...QueryRequest) error {
+func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegistrar, gate *productToolGate, resolved *resolvedAgentProfile, userID, sessionID, workspacePath string, readOnly bool, req ...QueryRequest) error {
 	if resolved == nil {
 		return nil
 	}
 	for _, binding := range resolved.Definition.Tools {
+		// Crew Run mode: readers keep caller-scoped factories
+		// (custom commands) but lose crew mutations (identity,
+		// project creation). The tool gate denies the same names
+		// as a backstop.
+		if readOnly && (binding.ID == "work.set-identity" || binding.ID == "work.create-project") {
+			continue
+		}
 		tool, err := api.agentProfiles.BuildTool(binding, agentprofiles.ToolRuntimeContext{
 			UserID: userID, SessionID: sessionID, WorkspacePath: workspacePath,
 			Emit:         func(event any) { api.emitAgentProfileEvent(sessionID, event) },
@@ -590,39 +630,41 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		}
 	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workflow-references") {
-		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath); err != nil {
+		if err := api.registerWorkWorkflowReferenceTools(registrar, userID, sessionID, workspacePath, readOnly); err != nil {
 			return err
 		}
+		// Run operations stay: the workflow side re-checks the caller's
+		// own workflow access before anything runs.
 		if err := api.registerCrewWorkflowRunTools(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
 		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
 	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "schedules") {
-		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath); err != nil {
+		if err := api.registerWorkScheduleTools(registrar, userID, workspacePath, readOnly); err != nil {
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "mcp") {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "mcp") {
 		if err := api.registerWorkMCPSelectionTool(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "secrets") {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "secrets") {
 		if err := api.registerWorkGlobalSecretSelectionTool(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "skills") {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "skills") {
 		if err := api.registerWorkSkillSelectionTool(registrar, userID, workspacePath); err != nil {
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "bots") {
 		var input QueryRequest
 		if len(req) > 0 {
 			input = req[0]
@@ -637,7 +679,7 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 			return err
 		}
 	}
-	if activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
+	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "workspace-ui") && len(req) > 0 && registerWorkUIAllowed(req[0]) {
 		for _, name := range []string{"list_ui_capabilities", "get_ui_state", "perform_ui_action"} {
 			gate.Declare(name)
 		}

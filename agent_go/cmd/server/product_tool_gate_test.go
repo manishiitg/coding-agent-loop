@@ -132,7 +132,7 @@ func TestRegisterAgentProfileToolsDeclaresResolvedPublicNameToGate(t *testing.T)
 	registrar := &gateRecordingRegistrar{gate: gate}
 	api := &StreamingAPI{agentProfiles: registry}
 
-	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects/demo"); err != nil {
+	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects/demo", false); err != nil {
 		t.Fatalf("register profile tools: %v", err)
 	}
 	foundIdentity := false
@@ -191,7 +191,7 @@ func TestRegisterAgentProfileToolsAllowsWorkLandingChatWithoutProjectTools(t *te
 	registrar := &gateRecordingRegistrar{gate: gate}
 	api := &StreamingAPI{agentProfiles: registry}
 
-	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects"); err != nil {
+	if err := api.registerAgentProfileTools(registrar, gate, resolved, "user-1", "session-1", "Chats/Work/projects", false); err != nil {
 		t.Fatalf("register landing-chat tools: %v", err)
 	}
 	for _, name := range registrar.admitted {

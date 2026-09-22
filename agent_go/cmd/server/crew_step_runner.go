@@ -274,7 +274,7 @@ func preflightCrewSteps(ctx context.Context, crews *ProductScheduleService, user
 			return fmt.Errorf("crew attachment %q cannot run: %w; re-attach it read-only with manage_crew_attachment before running", attachment.Alias, err)
 		}
 		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
-		_, binding, _, err := crews.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
+		_, binding, _, _, err := crews.projectManifestAnyOwner(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
 		if err != nil {
 			return fmt.Errorf("crew attachment %q cannot run: crew project %q is unavailable or access was revoked: %w", attachment.Alias, strings.TrimSpace(attachment.CrewProjectID), err)
 		}

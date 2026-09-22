@@ -1777,6 +1777,10 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 	if ownedPath, isWorkProject := ownedWorkProjectWorkspacePath(userID, workflowPath); isWorkProject {
 		builderWorkspacePath = ownedPath
 	}
+	// Crew Run mode: a reader's history for someone else's crew comes from
+	// the reader's own central store only. Never scan the owner's
+	// builder/conversation transcripts from disk for another user.
+	skipBuilderDisk := crewBuilderDiskHiddenFromUser(userID, workflowPath)
 
 	// Workflow builder files are the most precise source for /resume inside a
 	// workflow. Do not include global chat_history matches here: those can
@@ -1787,8 +1791,10 @@ func listWorkflowScopedChatHistorySessionsFromDisk(userID, chatHistoryRootPath, 
 	if limit > 0 {
 		readBudget = limit + offset
 	}
-	if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, builderWorkspacePath, readBudget, kind); ok {
-		all = append(all, builderSessions...)
+	if !skipBuilderDisk {
+		if builderSessions, ok := listWorkflowBuilderHistoryFromDisk(userID, builderWorkspacePath, readBudget, kind); ok {
+			all = append(all, builderSessions...)
+		}
 	}
 
 	// Compatibility fallback for product conversations written before Work moved

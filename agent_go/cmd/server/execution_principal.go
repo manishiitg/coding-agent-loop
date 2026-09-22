@@ -133,9 +133,15 @@ func (api *StreamingAPI) conversationTargetAccess(ctx context.Context, req Query
 		if key == "" {
 			return WorkflowAccessNone, fmt.Errorf("Crew conversation is required")
 		}
-		binding, err := resolveProductConversationBinding(ctx, claims.UserID, profile, key)
-		if err != nil || !workspacePathsMatchForUser(claims.UserID, binding.WorkspacePath, req.SelectedFolder) {
+		// Crew Run mode: the owner chats with full access; anyone else
+		// with the Crew product chats read-only. The binding resolves
+		// under whichever owner holds the project.
+		crew, err := resolveCrewProjectBinding(ctx, claims.UserID, profile, key, req.SelectedFolder)
+		if err != nil || !workspacePathsMatchForUser(claims.UserID, crew.Binding.WorkspacePath, req.SelectedFolder) {
 			return WorkflowAccessNone, fmt.Errorf("Crew access denied")
+		}
+		if !crew.OwnedByCaller {
+			return WorkflowAccessRead, nil
 		}
 		return WorkflowAccessOwner, nil
 	}

@@ -365,7 +365,7 @@ func crewAttachmentReadRoots(ctx context.Context, svc *ProductScheduleService, u
 	roots := make([]string, 0, len(manifest.CrewAttachments))
 	for _, attachment := range liveCrewAttachmentBindings(manifest.CrewAttachments) {
 		profileID := normalizeInternalProfileID(attachment.CrewProfileID)
-		_, binding, _, err := svc.projectManifest(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
+		_, binding, _, _, err := svc.projectManifestAnyOwner(ctx, userID, profileID, strings.TrimSpace(attachment.CrewProjectID))
 		if err != nil {
 			continue
 		}

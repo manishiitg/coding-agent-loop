@@ -11,7 +11,7 @@ func TestRegisterWorkScheduleToolsReadsPairedUsersProjectManifest(t *testing.T) 
 
 	api := &StreamingAPI{productSchedules: &ProductScheduleService{}}
 	registrar := &recordingRegistrar{}
-	if err := api.registerWorkScheduleTools(registrar, userID, publicPath); err != nil {
+	if err := api.registerWorkScheduleTools(registrar, userID, publicPath, false); err != nil {
 		t.Fatalf("register Work tools from public conversation path: %v", err)
 	}
 	if _, ok := registrar.tools["list_project_schedules"]; !ok {
@@ -19,7 +19,7 @@ func TestRegisterWorkScheduleToolsReadsPairedUsersProjectManifest(t *testing.T) 
 	}
 
 	other := &recordingRegistrar{}
-	if err := api.registerWorkScheduleTools(other, "another-user", publicPath); err == nil {
+	if err := api.registerWorkScheduleTools(other, "another-user", publicPath, false); err == nil {
 		t.Fatal("another user's project manifest must not authorize schedule tools")
 	}
 }

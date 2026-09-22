@@ -135,7 +135,7 @@ func (api *StreamingAPI) agentProfileConversationSlot(w http.ResponseWriter, r *
 		writeAgentProfileError(w, http.StatusNotFound, "agent profile not found")
 		return "", profileAndBinding{}, false
 	}
-	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, conversationKey)
+	binding, _, err := resolveConversationBindingForUser(r.Context(), userID, profile, conversationKey)
 	if err != nil {
 		writeAgentProfileError(w, http.StatusUnprocessableEntity, err.Error())
 		return "", profileAndBinding{}, false

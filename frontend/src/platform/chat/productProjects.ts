@@ -1,5 +1,5 @@
 import { agentApi } from '../../services/api'
-import type { PresetLLMConfig } from '../../services/api-types'
+import type { PresetLLMConfig, SharedProjectSchedule, SharedProjectTrigger } from '../../services/api-types'
 import { dedupeByFilepath, flattenFiles, responseContent, responseFiles, slugifyTitle } from '../../utils/plannerFiles'
 
 export type ProductProject<P extends string = string> = {
@@ -22,6 +22,20 @@ export type ProductProject<P extends string = string> = {
   selectionConfigInitialized: boolean
   secretSelectionInitialized: boolean
   runtimeConfigInitialized: boolean
+  /**
+   * Set when another user owns the project (Crew Run mode). The UI must
+   * treat the session as read-only: no manifest writes, no deletions, no
+   * management panels — and file reads go through the mediated shared
+   * endpoints, never the workspace proxy with the owner's path.
+   */
+  shared?: ProductProjectShare
+}
+
+export type ProductProjectShare = {
+  ownerId: string
+  ownerUsername?: string
+  triggers: SharedProjectTrigger[]
+  schedules: SharedProjectSchedule[]
 }
 
 export type ProductIdentity = {

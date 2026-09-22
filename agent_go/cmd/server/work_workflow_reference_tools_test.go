@@ -38,7 +38,7 @@ func TestWorkWorkflowReferenceToolsDiscoverAndPersistAuthorizedWorkflows(t *test
 	registrar := &recordingRegistrar{}
 	common.SetSessionFolderGuard("session-1", []string{"_users/reader/Chats/Work/projects/banking"}, []string{"_users/reader/Chats/Work/projects/banking"})
 	t.Cleanup(func() { common.ClearSessionShellConfig("session-1") })
-	if err := api.registerWorkWorkflowReferenceTools(registrar, "reader", "session-1", "_users/reader/Chats/Work/projects/banking"); err != nil {
+	if err := api.registerWorkWorkflowReferenceTools(registrar, "reader", "session-1", "_users/reader/Chats/Work/projects/banking", false); err != nil {
 		t.Fatal(err)
 	}
 	for _, name := range []string{"list_accessible_workflows", "attach_workflow_reference", "detach_workflow_reference"} {

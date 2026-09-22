@@ -3,8 +3,8 @@ import { Brain, Loader2, Sparkles } from 'lucide-react'
 import { MarkdownRenderer } from '../../components/ui/MarkdownRenderer'
 import { WorkspaceViewActions } from '../../components/workflow/WorkspaceViewActions'
 import { WorkspaceViewHeader } from '../../components/workflow/WorkspaceViewHeader'
-import { agentApi } from '../../services/api'
 import { flattenFiles, responseFiles } from '../../utils/plannerFiles'
+import { proxyCrewFileClient, type CrewFileClient } from './sharedCrewFiles'
 
 type CrewSkill = {
   name: string
@@ -32,11 +32,11 @@ function parseCrewSkill(filePath: string, content: string): CrewSkill {
   }
 }
 
-async function loadCrewSkills(workspacePath: string): Promise<CrewSkill[]> {
+async function loadCrewSkills(workspacePath: string, files: Pick<CrewFileClient, 'listFiles' | 'readFile'> = proxyCrewFileClient): Promise<CrewSkill[]> {
   const skillsRoot = `${workspacePath}/skills`
   let listing
   try {
-    listing = await agentApi.getPlannerFiles(skillsRoot, -1, 4)
+    listing = await files.listFiles(skillsRoot, -1, 4)
   } catch (cause) {
     const status = (cause as { response?: { status?: number } } | undefined)?.response?.status
     if (status === 404) return []
@@ -53,7 +53,7 @@ async function loadCrewSkills(workspacePath: string): Promise<CrewSkill[]> {
     // skills/custom path contain the same skill.
     .sort((a, b) => Number(a.startsWith(`${skillsRoot}/custom/`)) - Number(b.startsWith(`${skillsRoot}/custom/`)))
   const loaded = await Promise.all(skillFiles.map(async filePath => {
-    const response = await agentApi.getPlannerFileContent(filePath)
+    const response = await files.readFile(filePath)
     return parseCrewSkill(filePath, typeof response?.data?.content === 'string' ? response.data.content : '')
   }))
   const deduplicated = new Map<string, CrewSkill>()
@@ -64,10 +64,13 @@ async function loadCrewSkills(workspacePath: string): Promise<CrewSkill[]> {
   return [...deduplicated.values()].sort((a, b) => a.name.localeCompare(b.name))
 }
 
-export function WorkMemoryPanel({ workspacePath, onAsk, onOpenFile }: {
+export function WorkMemoryPanel({ workspacePath, onAsk, onOpenFile, fileClient, readOnly }: {
   workspacePath: string
   onAsk: (message: string) => Promise<void>
   onOpenFile: (filePath: string) => void
+  /** Shared Crews pass the mediated client; owned Crews use the proxy. */
+  fileClient?: CrewFileClient
+  readOnly?: boolean
 }) {
   const [content, setContent] = useState('')
   const [skills, setSkills] = useState<CrewSkill[]>([])
@@ -83,9 +86,10 @@ export function WorkMemoryPanel({ workspacePath, onAsk, onOpenFile }: {
     setLoading(true)
     setMemoryError(null)
     setSkillsError(null)
+    const files = fileClient ?? proxyCrewFileClient
     void Promise.allSettled([
-      agentApi.getPlannerFileContent(`${workspacePath}/MEMORY.md`),
-      loadCrewSkills(workspacePath),
+      files.readFile(`${workspacePath}/MEMORY.md`),
+      loadCrewSkills(workspacePath, files),
     ]).then(([memoryResult, skillsResult]) => {
       if (cancelled) return
       if (memoryResult.status === 'fulfilled') {
@@ -108,7 +112,7 @@ export function WorkMemoryPanel({ workspacePath, onAsk, onOpenFile }: {
       if (!cancelled) setLoading(false)
     })
     return () => { cancelled = true }
-  }, [refreshNonce, workspacePath])
+  }, [fileClient, refreshNonce, workspacePath])
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
@@ -118,7 +122,9 @@ export function WorkMemoryPanel({ workspacePath, onAsk, onOpenFile }: {
         subtitle="Durable project context that Crew carries across chats, schedules, triggers, and bots."
         actions={<WorkspaceViewActions
           workspacePath={workspacePath}
-          message="Review this Crew project's MEMORY.md and its project-local skills. Explain what Crew currently remembers, identify anything stale or missing, and ask what I want to update. Keep project facts in memory and reusable procedures in focused skills inside this project."
+          message={readOnly
+            ? "Review this Crew project's MEMORY.md and its project-local skills. Explain what the Crew remembers and how it uses each skill. This Crew is read-only for me, so do not offer to change anything."
+            : "Review this Crew project's MEMORY.md and its project-local skills. Explain what Crew currently remembers, identify anything stale or missing, and ask what I want to update. Keep project facts in memory and reusable procedures in focused skills inside this project."}
           onAsk={onAsk}
           onRefresh={refresh}
           refreshing={loading}

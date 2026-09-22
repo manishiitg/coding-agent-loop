@@ -739,9 +739,16 @@ func wrapExecutorsWithFolderGuard(executors map[string]func(ctx context.Context,
 func wrapExecutorsWithPlanFolderGuard(executors map[string]func(ctx context.Context, args map[string]interface{}) (string, error), planFolder string, readOnlyFolders []string, additionalWriteFolders ...string) map[string]func(ctx context.Context, args map[string]interface{}) (string, error) {
 	protectedFolders := []string{}
 
-	// Use the plan folder as the allowed write folder (instead of Chats/)
-	planFolderWithSlash := strings.TrimSuffix(planFolder, "/") + "/"
-	allowedWriteFolders := []string{planFolderWithSlash}
+	// Use the plan folder as the allowed write folder (instead of Chats/).
+	// An empty plan folder is "no write root" (the same convention the
+	// workflow-phase guard uses for read-only identities): only the
+	// additional folders stay writable, and reads come from
+	// readOnlyFolders. Callers pass the project root through readOnlyFolders
+	// in that case so the turn keeps inspecting it.
+	allowedWriteFolders := []string{}
+	if strings.TrimSpace(planFolder) != "" {
+		allowedWriteFolders = append(allowedWriteFolders, strings.TrimSuffix(planFolder, "/")+"/")
+	}
 	allowedWriteFolders = append(allowedWriteFolders, additionalWriteFolders...)
 
 	shellAllowedFolders := make([]string, len(allowedWriteFolders))

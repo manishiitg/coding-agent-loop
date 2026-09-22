@@ -42,6 +42,8 @@ import type {
   AgentProfileChatRequest,
   AgentProfileConversationRequest,
   AgentProfileConversationResponse,
+  SharedProjectFileEntry,
+  SharedProjectSummary,
   GetEventsResponse,
   TerminalEventsResponse,
   MCPServerConfig,
@@ -1148,6 +1150,28 @@ export const agentApi = {
     const response = await api.post(
       `/api/agent-profiles/${encodeURIComponent(profileId)}/conversation/new`,
       request,
+    )
+    return response.data
+  },
+
+  listSharedProjects: async (profileId: string): Promise<{ projects: SharedProjectSummary[] }> => {
+    const response = await api.get(
+      `/api/agent-profiles/${encodeURIComponent(profileId)}/shared-projects`,
+    )
+    return response.data
+  },
+
+  listSharedProjectFiles: async (profileId: string, projectId: string): Promise<{ files: SharedProjectFileEntry[]; truncated?: boolean }> => {
+    const response = await api.get(
+      `/api/agent-profiles/${encodeURIComponent(profileId)}/shared-projects/${encodeURIComponent(projectId)}/files`,
+    )
+    return response.data
+  },
+
+  getSharedProjectFile: async (profileId: string, projectId: string, path: string): Promise<{ path: string; content: string; truncated?: boolean }> => {
+    const response = await api.get(
+      `/api/agent-profiles/${encodeURIComponent(profileId)}/shared-projects/${encodeURIComponent(projectId)}/file`,
+      { params: { path } },
     )
     return response.data
   },

@@ -1,7 +1,7 @@
 import { createProductProject, loadProductProjects, parseProductProjectManifest, updateProductProjectIdentity, updateProductProjectSelections, type ProductIdentityPatch, type ProductProject } from '../../platform/chat/productProjects'
 import { agentApi } from '../../services/api'
 import { secretsApi } from '../../api/secrets'
-import type { LLMProvider, PresetLLMConfig } from '../../services/api-types'
+import type { LLMProvider, PresetLLMConfig, SharedProjectSummary } from '../../services/api-types'
 import { slugifyTitle } from '../../utils/plannerFiles'
 import { loadAgentProfileProviderOptions } from '../../utils/agentProfileCapabilities'
 import { WORK_PROFILE_ID, WORK_PROJECTS_ROOT } from './workData'
@@ -99,9 +99,77 @@ export async function createWorkSession(title: string, description: string, icon
 }
 
 export async function deleteWorkSession(session: WorkSession): Promise<void> {
+  if (session.shared) throw new Error('Shared Crew projects can only be deleted by their owner.')
   await agentApi.deleteAgentProfileProject(WORK_PROFILE_ID, session.id)
 }
 
+export function sharedProjectToWorkSession(row: SharedProjectSummary): WorkSession {
+  const llm = row.llm?.provider && row.llm.model_id
+    ? {
+      schema_version: 2,
+      mode: 'explicit',
+      builder_llm: {
+        provider: row.llm.provider,
+        model_id: row.llm.model_id,
+        ...(row.llm.reasoning_effort ? { options: { reasoning_effort: row.llm.reasoning_effort } } : {}),
+      },
+    } as PresetLLMConfig
+    : undefined
+  return {
+    schemaVersion: 1,
+    product: WORK_PROFILE_ID,
+    id: row.id,
+    title: row.title || 'Untitled Crew',
+    description: row.description || '',
+    identity: row.icon || row.name ? { icon: row.icon || undefined, name: row.name || undefined } : undefined,
+    // No session binding: opening a shared Crew resolves the reader's own
+    // conversation server-side, never the owner's live session.
+    sessionId: '',
+    workspacePath: row.workspace_path,
+    createdAt: row.created_at || '',
+    updatedAt: row.updated_at || '',
+    llmConfig: llm,
+    selectedServers: row.selected_servers || [],
+    selectedSkills: row.selected_skills || [],
+    selectedSecrets: row.selected_secrets || [],
+    selectedGlobalSecrets: row.selected_global_secrets || [],
+    workflowContextPaths: row.workflow_context_paths || [],
+    // Shared rows arrive fully formed. Marking every config initialized
+    // keeps the owned-project migration path from ever writing to
+    // another owner's manifests.
+    selectionConfigInitialized: true,
+    secretSelectionInitialized: true,
+    runtimeConfigInitialized: true,
+    shared: {
+      ownerId: row.owner_id,
+      ownerUsername: row.owner_username || undefined,
+      triggers: row.triggers || [],
+      schedules: row.schedules || [],
+    },
+  }
+}
+
+export async function loadSharedWorkSessions(): Promise<WorkSession[]> {
+  const response = await agentApi.listSharedProjects(WORK_PROFILE_ID)
+  return (response?.projects || []).map(sharedProjectToWorkSession)
+}
+
+/**
+ * Owned Crews first, then other owners' Crews (Crew Run mode). A shared row
+ * whose id collides with an owned Crew loses: the owned project is the one
+ * the reader can open and change. Shared-listing failures degrade to
+ * owned-only rather than failing the whole Crew surface.
+ */
+export async function loadWorkSessionsIncludingShared(): Promise<WorkSession[]> {
+  const [owned, shared] = await Promise.all([
+    loadWorkSessions(),
+    loadSharedWorkSessions().catch(() => [] as WorkSession[]),
+  ])
+  const ownedIds = new Set(owned.map(session => session.id))
+  return [...owned, ...shared.filter(session => !ownedIds.has(session.id))]
+}
+
 export async function updateWorkSessionIdentity(session: WorkSession, patch: ProductIdentityPatch): Promise<WorkSession> {
+  if (session.shared) throw new Error('Only the Crew owner can change this.')
   return updateProductProjectIdentity(session, patch, `Update Crew project identity ${session.title}`)
 }

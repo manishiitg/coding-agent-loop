@@ -256,6 +256,62 @@ export interface AgentProfileConversationResponse {
   session_id: string
 }
 
+// Crew Run mode: every crew has a single owner and is read-only for
+// everyone else. Shared rows describe other owners' crews: setup names
+// only, never secret values, trigger endpoint material, or the owner's
+// live session.
+export interface SharedProjectLLM {
+  provider?: string
+  model_id?: string
+  reasoning_effort?: string
+}
+
+export interface SharedProjectTrigger {
+  id: string
+  name: string
+  enabled: boolean
+  kind?: string
+  message?: string
+  run_destination?: string
+  auth_mode?: string
+  caller?: { type?: string; id?: string; profile_id?: string }
+}
+
+export interface SharedProjectSchedule {
+  id?: string
+  name?: string
+  enabled?: boolean
+  [key: string]: unknown
+}
+
+export interface SharedProjectSummary {
+  id: string
+  title: string
+  description?: string
+  icon?: string
+  name?: string
+  owner_id: string
+  owner_username?: string
+  /** Owner's physical crew root: scopes chat history. File reads for
+   * shared crews go through the mediated endpoints, never the proxy. */
+  workspace_path: string
+  created_at?: string
+  updated_at?: string
+  llm?: SharedProjectLLM
+  selected_servers?: string[]
+  selected_skills?: string[]
+  selected_secrets?: string[]
+  selected_global_secrets?: string[]
+  workflow_context_paths?: string[]
+  triggers?: SharedProjectTrigger[]
+  schedules?: SharedProjectSchedule[]
+}
+
+export interface SharedProjectFileEntry {
+  path: string
+  type: 'file' | 'folder'
+}
+
 // LLM Defaults Configuration Response
 export interface LLMDefaultsResponse {
   primary_config: LLMConfiguration

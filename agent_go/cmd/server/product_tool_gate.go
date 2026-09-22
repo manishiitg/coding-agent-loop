@@ -36,6 +36,12 @@ type productToolGate struct {
 	// real enabled: list can be seeded from a live session instead of guessed.
 	allowed map[string]struct{}
 
+	// readerDenied overlays a deny-list for read-only turns (Crew Run
+	// mode): mutating tools are dropped at the same chokepoint even when
+	// a registration path admits them. Authority, not focus: readers
+	// must not mutate, whatever the prompt says.
+	readerDenied map[string]struct{}
+
 	mu         sync.Mutex
 	registered []string
 	filtered   []string
@@ -101,6 +107,24 @@ func (g *productToolGate) Declare(name string) {
 	g.filtered = kept
 }
 
+// DenyReaderTools arms the read-only overlay: every named tool is
+// refused at admission for the rest of the turn.
+func (g *productToolGate) DenyReaderTools(names ...string) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.readerDenied == nil {
+		g.readerDenied = map[string]struct{}{}
+	}
+	for _, name := range names {
+		if trimmed := strings.TrimSpace(name); trimmed != "" {
+			g.readerDenied[trimmed] = struct{}{}
+		}
+	}
+}
+
 // Admit is the hook handed to the agent wrapper. It is called while the wrapper
 // holds its own lock, so it must never call back into the wrapper.
 func (g *productToolGate) Admit(name string) bool {
@@ -110,6 +134,10 @@ func (g *productToolGate) Admit(name string) bool {
 	trimmed := strings.TrimSpace(name)
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if _, denied := g.readerDenied[trimmed]; denied {
+		g.filtered = append(g.filtered, trimmed)
+		return false
+	}
 	if g.allowed != nil {
 		if _, ok := g.allowed[trimmed]; !ok {
 			g.filtered = append(g.filtered, trimmed)

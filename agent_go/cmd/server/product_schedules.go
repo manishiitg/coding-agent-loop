@@ -517,6 +517,59 @@ func (s *ProductScheduleService) SetEnabled(ctx context.Context, userID, jobID s
 	return s.Job(ctx, userID, jobID)
 }
 
+// projectManifestAnyOwner resolves a crew project under the caller first
+// (with the usual legacy migration), then under whichever other owner
+// holds it. The fallback is read-only: a reader's workflow run must never
+// rewrite the owner's manifests, so legacy conversion is skipped there.
+// A project ID present under two owners fails closed as ambiguous.
+func (s *ProductScheduleService) projectManifestAnyOwner(ctx context.Context, userID, profileID, projectID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, string, error) {
+	failed := func(err error) (agentprofiles.Profile, productConversationBinding, productProjectManifest, string, error) {
+		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, "", err
+	}
+	profile, binding, manifest, err := s.projectManifest(ctx, userID, profileID, projectID)
+	if err == nil {
+		return profile, binding, manifest, sanitizeUserIDForPath(userID), nil
+	}
+	firstErr := err
+	if s.registry == nil {
+		return failed(firstErr)
+	}
+	profile, resolveErr := s.registry.Resolve(profileID, 0, userID)
+	if resolveErr != nil {
+		return failed(firstErr)
+	}
+	if !profile.UIPanels.Schedules || !strings.EqualFold(strings.TrimSpace(profile.Runtime.Conversation.Mode), agentprofiles.ConversationModeKeyed) {
+		return failed(firstErr)
+	}
+	want := strings.TrimSpace(projectID)
+	var matchOwner string
+	var matchBinding productConversationBinding
+	var matchManifest productProjectManifest
+	matched := false
+	for _, owner := range crewProjectOwnerCandidates(userID) {
+		binding, bindErr := resolveProductProjectBindingWithStore(ctx, owner, profile, want, defaultProductProjectStore())
+		if bindErr != nil {
+			continue
+		}
+		manifest, manifestErr := readCrewProjectManifests(ctx, profile.ID, binding.WorkspacePath)
+		if manifestErr != nil || strings.TrimSpace(manifest.ID) != want {
+			continue
+		}
+		ownerID, ok := crewProjectOwnerID(binding.WorkspacePath)
+		if !ok {
+			continue
+		}
+		if matched {
+			return failed(fmt.Errorf("crew project %q is ambiguous", want))
+		}
+		matchOwner, matchBinding, matchManifest, matched = ownerID, binding, manifest, true
+	}
+	if !matched {
+		return failed(firstErr)
+	}
+	return profile, matchBinding, matchManifest, matchOwner, nil
+}
+
 func (s *ProductScheduleService) projectManifest(ctx context.Context, userID, profileID, projectID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, error) {
 	if s.registry == nil {
 		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, fmt.Errorf("product profiles are unavailable")

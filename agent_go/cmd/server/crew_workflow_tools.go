@@ -57,13 +57,28 @@ func (api *StreamingAPI) registerCrewWorkflowRunTools(registrar definitionToolRe
 			Available     bool   `json:"available"`
 		}
 		attached := make([]attachedWorkflow, 0, len(refs))
+		// Crew Run mode: a reader lists the attached workflows they may
+		// open. References to other workflows are filtered rather than
+		// named, so a crew reused across workflows never leaks a
+		// workflow's existence to a reader who cannot open it.
+		reader := GetUserFromContext(ctx)
+		readerOnly := reader != nil && isCrewProjectPath(workspacePath) && !crewProjectOwnedByCaller(reader.UserID, workspacePath)
 		for _, ref := range refs {
 			entry := attachedWorkflow{WorkspacePath: ref}
-			if manifest, exists, err := ReadWorkflowManifest(ctx, ref); err == nil && exists && manifest != nil {
-				entry.Label = manifest.Label
-				entry.WorkflowID = manifest.ID
-				entry.Available = true
+			manifest, exists, err := ReadWorkflowManifest(ctx, ref)
+			if err != nil || !exists || manifest == nil {
+				if readerOnly {
+					continue
+				}
+				attached = append(attached, entry)
+				continue
 			}
+			if readerOnly && (workflowAccessForManifest(reader, manifest) == WorkflowAccessNone || !userAllowedWorkflowID(reader, manifest.ID)) {
+				continue
+			}
+			entry.Label = manifest.Label
+			entry.WorkflowID = manifest.ID
+			entry.Available = true
 			attached = append(attached, entry)
 		}
 		encoded, err := json.MarshalIndent(map[string]interface{}{"workflows": attached}, "", "  ")

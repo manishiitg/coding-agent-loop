@@ -640,7 +640,15 @@ func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Cont
 	if deliveryID == "" {
 		deliveryID = uuid.NewString()
 	}
-	match := &productWebhookMatch{UserID: call.UserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
+	// The delivery runs in the crew owner's namespace: the binding stamp
+	// is the authorization, so a reader's workflow run drives the same
+	// crew turn the owner would get, and the reader only ever sees the
+	// step result through their own workflow run.
+	matchUserID := call.UserID
+	if ownerID, ok := crewProjectOwnerID(binding.WorkspacePath); ok {
+		matchUserID = ownerID
+	}
+	match := &productWebhookMatch{UserID: matchUserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
 	sourceNote := "This turn was started by workflow \"" + strings.TrimSpace(call.Caller.ID) + "\" through an internal trigger."
 	caller := &workflowtypes.CrewRunCaller{
 		WorkflowID: strings.TrimSpace(call.Caller.ID),
@@ -669,11 +677,14 @@ func (s *ProductScheduleService) getInternalProductTriggerRun(ctx context.Contex
 	return productWebhookRunStatusDTO(entry), nil
 }
 
-// findInternalProductTrigger resolves a user-scoped Crew trigger for internal
-// callers and enforces the binding facts: it must exist, be internal, and be
-// enabled. Caller authorization is left to the caller-facing method.
+// findInternalProductTrigger resolves a Crew trigger for internal callers
+// and enforces the binding facts: it must exist, be internal, and be
+// enabled. Caller authorization is left to the caller-facing method. The
+// crew resolves under whichever owner holds it (Crew Run mode): a
+// reader's workflow run invokes the owner's crew through the same bound
+// trigger, and delivery below runs in the crew owner's namespace.
 func (s *ProductScheduleService) findInternalProductTrigger(ctx context.Context, userID, profileID, projectID, triggerID string) (agentprofiles.Profile, productConversationBinding, productProjectManifest, *productWebhookTrigger, error) {
-	profile, binding, manifest, err := s.projectManifest(ctx, userID, normalizeInternalProfileID(profileID), projectID)
+	profile, binding, manifest, _, err := s.projectManifestAnyOwner(ctx, userID, normalizeInternalProfileID(profileID), projectID)
 	if err != nil {
 		return agentprofiles.Profile{}, productConversationBinding{}, productProjectManifest{}, nil, fmt.Errorf("%w: %w", ErrInternalTriggerNotFound, err)
 	}

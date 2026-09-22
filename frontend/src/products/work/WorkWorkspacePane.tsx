@@ -1,4 +1,4 @@
-import { Suspense, lazy, useCallback, useEffect, useState } from 'react'
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState } from 'react'
 import {
   Brain,
   Database,
@@ -32,6 +32,8 @@ import { WorkIdentityPanel } from './WorkIdentityPanel'
 import { WorkIntegrationsPanel } from './WorkIntegrationsPanel'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
 import { WorkMemoryPanel } from './WorkMemoryPanel'
+import { SharedCrewFilesPanel } from './SharedCrewFilesPanel'
+import { sharedCrewFileClient } from './sharedCrewFiles'
 
 const CostsPopup = lazy(() => import('../../components/workflow/CostsPopup'))
 const AutomationHubPanel = lazy(() => import('../../components/automation/AutomationHubPanel').then(module => ({ default: module.AutomationHubPanel })))
@@ -79,10 +81,18 @@ function WorkToolbarButton({ active, icon: Icon, label, onClick }: { active: boo
   return <Tooltip><TooltipTrigger asChild>{button}</TooltipTrigger><TooltipContent side="bottom"><p>{label}</p></TooltipContent></Tooltip>
 }
 
-export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string> }) {
-  const visibleViews = enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
-  const visibleOps = enabledPanels ? OPS_BUTTONS.filter(item => enabledPanels.has(item.id)) : OPS_BUTTONS
-  const visibleSetup = enabledPanels ? SETUP_BUTTONS.filter(item => isWorkWorkspaceViewEnabled(item.id, enabledPanels)) : SETUP_BUTTONS
+export function WorkWorkspaceToolbar({ workspacePath, view, onViewChange, enabledPanels, readOnly }: { workspacePath: string; view: WorkWorkspaceView; onViewChange: (view: WorkWorkspaceView) => void; enabledPanels?: Set<string>; readOnly?: boolean }) {
+  const visibleViews = readOnly
+    ? VIEW_BUTTONS.filter(item => item.id === 'memory')
+    : enabledPanels ? VIEW_BUTTONS.filter(item => enabledPanels.has(item.id)) : VIEW_BUTTONS
+  const visibleOps = readOnly
+    ? OPS_BUTTONS.filter(item => item.id === 'files')
+    : enabledPanels ? OPS_BUTTONS.filter(item => enabledPanels.has(item.id)) : OPS_BUTTONS
+  // Setup (identity, integrations) edits owner state, so someone else's
+  // Crew offers no setup views at all — not even the always-on identity.
+  const visibleSetup = readOnly
+    ? []
+    : enabledPanels ? SETUP_BUTTONS.filter(item => isWorkWorkspaceViewEnabled(item.id, enabledPanels)) : SETUP_BUTTONS
   // Setup stays permanently expanded (no toggle); only Ops collapses.
   const [openGroup, setOpenGroup] = useState<'ops' | null>(() =>
     OPS_BUTTONS.some(item => item.id === view) ? 'ops' : null,
@@ -197,7 +207,13 @@ function WorkBrowserPanel({ tabId, projectId, workspacePath }: { tabId: string; 
   )
 }
 
-export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectDescription, projectIdentity, tabId, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onViewChange, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest }: { workspacePath: string; projectId: string; projectTitle: string; projectDescription: string; projectIdentity?: ProductIdentity; tabId: string; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onViewChange: (view: WorkWorkspaceView) => void; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void }) {
+export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, projectDescription, projectIdentity, tabId, view, enabledPanels, projectLLMConfig, selectedSecrets, selectedGlobalSecrets, workflowContextPaths, onViewChange, onRuntimeChange, onSelectedServersChange, onSelectedSkillsChange, onSelectedSecretsChange, onSelectedGlobalSecretsChange, onWorkflowContextPathsChange, onUpdateIdentity, onDeleteRequest, shared }: { workspacePath: string; projectId: string; projectTitle: string; projectDescription: string; projectIdentity?: ProductIdentity; tabId: string; view: WorkWorkspaceView; enabledPanels?: Set<string>; projectLLMConfig?: PresetLLMConfig; selectedSecrets: string[]; selectedGlobalSecrets: string[]; workflowContextPaths: string[]; onViewChange: (view: WorkWorkspaceView) => void; onRuntimeChange: (selection: WorkRuntimeSelection) => void | Promise<void>; onSelectedServersChange: (servers: string[]) => Promise<unknown>; onSelectedSkillsChange: (skills: string[]) => Promise<unknown>; onSelectedSecretsChange: (secrets: string[]) => Promise<unknown>; onSelectedGlobalSecretsChange: (secrets: string[]) => Promise<unknown>; onWorkflowContextPathsChange: (paths: string[]) => Promise<unknown>; onUpdateIdentity: (patch: ProductIdentityPatch) => Promise<unknown>; onDeleteRequest: () => void; shared?: { ownerId: string; ownerUsername?: string } }) {
+  const readOnly = Boolean(shared)
+  const sharedFiles = useMemo(
+    () => (readOnly ? sharedCrewFileClient(projectId, workspacePath) : null),
+    [readOnly, projectId, workspacePath],
+  )
+  const [sharedFileRequest, setSharedFileRequest] = useState<{ path: string; nonce: number } | null>(null)
   const openHistoryChat = useResumePreviousChat()
   const activeSessionId = useChatStore(state => state.chatTabs[tabId]?.sessionId ?? undefined)
   const canonicalSessionId = useChatStore(state => Object.values(state.chatTabs).find(tab =>
@@ -216,6 +232,13 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
   }
 
   const openProjectFile = async (filePath: string) => {
+    if (readOnly) {
+      // The proxy refuses cross-user reads, so shared files open in the
+      // mediated browser instead of the workspace viewer.
+      onViewChange('files')
+      setSharedFileRequest(current => ({ path: filePath, nonce: (current?.nonce ?? 0) + 1 }))
+      return
+    }
     const fileName = filePath.split('/').filter(Boolean).pop() || filePath
     const workspace = useWorkspaceStore.getState()
     workspace.setSelectedFile({ name: fileName, path: filePath })
@@ -241,15 +264,33 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
     return <div className="grid h-full place-items-center bg-background text-sm text-muted-foreground">No workspace view is enabled for this product.</div>
   }
 
+  // Belt and braces behind the toolbar filter and the surface's view
+  // fallback: a stale saved view or an agent-driven view request must never
+  // render an owner-only panel (identity editors, transcripts, usage)
+  // for someone else's Crew.
+  if (readOnly && view !== 'memory' && view !== 'files') {
+    return <div className="grid h-full place-items-center bg-background p-6 text-center text-sm text-muted-foreground">This workspace view is only available to the Crew owner.</div>
+  }
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <div className="min-h-0 flex-1 overflow-hidden">
-        {view === 'files' && <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}><FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions testId="work-files-panel" headerAction={<AskAIButton
+        {view === 'files' && (readOnly ? <SharedCrewFilesPanel
+          projectId={projectId}
+          crewRoot={workspacePath}
+          request={sharedFileRequest}
+          headerAction={<AskAIButton
+            workspacePath={workspacePath}
+            message="Help me with this Crew project's files. Explain what they do in plain words; this Crew is read-only for me, so do not offer to change anything."
+            onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
+            iconOnly
+          />}
+        /> : <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}><FileWorkspacePane workspacePath={workspacePath} hiddenRootFolders={['.git', 'node_modules', 'product.json', 'workflow.json']} hideManagedEntriesByDefault title="Workspace" hideAddToChat hideRootActions testId="work-files-panel" headerAction={<AskAIButton
           workspacePath={workspacePath}
           message="Help me with this Crew project's files. Ask what I want to find, understand, or change."
           onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           iconOnly
-        />} /></Suspense>}
+        />} /></Suspense>)}
         {view === 'identity' && <WorkIdentityPanel
           workspacePath={workspacePath}
           projectTitle={projectTitle}
@@ -283,6 +324,8 @@ export function WorkWorkspacePane({ workspacePath, projectId, projectTitle, proj
           workspacePath={workspacePath}
           onAsk={async message => { await sendWorkProjectPaneMessage(projectId, message) }}
           onOpenFile={filePath => { void openProjectFile(filePath) }}
+          fileClient={sharedFiles ?? undefined}
+          readOnly={readOnly}
         />}
         <Suspense fallback={<div className="grid h-full place-items-center text-sm text-muted-foreground">Loading…</div>}>
           {view === 'dashboard' && <ReportView

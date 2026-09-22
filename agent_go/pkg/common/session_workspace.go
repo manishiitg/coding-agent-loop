@@ -62,7 +62,9 @@ func CanonicalSessionWorkspace(userID, workspacePath string) string {
 // root `Chats/Work/projects/<id>` for Crew sessions. Deeper working
 // directories collapse to their root. Anything else is unknown with an
 // empty root. The Crew rule matches cmd/server's
-// isActiveWorkProjectWorkspace: same prefix, non-empty project remainder.
+// isActiveWorkProjectWorkspace: same prefix, non-empty project remainder,
+// under any owner's physical prefix (Crew Run mode: a Crew project is a
+// Crew project whoever owns it).
 func ClassifySessionWorkspace(userID, workspacePath string) (SessionWorkspaceKind, string) {
 	canonical := CanonicalSessionWorkspace(userID, workspacePath)
 	if canonical == "" {
@@ -76,8 +78,9 @@ func ClassifySessionWorkspace(userID, workspacePath string) (SessionWorkspaceKin
 		return SessionWorkspaceUnknown, ""
 	}
 	const crewPrefix = "Chats/Work/projects/"
-	if strings.HasPrefix(canonical, crewPrefix) {
-		rest := strings.Trim(strings.TrimPrefix(canonical, crewPrefix), "/")
+	crewCanonical := stripAnySessionUserPrefix(canonical)
+	if strings.HasPrefix(crewCanonical, crewPrefix) {
+		rest := strings.Trim(strings.TrimPrefix(crewCanonical, crewPrefix), "/")
 		if rest == "" {
 			return SessionWorkspaceUnknown, ""
 		}
@@ -88,6 +91,20 @@ func ClassifySessionWorkspace(userID, workspacePath string) (SessionWorkspaceKin
 		return SessionWorkspaceCrewProject, crewPrefix + project
 	}
 	return SessionWorkspaceUnknown, ""
+}
+
+// stripAnySessionUserPrefix drops any owner's `_users/<id>/` prefix. It
+// mirrors cmd/server's normalizeConversationWorkspace, which the server
+// crew check applies after its own-prefix canonicalization.
+func stripAnySessionUserPrefix(workspacePath string) string {
+	clean := strings.Trim(strings.TrimSpace(workspacePath), "/")
+	if index := strings.Index(clean, "_users/"); index >= 0 {
+		rest := clean[index+len("_users/"):]
+		if slash := strings.Index(rest, "/"); slash >= 0 {
+			return rest[slash+1:]
+		}
+	}
+	return clean
 }
 
 // SessionUserIDFromContext reads the signed-in user for canonicalization.

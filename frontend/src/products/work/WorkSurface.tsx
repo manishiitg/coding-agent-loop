@@ -19,7 +19,7 @@ import { WORK_PROFILE_ID, WORK_PROFILE_VERSION, loadWorkProductCommands } from '
 import { isWorkIdentityComplete } from './workIdentity'
 import { setProductCommands } from '../../commands/registry'
 import { toProductCommandDefinitions } from './productCommands'
-import { createWorkSession, deleteWorkSession, loadWorkSessions, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
+import { createWorkSession, deleteWorkSession, loadWorkSessionsIncludingShared, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 import { WorkWorkspacePane, WorkWorkspaceToolbar, type WorkWorkspaceView } from './WorkWorkspacePane'
 import { isWorkWorkspaceViewEnabled } from './workViewGating'
 import { usePointerDrag } from '../../hooks/usePointerDrag'
@@ -65,6 +65,14 @@ function workPresentationView(view: WorkWorkspaceView): WorkUIPresentationView {
 }
 
 const WORKSPACE_VIEW_IDS = new Set<WorkWorkspaceView>(Object.values(WORK_UI_PRESENTATION_VIEWS))
+
+// Crew Run mode: someone else's Crew opens read-only. Memory and files are
+// the inspect surface (both served through the mediated shared endpoints);
+// identity, integrations, automation, database, browser, costs, and the
+// dashboard stay owner-only because they edit state or read owner-private
+// data (transcripts, run databases, usage) the proxy will not serve
+// cross-user.
+const SHARED_CREW_WORKSPACE_PANELS: Set<string> = new Set(['memory', 'files'])
 
 function readWorkWorkspaceView(projectId?: string): WorkWorkspaceView {
   if (typeof window === 'undefined' || !projectId) return 'dashboard'
@@ -142,7 +150,7 @@ function useWorkSessions() {
   const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
-    const listed = await loadWorkSessions()
+    const listed = await loadWorkSessionsIncludingShared()
     setSessions(listed)
     const current = useProductSurfaceStore.getState().selectedWorkProjectId
     setSelectedId(current && listed.some(item => item.id === current) ? current : listed[0]?.id ?? null)
@@ -151,7 +159,7 @@ function useWorkSessions() {
 
   useEffect(() => {
     let cancelled = false
-    void loadWorkSessions()
+    void loadWorkSessionsIncludingShared()
       .then((listed) => {
         if (cancelled) return
         setSessions(listed)
@@ -176,11 +184,15 @@ function useWorkSessions() {
   const remove = useCallback(async (projectId: string) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
-    try {
-      await agentApi.stopSession(project.sessionId, true)
-    } catch (cause) {
-      const status = (cause as { response?: { status?: number } })?.response?.status
-      if (status !== 404) throw cause
+    // Shared rows fail in deleteWorkSession below; skip the session stop for
+    // the reader-side stub, which has no session of its own to stop.
+    if (!project.shared) {
+      try {
+        await agentApi.stopSession(project.sessionId, true)
+      } catch (cause) {
+        const status = (cause as { response?: { status?: number } })?.response?.status
+        if (status !== 404) throw cause
+      }
     }
     await deleteWorkSession(project)
 
@@ -203,6 +215,7 @@ function useWorkSessions() {
   const updateLLMConfig = useCallback(async (projectId: string, selection: WorkRuntimeSelection) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
+    if (project.shared) throw new Error('Only the Crew owner can change this.')
     const llmConfig = workLLMConfigFromSelection({
       provider: selection.provider || selection.engine,
       modelId: selection.modelId,
@@ -216,6 +229,7 @@ function useWorkSessions() {
   const updateSelections = useCallback(async (projectId: string, patch: { selectedServers?: string[]; selectedSkills?: string[]; selectedSecrets?: string[]; selectedGlobalSecrets?: string[]; workflowContextPaths?: string[] }) => {
     const project = sessions.find(item => item.id === projectId)
     if (!project) throw new Error('This Crew project is no longer available.')
+    if (project.shared) throw new Error('Only the Crew owner can change this.')
     const updated = await updateProductProjectSelections(project, patch, `Update Crew project integrations ${project.title}`, 'workflow.json')
     setSessions(current => current.map(item => item.id === projectId ? updated : item))
     return updated
@@ -439,7 +453,30 @@ function WorkChatTabs({ projectId, canonicalTabId }: { projectId: string; canoni
   )
 }
 
-function WorkNewChatGuide() {
+function WorkNewChatGuide({ sharedBy }: { sharedBy?: string }) {
+  if (sharedBy) {
+    return (
+      <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-10">
+        <div className="w-full max-w-lg rounded-xl border border-border bg-muted/20 p-5">
+          <div className="flex items-center gap-2 text-sm font-semibold text-foreground">
+            <Sparkles className="h-4 w-4 text-primary" />
+            Explore {sharedBy}’s Crew
+          </div>
+          <p className="mt-2 text-sm leading-6 text-muted-foreground">
+            This Crew is read-only for you. Ask it to:
+          </p>
+          <ul className="mt-3 space-y-2 text-sm text-muted-foreground">
+            <li>• Explain how the Crew works and what it can do</li>
+            <li>• Walk through its files, memory, and configuration</li>
+            <li>• Run its attached workflows when you ask</li>
+          </ul>
+          <p className="mt-3 text-sm leading-6 text-muted-foreground">
+            Your conversation stays private to you — the owner never sees it.
+          </p>
+        </div>
+      </div>
+    )
+  }
   return (
     <div className="flex h-full min-h-0 items-center justify-center overflow-y-auto px-6 py-10">
       <div className="w-full max-w-lg rounded-xl border border-border bg-muted/20 p-5">
@@ -484,7 +521,7 @@ function WorkTopBarControl({
       label={selected?.identity?.name || selected?.title}
       leading={selected ? <EntityIdentityIcon icon={selected.identity?.icon} label={selected.identity?.name || selected.title} /> : undefined}
       compactOnNarrow
-      title={selected ? `${selected.identity?.name || selected.title}${selected.identity?.name && selected.identity.name !== selected.title ? ` · ${selected.title}` : ''}` : 'New Crew'}
+      title={selected ? `${selected.identity?.name || selected.title}${selected.identity?.name && selected.identity.name !== selected.title ? ` · ${selected.title}` : ''}${selected.shared ? ` · shared by ${selected.shared.ownerUsername || selected.shared.ownerId} (read-only)` : ''}` : 'New Crew'}
       placeholder="New Crew member"
       open={open}
       onToggle={() => setOpen(current => !current)}
@@ -507,40 +544,72 @@ function WorkTopBarControl({
         </button>
         {sessions.length === 0 ? (
           <div className="p-2 text-center text-sm text-gray-500 dark:text-gray-400">No projects yet. Create one to get started.</div>
-        ) : sessions.map(session => (
-          <div
-            key={session.id}
-            className={`flex items-center rounded-md text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
-          >
-            <button
-              type="button"
-              role="menuitemradio"
-              aria-checked={session.id === selected?.id}
-              onClick={() => { onSelect(session.id); setOpen(false) }}
-              className="min-w-0 flex-1 p-2 text-left"
+        ) : (<>
+          {sessions.filter(session => !session.shared).map(session => (
+            <div
+              key={session.id}
+              className={`flex items-center rounded-md text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
             >
-              <span className="flex items-center gap-2">
-                <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
-                <span className="min-w-0">
-                  <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
-                  {session.identity?.name && session.identity.name !== session.title
-                    ? <span className="block truncate text-xs text-muted-foreground">{session.title}</span>
-                    : null}
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={session.id === selected?.id}
+                onClick={() => { onSelect(session.id); setOpen(false) }}
+                className="min-w-0 flex-1 p-2 text-left"
+              >
+                <span className="flex items-center gap-2">
+                  <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
+                    {session.identity?.name && session.identity.name !== session.title
+                      ? <span className="block truncate text-xs text-muted-foreground">{session.title}</span>
+                      : null}
+                  </span>
                 </span>
-              </span>
-            </button>
-            <button
-              type="button"
-              aria-label={`Delete Crew ${session.identity?.name || session.title}`}
-              title="Delete Crew"
-              disabled={deletingProjectId !== null}
-              onClick={() => { setOpen(false); onDelete(session) }}
-              className="mr-1 rounded p-2 text-gray-400 transition-colors hover:bg-red-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+              </button>
+              <button
+                type="button"
+                aria-label={`Delete Crew ${session.identity?.name || session.title}`}
+                title="Delete Crew"
+                disabled={deletingProjectId !== null}
+                onClick={() => { setOpen(false); onDelete(session) }}
+                className="mr-1 rounded p-2 text-gray-400 transition-colors hover:bg-red-100 hover:text-red-600 disabled:opacity-50 dark:hover:bg-red-950/40 dark:hover:text-red-400"
+              >
+                {deletingProjectId === session.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+          ))}
+          {sessions.some(session => session.shared) && (
+            <div aria-hidden="true" className="px-2 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground">
+              Shared by others · read-only
+            </div>
+          )}
+          {sessions.filter(session => session.shared).map(session => (
+            <div
+              key={`shared:${session.id}`}
+              className={`flex items-center rounded-md text-sm transition-colors ${session.id === selected?.id ? 'bg-blue-100 text-blue-900 dark:bg-blue-900/30 dark:text-blue-100' : 'text-gray-700 hover:bg-gray-100 dark:text-gray-300 dark:hover:bg-slate-700'}`}
             >
-              {deletingProjectId === session.id ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
-            </button>
-          </div>
-        ))}
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={session.id === selected?.id}
+                onClick={() => { onSelect(session.id); setOpen(false) }}
+                className="min-w-0 flex-1 p-2 text-left"
+              >
+                <span className="flex items-center gap-2">
+                  <EntityIdentityIcon icon={session.identity?.icon} label={session.identity?.name || session.title} />
+                  <span className="min-w-0">
+                    <span className="block truncate font-medium">{session.identity?.name || session.title}</span>
+                    <span className="block truncate text-xs text-muted-foreground">
+                      {session.shared?.ownerUsername || session.shared?.ownerId || 'Another user'}
+                      {session.identity?.name && session.identity.name !== session.title ? ` · ${session.title}` : ''}
+                    </span>
+                  </span>
+                </span>
+              </button>
+            </div>
+          ))}
+        </>)}
       </div>
     </TopBarEntitySelector>
   )
@@ -550,7 +619,7 @@ export function WorkSurface() {
   const { sessions, selected, select, create, remove, updateLLMConfig, updateSelections, updateIdentity, refresh, loading: sessionsLoading, error: sessionsError } = useWorkSessions()
   const workflowContextSignature = selected?.workflowContextPaths.join('\u0000') || ''
   const persistLegacyRuntime = useCallback(async (selection: WorkRuntimeSelection) => {
-    if (!selected) return
+    if (!selected || selected.shared) return
     await updateLLMConfig(selected.id, selection)
   }, [selected, updateLLMConfig])
   const { tabId, canonicalTabId, error: chatError } = useWorkChatTab(selected, persistLegacyRuntime)
@@ -628,17 +697,21 @@ export function WorkSurface() {
     writeWorkWorkspaceView(selected?.id, view)
   }, [selected?.id])
 
+  // Someone else's Crew offers only the read-only inspect surface, no
+  // matter what the server's feature list enables for owned Crews.
+  const workspacePanels = selected?.shared ? SHARED_CREW_WORKSPACE_PANELS : enabledWorkspacePanels
   const openWorkPresentationView = useCallback((view: string, target?: string) => {
     if (!(view in WORK_UI_PRESENTATION_VIEWS)) return
     const panel = WORK_UI_PRESENTATION_VIEWS[view as WorkUIPresentationView]
-    if (!isWorkWorkspaceViewEnabled(panel, enabledWorkspacePanels)) return
+    if (!isWorkWorkspaceViewEnabled(panel, workspacePanels)) return
+    if (selected?.shared && !SHARED_CREW_WORKSPACE_PANELS.has(panel)) return
     if (panel === 'schedules') {
       const automationTarget = view === 'bots' ? 'bots' : target === 'webhooks' ? 'triggers' : target || 'schedules'
       useWorkflowStore.getState().openWorkspaceView('workshop', automationTarget)
     }
     setPanelOpen(true)
     selectWorkspaceView(panel)
-  }, [enabledWorkspacePanels, selectWorkspaceView])
+  }, [selected?.shared, selectWorkspaceView, workspacePanels])
   useEffect(() => {
     if (!pendingWorkView) return
     openWorkPresentationView(pendingWorkView)
@@ -713,12 +786,13 @@ export function WorkSurface() {
   }, [])
 
   useLayoutEffect(() => {
-    setWorkspaceView(readWorkWorkspaceView(selected?.id))
+    const savedView = readWorkWorkspaceView(selected?.id)
+    setWorkspaceView(selected?.shared && !SHARED_CREW_WORKSPACE_PANELS.has(savedView) ? 'files' : savedView)
     const nextRatio = readWorkSplitRatio(selected?.id)
     splitRatioRef.current = nextRatio
     setSplitRatioState(nextRatio)
     setReportPreviewPreference(readReportPreviewPreference(selected?.workspacePath))
-  }, [selected?.id, selected?.workspacePath])
+  }, [selected?.id, selected?.shared, selected?.workspacePath])
 
   useEffect(() => {
     const sync = () => setReportPreviewPreference(readReportPreviewPreference(selected?.workspacePath))
@@ -731,13 +805,19 @@ export function WorkSurface() {
   }, [selected?.workspacePath])
 
   useEffect(() => {
+    if (selected?.shared) {
+      // Identity is always "enabled", so shared Crews need their own
+      // fallback: a stale saved view must land on the inspect surface.
+      if (!SHARED_CREW_WORKSPACE_PANELS.has(workspaceView)) selectWorkspaceView('files')
+      return
+    }
     if (!isWorkWorkspaceViewEnabled(workspaceView, enabledWorkspacePanels)) {
       // Identity is always enabled, so this always terminates.
       const fallback = (['dashboard', 'files', 'identity'] as const)
         .find(view => isWorkWorkspaceViewEnabled(view, enabledWorkspacePanels)) ?? 'identity'
       selectWorkspaceView(fallback)
     }
-  }, [enabledWorkspacePanels, selectWorkspaceView, workspaceView])
+  }, [enabledWorkspacePanels, selectWorkspaceView, selected?.shared, workspaceView])
 
   useEffect(() => {
     if (!selected) return
@@ -934,10 +1014,17 @@ export function WorkSurface() {
               >
                 <WorkspaceTopToolbar className={layout.toolbarClassName}>
                   {tabId && canonicalTabId && selected ? <WorkChatTabs projectId={selected.id} canonicalTabId={canonicalTabId} /> : <div className="min-w-0 flex-1" />}
-                  {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={enabledWorkspacePanels} /> : null}
+                  {panelOpen ? <WorkWorkspaceToolbar workspacePath={selected.workspacePath} view={workspaceView} onViewChange={selectWorkspaceView} enabledPanels={workspacePanels} readOnly={Boolean(selected.shared)} /> : null}
                 </WorkspaceTopToolbar>
                 {layout.showChat ? <main className={layout.chatClassName}>
-                  {!isWorkIdentityComplete(selected.identity, selected.description) ? (
+                  {selected.shared ? (
+                    <div className="flex items-center gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
+                      <span className="min-w-0 flex-1 text-muted-foreground">
+                        {selected.shared.ownerUsername || selected.shared.ownerId}’s Crew · read-only. Your chats stay private to you.
+                      </span>
+                    </div>
+                  ) : null}
+                  {!selected.shared && !isWorkIdentityComplete(selected.identity, selected.description) ? (
                     <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
                       <span className="min-w-0 flex-1 text-muted-foreground">This Crew needs a role and purpose before it can help at its best.</span>
                       <button
@@ -960,7 +1047,7 @@ export function WorkSurface() {
                         <ChatArea
                           tabId={tabId}
                           compact
-                          landingContent={<WorkNewChatGuide />}
+                          landingContent={<WorkNewChatGuide sharedBy={selected.shared ? (selected.shared.ownerUsername || selected.shared.ownerId) : undefined} />}
                           composerPlaceholder="Describe what you want to build… (@ files, # references)"
                           showCompactRuntimeLoading
                           showProductSteerAction
@@ -1002,7 +1089,8 @@ export function WorkSurface() {
                         tabId={tabId}
                         view={workspaceView}
                         onViewChange={selectWorkspaceView}
-                        enabledPanels={enabledWorkspacePanels}
+                        enabledPanels={workspacePanels}
+                        shared={selected.shared ? { ownerId: selected.shared.ownerId, ownerUsername: selected.shared.ownerUsername } : undefined}
                         projectLLMConfig={selected.llmConfig}
                         selectedSecrets={selected.selectedSecrets}
                         selectedGlobalSecrets={selected.selectedGlobalSecrets}

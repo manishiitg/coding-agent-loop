@@ -656,12 +656,18 @@ func initializeProductConversationWorkspace(ctx context.Context, userID string, 
 
 func (api *StreamingAPI) resolveAgentProfileConversation(r *http.Request, profile agentprofiles.Profile, requestedKey string) (ProductConversationRecord, error) {
 	userID := productWorkspaceUserID(r.Context())
-	binding, err := resolveProductConversationBinding(r.Context(), userID, profile, requestedKey)
+	// Crew Run mode: opening resolves under whichever owner holds the
+	// project. Reader bindings carry no manifest path, so the registry
+	// below stays reader-scoped and project initialization (which
+	// creates folders and databases) is skipped.
+	binding, owned, err := resolveConversationBindingForUser(r.Context(), userID, profile, requestedKey)
 	if err != nil {
 		return ProductConversationRecord{}, err
 	}
-	if err := initializeProductConversationWorkspace(r.Context(), userID, profile, binding); err != nil {
-		return ProductConversationRecord{}, err
+	if owned {
+		if err := initializeProductConversationWorkspace(r.Context(), userID, profile, binding); err != nil {
+			return ProductConversationRecord{}, err
+		}
 	}
 
 	candidate := strings.TrimSpace(r.Header.Get("X-Session-ID"))

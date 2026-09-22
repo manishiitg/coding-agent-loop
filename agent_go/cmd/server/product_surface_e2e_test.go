@@ -170,7 +170,7 @@ func TestCrewProductSurfaceE2E(t *testing.T) {
 	draft := &productSurfaceDraft{}
 	api := &StreamingAPI{agentProfiles: registry}
 	resolved := &resolvedAgentProfile{Definition: profile}
-	if err := api.registerAgentProfileTools(draft, newProductToolGate(resolved), resolved, "test-user", "surface-e2e", "Chats/Work/projects/surface-e2e", QueryRequest{}); err != nil {
+	if err := api.registerAgentProfileTools(draft, newProductToolGate(resolved), resolved, "test-user", "surface-e2e", "Chats/Work/projects/surface-e2e", false, QueryRequest{}); err != nil {
 		t.Fatal(err)
 	}
 	for name := range draft.tools {

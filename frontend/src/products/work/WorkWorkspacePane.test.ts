@@ -29,7 +29,7 @@ describe('Work Dashboard', () => {
     expect(memory).toContain('title="Memory"')
     expect(memory).toContain('Custom skills')
     expect(memory).toContain('`${workspacePath}/skills`')
-    expect(memory).toContain('loadCrewSkills(workspacePath)')
+    expect(memory).toContain('loadCrewSkills(workspacePath, files)')
     expect(memory).toContain('Crew has not created any custom skills yet.')
     expect(memory).not.toContain('skillsApi.listSkills')
     expect(memory).not.toContain('View and manage skills')

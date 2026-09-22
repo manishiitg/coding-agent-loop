@@ -4,12 +4,19 @@ const updatePlannerFile = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 const getPlannerFileContent = vi.hoisted(() => vi.fn())
 const createPlannerFolder = vi.hoisted(() => vi.fn().mockResolvedValue({}))
 const deleteAgentProfileProject = vi.hoisted(() => vi.fn().mockResolvedValue({ success: true }))
+const listSharedProjects = vi.hoisted(() => vi.fn())
+const loadProductProjects = vi.hoisted(() => vi.fn())
 
 vi.mock('../../services/api', () => ({
-  agentApi: { createPlannerFolder, deleteAgentProfileProject, getPlannerFileContent, updatePlannerFile },
+  agentApi: { createPlannerFolder, deleteAgentProfileProject, getPlannerFileContent, listSharedProjects, updatePlannerFile },
   getApiBaseUrl: () => '',
   getAuthToken: () => null,
 }))
+
+vi.mock('../../platform/chat/productProjects', async importOriginal => {
+  const actual = await importOriginal<typeof import('../../platform/chat/productProjects')>()
+  return { ...actual, loadProductProjects }
+})
 
 vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
   ok: true,
@@ -27,7 +34,8 @@ vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
 }))
 
 import { updateProductProjectLLMConfig, updateProductProjectSelections } from '../../platform/chat/productProjects'
-import { createWorkSession, deleteWorkSession, parseSessionManifest, sessionSlug, workLLMConfigFromSelection, workLLMSelectionFromConfig } from './workSessions'
+import type { SharedProjectSummary } from '../../services/api-types'
+import { createWorkSession, deleteWorkSession, loadWorkSessionsIncludingShared, parseSessionManifest, sessionSlug, sharedProjectToWorkSession, updateWorkSessionIdentity, workLLMConfigFromSelection, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
 
 describe('sessionSlug', () => {
   it('slugifies titles and falls back', () => {
@@ -125,6 +133,128 @@ describe('deleteWorkSession', () => {
     await deleteWorkSession(session)
 
     expect(deleteAgentProfileProject).toHaveBeenCalledWith('work', 'crew-1')
+  })
+
+  it('refuses to delete someone else’s Crew', async () => {
+    const session = sharedProjectToWorkSession(sharedRow({ id: 'crew-shared' }))
+
+    await expect(deleteWorkSession(session)).rejects.toThrow('only be deleted by their owner')
+    expect(deleteAgentProfileProject).not.toHaveBeenCalledWith('work', 'crew-shared')
+  })
+})
+
+function sharedRow(overrides: Partial<SharedProjectSummary> = {}): SharedProjectSummary {
+  return {
+    id: 'crew-shared',
+    title: 'Shared Research',
+    description: 'Another user’s Crew.',
+    icon: '🔬',
+    name: 'Researcher',
+    owner_id: 'owner-1',
+    owner_username: 'ada',
+    workspace_path: '_users/owner-1/Chats/Work/projects/crew-shared',
+    created_at: '2026-09-20T00:00:00Z',
+    updated_at: '2026-09-21T00:00:00Z',
+    llm: { provider: 'muse-cli', model_id: 'muse-spark-1.3-contributor', reasoning_effort: 'max' },
+    selected_servers: ['github'],
+    selected_skills: ['code-reviewer'],
+    selected_secrets: ['GITHUB_TOKEN'],
+    selected_global_secrets: ['SHARED_API_TOKEN'],
+    workflow_context_paths: ['Workflow/reference'],
+    triggers: [{ id: 'trig-1', name: 'Nightly', enabled: true }],
+    schedules: [{ id: 'sched-1', name: 'Daily', enabled: true }],
+    ...overrides,
+  }
+}
+
+function ownedSession(overrides: Partial<WorkSession> = {}): WorkSession {
+  return {
+    schemaVersion: 1,
+    product: 'work',
+    id: 'crew-owned',
+    title: 'Owned',
+    description: '',
+    sessionId: 'work:project:crew-owned',
+    workspacePath: 'Chats/Work/projects/owned-crew-owned',
+    createdAt: '',
+    updatedAt: '',
+    selectedServers: [],
+    selectedSkills: [],
+    selectedSecrets: [],
+    selectedGlobalSecrets: [],
+    workflowContextPaths: [],
+    selectionConfigInitialized: true,
+    secretSelectionInitialized: true,
+    runtimeConfigInitialized: true,
+    ...overrides,
+  }
+}
+
+describe('sharedProjectToWorkSession', () => {
+  it('maps a shared row to a read-only session stub without the owner’s live session', () => {
+    const session = sharedProjectToWorkSession(sharedRow())
+
+    expect(session.id).toBe('crew-shared')
+    expect(session.title).toBe('Shared Research')
+    expect(session.identity).toEqual({ icon: '🔬', name: 'Researcher' })
+    expect(session.sessionId).toBe('')
+    expect(session.workspacePath).toBe('_users/owner-1/Chats/Work/projects/crew-shared')
+    expect(session.llmConfig?.builder_llm).toMatchObject({ provider: 'muse-cli', model_id: 'muse-spark-1.3-contributor' })
+    expect(session.selectedServers).toEqual(['github'])
+    expect(session.selectedSkills).toEqual(['code-reviewer'])
+    expect(session.selectedSecrets).toEqual(['GITHUB_TOKEN'])
+    expect(session.selectedGlobalSecrets).toEqual(['SHARED_API_TOKEN'])
+    expect(session.workflowContextPaths).toEqual(['Workflow/reference'])
+    expect(session.selectionConfigInitialized).toBe(true)
+    expect(session.secretSelectionInitialized).toBe(true)
+    expect(session.runtimeConfigInitialized).toBe(true)
+    expect(session.shared).toEqual({
+      ownerId: 'owner-1',
+      ownerUsername: 'ada',
+      triggers: [{ id: 'trig-1', name: 'Nightly', enabled: true }],
+      schedules: [{ id: 'sched-1', name: 'Daily', enabled: true }],
+    })
+  })
+})
+
+describe('loadWorkSessionsIncludingShared', () => {
+  it('lists owned Crews first, then shared Crews', async () => {
+    loadProductProjects.mockResolvedValue([ownedSession()])
+    listSharedProjects.mockResolvedValue({ projects: [sharedRow()] })
+
+    const sessions = await loadWorkSessionsIncludingShared()
+
+    expect(listSharedProjects).toHaveBeenCalledWith('work')
+    expect(sessions.map(session => session.id)).toEqual(['crew-owned', 'crew-shared'])
+    expect(sessions[1].shared?.ownerId).toBe('owner-1')
+  })
+
+  it('prefers the owned Crew when an id collides', async () => {
+    loadProductProjects.mockResolvedValue([ownedSession({ id: 'crew-dup', title: 'Mine' })])
+    listSharedProjects.mockResolvedValue({ projects: [sharedRow({ id: 'crew-dup', title: 'Theirs' })] })
+
+    const sessions = await loadWorkSessionsIncludingShared()
+
+    expect(sessions.map(session => session.id)).toEqual(['crew-dup'])
+    expect(sessions[0].title).toBe('Mine')
+    expect(sessions[0].shared).toBeUndefined()
+  })
+
+  it('degrades to owned-only when the shared listing fails', async () => {
+    loadProductProjects.mockResolvedValue([ownedSession()])
+    listSharedProjects.mockRejectedValue(new Error('boom'))
+
+    const sessions = await loadWorkSessionsIncludingShared()
+
+    expect(sessions.map(session => session.id)).toEqual(['crew-owned'])
+  })
+})
+
+describe('updateWorkSessionIdentity', () => {
+  it('refuses identity writes to someone else’s Crew', async () => {
+    const session = sharedProjectToWorkSession(sharedRow())
+
+    await expect(updateWorkSessionIdentity(session, { name: 'Hijacked' })).rejects.toThrow('Only the Crew owner')
   })
 })
 

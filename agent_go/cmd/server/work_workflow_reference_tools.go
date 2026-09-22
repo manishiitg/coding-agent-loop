@@ -195,11 +195,16 @@ func (api *StreamingAPI) registerAccessibleWorkflowListTool(registrar definition
 // same authorized workflow set as the AgentWorks picker and persist an exact
 // read-only reference in workflow.json. Names are never accepted for mutation:
 // the model must first list, disambiguate, and use the returned workspace path.
-func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definitionToolRegistrar, userID, sessionID, workspacePath string) error {
+func (api *StreamingAPI) registerWorkWorkflowReferenceTools(registrar definitionToolRegistrar, userID, sessionID, workspacePath string, readOnly bool) error {
 	if err := api.registerAccessibleWorkflowListTool(registrar, userID, func(ctx context.Context) ([]string, error) {
 		return readWorkWorkflowReferences(ctx, workspacePath)
 	}); err != nil {
 		return err
+	}
+	// Crew Run mode: discovery stays so readers can see what the crew
+	// references; attach/detach mutate the crew and go.
+	if readOnly {
+		return nil
 	}
 	register := func(name, description string, parameters map[string]interface{}, execute func(context.Context, map[string]interface{}) (string, error)) error {
 		return registrar.RegisterCustomTool(name, description, parameters, execute, "work_workflow_reference_tools")

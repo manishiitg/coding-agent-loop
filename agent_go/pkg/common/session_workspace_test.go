@@ -18,7 +18,7 @@ func TestClassifySessionWorkspace(t *testing.T) {
 		{"crew deep collapses", "u1", "Chats/Work/projects/demo/db/reports", SessionWorkspaceCrewProject, "Chats/Work/projects/demo"},
 		{"crew landing is not a project", "u1", "Chats/Work/projects/", SessionWorkspaceUnknown, ""},
 		{"crew landing bare", "u1", "Chats/Work", SessionWorkspaceUnknown, ""},
-		{"other user prefix never strips", "u1", "_users/u2/Chats/Work/projects/demo", SessionWorkspaceUnknown, ""},
+		{"other owner's crew project still classifies", "u1", "_users/u2/Chats/Work/projects/demo", SessionWorkspaceCrewProject, "Chats/Work/projects/demo"},
 		{"traversal rejected", "u1", "../Workflow/x", SessionWorkspaceUnknown, ""},
 		{"empty", "u1", "", SessionWorkspaceUnknown, ""},
 		{"unrelated", "u1", "Downloads/x", SessionWorkspaceUnknown, ""},

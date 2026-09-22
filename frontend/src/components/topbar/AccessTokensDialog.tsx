@@ -29,7 +29,6 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
   const [days, setDays] = useState(30)
   const [allWorkflows, setAllWorkflows] = useState(true)
   const [workflowIDs, setWorkflowIDs] = useState<string[]>([])
-  const [allowRun, setAllowRun] = useState(false)
   const [created, setCreated] = useState('')
   const [copied, setCopied] = useState(false)
   const dialog = useRef<HTMLDivElement>(null)
@@ -64,7 +63,7 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
     if (busyRef.current) return
     busyRef.current = true; setBusy(true); setError('')
     try {
-      const scopes = allowRun ? [...readScopes, runScope] : readScopes
+      const scopes = [...readScopes, runScope]
       const result = await authApi.createAccessToken({ name: name.trim(), expires_in_days: days, scopes, all_workflows: allWorkflows, workflow_ids: allWorkflows ? [] : workflowIDs })
       if (mounted.current) { setCreated(result.token); setCopied(false); setTokens(current => [result.access_token, ...current]) }
     } catch (e) { if (mounted.current) setError(errorMessage(e)) }
@@ -106,15 +105,14 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
             <p className="text-sm">Run this command, paste the token, then press Enter and Ctrl-D to finish standard input on macOS/Linux.</p>
             <pre className="p-3 bg-muted rounded-md text-xs whitespace-pre-wrap break-all">{command}</pre>
             <p className="text-sm text-muted-foreground">For MCP, use <code>agentworks mcp serve</code> after login. Access ends at expiry or when you revoke this token.</p>
-            <button className={buttonClass} onClick={() => { setCreated(''); setName(''); setAllWorkflows(true); setWorkflowIDs([]); setAllowRun(false) }}>Done</button>
+            <button className={buttonClass} onClick={() => { setCreated(''); setName(''); setAllWorkflows(true); setWorkflowIDs([]) }}>Done</button>
           </section> : <form className="space-y-4" onSubmit={e => { e.preventDefault(); void create() }}>
             <h3 className="font-medium">Generate a token</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-sm">Name<input required maxLength={80} value={name} onChange={e => setName(e.target.value)} placeholder="Claude Code on my laptop" className={inputClass} /></label>
               <label className="text-sm">Expires in<select value={days} onChange={e => setDays(Number(e.target.value))} className={inputClass}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label>
             </div>
-            <p className="text-sm text-muted-foreground">Reads workflows, plans, run logs, documents and skills. A token can never create or edit workflows, plans, or files.</p>
-            <label className="flex items-center gap-2 text-sm"><input type="checkbox" checked={allowRun} onChange={e => setAllowRun(e.target.checked)} />Allow running workflows (execute steps, trigger schedules) — running never edits plans or files</label>
+            <p className="text-sm text-muted-foreground">Reads workflows, plans, run logs, documents and skills, and runs steps, workflows, and schedules. A token can never create or edit workflows, plans, or files.</p>
             <label className="block text-sm">Which workflows can this token see?<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => setAllWorkflows(e.target.value === 'all')}><option value="all">All workflows I can see, including future ones</option><option value="selected">Selected workflows</option></select></label>
             {!allWorkflows && <fieldset className="space-y-2 border border-border rounded-md p-3 max-h-40 overflow-auto"><legend className="text-sm">Select workflows</legend>
               {workflows.map(w => <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={workflowIDs.includes(w.id)} onChange={e => setWorkflowIDs(ids => e.target.checked ? [...ids, w.id] : ids.filter(id => id !== w.id))} />{w.label}</label>)}

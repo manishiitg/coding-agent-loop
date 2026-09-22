@@ -1,3 +1,52 @@
+## Crew identity is role and purpose; fingerprint tracks it, not skills — PLAT-350
+
+[PLAT-350](pulse_platform/coding-agent-bridge/plat-350.md) makes Crew role and
+purpose required and user-owned, removes the user-editable instructions field
+(behavior stays in the system-owned product template), and renders the project
+description into the prompt as `Purpose:`. The retained native-session
+fingerprint is now definition + MCP servers + role/purpose, so identity edits
+relaunch retained sessions; skills are out of the key because the agent
+re-reads them from disk. The setup banner opens Identity and asks for both
+via the shared pane-to-chat queue. Implemented locally; live acceptance
+pending.
+
+## Chat delivery browser observability — PLAT-349
+
+[PLAT-349](pulse_platform/frontend-chat/plat-349.md) closes the
+browser-observability gap in chat delivery. The client records content-free
+milestones (`sse_received`, `poll_received`, `catchup_received`,
+`processed`) for visible chat events into a 100ms-batched queue that POSTs
+fire-and-forget to `/api/client-telemetry/chat-delivery`; the server
+validates a fixed schema and logs `[CLIENT_CHAT_TIMELINE]` lines. Message
+text and tool arguments are never accepted. The `painted` phase is reserved
+but not recorded yet. Implemented locally; live acceptance pending.
+
+## RTS deploy blocked on stale active-session state — PLAT-347
+
+[PLAT-347](pulse_platform/performance/plat-347.md) records the RTS release that
+could not activate because `/api/health` reported `active_sessions: 1` with
+zero in-flight work — retained chats keep that aggregate non-zero, so it was
+never a safe gate. Decision: RTS activation is explicitly breaking (swap and
+restart user services immediately; clients reconnect), and the deploy no
+longer uses `DRAIN_TIMEOUT_SECONDS`. Fixed.
+
+## Retained chat killed by provider idle timer, reported as tmux crash — PLAT-346
+
+[PLAT-346](pulse_platform/coding-agent-bridge/plat-346.md) records the Crew
+session whose active turn was canceled at 11:45 UTC and reported as a tmux
+pane disappearance. Root cause: the 3-hour idle timer was never re-armed on
+the retained-chat `SendClaudeCodeInput` path. Fixed by moving retention to a
+shared lease (adapters keep no private timer state); pending RTS deployment.
+Typed cleanup reasons remain an observability follow-up.
+
+## Stopping a workflow response stranded the next message — PLAT-339
+
+[PLAT-339](pulse_platform/chat-reliability/plat-339.md) records the confida
+2026-09-21 reproduction where pressing Stop then sending another message left
+the chat unusable: `live-input` returned 409 because the Stop teardown
+deleted `lastQueryRequests` and `sessionWorkspaceFolders`. Implemented
+locally with green regression tests; not pushed or deployed at filing time.
+
 ## Retained-session workflow-open fan-out — PLAT-348
 
 [PLAT-348](pulse_platform/performance/plat-348.md) records the RTS regression
@@ -433,7 +482,11 @@ builder, orchestrator, runtime and repair; validated values reach `main.py` as
 the implemented `call_scripted_sub_agent` is parameter-only for scripted routes
 and preserves its contract across asynchronous dispatch. Builder `execute_step`
 accepts the same validated object. Help is generated from the saved contract
-rather than handwritten per-script help.
+rather than handwritten per-script help. The 2026-09-22 enforcement accepts
+only contract 1.0.44 for execution and requires `code_layout_version == 1`
+on manual, webhook, Slack-trigger, and scheduled paths; older workflows get
+a migration prompt or a prepended `upgrade-nested-agent-artifacts` turn.
+Live acceptance of the migrated fleet is pending.
 
 ## Codex retained-session, resume and structured-event reliability — PLAT-297
 
@@ -505,7 +558,10 @@ multi-tab/reconnect handling, phased rollout and acceptance tests.
 **Baseline deployed to RTS; partially implemented.** The acknowledged AgentWorks baseline and
 Notify instruction expansion are implemented; deeper adapters, product coverage
 and full end-to-end rollout proof remain open. No change to live
-issue-resolution counts. See PLAT-292's implementation record.
+issue-resolution counts. See PLAT-292's implementation record. The 2026-09-22
+update makes SSE, view-state changes, and adapter swaps the primary sync
+wake-ups with coalesced trailing syncs; the 10s poll only renews the 15s
+lease and recovers lost events.
 
 ## Public finding ID preservation — PLAT-291
 

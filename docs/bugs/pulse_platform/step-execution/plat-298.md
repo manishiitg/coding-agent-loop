@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | Implemented, including typed scripted-route parameters, dedicated invocation tool, and Builder execute support — production acceptance pending |
-| Last synchronized | 2026-09-08 |
+| Ticket state | Implemented, including typed scripted-route parameters, dedicated invocation tool, Builder execute support, and contract 1.0.44 code-layout enforcement — production acceptance pending |
+| Last synchronized | 2026-09-22 |
 | Priority | P1 reliability |
 
 ## Problem and observed evidence
@@ -355,3 +355,17 @@ add snapshot execution while implementing these requirements.
 release. This ticket's remaining foundation acceptance is still required and is
 not closed by adding Architecture or outcome tracking. Historical evidence and
 legacy workflow behavior remain unchanged by that release.
+
+## 2026-09-22 enforcement (contract 1.0.44)
+
+Only the current artifact contract is execution-compatible now:
+`workflowContractVersionIsExecutionCompatible` accepts exactly
+1.0.44, and both the manual-run guard
+(`requireCurrentWorkflowContractForManualRun`) and the direct-webhook
+preflight additionally require `code_layout_version == 1`. Older
+workflows are refused with a migration prompt (manual/webhook) or get
+the `upgrade-nested-agent-artifacts` turn prepended (scheduler), which
+moves scripted bundles under `code/<step-id>/` and stamps 1.0.44 via
+`set_workflow_contract_version`. Historical run folders are evidence and
+are never rewritten. The first deploy triggers a fleet-wide migration
+wave; live acceptance of the migrated fleet is still pending.

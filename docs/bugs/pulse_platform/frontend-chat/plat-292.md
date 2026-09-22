@@ -399,3 +399,13 @@ tests. This does not close the wider PLAT-292 scope (remaining view/product
 adapters, legacy refresh, full permissions matrix, etc.). The generic activity
 card still uses the misleading "Production update" fallback for UI-action
 wake-up events; the actual tool receipt and selected state are correct.
+
+## 2026-09-22 SSE-first sync
+
+`useWorkspaceUIControl` no longer polls every 3s. SSE presentation events,
+local view-state changes, and adapter swaps are the primary wake-up paths;
+overlapping syncs coalesce into one trailing run. The 10s interval
+(`UI_CONTROL_BACKUP_POLL_MS`) only renews the 15s lease and recovers lost
+events during stream reconnects. Behavior is unchanged; sync traffic drops
+with idle views. Call sites must pass a memoized adapter or the adapter
+effect re-fires every render.

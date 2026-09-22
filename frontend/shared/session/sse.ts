@@ -168,6 +168,10 @@ export class SSEConnection {
         const data = dataLines.join('\n')
         if (eventName === 'event' || eventName === '') this.handleEventFrame(data, id)
         else if (eventName === 'status') this.handleStatusFrame(data)
+        else if (eventName === 'cursor' && id !== undefined) {
+          const cursor = Number.parseInt(id, 10)
+          if (!Number.isNaN(cursor)) this.sinceIndex = cursor
+        }
       }
       eventName = ''
       id = undefined

@@ -2,6 +2,7 @@ package events
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -73,6 +74,27 @@ func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestSQLiteEventJournalForwardPagesStartAtFirstRow(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	for i := 1; i <= 5; i++ {
+		if _, _, err := journal.Append("chat", journalTestEvent(fmt.Sprintf("event-%d", i), "text")); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first, err := journal.ReadPage("chat", DurableEventPageOptions{Limit: 2, FromStart: true})
+	if err != nil || len(first.Events) != 2 || first.Events[0].ID != "event-1" || first.Events[1].ID != "event-2" || !first.HasNewer {
+		t.Fatalf("first forward page = %+v err=%v", first, err)
+	}
+	second, err := journal.ReadPage("chat", DurableEventPageOptions{Limit: 2, AfterSequence: first.LatestSequence})
+	if err != nil || len(second.Events) != 2 || second.Events[0].ID != "event-3" || second.Events[1].ID != "event-4" || !second.HasNewer {
+		t.Fatalf("second forward page = %+v err=%v", second, err)
+	}
+}
+
 func TestOnlyInteractiveChatSessionsUseDurableJournal(t *testing.T) {
 	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
 	if err != nil {
@@ -102,6 +124,25 @@ func TestOnlyInteractiveChatSessionsUseDurableJournal(t *testing.T) {
 		if got := store.GetAllEventsRaw(sessionID); len(got) != 1 {
 			t.Fatalf("%s live events = %d, want 1", sessionID, len(got))
 		}
+	}
+}
+
+func TestLiveInputConfirmationSurvivesChatJournalRestore(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewEventStore(10)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+	classifyInteractiveTestSession(t, store, "chat")
+	event := Event{ID: "message-1:confirmed", Type: "live_input_confirmed", Timestamp: time.Now()}
+	if err := store.AddEventChecked("chat", event); err != nil {
+		t.Fatal(err)
+	}
+	page, err := store.ReadDurableChatPage("chat", DurableEventPageOptions{Limit: 10})
+	if err != nil || len(page.Events) != 1 || page.Events[0].ID != event.ID {
+		t.Fatalf("confirmation was not durable: %+v err=%v", page, err)
 	}
 }
 

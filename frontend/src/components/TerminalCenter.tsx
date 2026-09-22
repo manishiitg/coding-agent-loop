@@ -50,6 +50,8 @@ import { requestWorkflowPlanStepFocus } from '../utils/workflowPlanFocus'
 import { mergeNewerTerminalEventPage, mergeTerminalEventPages, terminalEventSequenceBounds } from '../utils/terminalEventPage'
 import { projectExecutionTreeTerminals } from '../utils/terminalExecutionProjection'
 import { hydrateTabEvents } from '../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
+import { isExecutionConversationTab } from '../utils/sessionEventSource'
 
 // hasAnsiCodes returns true when the string contains at least one CSI escape.
 // Used to decide whether to take the colored-render path or fall back to the
@@ -2672,6 +2674,10 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
       (tab?.metadata?.isViewOnly || tab?.config?.restoredConversationPath),
     )
   })
+  const selectedTabIsExecution = useChatStore(state => {
+    const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
+    return tab?.sessionId === currentSessionId && isExecutionConversationTab(tab)
+  })
   const selectedTabPrefersFormattedResume = useChatStore(state => {
     const tab = state.activeTabId ? state.chatTabs[state.activeTabId] : undefined
     return Boolean(
@@ -3589,11 +3595,11 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
     if (!currentSessionId) return
     setMainEventHydration({ sessionId: currentSessionId, loading: true })
     try {
-      await hydrateTabEvents(currentSessionId, {
-        workspacePath: activeWorkflowPath || undefined,
-        fallbackToChatHistory: true,
-        preferChatHistory: selectedTabRequiresHistoryHydration,
-      })
+      if (selectedTabIsExecution) {
+        await hydrateExecutionConversation(currentSessionId, activeWorkflowPath || undefined)
+      } else {
+        await hydrateTabEvents(currentSessionId, { workspacePath: activeWorkflowPath || undefined })
+      }
       setMainEventHydration({ sessionId: currentSessionId, loading: false, loaded: true })
     } catch (loadError) {
       setMainEventHydration({
@@ -3602,7 +3608,7 @@ const TerminalCenterInner: React.FC<TerminalCenterProps> = ({ currentSessionId, 
         error: loadError instanceof Error ? loadError.message : 'Failed to load conversation events.',
       })
     }
-  }, [activeWorkflowPath, currentSessionId, selectedTabRequiresHistoryHydration])
+  }, [activeWorkflowPath, currentSessionId, selectedTabIsExecution])
 
   useEffect(() => {
     if (!shouldHydrateMainTerminalEvents(

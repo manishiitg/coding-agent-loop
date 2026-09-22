@@ -140,6 +140,8 @@ import {
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
 import { appendRestoredLiveTail, hydrateTabEvents } from '../../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../../utils/executionConversationRestore'
+import { isExecutionConversationTab } from '../../utils/sessionEventSource'
 import { resolveLiveInputConfirmations } from '../../utils/liveInputReceipt'
 import {
   hydrateWorkflowTabsPrioritized,
@@ -381,6 +383,7 @@ const WorkflowPreviousChatsPanel: React.FC<{
         mode: 'workflow',
         presetQueryId: activePresetId || undefined,
         isViewOnly: true,
+        isExecutionRun: isSchedule || Boolean(session.bot_platform),
         isScheduledRun: isSchedule,
         isBotRun: Boolean(session.bot_platform),
         botPlatform: session.bot_platform,
@@ -410,11 +413,9 @@ const WorkflowPreviousChatsPanel: React.FC<{
       chatStore.setTabCanSteer(targetTabId, false)
 
       try {
-        const runtime = await hydrateTabEvents(session.session_id, {
-          workspacePath,
-          fallbackToChatHistory: true,
-          preferChatHistory: true,
-        })
+        const runtime = scheduleMetadata.isExecutionRun
+          ? await hydrateExecutionConversation(session.session_id, workspacePath)
+          : await hydrateTabEvents(session.session_id, { workspacePath })
         chatStore.setTabStreaming(targetTabId, runtime.status === 'running')
         chatStore.setTabCompleted(targetTabId, runtime.status !== 'running')
         chatStore.setTabHasRunningBgAgents(targetTabId, runtime.hasRunningBackgroundAgents ?? false)
@@ -746,7 +747,9 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
         try {
           if (isReadOnlyWorkflowRunTab(tab)) {
             const runtime = await withWorkflowRestoreTimeout(
-              hydrateTabEvents(sessionId, { workspacePath: currentWorkspacePath || undefined, fallbackToChatHistory: true }),
+              isExecutionConversationTab(tab)
+                ? hydrateExecutionConversation(sessionId, currentWorkspacePath || undefined)
+                : hydrateTabEvents(sessionId, { workspacePath: currentWorkspacePath || undefined }),
               `Restoring scheduled run transcript for ${sessionId}`,
             )
             if (stillOwnsSession()) {

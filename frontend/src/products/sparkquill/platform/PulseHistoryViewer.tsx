@@ -44,6 +44,7 @@ export default function PulseHistoryViewer({ sessionId, title = 'Check-in histor
         agentProfileVersion,
         agentProfileWorkspace: workspacePath,
         agentProfileChatContract: 'profile-v1',
+        isExecutionRun: true,
       }, sessionId)
       if (!chatStore.getTab(createdTabId)) throw new Error('the conversation tab could not be created')
       await hydrateExecutionConversation(sessionId, workspacePath)

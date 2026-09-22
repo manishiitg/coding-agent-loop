@@ -454,6 +454,7 @@ async function restoreReadOnlyWorkflowRunChat(
     phaseName: undefined,
     ...(presetId ? { presetQueryId: presetId } : {}),
     isViewOnly: true,
+    isExecutionRun: true,
     ...options.metadata,
     readOnlyRestoredAt: Date.now(),
   }

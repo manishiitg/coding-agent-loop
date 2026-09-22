@@ -293,6 +293,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			}
 			pageOpts.Limit = events.MaxPollingLimit
 			pageOpts.AfterSequence = afterSequence
+			pageOpts.FromStart = afterSequence == 0
 		} else {
 			if limitStr != "" {
 				limit, err := strconv.Atoi(limitStr)
@@ -324,7 +325,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 			lastProcessedIndex = int(page.LatestSequence)
 			sessionEvents = []events.Event{}
 		}
-		if pageOpts.AfterSequence > 0 {
+		if pageOpts.AfterSequence > 0 || pageOpts.FromStart {
 			hasMoreFromStore = page.HasNewer
 		} else {
 			hasMoreFromStore = page.HasOlder

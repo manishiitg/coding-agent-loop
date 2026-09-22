@@ -128,28 +128,65 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 
 	ctx := r.Context()
 
-	// Backfill: send catch-up events the client hasn't seen yet
-	if sinceIndex >= 0 {
-		var backfillEvents []events.Event
-		var resultExists bool
-		resultLastIndex := sinceIndex
-		if durableChat {
-			page, err := api.eventStore.ReadDurableChatPage(sessionID, events.DurableEventPageOptions{Limit: events.MaxPollingLimit, AfterSequence: int64(sinceIndex)})
+	// Backfill: subscribe first, then stream every missing durable page. A
+	// one-page read must never advertise the journal tip as its cursor: doing
+	// so silently drops all remaining pages on reconnect.
+	if durableChat && sinceIndex >= 0 {
+		requestedIndex := sinceIndex
+		for {
+			page, err := api.eventStore.ReadDurableChatPage(sessionID, events.DurableEventPageOptions{
+				Limit: events.MaxPollingLimit, AfterSequence: int64(sinceIndex), FromStart: sinceIndex == 0,
+			})
 			if err != nil {
 				log.Printf("[SSE] durable backfill failed for session %s: %v", sessionID, err)
 				return
 			}
-			backfillEvents = page.Events
-			resultExists = page.Exists
-			if page.JournalLatestSequence > 0 {
-				resultLastIndex = int(page.JournalLatestSequence)
+			if len(page.Events) == 0 {
+				if page.JournalLatestSequence < int64(requestedIndex) {
+					// A previous live-only cursor (or an older server instance)
+					// can be ahead of the durable tip. Rewind before live delivery.
+					sinceIndex = int(page.JournalLatestSequence)
+					if err := writeSSEEvent(w, "cursor", sinceIndex, struct{}{}); err != nil {
+						return
+					}
+					flusher.Flush()
+				}
+				break
 			}
-		} else {
-			result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{SinceIndex: sinceIndex, IncludeStreaming: true})
-			backfillEvents = result.Events
-			resultExists = result.Exists
-			resultLastIndex = result.LastProcessedIndex
+			cursor := int(page.LatestSequence)
+			batch := page.Events
+			if workingSetOnly {
+				batch = events.FilterSessionWorkingSet(sessionID, batch)
+			}
+			if len(batch) == 0 {
+				if err := writeSSEEvent(w, "cursor", cursor, struct{}{}); err != nil {
+					return
+				}
+			} else {
+				runtimeState, _ := api.authoritativeRuntimeSnapshot(sessionID)
+				runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
+				msg := sseEventMessage{
+					Events: batch, SessionStatus: sessionStatus,
+					DisplayStatus: runtimeStatus.Status, LastProcessedIndex: cursor,
+					HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
+					IsSyntheticTurn:            api.isSyntheticTurn(sessionID), CanSteer: runtimeStatus.CanSteer,
+					RuntimeState: &runtimeState,
+				}
+				if err := writeSSEEvent(w, "event", cursor, msg); err != nil {
+					return
+				}
+			}
+			sinceIndex = cursor
+			flusher.Flush()
+			if !page.HasNewer || ctx.Err() != nil {
+				break
+			}
 		}
+	} else if sinceIndex >= 0 {
+		result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{SinceIndex: sinceIndex, IncludeStreaming: true})
+		backfillEvents := result.Events
+		resultExists := result.Exists
+		resultLastIndex := result.LastProcessedIndex
 		rawBackfillCount := len(backfillEvents)
 		if workingSetOnly {
 			backfillEvents = events.FilterSessionWorkingSet(sessionID, backfillEvents)
@@ -175,15 +212,6 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				RuntimeState:               &runtimeState,
 			}
 			if err := writeSSEEvent(w, "event", resultLastIndex, msg); err != nil {
-				return
-			}
-			sinceIndex = resultLastIndex
-			flusher.Flush()
-		} else if durableChat && resultLastIndex < sinceIndex {
-			// Live-only deltas can advance the browser's Last-Event-ID beyond the
-			// durable tip. After a restart those deltas are gone, so move the SSE
-			// cursor back to the journal tip before accepting newly numbered rows.
-			if err := writeSSEEvent(w, "cursor", resultLastIndex, struct{}{}); err != nil {
 				return
 			}
 			sinceIndex = resultLastIndex
@@ -248,6 +276,28 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 			if !ok {
 				// Channel closed (unsubscribed)
 				return
+			}
+			if durableChat && !events.IsDurableChatEvent(event) {
+				// Live-only updates still drive the streaming UI, but never become
+				// chat history or advance the journal cursor. No SSE id means a
+				// reconnect resumes from the last persisted event instead.
+				if workingSetOnly && !events.RetainEventInSessionWorkingSet(sessionID, event) {
+					continue
+				}
+				runtimeState, _ := api.authoritativeRuntimeSnapshot(sessionID)
+				runtimeStatus := sessionDisplayStatusFromRuntime(runtimeState)
+				msg := sseEventMessage{
+					Events: []events.Event{event}, SessionStatus: sessionStatus,
+					DisplayStatus: runtimeStatus.Status, LastProcessedIndex: lastIndex,
+					HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
+					IsSyntheticTurn:            api.isSyntheticTurn(sessionID), CanSteer: runtimeStatus.CanSteer,
+					RuntimeState: &runtimeState,
+				}
+				if err := writeSSEEvent(w, "event", -1, msg); err != nil {
+					return
+				}
+				flusher.Flush()
+				continue
 			}
 
 			// Skip events already covered by the backfill

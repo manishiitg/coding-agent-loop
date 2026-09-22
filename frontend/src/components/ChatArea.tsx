@@ -35,6 +35,9 @@ import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
 
 import { appendTimelineAndApplyConfirmations, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
+import { isExecutionConversationTab } from '../utils/sessionEventSource'
+import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { logger } from '../utils/logger'
 
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
@@ -803,7 +806,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (activeEventViewMode !== 'formatted') return
     const isVideoStudio = activeTab?.metadata?.agentProfileId === 'video-studio'
     const isWorkflowChat = activeTab?.metadata?.mode === 'workflow'
-    if (!isVideoStudio && !isWorkflowChat) return
+    if ((!isVideoStudio && !isWorkflowChat) || isExecutionConversationTab(activeTab)) return
 
     const workspacePath = activeTab?.metadata?.agentProfileWorkspace ||
       (isWorkflowChat ? getActivePreset('workflow')?.selectedFolder?.filepath : undefined)
@@ -828,6 +831,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     activeTab?.metadata?.agentProfileId,
     activeTab?.metadata?.agentProfileWorkspace,
     activeTab?.metadata?.mode,
+    activeTab?.metadata?.isExecutionRun,
+    activeTab?.metadata?.isScheduledRun,
+    activeTab?.metadata?.isBotRun,
+    activeTab?.metadata?.isViewOnly,
     getActivePreset,
   ])
   const activeStreamingText = useChatStore((state) =>
@@ -951,20 +958,45 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       error: undefined,
     }))
     try {
-      const response = await agentApi.getSessionEvents(sessionId, undefined, {
-        limit: 100,
-        beforeSequence: historyPagination.nextOffset,
-        durableChat: true,
-      })
-      const olderEvents = resolveLiveInputConfirmations(response.events || [])
+      const execution = isExecutionConversationTab(activeTab)
+      let olderEvents: PollingEvent[]
+      let hasMore: boolean
+      let nextOffset: number | undefined
+      if (execution) {
+        const conversation = await agentApi.getChatHistoryResumeConversation(
+          sessionId,
+          activeTab?.metadata?.agentProfileWorkspace || activeWorkflowPreset?.selectedFolder?.filepath,
+          100,
+          historyPagination.nextOffset,
+          true,
+        )
+        olderEvents = conversationToRestoredEvents(conversation).filter(event => event.type !== 'conversation_resumed')
+        hasMore = conversation.history_pagination?.has_more ?? false
+        nextOffset = conversation.history_pagination?.next_offset
+      } else {
+        const response = await agentApi.getSessionEvents(sessionId, undefined, {
+          limit: 100,
+          beforeSequence: historyPagination.nextOffset,
+          durableChat: true,
+        })
+        olderEvents = response.events || []
+        hasMore = response.has_more
+        nextOffset = response.oldest_sequence
+      }
+      olderEvents = resolveLiveInputConfirmations(olderEvents)
       const chatStore = useChatStore.getState()
+      const currentIDs = new Set([
+        ...chatStore.getTabEvents(sessionId),
+        ...(olderHistory.sessionId === sessionId ? olderHistory.events : []),
+      ].map(event => event.id).filter(Boolean))
+      olderEvents = olderEvents.filter(event => !event.id || !currentIDs.has(event.id))
       chatStore.setTabHistoryPagination(
         sessionId,
-        response.oldest_sequence
-          ? { hasMore: response.has_more, nextOffset: response.oldest_sequence }
+        nextOffset
+          ? { hasMore, nextOffset }
           : null,
       )
-      chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+      chatStore.setTabHasMoreOlderEvents(sessionId, hasMore)
       setOlderHistory((current) => ({
         sessionId,
         events: current.sessionId === sessionId
@@ -980,7 +1012,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         error: error instanceof Error ? error.message : 'Could not load earlier messages',
       }))
     }
-  }, [activeSessionId, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
+  }, [activeSessionId, activeTab, activeWorkflowPreset, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
 
   const hasConversationContent = useMemo(() => {
     return displayEvents.some(event =>
@@ -1124,10 +1156,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     if (!sessionId || !tabId) return
     setReadOnlyRunViewGaveUp(false)
     try {
-      const runtime = await hydrateTabEvents(sessionId, {
-        workspacePath: activeWorkflowPreset?.selectedFolder?.filepath || activeTab?.metadata?.agentProfileWorkspace,
-        fallbackToChatHistory: true,
-      })
+      const workspacePath = activeWorkflowPreset?.selectedFolder?.filepath || activeTab?.metadata?.agentProfileWorkspace
+      const runtime = isExecutionConversationTab(activeTab)
+        ? await hydrateExecutionConversation(sessionId, workspacePath)
+        : await hydrateTabEvents(sessionId, { workspacePath })
       const chatStore = useChatStore.getState()
       const isDone = runtime.status === 'completed' || runtime.status === 'stopped'
       const isError = runtime.status === 'error'
@@ -1136,7 +1168,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     } catch {
       // Leave it to the give-up timer to re-fire; nothing else to do here.
     }
-  }, [activeSessionId, activeTab?.tabId, activeTab?.metadata?.agentProfileWorkspace, activeWorkflowPreset])
+  }, [activeSessionId, activeTab, activeWorkflowPreset])
   // resumePending — SYNCHRONOUS (derived in render, NOT an effect-set state). This
   // is the regression fix: on a Resume click restoredConversationPath is set
   // synchronously (setTabConfig), so this is already true on the FIRST render →
@@ -2320,7 +2352,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Track which session is currently being polled (for derived isStreaming)
 
       try {
-        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { durableChat: true })
+        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, {
+          durableChat: !isExecutionConversationTab(currentTab),
+        })
         if (!isChatIdentityCurrent(identity)) return
         if (response.session_id && response.session_id !== effectiveSessionId) continue
         if (currentTab && chatStore.getTab(currentTab.tabId)?.sessionId !== effectiveSessionId) continue
@@ -2388,6 +2422,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       let shouldContinue = true
       try {
         const since = Math.max(0, store.getTabLastEventIndex(sessionId))
+        if (isExecutionConversationTab(tab)) {
+          delete foregroundCatchUpTimersRef.current[sessionId]
+          return
+        }
         const response = await agentApi.getSessionEvents(sessionId, since, { durableChat: true })
         const freshStore = useChatStore.getState()
         const freshTab = Object.values(freshStore.chatTabs).find(candidate => candidate.sessionId === sessionId) || null
@@ -2649,7 +2687,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         sessionId,
         (msg: SSEEventMessage) => handleSSEMessage(msg, sessionId),
         (msg: SSEStatusMessage) => handleSSEStatus(msg, sessionId),
-        () => handleSSEFallback(sessionId)
+        () => handleSSEFallback(sessionId),
+        !isExecutionConversationTab(Object.values(store.chatTabs).find(tab => tab.sessionId === sessionId)),
       )
     }
     // Connect SSE for sessions that don't have a connection yet (any
@@ -2670,11 +2709,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (useChatStore.getState().tabEventIndices[sid] === undefined) {
         if (sseRestoreInFlightRef.current.has(sid)) continue
         sseRestoreInFlightRef.current.add(sid)
-        void hydrateTabEvents(sid, {
-          workspacePath: tab.metadata?.agentProfileWorkspace,
-          fallbackToChatHistory: true,
-          preferChatHistory: true,
-        }).catch(error => {
+        const restore = isExecutionConversationTab(tab)
+          ? hydrateExecutionConversation(sid, tab.metadata?.agentProfileWorkspace)
+          : hydrateTabEvents(sid, { workspacePath: tab.metadata?.agentProfileWorkspace })
+        void restore.catch(error => {
           logger.error('ChatArea', `Failed to establish restore cursor before SSE for ${sid}`, error)
         }).finally(() => {
           sseRestoreInFlightRef.current.delete(sid)

@@ -56,6 +56,7 @@ type DurableEventPageOptions struct {
 	Limit          int
 	BeforeSequence int64
 	AfterSequence  int64
+	FromStart      bool
 }
 
 type DurableEventPage struct {
@@ -282,7 +283,7 @@ func (j *SQLiteEventJournal) ReadPage(sessionID string, opts DurableEventPageOpt
 	if j == nil || j.db == nil || sessionID == "" {
 		return DurableEventPage{Events: []Event{}}, nil
 	}
-	if opts.BeforeSequence > 0 && opts.AfterSequence > 0 {
+	if opts.BeforeSequence > 0 && (opts.AfterSequence > 0 || opts.FromStart) {
 		return DurableEventPage{}, fmt.Errorf("before_sequence and after_sequence are mutually exclusive")
 	}
 	limit := opts.Limit
@@ -307,7 +308,7 @@ func (j *SQLiteEventJournal) ReadPage(sessionID string, opts DurableEventPageOpt
 	if opts.BeforeSequence > 0 {
 		query = `SELECT payload FROM structured_chat_events WHERE session_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`
 		args = []interface{}{sessionID, opts.BeforeSequence, limit + 1}
-	} else if opts.AfterSequence > 0 {
+	} else if opts.AfterSequence > 0 || opts.FromStart {
 		query = `SELECT payload FROM structured_chat_events WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`
 		args = []interface{}{sessionID, opts.AfterSequence, limit + 1}
 		descending = false
@@ -356,7 +357,7 @@ func (j *SQLiteEventJournal) ReadPage(sessionID string, opts DurableEventPageOpt
 	if opts.BeforeSequence > 0 {
 		page.HasOlder = moreInQueryDirection
 	}
-	if opts.AfterSequence > 0 {
+	if opts.AfterSequence > 0 || opts.FromStart {
 		page.HasNewer = moreInQueryDirection
 	}
 	return page, nil

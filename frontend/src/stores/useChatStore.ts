@@ -423,6 +423,7 @@ export interface ChatTab {
     isRestored?: boolean  // True when restored from history (inline history panel or page refresh)
     isRestoringSession?: boolean  // True while session events are being loaded from backend
     isViewOnly?: boolean // True when tab is in view-only mode (e.g. shared session or bot connector)
+    isExecutionRun?: boolean // Execution diagnostics use JSON history, not the interactive chat journal.
     isScheduledRun?: boolean // True when tab is observing a scheduled-run session (read-only live view)
     scheduledJobName?: string // Display name of the scheduled job, surfaced in the view-only banner
     isBotRun?: boolean // True when tab is observing a bot-triggered session (read-only live view)
@@ -756,7 +757,7 @@ export interface ChatState extends StoreActions {
 
   // SSE connection management
   sseConnections: Record<string, SSEConnection>  // sessionId -> SSEConnection
-  connectSSE: (sessionId: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void, onError?: () => void) => void
+  connectSSE: (sessionId: string, onMessage: (msg: SSEEventMessage) => void, onStatus: (msg: SSEStatusMessage) => void, onError?: () => void, durableChat?: boolean) => void
   disconnectSSE: (sessionId: string) => void
   disconnectAllSSE: () => void
 
@@ -1957,7 +1958,7 @@ export const useChatStore = create<ChatState>()(
       },
 
       // SSE connection management
-      connectSSE: (sessionId, onMessage, onStatus, onError) => {
+      connectSSE: (sessionId, onMessage, onStatus, onError, durableChat = true) => {
         const identity = captureChatIdentity()
         const state = get()
         // Close existing connection for this session if any
@@ -1984,7 +1985,7 @@ export const useChatStore = create<ChatState>()(
           onOpen: () => {
             logger.debug('ChatStore', `SSE connected for session ${sessionId}`)
           },
-        })
+        }, durableChat)
         set((s) => ({
           sseConnections: { ...s.sseConnections, [sessionId]: conn },
         }))

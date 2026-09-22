@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `implemented locally; verification in progress` |
+| Status | `partial implementation; verification in progress` |
 | Priority | P2 architecture |
 | Owner | unassigned — design review first |
 | Reported | 2026-09-22 |
@@ -314,7 +314,8 @@ single-source chat migration.
 
 ### Implementation progress (2026-09-22)
 
-The full chat cutover is now implemented locally:
+The first chat-only journal cutover is implemented locally; the canonical
+schema and retention requirements below are not yet complete:
 
 - every query session is classified as `interactive_chat`, `execution`, or
   `ephemeral` from typed request metadata rather than ID-prefix-only guesses;
@@ -358,6 +359,30 @@ review, raw execution/tool inspection, and cost analysis. It no longer repairs,
 overwrites, or races the rendered chat. The original mixed journal remains on
 disk under its old filename for rollback/inspection and is not opened by the
 new server.
+
+### Correctness follow-up (2026-09-23)
+
+- Read-only execution tabs now use their JSON diagnostics reader for restore
+  and pagination, and raw SSE/polling for live activity. Interactive chats
+  alone request `durable_chat=1`.
+- Durable SSE backfill reads every forward page before live delivery. Live-only
+  frames remain visible while running but carry no durable cursor; reconnect
+  replays only SQLite rows. Forward polling from sequence zero starts at the
+  first row rather than the newest page.
+- `live_input_confirmed` receipts are retained with interactive chat so a
+  delivery confirmation can survive refresh.
+- Fresh legacy imports anchor bounded UI tool/approval traces between matching
+  provider-history messages instead of appending every trace event after the
+  final answer. Historical files without a matching carrier have no exact
+  ordering evidence; the original JSON remains available for inspection.
+- The migration marker is one-time. An already-imported v2 database is **not**
+  silently rewritten by this importer change. Repair of any such database
+  needs an explicit, separately verified migration before deployment.
+
+Still open before PLAT-352 is complete: the versioned canonical event envelope
+and type names, a total-size/retention policy with referenced-artifact cleanup,
+and replacing content-based optimistic-message identity transfer with a stable
+client/server message ID contract. Do not describe the full design as shipped.
 
 ## Caveats
 

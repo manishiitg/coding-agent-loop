@@ -25,6 +25,7 @@ var durableChatEventTypes = map[string]bool{
 	"conversation_end":            true,
 	"conversation_error":          true,
 	"conversation_resumed":        true,
+	"live_input_confirmed":        true,
 	"orchestrator_end":            true,
 	"plan_approval":               true,
 	"pre_validation_completed":    true,
@@ -43,15 +44,21 @@ var durableChildSummaryTypes = map[string]bool{
 	"background_agent_terminated": true,
 }
 
-func projectDurableChatEvent(event Event) (Event, bool) {
+// IsDurableChatEvent mirrors the journal projector for transport filtering.
+// AddEventChecked publishes the projected row only after SQLite accepts it.
+func IsDurableChatEvent(event Event) bool {
 	if IsTranscriptMessage(event) {
-		return compactDurableChatEvent(event), true
+		return true
 	}
 	if !durableChatEventTypes[event.Type] {
-		return Event{}, false
+		return false
 	}
 	kind := strings.ToLower(strings.TrimSpace(event.ExecutionKind))
-	if kind != "" && kind != "main" && kind != "main_agent" && kind != "chat" && !durableChildSummaryTypes[event.Type] {
+	return kind == "" || kind == "main" || kind == "main_agent" || kind == "chat" || durableChildSummaryTypes[event.Type]
+}
+
+func projectDurableChatEvent(event Event) (Event, bool) {
+	if !IsDurableChatEvent(event) {
 		return Event{}, false
 	}
 	return compactDurableChatEvent(event), true

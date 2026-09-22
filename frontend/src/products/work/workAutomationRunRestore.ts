@@ -131,11 +131,13 @@ export async function openWorkAutomationRunChat(
     agentProfileConversationId: undefined,
     agentProfileRuntimeDirty: false,
     isViewOnly: true,
+    isExecutionRun: true,
     isBotRun: Boolean(session.bot_platform),
     botPlatform: session.bot_platform,
     readOnlyRestoredAt: Date.now(),
     userInteractiveContinuation: false,
   }, session.session_id)
+  if (existing) chatStore.setTabMetadata(runTabId, { isExecutionRun: true })
   chatStore.setTabCanSteer(runTabId, false)
   const runtime = await hydrateExecutionConversation(session.session_id, session.workspace_path || project.workspacePath)
   chatStore.setTabStreaming(runTabId, runtime.status === 'running')

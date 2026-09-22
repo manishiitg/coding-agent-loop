@@ -632,6 +632,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       phaseName: undefined,
       ...(effectivePresetQueryId ? { presetQueryId: effectivePresetQueryId } : {}),
       isViewOnly: true,
+      isExecutionRun: true,
       isScheduledRun: true,
       scheduledJobName: job.name,
     }

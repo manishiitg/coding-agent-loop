@@ -11,6 +11,8 @@ import {
 } from '../components/PreviousChatHistoryPanel'
 import { chatHistorySessionTitle } from '../utils/chatHistoryTitle'
 import { hydrateTabEvents } from '../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
+import { isScheduledChatHistorySession } from '../utils/chatHistoryOpenDisposition'
 import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
 
 /**
@@ -29,6 +31,8 @@ import { startRestoredTransportTerminal } from '../utils/restoredTerminal'
  */
 export function useResumePreviousChat() {
   return useCallback(async (session: ChatHistorySession) => {
+    const isExecutionHistory = Boolean(session.bot_platform) ||
+      isScheduledChatHistorySession(session) || session.session_id.includes(':trigger:')
     const chatStore = useChatStore.getState()
     let targetTabId = chatStore.activeTabId || undefined
     let targetTab = targetTabId ? chatStore.chatTabs[targetTabId] : undefined
@@ -71,18 +75,19 @@ export function useResumePreviousChat() {
         agentProfileConversationId: undefined,
         agentProfileRuntimeDirty: false,
         isViewOnly: true,
+        isExecutionRun: isExecutionHistory,
         isBotRun: Boolean(session.bot_platform),
         botPlatform: session.bot_platform,
         readOnlyRestoredAt: Date.now(),
         userInteractiveContinuation: false,
       }, session.session_id)
+      if (existing) chatStore.setTabMetadata(historyTabId, { isExecutionRun: isExecutionHistory })
       chatStore.setTabCanSteer(historyTabId, false)
       try {
-        const runtime = await hydrateTabEvents(session.session_id, {
-          workspacePath: session.workspace_path || targetTab.metadata.agentProfileWorkspace,
-          fallbackToChatHistory: true,
-          preferChatHistory: true,
-        })
+        const workspacePath = session.workspace_path || targetTab.metadata.agentProfileWorkspace
+        const runtime = isExecutionHistory
+          ? await hydrateExecutionConversation(session.session_id, workspacePath)
+          : await hydrateTabEvents(session.session_id, { workspacePath })
         chatStore.setTabStreaming(historyTabId, runtime.status === 'running')
         chatStore.setTabCompleted(historyTabId, runtime.status !== 'running')
         chatStore.setTabViewMode(historyTabId, 'formatted')
@@ -103,14 +108,18 @@ export function useResumePreviousChat() {
         ...targetTab.metadata,
         agentProfileBuilder: false,
         isViewOnly: true,
+        isExecutionRun: isExecutionHistory,
         isBotRun: Boolean(session.bot_platform),
         botPlatform: session.bot_platform,
         readOnlyRestoredAt: Date.now(),
         userInteractiveContinuation: false,
       }, session.session_id)
+      if (existing) chatStore.setTabMetadata(readOnlyTabId, { isExecutionRun: isExecutionHistory })
       chatStore.setTabCanSteer(readOnlyTabId, false)
       try {
-        const runtime = await hydrateTabEvents(session.session_id, { workspacePath: session.workspace_path, fallbackToChatHistory: true, preferChatHistory: true })
+        const runtime = isExecutionHistory
+          ? await hydrateExecutionConversation(session.session_id, session.workspace_path)
+          : await hydrateTabEvents(session.session_id, { workspacePath: session.workspace_path })
         chatStore.setTabStreaming(readOnlyTabId, runtime.status === 'running')
         chatStore.setTabCompleted(readOnlyTabId, runtime.status !== 'running')
         chatStore.switchTab(readOnlyTabId)

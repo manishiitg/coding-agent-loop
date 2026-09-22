@@ -3,7 +3,9 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -224,5 +226,90 @@ func TestSSEStreamDeliversNewEventsAfterResyncSignal(t *testing.T) {
 	body := w.Body.String()
 	if !strings.Contains(body, "evt-post-restart-1") {
 		t.Fatalf("a genuinely new event published after the resync signal must reach the client, not be silently dropped as already-seen:\n%s", body)
+	}
+}
+
+func TestDurableSSEBackfillStreamsEveryPageWithoutSkipping(t *testing.T) {
+	journal, err := events.OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := events.NewEventStore(2)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+	const sessionID = "paged-chat"
+	if err := store.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= events.MaxPollingLimit+5; i++ {
+		if _, _, err := journal.Append(sessionID, events.Event{
+			ID: fmt.Sprintf("message-%d", i), Type: "user_message", Timestamp: time.Now(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	api := &StreamingAPI{
+		eventStore: store, runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "completed", CreatedAt: time.Now()},
+		},
+	}
+	req := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events/stream?durable_chat=1&since=0", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	ctx, cancel := context.WithTimeout(req.Context(), 100*time.Millisecond)
+	defer cancel()
+	w := httptest.NewRecorder()
+	api.handleSSEStream(w, req.WithContext(ctx))
+	body := w.Body.String()
+	if !strings.Contains(body, `"id":"message-1"`) || !strings.Contains(body, `"id":"message-1005"`) {
+		t.Fatalf("durable backfill skipped the first or last page: first=%t last=%t", strings.Contains(body, `"id":"message-1"`), strings.Contains(body, `"id":"message-1005"`))
+	}
+	if !strings.Contains(body, "id: 1000\n") || !strings.Contains(body, "id: 1005\n") {
+		t.Fatal("durable backfill did not advance one page at a time")
+	}
+}
+
+func TestDurableSSELiveOnlyUpdatesDoNotAdvanceJournalCursor(t *testing.T) {
+	journal, err := events.OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := events.NewEventStore(10)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+	const sessionID = "live-chat"
+	if err := store.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{
+		eventStore: store, runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: time.Now()},
+		},
+	}
+	req := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events/stream?durable_chat=1&since=0", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	ctx, cancel := context.WithCancel(req.Context())
+	w := httptest.NewRecorder()
+	done := make(chan struct{})
+	go func() {
+		api.handleSSEStream(w, req.WithContext(ctx))
+		close(done)
+	}()
+	time.Sleep(50 * time.Millisecond)
+	store.AddEvent(sessionID, events.Event{
+		ID: "live-chunk", Type: "streaming_chunk", Timestamp: time.Now(),
+		Data: pkgevents.NewAgentEvent(&pkgevents.StreamingChunkEvent{Content: "working", Source: "llm"}),
+	})
+	store.AddEvent(sessionID, events.Event{ID: "durable-message", Type: "user_message", Timestamp: time.Now()})
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+	<-done
+	body := w.Body.String()
+	if !strings.Contains(body, `"id":"live-chunk"`) || !strings.Contains(body, `"id":"durable-message"`) {
+		t.Fatalf("stream omitted live or durable event: %s", body)
+	}
+	if strings.Count(body, "id: ") != 1 || !strings.Contains(body, "id: 2\n") {
+		t.Fatalf("live-only chunk advanced the journal cursor: %s", body)
 	}
 }

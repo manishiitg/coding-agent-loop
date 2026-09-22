@@ -16,7 +16,7 @@ import (
 
 func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	const projectPath = "Chats/Work/projects/demo"
-	manifest := `{"schema_version":1,"product":"work","id":"demo","title":"Demo","updated_at":"old","capabilities":{"selected_servers":[]}}`
+	manifest := `{"schema_version":1,"product":"work","id":"demo","title":"Demo","description":"Ship the demo Crew.","updated_at":"old","capabilities":{"selected_servers":[]}}`
 	var mu sync.Mutex
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/api/documents/"+projectPath+"/product.json" {
@@ -103,7 +103,7 @@ func TestWorkIdentityToolPersistsAndPromptVariablesReloadIt(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load Crew prompt variables: %v", err)
 	}
-	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Icon: 🛠️") || !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
+	if got := variables["WORK_IDENTITY"]; !strings.Contains(got, "Purpose: Ship the demo Crew.") || !strings.Contains(got, "Icon: 🛠️") || !strings.Contains(got, "Name: Nova") || !strings.Contains(got, "Role: Engineering partner") {
 		t.Fatalf("prompt identity was not reloaded: %q", got)
 	}
 

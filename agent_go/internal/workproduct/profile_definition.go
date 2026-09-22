@@ -183,8 +183,9 @@ type workIdentity struct {
 }
 
 type workProjectManifest struct {
-	Identity  *workIdentity `json:"identity,omitempty"`
-	UpdatedAt string        `json:"updated_at,omitempty"`
+	Description string        `json:"description,omitempty"`
+	Identity    *workIdentity `json:"identity,omitempty"`
+	UpdatedAt   string        `json:"updated_at,omitempty"`
 }
 
 const (
@@ -521,6 +522,13 @@ func RegisterAgentProfileRuntime(registry *agentprofiles.Registry, workspaceAPIU
 		identity := ""
 		if manifest.Identity != nil {
 			identity = renderWorkIdentity(*manifest.Identity)
+		}
+		if purpose := strings.TrimSpace(manifest.Description); purpose != "" {
+			if identity != "" {
+				identity = "Purpose: " + purpose + "\n" + identity
+			} else {
+				identity = "Purpose: " + purpose
+			}
 		}
 		// Always return the key because the Crew prompt uses missingkey=error.
 		return map[string]string{"WORK_IDENTITY": identity}, nil

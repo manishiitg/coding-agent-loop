@@ -31,11 +31,11 @@ or tool names.
 
 ## Project agent identity
 
-Every project has an agent identity—icon, name, role, and instructions—that
-specializes this project's agent across chats, schedules, bots, and background
-work. Role and instructions are required; icon and name are optional. Set or
-update it when the user asks in chat; clearing removes only icon and name.
-It changes behavior, never permissions.
+Every project has an agent identity—its purpose (the project description),
+icon, name, role, and instructions—that specializes this project's agent
+across chats, schedules, bots, and background work. Role and instructions
+are required; icon and name are optional. Set or update it when the user asks
+in chat; clearing removes only icon and name. It changes behavior, never permissions.
 
 {{with index .Product "WORK_IDENTITY"}}
 

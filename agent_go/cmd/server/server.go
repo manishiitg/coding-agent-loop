@@ -3425,7 +3425,7 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 		var inFlight int64
 		if traceRequest {
 			inFlight = atomic.AddInt64(&apiRequestsInFlight, 1)
-			logfWithContext(api.httpRequestLogContext(r), "[API] --> %s %s in_flight=%d", r.Method, requestLogPath(r), inFlight)
+			logfWithContext(api.httpRequestLogContext(r), "[API] --> %s %s request_id=%q in_flight=%d", r.Method, requestLogPath(r), requestLogID(r), inFlight)
 		}
 
 		defer func() {
@@ -3435,9 +3435,10 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 			}
 			if traceRequest {
 				remaining := atomic.AddInt64(&apiRequestsInFlight, -1)
-				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s status=%d bytes=%d duration=%s in_flight=%d",
+				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s request_id=%q status=%d bytes=%d duration=%s in_flight=%d",
 					r.Method,
 					requestLogPath(r),
+					requestLogID(r),
 					status,
 					recorder.bytes,
 					time.Since(start).Round(time.Millisecond),
@@ -3446,9 +3447,10 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 			} else if status >= http.StatusBadRequest {
 				// Background reads are quiet when they succeed, but failures remain
 				// actionable in the normal server log.
-				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s status=%d bytes=%d duration=%s",
+				logfWithContext(api.httpRequestLogContext(r), "[API] <-- %s %s request_id=%q status=%d bytes=%d duration=%s",
 					r.Method,
 					requestLogPath(r),
+					requestLogID(r),
 					status,
 					recorder.bytes,
 					time.Since(start).Round(time.Millisecond),
@@ -3483,6 +3485,16 @@ func apiRequestLogIncludeGET() bool {
 func shouldLogAPIRequests() bool {
 	value := strings.ToLower(strings.TrimSpace(os.Getenv("API_REQUEST_LOG")))
 	return value != "false" && value != "0" && value != "off"
+}
+
+func requestLogID(r *http.Request) string {
+	if r == nil {
+		return "-"
+	}
+	if requestID := strings.TrimSpace(r.Header.Get("X-Request-ID")); requestID != "" {
+		return requestID
+	}
+	return "-"
 }
 
 func requestLogPath(r *http.Request) string {

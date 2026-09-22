@@ -1370,6 +1370,20 @@ func (es *EventStore) GetSessionStatus(sessionID string) (int, bool) {
 	return len(events), true
 }
 
+// GetLatestEventIndex returns the absolute cursor for the newest retained
+// event without serializing the retained event payloads.
+func (es *EventStore) GetLatestEventIndex(sessionID string) (int, bool) {
+	es.hydrateSession(sessionID)
+	es.mu.RLock()
+	defer es.mu.RUnlock()
+
+	sessionEvents, exists := es.events[sessionID]
+	if !exists {
+		return -1, false
+	}
+	return es.sessionStartIndices[sessionID] + len(sessionEvents) - 1, true
+}
+
 // RemoveSession removes a session and its events
 func (es *EventStore) RemoveSession(sessionID string) {
 	es.mu.Lock()

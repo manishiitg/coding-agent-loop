@@ -614,12 +614,9 @@ export async function hydrateTabEvents(
   const identity = captureChatIdentity()
   const chatStore = useChatStore.getState()
 
-  // These two reads never depend on each other's result -- the durable-history
-  // fetch is preferred "regardless" of what the live event store returns (see
-  // below), and the live-store fetch's only use of the history result is in
-  // the NotFound catch branch. Firing them together instead of one-after-
-  // another halves this function's network latency on every call.
-  const eventsPromise = agentApi.getRecentSessionEvents(sessionId).then(
+  // Fetch durable history and the small event-store cursor in parallel. The
+  // cursor keeps SSE incremental without downloading the retained raw events.
+  const eventsPromise = agentApi.getSessionEventCursor(sessionId).then(
       (value) => ({ ok: true as const, value }),
       (error: unknown) => ({ ok: false as const, error }),
     )
@@ -645,7 +642,7 @@ export async function hydrateTabEvents(
   // session, regardless of its owning product. Runtime status remains
   // authoritative so a currently running turn still renders as streaming.
   if (conversation) {
-    const restored = hydrateTabEventsFromConversation(sessionId, conversation, response.events)
+    const restored = hydrateTabEventsFromConversation(sessionId, conversation)
     if (response.last_processed_index !== undefined) {
       chatStore.setTabLastEventIndex(sessionId, response.last_processed_index)
     }
@@ -657,18 +654,23 @@ export async function hydrateTabEvents(
     }
   }
 
-  if (response.events.length > 0) {
+  // Legacy sessions without durable history still need their raw retained
+  // events. Normal Crew/workflow refreshes never enter this fallback.
+  const recentResponse = await agentApi.getRecentSessionEvents(sessionId)
+  assertChatIdentityCurrent(identity)
+
+  if (recentResponse.events.length > 0) {
     // A missing durable-history response must not replace an already restored
     // transcript with the server's bounded live tail.
-    if (chatStore.getTabEvents(sessionId).length > 0) appendRestoredLiveTail(sessionId, response.events)
-    else chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(response.events))
+    if (chatStore.getTabEvents(sessionId).length > 0) appendRestoredLiveTail(sessionId, recentResponse.events)
+    else chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(recentResponse.events))
     // This is a live event window, not a paged durable conversation. A cursor
     // left over from an earlier resume must not offer unrelated history here.
     chatStore.setTabHistoryPagination(sessionId, null)
-    const lastIndex = response.last_processed_index ?? (response.events.length - 1)
+    const lastIndex = recentResponse.last_processed_index ?? (recentResponse.events.length - 1)
     chatStore.setTabLastEventIndex(sessionId, lastIndex)
-    if (response.has_more !== undefined) {
-      chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
+    if (recentResponse.has_more !== undefined) {
+      chatStore.setTabHasMoreOlderEvents(sessionId, recentResponse.has_more)
     }
   } else if (options.fallbackToChatHistory) {
     // A restored terminal can recreate an in-memory session shell whose status
@@ -681,17 +683,17 @@ export async function hydrateTabEvents(
     if (fallbackConversation) {
       const restored = hydrateTabEventsFromConversation(sessionId, fallbackConversation)
       return {
-        status: response.session_status || restored.status,
-        hasRunningBackgroundAgents: response.has_running_background_agents,
-        isSyntheticTurn: response.is_synthetic_turn,
-        canSteer: response.can_steer,
+        status: recentResponse.session_status || restored.status,
+        hasRunningBackgroundAgents: recentResponse.has_running_background_agents,
+        isSyntheticTurn: recentResponse.is_synthetic_turn,
+        canSteer: recentResponse.can_steer,
       }
     }
   }
   return {
-    status: response.session_status,
-    hasRunningBackgroundAgents: response.has_running_background_agents,
-    isSyntheticTurn: response.is_synthetic_turn,
-    canSteer: response.can_steer,
+    status: recentResponse.session_status,
+    hasRunningBackgroundAgents: recentResponse.has_running_background_agents,
+    isSyntheticTurn: recentResponse.is_synthetic_turn,
+    canSteer: recentResponse.can_steer,
   }
 }

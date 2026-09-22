@@ -189,6 +189,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	sinceStr := r.URL.Query().Get("since")
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
+	cursorOnly := r.URL.Query().Get("cursor_only") == "1"
 
 	// Build options for GetEvents
 	opts := events.GetEventsOptions{
@@ -198,7 +199,11 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	}
 
 	// Determine mode: forward polling (since) or backward pagination (limit/offset)
-	if sinceStr != "" {
+	if cursorOnly {
+		// Cursor-only restores pair runtime state with durable chat history. They
+		// must not serialize the retained raw event window merely to discover the
+		// SSE resume position.
+	} else if sinceStr != "" {
 		// Forward polling mode
 		sinceIndex, err := strconv.Atoi(sinceStr)
 		if err != nil {
@@ -233,16 +238,23 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	// Get events for session with options
-	getEventsResult := api.eventStore.GetEvents(sessionID, opts)
-	sessionEvents := getEventsResult.Events
-	if r.URL.Query().Get("working_set") == "session" {
-		sessionEvents = events.FilterSessionWorkingSet(sessionID, sessionEvents)
+	var sessionEvents []events.Event
+	var exists bool
+	var lastProcessedIndex int
+	var hasMoreFromStore bool
+	if cursorOnly {
+		lastProcessedIndex, exists = api.eventStore.GetLatestEventIndex(sessionID)
+		sessionEvents = []events.Event{}
+	} else {
+		getEventsResult := api.eventStore.GetEvents(sessionID, opts)
+		sessionEvents = getEventsResult.Events
+		if r.URL.Query().Get("working_set") == "session" {
+			sessionEvents = events.FilterSessionWorkingSet(sessionID, sessionEvents)
+		}
+		exists = getEventsResult.Exists
+		lastProcessedIndex = getEventsResult.LastProcessedIndex
+		hasMoreFromStore = getEventsResult.HasMore
 	}
-	exists := getEventsResult.Exists
-
-	lastProcessedIndex := getEventsResult.LastProcessedIndex
-	hasMoreFromStore := getEventsResult.HasMore
 
 	// Get current user ID for session isolation
 	currentUserID := GetUserIDFromContext(r.Context())

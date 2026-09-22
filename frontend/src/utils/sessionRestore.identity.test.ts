@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   setTabHasMoreOlderEvents: vi.fn(),
   setTabHistoryPagination: vi.fn(),
   getTabEvents: vi.fn(),
+  getSessionEventCursor: vi.fn(),
   getRecentSessionEvents: vi.fn(),
   getChatHistoryConversation: vi.fn(),
   getChatHistoryResumeConversation: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('../stores/useModeStore', () => ({
 
 vi.mock('../services/api', () => ({
   agentApi: {
+    getSessionEventCursor: mocks.getSessionEventCursor,
     getRecentSessionEvents: mocks.getRecentSessionEvents,
     getChatHistoryConversation: mocks.getChatHistoryConversation,
     getChatHistoryResumeConversation: mocks.getChatHistoryResumeConversation,
@@ -43,13 +45,17 @@ import { hydrateTabEvents } from './sessionRestore'
 import { invalidateChatIdentity } from './chatIdentity'
 
 describe('durable hydration isolation', () => {
-  beforeEach(() => { vi.resetAllMocks(); invalidateChatIdentity() })
+  beforeEach(() => {
+    vi.resetAllMocks()
+    invalidateChatIdentity()
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: 42 })
+  })
   it('does not erase a newer durable answer when an older hydration resolves last', async () => {
     vi.resetAllMocks()
     let stored: any[] = []
     mocks.getTabEvents.mockImplementation(() => stored)
     mocks.setTabEvents.mockImplementation((_id, events) => { stored = events })
-    mocks.getRecentSessionEvents.mockResolvedValue({events: [], session_status: 'completed', last_processed_index: -1})
+    mocks.getSessionEventCursor.mockResolvedValue({events: [], session_status: 'completed', last_processed_index: -1})
     let resolveOld!: (value: any) => void
     mocks.getChatHistoryResumeConversation.mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve }))
     mocks.getChatHistoryResumeConversation.mockResolvedValueOnce({session_id: 'audit', conversation_history: [
@@ -67,7 +73,7 @@ describe('durable hydration isolation', () => {
     let stored: any[] = []
     mocks.getTabEvents.mockImplementation(() => stored)
     mocks.setTabEvents.mockImplementation((_id, events) => { stored = events })
-    mocks.getRecentSessionEvents.mockResolvedValue({ events: [], session_status: 'completed' })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed' })
     const user = { Role: 'human', Parts: [{ Text: 'Remember ORCHID' }] }
     mocks.getChatHistoryResumeConversation.mockResolvedValueOnce({session_id: 'lag', conversation_history: [user,
       { Role: 'ai', Parts: [{ Text: 'ORCHID remembered' }] },
@@ -80,7 +86,7 @@ describe('durable hydration isolation', () => {
 
   it('rejects the old account response without writing events or cursors', async () => {
     mocks.getTabEvents.mockReturnValue([])
-    mocks.getRecentSessionEvents.mockResolvedValue({ events: [], session_status: 'completed' })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed' })
     let resolve!: (value: any) => void
     mocks.getChatHistoryResumeConversation.mockImplementation(() => new Promise(done => { resolve = done }))
     const pending = hydrateTabEvents('shared-session-id')
@@ -95,7 +101,7 @@ describe('durable hydration isolation', () => {
     let stored: any[] = []
     mocks.getTabEvents.mockImplementation(() => stored)
     mocks.setTabEvents.mockImplementation((_id, events) => { stored = events })
-    mocks.getRecentSessionEvents.mockResolvedValue({ events: [], session_status: 'completed' })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed' })
     mocks.getChatHistoryResumeConversation.mockResolvedValueOnce({ session_id: 'revised', revision: 9, conversation_history: [
       { Role: 'human', Parts: [{ Text: 'Latest turn' }] }, { Role: 'ai', Parts: [{ Text: 'Latest durable answer' }] },
     ] })

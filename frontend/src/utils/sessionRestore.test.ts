@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
   setTabHasMoreOlderEvents: vi.fn(),
   setTabHistoryPagination: vi.fn(),
   getTabEvents: vi.fn(),
+  getSessionEventCursor: vi.fn(),
   getRecentSessionEvents: vi.fn(),
   getChatHistoryConversation: vi.fn(),
   getChatHistoryResumeConversation: vi.fn(),
@@ -37,6 +38,7 @@ vi.mock('../stores/useModeStore', () => ({
 
 vi.mock('../services/api', () => ({
   agentApi: {
+    getSessionEventCursor: mocks.getSessionEventCursor,
     getRecentSessionEvents: mocks.getRecentSessionEvents,
     getChatHistoryConversation: mocks.getChatHistoryConversation,
     getChatHistoryResumeConversation: mocks.getChatHistoryResumeConversation,
@@ -53,6 +55,9 @@ describe('hydrateTabEvents restored chat fallback', () => {
     vi.resetAllMocks()
     mocks.chatTabs = {}
     mocks.getTabEvents.mockReturnValue([])
+    mocks.getSessionEventCursor.mockResolvedValue({
+      events: [], session_status: 'completed', last_processed_index: 42, has_more: false,
+    })
   })
 
   it('hydrates the initial workflow chat from indexed preview messages without reading the archive', () => {
@@ -136,6 +141,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
         { Role: 'ai', Parts: [{ Text: 'Hi there' }] },
       ],
     })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: -1, has_more: false })
 
     await hydrateTabEvents('restored-session', {
       workspacePath: '/workspace/workflow',
@@ -169,7 +175,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
     expect(mocks.setTabLastEventIndex).toHaveBeenCalledWith('restored-session', -1)
     expect(mocks.setTabHasMoreOlderEvents).toHaveBeenCalledWith('restored-session', false)
     expect(mocks.setTabHistoryPagination).toHaveBeenCalledWith('restored-session', null)
-    expect(mocks.getRecentSessionEvents).toHaveBeenCalledWith('restored-session')
+    expect(mocks.getRecentSessionEvents).not.toHaveBeenCalled()
   })
 
   it('keeps the in-memory live tail when durable history is older', async () => {
@@ -189,6 +195,8 @@ describe('hydrateTabEvents restored chat fallback', () => {
       session_id: 'active-codex-session',
       conversation_history: [{ Role: 'human', Parts: [{ Text: 'Older prompt' }] }],
     })
+    mocks.getTabEvents.mockReturnValue([liveTail])
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: 7, has_more: false })
 
     await hydrateTabEvents('active-codex-session', { workspacePath: '/workspace/workflow' })
 
@@ -240,6 +248,21 @@ describe('hydrateTabEvents restored chat fallback', () => {
         },
       ],
     })
+    mocks.getTabEvents.mockReturnValue([
+      {
+        id: 'current-user',
+        type: 'user_message',
+        timestamp: '2026-09-16T08:00:00Z',
+        data: { data: { content: currentPrompt } },
+      },
+      {
+        id: 'progress-before-final',
+        type: 'conversation_thinking',
+        timestamp: '2026-09-16T08:07:00Z',
+        data: { data: { content: 'Testing the implementation' } },
+      },
+    ])
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: 84, has_more: false })
 
     await hydrateTabEvents('post-deploy-ordering-regression', { workspacePath: '/workspace/workflow' })
 
@@ -304,7 +327,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
       timestamp: '2026-09-16T18:18:58Z',
       data: { data: { final_result: finalAnswer } },
     }
-    let storedEvents: Array<Record<string, unknown>> = []
+    let storedEvents: Array<Record<string, unknown>> = [liveCompletion]
     mocks.getTabEvents.mockImplementation(() => storedEvents)
     mocks.setTabEvents.mockImplementation((_sessionId, events) => {
       storedEvents = events
@@ -316,6 +339,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
       ],
       history_source_message_count: 1,
     })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: 8, has_more: false })
     mocks.getRecentSessionEvents
       .mockResolvedValueOnce({
         events: [liveCompletion],
@@ -354,7 +378,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
       storedEvents.splice(0, storedEvents.length, ...events)
     })
     mocks.getChatHistoryResumeConversation.mockReturnValue(new Promise(resolve => { resolveHistory = resolve }))
-    mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveEvents = resolve }))
+    mocks.getSessionEventCursor.mockReturnValue(new Promise(resolve => { resolveEvents = resolve }))
 
     const hydration = hydrateTabEvents('retained-resume-race', { workspacePath: '/workspace/work' })
     resolveHistory({
@@ -404,6 +428,7 @@ describe('hydrateTabEvents restored chat fallback', () => {
         { Role: 'ai', Parts: [{ Text: answer }] },
       ],
     })
+    mocks.getSessionEventCursor.mockResolvedValue({ events: [], session_status: 'completed', last_processed_index: 8, has_more: false })
 
     await hydrateTabEvents('duplicate-response-session', { workspacePath: '/workspace/video' })
 
@@ -652,7 +677,7 @@ describe('lazy history hydration', () => {
   })
   it('reconciles recent history and live status once while keeping the older-page cursor', async () => {
     let resolveLive!: (value: unknown) => void
-    mocks.getRecentSessionEvents.mockReturnValue(new Promise(resolve => { resolveLive = resolve }))
+    mocks.getSessionEventCursor.mockReturnValue(new Promise(resolve => { resolveLive = resolve }))
     mocks.getChatHistoryResumeConversation.mockResolvedValue({
       session_id: 'paged',
       conversation_history: [
@@ -676,6 +701,9 @@ describe('lazy history hydration', () => {
 describe('accepted live-input reconciliation', () => {
   beforeEach(() => {
     vi.resetAllMocks()
+    mocks.getSessionEventCursor.mockResolvedValue({
+      events: [], session_status: 'completed', last_processed_index: 42, has_more: false,
+    })
   })
 
   it('keeps an acknowledged user receipt when completion history is stale', async () => {
@@ -690,14 +718,15 @@ describe('accepted live-input reconciliation', () => {
         message_id: 'steer-server-pr79',
       } } },
     }
-    mocks.getTabEvents.mockReturnValue([receipt])
+    const reply = {
+      id: 'reply-pr79',
+      type: 'unified_completion',
+      timestamp: '2026-09-18T04:23:24Z',
+      data: { data: { final_result: 'PR #79 is in course_designer.' } },
+    }
+    mocks.getTabEvents.mockReturnValue([receipt, reply])
     mocks.getRecentSessionEvents.mockResolvedValue({
-      events: [{
-        id: 'reply-pr79',
-        type: 'unified_completion',
-        timestamp: '2026-09-18T04:23:24Z',
-        data: { data: { final_result: 'PR #79 is in course_designer.' } },
-      }],
+      events: [reply],
       session_status: 'completed',
       last_processed_index: 99,
       has_more: false,
@@ -711,6 +740,7 @@ describe('accepted live-input reconciliation', () => {
         // the server message ID is still behind. Text equality alone must not
         // revoke the accepted browser receipt.
         { Role: 'human', Parts: [{ Text: prompt }] },
+        { Role: 'ai', Parts: [{ Text: 'PR #79 is in course_designer.' }] },
       ],
       // The history response completed before this accepted message reached
       // the durable trace.
@@ -722,7 +752,12 @@ describe('accepted live-input reconciliation', () => {
     const [, events] = mocks.setTabEvents.mock.calls.at(-1) as [string, Array<{ id?: string; type: string }>]
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ id: receipt.id, type: 'user_message' }),
-      expect.objectContaining({ id: 'reply-pr79', type: 'unified_completion' }),
+      expect.objectContaining({
+        type: 'unified_completion',
+        data: expect.objectContaining({
+          data: expect.objectContaining({ final_result: 'PR #79 is in course_designer.' }),
+        }),
+      }),
     ]))
     const items = buildCleanConversationItems(events as never)
     expect(items.filter(item => item.role === 'user' && item.content === prompt)).toHaveLength(1)
@@ -822,6 +857,9 @@ describe('hydrateTabEvents live-input durability receipts', () => {
     vi.resetAllMocks()
     mocks.chatTabs = {}
     mocks.getTabEvents.mockReturnValue([])
+    mocks.getSessionEventCursor.mockResolvedValue({
+      events: [], session_status: 'idle', last_processed_index: 42, has_more: false,
+    })
     mocks.getChatHistoryResumeConversation.mockRejectedValue(notFoundError())
   })
 

@@ -788,6 +788,15 @@ export const agentApi = {
     })
   },
 
+  // Refresh needs runtime state and the SSE resume position, not the retained
+  // raw event payloads. Durable chat history supplies the visible transcript.
+  getSessionEventCursor: async (sessionId: string): Promise<GetEventsResponse> => {
+    const response = await api.get(`/api/sessions/${sessionId}/events`, {
+      params: { cursor_only: 1 },
+    })
+    return response.data
+  },
+
   getTerminalEvents: async (
     terminalId: string,
     options: { limit?: number; beforeSequence?: number; afterSequence?: number } = {},

@@ -808,6 +808,23 @@ func TestUnsubscribeClosesChannel(t *testing.T) {
 	}
 }
 
+func TestGetLatestEventIndexDoesNotReadEventPayloads(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+
+	for i := 0; i < 3; i++ {
+		store.AddEvent("cursor-only", Event{ID: fmt.Sprintf("event-%d", i), Type: "user_message", Timestamp: time.Now()})
+	}
+
+	index, exists := store.GetLatestEventIndex("cursor-only")
+	if !exists || index != 2 {
+		t.Fatalf("GetLatestEventIndex = (%d, %t), want (2, true)", index, exists)
+	}
+	if index, exists := store.GetLatestEventIndex("missing"); exists || index != -1 {
+		t.Fatalf("missing GetLatestEventIndex = (%d, %t), want (-1, false)", index, exists)
+	}
+}
+
 func TestShouldShowEventFiltersCorrectly(t *testing.T) {
 	tests := []struct {
 		eventType string

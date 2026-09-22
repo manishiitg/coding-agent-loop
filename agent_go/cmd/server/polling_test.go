@@ -2,12 +2,55 @@ package server
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/gorilla/mux"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/terminals"
 )
+
+func TestGetSessionEventsCursorOnlyOmitsRawEvents(t *testing.T) {
+	store := events.NewEventStore(100)
+	defer store.Stop()
+	const sessionID = "cursor-only-session"
+	for i := 0; i < 3; i++ {
+		store.AddEvent(sessionID, events.Event{
+			ID:        fmt.Sprintf("event-%d", i),
+			Type:      "user_message",
+			Timestamp: time.Now(),
+			SessionID: sessionID,
+		})
+	}
+	api := &StreamingAPI{
+		eventStore:         store,
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "completed", CreatedAt: time.Now()},
+		},
+	}
+
+	req := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events?cursor_only=1", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	w := httptest.NewRecorder()
+	api.handleGetSessionEvents(w, req)
+
+	if w.Code != 200 {
+		t.Fatalf("cursor-only status = %d, body=%s", w.Code, w.Body.String())
+	}
+	var response GetEventsResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode cursor-only response: %v", err)
+	}
+	if len(response.Events) != 0 {
+		t.Fatalf("cursor-only response serialized %d raw events", len(response.Events))
+	}
+	if response.LastProcessedIndex != 2 {
+		t.Fatalf("last_processed_index = %d, want 2", response.LastProcessedIndex)
+	}
+}
 
 func TestActiveSessionsIncludesTrackedWorkflowWithoutChatRow(t *testing.T) {
 	const sessionID = "workflow-after-restart"

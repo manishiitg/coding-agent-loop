@@ -5,6 +5,7 @@ import type { GmailConnection, GoogleServiceGrant } from '../../../services/api-
 import { Button } from '../../ui/Button'
 import { Card } from '../../ui/Card'
 import { Checkbox } from '../../ui/checkbox'
+import { FormSection } from '../../ui/FormSection'
 import { Input } from '../../ui/Input'
 import { Label } from '../../ui/label'
 import { Textarea } from '../../ui/Textarea'
@@ -336,27 +337,27 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
         <div className="flex items-center justify-center py-12"><Loader2 className="w-8 h-8 animate-spin text-primary" /></div>
       ) : (
         <>
-          <section className="overflow-hidden rounded-md border border-border bg-background">
-            <div className="px-3 py-2.5">
-              <div className="flex items-center gap-2">
+          <FormSection
+            title={
+              <span className="flex items-center gap-2">
                 <Mail className="h-4 w-4 shrink-0 text-muted-foreground" />
-                <span className="text-sm font-medium text-foreground">Gmail</span>
+                <span>Gmail</span>
                 <span className={`inline-flex items-center gap-1 text-[11px] font-medium ${gmailConfig.enabled ? 'text-emerald-600 dark:text-emerald-400' : 'text-muted-foreground'}`}>
                   <span className={`h-1.5 w-1.5 rounded-full ${gmailConfig.enabled ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
                   {gmailConfig.enabled ? 'On' : 'Off'}
                 </span>
-                <span className="flex-1" />
-                <AskAIButton
-                  workspacePath={workspacePath}
-                  onAsk={onAsk}
-                  label={scopeNoun === 'project' ? 'Ask Crew to set up Gmail' : 'Ask Builder to set up Gmail'}
-                  message="Help me set up Gmail notifications: connect a sending account (Google Cloud OAuth client upload and Google sign-in), choose default recipients, and send a test email. Guide me through the settings UI without requesting secrets in chat."
-                />
-              </div>
-            </div>
-            <div className="space-y-2 px-3 pb-3">
-              <h3 className="text-xs font-medium text-muted-foreground">Sending accounts</h3>
-              <p className="text-xs leading-5 text-muted-foreground">Which mailbox notifications are sent from. Upload the Google Cloud client file for a mailbox and it signs in immediately — a second upload for the same mailbox never replaces an existing client by accident. A workflow may pick a specific account; otherwise the default is used.</p>
+              </span>
+            }
+            description="Sending accounts used for notifications. Uploading the Google Cloud client file signs in that mailbox; a workflow may select an account, otherwise the default is used."
+            actions={
+              <AskAIButton
+                workspacePath={workspacePath}
+                onAsk={onAsk}
+                label={scopeNoun === 'project' ? 'Ask Crew to set up Gmail' : 'Ask Builder to set up Gmail'}
+                message="Help me set up Gmail notifications: connect a sending account (Google Cloud OAuth client upload and Google sign-in), choose default recipients, and send a test email. Guide me through the settings UI without requesting secrets in chat."
+              />
+            }
+          >
               {!(gmailConfig.auth.authenticated && gmailConfig.auth.has_gmail_scope) && gmailConnections.length === 0 && (
                 <Card className="border-amber-300 bg-amber-50 p-4 text-xs text-amber-900 dark:border-amber-700 dark:bg-amber-900/20 dark:text-amber-100">
                   <div className="flex gap-2"><AlertTriangle className="h-4 w-4 flex-shrink-0" /><div><strong>No account connected yet.</strong> Add a sending account below and sign in with Google. <code>{gmailBackendLabel(gmailConfig.auth.backend).install}</code> must be installed on the server host.</div></div>
@@ -711,11 +712,11 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
                     </Button>
                   </div>
                 )}
-            </div>
-          </section>
-          <section className="space-y-2">
-            <h3 className="text-xs font-medium text-muted-foreground">Delivery settings</h3>
-            <p className="text-xs leading-5 text-muted-foreground">Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and product chat. Turn this off to stop all outbound email. Email replies do not resume an agent.</p>
+          </FormSection>
+          <FormSection
+            title="Delivery settings"
+            description={<>Account-wide one-way email delivery, shared by <code>notify_user</code> across every workflow and product chat. Turn this off to stop all outbound email. Email replies do not resume an agent.</>}
+          >
             {gmailError && <StatusBanner tone="error">{gmailError}</StatusBanner>}
             {gmailSuccess && <StatusBanner tone="success">{gmailSuccess}</StatusBanner>}
             <Card className="p-4">
@@ -748,7 +749,7 @@ export function GmailNotifications({ bots, workspacePath, scopeNoun = 'workflow'
               <div className="flex justify-end">
                 <Button onClick={saveGmail} disabled={readOnly || !gmailHasChanges || gmailSaving || gmailLoading || gmailDefaultIsBlocked || (gmailConfig.enabled && !gmailCanEnable)} title={readOnly ? READ_ONLY_TITLE : undefined}>{gmailSaving ? <><Loader2 className="mr-2 h-4 w-4 animate-spin" />Saving…</> : 'Save'}</Button>
               </div>
-            </section>
+          </FormSection>
           </>
         )}
     </div>

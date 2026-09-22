@@ -42,7 +42,9 @@ func buildWorkflowPhaseSystemPrompt(phase string, vars map[string]string, ctx pr
 		return "", included, skipped, err
 	}
 	if ctx.WorkflowUIAvailable {
-		parts.parts = append(parts.parts, "## Workflow views\n\nUse perform_ui_action to show the relevant report, plan, or other view, and perform_ui_action with action=refresh after changing its content. When using agent_browser to browse or @agentworks/playwright to run live tests for the user, call perform_ui_action(action=\"open\", view=\"browser\") so they can watch the live browser in the right-hand pane. Open it once when beginning browser work; do not repeatedly switch away from a view the user chose. Playwright test sessions are watch-only; read builder-reference/references/playwright-scripted.md for fixture setup. The Browser view streams automatically and does not need perform_ui_action with action=refresh after navigation. Only an applied receipt confirms the UI switched. Read the attached workflow-ui-control skill before choosing a view.")
+		// Keep the always-loaded reminder small; the attached workflow-ui-control
+		// skill owns the detailed view-selection and browser-watching procedure.
+		parts.parts = append(parts.parts, "## Workflow views\n\nUse perform_ui_action to open the relevant view and refresh changed content. For browser work, open the browser view once so the user can watch; it streams without refresh. Only an applied receipt confirms the switch. Follow the attached workflow-ui-control skill for the full procedure.")
 	}
 	for _, addition := range additions {
 		if strings.TrimSpace(addition) != "" {

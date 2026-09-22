@@ -125,6 +125,28 @@ func (g *productToolGate) DenyReaderTools(names ...string) {
 	}
 }
 
+// Allows reports the current policy without recording a registration attempt.
+// Prompt assembly uses this to describe only tools the agent can actually see.
+func (g *productToolGate) Allows(name string) bool {
+	if g == nil {
+		return true
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	return g.allowsLocked(strings.TrimSpace(name))
+}
+
+func (g *productToolGate) allowsLocked(name string) bool {
+	if _, denied := g.readerDenied[name]; denied {
+		return false
+	}
+	if g.allowed != nil {
+		_, ok := g.allowed[name]
+		return ok
+	}
+	return true
+}
+
 // Admit is the hook handed to the agent wrapper. It is called while the wrapper
 // holds its own lock, so it must never call back into the wrapper.
 func (g *productToolGate) Admit(name string) bool {
@@ -134,15 +156,9 @@ func (g *productToolGate) Admit(name string) bool {
 	trimmed := strings.TrimSpace(name)
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if _, denied := g.readerDenied[trimmed]; denied {
+	if !g.allowsLocked(trimmed) {
 		g.filtered = append(g.filtered, trimmed)
 		return false
-	}
-	if g.allowed != nil {
-		if _, ok := g.allowed[trimmed]; !ok {
-			g.filtered = append(g.filtered, trimmed)
-			return false
-		}
 	}
 	g.registered = append(g.registered, trimmed)
 	return true

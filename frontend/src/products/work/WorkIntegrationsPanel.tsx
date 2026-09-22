@@ -12,7 +12,6 @@ import { WorkspaceViewActions } from '../../components/workflow/WorkspaceViewAct
 import { WorkspaceViewHeader } from '../../components/workflow/WorkspaceViewHeader'
 import { useChatStore } from '../../stores/useChatStore'
 import { useMCPStore } from '../../stores/useMCPStore'
-import { useAuthStore } from '../../stores/useAuthStore'
 import { isWorkIntegrationTabEnabled } from './workViewGating'
 
 export type WorkIntegrationTab = 'apps' | 'skills' | 'slack' | 'whatsapp' | 'gmail' | 'cli'
@@ -160,11 +159,11 @@ export function WorkIntegrationsPanel({ workspacePath, projectId, projectTitle, 
   onSelectedServersChange: (servers: string[]) => Promise<unknown>
   onSelectedSkillsChange: (skills: string[]) => Promise<unknown>
 }) {
-  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
-  // The Connect tab points at this installation's hosted API origin, so it
-  // only exists on multi-user servers — never on local installs.
+  // The Connect tab points at this installation's API origin, on servers and
+  // local installs alike. Remote assistants need a public origin; local-only
+  // origins can still drive the CLI and local MCP bridges.
   const visibleTabs = INTEGRATION_TABS.filter(option =>
-    isWorkIntegrationTabEnabled(option.value, enabledPanels) && (option.value !== 'cli' || isMultiUserMode))
+    isWorkIntegrationTabEnabled(option.value, enabledPanels))
   const [tab, setTab] = usePersistentTab<WorkIntegrationTab>('agentworks.tab.crew-integrations', 'apps', INTEGRATION_TABS.map(option => option.value))
   const activeTab = visibleTabs.some(option => option.value === tab) ? tab : visibleTabs[0].value
   // Every tab loads on mount, so Refresh always remounts.

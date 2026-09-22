@@ -50,6 +50,9 @@ type promptContext struct {
 	ProfileID       string
 	HasProfile      bool
 	IsWorkflowPhase bool
+	// HasTriggerAutoNotifyTool is set only after the tool is registered for
+	// this chat. Keep its guidance paired with the actual tool surface.
+	HasTriggerAutoNotifyTool bool
 	// NativeCodingTools is true for agent_tools.mode=hybrid: the coding CLI
 	// keeps its own Bash/Read/Write. Sections that describe a bridge-only
 	// world must not apply when this is set.
@@ -136,6 +139,11 @@ var promptSections = []promptSection{
 		Name:    "product-features",
 		Applies: func(c promptContext) bool { return c.HasProfile && len(c.FeatureExtensions) > 0 },
 		Build:   func(c promptContext) string { return strings.Join(c.FeatureExtensions, "\n\n") },
+	},
+	{
+		Name:    "trigger-auto-notify",
+		Applies: func(c promptContext) bool { return c.HasTriggerAutoNotifyTool },
+		Build:   func(promptContext) string { return triggerAutoNotifyPrompt },
 	},
 	{
 		// A provider/auth inventory that also instructs the agent to call

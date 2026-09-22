@@ -101,6 +101,72 @@ func TestAccessTokenHTTPManagementAndRestrictions(t *testing.T) {
 		t.Fatal("revocation not enforced", w.Code)
 	}
 }
+func TestAccessTokenIssuingReplacesPreviousToken(t *testing.T) {
+	api := tokenTestSetup(t)
+	jwt, err := GenerateJWT(GetDefaultUserID(), "owner", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	router := mux.NewRouter()
+	router.HandleFunc("/api/auth/access-tokens", api.handleAccessTokens).Methods("GET", "POST")
+	router.HandleFunc("/api/external/v1/tools", api.handleExternalTools)
+	handler := AuthMiddleware(router)
+	request := func(method, path, body, token string) *httptest.ResponseRecorder {
+		r := httptest.NewRequest(method, path, strings.NewReader(body))
+		r.Header.Set("Authorization", "Bearer "+token)
+		w := httptest.NewRecorder()
+		handler.ServeHTTP(w, r)
+		return w
+	}
+	issue := func(name string) (string, string) {
+		t.Helper()
+		w := request("POST", "/api/auth/access-tokens", `{"name":"`+name+`","scopes":["workflows:read","files:read"],"all_workflows":true,"expires_in_days":30}`, jwt)
+		if w.Code != 201 {
+			t.Fatalf("issue %s: %d %s", name, w.Code, w.Body.String())
+		}
+		var created struct {
+			Token    string             `json:"token"`
+			Metadata accesstokens.Token `json:"access_token"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &created); err != nil {
+			t.Fatal(err)
+		}
+		return created.Token, created.Metadata.ID
+	}
+	// Empty names default server-side now that the dialog asks for none.
+	unnamed := request("POST", "/api/auth/access-tokens", `{"scopes":["workflows:read"],"all_workflows":true,"expires_in_days":7}`, jwt)
+	if unnamed.Code != 201 {
+		t.Fatalf("unnamed issue: %d %s", unnamed.Code, unnamed.Body.String())
+	}
+	first, _ := issue("First")
+	if w := request("GET", "/api/external/v1/tools", "", first); w.Code != 200 {
+		t.Fatalf("first token rejected before replacement: %d", w.Code)
+	}
+	second, _ := issue("Second")
+	if w := request("GET", "/api/external/v1/tools", "", first); w.Code != 401 || !strings.Contains(w.Body.String(), "invalid_token") {
+		t.Fatalf("replaced token still accepted: %d %s", w.Code, w.Body.String())
+	}
+	if w := request("GET", "/api/external/v1/tools", "", second); w.Code != 200 {
+		t.Fatalf("replacement token rejected: %d", w.Code)
+	}
+	list := request("GET", "/api/auth/access-tokens", "", jwt)
+	var listed struct {
+		Tokens []accesstokens.Token `json:"tokens"`
+	}
+	if err := json.Unmarshal(list.Body.Bytes(), &listed); err != nil {
+		t.Fatal(err)
+	}
+	live := 0
+	for _, token := range listed.Tokens {
+		if token.RevokedAt == nil && token.ExpiresAt.After(time.Now()) {
+			live++
+		}
+	}
+	if live != 1 {
+		t.Fatalf("%d live tokens, want exactly 1", live)
+	}
+}
+
 func TestAccessTokenIdentityFailsClosed(t *testing.T) {
 	tokenTestSetup(t)
 	t.Setenv("MULTI_USER_MODE", "true")

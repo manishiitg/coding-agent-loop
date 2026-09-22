@@ -152,6 +152,12 @@ func (s *Store) Issue(ctx context.Context, t Token, now time.Time) (Token, strin
 	t.ID = hex.EncodeToString(entropy[:8])
 	t.CreatedAt = now.UTC()
 	t.Name = strings.TrimSpace(t.Name)
+	// One token per user: issuing replaces any live token. History stays
+	// listed; only unrevoked, unexpired rows lose access. The cap below
+	// remains as a backstop for concurrent double issuance.
+	if _, err := s.db.ExecContext(ctx, `UPDATE access_tokens SET revoked_at=COALESCE(revoked_at,?) WHERE user_id=? AND revoked_at IS NULL AND expires_at>?`, now.Unix(), t.UserID, now.Unix()); err != nil {
+		return Token{}, "", err
+	}
 	scopes, _ := json.Marshal(t.Scopes)
 	ids, _ := json.Marshal(t.WorkflowIDs)
 	// Cap issuance in the same statement, including concurrent requests.

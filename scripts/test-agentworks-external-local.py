@@ -120,7 +120,6 @@ class Probe:
         self.pat_id=issued['access_token']['id']
         self.command('login','--token-stdin',input=issued['token']+'\n')
         self.token=json.loads(self.config.read_text())['token']
-        self.pat_token=issued['token']
         assert self.config.stat().st_mode&0o077==0
         self.record('App-generated PAT login and private CLI credentials')
         # Authoring scopes are not issued; runs:execute is a separate grant.
@@ -132,20 +131,27 @@ class Probe:
         assert {'get_plan','read_file','get_agent_context'}<=names
         assert not ({'update_message_sequence_step','write_file','patch_file','builder_chat'}&names)
         assert not ({'execute_step','run_full_workflow','trigger_schedule'}&names)
-        runner=http(self.server+'/api/auth/access-tokens',{'name':'Runner','scopes':['workflows:read','files:read','runs:execute'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
-        self.runner_token=runner['token']
-        run_tools=http(self.server+'/api/external/v1/tools',token=runner['token'])
-        run_names={t['name'] for t in run_tools['tools']}
-        assert {'execute_step','run_full_workflow','run_status','trigger_schedule','list_schedules'}<=run_names
-        self.record('workflow discovery; run tools listed only for the runs:execute grant',workflow_id=self.wid,tool_count=len(tools['tools']),run_tool_count=len(run_tools['tools']))
-        # The run surface answers without model calls: unknown sessions and
-        # schedules 404, live readers return empty, and a read-only token is
-        # denied execution before dispatch.
+        self.record('workflow discovery on a read-only token',workflow_id=self.wid,tool_count=len(tools['tools']))
+        # A read-only token is denied execution before dispatch.
         call=lambda name,args,token,expected:(http(self.server+'/api/external/v1/call',{'name':name,'arguments':args},token,expected=expected))
         denied=call('execute_step',{'workflow_id':self.wid,'step_id':'nope'},issued['token'],403)
         assert denied['error']['code']=='insufficient_scope'
         gagged=call('chat',{'workflow_id':self.wid,'message':'hello'},issued['token'],403)
         assert gagged['error']['code']=='insufficient_scope'
+        self.record('read-only execution denial')
+        # One token per account: issuing the runner replaces the read token,
+        # so the CLI relogins and everything after runs on the runner grant.
+        runner=http(self.server+'/api/auth/access-tokens',{'name':'Runner','scopes':['workflows:read','files:read','runs:execute'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        replaced=http(self.server+'/api/external/v1/tools',token=issued['token'],expected=401)
+        assert replaced['error']['code']=='invalid_token'
+        run_tools=http(self.server+'/api/external/v1/tools',token=runner['token'])
+        run_names={t['name'] for t in run_tools['tools']}
+        assert {'execute_step','run_full_workflow','run_status','trigger_schedule','list_schedules'}<=run_names
+        self.command('login','--token-stdin',input=runner['token']+'\n')
+        self.token=runner['token'];self.pat_id=runner['access_token']['id']
+        self.record('issuing replaces the previous token; CLI relogin on the runner grant',run_tool_count=len(run_tools['tools']))
+        # The run surface answers without model calls: unknown sessions and
+        # schedules 404 and live readers return empty.
         missing=call('run_status',{'workflow_id':self.wid,'session_id':'no-such-session'},runner['token'],404)
         assert missing['error']['code']=='session_not_found'
         unheard=call('run_reply_input',{'workflow_id':self.wid,'session_id':'no-such-session','request_id':'r','response':'yes'},runner['token'],404)
@@ -226,6 +232,10 @@ class Probe:
             result=rpc('tools/call',{'name':name,'arguments':args},token)
             if result.get('isError'):raise RuntimeError(str(result)[:2000])
             return result.get('structuredContent') or json.loads(result['content'][0]['text'])
+        # One token per account: mint the read token (replacing the CLI's
+        # runner), check it, then mint the runner back and relogin the CLI.
+        read=http(self.server+'/api/auth/access-tokens',{'name':'RemoteRead','scopes':['workflows:read','files:read'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        self.pat_token=read['token']
         rpc('initialize',{'protocolVersion':'2025-11-25','capabilities':{},'clientInfo':{'name':'agentworks-local-smoke','version':'1'}},self.pat_token)
         catalog=rpc('tools/list',{},self.pat_token)
         assert {t['name'] for t in catalog['tools']}=={'get_api_spec','call_tool'},catalog
@@ -235,23 +245,27 @@ class Probe:
         assert not any(t['name']=='execute_step' for t in spec['tools'])
         schemas=remote_call('get_api_spec',{'names':['get_plan']},self.pat_token)
         assert 'workflow_id' in json.dumps(schemas['schemas']['get_plan'])
-        run_spec=remote_call('get_api_spec',{},self.runner_token)
-        assert any(t['name']=='execute_step' for t in run_spec['tools'])
-        plan=remote_call('call_tool',{'name':'get_plan','arguments':{'workflow_id':self.wid}},self.pat_token)
-        assert plan['revision']
         denied=rpc('tools/call',{'name':'call_tool','arguments':{'name':'execute_step','arguments':{'workflow_id':self.wid}}},self.pat_token)
         assert denied.get('isError') and 'insufficient_scope' in json.dumps(denied)
+        run_again=http(self.server+'/api/auth/access-tokens',{'name':'RemoteRunner','scopes':['workflows:read','files:read','runs:execute'],'all_workflows':True,'expires_in_days':7},self.app_token,expected=201)
+        self.runner_token=run_again['token']
+        run_spec=remote_call('get_api_spec',{},self.runner_token)
+        assert any(t['name']=='execute_step' for t in run_spec['tools'])
+        self.command('login','--token-stdin',input=self.runner_token+'\n')
+        self.token=self.runner_token;self.pat_id=run_again['access_token']['id']
+        plan=remote_call('call_tool',{'name':'get_plan','arguments':{'workflow_id':self.wid}},self.runner_token)
+        assert plan['revision']
         self.record('remote MCP initialize/list/spec/call over Streamable HTTP with scope filtering')
-        rpc('tools/list',{},self.pat_token,query_token=True)
+        rpc('tools/list',{},self.runner_token,query_token=True)
         anon=urllib.request.Request(self.server+'/api/external/v1/mcp',json.dumps({'jsonrpc':'2.0','id':999,'method':'tools/list','params':{}}).encode(),headers={'Content-Type':'application/json'})
         try:
             urllib.request.urlopen(anon,timeout=10);raise RuntimeError('unauthenticated remote MCP unexpectedly allowed')
         except urllib.error.HTTPError as e:assert e.code==401
         self.record('remote MCP accepts ?token= and denies anonymous calls')
-        mdreq=urllib.request.Request(self.server+'/api/external/v1/skill.md',headers={'Authorization':'Bearer '+self.pat_token})
+        mdreq=urllib.request.Request(self.server+'/api/external/v1/skill.md',headers={'Authorization':'Bearer '+self.runner_token})
         with urllib.request.urlopen(mdreq,timeout=10) as r:markdown=r.read().decode()
         assert 'name: agentworks' in markdown and 'get_api_spec' in markdown and 'aw_pat_' not in markdown
-        zipreq=urllib.request.Request(self.server+'/api/external/v1/skill.zip',headers={'Authorization':'Bearer '+self.pat_token})
+        zipreq=urllib.request.Request(self.server+'/api/external/v1/skill.zip',headers={'Authorization':'Bearer '+self.runner_token})
         with urllib.request.urlopen(zipreq,timeout=10) as r:payload=r.read()
         archive=zipfile.ZipFile(io.BytesIO(payload))
         assert archive.namelist()==['agentworks/SKILL.md']

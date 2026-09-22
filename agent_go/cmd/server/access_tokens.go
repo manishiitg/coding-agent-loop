@@ -164,6 +164,9 @@ func (api *StreamingAPI) handleAccessTokens(w http.ResponseWriter, r *http.Reque
 			externalError(w, 400, "invalid_arguments", "Choose an expiry between 1 and 90 days.")
 			return
 		}
+		if strings.TrimSpace(req.Name) == "" {
+			req.Name = "Access token"
+		}
 		now := time.Now()
 		t := accesstokens.Token{Name: req.Name, UserID: c.UserID, Username: c.Username, Email: c.Email, Provider: c.Provider, Scopes: req.Scopes, WorkflowIDs: req.WorkflowIDs, AllWorkflows: req.AllWorkflows, ExpiresAt: now.Add(time.Duration(req.ExpiresInDays) * 24 * time.Hour)}
 		if err := accesstokens.Validate(t, now); err != nil {
@@ -190,10 +193,22 @@ func (api *StreamingAPI) handleAccessTokens(w http.ResponseWriter, r *http.Reque
 				}
 			}
 		}
+		previous, err := store.List(r.Context(), c.UserID)
+		if err != nil {
+			externalError(w, 503, "auth_unavailable", "Could not load access tokens.")
+			return
+		}
 		token, raw, err := store.Issue(r.Context(), t, now)
 		if err != nil {
 			externalError(w, 503, "token_creation_failed", "Could not create token; at most 100 active tokens are allowed.")
 			return
+		}
+		// Issuing replaces the user's live token: cancel its runs like an
+		// explicit revocation so replaced credentials stop work immediately.
+		for _, old := range previous {
+			if old.RevokedAt == nil && old.ExpiresAt.After(now) {
+				api.cancelAccessTokenSessions(old.ID)
+			}
 		}
 		w.WriteHeader(http.StatusCreated)
 		externalJSON(w, map[string]any{"token": raw, "access_token": token})

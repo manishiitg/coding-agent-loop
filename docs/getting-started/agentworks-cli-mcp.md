@@ -98,25 +98,28 @@ pipe the token into this command. The CLI verifies access before saving it.
 Username/password flags and app-session JWTs are no longer accepted by CLI
 login. The app keeps its existing password and SSO sign-in flows.
 
-Tokens carry two read permissions: `workflows:read` and `files:read`.
-Write permissions (`files:write`, `plan:write`, `builder:chat`) are not issued
-in v1. Choose all currently/future accessible workflows or specific workflow
-IDs. Every call checks both the token restrictions and the user's current
-workflow access. Tokens cannot call account management, the general query
-endpoint, or the workspace proxy; only the external tool and asset-content
-endpoints accept them. A token still cannot exceed the user's normal account
-permissions.
+One token per account: generating a new token revokes the current one
+immediately, everywhere it was pasted. Tokens run in full run mode —
+`workflows:read`, `files:read`, and `runs:execute` — over all currently and
+future accessible workflows or specific workflow IDs. Write permissions
+(`files:write`, `plan:write`, `builder:chat`) are not issued in v1. Every
+call checks both the token restrictions and the user's current workflow
+access. Tokens cannot call account management, the general query endpoint,
+or the workspace proxy; only the external tool, asset-content, skill, and
+remote MCP endpoints accept them. A token still cannot exceed the user's
+normal account permissions.
 
-In the account menu, inspect each token's expiry and last-used time or revoke it.
-Every CLI/MCP HTTP request checks the persisted token record. Revocation rejects
-subsequent calls, including calls from an MCP bridge already running. A local
-revocation also requests immediate cancellation of that server's token-owned
-sessions.
+In the account menu, inspect the token's expiry and last-used time, revoke
+it, or generate a replacement. Every CLI/MCP HTTP request checks the
+persisted token record. Revocation — explicit or by replacement — rejects
+subsequent calls, including calls from an MCP bridge already running, and
+requests immediate cancellation of that token's sessions.
 
-PATs do not silently refresh or extend their lifetime. Rotate by generating a
-replacement, logging in with it, restarting the MCP bridge to load it, and
-revoking the old token. Expired/revoked
-tokens require a replacement from the app. `agentworks logout` removes the local
+PATs do not silently refresh or extend their lifetime. Rotate by generating
+a replacement, logging in with it, and restarting the MCP bridge to load
+it; the old token is already dead, so update pasted copies (CLI logins,
+MCP connector URLs, scripts) promptly. Expired/revoked tokens require a
+replacement from the app. `agentworks logout` removes the local
 credential; it does not revoke the token on the server or unset environment
 variables. There is no browser/device-login or refresh-token flow in this CLI.
 

@@ -220,7 +220,8 @@ export function CliMcpSetupPanel() {
       <p className="text-sm text-muted-foreground">
         Connect this installation to your terminal or an AI assistant. Generate a connection below and paste the
         commands — the assistant can list workflows, read files, plans, and run logs, and run steps, workflows, and
-        schedules, but cannot change plans or files. The token expires after 30 days, and you can revoke it here anytime.
+        schedules, but cannot change plans or files. One token per account: generating a new one replaces it everywhere.
+        The token expires after 30 days, and you can revoke it here anytime.
       </p>
       <SettingsCard
         icon={<Terminal className="h-4 w-4 text-primary" />}

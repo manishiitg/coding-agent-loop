@@ -98,6 +98,23 @@ func TestProductToolGateAllowlistFiltersUnlistedTools(t *testing.T) {
 	}
 }
 
+func TestProductToolGateAllowsDoesNotRecordRegistration(t *testing.T) {
+	gate := newProductToolGate(profileWithPolicy("work", agentprofiles.ToolPolicy{
+		Mode: agentprofiles.ToolPolicyModeAllowlist, Enabled: []string{"trigger_and_auto_notify"},
+	}))
+	if !gate.Allows("trigger_and_auto_notify") || gate.Allows("unlisted") {
+		t.Fatal("policy preview disagrees with allowlist")
+	}
+	registered, filtered := gate.summary()
+	if len(registered) != 0 || len(filtered) != 0 {
+		t.Fatalf("policy preview changed registration log: registered=%v filtered=%v", registered, filtered)
+	}
+	gate.DenyReaderTools("trigger_and_auto_notify")
+	if gate.Allows("trigger_and_auto_notify") {
+		t.Fatal("policy preview ignored read-only denial")
+	}
+}
+
 func TestProductToolGateAdmitsProfileDeclaredToolWithoutDuplicatedPolicyEntry(t *testing.T) {
 	gate := newProductToolGate(&resolvedAgentProfile{Definition: agentprofiles.Profile{
 		ID: "work",
@@ -216,11 +233,11 @@ func TestProductToolGateAppliesAcrossPools(t *testing.T) {
 	}))
 
 	cases := map[string]bool{
-		"list_secrets":            true,  // secret tools
-		"query_step":              true,  // workflow tools
-		"delete_workflow_secret":  false, // secret pool, not enabled
-		"execute_step":          false, // workflow pool, not enabled
-		"list_llm_capabilities": false, // platform pool, not enabled
+		"list_secrets":           true,  // secret tools
+		"query_step":             true,  // workflow tools
+		"delete_workflow_secret": false, // secret pool, not enabled
+		"execute_step":           false, // workflow pool, not enabled
+		"list_llm_capabilities":  false, // platform pool, not enabled
 	}
 	for name, want := range cases {
 		if got := gate.Admit(name); got != want {

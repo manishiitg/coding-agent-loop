@@ -6044,9 +6044,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// chat and writable Crew chat. Workflow-phase agents already have their
 			// own execution lifecycle, and read-only Crew runs must not gain a new
 			// process/write path.
-			backgroundCodeSurface := resolvedProfile == nil ||
-				(strings.TrimSpace(resolvedProfile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(currentUserID, req.SelectedFolder))
-			if !isWorkflowPhase && !crewReadOnly && backgroundCodeSurface {
+			triggerAutoNotifyAvailable := !isWorkflowPhase && !crewReadOnly && toolGate.Allows("trigger_and_auto_notify") &&
+				(resolvedProfile == nil ||
+					(strings.TrimSpace(resolvedProfile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(currentUserID, req.SelectedFolder)))
+			if triggerAutoNotifyAvailable {
 				if err := api.registerBackgroundCodeTools(llmAgent, req, sessionID, currentUserID); err != nil {
 					logfWithContext(queryLogCtx, "[BACKGROUND CODE] Failed to register tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register background code tools: %v", err), true)
@@ -6227,13 +6228,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-			if !isWorkflowPhase && !crewReadOnly && backgroundCodeSurface {
-				if err := llmAgent.AddInstructions(triggerAutoNotifyPrompt); err != nil {
-					sendError(fmt.Sprintf("Failed to add auto-notification guidance: %v", err), true)
-					return
-				}
-			}
-
 			// 2. CONTEXT — skills. Attaching a skill is not an instruction
 			//    section (AttachSkill, not AddInstructions), so it stays here
 			//    rather than in the prompt-section registry below.
@@ -6282,14 +6276,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			//    assembler logs what it applied. See prompt_sections.go for why
 			//    these stopped being inline ifs.
 			promptCtx := promptContext{
-				Provider:            req.Provider,
-				HasProfile:          resolvedProfile != nil,
-				IsWorkflowPhase:     isWorkflowPhase,
-				ShellRoot:           shellRoot,
-				PerUserChatsFolder:  perUserChatsFolder,
-				WorkflowPhaseFolder: workflowPhaseFolder,
-				ProfileWorkspace:    agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder),
-				CapabilitySection:   buildLLMCapabilityPromptSection(r.Context()),
+				Provider:                 req.Provider,
+				HasProfile:               resolvedProfile != nil,
+				IsWorkflowPhase:          isWorkflowPhase,
+				HasTriggerAutoNotifyTool: triggerAutoNotifyAvailable,
+				ShellRoot:                shellRoot,
+				PerUserChatsFolder:       perUserChatsFolder,
+				WorkflowPhaseFolder:      workflowPhaseFolder,
+				ProfileWorkspace:         agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder),
+				CapabilitySection:        buildLLMCapabilityPromptSection(r.Context()),
 				// The snapshot instructs the agent to call these. The gate is the
 				// authority on whether it can, so ask it rather than assuming.
 				HasLLMCapabilityTools: toolGate.Admit("list_llm_capabilities") ||

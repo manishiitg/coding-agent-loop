@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `design proposal; not implemented` |
+| Status | `design direction agreed; persistence scope and migration not implemented` |
 | Priority | P2 architecture |
 | Owner | unassigned — design review first |
 | Reported | 2026-09-22 |
@@ -62,15 +62,97 @@ fallback branch — roughly half of `sessionRestore.ts` — while the
 snapshot-merge machinery (`mergeChatConversationSnapshots`, overwrite
 guards) shrinks to "append wins, sequence decides."
 
+## Current durable-journal finding
+
+The repository already contains part of this foundation: one global SQLite
+journal at `structured-chat-events.sqlite`. `EventStore.AddEvent` appends
+non-streaming structured events with a stable event ID and monotonic
+per-session sequence, and hydrates a bounded tail after restart. This means
+the remaining work is not "introduce SQLite"; it is to narrow and compact
+that journal, make chat readers authoritative on it, and remove the duplicate
+conversation/UI-event representations.
+
+The current journal is global and unbounded. It receives events from direct
+and product chats, Builder/Crew, scheduled and headless workflow runs,
+workflow steps, message-sequence items, and sub-agents. The in-memory
+1,500-event limit does not delete SQLite rows, and the current 512 MB threshold
+only logs a warning.
+
+Measurements on 2026-09-22 confirmed that this is already material:
+
+- Local: about 270 MB database + WAL in roughly 25 hours, containing 29,139
+  events across 30 sessions. Of those, 13,890 were `workflow_step` events.
+- RTS: about 67 MB database + WAL in roughly one day, containing 7,742 events
+  across 175 sessions.
+- Large repeated snapshots, rather than row count alone, drive growth. Local
+  `conversation_turn` payloads totaled 46.7 MB and reached 1.04 MB each;
+  `llm_generation_end` totaled 36.6 MB and reached 1.21 MB each.
+- Scheduled workflow sessions were the largest individual local consumers,
+  with one session using about 52 MB.
+
+## Agreed persistence boundary
+
+The durable structured journal is for **interactive conversation history**,
+not general execution telemetry.
+
+Persist:
+
+- Workflow Builder chats;
+- Crew chats;
+- Work/project chats;
+- product chats and other direct user conversations;
+- compact parent-chat summaries for child/sub-agent lifecycle transitions.
+
+Do not persist to the chat journal:
+
+- scheduled, queued, or manual workflow runs;
+- headless/full workflow executions;
+- individual workflow-step or message-sequence-item events;
+- sub-agent internal streams;
+- token/streaming chunks, terminal frames, repeated status lines, or system
+  prompts.
+
+Execution products keep using their existing run/execution logs. A parent chat
+may retain a compact reference to an execution without copying its internal
+event stream into the chat journal.
+
+The server must register an explicit persistence class when it creates a
+session, for example `interactive_chat`, `execution`, or `ephemeral`.
+Persistence must not be inferred from session-ID prefixes. Only
+`interactive_chat` sessions may append to the durable chat journal; unknown
+sessions fail closed to non-durable delivery until classified.
+
+Even retained chat events must be semantic and compact. Do not put a complete,
+growing conversation snapshot into each `conversation_turn` or
+`llm_generation_end` row. Large tool results, terminal captures, screenshots,
+and files belong in separate artifacts; the event stores a bounded summary and
+stable reference.
+
+## Retention and migration requirements
+
+- Deleting a conversation deletes its journal rows and referenced private
+  artifacts.
+- Define an explicit retention/archive policy for old conversations, plus a
+  total-size guard; a warning alone is insufficient.
+- Checkpoint the WAL and provide deliberate compaction after bulk deletion.
+- Archive or rotate the existing mixed-scope journal once during migration.
+  Existing conversation JSON remains the restoration fallback while chat
+  sessions are moved to the filtered journal.
+- Keep the inspectable conversation JSON as a derived/export projection during
+  migration, not an independent competing source of truth.
+
 ## Migration (not a flag day)
 
-1. Keep the current event envelope; add server-assigned sequence
-   numbers to the in-memory window.
-2. Persist the window on append (per-turn fsync batching).
-3. Move readers over one surface at a time (chat, then work/crew/video,
-   then bots/workflows), each switching to range reads + stable-ID
-   dedup.
-4. Delete the converters last, once no caller passes a second source.
+1. Add the explicit session persistence class and stop journaling execution,
+   workflow-step, message-sequence, and internal sub-agent streams.
+2. Define the compact canonical chat-event schema and move large payloads to
+   referenced artifacts.
+3. Archive/rotate the existing mixed journal, then retain/checkpoint the new
+   chat-only journal under an explicit size policy.
+4. Move readers over one surface at a time (chat, then Work/Crew/product
+   chats), each switching to range reads + stable-ID dedup.
+5. Delete the converters and duplicate persisted `ui_events` last, once no
+   caller passes a second source.
 
 ## Caveats
 
@@ -91,6 +173,10 @@ guards) shrinks to "append wins, sequence decides."
 
 ## Verification
 
-Design ticket: verify by review, not tests. Acceptance is an approved
-schema + endpoint shape (`GET log` ranges, sequence/ID semantics) that
-the migration steps above can land against incrementally.
+Design acceptance requires an approved compact schema + endpoint shape (`GET
+log` ranges, sequence/ID semantics), explicit session persistence classes,
+retention/deletion behavior, and an archive/rotation plan for the existing
+mixed journal. Implementation verification must additionally prove that
+workflow-step and scheduled-run events do not create journal rows, interactive
+chat restore survives restart, large payloads are referenced rather than
+copied, and conversation deletion removes its durable rows.

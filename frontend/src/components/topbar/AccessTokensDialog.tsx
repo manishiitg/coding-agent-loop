@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Copy, Terminal, X } from 'lucide-react'
 import ModalPortal from '../ui/ModalPortal'
-import { agentApi, authApi, getApiBaseUrl, type PersonalAccessToken } from '../../services/api'
+import { authApi, getApiBaseUrl, type PersonalAccessToken } from '../../services/api'
 
 // Every token reads workflows, plans, run logs, documents and skills.
 // Nothing creates, edits, or authors. Running is a separate grant.
@@ -21,13 +21,10 @@ const date = (value: string) => new Date(value).toLocaleDateString()
 
 export default function AccessTokensDialog({ onClose }: { onClose: () => void }) {
   const [tokens, setTokens] = useState<PersonalAccessToken[]>([])
-  const [workflows, setWorkflows] = useState<{ id: string; label: string }[]>([])
   const [loading, setLoading] = useState(true)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [days, setDays] = useState(30)
-  const [allWorkflows, setAllWorkflows] = useState(true)
-  const [workflowIDs, setWorkflowIDs] = useState<string[]>([])
   const [created, setCreated] = useState('')
   const [copied, setCopied] = useState(false)
   const dialog = useRef<HTMLDivElement>(null)
@@ -40,10 +37,9 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
     mounted.current = true
     const previous = document.activeElement as HTMLElement | null
     dialog.current?.querySelector<HTMLInputElement>('input')?.focus()
-    void Promise.all([authApi.listAccessTokens(), agentApi.listWorkflowManifests()]).then(([list, choices]) => {
+    void authApi.listAccessTokens().then(list => {
       if (!mounted.current) return
       setTokens(list.tokens)
-      setWorkflows(choices.workflows.map(w => ({ id: w.manifest.id, label: w.manifest.label })))
     }).catch(e => { if (mounted.current) setError(errorMessage(e)) }).finally(() => { if (mounted.current) setLoading(false) })
     const keydown = (event: KeyboardEvent) => {
       if (event.key === 'Escape' && !busyRef.current) { event.preventDefault(); event.stopPropagation(); closeRef.current() }
@@ -63,7 +59,7 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
     busyRef.current = true; setBusy(true); setError('')
     try {
       const scopes = [...readScopes, runScope]
-      const result = await authApi.createAccessToken({ name: '', expires_in_days: days, scopes, all_workflows: allWorkflows, workflow_ids: allWorkflows ? [] : workflowIDs })
+      const result = await authApi.createAccessToken({ name: '', expires_in_days: days, scopes, all_workflows: true, workflow_ids: [] })
       if (mounted.current) { setCreated(result.token); setCopied(false); setTokens(current => [result.access_token, ...current]) }
     } catch (e) { if (mounted.current) setError(errorMessage(e)) }
     finally { busyRef.current = false; if (mounted.current) setBusy(false) }
@@ -105,20 +101,15 @@ export default function AccessTokensDialog({ onClose }: { onClose: () => void })
             <p className="text-sm">Run this command, paste the token, then press Enter and Ctrl-D to finish standard input on macOS/Linux.</p>
             <pre className="p-3 bg-muted rounded-md text-xs whitespace-pre-wrap break-all">{command}</pre>
             <p className="text-sm text-muted-foreground">For MCP, use <code>agentworks mcp serve</code> after login. Access ends at expiry or when you revoke this token.</p>
-            <button className={buttonClass} onClick={() => { setCreated(''); setAllWorkflows(true); setWorkflowIDs([]) }}>Done</button>
+            <button className={buttonClass} onClick={() => { setCreated('') }}>Done</button>
           </section> : <form className="space-y-4" onSubmit={e => { e.preventDefault(); void create() }}>
             <h3 className="font-medium">Your access token</h3>
             <p className="text-sm text-muted-foreground">One token per account. It connects the CLI, MCP clients, and scripts with the same access everywhere.</p>
             <label className="block text-sm max-w-xs">Expires in<select value={days} onChange={e => setDays(Number(e.target.value))} className={inputClass}><option value={7}>7 days</option><option value={30}>30 days</option><option value={90}>90 days</option></select></label>
             <p className="text-sm text-muted-foreground">Reads workflows, plans, run logs, documents and skills, and runs steps, workflows, and schedules. A token can never create or edit workflows, plans, or files.</p>
-            <label className="block text-sm">Which workflows can this token see?<select className={inputClass} value={allWorkflows ? 'all' : 'selected'} onChange={e => setAllWorkflows(e.target.value === 'all')}><option value="all">All workflows I can see, including future ones</option><option value="selected">Selected workflows</option></select></label>
-            {!allWorkflows && <fieldset className="space-y-2 border border-border rounded-md p-3 max-h-40 overflow-auto"><legend className="text-sm">Select workflows</legend>
-              {workflows.map(w => <label key={w.id} className="flex items-center gap-2 text-sm"><input type="checkbox" checked={workflowIDs.includes(w.id)} onChange={e => setWorkflowIDs(ids => e.target.checked ? [...ids, w.id] : ids.filter(id => id !== w.id))} />{w.label}</label>)}
-              {!workflows.length && <p className="text-sm text-muted-foreground">No accessible workflows.</p>}
-            </fieldset>}
-            <p className="text-xs text-muted-foreground">Visibility only: a token sees at most the workflows your account can already see.</p>
+            <p className="text-xs text-muted-foreground">Sees exactly the workflows your account can see — no separate layer.</p>
             {hasActive && <p className="text-xs text-muted-foreground">Generating a new token revokes your current one immediately — update pasted copies (CLI login, MCP connectors, scripts).</p>}
-            <button type="submit" disabled={loading || busy || (!allWorkflows && !workflowIDs.length)} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50">{busy ? 'Saving…' : hasActive ? 'Generate new token' : 'Generate token'}</button>
+            <button type="submit" disabled={loading || busy} className="px-4 py-2 rounded-md bg-primary text-primary-foreground text-sm disabled:opacity-50">{busy ? 'Saving…' : hasActive ? 'Generate new token' : 'Generate token'}</button>
           </form>}
           <section className="border-t border-border pt-4 space-y-3" aria-label="Existing access tokens"><h3 className="font-medium">Your tokens</h3>
             {loading ? <p role="status" className="text-sm text-muted-foreground">Loading tokens…</p> : !tokens.length ? <p className="text-sm text-muted-foreground">No tokens yet.</p> : tokens.map(t => {

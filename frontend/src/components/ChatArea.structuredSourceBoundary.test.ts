@@ -18,4 +18,16 @@ describe('formatted Chat structured-source boundary', () => {
     expect(submit).toBeGreaterThan(stage)
     expect(source).not.toContain('chatSubmissionLane')
   })
+
+  it('hydrates a fresh restore cursor before opening the session SSE stream', () => {
+    const source = readFileSync('src/components/ChatArea.tsx', 'utf8')
+    const boundary = source.indexOf('tabEventIndices[sid] === undefined')
+    const hydration = source.indexOf('hydrateTabEvents(sid', boundary)
+    const connection = source.indexOf('connectSSE(', hydration)
+
+    expect(boundary).toBeGreaterThan(-1)
+    expect(hydration).toBeGreaterThan(boundary)
+    expect(connection).toBeGreaterThan(hydration)
+    expect(source.slice(hydration, connection)).toContain('.finally(() =>')
+  })
 })

@@ -1604,6 +1604,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // Track recently notified workshop agent names to prevent duplicate notifications
   // (retries emit multiple orchestrator_agent_end events with the same agent name)
   const notifiedWorkshopAgentsRef = useRef<Set<string>>(new Set())
+  // A restored tab is created before its durable transcript and EventStore
+  // cursor finish loading. Track that startup work so the SSE effect cannot
+  // connect at its default cursor (0) and replay megabytes of raw history.
+  const sseRestoreInFlightRef = useRef<Set<string>>(new Set())
   // Suppress auto-notifications during initial SSE backfill (first 3s after mount).
   // Without this, page reload would replay all old completion events as new notifications.
   // After the backfill window, all notifications are allowed. The dedup set
@@ -2647,6 +2651,35 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       if (!tab.sessionId) continue
       const sid = tab.sessionId
       if (currentSSE[sid]) {
+        continue
+      }
+
+      // On a page refresh tabEventIndices is intentionally empty: the backend
+      // EventStore cursor is volatile and cannot be trusted across restarts.
+      // Hydrate the compact durable transcript and fetch a fresh cursor before
+      // opening SSE. Otherwise connectSSE defaults to since=0 and the server
+      // replays the raw retained event window before the current chat appears.
+      if (useChatStore.getState().tabEventIndices[sid] === undefined) {
+        if (sseRestoreInFlightRef.current.has(sid)) continue
+        sseRestoreInFlightRef.current.add(sid)
+        void hydrateTabEvents(sid, {
+          workspacePath: tab.metadata?.agentProfileWorkspace,
+          fallbackToChatHistory: true,
+          preferChatHistory: true,
+        }).catch(error => {
+          logger.error('ChatArea', `Failed to establish restore cursor before SSE for ${sid}`, error)
+        }).finally(() => {
+          sseRestoreInFlightRef.current.delete(sid)
+          const freshStore = useChatStore.getState()
+          const stillOwnsTab = Object.values(freshStore.chatTabs).some(candidate => candidate.sessionId === sid)
+          if (!stillOwnsTab || freshStore.sseConnections[sid]) return
+          connectSSE(
+            sid,
+            (msg: SSEEventMessage) => handleSSEMessage(msg, sid),
+            (msg: SSEStatusMessage) => handleSSEStatus(msg, sid),
+            () => handleSSEFallback(sid)
+          )
+        })
         continue
       }
 

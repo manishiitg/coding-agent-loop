@@ -3366,6 +3366,8 @@ export interface WorkflowContractUpgradeStatus {
 export interface WorkflowContractUpgradeItem {
   label: string
   target_version: string
+  details: string
+  applied_at?: string
 }
 
 export interface CreateWorkflowManifestRequest {

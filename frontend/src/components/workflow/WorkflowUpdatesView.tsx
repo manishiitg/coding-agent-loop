@@ -1,11 +1,9 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
-import { AlertCircle, CheckCircle2, Clock3, Loader2, PackageCheck } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
+import { AlertCircle, CheckCircle2, ChevronDown, ChevronUp, Clock3, Loader2, PackageCheck } from 'lucide-react'
 import { workflowManifestApi } from '../../services/api'
 import type { WorkflowContractUpgradeItem, WorkflowContractUpgradeStatus } from '../../services/api-types'
 import { useCanWriteWorkflow } from '../../hooks/useCanWriteWorkflow'
 import { AskAIButton } from './AskAIButton'
-import { WorkspaceViewHeader } from './WorkspaceViewHeader'
-import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 
 const MANUAL_UPDATE_MESSAGE = 'Update this workflow to the current platform contract now. Use get_contract_upgrades, complete and verify each pending migration in order, and stamp each completed version before continuing to the next. Do not run the workflow as part of the migration. If a migration requires a genuine product, business, or safety choice, stop and ask me in this chat instead of guessing. When all migrations are complete, confirm the final workflow contract version.'
 
@@ -17,32 +15,60 @@ function formatUpgradeLabel(label: string): string {
     .join(' ')
 }
 
+function formatAppliedAt(value: string): string | null {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return null
+  return date.toLocaleString(undefined, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
 function UpgradeRow({ item, state }: { item: WorkflowContractUpgradeItem; state: 'pending' | 'applied' }) {
+  const [expanded, setExpanded] = useState(false)
   const pending = state === 'pending'
   const Icon = pending ? Clock3 : CheckCircle2
+  const appliedAt = item.applied_at ? formatAppliedAt(item.applied_at) : null
   return (
-    <li className="flex items-start gap-3 px-4 py-3">
-      <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${pending ? 'bg-amber-500/10 text-amber-600 dark:text-amber-300' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'}`}>
-        <Icon className="h-3.5 w-3.5" />
-      </span>
-      <div className="min-w-0 flex-1">
-        <p className="text-sm font-medium text-foreground">{formatUpgradeLabel(item.label)}</p>
-        <p className="mt-0.5 text-xs text-muted-foreground">Contract {item.target_version}</p>
+    <li>
+      <div className="flex items-start gap-3 px-4 py-3">
+        <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${pending ? 'bg-amber-500/10 text-amber-600 dark:text-amber-300' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'}`}>
+          <Icon className="h-3.5 w-3.5" />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-medium text-foreground">{formatUpgradeLabel(item.label)}</p>
+          <p className="mt-0.5 text-xs text-muted-foreground">
+            Contract {item.target_version}
+            {!pending && <> · {appliedAt ? `Applied ${appliedAt}` : 'Applied date unavailable'}</>}
+          </p>
+        </div>
+        <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${pending ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
+          {pending ? 'Pending' : 'Applied'}
+        </span>
+        <button
+          type="button"
+          onClick={() => setExpanded(value => !value)}
+          aria-expanded={expanded}
+          aria-label={`${expanded ? 'Hide' : 'Show'} details for ${formatUpgradeLabel(item.label)}`}
+          className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary"
+        >
+          {expanded ? <ChevronUp className="h-3.5 w-3.5" /> : <ChevronDown className="h-3.5 w-3.5" />}
+        </button>
       </div>
-      <span className={`rounded-full border px-2 py-0.5 text-[11px] font-medium ${pending ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
-        {pending ? 'Pending' : 'Applied'}
-      </span>
+      {expanded && (
+        <div className="border-t border-border bg-muted/30 py-3 pl-[3.25rem] pr-4">
+          <p className="text-xs font-semibold text-foreground">What changed</p>
+          <p className="mt-1 text-xs leading-5 text-muted-foreground">{item.details || 'No migration details are available.'}</p>
+        </div>
+      )}
     </li>
   )
 }
 
-export default function WorkflowUpdatesView({
-  workspacePath,
-  headerAction,
-}: {
-  workspacePath: string | null
-  headerAction?: ReactNode
-}) {
+export default function WorkflowUpdatesView({ workspacePath }: { workspacePath: string | null }) {
   const canWrite = useCanWriteWorkflow(workspacePath)
   const [status, setStatus] = useState<WorkflowContractUpgradeStatus | null>(null)
   const [loading, setLoading] = useState(true)
@@ -71,39 +97,37 @@ export default function WorkflowUpdatesView({
 
   const pending = status?.pending ?? []
   const applied = useMemo(() => [...(status?.applied ?? [])].reverse(), [status?.applied])
-  const scopeName = workspacePath?.split('/').filter(Boolean).pop() || 'Workflow'
   const currentVersion = status?.current_version || '—'
   const platformVersion = status?.platform_version || '—'
 
   return (
-    <div className="flex h-full min-h-0 w-full flex-col bg-background">
-      <WorkspaceViewHeader
-        icon={PackageCheck}
-        title="Workflow updates"
-        context={status && (
-          <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${status.required ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
-            {status.required ? (pending.length > 0 ? `${pending.length} pending` : 'Needs attention') : 'Up to date'}
-          </span>
-        )}
-        subtitle={`${scopeName} · v${currentVersion} · platform v${platformVersion}`}
-        actions={<>
-          {canWrite && status?.required && <AskAIButton workspacePath={workspacePath} label="Update workflow" message={MANUAL_UPDATE_MESSAGE} />}
-          {headerAction}
-          <WorkspaceViewIconButton label="Refresh workflow updates" onClick={() => { void load() }} spinning={loading} />
-        </>}
-      />
-
+    <div className="space-y-5">
       {error && (
-        <div className="flex items-center gap-2 bg-destructive/10 px-5 py-2 text-xs text-destructive">
+        <div className="flex items-center gap-2 rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
           <AlertCircle className="h-3.5 w-3.5 shrink-0" />{error}
         </div>
       )}
 
-      <div className="flex-1 overflow-y-auto px-4 py-4 sm:px-5">
-        {loading && !status ? (
-          <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
-        ) : status ? (
-          <div className="space-y-5">
+      {loading && !status ? (
+        <div className="flex items-center justify-center py-12"><Loader2 className="h-5 w-5 animate-spin text-muted-foreground" /></div>
+      ) : status ? (
+        <>
+            <section className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-muted/40 p-3">
+              <span className={`flex h-9 w-9 shrink-0 items-center justify-center rounded-md ${status.required ? 'bg-amber-500/10 text-amber-600 dark:text-amber-300' : 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-300'}`}>
+                <PackageCheck className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="text-sm font-semibold text-foreground">Workflow contract</h3>
+                  <span className={`rounded-full border px-2 py-0.5 text-xs font-medium ${status.required ? 'border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300' : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'}`}>
+                    {status.required ? (pending.length > 0 ? `${pending.length} pending` : 'Needs attention') : 'Up to date'}
+                  </span>
+                </div>
+                <p className="mt-0.5 text-xs text-muted-foreground">Current v{currentVersion} · platform v{platformVersion}</p>
+              </div>
+              {canWrite && status.required && <AskAIButton workspacePath={workspacePath} label="Update workflow" message={MANUAL_UPDATE_MESSAGE} />}
+            </section>
+
             <section>
               <div className="mb-2 flex items-baseline justify-between gap-3">
                 <div>
@@ -135,9 +159,8 @@ export default function WorkflowUpdatesView({
                   : <li className="px-4 py-6 text-center text-sm text-muted-foreground">No earlier platform updates are recorded by this contract.</li>}
               </ul>
             </section>
-          </div>
-        ) : null}
-      </div>
+        </>
+      ) : null}
     </div>
   )
 }

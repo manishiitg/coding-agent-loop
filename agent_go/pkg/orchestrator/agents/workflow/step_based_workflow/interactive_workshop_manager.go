@@ -6270,8 +6270,13 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return refusal, nil
 			}
 
+			appliedAt := time.Now().UTC()
 			manifest["version"] = version
-			manifest["updated_at"] = time.Now().UTC().Format(time.RFC3339)
+			manifest["updated_at"] = appliedAt.Format(time.RFC3339)
+			if err := appendContractUpgradeHistory(manifest, version, appliedAt); err != nil {
+				contractupgrade.Restore(sessionID, version)
+				return fmt.Sprintf("Failed to record contract upgrade history: %v", err), nil
+			}
 			updated, err := json.MarshalIndent(manifest, "", "  ")
 			if err != nil {
 				return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil

@@ -31,6 +31,7 @@ import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { getIdentityTabAskAIMessage, getIntegrationTabAskAIMessage, getWorkspaceAskAIMessage, type IdentityTabId, type IntegrationTabId } from './workspaceAskAI'
 import WorkflowIdentityPanel from './WorkflowIdentityPanel'
 import WorkflowFolderAccessView from './WorkflowFolderAccessView'
+import WorkflowUpdatesView from './WorkflowUpdatesView'
 
 // Which sections exist is decided by the registry in workspaceViews.ts; this
 // panel only carries the per-section copy.
@@ -54,6 +55,7 @@ const IDENTITY_TABS: Array<{ value: IdentityTab; label: string }> = [
   { value: 'secrets', label: 'Secrets' },
   { value: 'folders', label: 'File access' },
   { value: 'llm', label: 'Models' },
+  { value: 'upgrades', label: 'Upgrades' },
 ]
 
 interface WorkflowCapabilitiesPanelProps {
@@ -89,7 +91,7 @@ const SECTION_COPY: Record<WorkflowCapabilitySection, { title: string; descripti
   },
   identity: {
     title: 'Identity',
-    description: 'Name, icon, purpose, secrets, file access, and LLMs for this workflow.',
+    description: 'Name, icon, purpose, secrets, file access, LLMs, and platform upgrades for this workflow.',
     savesViaManifest: false,
   },
   browser: {
@@ -581,6 +583,9 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
                       void persist(next)
                     }}
                   />
+                )}
+                {identityTab === 'upgrades' && (
+                  <WorkflowUpdatesView workspacePath={workspacePath} />
                 )}
               </div>
             )}

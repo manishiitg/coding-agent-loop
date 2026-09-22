@@ -17,6 +17,9 @@ func TestGetWorkflowManifestIncludesManualContractUpgradeStatus(t *testing.T) {
 		"label":          "Manual upgrade",
 		"capabilities":   map[string]interface{}{},
 		"schedules":      []interface{}{},
+		"contract_upgrade_history": []map[string]string{
+			{"version": workflowContractEvalVerdictSchemaVersion, "applied_at": "2026-09-22T04:00:00Z"},
+		},
 	})
 	workspace := &mockWorkspaceAPI{files: map[string]string{
 		workspacePath + "/workflow.json": string(manifestJSON),
@@ -55,6 +58,18 @@ func TestGetWorkflowManifestIncludesManualContractUpgradeStatus(t *testing.T) {
 	}
 	if got := response.ContractUpgrade.Pending[0].Label; got != response.ContractUpgrade.NextLabel {
 		t.Fatalf("first pending label = %q, next label = %q", got, response.ContractUpgrade.NextLabel)
+	}
+	if response.ContractUpgrade.Pending[0].Details == "" {
+		t.Fatal("pending migration details are empty")
+	}
+	foundDatedApplied := false
+	for _, item := range response.ContractUpgrade.Applied {
+		if item.TargetVersion == workflowContractEvalVerdictSchemaVersion && item.AppliedAt == "2026-09-22T04:00:00Z" {
+			foundDatedApplied = true
+		}
+	}
+	if !foundDatedApplied {
+		t.Fatalf("applied history date missing: %+v", response.ContractUpgrade.Applied)
 	}
 }
 

@@ -12,7 +12,6 @@ import {
   Globe,
   LayoutDashboard,
   Monitor,
-  PackageCheck,
   Route,
   Server,
   ShieldCheck,
@@ -73,7 +72,6 @@ const VIEWS = [
   { id: 'costs', kind: 'inspector', label: 'Costs', icon: DollarSign, toolbarGroup: 'views', pane: true },
   { id: 'execution-logs', kind: 'inspector', label: 'Execution logs', icon: FileText, toolbarGroup: 'views', pane: true },
   { id: 'knowledge', kind: 'inspector', label: 'Knowledge', icon: BookOpen, toolbarGroup: 'views', pane: true },
-  { id: 'updates', kind: 'inspector', label: 'Updates', icon: PackageCheck, toolbarGroup: 'views', pane: true },
   { id: 'webhooks', kind: 'inspector', label: 'Webhooks', icon: Webhook, toolbarGroup: 'views', pane: true },
   { id: 'schedules', kind: 'inspector', label: 'Schedules', icon: CalendarClock, toolbarGroup: 'views', pane: true },
   // -- files (last button of the "views" cluster) --------------------------

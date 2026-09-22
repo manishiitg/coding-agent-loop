@@ -2,9 +2,42 @@ package step_based_workflow
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/contractupgrade"
 )
+
+const contractUpgradeHistoryField = "contract_upgrade_history"
+
+// appendContractUpgradeHistory records the first successful stamp time for a
+// contract rung. The version remains the authoritative execution marker; this
+// ledger is display/audit metadata for migrations completed after tracking was
+// introduced.
+func appendContractUpgradeHistory(manifest map[string]interface{}, version string, appliedAt time.Time) error {
+	raw := manifest[contractUpgradeHistoryField]
+	history := make([]interface{}, 0)
+	if raw != nil {
+		var ok bool
+		history, ok = raw.([]interface{})
+		if !ok {
+			return fmt.Errorf("%s must be an array", contractUpgradeHistoryField)
+		}
+	}
+	for _, rawEntry := range history {
+		entry, ok := rawEntry.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		if stampedVersion, _ := entry["version"].(string); stampedVersion == version {
+			return nil
+		}
+	}
+	manifest[contractUpgradeHistoryField] = append(history, map[string]interface{}{
+		"version":    version,
+		"applied_at": appliedAt.UTC().Format(time.RFC3339),
+	})
+	return nil
+}
 
 // NestedAgentArtifactsContractVersion is shared with the server's workflow
 // contract ladder because the stamp executor must enforce this migration's

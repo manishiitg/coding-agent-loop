@@ -2,16 +2,16 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 
 describe('identity section layout', () => {
-  it('separates general, secrets, folders, and llm into header tabs with general first', () => {
+  it('separates general, secrets, folders, llm, and upgrades into header tabs with general first', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
 
     expect(panel).toContain("usePersistentTab<IdentityTab>('agentworks.tab.workflow-identity', 'general'")
-    expect(panel).toMatch(/IDENTITY_TABS[^=]*=[\s\S]*?'general'[\s\S]*?'secrets'[\s\S]*?'folders'[\s\S]*?'llm'/)
+    expect(panel).toMatch(/IDENTITY_TABS[^=]*=[\s\S]*?'general'[\s\S]*?'secrets'[\s\S]*?'folders'[\s\S]*?'llm'[\s\S]*?'upgrades'/)
     expect(panel).toContain("ariaLabel: 'Identity'")
     expect(panel).toContain('getIdentityTabAskAIMessage(identityTab)')
   })
 
-  it('embeds identity, secrets, folders, and llm panels inside the Identity tabs instead of standalone views', () => {
+  it('embeds identity, secrets, folders, llm, and upgrades panels inside the Identity tabs instead of standalone views', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
     const views = readFileSync('src/components/workflow/workspaceViews.ts', 'utf8')
     const host = readFileSync('src/components/workflow/canvas/WorkspaceViewHost.tsx', 'utf8')
@@ -20,15 +20,18 @@ describe('identity section layout', () => {
     expect(panel).toMatch(/section === 'identity'[\s\S]*?<SecretSelectionSection/)
     expect(panel).toMatch(/section === 'identity'[\s\S]*?<WorkflowFolderAccessView/)
     expect(panel).toMatch(/section === 'identity'[\s\S]*?<WorkflowLLMConfigurationPanel/)
+    expect(panel).toMatch(/section === 'identity'[\s\S]*?<WorkflowUpdatesView/)
     expect(panel).not.toContain("section === 'secrets'")
     expect(panel).not.toContain("section === 'llm'")
     expect(views).not.toMatch(/id: 'secrets'/)
     expect(views).not.toMatch(/id: 'folders'/)
     expect(views).not.toMatch(/id: 'llm'/)
+    expect(views).not.toMatch(/id: 'updates'/)
     expect(views).toMatch(/id: 'identity'/)
     expect(host).not.toContain("case 'secrets':")
     expect(host).not.toContain("case 'folders':")
     expect(host).not.toContain("case 'llm':")
+    expect(host).not.toContain("case 'updates':")
     expect(host).toContain("case 'identity':")
   })
 
@@ -36,6 +39,14 @@ describe('identity section layout', () => {
     const panel = readFileSync('src/components/workflow/WorkflowCapabilitiesPanel.tsx', 'utf8')
 
     expect(panel).toContain('<WorkflowFolderAccessView workspacePath={workspacePath} hideHeader manageOwnScroll={false} />')
+  })
+
+  it('lets users expand each upgrade to see what changed', () => {
+    const updates = readFileSync('src/components/workflow/WorkflowUpdatesView.tsx', 'utf8')
+
+    expect(updates).toContain('aria-expanded={expanded}')
+    expect(updates).toContain('What changed')
+    expect(updates).toContain("item.details || 'No migration details are available.'")
   })
 
   it('attaches only workflow and global secrets, never personal ones', () => {

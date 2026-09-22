@@ -15,7 +15,6 @@ export const WORKSPACE_ASK_AI_MESSAGE = {
   costs: "Help me understand what my helper costs to run — and bring it down if I want. Explain in plain words where the money goes and what's costing the most, then ask what I want to change.",
   'execution-logs': "Help me investigate this workflow's execution logs. Identify failures or unusual behavior, explain the evidence, and ask which run or issue I want to examine.",
   knowledge: "Help me use what my helper knows — what it has learned, its background notes, and its stored records. Explain in plain words and ask what I want to find, add, or change.",
-  updates: "Help me understand this workflow's platform updates. Explain what is pending, what the workflow already satisfies, and help me start pending updates only if I ask.",
   schedules: "Help me set up or change a schedule for this workflow. Ask what should run, when it should run, and any route requirements.",
   webhooks: "Help me set up or change a webhook for this workflow. Ask which external event should trigger it, what should run, and which authentication and routing it needs.",
   files: "Help me work with this workflow's files. Ask what I want to find, understand, create, or change before modifying anything.",
@@ -98,9 +97,9 @@ export function getIntegrationTabAskAIMessage(tab: IntegrationTabId): string {
   })
 }
 
-// The Identity view holds four tabs, so its header Ask AI follows the
+// The Identity view holds five tabs, so its header Ask AI follows the
 // active tab instead of the view.
-export type IdentityTabId = 'general' | 'secrets' | 'folders' | 'llm'
+export type IdentityTabId = 'general' | 'secrets' | 'folders' | 'llm' | 'upgrades'
 
 const IDENTITY_TAB_ASK_AI_MESSAGE: Record<IdentityTabId, { label: string; summary: string; instructions?: string }> = {
   general: {
@@ -119,6 +118,10 @@ const IDENTITY_TAB_ASK_AI_MESSAGE: Record<IdentityTabId, { label: string; summar
   llm: {
     label: 'Identity · Models',
     summary: "Help me choose or configure the LLMs for this workflow. Explain the current setup and ask about quality, speed, and cost requirements.",
+  },
+  upgrades: {
+    label: 'Identity · Upgrades',
+    summary: "Help me understand this workflow's platform upgrades. Explain what is pending, what the workflow already satisfies, and help me start pending upgrades only if I ask.",
   },
 }
 

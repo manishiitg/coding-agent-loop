@@ -104,16 +104,17 @@ const (
 
 // WorkflowManifest is the top-level workflow.json structure that lives in each workspace.
 type WorkflowManifest struct {
-	KnowledgebaseSources []workflowtypes.KnowledgebaseSource `json:"knowledgebase_sources,omitempty"`
-	CodeLayoutVersion    int                                 `json:"code_layout_version,omitempty"` // 0: legacy learnings; 1: persistent code tree
-	SchemaVersion        int                                 `json:"schema_version"`
-	ID                   string                              `json:"id"`
-	Version              string                              `json:"version,omitempty"`
-	Label                string                              `json:"label"`
-	Icon                 string                              `json:"icon,omitempty"`
-	Capabilities         WorkflowCapabilities                `json:"capabilities"`
-	ExecutionDefs        WorkflowExecutionDefaults           `json:"execution_defaults"`
-	Schedules            []WorkflowSchedule                  `json:"schedules"`
+	KnowledgebaseSources   []workflowtypes.KnowledgebaseSource   `json:"knowledgebase_sources,omitempty"`
+	CodeLayoutVersion      int                                   `json:"code_layout_version,omitempty"` // 0: legacy learnings; 1: persistent code tree
+	SchemaVersion          int                                   `json:"schema_version"`
+	ID                     string                                `json:"id"`
+	Version                string                                `json:"version,omitempty"`
+	ContractUpgradeHistory []WorkflowContractUpgradeHistoryEntry `json:"contract_upgrade_history,omitempty"`
+	Label                  string                                `json:"label"`
+	Icon                   string                                `json:"icon,omitempty"`
+	Capabilities           WorkflowCapabilities                  `json:"capabilities"`
+	ExecutionDefs          WorkflowExecutionDefaults             `json:"execution_defaults"`
+	Schedules              []WorkflowSchedule                    `json:"schedules"`
 	// CreatedBy is the user ID that created this workflow, stamped once at
 	// creation time (handleCreateWorkflowManifest) from the authenticated
 	// request. Scheduled/cron runs have no logged-in user of their own --
@@ -192,6 +193,11 @@ type WorkflowManifest struct {
 	// (never serialized): set during ReadWorkflowManifest, used to avoid clobbering
 	// the on-disk config on write-back and to flag the issue.
 	MalformedConfig []string `json:"-"`
+}
+
+type WorkflowContractUpgradeHistoryEntry struct {
+	Version   string `json:"version"`
+	AppliedAt string `json:"applied_at"`
 }
 
 type InstalledPlaybook struct {

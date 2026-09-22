@@ -34,7 +34,7 @@ import { useLLMStore } from '../../../stores/useLLMStore'
 // Execution phase ID - special phase that should be displayed separately
 const EXECUTION_PHASE_ID = 'execution'
 const PRIMARY_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['pulse', 'flow', 'browser', 'workshop'])
-const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['knowledge', 'updates', 'costs', 'execution-logs', 'files', 'backup', 'publish', 'notify'])
+const OPERATIONS_TOOLBAR_VIEW_IDS = new Set<WorkspaceViewId>(['knowledge', 'costs', 'execution-logs', 'files', 'backup', 'publish', 'notify'])
 const SETUP_TOOLBAR_LABELS: Partial<Record<WorkspaceViewId, string>> = {
   identity: 'Identity',
   playbooks: 'Playbooks',
@@ -436,7 +436,7 @@ export const WorkflowToolbar: React.FC<WorkflowToolbarProps> = ({
             hideToggleWhenOpen
             open={openToolbarMenu === 'ops'}
             onToggle={() => toggleToolbarMenu('ops')}
-            title="Operations: knowledge, workflow updates, costs, execution logs, files, backup, publish and notifications"
+            title="Operations: knowledge, costs, execution logs, files, backup, publish and notifications"
           >
             <div className="inline-flex items-center gap-0.5">
               {operationsWorkspaceViewDefinitions.map(({ id: view, icon: Icon, label }) => (

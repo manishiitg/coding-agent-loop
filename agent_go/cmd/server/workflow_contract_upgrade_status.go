@@ -9,6 +9,34 @@ import (
 type workflowContractUpgradeListItem struct {
 	Label         string `json:"label"`
 	TargetVersion string `json:"target_version"`
+	Details       string `json:"details"`
+	AppliedAt     string `json:"applied_at,omitempty"`
+}
+
+func workflowContractUpgradeDetails(upgrade workflowVersionUpgrade) string {
+	paragraphs := strings.Split(strings.TrimSpace(upgrade.query), "\n\n")
+	details := make([]string, 0, 2)
+	for _, paragraph := range paragraphs[1:] { // the first paragraph is the all-caps title
+		paragraph = strings.Join(strings.Fields(paragraph), " ")
+		if paragraph == "" {
+			continue
+		}
+		details = append(details, paragraph)
+		if len(strings.Join(details, " ")) >= 180 || len(details) == 2 {
+			break
+		}
+	}
+	summary := strings.Join(details, " ")
+	const maxLength = 420
+	runes := []rune(summary)
+	if len(runes) <= maxLength {
+		return summary
+	}
+	prefix := string(runes[:maxLength])
+	if boundary := strings.LastIndexAny(prefix, ".!?"); boundary >= 120 {
+		return strings.TrimSpace(prefix[:boundary+1])
+	}
+	return strings.TrimSpace(prefix) + "…"
 }
 
 // workflowContractUpgradeLists turns the migration ladder into a compact UI
@@ -30,9 +58,20 @@ func workflowContractUpgradeLists(manifest *WorkflowManifest) (pending, applied 
 	for _, upgrade := range pendingPlan {
 		pendingLabels[upgrade.label] = struct{}{}
 	}
+	appliedAtByVersion := make(map[string]string, len(manifest.ContractUpgradeHistory))
+	for _, entry := range manifest.ContractUpgradeHistory {
+		if version, appliedAt := strings.TrimSpace(entry.Version), strings.TrimSpace(entry.AppliedAt); version != "" && appliedAt != "" {
+			appliedAtByVersion[version] = appliedAt
+		}
+	}
 
 	for _, upgrade := range allActive {
-		item := workflowContractUpgradeListItem{Label: upgrade.label, TargetVersion: upgrade.to}
+		item := workflowContractUpgradeListItem{
+			Label:         upgrade.label,
+			TargetVersion: upgrade.to,
+			Details:       workflowContractUpgradeDetails(upgrade),
+			AppliedAt:     appliedAtByVersion[upgrade.to],
+		}
 		targetRank, targetKnown := workflowContractVersionRank(upgrade.to)
 		if targetKnown && targetRank <= currentRank {
 			applied = append(applied, item)
@@ -47,6 +86,7 @@ func workflowContractUpgradeLists(manifest *WorkflowManifest) (pending, applied 
 		pending = append(pending, workflowContractUpgradeListItem{
 			Label:         "upgrade-nested-agent-code-layout",
 			TargetVersion: WorkflowContractCurrentVersion,
+			Details:       "Moves every scripted step from the legacy learnings folder into the canonical code/<step-id>/ source tree and verifies authored path assumptions before enabling the current code layout.",
 		})
 	}
 	return pending, applied

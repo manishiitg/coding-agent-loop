@@ -8,6 +8,7 @@ import { UI_CONTROL_CONTRACT } from './contract.generated'
 import { applyUIAction, workspaceHost, type UIAction, type UISnapshot } from './client'
 
 const kinds = ['workflow.ui-action']
+export const UI_CONTROL_BACKUP_POLL_MS = 10_000
 type Binding = { binding: string; token: string; workspace: string }
 
 export type WorkspaceUIControlAdapter = {
@@ -29,11 +30,13 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
   const events = usePresentationEvents(session, kinds)
   const wake = useRef<(() => void) | null>(null)
   useEffect(() => { wake.current?.() }, [events])
+  useEffect(() => { wake.current?.() }, [adapter])
   useEffect(() => {
     if (!session) return
     let binding: Binding | undefined
     let stopped = false
     let busy = false
+    let syncQueued = false
     let lastView = ''
     let revision = 0
     let lastVisible = false
@@ -63,7 +66,8 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
       if (previous) await workflowUIControl(session, { version: UI_CONTROL_CONTRACT.version, operation: 'unbind', binding: previous.binding, token: previous.token }).catch(() => {})
     }
     const sync = async () => {
-      if (busy || stopped) return
+      if (stopped) return
+      if (busy) { syncQueued = true; return }
       if (document.visibilityState !== 'visible') { await release(); return }
       busy = true
       try {
@@ -125,20 +129,37 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
         // An uncertain outcome is never replayed. A new lease cannot ACK or
         // claim the previous lease's commands; the server expires those.
         await release()
-      } finally { busy = false }
+      } finally {
+        busy = false
+        if (syncQueued && !stopped) {
+          syncQueued = false
+          queueMicrotask(() => { void sync() })
+        }
+      }
     }
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') void release()
       else void sync()
     }
     wake.current = () => { void sync() }
-    const timer = setInterval(() => { void sync() }, 3000)
+    const unsubscribeViewState = useWorkflowStore.subscribe((current, previous) => {
+      if (current.workflowWorkspaceView !== previous.workflowWorkspaceView
+        || current.lastCanvasView !== previous.lastCanvasView
+        || current.workspaceViewTarget !== previous.workspaceViewTarget) {
+        void sync()
+      }
+    })
+    // SSE presentation events and local view changes are the primary wake-up
+    // paths. This slower poll only renews the 15-second lease and recovers if
+    // an event is lost while the stream reconnects.
+    const timer = setInterval(() => { void sync() }, UI_CONTROL_BACKUP_POLL_MS)
     document.addEventListener('visibilitychange', onVisibility)
     void sync()
     return () => {
       stopped = true
       controller.abort()
       clearInterval(timer)
+      unsubscribeViewState()
       wake.current = null
       document.removeEventListener('visibilitychange', onVisibility)
       void release()

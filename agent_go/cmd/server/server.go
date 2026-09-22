@@ -6053,7 +6053,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					return
 				}
 			}
-
 			isToolBackedChat := !isWorkflowPhase
 			isAgentWorksChat := isToolBackedChat && resolvedProfile == nil
 			if isToolBackedChat {
@@ -7746,16 +7745,6 @@ func createServerLogger() loggerv2.Logger {
 		log.Fatalf("Failed to create server logger: %v", err)
 	}
 	return serverLogger
-}
-
-// createLLMLogger creates a separate logger instance for LLM operations
-// This logger writes to logs/llm_debug.log to separate LLM logs from server logs
-func createLLMLogger() loggerv2.Logger {
-	llmLogger, err := logger.CreateLogger("logs/llm_debug.log", "debug", "text", false)
-	if err != nil {
-		log.Fatalf("Failed to create LLM logger: %v", err)
-	}
-	return llmLogger
 }
 
 // --- ACTIVE SESSION MANAGEMENT ---

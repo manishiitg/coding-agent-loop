@@ -213,7 +213,7 @@ func (api *StreamingAPI) runTriggerAndAutoNotify(
 	}
 	result := formatTriggerResult(stdout, stderr)
 	if runErr != nil {
-		notifier.OnExecutionComplete(executionID, name, result, nil, fmt.Errorf("%v%s", runErr, triggerOutputSuffix(stdout, stderr)))
+		notifier.OnExecutionComplete(executionID, name, result, nil, fmt.Errorf("%w%s", runErr, triggerOutputSuffix(stdout, stderr)))
 		return
 	}
 	notifier.OnExecutionComplete(executionID, name, result, nil, nil)

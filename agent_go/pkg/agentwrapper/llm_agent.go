@@ -54,10 +54,6 @@ type LLMAgentWrapper struct {
 	lastResult mcpagent.Result
 }
 
-func providerUsesNativeContextManagement(provider llm.Provider) bool {
-	return common.IsCLIProvider(string(provider))
-}
-
 func providerNeedsPlainTextHistory(provider llm.Provider) bool {
 	return common.IsCLIProvider(string(provider))
 }

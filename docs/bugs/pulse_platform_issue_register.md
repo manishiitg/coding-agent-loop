@@ -1,3 +1,13 @@
+## Simplify chat render and restoration to one durable ordered log — PLAT-352
+
+[PLAT-352](pulse_platform/chat-reliability/plat-352.md) is a design
+proposal (not implemented): replace the volatile-window plus durable-JSON
+reconciliation in chat restore with a single per-session event log that is
+durable on append, sequenced at write time, and read by range for
+restore/resume/pagination/preview, with client idempotency keys replacing
+positional cursors and the identity-transfer machinery. Records the
+migration order and the bounding/crash-window caveats for design review.
+
 ## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
 
 [PLAT-351](pulse_platform/coding-agent-bridge/plat-351.md) fixes the false

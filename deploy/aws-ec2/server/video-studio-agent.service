@@ -10,6 +10,7 @@ Group=video-studio
 EnvironmentFile=/opt/video-studio/.env
 Environment=HOME=/var/lib/video-studio
 Environment=AGENTWORKS_MCP_STATE_DIR=/var/lib/video-studio/.local/state/agentworks/mcp
+Environment=AGENTWORKS_STATE_ROOT=/var/lib/video-studio/agentworks-state
 Environment=AGENT_BROWSER_CDP_ENABLED=false
 Environment=STATIC_DIR=/opt/video-studio/current/frontend
 Environment=MCP_BRIDGE_BINARY=/opt/video-studio/current/bin/mcpbridge

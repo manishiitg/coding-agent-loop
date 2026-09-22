@@ -9,7 +9,7 @@ import { activateTab } from '../../../utils/activateTab'
 import { selectWorkflowPreset } from '../../../utils/workflowNavigation'
 import { scheduleTabLabel } from '../../../utils/scheduleTabLabel'
 import { resolveWorkflowTabForSession } from '../../../utils/workflowTabResolution'
-import { hydrateTabEvents } from '../../../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../../../utils/executionConversationRestore'
 import type { ScheduledJob, ScheduledJobRun, SchedulerConfig } from '../../../services/api-types'
 import { useCanWriteWorkflow } from '../../../hooks/useCanWriteWorkflow'
 import {
@@ -658,18 +658,13 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       }
     }
 
-    // Restore through the shared durable-history path. The polling event store
-    // is process-local and may be empty after a deployment even though the
-    // scheduled conversation is safely persisted on disk.
+    // Scheduled runs are execution diagnostics, not interactive chats. Read
+    // their saved JSON artifact explicitly; never route it through SQLite chat.
     try {
       const workspacePath = stableScope?.workspacePath
         || (effectivePresetQueryId ? presetMap.get(effectivePresetQueryId)?.workspacePath : undefined)
         || undefined
-      const runtime = await hydrateTabEvents(sessionId, {
-        workspacePath,
-        fallbackToChatHistory: true,
-        preferChatHistory: true,
-      })
+      const runtime = await hydrateExecutionConversation(sessionId, workspacePath)
       chatStore.setTabCompleted(tabId, runtime.status !== 'running')
       chatStore.setTabStreaming(tabId, runtime.status === 'running')
       chatStore.setTabHasRunningBgAgents(tabId, !!runtime.hasRunningBackgroundAgents)

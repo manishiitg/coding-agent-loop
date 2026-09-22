@@ -3,6 +3,7 @@ package events
 import (
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
@@ -13,6 +14,50 @@ func transcriptMessage(id, content string) Event {
 		Type: pkgevents.EventType("streaming_chunk"),
 		Data: &pkgevents.StreamingChunkEvent{Source: "transcript", Content: content},
 	}}
+}
+
+func TestDurableChatProjectionBoundsLargeTranscriptWithDiagnosticReference(t *testing.T) {
+	event := transcriptMessage("large-message", strings.Repeat("x", 200*1024))
+	projected, keep := projectDurableChatEvent(event)
+	if !keep {
+		t.Fatal("large transcript was dropped")
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxDurableChatEventBytes {
+		t.Fatalf("projected row is %d bytes, limit %d", len(encoded), maxDurableChatEventBytes)
+	}
+	var document map[string]interface{}
+	if err := json.Unmarshal(encoded, &document); err != nil {
+		t.Fatal(err)
+	}
+	data := document["data"].(map[string]interface{})["data"].(map[string]interface{})
+	if data["payload_truncated"] != true || data["artifact_event_id"] != "large-message" {
+		t.Fatalf("missing diagnostic reference: %+v", data)
+	}
+}
+
+func TestDurableChatProjectionHardBoundsManyLargeFields(t *testing.T) {
+	fields := map[string]interface{}{}
+	for _, key := range []string{"content", "final_result", "result", "error", "message", "question", "tool_name", "tool_call_id", "name", "status", "role", "source"} {
+		fields[key] = strings.Repeat(key, 32*1024)
+	}
+	event := Event{ID: "large-tool", Type: "tool_call_end", Data: &pkgevents.AgentEvent{
+		Type: pkgevents.EventType("tool_call_end"), Data: NewGenericEventData("tool_call_end", fields),
+	}}
+	projected, keep := projectDurableChatEvent(event)
+	if !keep {
+		t.Fatal("large tool event was dropped")
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(encoded) > maxDurableChatEventBytes {
+		t.Fatalf("projected row is %d bytes, limit %d", len(encoded), maxDurableChatEventBytes)
+	}
 }
 
 func TestTranscriptMessageClassificationSurvivesJSON(t *testing.T) {
@@ -56,6 +101,30 @@ func TestTranscriptMessageClassificationSurvivesJSON(t *testing.T) {
 			}
 			if restored.ID != event.ID || IsTranscriptMessage(restored) != tc.want {
 				t.Fatalf("persisted event did not round-trip: %+v", restored)
+			}
+		})
+	}
+}
+
+func TestDurableChatProjectionKeepsSemanticMainEventsOnly(t *testing.T) {
+	tests := []struct {
+		name  string
+		event Event
+		want  bool
+	}{
+		{name: "user message", event: Event{Type: "user_message", ExecutionKind: "main_agent"}, want: true},
+		{name: "whole assistant message", event: transcriptMessage("reply", "Hello"), want: true},
+		{name: "token chunk", event: Event{Type: "streaming_chunk", ExecutionKind: "main_agent", Data: pkgevents.NewAgentEvent(&pkgevents.StreamingChunkEvent{Source: "llm", Content: "H", IsDelta: true})}},
+		{name: "system prompt", event: Event{Type: "system_prompt", ExecutionKind: "main_agent"}},
+		{name: "main tool", event: Event{Type: "tool_call_end", ExecutionKind: "main_agent"}, want: true},
+		{name: "child tool", event: Event{Type: "tool_call_end", ExecutionKind: "sub_agent"}},
+		{name: "child summary", event: Event{Type: "background_agent_completed", ExecutionKind: "sub_agent"}, want: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			_, got := projectDurableChatEvent(test.event)
+			if got != test.want {
+				t.Fatalf("durable=%v, want %v", got, test.want)
 			}
 		})
 	}

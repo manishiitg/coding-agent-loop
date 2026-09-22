@@ -34,7 +34,7 @@ import { PresetSelectionOverlay } from './PresetSelectionOverlay'
 import { ModeSwitchDialog } from './ui/ModeSwitchDialog'
 import type { ChatTab } from '../stores/useChatStore'
 
-import { appendTimelineAndApplyConfirmations, conversationToRestoredEvents, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
+import { appendTimelineAndApplyConfirmations, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { logger } from '../utils/logger'
 
 import { useResumePreviousChat } from '../hooks/useResumePreviousChat'
@@ -951,23 +951,20 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       error: undefined,
     }))
     try {
-      const conversation = await agentApi.getChatHistoryResumeConversation(
-        sessionId,
-        activeTab?.metadata?.agentProfileWorkspace,
-        100,
-        historyPagination.nextOffset,
-      )
-      // The page marker is useful only when initially hydrating an otherwise
-      // empty transcript. Do not repeat it between real user/assistant pages.
-      const olderEvents = resolveLiveInputConfirmations(conversationToRestoredEvents(conversation))
-        .filter((event) => event.type !== 'conversation_resumed')
-      const pagination = conversation.history_pagination
+      const response = await agentApi.getSessionEvents(sessionId, undefined, {
+        limit: 100,
+        beforeSequence: historyPagination.nextOffset,
+        durableChat: true,
+      })
+      const olderEvents = resolveLiveInputConfirmations(response.events || [])
       const chatStore = useChatStore.getState()
       chatStore.setTabHistoryPagination(
         sessionId,
-        pagination ? { hasMore: pagination.has_more, nextOffset: pagination.next_offset } : null,
+        response.oldest_sequence
+          ? { hasMore: response.has_more, nextOffset: response.oldest_sequence }
+          : null,
       )
-      chatStore.setTabHasMoreOlderEvents(sessionId, pagination?.has_more ?? false)
+      chatStore.setTabHasMoreOlderEvents(sessionId, response.has_more)
       setOlderHistory((current) => ({
         sessionId,
         events: current.sessionId === sessionId
@@ -983,7 +980,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         error: error instanceof Error ? error.message : 'Could not load earlier messages',
       }))
     }
-  }, [activeSessionId, activeTab?.metadata?.agentProfileWorkspace, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
+  }, [activeSessionId, historyPagination?.hasMore, historyPagination?.nextOffset, olderHistory.loading])
 
   const hasConversationContent = useMemo(() => {
     return displayEvents.some(event =>
@@ -2323,7 +2320,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Track which session is currently being polled (for derived isStreaming)
 
       try {
-        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex)
+        const response = await agentApi.getSessionEvents(effectiveSessionId, currentLastEventIndex, { durableChat: true })
         if (!isChatIdentityCurrent(identity)) return
         if (response.session_id && response.session_id !== effectiveSessionId) continue
         if (currentTab && chatStore.getTab(currentTab.tabId)?.sessionId !== effectiveSessionId) continue
@@ -2391,7 +2388,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       let shouldContinue = true
       try {
         const since = Math.max(0, store.getTabLastEventIndex(sessionId))
-        const response = await agentApi.getSessionEvents(sessionId, since)
+        const response = await agentApi.getSessionEvents(sessionId, since, { durableChat: true })
         const freshStore = useChatStore.getState()
         const freshTab = Object.values(freshStore.chatTabs).find(candidate => candidate.sessionId === sessionId) || null
         recordChatDeliveryTelemetry('catchup_received', sessionId, response.events, 'foreground_catchup', freshTab?.tabId)

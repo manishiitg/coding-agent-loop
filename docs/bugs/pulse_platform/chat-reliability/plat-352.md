@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `implementation in progress; migration step 1 implemented locally` |
+| Status | `implemented locally; verification in progress` |
 | Priority | P2 architecture |
 | Owner | unassigned — design review first |
 | Reported | 2026-09-22 |
@@ -314,26 +314,50 @@ single-source chat migration.
 
 ### Implementation progress (2026-09-22)
 
-Migration step 1 now has its explicit backend boundary:
+The full chat cutover is now implemented locally:
 
 - every query session is classified as `interactive_chat`, `execution`, or
   `ephemeral` from typed request metadata rather than ID-prefix-only guesses;
-- only `interactive_chat` sessions hydrate from or append to
-  `structured-chat-events.sqlite`;
+- only `interactive_chat` sessions append to the versioned
+  `structured-chat-events-v2.sqlite` journal;
 - scheduled/webhook/headless workflow sessions and typed child/runtime
   sessions remain live in SSE/terminal memory but create no chat-journal rows;
 - an unknown session fails closed to live-only, and a session cannot be
   promoted to durable after it has already emitted events; and
 - direct, Builder, Crew, Work/product, and bot conversations retain the
-  interactive class.
+  interactive class;
+- a single allowlist projector keeps whole assistant transcript messages and
+  semantic user/tool/turn/child-summary events while excluding token chunks,
+  terminal frames, system prompts, workflow steps, and raw execution streams;
+- encoded rows are bounded to 64 KiB. Oversized payloads become a marked
+  summary carrying the original event ID and `conversation_json` diagnostic
+  source instead of copying a megabyte-scale payload into SQLite;
+- the polling endpoint supports SQLite-native tail, `after_sequence`, and
+  `before_sequence` ranges, and SSE reconnect uses the same stable sequence;
+- `ChatArea`, Workflow Builder, Crew, Work, Video Studio, and SparkQuill chat
+  restore now render the SQLite page directly. The JSON/live-window trace
+  combiner, monotonic JSON snapshot guard, preview paint, tool-argument repair,
+  and JSON fallback branches were removed from the normal render path;
+- read-only scheduled/workflow-run history uses a separately named execution
+  diagnostics reader for its JSON artifact and cannot promote that run into
+  the interactive chat journal;
+- conversation deletion removes events, sequence state, ownership, and
+  migration state, then checkpoints the WAL;
+- durable ownership is stored beside the journal and inactive-session reads
+  fail closed when the authenticated user is not the owner; and
+- legacy JSON import is deliberately **not** lazy. `server
+  migrate-chat-events` scans only interactive conversation files, selects the
+  newest copy per session, skips schedule/bot execution sessions, imports with
+  stable IDs, checkpoints SQLite, and writes a one-time marker. RTS and shared
+  rootless deployment scripts run it while the old agent is stopped; the local
+  logging launcher runs it before starting the server. Therefore a user's
+  first refresh never pays for parsing a multi-megabyte legacy transcript.
 
-This is only the storage-scope boundary. `ChatArea` still reconciles the
-workspace conversation JSON with the live event window. Steps 2-5 remain:
-project canonical bounded events, expose SQLite range reads, migrate each chat
-surface to those reads, and finally remove JSON `ui_events` from the render and
-restore path. Conversation JSON then remains a derived diagnostic/export
-artifact for agent review, raw execution/tool inspection, and cost analysis;
-it is not allowed to repair or overwrite the rendered SQLite conversation.
+Conversation JSON remains a derived diagnostic/export artifact for agent
+review, raw execution/tool inspection, and cost analysis. It no longer repairs,
+overwrites, or races the rendered chat. The original mixed journal remains on
+disk under its old filename for rollback/inspection and is not opened by the
+new server.
 
 ## Caveats
 

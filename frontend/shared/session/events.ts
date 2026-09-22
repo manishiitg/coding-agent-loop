@@ -9,6 +9,7 @@ export interface SessionClientConfig {
   baseUrl: string
   token: () => Promise<string | null> | string | null
   workingSet?: 'session' | 'all'
+  durableChat?: boolean
   log?: SSELogger
 }
 
@@ -16,6 +17,19 @@ export interface SessionClientConfig {
 export async function fetchSessionEvents(cfg: SessionClientConfig, sessionId: string, since: number): Promise<GetEventsResponse> {
   const token = await cfg.token()
   const params = new URLSearchParams({ since: String(Math.max(since, 0)), working_set: cfg.workingSet ?? 'session' })
+  if (cfg.durableChat) params.set('durable_chat', '1')
+  const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(sessionId)}/events?${params}`, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  })
+  if (!res.ok) throw new Error(`session events HTTP ${res.status}`)
+  return (await res.json()) as GetEventsResponse
+}
+
+/** GET the newest bounded page from the durable chat journal. */
+export async function fetchRecentSessionEvents(cfg: SessionClientConfig, sessionId: string, limit = 300): Promise<GetEventsResponse> {
+  const token = await cfg.token()
+  const params = new URLSearchParams({ limit: String(limit), working_set: cfg.workingSet ?? 'session' })
+  if (cfg.durableChat) params.set('durable_chat', '1')
   const res = await fetch(`${cfg.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(sessionId)}/events?${params}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
@@ -65,7 +79,7 @@ export function followSession(cfg: SessionClientConfig, sessionId: string, since
     const token = await cfg.token()
     if (stopped) return
     conn = new SSEConnection({
-      sessionId, sinceIndex: cursor, baseUrl: cfg.baseUrl, token, transport: 'fetch', workingSet: cfg.workingSet, log: cfg.log,
+      sessionId, sinceIndex: cursor, baseUrl: cfg.baseUrl, token, transport: 'fetch', workingSet: cfg.workingSet, durableChat: cfg.durableChat, log: cfg.log,
       callbacks: {
         onMessage: (msg) => {
           const index = conn?.lastIndex ?? cursor

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -49,6 +50,82 @@ func TestGetSessionEventsCursorOnlyOmitsRawEvents(t *testing.T) {
 	}
 	if response.LastProcessedIndex != 2 {
 		t.Fatalf("last_processed_index = %d, want 2", response.LastProcessedIndex)
+	}
+}
+
+func TestGetSessionEventsReadsDurableChatBySequence(t *testing.T) {
+	journal, err := events.OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := events.NewEventStore(2)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+	const sessionID = "durable-chat-session"
+	if err := store.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+	for i := 1; i <= 5; i++ {
+		store.AddEvent(sessionID, events.Event{ID: fmt.Sprintf("event-%d", i), Type: "user_message", Timestamp: time.Now()})
+	}
+	api := &StreamingAPI{
+		eventStore:         store,
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "completed", CreatedAt: time.Now()},
+		},
+	}
+
+	request := func(query string) GetEventsResponse {
+		t.Helper()
+		req := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events?durable_chat=1&"+query, nil)
+		req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+		w := httptest.NewRecorder()
+		api.handleGetSessionEvents(w, req)
+		if w.Code != 200 {
+			t.Fatalf("status = %d, body=%s", w.Code, w.Body.String())
+		}
+		var response GetEventsResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &response); err != nil {
+			t.Fatal(err)
+		}
+		return response
+	}
+
+	tail := request("limit=2")
+	if len(tail.Events) != 2 || tail.Events[0].ID != "event-4" || tail.Events[1].ID != "event-5" || !tail.HasMore || tail.OldestSequence != 4 || tail.LatestSequence != 5 {
+		t.Fatalf("tail = %+v", tail)
+	}
+	older := request("limit=2&before_sequence=4")
+	if len(older.Events) != 2 || older.Events[0].ID != "event-2" || older.Events[1].ID != "event-3" || !older.HasMore {
+		t.Fatalf("older = %+v", older)
+	}
+	newer := request("since=3")
+	if len(newer.Events) != 2 || newer.Events[0].ID != "event-4" || newer.Events[1].ID != "event-5" || newer.LastProcessedIndex != 5 {
+		t.Fatalf("newer = %+v", newer)
+	}
+}
+
+func TestGetSessionEventsCannotPromoteExecutionToDurableChat(t *testing.T) {
+	store := events.NewEventStore(10)
+	defer store.Stop()
+	const sessionID = "workflow-step-session"
+	if err := store.SetSessionPersistenceClass(sessionID, events.SessionPersistenceExecution); err != nil {
+		t.Fatal(err)
+	}
+	api := &StreamingAPI{
+		eventStore:         store,
+		runtimeCoordinator: NewRuntimeCoordinator(),
+		activeSessions: map[string]*ActiveSessionInfo{
+			sessionID: {SessionID: sessionID, Status: "running", CreatedAt: time.Now()},
+		},
+	}
+	req := httptest.NewRequest("GET", "/api/sessions/"+sessionID+"/events?durable_chat=1&limit=10", nil)
+	req = mux.SetURLVars(req, map[string]string{"session_id": sessionID})
+	w := httptest.NewRecorder()
+	api.handleGetSessionEvents(w, req)
+	if w.Code != 409 {
+		t.Fatalf("status = %d, want 409; body=%s", w.Code, w.Body.String())
 	}
 }
 

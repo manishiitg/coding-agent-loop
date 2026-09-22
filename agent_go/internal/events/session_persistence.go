@@ -40,17 +40,27 @@ func (es *EventStore) SetSessionPersistenceClass(sessionID string, class Session
 	}
 
 	es.mu.Lock()
-	defer es.mu.Unlock()
 	if existing, ok := es.persistenceClasses[sessionID]; ok {
 		if existing != class {
+			es.mu.Unlock()
 			return fmt.Errorf("session %s persistence class is already %q, cannot change to %q", sessionID, existing, class)
 		}
+		es.mu.Unlock()
 		return nil
 	}
 	if class == SessionPersistenceInteractiveChat && len(es.events[sessionID]) > 0 {
+		es.mu.Unlock()
 		return fmt.Errorf("session %s already has events and cannot be classified", sessionID)
 	}
 	es.persistenceClasses[sessionID] = class
+	ownerID := es.sessionOwners[sessionID]
+	journal := es.durableJournal
+	es.mu.Unlock()
+	if class == SessionPersistenceInteractiveChat && ownerID != "" {
+		if ownership, ok := journal.(DurableEventJournalOwnership); ok {
+			return ownership.RegisterOwner(sessionID, ownerID)
+		}
+	}
 	return nil
 }
 
@@ -58,4 +68,13 @@ func (es *EventStore) sessionUsesDurableChatJournal(sessionID string) bool {
 	es.mu.RLock()
 	defer es.mu.RUnlock()
 	return es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat
+}
+
+// IsDurableChatSession reports the server-owned classification. Transport
+// requests may inspect it, but must never promote an execution into a chat.
+func (es *EventStore) IsDurableChatSession(sessionID string) bool {
+	if es == nil {
+		return false
+	}
+	return es.sessionUsesDurableChatJournal(sessionID)
 }

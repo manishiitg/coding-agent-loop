@@ -13,11 +13,8 @@ vi.mock('./workSessions', async importOriginal => {
   return { ...actual, loadWorkSessions }
 })
 
-const hydrateTabEvents = vi.hoisted(() => vi.fn())
-vi.mock('../../utils/sessionRestore', async importOriginal => {
-  const actual = await importOriginal<typeof import('../../utils/sessionRestore')>()
-  return { ...actual, hydrateTabEvents }
-})
+const hydrateExecutionConversation = vi.hoisted(() => vi.fn())
+vi.mock('../../utils/executionConversationRestore', () => ({ hydrateExecutionConversation }))
 
 import type { ActiveSessionInfo } from '../../services/api-types'
 import { useAppStore } from '../../stores/useAppStore'
@@ -74,7 +71,7 @@ beforeEach(() => {
     conversation_key: 'news-id',
     conversation_id: 'conv-1',
   })
-  hydrateTabEvents.mockResolvedValue({ status: 'running' })
+  hydrateExecutionConversation.mockResolvedValue({ status: 'running' })
 })
 
 afterEach(() => {
@@ -112,9 +109,9 @@ describe('openWorkAutomationRunChat', () => {
       .toBe('news-id:history:product-af49f7f6-151d-4f94-9578-acd2c155e1a0')
     expect(runTab?.isStreaming).toBe(true)
 
-    expect(hydrateTabEvents).toHaveBeenCalledWith(
+    expect(hydrateExecutionConversation).toHaveBeenCalledWith(
       'product-af49f7f6-151d-4f94-9578-acd2c155e1a0',
-      { workspacePath: 'Chats/Work/projects/news-monitor', fallbackToChatHistory: true },
+      'Chats/Work/projects/news-monitor',
     )
     expect(useChatStore.getState().activeTabId).toBe(runTab?.tabId)
   })

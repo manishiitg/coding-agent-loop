@@ -3,6 +3,7 @@ package events
 import (
 	"errors"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -38,6 +39,14 @@ func classifyInteractiveTestSession(t *testing.T, store *EventStore, sessionID s
 	if err := store.SetSessionPersistenceClass(sessionID, SessionPersistenceInteractiveChat); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func journalEventIDs(events []Event) []string {
+	result := make([]string, 0, len(events))
+	for _, event := range events {
+		result = append(result, event.ID)
+	}
+	return result
 }
 
 func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
@@ -156,6 +165,38 @@ func TestSQLiteEventJournalReportsSizeAndCount(t *testing.T) {
 	}
 }
 
+func TestSQLiteEventJournalPersistsOwnerAndDeletesAllSessionState(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if err := journal.RegisterOwner("chat-1", "alice"); err != nil {
+		t.Fatal(err)
+	}
+	if owner, err := journal.Owner("chat-1"); err != nil || owner != "alice" {
+		t.Fatalf("owner = %q err=%v", owner, err)
+	}
+	if err := journal.RegisterOwner("chat-1", "bob"); err == nil {
+		t.Fatal("owner overwrite was accepted")
+	}
+	if _, _, err := journal.Append("chat-1", journalTestEvent("event-1", "one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.MarkMigrationComplete("chat-1"); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.DeleteSession("chat-1"); err != nil {
+		t.Fatal(err)
+	}
+	if owner, _ := journal.Owner("chat-1"); owner != "" {
+		t.Fatalf("owner survived deletion: %q", owner)
+	}
+	if complete, _ := journal.MigrationComplete("chat-1"); complete {
+		t.Fatal("migration marker survived deletion")
+	}
+}
+
 func TestEventStoreSuppliesStableIdentityForLegacyEvent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "events.sqlite")
 	journal, err := OpenSQLiteEventJournal(path)
@@ -229,6 +270,72 @@ func TestSQLiteEventJournalTailIsChronologicalAndBounded(t *testing.T) {
 	loaded, err := journal.LoadTail("session-1", 2)
 	if err != nil || len(loaded) != 2 || loaded[0].ID != "two" || loaded[1].ID != "three" {
 		t.Fatalf("bounded tail = %+v err=%v", loaded, err)
+	}
+}
+
+func TestSQLiteEventJournalReadsStableSequencePages(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	for index, id := range []string{"one", "two", "three", "four", "five"} {
+		event := journalTestEvent(id, id)
+		event.Sequence = int64(index + 1)
+		if _, _, err := journal.Append("session-1", event); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	tail, err := journal.ReadPage("session-1", DurableEventPageOptions{Limit: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := journalEventIDs(tail.Events); !reflect.DeepEqual(got, []string{"four", "five"}) || !tail.HasOlder || tail.HasNewer || tail.OldestSequence != 4 || tail.LatestSequence != 5 {
+		t.Fatalf("tail page = %+v ids=%v", tail, got)
+	}
+	older, err := journal.ReadPage("session-1", DurableEventPageOptions{Limit: 2, BeforeSequence: tail.OldestSequence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := journalEventIDs(older.Events); !reflect.DeepEqual(got, []string{"two", "three"}) || !older.HasOlder || !older.HasNewer {
+		t.Fatalf("older page = %+v ids=%v", older, got)
+	}
+	newer, err := journal.ReadPage("session-1", DurableEventPageOptions{Limit: 2, AfterSequence: 2})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := journalEventIDs(newer.Events); !reflect.DeepEqual(got, []string{"three", "four"}) || !newer.HasNewer {
+		t.Fatalf("newer page = %+v ids=%v", newer, got)
+	}
+	beyondTip, err := journal.ReadPage("session-1", DurableEventPageOptions{Limit: 2, AfterSequence: 20})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(beyondTip.Events) != 0 || beyondTip.JournalLatestSequence != 5 {
+		t.Fatalf("beyond-tip page = %+v", beyondTip)
+	}
+}
+
+func TestSQLiteEventJournalDeletesConversationRows(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer journal.Close()
+	if _, _, err := journal.Append("session-1", journalTestEvent("one", "one")); err != nil {
+		t.Fatal(err)
+	}
+	if err := journal.DeleteSession("session-1"); err != nil {
+		t.Fatal(err)
+	}
+	page, err := journal.ReadPage("session-1", DurableEventPageOptions{Limit: 10})
+	if err != nil || page.Exists || len(page.Events) != 0 {
+		t.Fatalf("deleted page = %+v err=%v", page, err)
+	}
+	reinserted, inserted, err := journal.Append("session-1", journalTestEvent("two", "two"))
+	if err != nil || !inserted || reinserted.Sequence != 1 {
+		t.Fatalf("reinsert after delete = %+v inserted=%v err=%v", reinserted, inserted, err)
 	}
 }
 

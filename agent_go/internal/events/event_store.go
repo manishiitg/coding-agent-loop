@@ -763,8 +763,17 @@ func (es *EventStore) SetSessionOwner(sessionID, userID string) {
 	}
 
 	es.mu.Lock()
-	defer es.mu.Unlock()
 	es.sessionOwners[sessionID] = userID
+	journal := es.durableJournal
+	class := es.persistenceClasses[sessionID]
+	es.mu.Unlock()
+	if class == SessionPersistenceInteractiveChat {
+		if ownership, ok := journal.(DurableEventJournalOwnership); ok {
+			if err := ownership.RegisterOwner(sessionID, userID); err != nil {
+				log.Printf("[EventStore] durable chat owner registration failed session=%s: %v", sessionID, err)
+			}
+		}
+	}
 }
 
 // GetSessionOwner returns the user that owns a session's in-memory events.
@@ -862,9 +871,10 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	} else if event.Sequence > es.nextSequence[sessionID] {
 		es.nextSequence[sessionID] = event.Sequence
 	}
-	if es.durableJournal != nil && es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat && shouldJournalStructuredEvent(event) {
+	projected, durable := projectDurableChatEvent(event)
+	if es.durableJournal != nil && es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat && durable {
 		started := time.Now()
-		persisted, inserted, err := es.durableJournal.Append(sessionID, event)
+		persisted, inserted, err := es.durableJournal.Append(sessionID, projected)
 		elapsed := time.Since(started)
 		if elapsed >= durableAppendSlowThreshold {
 			log.Printf("[EventStore] slow durable append session=%s type=%s id=%s duration=%s", sessionID, event.Type, event.ID, elapsed.Round(time.Millisecond))
@@ -946,15 +956,6 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	}
 	es.subscribersMu.RUnlock()
 	return nil
-}
-
-func shouldJournalStructuredEvent(event Event) bool {
-	switch event.Type {
-	case "streaming_start", "streaming_chunk", "streaming_end":
-		return false
-	default:
-		return true
-	}
 }
 
 func (es *EventStore) rebuildTerminalEventsLocked(sessionID string) {

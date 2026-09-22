@@ -4,7 +4,7 @@ import { useAppStore } from '../../stores/useAppStore'
 import { useChatStore } from '../../stores/useChatStore'
 import { useModeStore } from '../../stores/useModeStore'
 import { useProductSurfaceStore } from '../../stores/useProductSurfaceStore'
-import { hydrateTabEvents } from '../../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../../utils/executionConversationRestore'
 import { truncateTabTitle } from '../../utils/textUtils'
 import { WORK_PROFILE_ID, WORK_PROFILE_VERSION } from './workData'
 import { loadWorkSessions, workLLMSelectionFromConfig, type WorkSession } from './workSessions'
@@ -137,10 +137,7 @@ export async function openWorkAutomationRunChat(
     userInteractiveContinuation: false,
   }, session.session_id)
   chatStore.setTabCanSteer(runTabId, false)
-  const runtime = await hydrateTabEvents(session.session_id, {
-    workspacePath: session.workspace_path || project.workspacePath,
-    fallbackToChatHistory: true,
-  })
+  const runtime = await hydrateExecutionConversation(session.session_id, session.workspace_path || project.workspacePath)
   chatStore.setTabStreaming(runTabId, runtime.status === 'running')
   chatStore.setTabCompleted(runTabId, runtime.status !== 'running')
   chatStore.setTabViewMode(runTabId, 'formatted')

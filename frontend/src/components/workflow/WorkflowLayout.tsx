@@ -139,7 +139,7 @@ import {
 } from '../../services/api-types'
 import { findOrCreateWorkflowTab, isChatCompatiblePhase } from '../../utils/chatSubmitHelpers'
 import { useWorkflowViewPresentations } from './useWorkflowViewPresentations'
-import { appendRestoredLiveTail, hydrateTabEvents, hydrateTabEventsFromSessionPreview } from '../../utils/sessionRestore'
+import { appendRestoredLiveTail, hydrateTabEvents } from '../../utils/sessionRestore'
 import { resolveLiveInputConfirmations } from '../../utils/liveInputReceipt'
 import {
   hydrateWorkflowTabsPrioritized,
@@ -1572,25 +1572,14 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
           const chatStore = useChatStore.getState()
           applyRestoredWorkflowConversationConfig(tabId, historySession)
           chatStore.setTabViewMode(tabId, 'formatted')
-          // The list response already carries a compact, indexed transcript
-          // tail. Use it for automatic startup so a mature conversation does
-          // not block the whole right pane while the server parses its full
-          // archive. Explicit "Load earlier" requests still page the durable
-          // conversation endpoint.
-          if (!hydrateTabEventsFromSessionPreview(historySession)) {
-            chatStore.beginWorkflowSessionRestore(sessionId)
-            try {
-              await withWorkflowRestoreTimeout(
-                hydrateTabEvents(sessionId, {
-                  workspacePath: workspacePath || undefined,
-                  fallbackToChatHistory: true,
-                  preferChatHistory: true,
-                }),
-                `Restoring latest workflow chat ${sessionId}`,
-              )
-            } finally {
-              chatStore.endWorkflowSessionRestore(sessionId)
-            }
+          chatStore.beginWorkflowSessionRestore(sessionId)
+          try {
+            await withWorkflowRestoreTimeout(
+              hydrateTabEvents(sessionId, { workspacePath: workspacePath || undefined }),
+              `Restoring latest workflow chat ${sessionId}`,
+            )
+          } finally {
+            chatStore.endWorkflowSessionRestore(sessionId)
           }
           chatStore.setTabStreaming(tabId, false)
           chatStore.setTabCompleted(tabId, true)

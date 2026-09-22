@@ -1928,6 +1928,15 @@ else
     echo "🔖 Platform revision: unknown (not a git checkout) — findings will record no version"
 fi
 
+# Import legacy builder/product/Crew transcripts once, before the API can
+# accept a new turn. The migration command owns an idempotent marker under the
+# same AgentWorks state root used by the server.
+echo "🗃️  Checking durable chat migration..."
+if ! go run -ldflags "$GO_LDFLAGS" main.go server migrate-chat-events >> "$LOG_PATH" 2>&1; then
+    echo "❌ Durable chat migration failed. Check $LOG_PATH"
+    exit 1
+fi
+
 # Run the server with all the enhanced configuration
 echo "🚀 Starting server with 'go run'..."
 

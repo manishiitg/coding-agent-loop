@@ -1181,6 +1181,10 @@ func deleteChatHistorySessionHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, "Session not found", http.StatusNotFound)
 			return
 		}
+		if err := api.eventStore.DeleteDurableChatSession(sessionID); err != nil {
+			http.Error(w, "conversation was deleted but its durable event log could not be removed", http.StatusInternalServerError)
+			return
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{

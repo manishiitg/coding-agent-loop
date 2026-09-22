@@ -195,6 +195,7 @@ done
 } > "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf"
 cp "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf" \
    "$HOME/.config/systemd/user/$PRODUCT-workspace.service.d/zz-deploy-managed.conf"
+echo "Environment=AGENTWORKS_STATE_ROOT=$REMOTE_APP/state" >> "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf"
 for entry in "${AGENT_EXTRA_ENV[@]:-}"; do
   [[ -n "$entry" ]] && echo "Environment=$entry" >> "$HOME/.config/systemd/user/$PRODUCT-agent.service.d/zz-deploy-managed.conf"
 done
@@ -205,6 +206,13 @@ export XDG_RUNTIME_DIR="/run/user/$(id -u)"
 # marker and data live outside releases, while every subsequent service start
 # must resolve binaries and assets from this exact candidate.
 ln -sfn "$BUILD_DIR" "$REMOTE_APP/current"
+
+# Build the canonical chat log while the old agent is stopped. This command is
+# marker-backed and becomes a cheap no-op on later deployments.
+systemctl --user stop "$PRODUCT-agent"
+"$BUILD_DIR/bin/$PRODUCT-agent" server migrate-chat-events \
+  --docs-root "$REMOTE_APP/data/docs" \
+  --state-root "$REMOTE_APP/state"
 
 # One-time migration of legacy Workflow Builder chats, if this product opted
 # in. Runs after `current` points at code that understands the new nested

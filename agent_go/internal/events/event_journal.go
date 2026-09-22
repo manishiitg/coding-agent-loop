@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -36,6 +37,37 @@ type DurableEventJournalStats interface {
 	Stats() (EventJournalStats, error)
 }
 
+type DurableEventJournalPageReader interface {
+	ReadPage(sessionID string, opts DurableEventPageOptions) (DurableEventPage, error)
+	DeleteSession(sessionID string) error
+}
+
+type DurableEventJournalMigrator interface {
+	MigrationComplete(sessionID string) (bool, error)
+	MarkMigrationComplete(sessionID string) error
+}
+
+type DurableEventJournalOwnership interface {
+	RegisterOwner(sessionID, ownerID string) error
+	Owner(sessionID string) (string, error)
+}
+
+type DurableEventPageOptions struct {
+	Limit          int
+	BeforeSequence int64
+	AfterSequence  int64
+}
+
+type DurableEventPage struct {
+	Events                []Event
+	Exists                bool
+	HasOlder              bool
+	HasNewer              bool
+	OldestSequence        int64
+	LatestSequence        int64
+	JournalLatestSequence int64
+}
+
 func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return nil, fmt.Errorf("structured event journal path must be absolute")
@@ -65,6 +97,15 @@ func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
 			session_id TEXT PRIMARY KEY,
 			last_sequence INTEGER NOT NULL
 		)`,
+		`CREATE TABLE IF NOT EXISTS structured_chat_migrations (
+			session_id TEXT PRIMARY KEY,
+			migrated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS structured_chat_sessions (
+			session_id TEXT PRIMARY KEY,
+			owner_id TEXT NOT NULL,
+			updated_at TEXT NOT NULL
+		)`,
 	} {
 		if _, err := db.Exec(statement); err != nil {
 			db.Close()
@@ -73,6 +114,56 @@ func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
 	}
 	_ = os.Chmod(path, 0o600)
 	return &SQLiteEventJournal{db: db, path: path}, nil
+}
+
+func (j *SQLiteEventJournal) RegisterOwner(sessionID, ownerID string) error {
+	if j == nil || j.db == nil || sessionID == "" || ownerID == "" {
+		return nil
+	}
+	var existing string
+	err := j.db.QueryRow(`SELECT owner_id FROM structured_chat_sessions WHERE session_id = ?`, sessionID).Scan(&existing)
+	if err == nil && existing != ownerID {
+		return fmt.Errorf("durable chat %s is already owned by another user", sessionID)
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
+	_, err = j.db.Exec(`INSERT INTO structured_chat_sessions(session_id, owner_id, updated_at) VALUES(?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET updated_at = excluded.updated_at`, sessionID, ownerID, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
+}
+
+func (j *SQLiteEventJournal) Owner(sessionID string) (string, error) {
+	if j == nil || j.db == nil || sessionID == "" {
+		return "", nil
+	}
+	var ownerID string
+	err := j.db.QueryRow(`SELECT owner_id FROM structured_chat_sessions WHERE session_id = ?`, sessionID).Scan(&ownerID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return ownerID, err
+}
+
+func (j *SQLiteEventJournal) MigrationComplete(sessionID string) (bool, error) {
+	if j == nil || j.db == nil || sessionID == "" {
+		return false, nil
+	}
+	var present int
+	err := j.db.QueryRow(`SELECT 1 FROM structured_chat_migrations WHERE session_id = ?`, sessionID).Scan(&present)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func (j *SQLiteEventJournal) MarkMigrationComplete(sessionID string) error {
+	if j == nil || j.db == nil || sessionID == "" {
+		return nil
+	}
+	_, err := j.db.Exec(`INSERT INTO structured_chat_migrations(session_id, migrated_at) VALUES(?, ?)
+		ON CONFLICT(session_id) DO NOTHING`, sessionID, time.Now().UTC().Format(time.RFC3339Nano))
+	return err
 }
 
 func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool, error) {
@@ -91,12 +182,12 @@ func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool,
 			return Event{}, false, fmt.Errorf("decode existing structured event")
 		}
 		return persisted, false, nil
-	} else if err != sql.ErrNoRows {
+	} else if !errors.Is(err, sql.ErrNoRows) {
 		return Event{}, false, err
 	}
 
 	var last int64
-	if err := tx.QueryRow(`SELECT last_sequence FROM structured_chat_sequences WHERE session_id = ?`, sessionID).Scan(&last); err != nil && err != sql.ErrNoRows {
+	if err := tx.QueryRow(`SELECT last_sequence FROM structured_chat_sequences WHERE session_id = ?`, sessionID).Scan(&last); err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return Event{}, false, err
 	}
 	next := last + 1
@@ -145,6 +236,14 @@ func (j *SQLiteEventJournal) Stats() (EventJournalStats, error) {
 	return stats, nil
 }
 
+func (j *SQLiteEventJournal) Checkpoint() error {
+	if j == nil || j.db == nil {
+		return nil
+	}
+	_, err := j.db.Exec(`PRAGMA wal_checkpoint(PASSIVE)`)
+	return err
+}
+
 func (j *SQLiteEventJournal) LoadTail(sessionID string, limit int) ([]Event, error) {
 	if j == nil || j.db == nil || sessionID == "" {
 		return []Event{}, nil
@@ -177,6 +276,117 @@ func (j *SQLiteEventJournal) LoadTail(sessionID string, limit int) ([]Event, err
 		result[len(reversed)-1-index] = reversed[index]
 	}
 	return result, nil
+}
+
+func (j *SQLiteEventJournal) ReadPage(sessionID string, opts DurableEventPageOptions) (DurableEventPage, error) {
+	if j == nil || j.db == nil || sessionID == "" {
+		return DurableEventPage{Events: []Event{}}, nil
+	}
+	if opts.BeforeSequence > 0 && opts.AfterSequence > 0 {
+		return DurableEventPage{}, fmt.Errorf("before_sequence and after_sequence are mutually exclusive")
+	}
+	limit := opts.Limit
+	if limit <= 0 || limit > 1000 {
+		limit = 300
+	}
+
+	var total int
+	var minimum, maximum sql.NullInt64
+	if err := j.db.QueryRow(`SELECT COUNT(*), MIN(sequence), MAX(sequence) FROM structured_chat_events WHERE session_id = ?`, sessionID).Scan(&total, &minimum, &maximum); err != nil {
+		return DurableEventPage{}, err
+	}
+	page := DurableEventPage{Events: []Event{}, Exists: total > 0}
+	if total == 0 {
+		return page, nil
+	}
+	page.JournalLatestSequence = maximum.Int64
+
+	query := `SELECT payload FROM structured_chat_events WHERE session_id = ? ORDER BY sequence DESC LIMIT ?`
+	args := []interface{}{sessionID, limit + 1}
+	descending := true
+	if opts.BeforeSequence > 0 {
+		query = `SELECT payload FROM structured_chat_events WHERE session_id = ? AND sequence < ? ORDER BY sequence DESC LIMIT ?`
+		args = []interface{}{sessionID, opts.BeforeSequence, limit + 1}
+	} else if opts.AfterSequence > 0 {
+		query = `SELECT payload FROM structured_chat_events WHERE session_id = ? AND sequence > ? ORDER BY sequence ASC LIMIT ?`
+		args = []interface{}{sessionID, opts.AfterSequence, limit + 1}
+		descending = false
+	}
+
+	rows, err := j.db.Query(query, args...)
+	if err != nil {
+		return DurableEventPage{}, err
+	}
+	defer rows.Close()
+	loaded := make([]Event, 0, limit+1)
+	for rows.Next() {
+		var payload []byte
+		if err := rows.Scan(&payload); err != nil {
+			return DurableEventPage{}, err
+		}
+		var event Event
+		if err := json.Unmarshal(payload, &event); err != nil {
+			return DurableEventPage{}, err
+		}
+		loaded = append(loaded, event)
+	}
+	if err := rows.Err(); err != nil {
+		return DurableEventPage{}, err
+	}
+
+	moreInQueryDirection := len(loaded) > limit
+	if moreInQueryDirection {
+		loaded = loaded[:limit]
+	}
+	if descending {
+		for left, right := 0, len(loaded)-1; left < right; left, right = left+1, right-1 {
+			loaded[left], loaded[right] = loaded[right], loaded[left]
+		}
+	}
+	page.Events = loaded
+	if len(loaded) == 0 {
+		page.HasOlder = opts.AfterSequence > minimum.Int64
+		page.HasNewer = opts.BeforeSequence > 0 && opts.BeforeSequence <= maximum.Int64
+		return page, nil
+	}
+	page.OldestSequence = loaded[0].Sequence
+	page.LatestSequence = loaded[len(loaded)-1].Sequence
+	page.HasOlder = page.OldestSequence > minimum.Int64
+	page.HasNewer = page.LatestSequence < maximum.Int64
+	if opts.BeforeSequence > 0 {
+		page.HasOlder = moreInQueryDirection
+	}
+	if opts.AfterSequence > 0 {
+		page.HasNewer = moreInQueryDirection
+	}
+	return page, nil
+}
+
+func (j *SQLiteEventJournal) DeleteSession(sessionID string) error {
+	if j == nil || j.db == nil || sessionID == "" {
+		return nil
+	}
+	tx, err := j.db.BeginTx(context.Background(), &sql.TxOptions{})
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.Exec(`DELETE FROM structured_chat_events WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM structured_chat_sequences WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM structured_chat_migrations WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM structured_chat_sessions WHERE session_id = ?`, sessionID); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	return j.Checkpoint()
 }
 
 func (j *SQLiteEventJournal) Close() error {

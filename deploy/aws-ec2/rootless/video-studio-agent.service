@@ -9,6 +9,7 @@ Environment=HOME=%h
 Environment=PATH=%h/.local/bin:/usr/local/bin:/usr/bin:/bin
 Environment=AGENT_PRODUCTS=video-studio,work
 Environment=AGENTWORKS_MCP_STATE_DIR=%h/.local/state/agentworks/mcp
+Environment=AGENTWORKS_STATE_ROOT=%h/video-studio/state
 Environment=AGENT_BROWSER_CDP_ENABLED=false
 Environment=MCP_BRIDGE_BINARY=%h/video-studio/current/bin/mcpbridge
 # The release packages the SPA and the report-preview runtime together here.

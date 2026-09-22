@@ -29,7 +29,7 @@ browser_wrapper="$(dirname "$browser_path")/agentworks-chrome-headless"
 install -m 0755 "$RELEASE_DIR/server/chrome-headless-wrapper.sh" "$browser_wrapper"
 
 install -d -m 0755 /opt/video-studio /data/video-studio/{docs,workspace-db,agent-db,logs,caddy-data,caddy-config}
-install -d -o video-studio -g video-studio -m 0755 /var/lib/video-studio
+install -d -o video-studio -g video-studio -m 0755 /var/lib/video-studio /var/lib/video-studio/agentworks-state
 # Releases contain executable code and static configuration only. Make the
 # active release traversable/readable to the unprivileged application account;
 # credentials remain separately stored in the root-owned 0600 environment file.
@@ -89,6 +89,10 @@ cd /opt/video-studio
 docker compose up -d --force-recreate
 systemctl daemon-reload
 systemctl enable video-studio-workspace video-studio-agent video-studio-gateway
+systemctl stop video-studio-agent 2>/dev/null || true
+runuser -u video-studio -- "$RELEASE_DIR/bin/video-studio-agent" server migrate-chat-events \
+  --docs-root /data/video-studio/docs \
+  --state-root /var/lib/video-studio/agentworks-state
 systemctl restart video-studio-workspace video-studio-agent video-studio-gateway
 systemctl is-active --quiet video-studio-workspace video-studio-agent video-studio-gateway
 rm -f "$RELEASE_DIR/.deploying"

@@ -11,7 +11,7 @@ import ChatArea from '../../../components/ChatArea'
 import { useChatStore, waitForChatStoreHydration } from '../../../stores/useChatStore'
 import { useModeStore } from '../../../stores/useModeStore'
 import { useAppStore } from '../../../stores/useAppStore'
-import { hydrateTabEvents, restoreSession } from '../../../utils/sessionRestore'
+import { hydrateExecutionConversation } from '../../../utils/executionConversationRestore'
 import { api } from '../api'
 import { FAMILY_WORKSPACE, PARENT_PROFILE_ID, PARENT_PROFILE_VERSION, SparkQuillConversation, queryClient } from './PlatformChat'
 
@@ -46,12 +46,11 @@ export default function PulseHistoryViewer({ sessionId, title = 'Check-in histor
         agentProfileChatContract: 'profile-v1',
       }, sessionId)
       if (!chatStore.getTab(createdTabId)) throw new Error('the conversation tab could not be created')
-      const restoredTabId = await restoreSession(sessionId, { title, source: 'sparkquill-history-view', skipConfigRestore: true, workspacePath })
-      await hydrateTabEvents(sessionId, { workspacePath, fallbackToChatHistory: true, preferChatHistory: true })
-      if (cancelled) { await chatStore.closeTab(restoredTabId, true, false); return }
-      openedTabId = restoredTabId
-      chatStore.switchTab(restoredTabId)
-      setTabId(restoredTabId)
+      await hydrateExecutionConversation(sessionId, workspacePath)
+      if (cancelled) { await chatStore.closeTab(createdTabId, true, false); return }
+      openedTabId = createdTabId
+      chatStore.switchTab(createdTabId)
+      setTabId(createdTabId)
     }
     void open().catch((err) => {
       if (!cancelled) setError(err instanceof Error ? err.message : 'Could not open this conversation.')

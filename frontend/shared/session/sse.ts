@@ -33,6 +33,8 @@ export interface SSEOptions {
   /** "eventsource" (default in browsers) or "fetch". */
   transport?: 'eventsource' | 'fetch'
   workingSet?: 'session' | 'all'
+  /** Resume chat from the durable SQLite sequence log, not the live window. */
+  durableChat?: boolean
   maxConsecutiveErrors?: number
   log?: SSELogger
 }
@@ -62,6 +64,7 @@ export class SSEConnection {
     const params = new URLSearchParams()
     // Detailed child transcripts are fetched only for the selected terminal.
     params.set('working_set', this.opts.workingSet ?? 'session')
+    if (this.opts.durableChat) params.set('durable_chat', '1')
     if (this.sinceIndex >= 0) params.set('since', String(this.sinceIndex))
     if (forEventSource && this.opts.token) params.set('token', this.opts.token)
     return `${this.opts.baseUrl.replace(/\/+$/, '')}/api/sessions/${encodeURIComponent(this.opts.sessionId)}/events/stream?${params}`

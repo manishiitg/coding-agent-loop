@@ -79,6 +79,8 @@ export interface GetEventsResponse {
   is_synthetic_turn?: boolean // True when running auto-notification turn (input remains locked as normal)
   can_steer?: boolean // True when a live foreground agent can accept steer injection
   runtime_state?: RuntimeSnapshot
+  oldest_sequence?: number
+  latest_sequence?: number
 }
 
 export interface TerminalEventsResponse {

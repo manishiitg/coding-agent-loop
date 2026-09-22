@@ -165,6 +165,8 @@ type GetEventsResponse struct {
 	IsSyntheticTurn            bool             `json:"is_synthetic_turn,omitempty"`             // True when running auto-notification turn (frontend should not block input)
 	CanSteer                   bool             `json:"can_steer,omitempty"`                     // True when a live foreground agent can accept steer injection
 	RuntimeState               *RuntimeSnapshot `json:"runtime_state,omitempty"`
+	OldestSequence             int64            `json:"oldest_sequence,omitempty"`
+	LatestSequence             int64            `json:"latest_sequence,omitempty"`
 }
 
 // --- POLLING API HANDLERS ---
@@ -190,6 +192,43 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	limitStr := r.URL.Query().Get("limit")
 	offsetStr := r.URL.Query().Get("offset")
 	cursorOnly := r.URL.Query().Get("cursor_only") == "1"
+	durableChat := r.URL.Query().Get("durable_chat") == "1"
+	beforeSequenceStr := r.URL.Query().Get("before_sequence")
+	workspacePath := strings.TrimSpace(r.URL.Query().Get("workspace_path"))
+
+	// Authorize before touching either the live window or durable journal.
+	currentUserID := GetUserIDFromContext(r.Context())
+	activeSession, existsInActive := api.getActiveSession(sessionID)
+	if existsInActive && activeSession.UserID != "" && activeSession.UserID != currentUserID {
+		http.Error(w, "Session not found or access denied", http.StatusNotFound)
+		return
+	}
+	if durableChat {
+		if _, _, allowed := chatHistoryWorkspaceAccess(r, workspacePath); !allowed {
+			http.Error(w, "workflow access denied", http.StatusForbidden)
+			return
+		}
+		if existsInActive {
+			if !api.eventStore.IsDurableChatSession(sessionID) {
+				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
+				return
+			}
+		} else {
+			ownerID, ownerErr := api.eventStore.DurableChatOwner(sessionID)
+			if ownerErr != nil {
+				http.Error(w, "Failed to authorize durable chat", http.StatusInternalServerError)
+				return
+			}
+			if ownerID == "" || ownerID != currentUserID {
+				http.Error(w, "Session not found or access denied", http.StatusNotFound)
+				return
+			}
+			if err := api.eventStore.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
+				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
+				return
+			}
+		}
+	}
 
 	// Build options for GetEvents
 	opts := events.GetEventsOptions{
@@ -242,7 +281,55 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	var exists bool
 	var lastProcessedIndex int
 	var hasMoreFromStore bool
-	if cursorOnly {
+	if durableChat {
+		pageOpts := events.DurableEventPageOptions{Limit: 300}
+		if cursorOnly {
+			pageOpts.Limit = 1
+		} else if sinceStr != "" {
+			afterSequence, err := strconv.ParseInt(sinceStr, 10, 64)
+			if err != nil || afterSequence < 0 {
+				http.Error(w, "since parameter must be a non-negative sequence", http.StatusBadRequest)
+				return
+			}
+			pageOpts.Limit = events.MaxPollingLimit
+			pageOpts.AfterSequence = afterSequence
+		} else {
+			if limitStr != "" {
+				limit, err := strconv.Atoi(limitStr)
+				if err != nil || limit <= 0 {
+					http.Error(w, "limit parameter must be a positive integer", http.StatusBadRequest)
+					return
+				}
+				pageOpts.Limit = limit
+			}
+			if beforeSequenceStr != "" {
+				beforeSequence, err := strconv.ParseInt(beforeSequenceStr, 10, 64)
+				if err != nil || beforeSequence <= 0 {
+					http.Error(w, "before_sequence must be a positive sequence", http.StatusBadRequest)
+					return
+				}
+				pageOpts.BeforeSequence = beforeSequence
+			}
+		}
+		page, err := api.eventStore.ReadDurableChatPage(sessionID, pageOpts)
+		if err != nil {
+			http.Error(w, "Failed to read durable chat events", http.StatusInternalServerError)
+			return
+		}
+		sessionEvents = page.Events
+		exists = page.Exists || existsInActive
+		lastProcessedIndex = int(page.LatestSequence)
+		if cursorOnly && page.Exists {
+			// Tail page limit=1 returns the durable tip.
+			lastProcessedIndex = int(page.LatestSequence)
+			sessionEvents = []events.Event{}
+		}
+		if pageOpts.AfterSequence > 0 {
+			hasMoreFromStore = page.HasNewer
+		} else {
+			hasMoreFromStore = page.HasOlder
+		}
+	} else if cursorOnly {
 		lastProcessedIndex, exists = api.eventStore.GetLatestEventIndex(sessionID)
 		sessionEvents = []events.Event{}
 	} else {
@@ -256,17 +343,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		hasMoreFromStore = getEventsResult.HasMore
 	}
 
-	// Get current user ID for session isolation
-	currentUserID := GetUserIDFromContext(r.Context())
-
 	// Session status comes from the in-memory active sessions map.
 	var sessionStatus string
-	activeSession, existsInActive := api.getActiveSession(sessionID)
 	if existsInActive {
-		if activeSession.UserID != "" && activeSession.UserID != currentUserID {
-			http.Error(w, "Session not found or access denied", http.StatusNotFound)
-			return
-		}
 		sessionStatus = activeSession.Status
 	}
 	hasRunningBackgroundAgents := api.bgAgentRegistry != nil && api.bgAgentRegistry.HasRunningAgents(sessionID)
@@ -303,7 +382,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 	}
 
 	for i, event := range sessionEvents {
-		api.logger.Debug(fmt.Sprintf("  [%d] %s", i, event.Type))
+		if api.logger != nil {
+			api.logger.Debug(fmt.Sprintf("  [%d] %s", i, event.Type))
+		}
 	}
 
 	// The event store calculates this against the filtered pagination source.
@@ -321,12 +402,28 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		HasRunningBackgroundAgents: hasRunningBackgroundAgents,
 		CanSteer:                   canSteer,
 		RuntimeState:               &runtimeState,
+		OldestSequence:             firstEventSequence(sessionEvents),
+		LatestSequence:             lastEventSequence(sessionEvents, int64(lastProcessedIndex)),
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
+}
+
+func firstEventSequence(events []events.Event) int64 {
+	if len(events) == 0 {
+		return 0
+	}
+	return events[0].Sequence
+}
+
+func lastEventSequence(events []events.Event, fallback int64) int64 {
+	if len(events) == 0 {
+		return fallback
+	}
+	return events[len(events)-1].Sequence
 }
 
 // --- In-Memory Session/Agent State Management ---

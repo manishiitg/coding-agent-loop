@@ -83,6 +83,29 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 		sinceIndex = parsed
 	}
 	workingSetOnly := r.URL.Query().Get("working_set") == "session"
+	durableChat := r.URL.Query().Get("durable_chat") == "1"
+	if durableChat {
+		if _, active := api.getActiveSession(sessionID); active {
+			if !api.eventStore.IsDurableChatSession(sessionID) {
+				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
+				return
+			}
+		} else {
+			ownerID, ownerErr := api.eventStore.DurableChatOwner(sessionID)
+			if ownerErr != nil {
+				http.Error(w, "Failed to authorize durable chat", http.StatusInternalServerError)
+				return
+			}
+			if ownerID == "" || ownerID != GetUserIDFromContext(r.Context()) {
+				http.Error(w, "Session not found or access denied", http.StatusNotFound)
+				return
+			}
+			if err := api.eventStore.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
+				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
+				return
+			}
+		}
+	}
 
 	// 3. Disable write timeout for SSE connections — they are long-lived streams.
 	// The server's global WriteTimeout (30s) would kill the connection prematurely.
@@ -107,19 +130,35 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 
 	// Backfill: send catch-up events the client hasn't seen yet
 	if sinceIndex >= 0 {
-		result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{
-			SinceIndex:       sinceIndex,
-			IncludeStreaming: true,
-		})
-		backfillEvents := result.Events
+		var backfillEvents []events.Event
+		var resultExists bool
+		resultLastIndex := sinceIndex
+		if durableChat {
+			page, err := api.eventStore.ReadDurableChatPage(sessionID, events.DurableEventPageOptions{Limit: events.MaxPollingLimit, AfterSequence: int64(sinceIndex)})
+			if err != nil {
+				log.Printf("[SSE] durable backfill failed for session %s: %v", sessionID, err)
+				return
+			}
+			backfillEvents = page.Events
+			resultExists = page.Exists
+			if page.JournalLatestSequence > 0 {
+				resultLastIndex = int(page.JournalLatestSequence)
+			}
+		} else {
+			result := api.eventStore.GetEvents(sessionID, events.GetEventsOptions{SinceIndex: sinceIndex, IncludeStreaming: true})
+			backfillEvents = result.Events
+			resultExists = result.Exists
+			resultLastIndex = result.LastProcessedIndex
+		}
+		rawBackfillCount := len(backfillEvents)
 		if workingSetOnly {
 			backfillEvents = events.FilterSessionWorkingSet(sessionID, backfillEvents)
 		}
-		if workingSetOnly && len(result.Events) > 0 && len(backfillEvents) == 0 {
-			if err := writeSSEEvent(w, "cursor", result.LastProcessedIndex, struct{}{}); err != nil {
+		if workingSetOnly && rawBackfillCount > 0 && len(backfillEvents) == 0 {
+			if err := writeSSEEvent(w, "cursor", resultLastIndex, struct{}{}); err != nil {
 				return
 			}
-			sinceIndex = result.LastProcessedIndex
+			sinceIndex = resultLastIndex
 			flusher.Flush()
 		}
 		if len(backfillEvents) > 0 {
@@ -129,18 +168,27 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 				Events:                     backfillEvents,
 				SessionStatus:              sessionStatus,
 				DisplayStatus:              runtimeStatus.Status,
-				LastProcessedIndex:         result.LastProcessedIndex,
+				LastProcessedIndex:         resultLastIndex,
 				HasRunningBackgroundAgents: runtimeStatus.HasRunningBackgroundAgents,
 				IsSyntheticTurn:            api.isSyntheticTurn(sessionID),
 				CanSteer:                   runtimeStatus.CanSteer,
 				RuntimeState:               &runtimeState,
 			}
-			if err := writeSSEEvent(w, "event", result.LastProcessedIndex, msg); err != nil {
+			if err := writeSSEEvent(w, "event", resultLastIndex, msg); err != nil {
 				return
 			}
-			sinceIndex = result.LastProcessedIndex
+			sinceIndex = resultLastIndex
 			flusher.Flush()
-		} else if !result.Exists {
+		} else if durableChat && resultLastIndex < sinceIndex {
+			// Live-only deltas can advance the browser's Last-Event-ID beyond the
+			// durable tip. After a restart those deltas are gone, so move the SSE
+			// cursor back to the journal tip before accepting newly numbered rows.
+			if err := writeSSEEvent(w, "cursor", resultLastIndex, struct{}{}); err != nil {
+				return
+			}
+			sinceIndex = resultLastIndex
+			flusher.Flush()
+		} else if !resultExists {
 			// The in-memory EventStore has no record of this session at all —
 			// almost always because the process restarted and this ring
 			// buffer is memory-only (the durable transcript on disk is
@@ -203,13 +251,15 @@ func (api *StreamingAPI) handleSSEStream(w http.ResponseWriter, r *http.Request)
 			}
 
 			// Skip events already covered by the backfill
-			if event.Data != nil && event.Data.EventIndex > 0 && event.Data.EventIndex <= lastIndex {
+			if event.Sequence > 0 && event.Sequence <= int64(lastIndex) {
 				continue
 			}
 
 			// Determine the event index to use as SSE id
 			eventIndex := lastIndex + 1
-			if event.Data != nil && event.Data.EventIndex > 0 {
+			if event.Sequence > 0 {
+				eventIndex = int(event.Sequence)
+			} else if event.Data != nil && event.Data.EventIndex > 0 {
 				eventIndex = event.Data.EventIndex
 			}
 			if eventIndex > lastIndex {

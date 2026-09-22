@@ -746,18 +746,24 @@ export const agentApi = {
     options?: {
       limit?: number
       offset?: number
-	      // The normal chat working set omits detailed child transcripts. The
-	      // terminal Conversation view needs the complete page, then scopes it
-	      // locally to the selected terminal before rendering.
-	      workingSet?: 'session' | 'all'
+      // The normal chat working set omits detailed child transcripts. The
+      // terminal Conversation view needs the complete page, then scopes it
+      // locally to the selected terminal before rendering.
+      workingSet?: 'session' | 'all'
+      durableChat?: boolean
+      beforeSequence?: number
+      workspacePath?: string
     }
   ): Promise<GetEventsResponse> => {
     const params: Record<string, string | number> = {}
     if (options?.workingSet !== 'all') params.working_set = 'session'
+    if (options?.durableChat) params.durable_chat = 1
+    if (options?.beforeSequence !== undefined) params.before_sequence = options.beforeSequence
+    if (options?.workspacePath) params.workspace_path = options.workspacePath
 
     // Forward polling mode: use sinceIndex
     if (sinceIndex !== undefined && sinceIndex >= -1) {
-      params.since = sinceIndex
+      params.since = options?.durableChat ? Math.max(0, sinceIndex) : sinceIndex
     }
     // Backward pagination mode: use limit/offset
     else if (options?.limit !== undefined || options?.offset !== undefined) {
@@ -786,11 +792,19 @@ export const agentApi = {
     })
   },
 
+  getRecentChatEvents: async (sessionId: string, workspacePath?: string): Promise<GetEventsResponse> => {
+    return agentApi.getSessionEvents(sessionId, undefined, {
+      limit: 300,
+      durableChat: true,
+      workspacePath,
+    })
+  },
+
   // Refresh needs runtime state and the SSE resume position, not the retained
   // raw event payloads. Durable chat history supplies the visible transcript.
-  getSessionEventCursor: async (sessionId: string): Promise<GetEventsResponse> => {
+  getSessionEventCursor: async (sessionId: string, workspacePath?: string): Promise<GetEventsResponse> => {
     const response = await api.get(`/api/sessions/${sessionId}/events`, {
-      params: { cursor_only: 1 },
+      params: { cursor_only: 1, durable_chat: 1, ...(workspacePath ? { workspace_path: workspacePath } : {}) },
     })
     return response.data
   },

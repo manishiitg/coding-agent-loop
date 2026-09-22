@@ -6227,6 +6227,12 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
+			if !isWorkflowPhase && !crewReadOnly && backgroundCodeSurface {
+				if err := llmAgent.AddInstructions(triggerAutoNotifyPrompt); err != nil {
+					sendError(fmt.Sprintf("Failed to add auto-notification guidance: %v", err), true)
+					return
+				}
+			}
 
 			// 2. CONTEXT — skills. Attaching a skill is not an instruction
 			//    section (AttachSkill, not AddInstructions), so it stays here

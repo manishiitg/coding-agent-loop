@@ -213,6 +213,39 @@ metrics. The normal product surface remains **Execution Logs**; the existing
 child/step terminal rail remains available only when server runtime diagnostics
 are explicitly enabled.
 
+### Current developer-diagnostics mode
+
+The existing rail is not normal product navigation. `ChatArea` mounts
+`TerminalCenter` only when both conditions are true:
+
+1. `GET /api/capabilities` reports `runtime_debug: true`, which is controlled
+   by the server's explicit `AGENTWORKS_RUNTIME_DEBUG` opt-in (local launcher:
+   `--enable-chat-terminal-debugs`); and
+2. the active chat tab is switched from formatted conversation to Terminal /
+   Live view.
+
+When `runtime_debug` is false, the same Live-view control shows only
+`MainAgentTerminal`; individual workflow-step/child terminals are not exposed.
+Normal users inspect completed or running step records through Execution Logs.
+This distinction must remain explicit so an internal terminal inventory is not
+accidentally promoted into every product chat.
+
+The proposed Crew-style diagnostics surface should remain capability-gated and
+developer/admin-oriented initially. It must:
+
+- scope every terminal, step, artifact, and JSON read to the active authorized
+  session/workspace and never provide a cross-user "view all" mode;
+- lazy-load only after the developer opens Diagnostics, so ordinary chat startup
+  performs no terminal inventory or execution-log polling;
+- offer an explicit **Diagnostics** entry rather than silently changing the
+  normal **Open live view** behavior;
+- preserve the formatted conversation as the default view and make returning to
+  it immediate;
+- read existing execution artifacts, terminal/SSE state, and the cost ledger
+  without creating a new persistence stream;
+- clearly label checkpointed JSON versus live terminal data when the two have
+  not yet converged.
+
 Add a Crew-style developer diagnostics view over those existing artifacts:
 
 ```text

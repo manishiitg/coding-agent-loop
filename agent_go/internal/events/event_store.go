@@ -623,6 +623,7 @@ type EventStore struct {
 	nextSequence        map[string]int64
 	sessionStartIndices map[string]int    // sessionID -> startIndex (offset for events in memory)
 	sessionOwners       map[string]string // sessionID -> userID
+	persistenceClasses  map[string]SessionPersistenceClass
 	mu                  sync.RWMutex
 	maxEvents           int // Maximum events per session
 	cleanupTicker       *time.Ticker
@@ -651,6 +652,7 @@ func NewEventStoreWithActivityCallback(maxEvents int, activityCallback ActivityC
 		nextSequence:        make(map[string]int64),
 		sessionStartIndices: make(map[string]int),
 		sessionOwners:       make(map[string]string),
+		persistenceClasses:  make(map[string]SessionPersistenceClass),
 		maxEvents:           maxEvents,
 		cleanupTicker:       time.NewTicker(5 * time.Minute), // Cleanup every 5 minutes
 		stopCh:              make(chan struct{}),
@@ -675,6 +677,9 @@ func (es *EventStore) SetDurableJournal(journal DurableEventJournal) {
 
 func (es *EventStore) hydrateSession(sessionID string) {
 	if es == nil || strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	if !es.sessionUsesDurableChatJournal(sessionID) {
 		return
 	}
 	es.hydrateMu.Lock()
@@ -825,7 +830,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 	} else if event.Sequence > es.nextSequence[sessionID] {
 		es.nextSequence[sessionID] = event.Sequence
 	}
-	if es.durableJournal != nil && shouldJournalStructuredEvent(event) {
+	if es.durableJournal != nil && es.persistenceClasses[sessionID] == SessionPersistenceInteractiveChat && shouldJournalStructuredEvent(event) {
 		started := time.Now()
 		persisted, inserted, err := es.durableJournal.Append(sessionID, event)
 		elapsed := time.Since(started)
@@ -1392,6 +1397,7 @@ func (es *EventStore) RemoveSession(sessionID string) {
 	delete(es.nextSequence, sessionID)
 	delete(es.sessionStartIndices, sessionID)
 	delete(es.sessionOwners, sessionID)
+	delete(es.persistenceClasses, sessionID)
 	// Explicit removal is an in-process tombstone. A later read or new event
 	// must not resurrect the old durable tail; a new process may restore it.
 	es.hydratedSessions[sessionID] = true

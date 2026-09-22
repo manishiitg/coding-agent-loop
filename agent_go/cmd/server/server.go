@@ -3679,6 +3679,14 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 	}
 	currentUserIsReadOnly = readOnlyForRequest(access, req)
 	normalizeWorkflowConversationMode(&req, currentUserIsReadOnly)
+	if api.eventStore != nil {
+		class := sessionPersistenceClassForRequest(req)
+		if err := api.eventStore.SetSessionPersistenceClass(sessionID, class); err != nil {
+			logfWithContext(queryLogCtx, "[EVENT_JOURNAL] Session classification rejected: %v", err)
+			http.Error(w, "Session persistence classification conflict", http.StatusConflict)
+			return
+		}
+	}
 
 	var resolvedProfileSkills []*llmtypes.Skill
 	if resolvedProfile != nil {

@@ -33,6 +33,13 @@ func streamingTestEvent(id, content string) Event {
 	}
 }
 
+func classifyInteractiveTestSession(t *testing.T, store *EventStore, sessionID string) {
+	t.Helper()
+	if err := store.SetSessionPersistenceClass(sessionID, SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
 	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
 	if err != nil {
@@ -57,6 +64,57 @@ func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestOnlyInteractiveChatSessionsUseDurableJournal(t *testing.T) {
+	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.SetDurableJournal(journal)
+
+	if err := store.SetSessionPersistenceClass("execution-1", SessionPersistenceExecution); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddEventChecked("execution-1", journalTestEvent("execution-event", "run")); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddEventChecked("unknown-1", journalTestEvent("unknown-event", "unknown")); err != nil {
+		t.Fatal(err)
+	}
+	for _, sessionID := range []string{"execution-1", "unknown-1"} {
+		persisted, err := journal.LoadTail(sessionID, 10)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(persisted) != 0 {
+			t.Fatalf("%s persisted %d live-only events", sessionID, len(persisted))
+		}
+		if got := store.GetAllEventsRaw(sessionID); len(got) != 1 {
+			t.Fatalf("%s live events = %d, want 1", sessionID, len(got))
+		}
+	}
+}
+
+func TestSessionPersistenceClassificationIsImmutableAndPrecedesEvents(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	if err := store.SetSessionPersistenceClass("chat-1", SessionPersistenceInteractiveChat); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSessionPersistenceClass("chat-1", SessionPersistenceExecution); err == nil {
+		t.Fatal("persistence class change unexpectedly succeeded")
+	}
+	store.AddEvent("unknown-1", journalTestEvent("event-1", "live"))
+	if err := store.SetSessionPersistenceClass("unknown-1", SessionPersistenceInteractiveChat); err == nil {
+		t.Fatal("late persistence classification unexpectedly succeeded")
+	}
+	store.AddEvent("execution-1", journalTestEvent("event-2", "live execution"))
+	if err := store.SetSessionPersistenceClass("execution-1", SessionPersistenceExecution); err != nil {
+		t.Fatalf("late live-only classification failed: %v", err)
+	}
+}
+
 func TestStreamingChunksStayLiveOnlyAndBoundaryPreservesSequenceGap(t *testing.T) {
 	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
 	if err != nil {
@@ -65,6 +123,7 @@ func TestStreamingChunksStayLiveOnlyAndBoundaryPreservesSequenceGap(t *testing.T
 	store := NewEventStore(100)
 	defer store.Stop()
 	store.SetDurableJournal(journal)
+	classifyInteractiveTestSession(t, store, "session-1")
 	for _, id := range []string{"chunk-1", "chunk-2", "chunk-3"} {
 		if err := store.AddEventChecked("session-1", streamingTestEvent(id, id)); err != nil {
 			t.Fatal(err)
@@ -106,6 +165,7 @@ func TestEventStoreSuppliesStableIdentityForLegacyEvent(t *testing.T) {
 	store := NewEventStore(100)
 	defer store.Stop()
 	store.SetDurableJournal(journal)
+	classifyInteractiveTestSession(t, store, "session-1")
 	event := journalTestEvent("", "legacy")
 	if err := store.AddEventChecked("session-1", event); err != nil {
 		t.Fatalf("legacy event without an ID was rejected: %v", err)
@@ -127,6 +187,7 @@ func TestEventStoreRestoresDurableEventsAndContinuesSequence(t *testing.T) {
 	}
 	firstStore := NewEventStore(100)
 	firstStore.SetDurableJournal(journal)
+	classifyInteractiveTestSession(t, firstStore, "session-1")
 	firstStore.AddEvent("session-1", journalTestEvent("event-1", "one"))
 	firstStore.AddEvent("session-1", journalTestEvent("event-2", "two"))
 	firstStore.Stop()
@@ -138,6 +199,7 @@ func TestEventStoreRestoresDurableEventsAndContinuesSequence(t *testing.T) {
 	secondStore := NewEventStore(100)
 	defer secondStore.Stop()
 	secondStore.SetDurableJournal(reopened)
+	classifyInteractiveTestSession(t, secondStore, "session-1")
 	restored := secondStore.GetEvents("session-1", GetEventsOptions{SinceIndex: -1, IncludeStreaming: true}).Events
 	if len(restored) != 2 || restored[0].Sequence != 1 || restored[1].Sequence != 2 {
 		t.Fatalf("restored = %+v", restored)
@@ -174,6 +236,7 @@ func TestEventStoreDoesNotPublishBeforeDurableAppend(t *testing.T) {
 	store := NewEventStore(100)
 	defer store.Stop()
 	store.SetDurableJournal(failingEventJournal{})
+	classifyInteractiveTestSession(t, store, "session-1")
 	subscriber := store.Subscribe("session-1")
 	defer store.Unsubscribe("session-1", subscriber)
 	if err := store.AddEventChecked("session-1", journalTestEvent("event-1", "one")); err == nil {
@@ -197,6 +260,7 @@ func TestSessionStatusDoesNotHydrateAndRemovalDoesNotResurrect(t *testing.T) {
 	}
 	first := NewEventStore(100)
 	first.SetDurableJournal(journal)
+	classifyInteractiveTestSession(t, first, "session-1")
 	first.AddEvent("session-1", journalTestEvent("event-1", "one"))
 	first.Stop()
 
@@ -207,6 +271,7 @@ func TestSessionStatusDoesNotHydrateAndRemovalDoesNotResurrect(t *testing.T) {
 	store := NewEventStore(100)
 	defer store.Stop()
 	store.SetDurableJournal(reopened)
+	classifyInteractiveTestSession(t, store, "session-1")
 	if count, exists := store.GetSessionStatus("session-1"); exists || count != 0 {
 		t.Fatalf("status unexpectedly hydrated durable history: count=%d exists=%v", count, exists)
 	}

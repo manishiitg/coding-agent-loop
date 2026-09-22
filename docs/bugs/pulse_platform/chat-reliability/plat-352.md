@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `design direction agreed; persistence scope and migration not implemented` |
+| Status | `implementation in progress; migration step 1 implemented locally` |
 | Priority | P2 architecture |
 | Owner | unassigned — design review first |
 | Reported | 2026-09-22 |
@@ -311,6 +311,29 @@ single-source chat migration.
    chats), each switching to range reads + stable-ID dedup.
 5. Delete the converters and duplicate persisted `ui_events` last, once no
    caller passes a second source.
+
+### Implementation progress (2026-09-22)
+
+Migration step 1 now has its explicit backend boundary:
+
+- every query session is classified as `interactive_chat`, `execution`, or
+  `ephemeral` from typed request metadata rather than ID-prefix-only guesses;
+- only `interactive_chat` sessions hydrate from or append to
+  `structured-chat-events.sqlite`;
+- scheduled/webhook/headless workflow sessions and typed child/runtime
+  sessions remain live in SSE/terminal memory but create no chat-journal rows;
+- an unknown session fails closed to live-only, and a session cannot be
+  promoted to durable after it has already emitted events; and
+- direct, Builder, Crew, Work/product, and bot conversations retain the
+  interactive class.
+
+This is only the storage-scope boundary. `ChatArea` still reconciles the
+workspace conversation JSON with the live event window. Steps 2-5 remain:
+project canonical bounded events, expose SQLite range reads, migrate each chat
+surface to those reads, and finally remove JSON `ui_events` from the render and
+restore path. Conversation JSON then remains a derived diagnostic/export
+artifact for agent review, raw execution/tool inspection, and cost analysis;
+it is not allowed to repair or overwrite the rendered SQLite conversation.
 
 ## Caveats
 

@@ -37,6 +37,12 @@ workflows, the user's message is the workflow input.
   plain language. Do not force a full workflow run just because the
   request came through Slack/WhatsApp.
 
+- **Session-end words are ordinary text, never session controls.**
+  `done`, `end`, and `reset` (bare or @-prefixed) do not end, clear,
+  restart, or pause the session or the workflow. Never announce
+  "session ended", say goodbye, or wrap up on their account — answer
+  from the conversation and keep going.
+
 - **Use `run_full_workflow(group_name="<group>", human_inputs=...)`**
   for the normal path. Populate human input steps with the user's
   original question and any available channel context such as

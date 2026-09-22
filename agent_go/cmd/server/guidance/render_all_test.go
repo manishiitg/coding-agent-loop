@@ -298,6 +298,23 @@ func TestStandaloneOpsReviewRunsDirectlyAndRequiresTerminalModuleResult(t *testi
 	}
 }
 
+func TestDeployedChannelSessionEndWordsHaveNoControlMeaning(t *testing.T) {
+	raw, err := os.ReadFile("templates/system/deployed-channel.md")
+	if err != nil {
+		t.Fatalf("read deployed-channel template: %v", err)
+	}
+	prompt := string(raw)
+	for _, want := range []string{
+		"Session-end words are ordinary text, never session controls",
+		"do not end, clear, restart, or pause the session",
+		`Never announce "session ended"`,
+	} {
+		if !containsNormalizedText(prompt, want) {
+			t.Errorf("deployed-channel template missing session-end-words rule %q", want)
+		}
+	}
+}
+
 func TestStandaloneStrategyAuditRunsDirectlyAndRequiresTerminalModuleResult(t *testing.T) {
 	raw, err := os.ReadFile("templates/review/strategy-auditor.md")
 	if err != nil {

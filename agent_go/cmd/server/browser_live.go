@@ -16,7 +16,6 @@ import (
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/browser"
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 )
 
 // Browser discovery is scoped to both the signed-in session owner and workflow.
@@ -28,63 +27,44 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 		return result
 	}
 	result = api.playwrightSessions(GetUserIDFromContext(r.Context()), workspace)
+	userID := GetUserIDFromContext(r.Context())
+	claims := GetUserFromContext(r.Context())
+	shared := browserSessionForWorkspace(userID, workspace)
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
 		if browser.IsUserBrowserSession(item["browser_session"]) {
-			userID := GetUserIDFromContext(r.Context())
-			expected := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(userID, "", workspace) + "--browser")
-			userWorkspaceSession := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace(userID, "", workspace) + "--browser")
-			productSession := common.PrefixBrowserSessionID(common.BrowserSessionNamespace(userID, "") + "--browser")
-			if userID != "" && (item["browser_session"] == expected || item["browser_session"] == userWorkspaceSession || item["browser_session"] == productSession) {
-				// Crew projects have workflow.json because they reuse the shared
-				// project manifest, but they are not workflows and do not use the
-				// workflow-shared browser namespace or workflow browser_mode gate.
-				// Classify the path before reading the manifest; otherwise every
-				// real Crew browser is mistaken for a disabled Workflow browser and
-				// disappears from the Browser panel.
-				if isActiveWorkProjectWorkspace(userID, workspace) {
-					if item["browser_session"] == userWorkspaceSession && api.userOwnsActiveSessionAtWorkspace(userID, workspace) {
-						item["label"] = "Crew browser"
-						result = append(result, item)
-					}
-					continue
-				}
-				level, manifest := workflowAccessForWorkspacePath(r.Context(), GetUserFromContext(r.Context()), workspace)
-				if manifest != nil {
-					// A real Workflow/ folder: its own capabilities.browser_mode
-					// setting can disable browser access even though a session
-					// exists, so it gates visibility here too.
-					item["label"] = "Workflow browser"
-					if item["browser_session"] == expected && level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
-						result = append(result, item)
-					}
-				} else if !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace) {
-					// Product chats bind with BindSessionBrowserIsolation (user
-					// scope), rather than the workflow-path namespace. Accept
-					// that identity only here, never in a real workflow above.
-					// No workflow manifest at this path: a fixed-workspace
-					// product session (SparkQuill, Dominion, ...), not a
-					// Workflow/ folder -- there is no browser_mode toggle to
-					// check. WorkflowBrowserSessionNamespace hashes the
-					// workspace path ONLY when it's non-empty (deliberately,
-					// so a real Workflow's authorized users share one
-					// browser) -- it does NOT fold in userID the way it does
-					// for the empty-path case, so the identity match above is
-					// NOT itself proof this user owns this workspace path.
-					// Outside multi-user mode there is exactly one account on
-					// the whole deployment (every fixed-workspace product
-					// today), so that's moot; in multi-user mode, require the
-					// same ownership check the non-shared branch below already
-					// trusts before exposing anything.
-					item["label"] = "Persistent browser"
+			if userID == "" || shared == "" || item["browser_session"] != shared {
+				continue
+			}
+			// Crew projects have workflow.json because they reuse the shared
+			// project manifest, but they are not workflows and are not gated
+			// by a workflow browser_mode. Classify the path first.
+			if isCrewProjectPath(workspace) {
+				if api.crewBrowserAccess(claims, workspace) != WorkflowAccessNone {
+					item["label"] = "Crew browser"
 					result = append(result, item)
 				}
+				continue
+			}
+			level, manifest := workflowAccessForWorkspacePath(r.Context(), claims, workspace)
+			if manifest != nil {
+				// A real Workflow/ folder: its capabilities.browser_mode can
+				// disable browser access even though a session exists.
+				item["label"] = "Workflow browser"
+				if level != WorkflowAccessNone && (manifest.Capabilities.BrowserMode == "auto" || manifest.Capabilities.BrowserMode == "headless") {
+					result = append(result, item)
+				}
+			} else if api.ownsProjectWorkspace(userID, workspace) {
+				// A fixed-workspace product project (SparkQuill, Dominion, ...):
+				// its browser belongs to the project owner.
+				item["label"] = "Project browser"
+				result = append(result, item)
 			}
 			continue
 		}
 		id := item["workflow_session"]
 		api.activeSessionsMux.RLock()
 		owner := api.activeSessions[id]
-		matches := owner != nil && strings.TrimRight(owner.WorkspacePath, "/") == workspace && owner.UserID == GetUserIDFromContext(r.Context())
+		matches := owner != nil && strings.TrimRight(owner.WorkspacePath, "/") == workspace && owner.UserID == userID
 		api.activeSessionsMux.RUnlock()
 		if matches {
 			result = append(result, item)
@@ -94,9 +74,40 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	return result
 }
 
+// crewBrowserAccess follows Crew Run mode: the owner has full access and any
+// other signed-in user with the Crew product has read (view-only) access.
+func (api *StreamingAPI) crewBrowserAccess(claims *UserClaims, workspace string) WorkflowAccessLevel {
+	if claims == nil || strings.TrimSpace(claims.UserID) == "" || !isCrewProjectPath(workspace) {
+		return WorkflowAccessNone
+	}
+	if crewProjectOwnedByCaller(claims.UserID, workspace) {
+		return WorkflowAccessOwner
+	}
+	if api.agentProfiles == nil {
+		return WorkflowAccessNone
+	}
+	profile, err := api.agentProfiles.Resolve("work", 0, claims.UserID)
+	if err != nil || !userAllowedProduct(claims, profile.Product) {
+		return WorkflowAccessNone
+	}
+	return WorkflowAccessRead
+}
+
+// ownsProjectWorkspace reports whether userID owns a non-crew product project
+// workspace: its physical path names them, or (single-account deployments and
+// logical paths) they hold a live session there.
+func (api *StreamingAPI) ownsProjectWorkspace(userID, workspace string) bool {
+	if userID == "" {
+		return false
+	}
+	if ownerID, ok := crewProjectOwnerID(browserProjectKey(userID, workspace)); ok && ownerID == sanitizeUserIDForPath(userID) {
+		return true
+	}
+	return !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace)
+}
+
 // userOwnsActiveSessionAtWorkspace reports whether userID owns a currently
-// tracked chat session whose workspace matches workspace, the same ownership
-// signal the non-shared discovery branch above already relies on.
+// tracked chat session whose workspace matches workspace.
 func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace string) bool {
 	if userID == "" {
 		return false
@@ -112,29 +123,21 @@ func (api *StreamingAPI) userOwnsActiveSessionAtWorkspace(userID, workspace stri
 }
 
 // canControlLiveBrowser decides whether claims may take manual control of the
-// live browser at workspace. Split out from handleLiveBrowserStream's closure
-// so it's directly unit-testable without the websocket harness.
+// live browser at workspace. Viewing follows liveBrowserSessions; control
+// needs write access: the Crew owner, or a workflow owner/editor.
 func (api *StreamingAPI) canControlLiveBrowser(ctx context.Context, claims *UserClaims, workspace string) bool {
 	userID := ""
 	if claims != nil {
 		userID = claims.UserID
 	}
-	// Crew is a manifest-backed product workspace, not a Workflow. Its browser
-	// belongs to the signed-in project owner and is authorized by the active
-	// Crew binding rather than workflow ACLs.
-	if isActiveWorkProjectWorkspace(userID, workspace) {
-		return api.userOwnsActiveSessionAtWorkspace(userID, workspace)
+	if isCrewProjectPath(workspace) {
+		return api.crewBrowserAccess(claims, workspace) == WorkflowAccessOwner
 	}
 	level, manifest := workflowAccessForWorkspacePath(ctx, claims, workspace)
 	if manifest != nil {
 		return level == WorkflowAccessOwner || level == WorkflowAccessWrite
 	}
-	// No workflow.json at this path: a fixed-workspace product session
-	// (SparkQuill, Dominion, ...), not a Workflow/ folder. Mirror
-	// liveBrowserSessions' same fallback -- without it, nobody could ever
-	// take control of one of these live browsers, since manifest is always
-	// nil for them.
-	return !IsMultiUserMode() || api.userOwnsActiveSessionAtWorkspace(userID, workspace)
+	return api.ownsProjectWorkspace(userID, workspace)
 }
 
 func (api *StreamingAPI) handleLiveBrowserSessions(w http.ResponseWriter, r *http.Request) {

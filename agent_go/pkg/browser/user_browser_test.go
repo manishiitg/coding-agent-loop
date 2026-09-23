@@ -12,7 +12,7 @@ import (
 )
 
 func TestWorkflowBrowserSurvivesWorkflowCleanupAndCaptureProtectsLifetime(t *testing.T) {
-	session := common.WorkflowBrowserSessionNamespace("alice", "", "Workflow/one") + "--browser"
+	session := common.WorkflowBrowserSessionNamespace("Workflow/one") + "--browser"
 	tracker := &SessionTracker{sessions: map[string]*browserSessionInfo{}}
 	tracker.Touch(session, "builder", "run")
 	tracker.Touch(session, "step", "run")
@@ -44,9 +44,8 @@ func TestWorkflowBrowserSurvivesWorkflowCleanupAndCaptureProtectsLifetime(t *tes
 	}
 }
 func TestWorkflowBrowserCommandsShareGateAcrossUsersAndChatAliases(t *testing.T) {
-	for i, id := range []string{"one", "two"} {
-		user := []string{"alice", "bob"}[i]
-		common.BindSessionBrowserIsolationForWorkflow(id, user, "Workflow/research")
+	for _, id := range []string{"one", "two"} {
+		common.BindSessionBrowserIsolationForWorkflow(id, "Workflow/research")
 		defer common.ClearSessionShellConfig(id)
 	}
 	release, err := AcquireBrowserAutomation(context.Background(), common.ResolveBrowserSessionID("one", "main"))
@@ -60,7 +59,7 @@ func TestWorkflowBrowserCommandsShareGateAcrossUsersAndChatAliases(t *testing.T)
 		other()
 		t.Fatal("same workflow's commands ran concurrently")
 	}
-	other, err := AcquireBrowserAutomation(context.Background(), common.BrowserSessionNamespace("bob", "")+"--browser")
+	other, err := AcquireBrowserAutomation(context.Background(), common.SessionBrowserSessionNamespace("other-chat")+"--browser")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +70,7 @@ func TestProductWorkspaceBrowserIsNotCollapsedIntoSharedBrowser(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
 	const owner = "crew-chat"
-	common.BindSessionBrowserIsolationForUserWorkspace(owner, "alice", "Chats/Work/projects/crew-a")
+	common.BindSessionBrowserIsolationForProject(owner, "_users/alice/Chats/Work/projects/crew-a")
 	defer common.ClearSessionShellConfig(owner)
 	expected := common.ResolveBrowserSessionID(owner, "default")
 	defer GetSessionTracker().Remove(expected)
@@ -82,7 +81,7 @@ func TestProductWorkspaceBrowserIsNotCollapsedIntoSharedBrowser(t *testing.T) {
 		if !strings.Contains(req.Command, "--session "+expected) || strings.Contains(req.Command, "--session "+SharedSessionName) {
 			t.Errorf("Crew browser collapsed into shared runtime: %s", req.Command)
 		}
-		if !strings.Contains(req.Command, "/data/browser-profile-users/"+expected) {
+		if !strings.Contains(req.Command, "/data/browser-profile-projects/"+expected) {
 			t.Errorf("Crew browser did not receive an isolated persistent profile: %s", req.Command)
 		}
 		_ = json.NewEncoder(w).Encode(APIResponse{Success: true, Data: ShellExecuteResponse{Stdout: `{"success":true}`, ExitCode: 0}})
@@ -95,13 +94,48 @@ func TestProductWorkspaceBrowserIsNotCollapsedIntoSharedBrowser(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	for _, item := range GetSessionTracker().ActiveSessions() {
+		if item["browser_session"] == expected && item["last_action"] != "Opened https://example.com" {
+			t.Fatalf("last action = %q", item["last_action"])
+		}
+	}
+}
+
+func TestDescribeBrowserActionNeverLeaksValues(t *testing.T) {
+	for _, c := range []struct {
+		command string
+		args    []string
+		want    string
+	}{
+		{"open", []string{"https://user:pw@example.com/login?token=abc#frag"}, "Opened https://example.com/login"},
+		{"click", []string{"@e12"}, `Clicked "@e12"`},
+		{"fill", []string{"#password", "hunter2"}, `Typed into "#password"`},
+		{"type", []string{"@e3", "secret text"}, `Typed into "@e3"`},
+		{"select", []string{"#plan", "enterprise"}, `Selected an option in "#plan"`},
+		{"eval", []string{"document.cookie"}, "Ran a script on the page"},
+		{"find", []string{"role", "button", "click", "--name", "Sign in"}, `Used "Sign in"`},
+		{"press", []string{"Enter"}, "Pressed Enter"},
+		{"snapshot", []string{"-i"}, ""},
+		{"get", []string{"text", "@e1"}, ""},
+	} {
+		if got := describeBrowserAction(c.command, c.args); got != c.want {
+			t.Errorf("%s %v = %q, want %q", c.command, c.args, got, c.want)
+		}
+	}
+	tracker := &SessionTracker{sessions: map[string]*browserSessionInfo{}}
+	tracker.Touch("s", "a", "w")
+	tracker.RecordAction("s", "click", []string{"@e1"})
+	tracker.RecordAction("s", "snapshot", nil)
+	if item := tracker.ActiveSessions()[0]; item["last_action"] != `Clicked "@e1"` || item["last_action_at"] == "" {
+		t.Fatalf("read-only command replaced the last action: %v", item)
+	}
 }
 
 func TestWorkflowBrowserExecutorSharesBuilderWorkflowAndCapture(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("AGENT_BROWSER_CDP_ENABLED", "false")
 	const parent, child = "routing-builder", "routing-step"
-	common.BindSessionBrowserIsolationForWorkflow(parent, "alice", "Workflow/demo")
+	common.BindSessionBrowserIsolationForWorkflow(parent, "Workflow/demo")
 	common.SetSessionBrowserNamespace(child, common.GetSessionShellConfig(parent).BrowserSessionNamespace)
 	common.SetSessionBrowserSessionID(child, "old-workflow-specific-browser")
 	for _, id := range []string{parent, child} {

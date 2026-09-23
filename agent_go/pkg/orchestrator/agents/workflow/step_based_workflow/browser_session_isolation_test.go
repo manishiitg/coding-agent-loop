@@ -7,7 +7,7 @@ import (
 
 func TestWorkshopBrowserMatchesBuilderAcrossGroupsAndWorkflows(t *testing.T) {
 	const parent = "browser-test-parent"
-	common.BindSessionBrowserIsolation(parent, "alice")
+	common.BindSessionBrowserIsolationForSession(parent)
 	defer common.ClearSessionShellConfig(parent)
 	namespace := common.GetSessionShellConfig(parent).BrowserSessionNamespace
 	expected := common.ResolveBrowserSessionID(parent, "main")
@@ -19,8 +19,8 @@ func TestWorkshopBrowserMatchesBuilderAcrossGroupsAndWorkflows(t *testing.T) {
 			}
 		}
 	}
-	other := workshopBrowserSessionID(common.BrowserSessionNamespace("bob", "chat"), "Workflow/one", "default")
+	other := workshopBrowserSessionID(common.SessionBrowserSessionNamespace("other-chat"), "Workflow/one", "default")
 	if common.PrefixBrowserSessionID(other) == expected {
-		t.Fatal("different users share workflow browser")
+		t.Fatal("different sessions share a browser")
 	}
 }

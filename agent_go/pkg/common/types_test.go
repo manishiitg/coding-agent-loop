@@ -40,10 +40,10 @@ func TestBrowserSessionsSharedAcrossWorkflowUsersAndIsolatedAcrossWorkflows(t *t
 		t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
 	}
 
-	BindSessionBrowserIsolationForWorkflow(manishChat, "manish-user-id", "Workflow/research")
-	BindSessionBrowserIsolationForWorkflow(shubhamChat, "shubham-user-id", "Workflow/research")
-	BindSessionBrowserIsolationForWorkflow(secondManishChat, "manish-user-id", "Workflow/research")
-	BindSessionBrowserIsolationForWorkflow(otherWorkflowChat, "manish-user-id", "Workflow/publishing")
+	BindSessionBrowserIsolationForWorkflow(manishChat, "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow(shubhamChat, "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow(secondManishChat, "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow(otherWorkflowChat, "Workflow/publishing")
 
 	manishDefault := ResolveBrowserSessionID(manishChat, "default")
 	shubhamDefault := ResolveBrowserSessionID(shubhamChat, "default")
@@ -64,39 +64,51 @@ func TestBrowserSessionsSharedAcrossWorkflowUsersAndIsolatedAcrossWorkflows(t *t
 func TestBindSessionBrowserIsolationOverridesWorkflowDefault(t *testing.T) {
 	sessionID := "browser-isolation-workflow"
 	t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
-	BindSessionBrowserIsolationForWorkflow(sessionID, "user-id", "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow(sessionID, "Workflow/research")
 	SetSessionBrowserSessionID(sessionID, "workflow-browser-stable")
 
-	BindSessionBrowserIsolationForWorkflow(sessionID, "user-id", "Workflow/research")
-	if got := ResolveBrowserSessionID(sessionID, "default"); got != PrefixBrowserSessionID(WorkflowBrowserSessionNamespace("user-id", sessionID, "Workflow/research")+"--browser") {
+	BindSessionBrowserIsolationForWorkflow(sessionID, "Workflow/research")
+	if got := ResolveBrowserSessionID(sessionID, "default"); got != PrefixBrowserSessionID(WorkflowBrowserSessionNamespace("Workflow/research")+"--browser") {
 		t.Fatalf("workflow override escaped user browser: %q", got)
 	}
 }
 
 func TestWorkflowBrowserSessionNamespaceNormalizesWorkflowPath(t *testing.T) {
-	want := WorkflowBrowserSessionNamespace("user-id", "chat-one", "Workflow/research")
+	want := WorkflowBrowserSessionNamespace("Workflow/research")
 	for _, path := range []string{"/Workflow/research/", "Workflow//research", `Workflow\research`} {
-		if got := WorkflowBrowserSessionNamespace("user-id", "chat-two", path); got != want {
+		if got := WorkflowBrowserSessionNamespace(path); got != want {
 			t.Fatalf("path %q resolved to %q, want %q", path, got, want)
 		}
 	}
-	if got := WorkflowBrowserSessionNamespace("user-id", "chat-two", "Workflow/publishing"); got == want {
+	if got := WorkflowBrowserSessionNamespace("Workflow/publishing"); got == want {
 		t.Fatalf("different workflows shared namespace %q", got)
 	}
 }
 
-func TestUserWorkspaceBrowserSessionNamespaceScopesOwnerAndWorkspace(t *testing.T) {
-	want := UserWorkspaceBrowserSessionNamespace("alice", "chat-one", "Chats/Work/projects/crew-a")
-	for _, path := range []string{"/Chats/Work/projects/crew-a/", "Chats/Work//projects/crew-a", `Chats\Work\projects\crew-a`} {
-		if got := UserWorkspaceBrowserSessionNamespace("alice", "chat-two", path); got != want {
+func TestProjectBrowserSessionNamespaceIsPerProjectNotPerUser(t *testing.T) {
+	key := "_users/alice/Chats/Work/projects/crew-a"
+	want := ProjectBrowserSessionNamespace(key)
+	for _, path := range []string{"/_users/alice/Chats/Work/projects/crew-a/", "_users/alice/Chats/Work//projects/crew-a", `_users\alice\Chats\Work\projects\crew-a`} {
+		if got := ProjectBrowserSessionNamespace(path); got != want {
 			t.Fatalf("path %q resolved to %q, want %q", path, got, want)
 		}
 	}
-	if got := UserWorkspaceBrowserSessionNamespace("alice", "chat-two", "Chats/Work/projects/crew-b"); got == want {
+	if got := ProjectBrowserSessionNamespace("_users/alice/Chats/Work/projects/crew-b"); got == want {
 		t.Fatalf("different Crew projects shared namespace %q", got)
 	}
-	if got := UserWorkspaceBrowserSessionNamespace("bob", "chat-two", "Chats/Work/projects/crew-a"); got == want {
-		t.Fatalf("different users shared Crew namespace %q", got)
+	if got := ProjectBrowserSessionNamespace("_users/bob/Chats/Work/projects/crew-a"); got == want {
+		t.Fatalf("two owners' same-named projects shared namespace %q", got)
+	}
+	if got := WorkflowBrowserSessionNamespace(key); got == want {
+		t.Fatalf("project and workflow browsers collided: %q", got)
+	}
+	// Two users binding the same project get the same browser.
+	aliceChat, bobChat := "project-alice-chat", "project-bob-chat"
+	t.Cleanup(func() { ClearSessionShellConfig(aliceChat); ClearSessionShellConfig(bobChat) })
+	BindSessionBrowserIsolationForProject(aliceChat, key)
+	BindSessionBrowserIsolationForProject(bobChat, key)
+	if a, b := ResolveBrowserSessionID(aliceChat, "default"), ResolveBrowserSessionID(bobChat, "default"); a != b {
+		t.Fatalf("users of one project got different browsers: %q vs %q", a, b)
 	}
 }
 
@@ -104,10 +116,10 @@ func TestBrowserSessionIsolationComposesWithDeploymentPrefix(t *testing.T) {
 	t.Setenv("AGENTWORKS_BROWSER_SESSION_PREFIX", "confida")
 	sessionID := "browser-isolation-prefix"
 	t.Cleanup(func() { ClearSessionShellConfig(sessionID) })
-	BindSessionBrowserIsolation(sessionID, "user-id")
+	BindSessionBrowserIsolationForSession(sessionID)
 
 	got := ResolveBrowserSessionID(sessionID, "default")
-	if !strings.HasPrefix(got, "confida--user-") {
+	if !strings.HasPrefix(got, "confida--session-") {
 		t.Fatalf("deployment prefix was not applied to isolated browser: %q", got)
 	}
 }
@@ -371,7 +383,7 @@ func TestCopySessionFolderGuardPreservesDenyOnlyGuard(t *testing.T) {
 
 func TestUserBrowserAliasesAndChildSessions(t *testing.T) {
 	t.Setenv("AGENTWORKS_BROWSER_SESSION_PREFIX", "confida")
-	BindSessionBrowserIsolationForWorkflow("parent", "alice", "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow("parent", "Workflow/research")
 	SetSessionBrowserNamespace("child", GetSessionShellConfig("parent").BrowserSessionNamespace)
 	SetSessionBrowserSessionID("child", "obsolete-workflow-browser")
 	defer ClearSessionShellConfig("parent")
@@ -384,11 +396,11 @@ func TestUserBrowserAliasesAndChildSessions(t *testing.T) {
 			}
 		}
 	}
-	BindSessionBrowserIsolationForWorkflow("parent", "bob", "Workflow/research")
+	BindSessionBrowserIsolationForWorkflow("parent", "Workflow/research")
 	if ResolveBrowserSessionID("parent", "main") != expected {
 		t.Fatal("changing user split the shared workflow browser")
 	}
-	if BrowserSessionNamespace("", "guest-one") == BrowserSessionNamespace("", "guest-two") {
+	if SessionBrowserSessionNamespace("guest-one") == SessionBrowserSessionNamespace("guest-two") {
 		t.Fatal("anonymous chats share cookies")
 	}
 }

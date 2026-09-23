@@ -129,14 +129,14 @@ func TestLandlockSystemReadPathsGrantAllOfEtcReadOnly(t *testing.T) {
 func TestLandlockSystemWritePathsCoverSharedProfileUserAndWorkflowSiblings(t *testing.T) {
 	base := t.TempDir()
 	profile := filepath.Join(base, "browser-profile")
-	for _, dir := range []string{profile, profile + "-users", profile + "-workflows"} {
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(profile, 0o755); err != nil {
+		t.Fatal(err)
 	}
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", profile)
 
-	want := []string{profile, profile + "-users", profile + "-workflows"}
+	// The sibling roots are created on demand, so a deployment that never
+	// had a project browser still grants the first one.
+	want := []string{profile, profile + "-users", profile + "-workflows", profile + "-projects"}
 	got := landlockSystemWritePaths()
 	for _, w := range want {
 		found := false

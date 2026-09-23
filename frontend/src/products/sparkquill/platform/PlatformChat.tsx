@@ -138,12 +138,24 @@ export const queryClient = new QueryClient()
 // The one tab this page opened for the parent conversation (module-level so a
 // remount finds it).
 let openedTab: Promise<{ tabId: string; sessionId: string }> | null = null
+let activeSubmit: ((text: string) => void) | null = null
+
+/** Sends a page choice into the parent's currently open Quill conversation. */
+export function submitToParentChat(text: string): boolean {
+  if (!activeSubmit) return false
+  activeSubmit(text)
+  return true
+}
 
 // The tool binding that asked for in-chat suggestions (product.yaml
 // `interaction: { kind, render: chat.suggestions }`), if any.
 let suggestionsKind: string | null = null
 
 export function SparkQuillConversation({ events, isStreaming, isRestoring, streamingText, streamingStatus, hasOlder, loadingOlder, historyError, onLoadOlder, landingContent, onSubmitQuery }: ChatContentRendererProps) {
+  useEffect(() => {
+    activeSubmit = onSubmitQuery ?? null
+    return () => { if (activeSubmit === onSubmitQuery) activeSubmit = null }
+  }, [onSubmitQuery])
   if (!isRestoring && events.length === 0 && !streamingText) return <>{landingContent}</>
   return (
     <div className="fl-platform-transcript">

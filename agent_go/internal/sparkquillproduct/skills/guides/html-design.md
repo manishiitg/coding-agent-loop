@@ -51,11 +51,13 @@ mistake, not a harmless leftover.
   richness the moment deserves. Judge tastefully — quality over quantity, and
   never at the cost of the content being clear and correct — but don't hold back
   on capability you actually have.
-- **No form controls at all** — no `<input>`, `<textarea>`, `<select>`, or `<form>`,
-  not even an unscripted one. An empty text box is still wrong: the child will type
-  into it expecting something to happen, and nothing will. Write "try it yourself"
-  questions as plain text with space to work on paper.
-  - BAD: `<input type="text" placeholder="Type your answer...">`
+- **Wire every answer control to Quill.** A text box or selection must have a
+  submit button that calls `SQ.answer(qid, value, this)`; a standalone control
+  leaves the child expecting a response that never comes. The activity finisher
+  keeps `<input>`, `<textarea>`, and `<select>` but unwraps `<form>`. Write
+  "try it yourself" questions as plain text when the answer belongs on paper.
+  - BAD: `<input type="text" placeholder="Type your answer...">` with no
+    `SQ.answer` button
 - **Give every major section, sub-section, and figure a real, predictable `id`** —
   not just questions. `open_file`'s `focus` parameter scrolls the page straight to
   any id on it, so when you're talking about "the worked example" or "Figure 2" the
@@ -445,8 +447,8 @@ show them, and marking happens in chat by Quill.
   </script>
   ```
   (`.picked` needs one CSS rule, e.g. `.picked{outline:2px solid var(--focus)}`.)
-  Empty submits send nothing — the host drops them — but still disable the
-  button, so check `value.trim()` first for blanks and do nothing when empty.
+  Empty submits send nothing and leave the button enabled. You can also check
+  `value.trim()` in your page to show the child what needs filling in.
 
 ## Timers
 

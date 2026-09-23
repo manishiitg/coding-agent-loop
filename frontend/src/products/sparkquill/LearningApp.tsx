@@ -57,7 +57,7 @@ import {
   type Activity,
   type VoiceStatus,
 } from './stores'
-import PlatformChat, { FAMILY_WORKSPACE, PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
+import PlatformChat, { FAMILY_WORKSPACE, PARENT_PROFILE_ID, applyFamilyEngineToOpenTabs, startNewParentConversation, submitToParentChat, switchParentConversation, type ProductInteraction, type ProductPresentation } from './platform/PlatformChat'
 import { CHILD_PROFILE_ID, CHILD_PROFILE_VERSION } from './platform/ChildPlatformChat'
 import type { ParentChat } from './api/familyApi'
 import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, type AgentProfileProviderOption } from '../../utils/agentProfileCapabilities'
@@ -565,7 +565,6 @@ function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; 
   const [content, setContent] = useState<{ kind: 'html' | 'md'; text: string } | null>(null)
   const frameRef = useRef<HTMLIFrameElement>(null)
   const scrollYRef = useRef(0)
-  const nonce = useMemo(() => crypto.randomUUID(), [])
   useEffect(() => {
     const onMsg = (e: MessageEvent) => {
       if (e.source !== frameRef.current?.contentWindow) return
@@ -589,8 +588,8 @@ function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; 
     return () => { cancelled = true }
   }, [path, refreshKey])
   const previewSrcDoc = useMemo(
-    () => content?.kind === 'html' ? withPreviewPositionScript(content.text, scrollYRef.current, nonce) : '',
-    [content, nonce],
+    () => content?.kind === 'html' ? withPreviewPositionScript(content.text, scrollYRef.current) : '',
+    [content],
   )
   if (!content) {
     return (
@@ -1999,6 +1998,10 @@ export default function LearningApp() {
       const m = e.data
       if (!m || typeof m !== 'object' || (m as { __sq?: unknown }).__sq !== 1) return
       const msg = m as { op?: string; key?: string; id?: string; data?: unknown; text?: string; qid?: unknown; value?: unknown; timers?: unknown; message?: unknown; url?: unknown }
+      const fromFrame = (selector: string) => Array.from(document.querySelectorAll<HTMLIFrameElement>(selector))
+        .some((frame) => e.source === frame.contentWindow)
+      const fromParentPage = () => e.source === iframeRef.current?.contentWindow || fromFrame('.fl-item-preview-frame, .fl-map-frame')
+      const fromChildPage = () => e.source === childIframeRef.current?.contentWindow || fromFrame('.fl-scene-frame')
       if (msg.op === 'save' && typeof msg.key === 'string') {
         api.saveState(msg.key, msg.data).catch(() => {})
       } else if (msg.op === 'load' && typeof msg.key === 'string') {
@@ -2006,13 +2009,18 @@ export default function LearningApp() {
           .then((data) => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: data ?? null }, '*'))
           .catch(() => iframeRef.current?.contentWindow?.postMessage({ __sq: 1, op: 'loaded', id: msg.id, data: null }, '*'))
       } else if (msg.op === 'choose' && typeof msg.text === 'string') {
-        submitToChildChat(msg.text)
+        if (fromChildPage()) submitToChildChat(msg.text)
+        else if (fromParentPage()) submitToParentChat(msg.text)
       } else if (msg.op === 'answer') {
         const text = buildSqAnswerText(msg.qid, msg.value)
         if (!text) return
-        // Answering stops that question's clock, if one was running.
-        clearSqTimer(`${activityOf(childViewerPathRef.current)}::${sanitizeSqId(msg.qid)}`)
-        submitToChildChat(text)
+        if (fromChildPage()) {
+          // Answering stops that question's clock, if one was running.
+          clearSqTimer(`${activityOf(childViewerPathRef.current)}::${sanitizeSqId(msg.qid)}`)
+          submitToChildChat(text)
+        } else if (fromParentPage()) {
+          submitToParentChat(text)
+        }
       } else if (msg.op === 'timer-config') {
         if (e.source !== childIframeRef.current?.contentWindow) return
         const activity = activityOf(childViewerPathRef.current)

@@ -1,15 +1,15 @@
-// Inline activity previews used to run with scripts fully disabled. Only this
-// nonce-scoped bridge may execute; generated page scripts remain blocked while
-// the frame reports and restores its own scroll position across content edits.
-export function withPreviewPositionScript(html: string, savedY: number, nonce: string): string {
-  const policy = `<meta http-equiv="Content-Security-Policy" content="script-src 'nonce-${nonce}'">`
+// Activity previews need their own inline scripts for answer widgets. Keep
+// external scripts blocked and the iframe origin isolated while also retaining
+// its scroll position when Quill edits the page.
+export function withPreviewPositionScript(html: string, savedY: number): string {
+  const policy = `<meta http-equiv="Content-Security-Policy" content="script-src 'unsafe-inline'">`
   const secured = /<head\b[^>]*>/i.test(html)
     ? html.replace(/<head\b[^>]*>/i, (head) => head + policy)
     : /<html\b[^>]*>/i.test(html)
       ? html.replace(/<html\b[^>]*>/i, (root) => root + `<head>${policy}</head>`)
       : html.replace(/^(\s*<!doctype[^>]*>)/i, `$1<head>${policy}</head>`)
   return secured + `
-<script nonce="${nonce}">(function(){
+<script>(function(){
   var savedY = ${Math.max(0, Math.round(savedY))};
   function restore(){ if (savedY > 0) window.scrollTo(0, savedY); }
   window.addEventListener('load', restore);

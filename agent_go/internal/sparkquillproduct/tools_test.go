@@ -223,7 +223,7 @@ func TestCreateLearningActivityWritesManifestAndProject(t *testing.T) {
 	if !strings.Contains(rendered, `id="q1"`) || !strings.Contains(rendered, `data-role="check"`) || !strings.Contains(rendered, "SQ.choose") {
 		t.Fatalf("rendered page wrong:\n%s", rendered)
 	}
-	if !strings.Contains(out, `"notes.html"`) || !strings.Contains(out, `"dropped":["<input>"]`) || !strings.Contains(out, `"marks":2`) {
+	if !strings.Contains(rendered, `<input>`) || !strings.Contains(out, `"notes.html"`) || !strings.Contains(out, `"marks":2`) {
 		t.Fatalf("result = %s", out)
 	}
 	if err := json.Unmarshal([]byte(fake.files["_users/u1/Chats/SparkQuill/activities/2026-09-03-fractions/activity.json"]), &manifest); err != nil {

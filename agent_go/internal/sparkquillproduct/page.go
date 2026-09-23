@@ -12,12 +12,11 @@ package sparkquillproduct
 //     she answered beside the question;
 //   - an answer space inside every question, replaced by the tutor's note
 //     once she has answered;
-//   - the SQ.choose button script and the print hook, so a choice button
-//     sends her turn and the app's print icon works;
+//   - the SQ choice/answer bridge and print hook, so page buttons send the
+//     reader's turn and the app's print icon works;
 //   - a section map (role and question ids per section) for activity.json.
 //
-// Removed: form controls (they do nothing on this page), <details>
-// click-to-reveal (its content is left in the open; a hidden answer is
+// Removed: <details> click-to-reveal (its content is left in the open; a hidden answer is
 // invisible to the tutor), links, and anything loaded from the internet
 // (blank offline and in print).
 
@@ -72,12 +71,11 @@ type RenderReport struct {
 var (
 	// Removed with their content.
 	dropElements = map[atom.Atom]bool{
-		atom.Input: true, atom.Textarea: true, atom.Select: true, atom.Form: true,
 		atom.Iframe: true, atom.Link: true, atom.Object: true, atom.Embed: true, atom.Base: true,
 	}
 	// Unwrapped: the element goes, its children stay.
 	unwrapElements = map[atom.Atom]bool{
-		atom.Details: true, atom.Summary: true, atom.A: true, atom.Font: true, atom.Center: true,
+		atom.Details: true, atom.Summary: true, atom.A: true, atom.Font: true, atom.Center: true, atom.Form: true,
 	}
 	urlScheme = regexp.MustCompile(`^[a-zA-Z][a-zA-Z0-9+.-]*:`)
 )
@@ -299,13 +297,14 @@ func (r *renderer) page() string {
 	var b strings.Builder
 	b.WriteString("<!doctype html>\n<html lang=\"en\">\n<head>\n<meta charset=\"utf-8\">\n<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n")
 	fmt.Fprintf(&b, "<title>%s</title>\n<style>%s</style>\n", html.EscapeString(r.title), functionalCSS)
+	fmt.Fprintf(&b, "<script>%s</script>\n", activityScript)
 	for _, h := range r.head {
 		b.WriteString(h)
 		b.WriteString("\n")
 	}
 	b.WriteString("</head>\n<body>\n")
 	b.Write(r.body.Bytes())
-	fmt.Fprintf(&b, "\n<script>%s</script>\n</body>\n</html>\n", activityScript)
+	b.WriteString("\n</body>\n</html>\n")
 	return b.String()
 }
 
@@ -320,7 +319,7 @@ func hasClass(n *xhtml.Node, class string) bool {
 
 func isVoid(a atom.Atom) bool {
 	switch a {
-	case atom.Br, atom.Hr, atom.Img, atom.Source, atom.Track, atom.Wbr, atom.Area, atom.Col, atom.Meta:
+	case atom.Br, atom.Hr, atom.Img, atom.Input, atom.Source, atom.Track, atom.Wbr, atom.Area, atom.Col, atom.Meta:
 		return true
 	}
 	return false
@@ -360,12 +359,16 @@ button:disabled{opacity:.55;cursor:default}
 @media print{.answer-space{min-height:110px}}
 `
 
-// activityScript is the print hook and SQ.choose: a choice button sends its
-// text as the child's turn and disables itself at once so a slow reply cannot
-// be tapped twice. data-choose buttons are wired on load so Quill never
-// writes an onclick.
+// activityScript is the print hook and the SQ button bridge. A choice or
+// answer sends its value as the reader's turn and disables itself at once so
+// a slow reply cannot be tapped twice. data-choose buttons are wired on load.
 const activityScript = `
 window.addEventListener('message',function(e){if(e&&e.data&&e.data.__sq===1&&e.data.op==='print')window.print()});
-window.SQ={choose:function(text,el){if(el&&el.disabled)return;if(el)el.disabled=true;parent.postMessage({__sq:1,op:'choose',text:text},'*')}};
-document.querySelectorAll('button[data-choose]').forEach(function(b){b.addEventListener('click',function(){SQ.choose(b.getAttribute('data-choose'),b)})});
+window.SQ={
+  choose:function(text,el){if(el&&el.disabled)return;if(el)el.disabled=true;parent.postMessage({__sq:1,op:'choose',text:text},'*')},
+  answer:function(qid,value,el){if(el&&el.disabled)return;if(String(value==null?'':value).trim()==='')return;if(el)el.disabled=true;parent.postMessage({__sq:1,op:'answer',qid:qid,value:value},'*')},
+  startTimers:function(timers){parent.postMessage({__sq:1,op:'timer-config',timers:timers},'*')},
+  cancelTimer:function(qid){parent.postMessage({__sq:1,op:'timer-cancel',qid:qid},'*')}
+};
+document.addEventListener('click',function(e){var b=e.target&&e.target.closest&&e.target.closest('button[data-choose]');if(b)SQ.choose(b.getAttribute('data-choose'),b)});
 `

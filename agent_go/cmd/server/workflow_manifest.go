@@ -1085,7 +1085,9 @@ func ValidateManifest(m *WorkflowManifest) error {
 			return fmt.Errorf("schedules[%d].pulse_mode must be off, basic, or full", i)
 		}
 		if schedulepolicy.RequiresExplicitPulse(m.Version) {
-			if err := schedulepolicy.ValidatePulse(sched.PulseMode, sched.PulseModeReason); err != nil {
+			// A persisted legacy "full" is tolerated (it runs as basic); only
+			// authoring paths reject newly setting it.
+			if err := schedulepolicy.ValidatePulse(schedulepolicy.NormalizePulse(sched.PulseMode), sched.PulseModeReason); err != nil {
 				return fmt.Errorf("schedules[%d]: %w", i, err)
 			}
 		}

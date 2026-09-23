@@ -5407,6 +5407,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			BridgeRoutingInstructionsOverride:      profileBridgeRoutingInstructions,
 			PiPersistentInteractiveSession:         piPersistentInteractive,
 			MusePersistentInteractiveSession:       musePersistentInteractive,
+			CodingAgentUserAnswersNativeQuestions:  codingAgentRequestHasAttendingUser(&req, sessionID),
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			ForceStructuredCodingAgent:             forceStructuredCodingAgent,
 			CodingAgentWorkingDir:                  chatWorkingDir,

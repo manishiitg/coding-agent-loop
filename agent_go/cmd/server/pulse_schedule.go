@@ -23,7 +23,8 @@ const pulseScheduleStateSchema = `CREATE TABLE IF NOT EXISTS pulse_schedule_stat
 	next_set_by_pulse_run_id TEXT NOT NULL DEFAULT '',
 	next_set_at TEXT NOT NULL DEFAULT '',
 	last_started_at TEXT NOT NULL DEFAULT '',
-	last_pulse_run_id TEXT NOT NULL DEFAULT ''
+	last_pulse_run_id TEXT NOT NULL DEFAULT '',
+	previous_started_at TEXT NOT NULL DEFAULT ''
 )`
 
 type pulseScheduleState struct {
@@ -33,11 +34,21 @@ type pulseScheduleState struct {
 	NextSetAt           time.Time
 	LastStartedAt       time.Time
 	LastPulseRunID      string
+	// PreviousStartedAt is the start of the Pulse before the latest one: the
+	// running Pulse's evidence window starts there (step concerns).
+	PreviousStartedAt time.Time
 }
 
 func ensurePulseScheduleStateSchema(ctx context.Context, db *sql.DB) error {
-	_, err := db.ExecContext(ctx, pulseScheduleStateSchema)
-	return err
+	if _, err := db.ExecContext(ctx, pulseScheduleStateSchema); err != nil {
+		return err
+	}
+	// Tables created before previous_started_at existed gain it in place.
+	if _, err := db.ExecContext(ctx, `ALTER TABLE pulse_schedule_state ADD COLUMN previous_started_at TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(strings.ToLower(err.Error()), "duplicate column") {
+		return err
+	}
+	return nil
 }
 
 func parseStoredTime(value string) time.Time {
@@ -68,9 +79,9 @@ func readPulseScheduleState(ctx context.Context, workspacePath string) (*pulseSc
 	if err := ensurePulseScheduleStateSchema(ctx, db); err != nil {
 		return nil, err
 	}
-	var nextAt, nextReason, setBy, setAt, lastStarted, lastRun string
-	err = db.QueryRowContext(ctx, `SELECT next_at,next_reason,next_set_by_pulse_run_id,next_set_at,last_started_at,last_pulse_run_id
-		FROM pulse_schedule_state WHERE workspace_path=?`, normalized).Scan(&nextAt, &nextReason, &setBy, &setAt, &lastStarted, &lastRun)
+	var nextAt, nextReason, setBy, setAt, lastStarted, lastRun, previousStarted string
+	err = db.QueryRowContext(ctx, `SELECT next_at,next_reason,next_set_by_pulse_run_id,next_set_at,last_started_at,last_pulse_run_id,previous_started_at
+		FROM pulse_schedule_state WHERE workspace_path=?`, normalized).Scan(&nextAt, &nextReason, &setBy, &setAt, &lastStarted, &lastRun, &previousStarted)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
@@ -80,6 +91,7 @@ func readPulseScheduleState(ctx context.Context, workspacePath string) (*pulseSc
 	return &pulseScheduleState{
 		NextAt: parseStoredTime(nextAt), NextReason: nextReason, NextSetByPulseRunID: setBy,
 		NextSetAt: parseStoredTime(setAt), LastStartedAt: parseStoredTime(lastStarted), LastPulseRunID: lastRun,
+		PreviousStartedAt: parseStoredTime(previousStarted),
 	}, nil
 }
 
@@ -115,7 +127,8 @@ func markPulseStarted(ctx context.Context, workspacePath, pulseRunID string, sta
 	}
 	_, err = db.ExecContext(ctx, `INSERT INTO pulse_schedule_state
 		(workspace_path,last_started_at,last_pulse_run_id) VALUES (?,?,?)
-		ON CONFLICT(workspace_path) DO UPDATE SET last_started_at=excluded.last_started_at,
+		ON CONFLICT(workspace_path) DO UPDATE SET previous_started_at=pulse_schedule_state.last_started_at,
+		last_started_at=excluded.last_started_at,
 		last_pulse_run_id=excluded.last_pulse_run_id, next_at='', next_reason='', next_set_by_pulse_run_id='', next_set_at=''`,
 		normalized, formatStoredTime(startedAt), strings.TrimSpace(pulseRunID))
 	return err

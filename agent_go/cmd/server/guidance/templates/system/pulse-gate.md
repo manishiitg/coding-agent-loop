@@ -69,8 +69,10 @@ finding and not authority for Gate to rewrite the workflow. The later Architectu
 Review must inspect the affected descriptions, schemas, and shared references
 before it decides whether prompt-contract consolidation is safe.
 
-Read fresh `CONCERNS:` markers from the relevant retained step summaries as
-selectors, not automatic findings. `open_concerns` contains accepted canonical
+Read `step_concerns` in `get_pulse_state(view="module")`: the `CONCERNS:`
+lines steps wrote since the previous Pulse, collected for you (step, text,
+repeat count, runs, source files). Do not search run folders for them. Use them
+as selectors, not automatic findings. `open_concerns` contains accepted canonical
 issues, not raw step emissions; do not reactivate historical workflow-observation
 rows as a queue. A concern can explain an incomplete output, failed side effect,
 recovery, or goal/measurement gap. Gate uses it to judge review value; the later

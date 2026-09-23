@@ -1,3 +1,27 @@
+## Attached context made query_workflow_db "ambiguous" — PLAT-356
+
+[PLAT-356](pulse_platform/step-execution/plat-356.md) fixes
+`workflow database context is ambiguous`. When `DB_PATH` was not set, the
+session resolver counted every folder grant as a candidate home. An attached
+knowledgebase source (`Workflow/<other>/knowledgebase`) or an attached
+workflow or Crew project (whole-root read grant) therefore made every
+`query_workflow_db` / `query_workflow_costs` call fail, both in builder
+sessions and in Crew chats with other Crews attached. The resolver now checks
+the session's own writable roots and working directory first, then read
+grants, then knowledgebase grants. The costs tool shares the same resolver.
+Implemented locally; live acceptance pending.
+
+## Scripted-step tool calls borrowed another run's executor — PLAT-355
+
+[PLAT-355](pulse_platform/security-sandbox/plat-355.md) fixes the
+intermittent `caller does not own this tool session` left open by PLAT-338. A
+scripted step's `session-group-*` bridge session has no tool registry of its
+own, so `CallCustomToolWithSession` fell back to the global executor map. The
+last agent to start overwrites that map, so a concurrently starting schedule
+could leave it bound to another run. mcpagent now resolves a live, registered
+child to its parent run's registry and allow list. Unregistered children keep
+the legacy path. Implemented locally; live acceptance pending.
+
 ## Show Muse native multiple-choice questions in chat — PLAT-354
 
 [PLAT-354](pulse_platform/coding-agent-bridge/plat-354.md) proposes reading

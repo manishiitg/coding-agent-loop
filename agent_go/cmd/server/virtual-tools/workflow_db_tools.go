@@ -641,22 +641,34 @@ func resolveWorkflowWorkspaceFolder(sessionID string, cfg *common.SessionShellCo
 	if folder := workflowDBWorkspacePathFromCandidate(cfg.Env["DB_PATH"]); folder != "" {
 		return folder, nil
 	}
-	candidates := append([]string{}, cfg.ReadPaths...)
-	candidates = append(candidates, cfg.WritePaths...)
-	candidates = append(candidates, cfg.WorkingDir)
-	seen := map[string]bool{}
-	var matches []string
-	for _, candidate := range candidates {
-		if folder := workflowDBWorkspacePathFromCandidate(candidate); folder != "" && !seen[folder] {
+	// Attached context is read-only: other workflows or Crew projects linked as
+	// context grant their whole root, and knowledgebase_sources grant another
+	// workflow's knowledgebase/. Neither says which workflow owns this session,
+	// yet counting them made every DB query in such a session "ambiguous". So
+	// the session's own writable roots and working dir decide first, read grants
+	// only when those name nothing, and knowledgebase grants last.
+	home := append(append([]string{}, cfg.WritePaths...), cfg.WorkingDir)
+	all := append(append([]string{}, cfg.ReadPaths...), home...)
+	for _, tier := range []struct {
+		candidates []string
+		kb         bool
+	}{{home, false}, {all, false}, {all, true}} {
+		seen := map[string]bool{}
+		var matches []string
+		for _, candidate := range tier.candidates {
+			folder := workflowDBWorkspacePathFromCandidate(candidate)
+			if folder == "" || seen[folder] || isKnowledgebaseGrant(candidate, folder) != tier.kb {
+				continue
+			}
 			seen[folder] = true
 			matches = append(matches, folder)
 		}
-	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	if len(matches) > 1 {
-		return "", fmt.Errorf("workflow database context is ambiguous for session %q", sessionID)
+		if len(matches) == 1 {
+			return matches[0], nil
+		}
+		if len(matches) > 1 {
+			return "", fmt.Errorf("workflow database context is ambiguous for session %q", sessionID)
+		}
 	}
 	return "", fmt.Errorf("workflow database context is unavailable for session %q", sessionID)
 }
@@ -685,6 +697,13 @@ func workflowDBWorkspacePathFromCandidate(candidate string) string {
 		}
 	}
 	return ""
+}
+
+// isKnowledgebaseGrant reports whether candidate points at or inside the
+// knowledgebase/ folder of the workflow folder it resolved to.
+func isKnowledgebaseGrant(candidate, folder string) bool {
+	clean := "/" + strings.Trim(filepath.ToSlash(filepath.Clean(strings.TrimSpace(candidate))), "/") + "/"
+	return strings.Contains(clean, "/"+folder+"/knowledgebase/")
 }
 
 // workflowDBSchemaDescriber runs one read-only statement against the database

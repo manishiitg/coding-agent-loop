@@ -143,21 +143,13 @@ func resolveCurrentWorkflowCostsPath(ctx context.Context, fallbackSessionID stri
 	if err != nil {
 		return "", err
 	}
-	candidates := append([]string{}, cfg.ReadPaths...)
-	candidates = append(candidates, cfg.WritePaths...)
-	candidates = append(candidates, cfg.WorkingDir)
-	seen := map[string]bool{}
-	var matches []string
-	for _, candidate := range candidates {
-		if costsPath := workflowCostsPathFromCandidate(candidate); costsPath != "" && !seen[costsPath] {
-			seen[costsPath] = true
-			matches = append(matches, costsPath)
-		}
+	// Same owning-workflow resolution as query_workflow_db, so attached
+	// context never makes the ledger ambiguous and the two tools always agree.
+	folder, err := resolveWorkflowWorkspaceFolder(sessionID, cfg)
+	if err == nil {
+		return workflowCostsPathFromCandidate(folder), nil
 	}
-	if len(matches) == 1 {
-		return matches[0], nil
-	}
-	if len(matches) > 1 {
+	if strings.Contains(err.Error(), "ambiguous") {
 		return "", fmt.Errorf("workflow cost ledger context is ambiguous for session %q", sessionID)
 	}
 	return "", fmt.Errorf("workflow cost ledger context is unavailable for session %q: this tool is only available inside a workflow's own folder", sessionID)

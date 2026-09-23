@@ -321,6 +321,19 @@ func (api *StreamingAPI) trackWorkshopExecutionStart(sessionID, workspacePath, p
 	})
 }
 
+// trackedExecutionFinished reports whether executionID is tracked and has
+// already left "running" (completed, failed or canceled).
+func (api *StreamingAPI) trackedExecutionFinished(executionID string) bool {
+	executionID = strings.TrimSpace(executionID)
+	if api == nil || executionID == "" {
+		return false
+	}
+	api.trackedWorkflowExecutionsMux.Lock()
+	defer api.trackedWorkflowExecutionsMux.Unlock()
+	exec := api.trackedWorkflowExecutions[executionID]
+	return exec != nil && exec.Status != trackedExecutionStatusRunning
+}
+
 func (api *StreamingAPI) completeTrackedExecution(executionID, status, errorMessage string, meta map[string]string) {
 	if api == nil || strings.TrimSpace(executionID) == "" {
 		return

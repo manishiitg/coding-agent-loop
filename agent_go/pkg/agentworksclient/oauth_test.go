@@ -2,14 +2,36 @@ package agentworksclient
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
+
+func TestDeviceAuthorizationAcceptsLocalFrontendAndRejectsRemoteOrigin(t *testing.T) {
+	var verification atomic.Value
+	verification.Store("http://127.0.0.1:51733/oauth/cli?code=cli_verify_" + strings.Repeat("a", 64))
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(DeviceAuthorization{DeviceCode: "cli_device_example", VerificationURIComplete: verification.Load().(string), UserCode: "AAAAAAAA", ExpiresIn: 600, Interval: 3})
+	}))
+	defer s.Close()
+	client, err := New(s.URL, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.StartDeviceAuthorization(context.Background()); err != nil {
+		t.Fatalf("local frontend approval rejected: %v", err)
+	}
+	verification.Store("https://example.com/oauth/cli?code=cli_verify_" + strings.Repeat("a", 64))
+	if _, err := client.StartDeviceAuthorization(context.Background()); err == nil {
+		t.Fatal("remote approval origin accepted for local login")
+	}
+}
 
 func TestConfigTokenProviderSerializesRefreshAcrossProviders(t *testing.T) {
 	var refreshes atomic.Int32

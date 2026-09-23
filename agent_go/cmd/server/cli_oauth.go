@@ -34,17 +34,35 @@ func cliOAuthResource(r *http.Request) (origin, resource string, ok bool) {
 		if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" {
 			return "", "", false
 		}
-		host := u.Hostname()
-		loopback := strings.EqualFold(host, "localhost")
-		if ip := net.ParseIP(host); ip != nil {
-			loopback = ip.IsLoopback()
-		}
-		if !loopback {
+		if !cliOAuthLoopback(u.Hostname()) {
 			return "", "", false
 		}
 		origin = candidate
 	}
 	return origin, origin + "/api/external/v1", true
+}
+
+func cliOAuthLoopback(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+func cliOAuthBrowserOrigin(serverOrigin string) string {
+	// Local development uses the current Vite app for approval; the API server
+	// may serve an older static build. Never use this override for public URLs.
+	serverURL, err := url.Parse(serverOrigin)
+	if err != nil || serverURL.Scheme != "http" || !cliOAuthLoopback(serverURL.Hostname()) {
+		return serverOrigin
+	}
+	browser := strings.TrimRight(strings.TrimSpace(os.Getenv("AGENTWORKS_CLI_BROWSER_URL")), "/")
+	u, err := url.Parse(browser)
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" || u.RawQuery != "" || u.Fragment != "" || !cliOAuthLoopback(u.Hostname()) {
+		return serverOrigin
+	}
+	return browser
 }
 
 func (api *StreamingAPI) handleCLIOAuthDevice(w http.ResponseWriter, r *http.Request) {
@@ -66,7 +84,8 @@ func (api *StreamingAPI) handleCLIOAuthDevice(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"device_code": device, "verification_uri": origin + cliOAuthBrowserPath, "verification_uri_complete": origin + cliOAuthBrowserPath + "?code=" + verify, "user_code": strings.ToUpper(verify[len("cli_verify_") : len("cli_verify_")+8]), "expires_in": 600, "interval": 3})
+	browserOrigin := cliOAuthBrowserOrigin(origin)
+	_ = json.NewEncoder(w).Encode(map[string]any{"device_code": device, "verification_uri": browserOrigin + cliOAuthBrowserPath, "verification_uri_complete": browserOrigin + cliOAuthBrowserPath + "?code=" + verify, "user_code": strings.ToUpper(verify[len("cli_verify_") : len("cli_verify_")+8]), "expires_in": 600, "interval": 3})
 }
 
 func (api *StreamingAPI) handleCLIOAuthConsent(w http.ResponseWriter, r *http.Request) {

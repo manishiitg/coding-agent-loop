@@ -326,17 +326,6 @@ func createCustomTools(workflowMode bool, sessionInfo ...string) ([]llmtypes.Too
 			toolCategories[name] = category
 		}
 
-		// PLAT-055. Steps get a structured concern outlet so findings that are
-		// not reusable how-to knowledge stop being written into learnings for
-		// lack of anywhere else to put them.
-		runConcernRegistry := virtualtools.CreateRunConcernToolRegistry(sessionID, recordStepRunConcernFromTool)
-		allTools = append(allTools, runConcernRegistry.Tools...)
-		for name, executor := range runConcernRegistry.Executors {
-			allExecutors[name] = executor
-		}
-		for name, category := range runConcernRegistry.Categories {
-			toolCategories[name] = category
-		}
 	}
 
 	// Note: Todo tools (create_todo, complete_todo, etc.) have been removed.

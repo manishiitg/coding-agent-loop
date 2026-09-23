@@ -16,7 +16,9 @@ hand those off once and keep your pass on the goal.
    `get_pulse_state(view="review_notes", module="strategic_review")` once for
    recent reasoning. Check answered decisions and new user feedback. Read a few
    recent real outputs (reports, posts, lists, summaries) as their recipient
-   would.
+   would. Search recent step summaries for `CONCERNS:` lines: those about
+   outcomes (a source ran dry, results falling, the audience not responding)
+   are goal evidence for you; concrete defects are Technical's.
 2. **Follow up.** For each earlier `done` item whose `check_at` has passed, look
    at the comparable metric and set `effect` to `worked`, `no_effect` or
    `unclear` with a short `effect_note` (`record_pulse_goal_work` with its

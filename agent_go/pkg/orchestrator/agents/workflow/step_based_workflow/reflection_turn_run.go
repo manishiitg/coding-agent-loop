@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/costobserver"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents"
@@ -121,10 +120,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) runStepReflectionTurn(
 		defer restore()
 
 		if cfg := executionAgent.GetConfig(); cfg != nil && strings.TrimSpace(cfg.MCPSessionID) != "" {
-			// Concerns raised from here are attributed to the reflection phase,
-			// which is what tells a reviewer the contradiction was found while
-			// reconciling stores rather than during the task itself.
-			common.SetRunConcernSessionPhase(strings.TrimSpace(cfg.MCPSessionID), ConcernPhaseLearnings)
 			hcpo.GetLogger().Info(fmt.Sprintf("🔓 [REFLECT] Widened sub-agent session %s for reflection turn on step %s: +%v",
 				strings.TrimSpace(cfg.MCPSessionID), step.GetID(), addedPaths))
 		}

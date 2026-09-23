@@ -554,7 +554,13 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   const handleTrigger = async (job: ScheduledJob) => {
     setTriggering(job.id)
     try {
-      await schedulerApi.triggerJob(job.id)
+      const result = await schedulerApi.triggerJob(job.id)
+      useChatStore.getState().addToast(
+        result.session_id === 'queued'
+          ? `“${job.name}” was queued for a run.`
+          : `Started a run for “${job.name}”.`,
+        'success',
+      )
       setTimeout(loadJobs, 1500)
     } catch (error) {
       const responseData = (error as { response?: { data?: unknown } })?.response?.data

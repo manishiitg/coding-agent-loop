@@ -2,6 +2,7 @@ import React from 'react'
 import { MoreHorizontal, Pause, Play, Square, Trash2 } from 'lucide-react'
 import type { ScheduledJob } from '../../../services/api-types'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
+import { isScheduleWaitingStatus } from './helpers'
 
 type ScheduleRowActionsProps = Pick<
   ScheduleRunsPanelState,
@@ -42,11 +43,12 @@ export const ScheduleRowActions: React.FC<ScheduleRowActionsProps> = ({
             <Square className="h-3 w-3" />
             Stop
           </button>
-        ) : job.schedule_type !== 'webhook' ? (
+        ) : job.schedule_type !== 'webhook' && !isScheduleWaitingStatus(job.last_status) ? (
           <button
             type="button"
             onClick={() => handleTrigger(job)}
             disabled={triggering === job.id}
+            title={isMissedJob ? 'Start one run now. Missed times are not replayed individually.' : 'Start this schedule now'}
             className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium transition-colors disabled:opacity-40 ${
               isMissedJob
                 ? 'border-warning/30 bg-warning/10 text-warning hover:bg-warning/20'

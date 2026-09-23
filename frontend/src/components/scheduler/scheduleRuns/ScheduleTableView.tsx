@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react'
-import { ChevronDown, ChevronRight, Square } from 'lucide-react'
+import { ChevronDown, ChevronRight, Play, Square } from 'lucide-react'
 import { WebhookEndpoint } from './WebhookEndpoint'
 import { describeCron } from './cron'
 import { formatDuration, formatExactDateTime, formatLastRunLabel, getLocalizedJobName, getScheduleDependencyIds, getScheduleExecutionScope, isMissedSchedule, isScheduleIssueStatus, isScheduleWaitingStatus } from './helpers'
@@ -38,7 +38,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
             <th className="px-3 py-2 font-medium">Run status</th>
             <th className="px-3 py-2 font-medium">Avg duration</th>
             <th className="px-3 py-2 font-medium">Needs attention</th>
-            <th className="px-4 py-2 text-right font-medium">Details</th>
+            <th className="px-4 py-2 text-right font-medium">Actions</th>
           </tr>
         </thead>
         <tbody className="divide-y divide-border">
@@ -50,6 +50,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
             const isRunning = job.last_status === 'running'
             const isMissed = isMissedSchedule(job)
             const isWaiting = isScheduleWaitingStatus(job.last_status)
+            const canRunMissed = isMissed && job.enabled && !isRunning && !isWaiting && !isWebhook && !panel.isReadOnlyUser
             const isIssue = isScheduleIssueStatus(job.last_status)
             const overlapWith = panel.potentialOverlaps.get(job.id)
             const outcome = isRunning ? 'Running now' : isWaiting ? job.last_status === 'waiting_for_capacity' ? 'Waiting for capacity' : 'Queued' : job.last_status === 'success' ? 'Succeeded' : job.last_status === 'error' ? 'Failed' : job.last_status === 'partial' ? 'Partial' : job.last_status === 'interrupted' ? 'Interrupted' : job.last_status === 'stopped' ? 'Stopped' : 'Not run yet'
@@ -86,6 +87,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                 </div></td>
                 <td className="px-4 py-3"><div className="flex items-center justify-end gap-2">
                   {isRunning && !panel.isReadOnlyUser && <button type="button" onClick={() => panel.handleStopRun(job)} className="inline-flex items-center gap-1 rounded px-2 py-1 text-xs text-destructive hover:bg-destructive/10"><Square className="h-3 w-3" />Stop</button>}
+                  {canRunMissed && <button type="button" onClick={() => panel.handleTrigger(job)} disabled={panel.triggering === job.id} aria-label={`Run missed schedule ${name} now`} title="Start one run now. Missed times are not replayed individually." className="inline-flex items-center gap-1 whitespace-nowrap rounded-md border border-warning/30 bg-warning/10 px-2 py-1 text-xs font-medium text-warning transition-colors hover:bg-warning/20 disabled:cursor-wait disabled:opacity-50"><Play className="h-3 w-3" />{panel.triggering === job.id ? 'Starting…' : 'Run now'}</button>}
                   <button type="button" aria-label={`${open ? 'Hide' : 'Show'} ${name} details`} aria-expanded={open} aria-controls={open ? detailsId : undefined} onClick={toggle} className="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground">{open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</button>
                 </div></td>
               </tr>
@@ -94,7 +96,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                   <div className="flex items-center justify-between gap-4">
                     <p className="text-xs text-muted-foreground">{job.run_count} runs · Last result: {job.last_status || 'Not run yet'}{scope ? ` · ${scope.label}` : ''}</p>
                     {!panel.isReadOnlyUser && <div className="flex items-center gap-1">
-                      <ScheduleRowActions {...panel} job={job} isRunning={isRunning} isMissedJob={false} menuButtonClassName="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" />
+                      <ScheduleRowActions {...panel} job={job} isRunning={isRunning} isMissedJob={isMissed} menuButtonClassName="rounded-md p-1.5 text-muted-foreground hover:bg-muted hover:text-foreground" />
                     </div>}
                   </div>
                   {isWebhook && <WebhookEndpoint id={job.id} name={job.name} />}
@@ -108,7 +110,7 @@ export function ScheduleTableView({ panel }: ScheduleTableViewProps) {
                   {job.messages?.length ? <div className="max-w-4xl space-y-2"><h4 className="text-xs font-medium text-foreground">Instructions</h4>{job.messages.map((message, i) => <p key={i} className="whitespace-pre-wrap text-sm leading-6 text-muted-foreground">{message}</p>)}</div> : null}
                   {job.last_error && <p className="max-w-4xl whitespace-pre-wrap break-words text-xs leading-5 text-muted-foreground">Last run: {job.last_error}</p>}
                   {overlapWith && <p className="text-xs text-warning">Possible overlap with {overlapWith}: next start times are closer than a recent average run duration. The scheduler’s collision policy decides whether a run waits, queues, or skips.</p>}
-                  {isMissedSchedule(job) && <p className="text-xs text-muted-foreground">{job.missed_run_count} missed occurrence{job.missed_run_count === 1 ? '' : 's'} recorded.</p>}
+                  {isMissed && <p className="text-xs text-muted-foreground">{job.missed_run_count} missed occurrence{job.missed_run_count === 1 ? '' : 's'} recorded. Run now starts one new execution; it does not replay each missed time.</p>}
                   {job.waiting_reason && <p className="text-xs text-muted-foreground">{job.waiting_reason}</p>}
                   {(job.run_count || 0) > 0 && <ScheduleExecutionHistoryList
                     job={job}

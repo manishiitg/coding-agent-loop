@@ -4,7 +4,7 @@
 #
 #   build-linux-agent.sh <build-dir> <agent_go-dir> <workspace-root>
 #
-# <build-dir> must already hold the go.work to build under (deploy-rootless.sh
+# <build-dir> must already hold the go.work to build under (build-and-activate.sh
 # writes one) and receives bin/video-studio-agent and bin/lib/*.so. Every host
 # path is mounted into the container at the SAME path so the go.work's absolute
 # `use` entries resolve unchanged.

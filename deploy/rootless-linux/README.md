@@ -7,13 +7,15 @@ its own system account (`sparkquill`, `confida`, `dominion`, ...); this
 pipeline only ever touches the one account and `$PRODUCT-*` systemd units
 named on the command line.
 
-Confida and SparkQuill use this shared pipeline. `deploy/cf/deploy-cf.sh`
-remains as a compatibility wrapper. Video Studio and Dominion keep their
-separate deployment paths because their host/bootstrap contracts differ.
+Confida and SparkQuill use this shared pipeline. Its local half is the
+`deploy_rootless_product` function in the repository-root `deploy.sh` (the only
+deployment entry point); this directory holds the server-side half and the
+per-product configuration. Video Studio and Dominion have their own cases in
+`deploy.sh` because their host/bootstrap contracts differ.
 
 ## How it works
 
-1. `deploy.sh <product>` runs on your machine. It reads
+1. `./deploy.sh <product>` runs on your machine. It reads
    `products/<product>/product.env`, installs/updates the product's CLI
    dependencies over SSH, then ships `bootstrap-build.sh` plus the branch
    name and repo URLs to `<product>@<host>`. **It never builds anything
@@ -49,8 +51,8 @@ Copy `products/sparkquill/` as a starting point:
 Requirements this template assumes:
 
 - The product's systemd units are already installed and enabled (one-time
-  account/unit/Caddy-site bootstrap is out of scope for this script, same as
-  `deploy/cf/`) — `<product>-agent`, `<product>-workspace`, `<product>-gateway`,
+  account/unit/Caddy-site bootstrap is out of scope for this pipeline)
+  — `<product>-agent`, `<product>-workspace`, `<product>-gateway`,
   each `WorkingDirectory=/srv/<product>/current` and loading
   `/srv/<product>/.env` via `EnvironmentFile=`.
 - `/srv/<product>/.env` already has whatever secrets and product-specific
@@ -73,9 +75,8 @@ Requirements this template assumes:
 ./deploy.sh confida
 ```
 
-Run those commands from the repository root. The shared root `deploy.sh`
-delegates to this directory's product deployer. Direct invocation remains
-available as `bash deploy/rootless-linux/deploy.sh <product>`.
+Run those commands from the repository root; `deploy.sh` is the only
+entry point (there is no separate per-directory deployer).
 
 Env overrides (all default from `product.env`): `HOST_IP`, `SSH_PORT`,
 `SSH_KEY_PATH`, `DEPLOY_BRANCH` (defaults to `main`).

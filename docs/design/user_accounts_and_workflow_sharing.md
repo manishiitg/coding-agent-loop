@@ -212,7 +212,7 @@ Read-only users see neither.
    Env tiers still honoured underneath for identities the directory does not know.
 2. **Video Studio as real users** (built): gateway password gate off, the
    gateway verifies the app JWT itself and stamps `X-User-ID`, login rate
-   limited, `deploy/aws-ec2/migrate-to-user-accounts.sh` moves the `default`
+   limited, `deploy/aws-ec2/migrate-to-user-accounts.sh` (one-time; removed 2026-09-23 after RTS migrated) moved the `default`
    tree to the admin.
 3. **Workflow ownership and sharing** (built): `access` block
    (`workflow_access.go`), `created_by` alone still names the owner on older

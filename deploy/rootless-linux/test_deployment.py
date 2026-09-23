@@ -17,11 +17,12 @@ class SharedRootlessDeploymentTest(unittest.TestCase):
                 self.assertTrue((directory / "mcp-servers.json").is_file())
                 self.assertFalse(any(directory.glob("*.sh")))
 
-    def test_confida_compatibility_entrypoint_has_no_deploy_implementation(self):
-        wrapper = (REPO / "deploy/cf/deploy-cf.sh").read_text()
-        self.assertIn('rootless-linux/deploy.sh" confida', wrapper)
-        for implementation_detail in ("npm install", "go build", "systemctl", "curl -fsSL"):
-            self.assertNotIn(implementation_detail, wrapper)
+    def test_repository_root_deploy_is_the_only_entry_point(self):
+        entry = (REPO / "deploy.sh").read_text()
+        self.assertIn("deploy_rootless_product() (", entry)
+        self.assertIn('deploy_rootless_product "$SERVER"', entry)
+        for removed in ("deploy/rootless-linux/deploy.sh", "deploy/cf/deploy-cf.sh"):
+            self.assertFalse((REPO / removed).exists(), removed)
 
     def test_confida_keeps_required_product_contract(self):
         config = (ROOT / "products/confida/product.env").read_text()
@@ -38,7 +39,7 @@ class SharedRootlessDeploymentTest(unittest.TestCase):
             self.assertIn(expected, config)
 
     def test_shared_builder_owns_confida_runtime_guards(self):
-        deploy = (ROOT / "deploy.sh").read_text()
+        deploy = (REPO / "deploy.sh").read_text()
         build = (ROOT / "build-and-activate.sh").read_text()
         for expected in ("install-slack-cli.sh", "agent-browser@latest", "CLI_TOOLS", "to_https_url"):
             self.assertIn(expected, deploy)

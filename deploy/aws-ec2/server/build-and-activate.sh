@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Invoked only inside a fresh server-side checkout by deploy-rootless.sh.
+# Invoked only inside a fresh server-side checkout started by `./deploy.sh rts`.
 set -euo pipefail
 [[ "$(uname -sm)" == "Linux x86_64" ]] || { echo "Build must run on Linux x86_64" >&2; exit 1; }
 WORKSPACE_ROOT="$1"

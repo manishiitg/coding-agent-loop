@@ -4,11 +4,11 @@
 # sherpa-onnx's prebuilt native libraries, which need CGO_ENABLED=1. A plain
 # `CGO_ENABLED=0 GOOS=linux go build` from the deployer's Mac compiles the
 # non-CGO stub instead, and the mic control then answers 503 on the server.
-# A Mac has no linux/amd64 C toolchain, so deploy-rootless.sh builds the agent
+# A Mac has no linux/amd64 C toolchain, so build-linux-agent.sh builds the agent
 # inside this image: a native arm64 Go image plus the Debian x86-64 cross gcc,
 # which is far faster than emulating an amd64 container.
 #
-# Build once (deploy-rootless.sh does this when the image is missing):
+# Build once (build-linux-agent.sh does this when the image is missing):
 #   docker build -t video-studio-linux-amd64-builder -f deploy/aws-ec2/build/Dockerfile.linux-amd64-cgo deploy/aws-ec2/build
 FROM golang:1.26-bookworm
 RUN apt-get update \

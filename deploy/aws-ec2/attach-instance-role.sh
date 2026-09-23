@@ -3,7 +3,7 @@
 # that shell out to the AWS CLI: create (or update) the IAM role + instance
 # profile stack and associate the profile with the running instance.
 #
-# Deliberately NOT part of template.yaml / deploy-aws-ec2.sh: that stack has
+# Deliberately NOT part of template.yaml: that stack has
 # drifted from the live instance (UserData, KeyName), so any update to it
 # would REPLACE the instance -- a change set on 2026-09-03 showed
 # "Instance ... Replacement: True". Associating a profile out-of-band is a

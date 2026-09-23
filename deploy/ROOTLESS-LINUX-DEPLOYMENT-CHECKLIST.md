@@ -9,7 +9,7 @@ directly (no root, no Docker), a shared host-level Caddy reverse-proxies to
 it, and shell tools run inside a Landlock-first sandbox with a mount-
 namespace fallback.
 
-This doc exists because Video Studio's `deploy-rootless.sh` guarantees most
+This doc exists because Video Studio's deploy (`./deploy.sh rts`) guarantees most
 of the items below automatically, every release. **Dominion has no
 equivalent script — every one of these was independently rediscovered as a
 live production incident**, one at a time, because there was nothing
@@ -18,9 +18,9 @@ going live. Use this as a pre-launch checklist for any *new* deployment on
 this pattern, and re-run it after any change to the underlying `workspace`/
 `agent_go` modules that touches sandboxing, credentials, or Caddy config.
 
-The legacy `dedicated-vm/README.md` deployment (root-owned, Docker Caddy +
-frontend) is architecturally different enough that most of this doesn't
-apply there as-is — it's called out per item below where relevant.
+The legacy root-owned shared-host deployment (Docker Caddy + frontend) that
+some items below still mention was retired and its scripts removed on
+2026-09-23; those notes are kept only as history.
 
 ## Checklist
 
@@ -172,7 +172,7 @@ custom tools use to call back into the agent, in this priority order:
 1. Explicit `MCP_API_URL` env var — **always wins if set.**
 2. `NATIVE_WORKSPACE=true` → `http://127.0.0.1:<agent-port>`. This flag is
    only set by a local-dev wrapper script (`run_server_with_logging.sh
-   --with-workspace`), **not** by `deploy-rootless.sh` — don't rely on it
+   --with-workspace`), **not** by `./deploy.sh rts` — don't rely on it
    for a production rootless deployment.
 3. Otherwise, if `WORKSPACE_API_URL` contains `localhost`/`127.0.0.1`
    (true for essentially every rootless deployment), it falls through to
@@ -186,7 +186,7 @@ self-diagnose. Found live on Dominion 2026-08-29, ~5 days after the rest of
 this checklist's items were already fixed — this one had no earlier
 symptom because nothing had needed a custom tool callback until then.
 
-`deploy-rootless.sh` guarantees this for Video Studio automatically
+`./deploy.sh rts` guarantees this for Video Studio automatically
 (`grep -q '^MCP_API_URL=' ... || echo 'MCP_API_URL=http://127.0.0.1:8000' >>
 ...`, idempotent on every release). Set it explicitly and permanently in
 `.env` for any deployment without that script:
@@ -377,7 +377,7 @@ clear existing workflow documents or change their code-layout versions.
 
 Every item above is currently a manual, human-run checklist. The more
 durable fix — a `deploy-dominion.sh` (or similarly named) script mirroring
-`deploy-rootless.sh`'s automatic guarantees for this specific deployment,
+`./deploy.sh rts`'s automatic guarantees for this specific deployment,
 so a release can't silently skip any of these — has not been built. Worth
 doing if this deployment gets another release cycle rather than staying
 effectively static.

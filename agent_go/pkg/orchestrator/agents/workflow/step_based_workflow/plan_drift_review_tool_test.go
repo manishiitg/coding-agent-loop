@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 	loggerv2 "github.com/manishiitg/mcpagent/logger/v2"
 )
 
@@ -107,10 +108,9 @@ func newPlanDriftReviewTestExecutorForWorkspace(workspacePath string, files map[
 func TestRecordPlanDriftReviewExecutorRequiresRealFindingForFailStatus(t *testing.T) {
 	ctx := context.Background()
 	ws := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, ws, "pulse-1", "", "step-a", ConcernPhaseReview,
-		structuredFindingSummary("PLANDRIFT-TEST-1", "step-a's report query no longer resolves")); err != nil {
-		t.Fatalf("record finding: %v", err)
-	}
+	finding := structuredFinding(pulsemodules.PlanDriftReviewID, "PLANDRIFT-TEST-1", "step-a's report query no longer resolves")
+	finding.StepID = "step-a"
+	recordTestReviewFinding(t, ws, "pulse-1", finding)
 	findings, err := LoadPulseFindingLifecycles(ctx, ws, "", -1)
 	if err != nil {
 		t.Fatalf("load findings: %v", err)
@@ -158,10 +158,9 @@ func TestRecordPlanDriftReviewExecutorRequiresRealFindingForFailStatus(t *testin
 func TestRecordPlanDriftReviewExecutorRejectsResolvedFinding(t *testing.T) {
 	ctx := context.Background()
 	ws := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, ws, "pulse-1", "", "step-a", ConcernPhaseReview,
-		structuredFindingSummary("PLANDRIFT-RESOLVED-1", "step-a's report query no longer resolves")); err != nil {
-		t.Fatalf("record finding: %v", err)
-	}
+	finding := structuredFinding(pulsemodules.PlanDriftReviewID, "PLANDRIFT-RESOLVED-1", "step-a's report query no longer resolves")
+	finding.StepID = "step-a"
+	recordTestReviewFinding(t, ws, "pulse-1", finding)
 	findings, err := LoadPulseFindingLifecycles(ctx, ws, "", -1)
 	if err != nil {
 		t.Fatalf("load findings: %v", err)
@@ -200,10 +199,9 @@ func TestRecordPlanDriftReviewExecutorRejectsResolvedFinding(t *testing.T) {
 func TestRecordPlanDriftReviewExecutorRejectsFindingForDifferentStep(t *testing.T) {
 	ctx := context.Background()
 	ws := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, ws, "pulse-1", "", "step-b", ConcernPhaseReview,
-		structuredFindingSummary("PLANDRIFT-OTHERSTEP-1", "step-b's own unrelated issue")); err != nil {
-		t.Fatalf("record finding: %v", err)
-	}
+	finding := structuredFinding(pulsemodules.PlanDriftReviewID, "PLANDRIFT-OTHERSTEP-1", "step-b's own unrelated issue")
+	finding.StepID = "step-b"
+	recordTestReviewFinding(t, ws, "pulse-1", finding)
 	findings, err := LoadPulseFindingLifecycles(ctx, ws, "", -1)
 	if err != nil {
 		t.Fatalf("load findings: %v", err)

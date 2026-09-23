@@ -87,8 +87,8 @@ func TestOrchestratorPromptRoutesConsequentialEvidenceToPulseReview(t *testing.T
 
 	for _, want := range []string{
 		"## Completion",
-		"Pulse Technical Review reads retained outputs",
-		"do not emit a `CONCERNS:` line",
+		"Pulse reads these lines from retained summaries",
+		"`CONCERNS: <what happened",
 		"STATUS: COMPLETED",
 		"STATUS: FAILED",
 	} {

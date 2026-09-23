@@ -272,15 +272,13 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 	api := &StreamingAPI{}
 	// A product browser belonging to a workflow owner must not be exposed as
 	// that workflow's browser, even though the owner may access both.
-	productBrowser := common.PrefixBrowserSessionID(common.BrowserSessionNamespace("alice", "") + "--browser")
+	productBrowser := browserSessionForWorkspace("alice", "Chats/SparkQuill")
 	browser.GetSessionTracker().Touch(productBrowser, "product-chat", "product-chat")
 	defer browser.GetSessionTracker().Remove(productBrowser)
-	for _, user := range []string{"alice", "bob", "outsider"} {
-		name := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check") + "--browser")
-		browser.GetSessionTracker().Touch(name, "old-chat", "old-chat")
-		defer browser.GetSessionTracker().Remove(name)
-	}
-	otherWorkflow := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("alice", "", "Workflow/private-work") + "--browser")
+	name := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("Workflow/shared-view-check") + "--browser")
+	browser.GetSessionTracker().Touch(name, "old-chat", "old-chat")
+	defer browser.GetSessionTracker().Remove(name)
+	otherWorkflow := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("Workflow/private-work") + "--browser")
 	browser.GetSessionTracker().Touch(otherWorkflow, "other-chat", "other-chat")
 	defer browser.GetSessionTracker().Remove(otherWorkflow)
 	for _, user := range []string{"alice", "bob", "outsider"} {
@@ -293,7 +291,7 @@ func TestUserBrowserDiscoveryHonorsOwnershipAndWorkflowAccess(t *testing.T) {
 			}
 			continue
 		}
-		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace(user, "", "Workflow/shared-view-check")+"--browser") {
+		if len(items) != 1 || items[0]["browser_session"] != common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("Workflow/shared-view-check")+"--browser") {
 			t.Fatalf("%s: %v", user, items)
 		}
 	}
@@ -305,7 +303,8 @@ func TestProductBrowserDiscoveryUsesActualUserBinding(t *testing.T) {
 	defer workspace.Close()
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{}
-	common.BindSessionBrowserIsolation("live-product-binding-test", "default")
+	common.BindSessionBrowserIsolationForProject("live-product-binding-test", "_users/default/Chats/SparkQuill")
+	defer common.ClearSessionShellConfig("live-product-binding-test")
 	name := common.ResolveBrowserSessionID("live-product-binding-test", "default")
 	browser.GetSessionTracker().Touch(name, "live-product-binding-test", "live-product-binding-test")
 	defer browser.GetSessionTracker().Remove(name)
@@ -341,7 +340,7 @@ func TestUserBrowserDiscoveryShowsFixedWorkspaceProductSessionInSingleUserMode(t
 	defer workspace.Close()
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{}
-	session := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("default", "", "Chats/SparkQuill") + "--browser")
+	session := browserSessionForWorkspace("default", "Chats/SparkQuill")
 	browser.GetSessionTracker().Touch(session, "default-chat", "default-chat")
 	defer browser.GetSessionTracker().Remove(session)
 
@@ -370,11 +369,9 @@ func TestUserBrowserDiscoveryShowsOnlyTheSelectedCrewBrowser(t *testing.T) {
 	t.Setenv("WORKSPACE_API_URL", workspaceServer.URL)
 
 	const workspace = "Chats/Work/projects/crew-a"
-	api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{
-		"crew-a-chat": {SessionID: "crew-a-chat", UserID: "alice", WorkspacePath: workspace},
-	}}
-	crewA := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace("alice", "", workspace) + "--browser")
-	crewB := common.PrefixBrowserSessionID(common.UserWorkspaceBrowserSessionNamespace("alice", "", "Chats/Work/projects/crew-b") + "--browser")
+	api := &StreamingAPI{}
+	crewA := browserSessionForWorkspace("alice", workspace)
+	crewB := browserSessionForWorkspace("alice", "Chats/Work/projects/crew-b")
 	browser.GetSessionTracker().Touch(crewA, "crew-a-chat", "crew-a-chat")
 	browser.GetSessionTracker().Touch(crewB, "crew-b-chat", "crew-b-chat")
 	defer browser.GetSessionTracker().Remove(crewA)
@@ -383,8 +380,73 @@ func TestUserBrowserDiscoveryShowsOnlyTheSelectedCrewBrowser(t *testing.T) {
 	r := httptest.NewRequest("GET", "/?workspace_path="+workspace, nil)
 	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
 	items := api.liveBrowserSessions(r)
-	if len(items) != 1 || items[0]["browser_session"] != crewA {
+	if len(items) != 1 || items[0]["browser_session"] != crewA || items[0]["label"] != "Crew browser" {
 		t.Fatalf("expected only selected Crew browser %q, got %v", crewA, items)
+	}
+}
+
+// One browser per Crew, not per user: the owner (logical path) and a member
+// (physical path) name the same browser, a Crew member may watch it, an
+// outsider without the Crew product may not, and only the owner may control it.
+func TestCrewBrowserIsSharedWithCrewMembersOnly(t *testing.T) {
+	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
+	fx := newCrewRunModeFixture(t)
+	withMemoryUserDirectory(t, `{"users":[{"id":"owner","username":"aman","can_create":true,"products":["work"]},{"id":"reader","username":"vaibhav","can_create":true,"products":["work"]},{"id":"stranger","username":"stranger","can_create":true,"products":["video-studio"]}]}`)
+	api := fx.api
+	const physical = crewRunModeOwnerRoot
+
+	ownerView := browserSessionForWorkspace("owner", "Chats/Work/projects/alpha")
+	if got := browserSessionForWorkspace("reader", physical); got != ownerView {
+		t.Fatalf("owner and member got different Crew browsers: %q vs %q", ownerView, got)
+	}
+	if got := browserSessionForWorkspace("owner", physical); got != ownerView {
+		t.Fatalf("owner's logical and physical paths split the Crew browser: %q vs %q", ownerView, got)
+	}
+	if !browser.IsUserBrowserSession(ownerView) {
+		t.Fatalf("Crew browser %q is not recognized as a persistent managed browser", ownerView)
+	}
+	// Binding a conversation matches discovery, whoever opens the Crew.
+	for _, c := range []struct{ session, user, workspace string }{{"crew-owner-chat", "owner", "Chats/Work/projects/alpha"}, {"crew-reader-chat", "reader", physical}} {
+		bindConversationBrowserIsolation(c.session, c.user, c.workspace, nil)
+		defer common.ClearSessionShellConfig(c.session)
+		if got := common.ResolveBrowserSessionID(c.session, "default"); got != ownerView {
+			t.Fatalf("%s bound %q, want %q", c.user, got, ownerView)
+		}
+	}
+	if browserSessionForWorkspace("owner", "Workflow/alpha") == ownerView {
+		t.Fatal("Crew and Workflow browsers collided")
+	}
+
+	browser.GetSessionTracker().Touch(ownerView, "crew-owner-chat", "crew-owner-chat")
+	defer browser.GetSessionTracker().Remove(ownerView)
+	browser.GetSessionTracker().RecordAction(ownerView, "fill", []string{"#password", "hunter2"})
+	for _, c := range []struct {
+		user, workspace string
+		visible         bool
+	}{{"owner", "Chats/Work/projects/alpha", true}, {"reader", physical, true}, {"stranger", physical, false}} {
+		r := httptest.NewRequest("GET", "/?workspace_path="+c.workspace, nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: c.user}))
+		items := api.liveBrowserSessions(r)
+		if !c.visible {
+			if len(items) != 0 {
+				t.Fatalf("%s: outsider saw the Crew browser: %v", c.user, items)
+			}
+			continue
+		}
+		if len(items) != 1 || items[0]["browser_session"] != ownerView {
+			t.Fatalf("%s: expected the Crew browser, got %v", c.user, items)
+		}
+		if items[0]["last_action"] != `Typed into "#password"` || items[0]["last_action_at"] == "" {
+			t.Fatalf("%s: last action = %q at %q", c.user, items[0]["last_action"], items[0]["last_action_at"])
+		}
+	}
+	if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "owner"}, physical) {
+		t.Fatal("the Crew owner must control the Crew browser")
+	}
+	for _, user := range []string{"reader", "stranger"} {
+		if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: user}, physical) {
+			t.Fatalf("%s must not control the Crew browser", user)
+		}
 	}
 }
 
@@ -411,17 +473,15 @@ func TestCanControlLiveBrowserTreatsManifestBackedCrewAsProductWorkspace(t *test
 	if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, publicWorkspace) {
 		t.Fatal("expected the owner to control the active Crew browser even though the Crew has workflow.json")
 	}
-	if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "bob"}, publicWorkspace) {
+	if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "bob"}, "_users/alice/Chats/Work/projects/crew-a") {
 		t.Fatal("another user must not control the Crew browser")
 	}
 }
 
-// WorkflowBrowserSessionNamespace hashes the workspace path ONLY when it's
-// non-empty (by design, so a real Workflow's authorized users share one
-// browser) -- it does not fold in userID the way it does for the empty-path
-// case. In multi-user mode, a matching session identity is therefore NOT
-// itself proof of ownership, and must not be trusted alone.
-func TestUserBrowserDiscoveryHidesFixedWorkspaceProductSessionWithoutTrackedOwnershipInMultiUserMode(t *testing.T) {
+// A fixed-workspace product project (SparkQuill, Dominion, ...) is owner-
+// qualified: the logical path always names the caller's own tree, so two users
+// at "Chats/SparkQuill" get distinct browsers and neither sees the other's.
+func TestUserBrowserDiscoveryKeepsFixedWorkspaceProjectBrowsersPerOwnerInMultiUserMode(t *testing.T) {
 	t.Setenv("AGENT_BROWSER_SHARED_PROFILE", "/data/browser-profile")
 	t.Setenv("MULTI_USER_MODE", "true")
 	withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]},{"id":"bob","username":"bob","can_create":true,"products":[]}]}`)
@@ -431,34 +491,23 @@ func TestUserBrowserDiscoveryHidesFixedWorkspaceProductSessionWithoutTrackedOwne
 	defer workspace.Close()
 	t.Setenv("WORKSPACE_API_URL", workspace.URL)
 	api := &StreamingAPI{activeSessions: make(map[string]*ActiveSessionInfo)}
-	// Both alice and bob hash to the identical identity here -- workspace-only
-	// hashing -- so neither is trusted without a tracked owning session.
-	aliceSession := common.PrefixBrowserSessionID(common.WorkflowBrowserSessionNamespace("alice", "", "Chats/SparkQuill") + "--browser")
+	aliceSession := browserSessionForWorkspace("alice", "Chats/SparkQuill")
+	if aliceSession == browserSessionForWorkspace("bob", "Chats/SparkQuill") {
+		t.Fatal("two users' own projects shared a browser")
+	}
 	browser.GetSessionTracker().Touch(aliceSession, "alice-chat", "alice-chat")
 	defer browser.GetSessionTracker().Remove(aliceSession)
 
-	for _, user := range []string{"alice", "bob"} {
-		r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
-		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: user}))
-		if items := api.liveBrowserSessions(r); len(items) != 0 {
-			t.Fatalf("%s: expected no session without tracked ownership, got %v", user, items)
+	for _, c := range []struct {
+		user, workspace string
+		visible         bool
+	}{{"alice", "Chats/SparkQuill", true}, {"bob", "Chats/SparkQuill", false}, {"bob", "_users/alice/Chats/SparkQuill", false}} {
+		r := httptest.NewRequest("GET", "/?workspace_path="+c.workspace, nil)
+		r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: c.user}))
+		items := api.liveBrowserSessions(r)
+		if c.visible != (len(items) == 1 && items[0]["browser_session"] == aliceSession) || (!c.visible && len(items) != 0) {
+			t.Fatalf("%s at %s: got %v", c.user, c.workspace, items)
 		}
-	}
-
-	// Once alice's chat is actually tracked as owning this workspace, she (and
-	// only she) sees the session.
-	api.activeSessions["alice-chat"] = &ActiveSessionInfo{SessionID: "alice-chat", UserID: "alice", WorkspacePath: "Chats/SparkQuill"}
-
-	r := httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
-	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "alice"}))
-	if items := api.liveBrowserSessions(r); len(items) != 1 || items[0]["browser_session"] != aliceSession {
-		t.Fatalf("expected alice to see her own tracked fixed-workspace session, got %v", items)
-	}
-
-	r = httptest.NewRequest("GET", "/?workspace_path=Chats/SparkQuill", nil)
-	r = r.WithContext(context.WithValue(r.Context(), UserContextKey, &UserClaims{UserID: "bob"}))
-	if items := api.liveBrowserSessions(r); len(items) != 0 {
-		t.Fatalf("expected bob not to see alice's tracked fixed-workspace session, got %v", items)
 	}
 }
 
@@ -481,16 +530,15 @@ func TestCanControlLiveBrowserAppliesSameFixedWorkspaceFallbackAsDiscovery(t *te
 		}
 	})
 
-	t.Run("multi user mode requires tracked ownership", func(t *testing.T) {
+	t.Run("multi user mode grants the owner only", func(t *testing.T) {
 		t.Setenv("MULTI_USER_MODE", "true")
-		withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]}]}`)
+		withMemoryUserDirectory(t, `{"users":[{"id":"alice","username":"alice","can_create":true,"products":[]},{"id":"bob","username":"bob","can_create":true,"products":[]}]}`)
 		api := &StreamingAPI{activeSessions: map[string]*ActiveSessionInfo{}}
-		if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, "Chats/SparkQuill") {
-			t.Fatal("expected control denied without a tracked owning session")
-		}
-		api.activeSessions["alice-chat"] = &ActiveSessionInfo{SessionID: "alice-chat", UserID: "alice", WorkspacePath: "Chats/SparkQuill"}
 		if !api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "alice"}, "Chats/SparkQuill") {
-			t.Fatal("expected control granted once alice owns a tracked session at this workspace")
+			t.Fatal("expected alice to control her own project browser")
+		}
+		if api.canControlLiveBrowser(context.Background(), &UserClaims{UserID: "bob"}, "_users/alice/Chats/SparkQuill") {
+			t.Fatal("bob must not control alice's project browser")
 		}
 	})
 }

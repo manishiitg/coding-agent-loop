@@ -47,7 +47,7 @@ func TestCodingAgentE2EClientObtainsUserJWTSeparatelyFromMCPToken(st *stdtesting
 
 func TestDefaultCodingAgentE2EModelIncludesCodingCLIProviders(st *stdtesting.T) {
 	tests := map[string]string{
-		"codex-cli":   "gpt-5.3-codex-spark",
+		"codex-cli":   "gpt-6-luna",
 		"cursor-cli":  "auto",
 		"claude-code": "claude-sonnet-5",
 	}

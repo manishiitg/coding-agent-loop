@@ -189,6 +189,9 @@ func AuthMiddleware(next http.Handler) http.Handler {
 			}
 		}
 		if authHeader == "" {
+			if r.URL.Path == externalMCPPath {
+				mcpOAuthChallenge(w)
+			}
 			http.Error(w, `{"error": "Authorization header required"}`, http.StatusUnauthorized)
 			return
 		}
@@ -199,6 +202,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if strings.HasPrefix(tokenString, mcpOAuthAccessPrefix) {
+			claims, ok := authenticateMCPOAuthToken(w, r, tokenString)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserContextKey, claims)))
+			return
+		}
 		if strings.HasPrefix(tokenString, accesstokens.Prefix) {
 			claims, ok := authenticateAccessToken(w, r, tokenString)
 			if !ok {
@@ -284,6 +295,9 @@ func shouldSkipAuth(path string) bool {
 		// callback with no valid state does nothing at all.
 		"/api/human-feedback/gmail/auth/callback",
 		"/api/downloads/", // Chrome CDP launcher zip (macOS)
+		mcpOAuthRegisterPath,
+		mcpOAuthAuthorizePath,
+		mcpOAuthTokenPath,
 	}
 
 	for _, p := range publicPaths {

@@ -2,25 +2,17 @@ package step_based_workflow
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/pulsemodules"
 )
 
 func filedReviewConcern(t *testing.T, workspacePath, pulseRunID, module, text string) RunConcern {
 	t.Helper()
-	ctx := context.Background()
-	if _, err := RecordRunConcerns(
-		ctx, workspacePath, pulseRunID, "", module, ConcernPhaseReview, "CONCERNS: "+text,
-	); err != nil {
-		t.Fatalf("record concern: %v", err)
-	}
-	concerns, err := LoadOpenRunConcerns(ctx, workspacePath, 10)
-	if err != nil {
-		t.Fatalf("load concern: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, pulseRunID, "", module, ConcernPhaseReview, text)
+	concerns := activeRunConcernRows(t, workspacePath)
 	if len(concerns) != 1 {
 		t.Fatalf("concerns = %+v, want one", concerns)
 	}
@@ -29,26 +21,25 @@ func filedReviewConcern(t *testing.T, workspacePath, pulseRunID, module, text st
 
 func filedAdvisorConcern(t *testing.T, workspacePath, pulseRunID, module, text, route, nextCheck string) RunConcern {
 	t.Helper()
-	marker := pulseFindingDetailMarker{
-		Concern: text,
-		Module:  module,
-		PulseFindingDetails: PulseFindingDetails{
-			IssueKind:        "workflow_issue",
-			RecommendedRoute: route,
-			NextCheck:        nextCheck,
-		},
+	seedRunConcerns(t, workspacePath, pulseRunID, "", module, ConcernPhaseReview, text)
+	concerns := activeRunConcernRows(t, workspacePath)
+	if len(concerns) != 1 {
+		t.Fatalf("load advisor concern: concerns=%+v", concerns)
 	}
-	raw, err := json.Marshal(marker)
-	if err != nil {
-		t.Fatalf("marshal advisor marker: %v", err)
+	// Advisor dispositions are checked against the stored route, so attach it
+	// the way a filed advisor finding carries it.
+	ctx := context.Background()
+	db, err := openRunConcernsDB(ctx, workspacePath, false)
+	if err != nil || db == nil {
+		t.Fatalf("open workflow db: %v", err)
 	}
-	if _, err := RecordRunConcerns(context.Background(), workspacePath, pulseRunID, "", module, ConcernPhaseReview,
-		pulseFindingJSONPrefix+" "+string(raw)+"\nCONCERNS: "+text); err != nil {
-		t.Fatalf("record advisor concern: %v", err)
-	}
-	concerns, err := LoadOpenRunConcerns(context.Background(), workspacePath, 10)
-	if err != nil || len(concerns) != 1 {
-		t.Fatalf("load advisor concern: concerns=%+v err=%v", concerns, err)
+	defer db.Close()
+	marker := pulseFindingDetailMarker{Concern: text, Module: module, PulseFindingDetails: PulseFindingDetails{
+		IssueKind: IssueKindWorkflow, RecommendedRoute: route, NextCheck: nextCheck,
+	}}
+	if err := recordPulseFindingDetailAt(ctx, db, workspacePath, pulseRunID, module, marker,
+		concerns[0].Fingerprint, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		t.Fatalf("attach advisor route: %v", err)
 	}
 	return concerns[0]
 }
@@ -113,11 +104,7 @@ func TestPulseFindingLifecycleClosesOnlyWithVerifiedFixAndReopensOnRecurrence(t 
 		t.Fatalf("verification evidence missing: %+v", lifecycles[0].Verification)
 	}
 
-	if _, err := RecordRunConcerns(
-		ctx, workspacePath, "pulse-2", "", module, ConcernPhaseReview, "CONCERNS: "+concernText,
-	); err != nil {
-		t.Fatalf("record recurrence: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "pulse-2", "", module, ConcernPhaseReview, concernText)
 	lifecycles, err = LoadPulseFindingLifecycles(ctx, workspacePath, module, 10)
 	if err != nil {
 		t.Fatalf("reload lifecycle: %v", err)
@@ -161,10 +148,7 @@ func TestPulseFindingLifecycleClosesAppliedChangeAndRecurrenceReopens(t *testing
 		t.Fatalf("applied change did not close its issue: %+v", lifecycles)
 	}
 
-	if _, err := RecordRunConcerns(ctx, workspacePath, "normal-run-2", "", module,
-		ConcernPhaseReview, "CONCERNS: evaluation uses a stale outcome"); err != nil {
-		t.Fatalf("record recurrence: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "normal-run-2", "", module, ConcernPhaseReview, "evaluation uses a stale outcome")
 	lifecycles, err = LoadPulseFindingLifecycles(ctx, workspacePath, module, 10)
 	if err != nil {
 		t.Fatalf("reload recurring lifecycle: %v", err)
@@ -245,10 +229,7 @@ func TestPulseFindingIssueIDUpdatesOneRootCauseAndMergePreservesDuplicateHistory
 		t.Fatalf("merged duplicate %s not found", second.IssueID)
 	}
 
-	if _, err := RecordRunConcerns(ctx, workspacePath, "pulse-4", "", module, ConcernPhaseReview,
-		"CONCERNS: summary hides the same failed collector rows"); err != nil {
-		t.Fatalf("record merged-alias recurrence: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "pulse-4", "", module, ConcernPhaseReview, "summary hides the same failed collector rows")
 	findings, err = LoadPulseFindingLifecycles(ctx, workspacePath, module, -1)
 	if err != nil || len(findings) != 2 {
 		t.Fatalf("reload alias recurrence: findings=%+v err=%v", findings, err)
@@ -271,9 +252,7 @@ func TestPulseFindingIssueIDUpdateReloadsExistingStepFindingAcrossReviewerModule
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
 	const concern = "The evaluator replaces managed DB truth with a retired JSON fallback."
-	if _, err := RecordRunConcerns(ctx, workspacePath, "execution-1", "", "eval-workflow-success", ConcernPhaseReview, "CONCERNS: "+concern); err != nil {
-		t.Fatalf("record step finding: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "execution-1", "", "eval-workflow-success", ConcernPhaseReview, concern)
 
 	findings, err := LoadPulseFindingLifecycles(ctx, workspacePath, "", -1)
 	if err != nil || len(findings) != 1 {
@@ -644,9 +623,7 @@ func TestWorkflowObservationBecomesIssueOnlyWhenReviewerPromotesIt(t *testing.T)
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
 	const concern = "The execution step emitted a broad shell scan without a bounded target."
-	if _, err := RecordRunConcerns(ctx, workspacePath, "execution-1", "default", "collect-signals", ConcernPhaseExecution, "CONCERNS: "+concern); err != nil {
-		t.Fatalf("record workflow observation: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "execution-1", "default", "collect-signals", ConcernPhaseExecution, concern)
 
 	findings, err := LoadPulseFindingLifecycles(ctx, workspacePath, "", -1)
 	if err != nil || len(findings) != 1 {
@@ -694,18 +671,31 @@ func TestWorkflowObservationBecomesIssueOnlyWhenReviewerPromotesIt(t *testing.T)
 func TestPulseFindingLifecycleLoadsStructuredHarnessReproduction(t *testing.T) {
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
-	module := "bug_review"
+	module := pulsemodules.TechnicalReviewID
 	concernText := "plan updater rejects the effective message-sequence step because its saved type is legacy regular"
-	summary := strings.Join([]string{
-		"## Finding",
-		"The plan-editing compatibility boundary is broken.",
-		`PULSE_FINDING_JSON: {"concern":"` + concernText + `","finding_id":"HARNESS-PLAN-EDIT-1","target_key":"harness:plan-editor:legacy-agentic-regular","issue_kind":"harness_issue","classification":"correctness_bug","severity":"critical","summary":"Runtime and editing APIs disagree about the step type.","impact":"Pulse can diagnose the workflow defect but cannot apply its repair.","workaround":"Persist the step as message_sequence manually.","evidence":["update_scripted_step rejected the agentic step","update_message_sequence_step rejected the saved regular type"],"reproduction":{"safe":true,"setup":"Use a copied plan with a regular step and declared_execution_mode=agentic.","action":"Call update_message_sequence_step for that step.","expected":"The harness upgrades the type and applies the edit.","observed":"The updater rejects the saved regular type.","limitations":"No production workflow execution is required."}}`,
-		"CONCERNS: " + concernText,
-	}, "\n")
-
-	if _, err := RecordRunConcerns(
-		ctx, workspacePath, "pulse-structured", "", module, ConcernPhaseReview, summary,
-	); err != nil {
+	if _, err := RecordPulseReviewFinding(ctx, workspacePath, "pulse-structured", "pulse-structured", PulseReviewFindingInput{
+		Concern: concernText,
+		Module:  module,
+		PulseFindingDetails: PulseFindingDetails{
+			FindingID:      "HARNESS-PLAN-EDIT-1",
+			TargetKey:      "harness:plan-editor:legacy-agentic-regular",
+			IssueKind:      IssueKindHarness,
+			Classification: "correctness_bug",
+			Severity:       "critical",
+			Summary:        "Runtime and editing APIs disagree about the step type.",
+			Impact:         "Pulse can diagnose the workflow defect but cannot apply its repair.",
+			Workaround:     "Persist the step as message_sequence manually.",
+			Evidence:       []string{"update_scripted_step rejected the agentic step", "update_message_sequence_step rejected the saved regular type"},
+			Reproduction: PulseFindingReproduction{
+				Safe:        true,
+				Setup:       "Use a copied plan with a regular step and declared_execution_mode=agentic.",
+				Action:      "Call update_message_sequence_step for that step.",
+				Expected:    "The harness upgrades the type and applies the edit.",
+				Observed:    "The updater rejects the saved regular type.",
+				Limitations: "No production workflow execution is required.",
+			},
+		},
+	}); err != nil {
 		t.Fatalf("record structured harness finding: %v", err)
 	}
 	lifecycles, err := LoadPulseFindingLifecycles(ctx, workspacePath, module, 10)
@@ -742,19 +732,30 @@ func TestHarnessFindingPlatformRegistryDeduplicatesAcrossWorkflows(t *testing.T)
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	issueKey := "harness:mcp-bridge:authorization-header"
 	concernText := "MCP bridge rejects the valid bearer authorization header"
-	summary := `PULSE_FINDING_JSON: {"concern":"` + concernText +
-		`","finding_id":"HARNESS-MCP-1","target_key":"` + issueKey +
-		`","issue_kind":"harness_issue","classification":"correctness_bug","severity":"high","summary":"The bridge rejects valid authorization.","reproduction":{"safe":true,"setup":"Use a local bridge fixture.","action":"Send the documented header.","expected":"Request is authorized.","observed":"Invalid API token."}}` +
-		"\nCONCERNS: " + concernText
-
 	for index, workspacePath := range []string{"Workflow/alpha", "Workflow/beta"} {
-		if _, err := RecordRunConcerns(
-			ctx, workspacePath, "pulse-"+string(rune('1'+index)), "", "bug_review", ConcernPhaseReview, summary,
-		); err != nil {
+		runID := "pulse-" + string(rune('1'+index))
+		if _, err := RecordPulseReviewFinding(ctx, workspacePath, runID, runID, PulseReviewFindingInput{
+			Concern: concernText,
+			Module:  pulsemodules.TechnicalReviewID,
+			PulseFindingDetails: PulseFindingDetails{
+				FindingID:      "HARNESS-MCP-1",
+				TargetKey:      issueKey,
+				IssueKind:      IssueKindHarness,
+				Classification: "correctness_bug",
+				Severity:       "high",
+				Summary:        "The bridge rejects valid authorization.",
+				Impact:         "Workflows cannot call MCP tools through the bridge.",
+				Evidence:       []string{"bridge log: Invalid API token"},
+				Reproduction: PulseFindingReproduction{
+					Safe: true, Setup: "Use a local bridge fixture.", Action: "Send the documented header.",
+					Expected: "Request is authorized.", Observed: "Invalid API token.",
+				},
+			},
+		}); err != nil {
 			t.Fatalf("record %s harness finding: %v", workspacePath, err)
 		}
 	}
-	lifecycles, err := LoadPulseFindingLifecycles(ctx, "Workflow/alpha", "bug_review", 10)
+	lifecycles, err := LoadPulseFindingLifecycles(ctx, "Workflow/alpha", pulsemodules.TechnicalReviewID, 10)
 	if err != nil {
 		t.Fatalf("load linked harness finding: %v", err)
 	}
@@ -767,30 +768,6 @@ func TestHarnessFindingPlatformRegistryDeduplicatesAcrossWorkflows(t *testing.T)
 	}
 	if got := strings.Join(platform.AffectedWorkflows, ","); got != "Workflow/alpha,Workflow/beta" {
 		t.Fatalf("affected workflow linkage = %q", got)
-	}
-}
-
-func TestPulseFindingDetailsMarkerCannotCreateUnfiledConcern(t *testing.T) {
-	ctx := context.Background()
-	workspacePath := concernsWorkspace(t)
-	summary := strings.Join([]string{
-		`PULSE_FINDING_JSON: {"concern":"hidden concern","issue_kind":"harness_issue","summary":"Must not be stored."}`,
-		"CONCERNS: visible concern",
-	}, "\n")
-	if _, err := RecordRunConcerns(
-		ctx, workspacePath, "pulse-mismatch", "", "bug_review", ConcernPhaseReview, summary,
-	); err != nil {
-		t.Fatalf("record concern with mismatched details: %v", err)
-	}
-	lifecycles, err := LoadPulseFindingLifecycles(ctx, workspacePath, "bug_review", 10)
-	if err != nil {
-		t.Fatalf("load mismatched details lifecycle: %v", err)
-	}
-	if len(lifecycles) != 1 || lifecycles[0].Text != "visible concern" {
-		t.Fatalf("unexpected lifecycle rows: %+v", lifecycles)
-	}
-	if lifecycles[0].Details != nil {
-		t.Fatalf("unfiled marker was attached: %+v", lifecycles[0].Details)
 	}
 }
 
@@ -915,10 +892,7 @@ func TestExternalActionRequiredLeavesActiveQueueAndStaysSuppressedOnRecurrence(t
 		ReopenCondition: "scheduler completion detection changes or a platform repair tool becomes available",
 	}})
 
-	active, err := LoadOpenRunConcerns(ctx, workspacePath, -1)
-	if err != nil {
-		t.Fatalf("load active concerns: %v", err)
-	}
+	active := activeRunConcernRows(t, workspacePath)
 	if len(active) != 0 {
 		t.Fatalf("externally owned finding remained active: %+v", active)
 	}
@@ -930,16 +904,8 @@ func TestExternalActionRequiredLeavesActiveQueueAndStaysSuppressedOnRecurrence(t
 		t.Fatalf("external finding was not suppressed: %+v", suppressed)
 	}
 
-	if _, err := RecordRunConcerns(
-		ctx, workspacePath, "pulse-external-2", "", module, ConcernPhaseReview,
-		"CONCERNS: "+concernText,
-	); err != nil {
-		t.Fatalf("record identical recurrence: %v", err)
-	}
-	active, err = LoadOpenRunConcerns(ctx, workspacePath, -1)
-	if err != nil {
-		t.Fatalf("reload active concerns: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "pulse-external-2", "", module, ConcernPhaseReview, concernText)
+	active = activeRunConcernRows(t, workspacePath)
 	if len(active) != 0 {
 		t.Fatalf("identical recurrence reopened external finding: %+v", active)
 	}
@@ -982,11 +948,7 @@ func TestFindingBacklogLeadsWithTheLargestCluster(t *testing.T) {
 
 	file := func(runID, step, text string) {
 		t.Helper()
-		if _, err := RecordRunConcerns(
-			ctx, workspacePath, runID, "", step, ConcernPhaseReview, "CONCERNS: "+text,
-		); err != nil {
-			t.Fatalf("record concern: %v", err)
-		}
+		seedRunConcerns(t, workspacePath, runID, "", step, ConcernPhaseReview, text)
 	}
 	// Filed first, so recency ranks them last.
 	for _, field := range []string{"wrong source", "stale selector", "missing retry"} {
@@ -1515,10 +1477,7 @@ func TestLegacyUnfixedWaitReturnsToActiveRegister(t *testing.T) {
 func TestActionableBacklogReconciliationRetiresUntypedAndHandsOffPlatform(t *testing.T) {
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, workspacePath, "run-1", "", "collect", ConcernPhaseExecution,
-		"CONCERNS: historical collector note without reviewer promotion"); err != nil {
-		t.Fatalf("record legacy observation: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "run-1", "", "collect", ConcernPhaseExecution, "historical collector note without reviewer promotion")
 	if _, err := RecordPulseReviewFinding(ctx, workspacePath, "pulse-1", "review-1", PulseReviewFindingInput{
 		Concern: "workflow validation rejects valid data", Module: pulsemodules.TechnicalReviewID,
 		PulseFindingDetails: PulseFindingDetails{
@@ -1589,3 +1548,58 @@ func TestChangedUnverifiedClosesWithoutSeparateVerificationBoundary(t *testing.T
 // the one value the Fixer's own contract tells it to send, against 149 for an
 // omitted filter on social-media. It only did any work by falling back to
 // omitting the module.
+
+// Live on social-media 2026-09-23: 87 rows filed by steps through the retired
+// record_run_concern tool (typed, never routed) kept Technical failing every
+// pass. The cleanup retires them; reviewer-filed and prevalidation rows stay.
+func TestReconcileRetiresUnroutedStepFiledTypedRows(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := concernsWorkspace(t)
+	stepRow := func(step, phase, text string) {
+		t.Helper()
+		seedRunConcerns(t, workspacePath, "run-1", "", step, phase, text)
+		db, err := openRunConcernsDB(ctx, workspacePath, false)
+		if err != nil || db == nil {
+			t.Fatalf("open db: %v", err)
+		}
+		defer db.Close()
+		fp := concernFingerprint(step, text)
+		marker := pulseFindingDetailMarker{Concern: text, Module: step, PulseFindingDetails: PulseFindingDetails{IssueKind: IssueKindWorkflow, Summary: text}}
+		if err := recordPulseFindingDetailAt(ctx, db, workspacePath, "run-1", step, marker, fp, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatalf("attach details: %v", err)
+		}
+	}
+	stepRow("execute-remediate", ConcernPhaseExecution, "step draft ignores learnings")
+	stepRow("sequence-a", ConcernPhaseMessageSequence, "sequence skipped a target")
+	recordTestReviewFinding(t, workspacePath, "pulse-1", testReviewFinding(pulsemodules.TechnicalReviewID, "reviewer-filed defect stays"))
+
+	result, err := ReconcilePulseActionableBacklog(ctx, workspacePath)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if result.RetiredLegacyObservations != 2 {
+		t.Fatalf("retired = %d, want the 2 step-filed rows", result.RetiredLegacyObservations)
+	}
+	active := activeRunConcernRows(t, workspacePath)
+	if len(active) != 1 || active[0].Text != "reviewer-filed defect stays" {
+		t.Fatalf("active after reconcile = %+v", active)
+	}
+}
+
+func TestCountActionableWorkflowIssuesForPassIgnoresOldUnroutedBacklog(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := concernsWorkspace(t)
+	recordTestReviewFinding(t, workspacePath, "pulse-old", testReviewFinding(pulsemodules.TechnicalReviewID, "old unrouted defect"))
+	handoff := testReviewFinding(pulsemodules.TechnicalReviewID, "routed to the fixer")
+	handoff.RecommendedRoute = pulseFindingRouteFixerHandoff
+	recordTestReviewFinding(t, workspacePath, "pulse-old", handoff)
+
+	future := time.Now().UTC().Add(time.Hour)
+	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, future); err != nil || n != 1 {
+		t.Fatalf("count since after both were seen = %d (%v), want only the fixer handoff", n, err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, past); err != nil || n != 2 {
+		t.Fatalf("count since before both were seen = %d (%v), want both", n, err)
+	}
+}

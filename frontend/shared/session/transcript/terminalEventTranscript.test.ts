@@ -1367,4 +1367,9 @@ describe('product side-channel events', () => {
     const references = { id: 'refs-1', type: 'work_workflow_references_updated', session_id: 's1', data: {} } as unknown as PollingEvent
     expect(selectTerminalEvents([identity, references], null, [])).toEqual([])
   })
+
+  it('keeps retired coding-agent question rows out of restored transcripts', () => {
+    const question = { id: 'question-1', type: 'coding_agent_question', session_id: 's1', data: { type: 'coding_agent_question', data: { kind: 'requested' } } } as unknown as PollingEvent
+    expect(selectTerminalEvents([question], null, [])).toEqual([])
+  })
 })

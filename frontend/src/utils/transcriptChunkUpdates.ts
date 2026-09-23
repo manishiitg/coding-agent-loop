@@ -1,2 +1,2 @@
 // Shared by live delivery, restored history, and all transcript surfaces.
-export { intermediateUpdateFromTranscriptChunk } from '../../shared/session/transcriptChunkUpdates'
+export { intermediateUpdateFromTranscriptChunk, isTranscriptChunkUpdate, normalizeTranscriptChunkEvents } from '../../shared/session/transcriptChunkUpdates'

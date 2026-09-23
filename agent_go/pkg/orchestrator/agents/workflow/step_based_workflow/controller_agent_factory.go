@@ -761,7 +761,6 @@ func (hcpo *StepBasedWorkflowOrchestrator) applyStepConfigToAgentConfig(config *
 			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Step config found but no SelectedTools specified - using orchestrator defaults: %v", config.SelectedTools))
 		}
 	}
-	config.SelectedTools = withoutRetiredRunConcernTool(config.SelectedTools)
 
 	// Determine execution mode: CLI providers and scripted steps always use code execution mode.
 	// scripted steps need code execution mode so the agent gets the tool index and get_api_spec
@@ -894,24 +893,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) prepareCustomTools(stepConfig *AgentC
 			}
 		}
 	}
-	enabledTools = withoutRetiredRunConcernTool(enabledTools)
 	tools, executors := orchestrator.FilterCustomToolsByCategory(hcpo.WorkspaceTools, hcpo.WorkspaceToolExecutors, enabledTools)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔧 Filtered custom tools: %d tools enabled from %d entries: %v", len(tools), len(enabledTools), enabledTools))
 	return tools, executors
-}
-
-// withoutRetiredRunConcernTool prevents legacy workflow configuration from
-// re-enabling the retired step-observation writer. Pulse reviews retained step
-// evidence and deterministic receipts directly instead.
-func withoutRetiredRunConcernTool(tools []string) []string {
-	filtered := make([]string, 0, len(tools))
-	for _, tool := range tools {
-		if strings.TrimSpace(tool) == "workflow_db:record_run_concern" {
-			continue
-		}
-		filtered = append(filtered, tool)
-	}
-	return filtered
 }
 
 // prepareWorkspaceToolsOnly prepares minimal tools for KB maintenance agents.

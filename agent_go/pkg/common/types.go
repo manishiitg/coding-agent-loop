@@ -622,88 +622,84 @@ func SetSessionBrowserSessionID(sessionID, browserSessionID string) {
 	log.Printf("[SHELL] Set browser session ID for session %s: %s", sessionID, browserSessionID)
 }
 
-// BrowserSessionNamespace is the authenticated browser ownership boundary for
-// non-workflow chats. Anonymous contexts remain chat-scoped so unrelated guests
-// never share cookies.
-func BrowserSessionNamespace(userID, sessionID string) string {
-	userID, sessionID = strings.TrimSpace(userID), strings.TrimSpace(sessionID)
-	if userID == "" && sessionID == "" {
+// Browser isolation is one browser per workflow and one per project (a Crew
+// or other product project), never per user: everyone with access to the same
+// workflow or project shares its tabs, cookies and logins. Only a conversation
+// with no workspace at all falls back to a browser scoped to that session.
+
+func browserPathHash(kind, path string) string {
+	sum := sha256.Sum256([]byte(kind + "\x00" + path))
+	return hex.EncodeToString(sum[:8])
+}
+
+func cleanBrowserWorkspacePath(path string) string {
+	path = strings.ReplaceAll(path, "\\", "/")
+	path = filepath.ToSlash(filepath.Clean(strings.TrimSpace(path)))
+	path = strings.Trim(path, "/")
+	if path == "." {
 		return ""
 	}
-	identity := userID
-	kind := "user-"
-	if identity == "" {
-		identity = sessionID
-		kind = "guest-"
-	}
-	sum := sha256.Sum256([]byte(identity))
-	return kind + hex.EncodeToString(sum[:8])
+	return path
 }
 
-// WorkflowBrowserSessionNamespace gives one workflow a durable browser shared
-// by all of its authorized users, runs, builder chats, groups and delegated
-// agents. An empty workflow path retains the user-scoped non-workflow boundary.
-func WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath string) string {
-	workflowPath = strings.ReplaceAll(workflowPath, "\\", "/")
-	workflowPath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(workflowPath)))
-	workflowPath = strings.Trim(workflowPath, "/")
-	if workflowPath == "" || workflowPath == "." {
-		return BrowserSessionNamespace(userID, sessionID)
+// WorkflowBrowserSessionNamespace names the browser shared by one workflow's
+// authorized users, runs, builder chats, groups and delegated agents.
+func WorkflowBrowserSessionNamespace(workflowPath string) string {
+	workflowPath = cleanBrowserWorkspacePath(workflowPath)
+	if workflowPath == "" {
+		return ""
 	}
-	sum := sha256.Sum256([]byte("workflow\x00" + workflowPath))
-	return "workflow-" + hex.EncodeToString(sum[:8])
+	return "workflow-" + browserPathHash("workflow", workflowPath)
 }
 
-// UserWorkspaceBrowserSessionNamespace gives one authenticated user's product
-// workspace a durable browser. It is stable across chat/session rotation, but
-// unlike WorkflowBrowserSessionNamespace it never crosses the user boundary.
-// Product workspaces such as Crew are owner-scoped rather than shared through
-// workflow ACLs, so both identities belong in the namespace.
-func UserWorkspaceBrowserSessionNamespace(userID, sessionID, workspacePath string) string {
-	workspacePath = strings.ReplaceAll(workspacePath, "\\", "/")
-	workspacePath = filepath.ToSlash(filepath.Clean(strings.TrimSpace(workspacePath)))
-	workspacePath = strings.Trim(workspacePath, "/")
-	if workspacePath == "" || workspacePath == "." {
-		return BrowserSessionNamespace(userID, sessionID)
+// ProjectBrowserSessionNamespace names the browser shared by one project
+// (a Crew or another product project). projectKey must be the project's
+// owner-qualified physical path so every user of the project derives the
+// same name and two owners' same-named projects never collide.
+func ProjectBrowserSessionNamespace(projectKey string) string {
+	projectKey = cleanBrowserWorkspacePath(projectKey)
+	if projectKey == "" {
+		return ""
 	}
-	owner := strings.TrimSpace(userID)
-	if owner == "" {
-		owner = strings.TrimSpace(sessionID)
-	}
-	sum := sha256.Sum256([]byte("user-workspace\x00" + owner + "\x00" + workspacePath))
-	return "workspace-" + hex.EncodeToString(sum[:8])
+	return "project-" + browserPathHash("project", projectKey)
 }
 
-// BindSessionBrowserIsolation always replaces obsolete per-chat/per-group bindings.
-func BindSessionBrowserIsolation(sessionID, userID string) {
-	BindSessionBrowserIsolationForWorkflow(sessionID, userID, "")
+// SessionBrowserSessionNamespace is the fallback for a conversation with no
+// workspace: isolated to that one session rather than shared.
+func SessionBrowserSessionNamespace(sessionID string) string {
+	sessionID = strings.TrimSpace(sessionID)
+	if sessionID == "" {
+		return ""
+	}
+	return "session-" + browserPathHash("session", sessionID)
 }
 
-// BindSessionBrowserIsolationForWorkflow binds a public tool/chat session to
-// one workflow's persistent browser, shared by that workflow's authorized users.
-func BindSessionBrowserIsolationForWorkflow(sessionID, userID, workflowPath string) {
-	if strings.TrimSpace(sessionID) == "" {
+func bindSessionBrowserNamespace(sessionID, namespace string) {
+	if strings.TrimSpace(sessionID) == "" || namespace == "" {
 		return
 	}
-	namespace := WorkflowBrowserSessionNamespace(userID, sessionID, workflowPath)
 	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
 		cfg.BrowserSessionNamespace = namespace
 		cfg.BrowserSessionID = namespace + "--browser"
 	})
 }
 
-// BindSessionBrowserIsolationForUserWorkspace binds product chats and runs to
-// one persistent browser for that user and workspace. Different projects do
-// not share cookies or tabs, and the same project survives chat rotation.
-func BindSessionBrowserIsolationForUserWorkspace(sessionID, userID, workspacePath string) {
-	if strings.TrimSpace(sessionID) == "" {
-		return
-	}
-	namespace := UserWorkspaceBrowserSessionNamespace(userID, sessionID, workspacePath)
-	updateSessionShellConfig(sessionID, func(cfg *SessionShellConfig) {
-		cfg.BrowserSessionNamespace = namespace
-		cfg.BrowserSessionID = namespace + "--browser"
-	})
+// BindSessionBrowserIsolationForWorkflow binds a tool/chat session to its
+// workflow's shared browser. Always replaces obsolete bindings.
+func BindSessionBrowserIsolationForWorkflow(sessionID, workflowPath string) {
+	bindSessionBrowserNamespace(sessionID, WorkflowBrowserSessionNamespace(workflowPath))
+}
+
+// BindSessionBrowserIsolationForProject binds a tool/chat session to its
+// project's shared browser (see ProjectBrowserSessionNamespace).
+func BindSessionBrowserIsolationForProject(sessionID, projectKey string) {
+	bindSessionBrowserNamespace(sessionID, ProjectBrowserSessionNamespace(projectKey))
+}
+
+// BindSessionBrowserIsolationForSession binds a conversation that has no
+// workspace to a browser scoped to that session only.
+func BindSessionBrowserIsolationForSession(sessionID string) {
+	bindSessionBrowserNamespace(sessionID, SessionBrowserSessionNamespace(sessionID))
 }
 
 // SetSessionBrowserNamespace propagates an already-authenticated browser

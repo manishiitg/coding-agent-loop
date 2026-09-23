@@ -145,3 +145,22 @@ func TestScheduleCallbacksRequireAndPersistPulsePolicy(t *testing.T) {
 		t.Fatalf("list hides rationale: %v %s", err, listing)
 	}
 }
+
+// Found in the live check on 2026-09-23: after retiring pulse_mode=full, every
+// save of a workflow that still stored a legacy full schedule failed
+// validation (social-media, salesoutreach, substack, linkedin, ...). A stored
+// legacy value must keep validating; it runs as basic.
+func TestCurrentManifestWithStoredLegacyFullScheduleStillValidates(t *testing.T) {
+	m := NewWorkflowManifest("Legacy full")
+	m.Version = WorkflowContractCurrentVersion
+	m.Schedules = []WorkflowSchedule{{
+		ID: "weekly", CronExpression: "0 8 * * 1", GroupNames: []string{"prod"}, Enabled: true,
+		PulseMode: "full", PulseModeReason: "Weekly review of accumulated route evidence",
+	}}
+	if err := ValidateManifest(m); err != nil {
+		t.Fatalf("a stored legacy full schedule must not block saving the workflow: %v", err)
+	}
+	if got := m.EffectivePulseMode(m.Schedules[0]); got != schedulePulseModeBasic {
+		t.Fatalf("legacy full runs as %q, want basic", got)
+	}
+}

@@ -88,3 +88,17 @@ func TestProductWorkspaceBrowserUsesPersistentIsolatedProfile(t *testing.T) {
 		t.Fatalf("product workspace profile was not isolated: %v", args)
 	}
 }
+
+func TestProjectBrowserUsesProjectsProfileRoot(t *testing.T) {
+	t.Setenv(ProfileEnv, "/data/profile")
+	for session, root := range map[string]string{
+		"project-0123456789abcdef--browser":             "/data/profile-projects/",
+		"video-prod--project-0123456789abcdef--browser": "/data/profile-projects/",
+		"session-0123456789abcdef--browser":             "/data/profile-users/",
+		"workflow-0123456789abcdef--browser":            "/data/profile-workflows/",
+	} {
+		if !IsUserSession(session) || ProfilePathForSession(session) != root+session {
+			t.Fatalf("%s: profile %q, want under %s", session, ProfilePathForSession(session), root)
+		}
+	}
+}

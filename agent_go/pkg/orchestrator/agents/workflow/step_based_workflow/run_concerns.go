@@ -21,20 +21,13 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// Durable record of the `CONCERNS:` lines steps emit.
-//
-// Why this exists: a concern used to live only as a substring inside the step's
-// completion summary. Pulse Gate grepped that text for the literal marker, and
-// if the Gate's cooldown said the matching module wasn't due, the concern was
-// gone. Nothing could answer "has this been reported before?" — pulse_module_state
-// keeps only `last_*` fields, so run N overwrites run N-1, and pulse_module_audit
-// (the table that was meant to hold history) is empty in most workflows because
-// it depends on an agent remembering to call a tool.
-//
-// That last point is the design constraint here: these rows are written by Go at
-// the moment the completion summary is composed, never by an agent calling a
-// tool. There is no call for an agent to skip, so the table cannot quietly end up
-// empty the way pulse_module_audit did.
+// run_concerns holds Pulse's canonical findings: rows written by Pulse's own
+// review path (RecordPulseReviewFinding), plus historical step-raised rows from
+// before 2026-08-29. Steps never write here. A step raises a concern as a plain
+// `CONCERNS:` line in its completion summary (scripted steps print it to
+// stdout); Pulse reads those lines from retained summaries as selectors and
+// decides whether each becomes a finding. There is no Go harvester and no step
+// tool, so raw step text never turns into a finding on its own.
 
 const runConcernsSchema = `CREATE TABLE IF NOT EXISTS run_concerns (
 	fingerprint TEXT PRIMARY KEY,
@@ -66,13 +59,9 @@ const (
 	// ConcernPhaseReview covers Pulse reviewer artifacts. The "step" for these is
 	// the module name (bug_review, db_health, ...) rather than a plan step.
 	ConcernPhaseReview = "review"
-	// ConcernPhasePreValidation is filed by Go itself (SavePreValidationLog),
-	// not by an agent — there is no step turn to emit a CONCERNS: line, since a
-	// failing gate produces a repair turn, not a completion summary. Written at
-	// the moment a validation_schema check fails so a step whose schema demands
-	// an undocumented field, or rejects a legitimate null, surfaces as evidence
-	// even on a run where it eventually passed after repair and left no other
-	// trace. See ParseConcernLines and RecordRunConcerns.
+	// ConcernPhasePreValidation marks validation_schema failures that Go filed
+	// (not an agent) before 2026-08-29. SavePreValidationLog no longer writes
+	// them; LoadPriorPreValidationFailures still reads the retained rows.
 	ConcernPhasePreValidation = "prevalidation"
 )
 
@@ -83,8 +72,6 @@ const (
 	ConcernStatusResolved               = "resolved"
 	ConcernStatusRejected               = "rejected"
 )
-
-const concernLinePrefix = "CONCERNS:"
 
 // RunConcern is one deduplicated concern with its recurrence history.
 type RunConcern struct {
@@ -117,68 +104,6 @@ func newPulseIssueID() string {
 	// crypto/rand failure is exceptionally rare. The timestamp fallback keeps
 	// recording concerns available rather than making a completed step fail.
 	return fmt.Sprintf("PUL-%X", time.Now().UTC().UnixNano())
-}
-
-// ParseConcernLines pulls the `CONCERNS:` payloads out of a summary blob.
-//
-// The marker is matched case-insensitively at the start of a trimmed line, which
-// is the shape the prompts ask for and the shape the message-sequence aggregator
-// already assumed. Everything after the prefix on that line is the concern.
-//
-// PLAT-211: a legacy review/advisor summary can render the marker as a
-// Markdown inline-code span -- "`CONCERNS: foo`" instead of a bare
-// "CONCERNS: foo" line. That backtick is real content the model wrote, not
-// whitespace strings.TrimSpace touches, so the bare prefix check silently
-// dropped it: no error, no warning, the review still recorded as completed,
-// and the finding just never reached run_concerns at all. Confirmed live on
-// HDFC-Personal-Accounts: six such findings vanished with no trace until a
-// later stage's fingerprint lookup came up empty. stripMarkdownCodeSpan
-// removes one matching pair of backtick-run delimiters wrapping the WHOLE
-// line before the prefix check runs.
-func ParseConcernLines(summary string) []string {
-	var out []string
-	for _, line := range strings.Split(summary, "\n") {
-		trimmed := stripMarkdownCodeSpan(strings.TrimSpace(line))
-		if !strings.HasPrefix(strings.ToUpper(trimmed), concernLinePrefix) {
-			continue
-		}
-		body := strings.TrimSpace(trimmed[len(concernLinePrefix):])
-		// A bare "CONCERNS:" with no payload carries no information.
-		if body == "" {
-			continue
-		}
-		out = append(out, body)
-	}
-	return out
-}
-
-// stripMarkdownCodeSpan removes a single matching pair of backtick-run
-// delimiters that wrap an ENTIRE line, e.g. "`CONCERNS: foo`" -> "CONCERNS: foo".
-// Markdown inline code spans open and close with the same run length of one
-// or more backticks (a longer run lets the span contain a shorter run of
-// backticks as literal text). Only a matching open/close run at the very
-// start and end of the line is stripped, so a line that merely mentions a
-// backtick mid-sentence, or opens a span it never closes, is left untouched.
-func stripMarkdownCodeSpan(line string) string {
-	if !strings.HasPrefix(line, "`") {
-		return line
-	}
-	openLen := 0
-	for openLen < len(line) && line[openLen] == '`' {
-		openLen++
-	}
-	closeDelim := strings.Repeat("`", openLen)
-	if len(line) < openLen*2 || !strings.HasSuffix(line, closeDelim) {
-		return line
-	}
-	inner := line[openLen : len(line)-openLen]
-	if strings.Contains(inner, closeDelim) {
-		// The delimiter recurs inside the span -- not actually the closing
-		// fence for THIS span (e.g. "`a` CONCERNS: `b`" is two spans, not one
-		// wrapping the whole line). Leave it alone rather than guess.
-		return line
-	}
-	return strings.TrimSpace(inner)
 }
 
 // concernFingerprint identifies "the same concern raised again".
@@ -264,53 +189,6 @@ func openRunConcernsDB(ctx context.Context, workspacePath string, create bool) (
 		return nil, fmt.Errorf("migrate compact Pulse store: %w", err)
 	}
 	return db, nil
-}
-
-// RecordRunConcerns extracts every concern from summary and upserts it.
-//
-// Best-effort by contract: a step that did its work must not fail because its
-// concern could not be filed. Callers log and continue.
-func RecordRunConcerns(ctx context.Context, workspacePath, runFolder, groupName, stepID, phase, summary string) (int, error) {
-	if phase == ConcernPhaseReview && pulsemodules.IsValid(stepID) {
-		stepID = pulsemodules.Normalize(stepID)
-	}
-	lines := ParseConcernLines(summary)
-	if len(lines) == 0 {
-		return 0, nil
-	}
-	if phase == ConcernPhaseReview {
-		if err := validatePulseAdvisorFindingRoutes(stepID, summary); err != nil {
-			return 0, err
-		}
-	}
-	db, err := openRunConcernsDB(ctx, workspacePath, true)
-	if err != nil || db == nil {
-		return 0, err
-	}
-	defer db.Close()
-	if err := ensurePulseFindingLifecycleSchema(ctx, db); err != nil {
-		return 0, err
-	}
-	observedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	fingerprints := pulseFindingFingerprintsByConcern(summary, stepID)
-	for concern, fingerprint := range fingerprints {
-		if canonical := canonicalFingerprintForMergedIssue(ctx, db, fingerprint); canonical != "" {
-			fingerprints[concern] = canonical
-		}
-	}
-	recorded, err := recordRunConcernLinesAtWithFingerprints(
-		ctx, db, runFolder, groupName, stepID, phase, lines,
-		observedAt, fingerprints,
-	)
-	if err != nil {
-		return recorded, err
-	}
-	if err := recordPulseFindingDetailsAt(
-		ctx, db, workspacePath, runFolder, stepID, summary, observedAt, lines, fingerprints,
-	); err != nil {
-		return recorded, err
-	}
-	return recorded, nil
 }
 
 func recordRunConcernLinesAtWithFingerprints(
@@ -438,64 +316,6 @@ func canonicalFingerprintForMergedIssue(ctx context.Context, db pulseFindingLife
 		return ""
 	}
 	return canonical
-}
-
-// LoadOpenRunConcerns returns concerns still needing Pulse attention. A negative
-// limit returns the complete active backlog; zero preserves the bounded default
-// for callers that only need a preview.
-func LoadOpenRunConcerns(ctx context.Context, workspacePath string, limit int) ([]RunConcern, error) {
-	db, err := openRunConcernsDB(ctx, workspacePath, false)
-	if err != nil || db == nil {
-		return nil, err
-	}
-	defer db.Close()
-	if limit == 0 {
-		limit = 50
-	}
-	// Rank by how many active concerns a step has before ranking by how often
-	// any one of them recurred. Prevalidation is already one root concern per
-	// step; this clustering remains useful for distinct execution/review concerns
-	// that share a step and should be read together.
-	query := `SELECT c.fingerprint, c.issue_id, c.step_id, c.phase, c.group_name, c.text,
-			c.first_seen_run, c.first_seen_at, c.last_seen_run, c.last_seen_at, c.seen_count, c.status
-		FROM run_concerns c
-		JOIN (
-			SELECT step_id, COUNT(*) AS active_count, MAX(seen_count) AS peak_seen
-			FROM run_concerns
-			WHERE status IN (?, ?, ?, ?, ?, ?)
-			GROUP BY step_id
-		) cluster ON cluster.step_id = c.step_id
-		WHERE c.status IN (?, ?, ?, ?, ?, ?)
-		ORDER BY cluster.active_count DESC, cluster.peak_seen DESC, c.step_id ASC,
-			c.seen_count DESC, c.first_seen_at ASC, c.last_seen_at DESC`
-	args := []interface{}{
-		ConcernStatusOpen, ConcernStatusAcknowledged, ConcernStatusFixing, ConcernStatusAwaitingVerification, ConcernStatusAwaitingRun, ConcernStatusQueuedForEngineering,
-		ConcernStatusOpen, ConcernStatusAcknowledged, ConcernStatusFixing, ConcernStatusAwaitingVerification, ConcernStatusAwaitingRun, ConcernStatusQueuedForEngineering,
-	}
-	if limit > 0 {
-		query += ` LIMIT ?`
-		args = append(args, limit)
-	}
-	rows, err := db.QueryContext(ctx, query, args...)
-	if err != nil {
-		// Absent table just means no concern has been raised yet.
-		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
-			return nil, nil
-		}
-		return nil, err
-	}
-	defer rows.Close()
-
-	var out []RunConcern
-	for rows.Next() {
-		var c RunConcern
-		if err := rows.Scan(&c.Fingerprint, &c.IssueID, &c.StepID, &c.Phase, &c.GroupName, &c.Text,
-			&c.FirstSeenRun, &c.FirstSeenAt, &c.LastSeenRun, &c.LastSeenAt, &c.SeenCount, &c.Status); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	return out, rows.Err()
 }
 
 // LoadExternallyOwnedRunConcerns returns findings Pulse has diagnosed as real

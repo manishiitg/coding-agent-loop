@@ -39,6 +39,7 @@ import { retainEventInSessionWorkingSet } from '../utils/sessionEventWorkingSet'
 import { autoNotificationDedupKey } from '../utils/internalChatEvents'
 import { durableStreamStartCursor } from '../utils/forwardCursor'
 import { reconcileDurableUserEchoes } from '../utils/clientMessageIdentity'
+import { intermediateUpdateFromTranscriptChunk, isTranscriptChunkUpdate, normalizeTranscriptChunkEvents } from '../utils/transcriptChunkUpdates'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -314,8 +315,7 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     'background_agent_started',
     'background_agent_completed',
     'background_agent_terminated',
-    'coding_agent_background_task',
-    'coding_agent_question'
+    'coding_agent_background_task'
   ]
   return importantTypes.includes(event.type)
 }
@@ -1141,7 +1141,23 @@ export const useChatStore = create<ChatState>()(
             currentEvents = reconciled.current
             for (const id of reconciled.replacedIds) idSet.delete(id)
           }
-          const events = reconciled.incoming
+          // Store narration in its rendered form so the live copy
+          // (`<chunk>-update`) and the durable raw chunk share one id: the
+          // durable row replaces the live one in place instead of landing
+          // beside it as a second item with the same key.
+          const events: PollingEvent[] = []
+          const eventsBeforeNarration = currentEvents
+          for (const raw of reconciled.incoming) {
+            const event = intermediateUpdateFromTranscriptChunk(raw) || raw
+            if (isTranscriptChunkUpdate(event) && idSet.has(event.id!)) {
+              const at = currentEvents.findIndex(existing => existing.id === event.id)
+              if (at >= 0 && currentEvents[at].sequence === undefined && event.sequence !== undefined) {
+                currentEvents = [...currentEvents.slice(0, at), event, ...currentEvents.slice(at + 1)]
+              }
+              continue
+            }
+            events.push(event)
+          }
           let autoNotifKeys = tabAutoNotificationKeys.get(sessionId)
           if (!autoNotifKeys) {
             autoNotifKeys = collectAutoNotificationKeys(currentEvents)
@@ -1174,7 +1190,9 @@ export const useChatStore = create<ChatState>()(
           // PERF: Skip state update entirely when no new events — avoids creating a new
           // array reference which would cascade re-renders through ChatArea → EventHierarchy.
           if (uniqueNewEvents.length === 0) {
-            return state
+            return currentEvents === eventsBeforeNarration
+              ? state
+              : { tabEvents: { ...state.tabEvents, [sessionId]: currentEvents } }
           }
 
           // When a new learn_code_script_execution starts (fix_iteration=0), purge all
@@ -1283,7 +1301,7 @@ export const useChatStore = create<ChatState>()(
       setTabEvents: (sessionId: string, events: PollingEvent[]) => {
         clearPendingEventBatch(sessionId)
         const retainedEvents = trimLargeRetainedEvents(
-          coalesceThinkingDeltas(events.filter(event => retainEventInSessionWorkingSet(sessionId, event))),
+          coalesceThinkingDeltas(normalizeTranscriptChunkEvents(events).filter(event => retainEventInSessionWorkingSet(sessionId, event))),
         )
         // Rebuild the persistent ID index for this session
         tabEventIdSets.set(sessionId, new Set(retainedEvents.map(e => e.id).filter(Boolean) as string[]))

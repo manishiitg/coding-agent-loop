@@ -779,6 +779,29 @@ func ReconcilePulseActionableBacklog(ctx context.Context, workspacePath string) 
 		result.RetiredLegacyObservations = int(affected)
 	}
 
+	// Steps could also file typed rows through the retired record_run_concern
+	// tool. They carry a details record but were never routed by a reviewer
+	// either, so they are the same unowned observations. Retire them unless a
+	// reviewer routed them or a repair was attempted. Prevalidation history
+	// stays: LoadPriorPreValidationFailures reads it.
+	stepTyped, err := db.ExecContext(ctx, `UPDATE run_concerns SET
+		status=?, resolved_at=?, resolved_by='pulse_actionable_backlog_migration',
+		resolution_note='Retired step-raised observation: filed by a step, never routed by a Pulse reviewer.'
+		WHERE status NOT IN (?, ?, ?)
+			AND phase IN (?, ?, ?, ?)
+			AND EXISTS (SELECT 1 FROM pulse_finding_details d WHERE d.fingerprint=run_concerns.fingerprint
+				AND COALESCE(json_extract(d.detail_json, '$.recommended_route'), '')='')
+			AND NOT EXISTS (SELECT 1 FROM pulse_fix_attempt_findings af WHERE af.fingerprint=run_concerns.fingerprint)`,
+		ConcernStatusRejected, now,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired,
+		ConcernPhaseExecution, ConcernPhaseMessageSequence, ConcernPhaseLearnings, ConcernPhaseKBReview)
+	if err != nil {
+		return PulseActionableBacklogReconciliation{}, err
+	}
+	if affected, affectedErr := stepTyped.RowsAffected(); affectedErr == nil {
+		result.RetiredLegacyObservations += int(affected)
+	}
+
 	// A typed harness issue is explicit evidence that the shared platform owns
 	// the failed boundary. It must not remain eligible for a per-workflow fixer.
 	platform, err := db.ExecContext(ctx, `UPDATE run_concerns SET
@@ -827,6 +850,33 @@ func ReconcilePulseActionableBacklog(ctx context.Context, workspacePath string) 
 // check. It intentionally excludes platform-owned findings, human decisions,
 // and evidence waits: those remain durable work, but cannot be completed by a
 // workflow repair agent in this run.
+// CountPulseActionableWorkflowIssuesForPass counts the actionable workflow
+// issues a Technical pass owns: those routed to the fixer, and those seen
+// since the given time (the previous Pulse's start). Older unrouted issues
+// stay in the backlog without failing every pass.
+func CountPulseActionableWorkflowIssuesForPass(ctx context.Context, workspacePath string, since time.Time) (int, error) {
+	db, err := openRunConcernsDB(ctx, workspacePath, true)
+	if err != nil || db == nil {
+		return 0, err
+	}
+	defer db.Close()
+	if err := ensurePulseFindingLifecycleSchema(ctx, db); err != nil {
+		return 0, err
+	}
+	var count int
+	err = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM run_concerns c
+		JOIN pulse_finding_details d ON d.fingerprint=c.fingerprint
+		WHERE c.status NOT IN (?, ?, ?)
+			AND d.issue_kind=?
+			AND COALESCE(json_extract(d.detail_json, '$.recommended_route'), '') NOT IN (?, ?)
+			AND (COALESCE(json_extract(d.detail_json, '$.recommended_route'), '')=? OR c.last_seen_at >= ?)`,
+		ConcernStatusResolved, ConcernStatusRejected, ConcernStatusExternalActionRequired,
+		IssueKindWorkflow, pulseFindingRouteDecisionRequired, pulseFindingRouteEvidenceWait,
+		pulseFindingRouteFixerHandoff, since.UTC().Format(time.RFC3339Nano),
+	).Scan(&count)
+	return count, err
+}
+
 func CountPulseActionableWorkflowIssues(ctx context.Context, workspacePath string) (int, error) {
 	db, err := openRunConcernsDB(ctx, workspacePath, true)
 	if err != nil || db == nil {
@@ -2238,10 +2288,8 @@ func LoadPulseFindingLifecycles(ctx context.Context, workspacePath, module strin
 	// one-offs, and successive Bug Review passes worked the top of the list and
 	// left all 39 untouched.
 	//
-	// Clustering only helped where it was applied. LoadOpenRunConcerns was
-	// reordered first, but that backs get_pulse_state(view="module") while the
-	// Fixer reads this query through view="backlog" — so the fix landed on
-	// a path the Fixer never reads and the backlog did not move.
+	// Clustering only helped where it was applied: an earlier reorder landed on
+	// a view the Fixer never reads, so this backlog query is where it matters.
 	query := fmt.Sprintf(`SELECT c.fingerprint, c.issue_id, c.step_id, c.phase, c.group_name, c.text,
 			c.first_seen_run, c.first_seen_at, c.last_seen_run, c.last_seen_at, c.seen_count,
 			c.status, c.resolution_note, COALESCE(d.detail_json, '')

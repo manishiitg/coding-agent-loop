@@ -115,6 +115,11 @@ func BuildStepReflectionTurn(in StepReflectionTurnInput) string {
 		b.WriteString("If your observation belongs in one of them it is already recorded — name the table, never paste its values here. A number copied out of the database is stale the moment the next run writes.\n\n")
 	}
 
+	// PUL-D0BAC922: reflection narration contradicted the artifacts the step had
+	// just written (6 cases on rtslatency) because it restated results from
+	// conversation memory. Results must come from the files or database.
+	b.WriteString("**State results only from what the step actually produced.** Before you mention any count, status or outcome of this run, re-read the output files the step wrote or query the database. Never restate results from memory of the conversation; if the files and your memory disagree, the files are right.\n\n")
+
 	// Pulse Technical Review independently evaluates retained output and runtime
 	// receipts. Reflection does not file observations or infer issue identity.
 

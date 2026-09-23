@@ -42,11 +42,16 @@ type ScheduleRunEntry struct {
 	// FinalResponse is the exact assistant answer produced by this run. Keeping
 	// it on the run avoids guessing from a persistent chat that may have received
 	// newer interactive or automation turns since this execution completed.
-	FinalResponse string     `json:"final_response,omitempty"`
-	DurationMs    *int64     `json:"duration_ms,omitempty"`
-	GroupNames    []string   `json:"group_names,omitempty"`
-	StartedAt     time.Time  `json:"started_at"`
-	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	FinalResponse string `json:"final_response,omitempty"`
+	// RanWorkflow records whether this invocation actually created or
+	// restarted a workflow run. Nil for runs recorded before it existed and for
+	// Pulse-only runs. A schedule that keeps completing with false is a signal
+	// Pulse reviews (direct-message schedules may legitimately run nothing).
+	RanWorkflow *bool      `json:"ran_workflow,omitempty"`
+	DurationMs  *int64     `json:"duration_ms,omitempty"`
+	GroupNames  []string   `json:"group_names,omitempty"`
+	StartedAt   time.Time  `json:"started_at"`
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
 	// Caller stamps the workflow step that invoked this run through a
 	// platform-internal trigger. It is nil for every other run, so
 	// Crew-side cost history can show what each caller spent.
@@ -439,4 +444,25 @@ func ListScheduleRuns(ctx context.Context, workspacePath string, scheduleID stri
 		end = total
 	}
 	return filtered[offset:end], total, nil
+}
+
+// SetScheduleRunRanWorkflow records whether an invocation actually ran the
+// workflow. Missing runs are ignored: the history write is best-effort.
+func SetScheduleRunRanWorkflow(ctx context.Context, workspacePath, runID string, ran bool) error {
+	path := scheduleRunsPath(workspacePath)
+	lock := scheduleRunFileLock(path)
+	lock.Lock()
+	defer lock.Unlock()
+	runs, err := readScheduleRunsUnlocked(ctx, workspacePath)
+	if err != nil {
+		return err
+	}
+	for i := range runs {
+		if runs[i].ID == runID {
+			value := ran
+			runs[i].RanWorkflow = &value
+			return writeScheduleRunsUnlocked(ctx, workspacePath, runs)
+		}
+	}
+	return nil
 }

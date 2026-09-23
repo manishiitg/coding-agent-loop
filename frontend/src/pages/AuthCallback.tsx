@@ -1,4 +1,5 @@
 import { consumeSharedReturnPath } from '../utils/sharedLinks'
+import { consumeMcpConsentReturnPath } from '../utils/mcpOAuthReturn'
 import { useEffect, useState } from 'react'
 import { useAuthStore, peekStoredOAuthState } from '../stores/useAuthStore'
 
@@ -40,7 +41,7 @@ export function AuthCallback() {
   // Redirect on successful authentication
   useEffect(() => {
     if (isAuthenticated && callbackState) {
-      const returnTo = consumeSharedReturnPath(callbackState)
+      const returnTo = consumeMcpConsentReturnPath(callbackState) || consumeSharedReturnPath(callbackState)
       window.location.href = returnTo || '/'
     }
   }, [isAuthenticated, callbackState])

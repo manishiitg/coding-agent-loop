@@ -41,9 +41,9 @@ func TestExecutionOnlyPromptLeavesConsequenceTriageToPulseReview(t *testing.T) {
 
 	for _, want := range []string{
 		"consequential non-fatal evidence",
-		"Pulse Technical Review reads retained outputs",
-		"do not emit a",
-		"line or try to classify/deduplicate the problem yourself",
+		"`CONCERNS: <what happened, the exact affected artifact or operation, and the evidence>`",
+		"do not classify, deduplicate or file it anywhere else",
+		"Pulse reads these lines from retained summaries",
 	} {
 		if !strings.Contains(prompt, want) {
 			t.Fatalf("execution prompt missing concern handoff %q:\n%s", want, prompt)

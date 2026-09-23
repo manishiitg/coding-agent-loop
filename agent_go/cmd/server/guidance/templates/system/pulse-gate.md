@@ -69,8 +69,10 @@ finding and not authority for Gate to rewrite the workflow. The later Architectu
 Review must inspect the affected descriptions, schemas, and shared references
 before it decides whether prompt-contract consolidation is safe.
 
-Read fresh `CONCERNS:` markers from the relevant retained step summaries as
-selectors, not automatic findings. `open_concerns` contains accepted canonical
+Read `step_concerns` in `get_pulse_state(view="module")`: the `CONCERNS:`
+lines steps wrote since the previous Pulse, collected for you (step, text,
+repeat count, runs, source files). Do not search run folders for them. Use them
+as selectors, not automatic findings. `open_concerns` contains accepted canonical
 issues, not raw step emissions; do not reactivate historical workflow-observation
 rows as a queue. A concern can explain an incomplete output, failed side effect,
 recovery, or goal/measurement gap. Gate uses it to judge review value; the later
@@ -145,6 +147,11 @@ Review again: it belongs to the platform register, not this workflow's upkeep.
 Examples include:
 
 - a failed or suspiciously successful production run;
+- `schedule_run_health` (in `view="module"`) shows a schedule whose recent runs
+  ran nothing (`ran_nothing`) or whose `last_ran_workflow_at` is old, while its
+  job is to run steps — for example a direct-message schedule that asks to run
+  a step. Plain workflow schedules now fail when nothing starts; direct-message
+  schedules may legitimately run nothing, so judge them from their messages;
 - a verified runtime signal with unresolved step impact or recovery that cannot
   be established (`run_not_completed`, `completed_run_child_errors`, or
   `tool_success_with_structured_failure` are evidence leads, not automatic triggers);

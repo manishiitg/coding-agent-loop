@@ -38,24 +38,26 @@ const CHILD_PROFILE_VERSION = 1
  * FamilyFile's comment) and this role's own model. A role that has never
  * picked a model falls back to ITS OWN profile's product.yaml default for
  * the current engine (provider_options[].model_id) rather than the other
- * role's pick or a shared legacy value — parent and child can genuinely
- * differ (e.g. parent's codex-cli default is gpt-6-astra, child's is
- * gpt-5.6-luna) without one side's choice silently overwriting the other's.
+ * role's pick or a shared legacy value. Both currently default to GPT-6 Luna
+ * on Codex, but either role can choose a different model without silently
+ * overwriting the other's choice.
  */
 export async function familyRuntime(role: 'parent' | 'child'): Promise<{ engine?: string; model?: string }> {
   const state = await api.setup().catch(() => null)
   const engine = state?.engine || undefined
   const roleModel = (role === 'parent' ? state?.parent_model : state?.child_model) || undefined
-  if (roleModel) return { engine, model: roleModel }
   if (engine) {
     const profileID = role === 'parent' ? PARENT_PROFILE_ID : CHILD_PROFILE_ID
     const profileVersion = role === 'parent' ? PARENT_PROFILE_VERSION : CHILD_PROFILE_VERSION
     const options = await loadAgentProfileProviderOptions(profileID, profileVersion).catch(() => [])
     const match = options.find((o) => o.id === engine || o.provider === engine)
+    // A saved model may have been removed from this profile's curated list.
+    // Send the current default instead of a model the server will reject.
+    if (roleModel && (!match?.models?.length || match.models.includes(roleModel))) return { engine, model: roleModel }
     if (match?.model_id) return { engine, model: match.model_id }
   }
   // Last resort: a pre-migration family.json with only the old shared field.
-  return { engine, model: state?.model || undefined }
+  return { engine, model: roleModel || state?.model || undefined }
 }
 
 /**

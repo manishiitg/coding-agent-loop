@@ -107,7 +107,7 @@
     <header class="hero">
       <div class="eyebrow">Pulse platform · Coding agent bridge</div>
       <h1>PLAT-354 — Show coding-agent native questions in chat</h1>
-      <div class="meta"><div class="meta-item"><span>Status</span><strong>Muse migration certified; Claude Code next</strong></div>
+      <div class="meta"><div class="meta-item"><span>Status</span><strong>Question card removed (auto-first everywhere); pane→structured migration continues</strong></div>
 <div class="meta-item"><span>Priority</span><strong>P0 contract migration; P1 question flow</strong></div>
 <div class="meta-item"><span>Owner</span><strong>coding agent bridge and frontend chat</strong></div>
 <div class="meta-item"><span>Reported</span><strong>2026-09-23</strong></div>
@@ -443,6 +443,24 @@ path or a verified policy that prevents them from appearing. Test pause,
 answer, cancel, and resume without a person at the tmux pane. This is a
 future gate, not a mode change in PLAT-354.</p>
 <h2 id="migration-progress-2026-09-23">Migration progress (2026-09-23)</h2>
+<p class="contract-note"><strong>Decision (2026-09-23, user): the native question
+card is removed.</strong> Muse auto-selects the first option of its native
+<code>request_user_input</code> widget in every run: chat, schedule, bot,
+webhook and background stage. That is the behaviour before this ticket's
+question flow. Removed: the chat question card and the input lock while a card
+is pending; the answer endpoint, including the <code>/muse-question/answer</code>
+alias; the attending-user plumbing
+(<code>codingAgentRequestHasAttendingUser</code>,
+<code>UserAnswersNativeQuestions</code>); the Muse question watcher and the
+<code>coding_agent_question</code> event; and Muse user-choice mode
+(<code>WithUserChoice</code>, <code>SubmitQuestionAnswers</code>). Stored events
+of that type in old chats are ignored by the transcript. The "question card"
+parts of this ticket below are historical. Native questions for other CLIs will
+not be built; the remaining work is the pane→structured replacement.
+Verified live: <code>TestMuseCLIRealAutoFirstOptionThreeQuestionsP0</code>,
+<code>PendingQuestionResumeP0</code> and <code>LiveInputQuestionsP0</code> pass on
+the removal. <code>TestMuseCLIRealTmuxLiveInput</code> fails identically with and
+without it (a pre-existing queued-follow-up intake issue).</p>
 <p><strong>Direction:</strong> keep tmux as the process host and keystroke
 transport. Provider JSON, rollout, transcript or database records are the P0
 proof of intake, completion and the final answer. Pane parsing becomes P1

@@ -2,6 +2,7 @@
 """Run on the product host/account; use an isolated profile, never a user's login.
 
 Example: python3 verify-managed-chrome.py sparkquill --port 23001 --cycles 20
+RTS:     python3 verify-managed-chrome.py video-studio --port 8080 --docs-dir /data/video-studio/docs
 Each browser operation is a separate sandbox request so command scratch cleanup
 is exercised. Print only test status, never service tokens or page contents.
 """
@@ -24,6 +25,7 @@ def main():
     parser.add_argument("product")
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--cycles", type=int, default=20)
+    parser.add_argument("--docs-dir", help="workspace docs root (default /srv/<product>/data/docs)")
     args = parser.parse_args()
     if not re.fullmatch(r"[a-z][a-z0-9-]*", args.product):
         parser.error("invalid product")
@@ -36,12 +38,13 @@ def main():
         text=True, timeout=10,
     ).strip()
     env = dict(item.split("=", 1) for item in Path(f"/proc/{pid}/environ").read_text().split("\0") if "=" in item)
-    root = Path(env["AGENT_BROWSER_SHARED_PROFILE"] + "-users")
-    session = "user-" + uuid.uuid4().hex[:16] + "--browser"
+    # A project browser, like a Crew's: exercises the -projects profile grant.
+    root = Path(env["AGENT_BROWSER_SHARED_PROFILE"] + "-projects")
+    session = "project-" + uuid.uuid4().hex[:16] + "--browser"
     profile = root / session
-    profile.mkdir(mode=0o700)
+    profile.mkdir(mode=0o700, parents=True)
     relative_work = "tmp/browser-smoke-" + session
-    work = Path(f"/srv/{args.product}/data/docs") / relative_work
+    work = Path(args.docs_dir or f"/srv/{args.product}/data/docs") / relative_work
     work.mkdir(mode=0o700, parents=True)
     flags = "--no-sandbox,--disable-gpu,--disable-blink-features=AutomationControlled,--lang=en-US,--restore-last-session,--use-fake-device-for-media-stream,--use-fake-ui-for-media-stream"
     prefix = ["agent-browser", "--session", session, "--profile", str(profile), "--idle-timeout", "0", "--args", flags, "--json"]

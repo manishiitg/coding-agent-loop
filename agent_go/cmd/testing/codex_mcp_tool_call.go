@@ -42,7 +42,7 @@ This catches Codex CLI approval regressions where MCP calls immediately return
 
 		modelID := viper.GetString("test.model")
 		if modelID == "" {
-			modelID = "gpt-5.3-codex-spark"
+			modelID = "gpt-6-luna"
 		}
 
 		logger.Info("=== Codex MCP Tool Call Test ===")

@@ -29,7 +29,7 @@ func TestLoadPulseReviewRunsForExecutionLogsKeepsOnlyPostRunReviewAgents(t *test
 	transcriptPath := orchEvents.BackgroundAgentTranscriptPath(workspacePath, sessionID, "bg-pulse-review")
 	transcript := orchEvents.NewBackgroundAgentTranscript(sessionID, "bg-pulse-review", "parent-review-fix", "Pulse Technical Maintenance", "sub_agent", pulseStarted)
 	transcript.Provider = "codex-cli"
-	transcript.ModelID = "gpt-5.6-terra"
+	transcript.ModelID = "gpt-6-sol"
 	transcript.AppendEvent(orchEvents.BackgroundAgentTranscriptEvent{Timestamp: pulseStarted, Type: "user_message", Role: "user", Text: "Review the due technical backlog."})
 	transcriptContent, err := transcript.Marshal()
 	if err != nil {
@@ -65,7 +65,7 @@ func TestLoadPulseReviewRunsForExecutionLogsKeepsOnlyPostRunReviewAgents(t *test
 	if agent.AgentID != "bg-pulse-review" || agent.ParentExecutionID != "parent-review-fix" {
 		t.Fatalf("unexpected Pulse agent: %+v", agent)
 	}
-	if agent.Provider != "codex-cli" || agent.ModelID != "gpt-5.6-terra" || len(agent.Events) != 1 || agent.Events[0].Text != "Review the due technical backlog." {
+	if agent.Provider != "codex-cli" || agent.ModelID != "gpt-6-sol" || len(agent.Events) != 1 || agent.Events[0].Text != "Review the due technical backlog." {
 		t.Fatalf("transcript not loaded: %+v", agent)
 	}
 }

@@ -232,7 +232,14 @@ func landlockSystemWritePaths() []string {
 		// socket: "Chrome exited early ... Failed to create socket directory."
 		// Confirmed live on SparkQuill the moment AGENT_BROWSER_SHARED_PROFILE
 		// was first enabled.
-		paths = append(paths, profile, profile+"-users", profile+"-workflows")
+		// Project browsers (one per Crew/product project) live under
+		// `<profile>-projects/<id>`. Create the roots here, before the ruleset
+		// is built: existingCanonicalPaths drops a missing directory, and a
+		// missing root would leave the first browser of that kind unwritable.
+		for _, root := range []string{profile + "-users", profile + "-workflows", profile + "-projects"} {
+			_ = os.MkdirAll(root, 0o700)
+		}
+		paths = append(paths, profile, profile+"-users", profile+"-workflows", profile+"-projects")
 	}
 	return existingCanonicalPaths(paths)
 }

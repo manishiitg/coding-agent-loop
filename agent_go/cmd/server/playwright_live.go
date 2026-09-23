@@ -35,12 +35,42 @@ type playwrightLiveRegistry struct {
 	recordings map[string]*playwrightRecording
 }
 
+// playwrightScope is the key a Playwright live session is filed under: the
+// workflow path, or for a Crew the owner-qualified project path so the owner
+// (logical path) and Crew members (physical path) name the same crew.
+func playwrightScope(userID, workspace string) string {
+	workspace = strings.TrimRight(workspace, "/")
+	if isCrewProjectPath(workspace) {
+		return browserProjectKey(userID, workspace)
+	}
+	return workspace
+}
+
+// playwrightVisible reports whether a viewer who asked for workspace may see a
+// Playwright session filed under (owner, scope). Workflow tests stay private to
+// the user who ran them; Crew tests follow Crew browser access.
+func (api *StreamingAPI) playwrightVisible(claims *UserClaims, workspace, owner, scope string) bool {
+	userID := ""
+	if claims != nil {
+		userID = claims.UserID
+	}
+	workspace = strings.TrimRight(workspace, "/")
+	if isCrewProjectPath(workspace) {
+		return api.crewBrowserAccess(claims, workspace) != WorkflowAccessNone && playwrightScope(userID, workspace) == scope
+	}
+	return userID != "" && owner == userID && scope == workspace
+}
+
 func (api *StreamingAPI) playwrightSessions(user, workspace string) []map[string]string {
+	return api.playwrightSessionsFor(&UserClaims{UserID: user}, workspace)
+}
+
+func (api *StreamingAPI) playwrightSessionsFor(claims *UserClaims, workspace string) []map[string]string {
 	api.playwrightLive.Lock()
 	defer api.playwrightLive.Unlock()
 	items := []map[string]string{}
 	for _, s := range api.playwrightLive.sessions {
-		if s.owner == user && s.workspace == workspace {
+		if api.playwrightVisible(claims, workspace, s.owner, s.workspace) {
 			item := map[string]string{"browser_session": s.id, "workflow_session": s.run, "label": s.label, "kind": "playwright", "read_only": "true"}
 			if s.recording != nil {
 				item["recording_state"], item["recording_error"] = s.recording.status()
@@ -49,7 +79,7 @@ func (api *StreamingAPI) playwrightSessions(user, workspace string) []map[string
 		}
 	}
 	for _, rec := range api.playwrightLive.recordings {
-		if rec.owner != user || rec.workspace != workspace {
+		if !api.playwrightVisible(claims, workspace, rec.owner, rec.workspace) {
 			continue
 		}
 		state, problem := rec.status()
@@ -125,10 +155,11 @@ func (api *StreamingAPI) playwrightWorkflowOwner(run string) (string, string) {
 func (api *StreamingAPI) handlePlaywrightPublisher(w http.ResponseWriter, r *http.Request) {
 	run := mux.Vars(r)["session_id"]
 	user, workspace := api.playwrightWorkflowOwner(run)
-	if user == "" || !strings.HasPrefix(workspace, "Workflow/") {
-		http.Error(w, "An active workflow session is required", http.StatusNotFound)
+	if user == "" || (!strings.HasPrefix(workspace, "Workflow/") && !isCrewProjectPath(workspace)) {
+		http.Error(w, "An active workflow or Crew session is required", http.StatusNotFound)
 		return
 	}
+	workspace = playwrightScope(user, workspace)
 	label := strings.TrimSpace(r.URL.Query().Get("label"))
 	if len(label) > 240 {
 		label = label[:240]
@@ -232,7 +263,7 @@ func (api *StreamingAPI) handlePlaywrightViewer(w http.ResponseWriter, r *http.R
 	api.playwrightLive.Lock()
 	s := api.playwrightLive.sessions[id]
 	api.playwrightLive.Unlock()
-	if s == nil || s.owner != GetUserIDFromContext(r.Context()) || s.workspace != strings.TrimRight(r.URL.Query().Get("workspace_path"), "/") {
+	if s == nil || !api.playwrightVisible(GetUserFromContext(r.Context()), r.URL.Query().Get("workspace_path"), s.owner, s.workspace) {
 		http.NotFound(w, r)
 		return
 	}

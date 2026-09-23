@@ -558,6 +558,10 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	// notifications.exclude_channels (carried on dest.ExcludeChannels); the optional
 	// exclude_channels arg adds a one-off skip for this send. Both are unioned.
 	excludeChannels := stringListFromArg(args["exclude_channels"])
+	// The caller narrowed delivery itself (for example a Slack-only alert).
+	// Remembered so a channel it kept but that cannot deliver is reported as
+	// a failure instead of silently disappearing from the receipt.
+	callerSelectedChannels := len(excludeChannels) > 0
 	if dest != nil && len(dest.ExcludeChannels) > 0 {
 		excludeChannels = append(excludeChannels, dest.ExcludeChannels...)
 	}
@@ -580,6 +584,12 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	if deliveryMode == "dashboard_only" {
 		excludeChannels = append(excludeChannels, "gmail", "slack", "whatsapp")
 	} else if deliveryMode == "external_only" {
+		excludeChannels = append(excludeChannels, "org_dashboard")
+	}
+	if notificationKind == "general" {
+		// Org Dashboard records only run and Pulse summaries; for anything
+		// else it sends nothing, which the receipt reported as a failed
+		// channel (PUL-70AD0472: a Slack-only secret alert showed "failed").
 		excludeChannels = append(excludeChannels, "org_dashboard")
 	}
 	summary, err := notificationSummaryFromArgs(args, notificationKind, gc, slackContent)
@@ -692,6 +702,9 @@ func handleNotifyUser(ctx context.Context, args map[string]interface{}) (string,
 	}
 	if dest.WhatsApp != nil {
 		expectedChannels = append(expectedChannels, "whatsapp")
+	}
+	if callerSelectedChannels && !containsNotificationChannel(excludeChannels, "slack") && !containsNotificationChannel(expectedChannels, "slack") {
+		expectedChannels = append(expectedChannels, "slack")
 	}
 	results = explainMissingChannels(results, expectedChannels, excludeChannels)
 

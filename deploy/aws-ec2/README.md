@@ -255,8 +255,14 @@ AGENT_BROWSER_EXECUTABLE_PATH=/var/lib/video-studio/.cache/hyperframes/chrome/<p
 HYPERFRAMES_BROWSER_PATH=<same path, injected into guarded commands>
 ```
 
-The wrapper adds the single-process and shared-memory flags required by the
-Landlock filesystem policy. The deployment verifies the managed binary and
+The wrapper runs Chromium multi-process under the Landlock filesystem policy:
+`--no-zygote` and `--in-process-gpu` avoid the zygote and GPU-process startup
+paths that need a child's own `/proc` entries (Landlock's `/proc/self` grant is
+bound to the launcher PID), `--disable-dev-shm-usage` keeps shared memory out
+of the ungranted `/dev/shm`, and a private `/tmp/aw-browser-<uid>` TMPDIR
+survives the per-command scratch cleanup. It is the same launcher as
+`deploy/rootless-linux/chrome-agentworks`. It no longer passes
+`--single-process`, under which one renderer crash killed the whole browser. The deployment verifies the managed binary and
 `agent-browser` before switching releases, and rewrites the runtime path on
 every restart so it survives reboots and upgrades. Do not replace it with
 `/usr/bin/google-chrome` or `/usr/bin/chromium`.

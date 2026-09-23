@@ -1449,14 +1449,6 @@ export const agentApi = {
     return response.data
   },
 
-  submitCodingAgentQuestion: async (sessionId: string, provider: string, promptId: string, answers: Array<{ id: string; selectedLabels: string[] }>): Promise<void> => {
-    await api.post(`/api/sessions/${sessionId}/coding-agent-question/answer`, {
-      provider,
-      prompt_id: promptId,
-      answers: answers.map((answer) => ({ id: answer.id, selected_labels: answer.selectedLabels })),
-    }, { headers: { 'X-Session-ID': sessionId } })
-  },
-
 
   // Human Feedback Management
   // Submit human feedback response

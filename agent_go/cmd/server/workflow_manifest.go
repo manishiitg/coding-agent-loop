@@ -220,6 +220,10 @@ type WorkflowPulseConfig struct {
 	// Schedule controls when the full Pulse runs. Nil means the defaults of
 	// EffectivePulseSchedule: self-deciding, at most daily, at least weekly.
 	Schedule *WorkflowPulseSchedule `json:"schedule,omitempty"`
+	// FocusAreas are the user's current priorities for Goal Work, e.g. "find
+	// more audience strategies like SaaS Builder". Goal Work starts there each
+	// pass; they direct attention, they do not limit what it may consider.
+	FocusAreas []string `json:"focus_areas,omitempty"`
 	// Autonomy holds Goal Work's permission levels. Nil means the defaults:
 	// Run is auto (Goal Work may run existing steps itself).
 	Autonomy              *WorkflowPulseAutonomy         `json:"autonomy,omitempty"`
@@ -296,6 +300,33 @@ type WorkflowPulseAutonomy struct {
 	// Run is "auto" (default) or "ask": whether Goal Work may run existing
 	// workflow steps and routes itself.
 	Run string `json:"run,omitempty"`
+}
+
+const (
+	maxPulseFocusAreas      = 10
+	maxPulseFocusAreaLength = 300
+)
+
+// normalizePulseFocusAreas trims, drops blanks and duplicates, and enforces the
+// small limits that keep them a priority list rather than a second prompt.
+func normalizePulseFocusAreas(values []string) ([]string, error) {
+	out := []string{}
+	seen := map[string]bool{}
+	for _, raw := range values {
+		value := strings.Join(strings.Fields(raw), " ")
+		if value == "" || seen[strings.ToLower(value)] {
+			continue
+		}
+		if len(value) > maxPulseFocusAreaLength {
+			return nil, fmt.Errorf("pulse.focus_areas entries must be at most %d characters", maxPulseFocusAreaLength)
+		}
+		seen[strings.ToLower(value)] = true
+		out = append(out, value)
+	}
+	if len(out) > maxPulseFocusAreas {
+		return nil, fmt.Errorf("pulse.focus_areas allows at most %d entries", maxPulseFocusAreas)
+	}
+	return out, nil
 }
 
 func normalizePulseAutonomyRun(value string) (string, error) {
@@ -1004,6 +1035,9 @@ func ValidateManifest(m *WorkflowManifest) error {
 				return err
 			}
 		}
+		if _, err := normalizePulseFocusAreas(m.Pulse.FocusAreas); err != nil {
+			return err
+		}
 	}
 
 	// Validate browser mode if set
@@ -1085,7 +1119,9 @@ func ValidateManifest(m *WorkflowManifest) error {
 			return fmt.Errorf("schedules[%d].pulse_mode must be off, basic, or full", i)
 		}
 		if schedulepolicy.RequiresExplicitPulse(m.Version) {
-			if err := schedulepolicy.ValidatePulse(sched.PulseMode, sched.PulseModeReason); err != nil {
+			// A persisted legacy "full" is tolerated (it runs as basic); only
+			// authoring paths reject newly setting it.
+			if err := schedulepolicy.ValidatePulse(schedulepolicy.NormalizePulse(sched.PulseMode), sched.PulseModeReason); err != nil {
 				return fmt.Errorf("schedules[%d]: %w", i, err)
 			}
 		}
@@ -1453,6 +1489,27 @@ func stripOptionalConfigBlocks(content []byte) ([]byte, []string) {
 // Arrays deliberately appear as one changed field. Their order and contents
 // are meaningful to a manifest, but producing index-level entries would be
 // noisy and unstable when an item is inserted or reordered.
+// withoutPulseSettingsManifestChanges drops changes to Pulse's own settings
+// and returns nothing when only those (and updated_at) changed.
+func withoutPulseSettingsManifestChanges(changes []step_based_workflow.PlanFieldChange) []step_based_workflow.PlanFieldChange {
+	kept := make([]step_based_workflow.PlanFieldChange, 0, len(changes))
+	substantive := false
+	for _, change := range changes {
+		field := strings.TrimSpace(change.Field)
+		if field == "workflow.json.pulse" || strings.HasPrefix(field, "workflow.json.pulse.") {
+			continue
+		}
+		if field != "workflow.json.updated_at" {
+			substantive = true
+		}
+		kept = append(kept, change)
+	}
+	if !substantive {
+		return nil
+	}
+	return kept
+}
+
 func workflowManifestChangelogChanges(previous, current string) []step_based_workflow.PlanFieldChange {
 	var before, after interface{}
 	beforeOK := strings.TrimSpace(previous) != ""
@@ -1569,13 +1626,20 @@ func WriteWorkflowManifest(ctx context.Context, workspacePath string, m *Workflo
 	// Skipped when the bytes are unchanged: WriteWorkflowManifest is called on
 	// paths that rewrite the manifest without altering it, and a changelog full
 	// of no-op entries would bury the real ones.
+	//
+	// Pulse's own settings (pulse.*: on/off, schedule, permissions, focus areas,
+	// reviewer toggles) are not part of the plan Plan Drift protects, so a save
+	// that changes only them is not recorded. Otherwise changing a Pulse
+	// setting made the next Pulse spend its pass on a drift review.
 	if !previousExists || previous != string(data) {
-		step_based_workflow.LogCanonicalArtifactChange(
-			ctx, workspacePath, "write_workflow_manifest",
-			"Recorded workflow.json field changes for artifact drift review.",
-			workflowManifestChangelogChanges(previous, string(data)), workflowManifestChangelogReader, writeFileToWorkspace, createServerLogger(),
-			"workflow.json", previous, string(data),
-		)
+		if changes := withoutPulseSettingsManifestChanges(workflowManifestChangelogChanges(previous, string(data))); len(changes) > 0 {
+			step_based_workflow.LogCanonicalArtifactChange(
+				ctx, workspacePath, "write_workflow_manifest",
+				"Recorded workflow.json field changes for artifact drift review.",
+				changes, workflowManifestChangelogReader, writeFileToWorkspace, createServerLogger(),
+				"workflow.json", previous, string(data),
+			)
+		}
 	}
 	return nil
 }

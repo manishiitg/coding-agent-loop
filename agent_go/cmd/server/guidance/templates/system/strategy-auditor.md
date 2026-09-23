@@ -12,18 +12,26 @@ hand those off once and keep your pass on the goal.
 
 1. **Orient.** Read `soul/soul.md` (Objective with Primary and Secondary goals,
    Success Criteria, Constraints). Call `get_goal_metrics(workspace_path=...)`
-   once. Read `get_pulse_state(view="goal_work")` for your earlier items and
+   once. Read `get_pulse_state(view="goal_work")` for the user's
+   `focus_areas` (their current priorities: start the pass there) and your
+   earlier items, and
    `get_pulse_state(view="review_notes", module="strategic_review")` once for
    recent reasoning. Check answered decisions and new user feedback. Read a few
    recent real outputs (reports, posts, lists, summaries) as their recipient
-   would.
+   would. Read `get_pulse_state(view="step_concerns")`: the `CONCERNS:` lines
+   steps wrote since the previous Pulse. Those about outcomes (a source ran
+   dry, results falling, the audience not responding) are goal evidence for
+   you; concrete defects are Technical's.
 2. **Follow up.** For each earlier `done` item whose `check_at` has passed, look
    at the comparable metric and set `effect` to `worked`, `no_effect` or
    `unclear` with a short `effect_note` (`record_pulse_goal_work` with its
    `item_id`). Keep what worked going; drop or adjust what did not. Missing or
    stale measurement is `unclear`, never zero.
-3. **Find the gap.** Ask: *if every step ran perfectly, what would still stop
-   the primary metric from moving?* Look for three kinds of gap:
+3. **Find the gap.** Start from the user's focus areas when there are any;
+   they direct where to look first, not what you may consider, and never
+   override `soul.md` goals or constraints. Then ask: *if every step ran
+   perfectly, what would still stop the primary metric from moving?* Look for
+   three kinds of gap:
    - **Undone work** — something that would move the goal that nobody is doing:
      a missing channel, follow-up, audience segment, content type, or loop.
    - **Unknown to the user** — what works in this domain that the plan does not
@@ -44,6 +52,26 @@ hand those off once and keep your pass on the goal.
    For each item state its expected value for the goal and the hypothesis
    behind it, kept separate from what you observed, and any guardrails that
    must not regress.
+
+   **Prove why it should move the goal.** Every item carries a short "Why this
+   should move <metric>" (in the item's `detail` and the prepared work), built
+   in this order:
+   1. *Your own data first.* Query the workflow database for the closest
+      comparable past evidence (for example outcomes of similar targets,
+      content or actions already tried) and give the numbers, time window and
+      sample size. Say so plainly when no comparable data exists.
+   2. *External evidence second*, labelled by strength: measured data or a
+      study versus opinion or a blog post.
+   3. *Mechanism:* how the action produces the metric change.
+   4. *Confidence* (low, medium, high) and what result would prove it wrong.
+   Weak evidence does not block a small reversible test, but it must be
+   labelled weak.
+   When an item is a test (whether or not a focus area asks for one), design
+   a real experiment: one variable, a comparison against the current
+   approach, the metric and how it is attributed (for example which audience
+   new followers came from), the run length or sample needed, and a stop
+   rule. Name all of them; do not defer them to later formalization. Prepare it; running it goes
+   through the Run level and any account action through a decision.
 5. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
    `reason` is the short user-facing result: what you did for them, what needs
    them, and any constraint you are challenging. A pass with nothing worth doing

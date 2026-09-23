@@ -99,6 +99,13 @@ For an authorized migration, using `set_code_layout_version`:
 - The platform displays this as the script's reported refusal, not proof the guard was correct. Exit code 2 without a complete record still stops automatic repair conservatively, but the notification states that the reason is unverified and includes captured output. Existing plain-text refusals remain stopped; malformed records never enable an automatic workaround.
 - Get this distinction right: `sys.exit(1)` on a guard that should be terminal lets an agentic retry read your own refusal, agree it was correct, and then perform the exact write the guard existed to prevent — which has happened live. `sys.exit(2)` on an ordinary bug wrongly aborts the step instead of letting the normal repair loop fix the script.
 
+**Non-fatal concerns — say what went wrong without failing the step**
+- When the script completes but something consequential looks wrong — a source returned nothing or far less than usual, data was stale or conflicting, an optional API failed, a result works against the workflow's goal — print one line per problem to stdout, unconditionally (not behind `VERBOSE`), as the last lines before exiting 0:
+  ```python
+  print(f"CONCERNS: prospect source returned 0 rows for group {group} (usual 40-60); outreach queue is empty")
+  ```
+- Plain text, one line each, with the affected artifact and the evidence. Do not classify or file it anywhere else. Pulse reads these lines from the step's retained output and decides whether each is a real issue. Print nothing when everything is normal. Use `CONCERNS:` only for non-fatal problems; a real error still exits non-zero, and a deliberate refusal still uses exit code 2.
+
 **Calling platform tools from main.py — which errors to retry**
 - A retry helper must sort errors into two kinds, never "retry everything". Retrying an error that cannot go away only delays the failure and hides a platform defect. A helper that retried every error six times turned a platform bug into a random 30-second delay.
 - Retry only failures that can pass on a second attempt: connection refused or reset, timeouts, and HTTP 429, 502, 503 or 504. Bound it to about 3 attempts with capped exponential backoff (for example 1s, 2s, 4s), and print each failed attempt's error.

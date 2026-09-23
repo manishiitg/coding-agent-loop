@@ -39,7 +39,7 @@
         "tool_result": {
           "tier": "high",
           "provider": "codex-cli",
-          "model_id": "gpt-5.6-terra",
+          "model_id": "gpt-6-sol",
           "response": "GENERATE_TEXT_LLM_P0_HIGH_OK"
         },
         "final_response": "GENERATE_TEXT_LLM_P0_HIGH_OK"
@@ -52,6 +52,6 @@
     "reviewed_fingerprint": "a71d5da6b2de41b4",
     "reviewer": "codex-agent",
     "issues": null,
-    "notes": "Reviewed the live Pi-dev receipt for all configured tiers. Low and medium each made one bridge tool call and relayed their exact canary from codex-cli/gpt-5.6-luna; high made one bridge tool call and relayed its exact canary from codex-cli/gpt-5.6-terra. The captured output contains no credentials or bridge transport noise."
+    "notes": "Reviewed the live Pi-dev receipt for all configured tiers. Low and medium each made one bridge tool call and relayed their exact canary from codex-cli/gpt-5.6-luna; high made one bridge tool call and relayed its exact canary from codex-cli/gpt-6-sol. The captured output contains no credentials or bridge transport noise."
   }
 }

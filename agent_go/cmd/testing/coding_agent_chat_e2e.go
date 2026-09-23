@@ -335,7 +335,7 @@ func (c *codingAgentChatE2EClient) ensureUserAuth(ctx context.Context) error {
 func defaultCodingAgentE2EModel(provider string) string {
 	switch provider {
 	case "codex-cli":
-		return "gpt-5.3-codex-spark"
+		return "gpt-6-luna"
 	case "cursor-cli":
 		return "auto"
 	case "claude-code":

@@ -1007,6 +1007,9 @@ func (e *Executor) HandleAgentBrowser(ctx context.Context, args map[string]inter
 	if err == nil && isOpenCommand {
 		captureChromePID(session)
 	}
+	if err == nil && isHeadless {
+		tracker.RecordAction(session, command, argsWithoutCDP)
+	}
 
 	// isDeadSession returns true for errors that mean the browser session no longer
 	// exists and we need to start fresh. Error strings come from agent-browser/Chrome:

@@ -10,8 +10,11 @@ paths stay in the server for a future write-enabled API version.
 ## Install the CLI
 
 Open Setup → Integrations → Connect on any installation — server or local —
-and paste the one command: it downloads the CLI build matching that server,
-verifies its checksum, installs it to `~/.local/bin`, and logs in with the
+and choose **Terminal or scripts**, **AI app on this computer**, or
+**Hosted AI app**. Create a personal token for either local option; the hosted
+option shows its OAuth URL immediately. The terminal installer downloads the
+CLI build matching that server, verifies its checksum, installs it to
+`~/.local/bin`, and logs in with the
 generated token, which reads and runs. macOS and Linux on arm64/amd64 are
 supported.
 One token per account: generating a new one replaces the current token
@@ -24,7 +27,10 @@ The binaries and installer are served by the server itself at
 `/api/downloads/cli/` (public, like the existing launcher downloads), so
 the CLI always matches the API it talks to. `agentworks version` prints the
 build; `agentworks update` (or `update --check`) self-updates from the
-connected server. Developers can still build from source as below.
+connected server. Confida and other rootless deployments build and package
+all supported CLI binaries with each release, then verify the public installer
+URL before marking the deploy successful. Developers can still build from
+source as below.
 
 ## Build and server setup
 
@@ -132,7 +138,7 @@ requests immediate cancellation of that token's sessions.
 PATs do not silently refresh or extend their lifetime. Rotate by generating
 a replacement, logging in with it, and restarting the MCP bridge to load
 it; the old token is already dead, so update pasted copies (CLI logins,
-MCP connector URLs, scripts) promptly. Expired/revoked tokens require a
+local MCP client configs, scripts) promptly. Expired/revoked tokens require a
 replacement from the app. `agentworks logout` removes the local
 credential; it does not revoke the token on the server or unset environment
 variables. There is no browser/device-login or refresh-token flow in this CLI.
@@ -143,18 +149,27 @@ file. `AGENTWORKS_SERVER` and `AGENTWORKS_TOKEN` support automation without savi
 credentials. HTTPS is required except on loopback development addresses.
 Redirects are refused to avoid forwarding credentials to another location.
 
-## Connect Claude Code
+## Connect a local AI app
 
-Register the local MCP bridge (copy the exact command from the Connect tab —
-it fills in your server and token):
+Choose **AI app on this computer** in Connect. Install the CLI first, then
+choose Claude Code, Codex, or a JSON-configured MCP client. The commands
+include your server and token. Claude Code uses:
 
 ```sh
-claude mcp add --transport stdio --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… agentworks -- agentworks mcp serve
+claude mcp add agentworks -e AGENTWORKS_SERVER=https://your-server -e AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
 ```
 
 Passing the server and token as env keeps the bridge self-sufficient: it
 works without a prior `agentworks login` on that machine. Log in as well if
 you also use the CLI directly.
+
+Codex uses its own registration command:
+
+```sh
+codex mcp add agentworks --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
+```
+
+The command follows [Codex's documented stdio MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
 
 The bridge runs locally and calls your configured hosted server. It discovers
 all tool schemas from that server at startup. Restart the bridge after upgrading
@@ -177,21 +192,27 @@ which list every tool, the remote surface is exactly two self-describing
 tools: `get_api_spec` (no arguments lists every available tool, names return
 JSON schemas) and `call_tool` (executes by name). The full catalog —
 product.yaml's external tools plus run tools — resolves internally, so the
-surface stays tiny no matter how run mode grows. The Connect tab's **Hosted
-AI assistants** card shows the ready-to-paste URL for the active
+surface stays tiny no matter how run mode grows. Choose **Hosted AI app**
+in Connect to see the ready-to-paste URL for the active
 installation:
 
 ```text
-https://your-server/api/external/v1/mcp?token=aw_pat_…
+https://your-server/api/external/v1/mcp
 ```
 
 - ChatGPT: Settings → Apps & Connectors → Developer Mode → add a custom MCP
-  connector with that URL.
-- Claude Cowork: Settings → Connectors → Add custom connector with that URL.
-- Direct integrations should send the token in the `Authorization: Bearer`
-  header instead of the URL.
+  connector with that URL and choose OAuth authentication.
+- Claude Cowork: Settings → Connectors → Add custom connector with that URL
+  and choose OAuth authentication.
 
-The Connect tab's **Assistant skill** card downloads the same guidance as an
+The assistant discovers AgentWorks OAuth metadata from the server. Sign in to
+Confida when prompted, review the requested permissions, and allow access.
+The connection uses short-lived MCP-only access tokens and rotating refresh
+tokens. Revoke it under **Connect → Hosted AI app → Connected apps**. The CLI
+and local stdio MCP bridge continue to use personal access tokens.
+
+The optional **Give the assistant workflow guidance** section downloads the
+same guidance as an
 uploadable skill zip (`GET /api/external/v1/skill.zip`, a SKILL.md following
 the Agent Skills layout ChatGPT, Claude, and Cowork accept) or copies its
 text (`GET /api/external/v1/skill.md`). Upload it via ChatGPT's Plugins →
@@ -200,13 +221,12 @@ text into Custom Instructions / the connector's Instructions field. The skill
 names the installation but carries no credential. Both endpoints accept the
 app session or a PAT.
 
-Schemas, scopes, and per-request token validation are identical to the REST
-external API: `get_api_spec` only lists and describes tools the token may
-use, every `call_tool` runs through the same dispatcher, and revoking the
-token rejects subsequent MCP calls immediately. The `?token=` form exists only for
-clients that cannot set headers — credentials in URLs leak into proxy logs
-and history, so prefer the header form everywhere it is accepted. There is no
-OAuth flow yet; Cowork-style OAuth login remains a follow-up.
+Schemas, scopes, and per-request authorization are identical to the REST
+external API: `get_api_spec` only lists and describes tools the grant may
+use, and every `call_tool` runs through the same dispatcher. Existing PAT
+connections remain supported; direct integrations should send a PAT in the
+`Authorization: Bearer` header. The legacy `?token=` form is supported for
+older clients, but credentials in URLs can leak into proxy logs and history.
 
 ## CLI examples
 
@@ -601,8 +621,10 @@ The server stores SHA-256 token hashes and metadata in SQLite under its private
 `AGENTWORKS_STATE_ROOT/auth/` directory (with the normal durable runtime root as
 a fallback). The directory is 0700 and database is 0600, outside workspace files.
 The database is bound to `AUTH_SECRET`; rotating that secret invalidates previous
-PATs as well as app sessions. Tokens are not stored in workflow documents or
-returned by listing endpoints. Creation responses use `Cache-Control: no-store`.
+PATs, MCP OAuth grants, and app sessions. OAuth access and refresh tokens are
+hashed in a separate SQLite database in the same directory. Tokens are not
+stored in workflow documents or returned by listing endpoints. Creation
+responses use `Cache-Control: no-store`.
 
 Persist this state directory across agent-server restarts/redeployments. This
 version supports a single hosted agent instance with persistent local storage;

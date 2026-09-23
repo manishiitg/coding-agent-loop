@@ -2,7 +2,7 @@ import { sessionStreamingState, type SessionActivitySnapshot } from '../utils/se
 import { isForegroundSessionEvent } from '../../shared/session/foreground'
 import { useEffect, useRef, useCallback, forwardRef, useImperativeHandle, useMemo, useState, lazy, Suspense, type ComponentType, type ForwardedRef, type ReactNode } from 'react'
 import { normalizeEventViewMode } from '../stores/useChatStore'
-import { intermediateUpdateFromTranscriptChunk } from '../utils/transcriptChunkUpdates'
+import { intermediateUpdateFromTranscriptChunk, normalizeTranscriptChunkEvents } from '../utils/transcriptChunkUpdates'
 import { applyLiveInputConfirmations, readLiveInputConfirmation, resolveLiveInputConfirmations, stampLiveInputIdentity, withLiveInputReceipt } from '../utils/liveInputReceipt'
 import { useRenderLogger, useMemoLogger } from '../utils/renderLogger'
 import { acquireBuilderSubmission, isConfirmedUndeliveredSubmission, type ChatSubmissionOptions } from '../utils/chatSubmissionTarget'
@@ -63,7 +63,6 @@ import {
 import { activateTab } from '../utils/activateTab'
 import { selectWorkflowPreset } from '../utils/workflowNavigation'
 import { ProductChatSurface } from '../platform/chat/ProductChatSurface'
-import { buildCleanConversationItems } from '../utils/cleanConversation'
 import { submissionFailure } from '../platform/chat/submissionFailure'
 import { WORKFLOW_LOG_REFRESH_EVENT } from './workflow/workflowEvents'
 import { decisionMutationNeedsRefresh } from '../utils/decisionRefresh'
@@ -893,7 +892,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       displayEventsRef.current = []
     }
 
-    const filtered = tabEvents.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(event => {
+    const filtered = normalizeTranscriptChunkEvents(tabEvents).filter(event => {
       // See the Formatted View Visibility Contract in
       // utils/terminalEventTranscript.ts. Streaming packets drive the transient
       // live buffer; they are not durable conversation records.
@@ -955,12 +954,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
   // while the stable server cursor prevents loading the same page twice.
   const transcriptEvents = useMemo(() => (
     olderHistory.sessionId === activeSessionId && olderHistory.events.length > 0
-      ? [...olderHistory.events, ...displayEvents]
+      ? normalizeTranscriptChunkEvents([...olderHistory.events, ...displayEvents])
       : displayEvents
   ), [activeSessionId, displayEvents, olderHistory.events, olderHistory.sessionId])
-  const pendingCodingAgentChoice = useMemo(() => buildCleanConversationItems(transcriptEvents).some(
-    (item) => item.codingAgentQuestion?.state === 'pending',
-  ), [transcriptEvents])
 
   // Primitive deps only: the tab object changes on every composer keystroke,
   // and this callback is a prop of the memoized transcript.
@@ -3819,10 +3815,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onLoadOlder={historyPagination?.hasMore ? loadOlderConversationPage : undefined}
             landingContent={landingContent}
             onRetryLastMessage={retryLastProductMessage}
-            onAnswerCodingAgentQuestion={async (provider, promptId, answers) => {
-              if (!activeSessionId) throw new Error('The coding agent session is no longer active')
-              await agentApi.submitCodingAgentQuestion(activeSessionId, provider, promptId, answers)
-            }}
             onSubmitQuery={(query) => submitQueryWithQuery(query)}
           />
         ) : selectedModeCategory === 'workflow' ? (
@@ -3975,7 +3967,6 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           showProductTerminalControl={showProductTerminalControl}
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
-          pendingNativeChoice={pendingCodingAgentChoice}
         />
       )}
 

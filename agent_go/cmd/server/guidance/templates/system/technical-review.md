@@ -51,6 +51,9 @@ shared-state overwrite and duplicate-action risks were disclosed. A separate
 manual work and Pulse remain serialized.
 
 Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.
+New step-raised `CONCERNS:` lines since the previous Pulse are in
+`get_pulse_state(view="step_concerns")`; treat them as leads to verify against
+the run evidence, not as findings.
 A failed child call alone is not a failed outcome. Establish required-output
 impact and recovery before filing a defect. Merge duplicate symptoms into one
 canonical root. If the same defect affects several workflows, link the platform

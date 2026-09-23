@@ -5,22 +5,19 @@ import (
 	"testing"
 )
 
-func structuredFindingSummary(id, concern string) string {
-	return `PULSE_FINDING_JSON: {"concern":"` + concern + `","finding_id":"` + id + `","issue_kind":"workflow_issue","summary":"identity test"}` + "\nCONCERNS: " + concern
+func structuredFinding(module, id, concern string) PulseReviewFindingInput {
+	finding := testReviewFinding(module, concern)
+	finding.FindingID = id
+	finding.Summary = "identity test"
+	return finding
 }
 
 func TestStructuredFindingIDSurvivesRewordingAndReviewerChange(t *testing.T) {
 	ctx := context.Background()
 	workspace := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-1", "", "bug_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-STABLE-1", "the first wording")); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-2", "", "artifact_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-STABLE-1", "different words for the same behavior")); err != nil {
-		t.Fatal(err)
-	}
-	concerns, err := LoadOpenRunConcerns(ctx, workspace, -1)
+	recordTestReviewFinding(t, workspace, "pulse-1", structuredFinding("bug_review", "HARNESS-STABLE-1", "the first wording"))
+	recordTestReviewFinding(t, workspace, "pulse-2", structuredFinding("artifact_review", "HARNESS-STABLE-1", "different words for the same behavior"))
+	concerns, err := LoadPulseFindingLifecycles(ctx, workspace, "", -1)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -32,10 +29,7 @@ func TestStructuredFindingIDSurvivesRewordingAndReviewerChange(t *testing.T) {
 func TestFindingIdentityMigrationMergesTwinsAndPreservesEvents(t *testing.T) {
 	ctx := context.Background()
 	workspace := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-1", "", "bug_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-MIGRATE-1", "canonical wording")); err != nil {
-		t.Fatal(err)
-	}
+	recordTestReviewFinding(t, workspace, "pulse-1", structuredFinding("bug_review", "HARNESS-MIGRATE-1", "canonical wording"))
 	db, err := openRunConcernsDB(ctx, workspace, false)
 	if err != nil || db == nil {
 		t.Fatalf("open db: %v", err)
@@ -77,10 +71,7 @@ func TestFindingIdentityMigrationMergesTwinsAndPreservesEvents(t *testing.T) {
 func TestFindingIdentityMigrationMovesEventsLeftByPartialMigration(t *testing.T) {
 	ctx := context.Background()
 	workspace := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-1", "", "bug_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-PARTIAL-1", "canonical wording")); err != nil {
-		t.Fatal(err)
-	}
+	recordTestReviewFinding(t, workspace, "pulse-1", structuredFinding("bug_review", "HARNESS-PARTIAL-1", "canonical wording"))
 	db, err := openRunConcernsDB(ctx, workspace, false)
 	if err != nil || db == nil {
 		t.Fatalf("open db: %v", err)
@@ -125,10 +116,7 @@ func TestFindingIdentityMigrationMergesHarnessTwinsByTargetKeyWhenFindingIDIsEmp
 	workspace := concernsWorkspace(t)
 	// Bootstrap the schema via one unrelated real finding, matching the
 	// pattern of the sibling tests above.
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-1", "", "bug_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-UNRELATED-1", "unrelated wording")); err != nil {
-		t.Fatal(err)
-	}
+	recordTestReviewFinding(t, workspace, "pulse-1", structuredFinding("bug_review", "HARNESS-UNRELATED-1", "unrelated wording"))
 	db, err := openRunConcernsDB(ctx, workspace, false)
 	if err != nil || db == nil {
 		t.Fatalf("open db: %v", err)
@@ -175,10 +163,7 @@ func TestFindingIdentityMigrationMergesHarnessTwinsByTargetKeyWhenFindingIDIsEmp
 func TestFindingIdentityMigrationDoesNotMergeNonHarnessRowsByTargetKey(t *testing.T) {
 	ctx := context.Background()
 	workspace := concernsWorkspace(t)
-	if _, err := RecordRunConcerns(ctx, workspace, "pulse-1", "", "bug_review", ConcernPhaseReview,
-		structuredFindingSummary("HARNESS-UNRELATED-2", "unrelated wording")); err != nil {
-		t.Fatal(err)
-	}
+	recordTestReviewFinding(t, workspace, "pulse-1", structuredFinding("bug_review", "HARNESS-UNRELATED-2", "unrelated wording"))
 	db, err := openRunConcernsDB(ctx, workspace, false)
 	if err != nil || db == nil {
 		t.Fatalf("open db: %v", err)

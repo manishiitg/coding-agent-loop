@@ -2,7 +2,6 @@ package step_based_workflow
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -23,7 +22,7 @@ import (
 // filedKindedConcern seeds a finding carrying an explicit issue_kind, for any
 // module. filedAdvisorConcern hardcodes workflow_issue and targets the advisor
 // routing contract, so it cannot express the harness case.
-func filedKindedConcern(t *testing.T, workspacePath, pulseRunID, module, text, issueKind string) RunConcern {
+func filedKindedConcern(t *testing.T, workspacePath, pulseRunID, module, text, issueKind string) PulseFindingLifecycle {
 	t.Helper()
 	details := PulseFindingDetails{
 		IssueKind:      issueKind,
@@ -40,19 +39,12 @@ func filedKindedConcern(t *testing.T, workspacePath, pulseRunID, module, text, i
 		details.Reproduction.Expected = "snapshot returns within the result cap"
 		details.Reproduction.Observed = "snapshot overflows and is truncated"
 	}
-	raw, err := json.Marshal(pulseFindingDetailMarker{
+	recordTestReviewFinding(t, workspacePath, pulseRunID, PulseReviewFindingInput{
 		Concern:             text,
 		Module:              module,
 		PulseFindingDetails: details,
 	})
-	if err != nil {
-		t.Fatalf("marshal %s marker: %v", issueKind, err)
-	}
-	if _, err := RecordRunConcerns(context.Background(), workspacePath, pulseRunID, "", module, ConcernPhaseReview,
-		pulseFindingJSONPrefix+" "+string(raw)+"\nCONCERNS: "+text); err != nil {
-		t.Fatalf("record %s concern: %v", issueKind, err)
-	}
-	concerns, err := LoadOpenRunConcerns(context.Background(), workspacePath, 10)
+	concerns, err := LoadPulseFindingLifecycles(context.Background(), workspacePath, "", 10)
 	if err != nil || len(concerns) != 1 {
 		t.Fatalf("load %s concern: concerns=%+v err=%v", issueKind, concerns, err)
 	}
@@ -165,7 +157,7 @@ func TestWorkflowIssueQueuesForEngineeringUnchanged(t *testing.T) {
 	}
 }
 
-// A plain CONCERNS: line writes no pulse_finding_details row at all, so no
+// An untyped legacy concern has no pulse_finding_details row at all, so no
 // issue_kind was ever claimed and there is nothing to contradict. These must
 // keep queueing normally — the lookup has to tolerate sql.ErrNoRows rather than
 // treating a missing row as a violation.
@@ -173,7 +165,8 @@ func TestUntypedConcernQueuesForEngineeringUnchanged(t *testing.T) {
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
 	module := "workflow_review"
-	concern := filedReviewConcern(t, workspacePath, "pulse-1", module, "report widget reads a dropped column")
+	seedRunConcerns(t, workspacePath, "pulse-1", "", module, ConcernPhaseReview, "report widget reads a dropped column")
+	concern := activeRunConcerns(t, workspacePath)[0]
 
 	if err := recordFindingDispositionsErr(t, workspacePath, module, "pulse-1",
 		[]PulseFindingDisposition{queuedForEngineering(concern.Fingerprint)}); err != nil {

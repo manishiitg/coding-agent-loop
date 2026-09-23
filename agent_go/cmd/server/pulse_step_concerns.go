@@ -286,3 +286,191 @@ func scheduleRunHealthForView(ctx context.Context, workspacePath string) []Sched
 	}
 	return collectScheduleRunHealth(ctx, workspacePath, manifest)
 }
+
+// Step outputs: what each step said it produced in its latest runs, side by
+// side. A step can finish "completed" on every run while doing no new work
+// (for example by re-verifying an earlier run's records); a single run looks
+// healthy, and only the lineup across runs shows it. This only reads: the
+// reviewer judges whether a lineup is a problem.
+
+const (
+	stepOutputRunsPerStep = 4
+	stepOutputMaxSteps    = 40
+	stepOutputMaxText     = 360
+)
+
+// StepOutputRun is one run of one step.
+type StepOutputRun struct {
+	RunFolder  string `json:"run_folder"`
+	FinishedAt string `json:"finished_at"`
+	Result     string `json:"result"`
+	SourceFile string `json:"source_file"`
+}
+
+// StepOutputs is one step's latest runs, newest first.
+type StepOutputs struct {
+	StepID string          `json:"step_id"`
+	Runs   []StepOutputRun `json:"runs"`
+}
+
+// StepOutputsView is what Pulse reads.
+type StepOutputsView struct {
+	Steps     []StepOutputs `json:"steps"`
+	Truncated bool          `json:"truncated,omitempty"`
+	Note      string        `json:"note"`
+}
+
+// stepOutputResultText keeps the end of a step's summary, where agents state
+// what they did, without its CONCERNS and STATUS lines.
+func stepOutputResultText(text string) string {
+	var kept []string
+	for _, raw := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(raw)
+		upper := strings.ToUpper(strings.TrimLeft(strings.Trim(line, "`"), "-* "))
+		if line == "" || strings.HasPrefix(upper, "CONCERNS:") || strings.HasPrefix(upper, "STATUS:") {
+			continue
+		}
+		kept = append(kept, line)
+	}
+	out := strings.Join(kept, " ")
+	if r := []rune(out); len(r) > stepOutputMaxText {
+		out = "…" + string(r[len(r)-stepOutputMaxText:])
+	}
+	return out
+}
+
+// readStepOutputSource returns the step's own account of one run. For a
+// message sequence the configured turns' summaries carry it; the generic
+// "Message sequence ... completed" execution summary does not.
+func readStepOutputSource(path string) (stepID, runFolder, text string, ok bool) {
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return "", "", "", false
+	}
+	switch filepath.Base(path) {
+	case "execution-final-summary.json":
+		var summary struct {
+			StepID          string `json:"step_id"`
+			RunFolder       string `json:"run_folder"`
+			ExecutionResult string `json:"execution_result"`
+		}
+		if json.Unmarshal(raw, &summary) != nil || strings.HasPrefix(summary.ExecutionResult, "Message sequence ") {
+			return "", "", "", false
+		}
+		return summary.StepID, summary.RunFolder, summary.ExecutionResult, true
+	case "session.json":
+		var session struct {
+			StepID    string `json:"step_id"`
+			RunFolder string `json:"run_folder"`
+			Entries   []struct {
+				ItemType string `json:"item_type"`
+				Summary  string `json:"summary"`
+			} `json:"entries"`
+		}
+		if json.Unmarshal(raw, &session) != nil {
+			return "", "", "", false
+		}
+		var parts []string
+		for _, entry := range session.Entries {
+			if entry.ItemType == "prevalidation" || strings.TrimSpace(entry.Summary) == "" {
+				continue
+			}
+			parts = append(parts, entry.Summary)
+		}
+		if len(parts) == 0 {
+			return "", "", "", false
+		}
+		return session.StepID, session.RunFolder, strings.Join(parts, "\n"), true
+	}
+	return "", "", "", false
+}
+
+// collectStepOutputs lists each step's latest retained runs with the step's
+// own summary of what it did.
+func collectStepOutputs(workspacePath, onlyStep string) StepOutputsView {
+	view := StepOutputsView{
+		Steps: []StepOutputs{},
+		Note:  "Each step's own summary of its latest retained runs, newest first. Compare runs of the same step: a step that completes every run but produces nothing new (re-checks or rebuilds an earlier run's output, reports zero new items or actions against its usual volume, or repeats the same result) is a silent no-op even though every status is success. Confirm against the system of record (new DB rows, receipts, published items) before filing.",
+	}
+	runsRoot := filepath.Join(fsutil.WorkspaceDocsRoot(), filepath.FromSlash(strings.Trim(workspacePath, "/")), "runs")
+	type runKey struct{ step, run string }
+	latest := map[runKey]StepOutputRun{}
+	latestTime := map[runKey]time.Time{}
+	_ = filepath.WalkDir(runsRoot, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if d.Name() == "pulse" && filepath.Dir(path) == runsRoot {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		name := d.Name()
+		if name != "execution-final-summary.json" && name != "session.json" {
+			return nil
+		}
+		if name == "session.json" && filepath.Base(filepath.Dir(filepath.Dir(path))) != "execution" {
+			return nil
+		}
+		stepID, runFolder, text, ok := readStepOutputSource(path)
+		if !ok {
+			return nil
+		}
+		if strings.TrimSpace(stepID) == "" {
+			stepID = filepath.Base(filepath.Dir(filepath.Dir(path)))
+		}
+		if onlyStep != "" && stepID != onlyStep {
+			return nil
+		}
+		rel, _ := filepath.Rel(filepath.Dir(runsRoot), path)
+		if runFolder == "" {
+			if parts := strings.Split(filepath.ToSlash(rel), "/"); len(parts) > 1 {
+				runFolder = parts[1]
+			}
+		}
+		info, err := d.Info()
+		if err != nil {
+			return nil
+		}
+		k := runKey{stepID, runFolder}
+		if !info.ModTime().After(latestTime[k]) {
+			return nil
+		}
+		latestTime[k] = info.ModTime()
+		latest[k] = StepOutputRun{
+			RunFolder:  runFolder,
+			FinishedAt: info.ModTime().UTC().Format(time.RFC3339),
+			Result:     stepOutputResultText(text),
+			SourceFile: filepath.ToSlash(rel),
+		}
+		return nil
+	})
+	byStep := map[string][]StepOutputRun{}
+	for k, run := range latest {
+		byStep[k.step] = append(byStep[k.step], run)
+	}
+	for stepID, runs := range byStep {
+		sort.Slice(runs, func(i, j int) bool { return runs[i].FinishedAt > runs[j].FinishedAt })
+		if len(runs) > stepOutputRunsPerStep {
+			runs = runs[:stepOutputRunsPerStep]
+		}
+		view.Steps = append(view.Steps, StepOutputs{StepID: stepID, Runs: runs})
+	}
+	sort.Slice(view.Steps, func(i, j int) bool {
+		if view.Steps[i].Runs[0].FinishedAt != view.Steps[j].Runs[0].FinishedAt {
+			return view.Steps[i].Runs[0].FinishedAt > view.Steps[j].Runs[0].FinishedAt
+		}
+		return view.Steps[i].StepID < view.Steps[j].StepID
+	})
+	if len(view.Steps) > stepOutputMaxSteps {
+		view.Steps = view.Steps[:stepOutputMaxSteps]
+		view.Truncated = true
+	}
+	return view
+}
+
+func readStepOutputsView(workspacePath, stepID string) (string, error) {
+	out, err := json.MarshalIndent(collectStepOutputs(workspacePath, strings.TrimSpace(stepID)), "", "  ")
+	return string(out), err
+}

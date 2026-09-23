@@ -64,14 +64,14 @@ const icons: Record<string, typeof Terminal> = {
 export function toAgentworksCommandDefinitions(commands: AgentworksProductCommand[]): CommandDefinition[] {
   return commands.map((command) => {
     const Icon = icons[command.icon] ?? Terminal
-    const focus = command.name === 'pulse-review'
+    const focus = command.name === 'run-technical-review'
       ? undefined
       : pulseReviewFocuses.find(candidate => candidate.legacyCommand === command.name)
     return {
       command: command.name,
       description: command.description,
       ...(command.aliases.length > 0 ? { aliases: command.aliases } : {}),
-      ...(command.name === 'pulse-review'
+      ...(command.name === 'run-technical-review'
         ? { searchTerms: pulseReviewFocuses.flatMap(entry => [entry.id, entry.label, entry.legacyCommand]) }
         : {}),
       icon: <Icon className="w-4 h-4" />,
@@ -95,8 +95,8 @@ export function executeAgentworksProductCommand(
   ctx: CommandContext,
 ): void {
   let context = ctx.beforeSlash ?? ''
-  if (command.name === 'pulse-review' || fixedFocus !== undefined) {
-    const resolved = command.name === 'pulse-review'
+  if (command.name === 'run-technical-review' || fixedFocus !== undefined) {
+    const resolved = command.name === 'run-technical-review'
       ? resolvePulseReviewFocus(ctx.pulseReviewFocus, ctx.beforeSlash)
       : undefined
     const focusText = fixedFocus ?? resolved?.instructions

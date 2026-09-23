@@ -225,7 +225,8 @@ type WorkflowPulseConfig struct {
 	// pass; they direct attention, they do not limit what it may consider.
 	FocusAreas []string `json:"focus_areas,omitempty"`
 	// Autonomy holds Goal Work's permission levels. Nil means the defaults:
-	// Run is auto (Goal Work may run existing steps itself).
+	// Run is auto (Goal Work may run existing steps itself); Outward and Change
+	// ask the user.
 	Autonomy              *WorkflowPulseAutonomy         `json:"autonomy,omitempty"`
 	AdvisorSpecialization *WorkflowAdvisorSpecialization `json:"advisor_specialization,omitempty"`
 	// DisabledReviewModules is the owner-controlled denylist for optional Pulse
@@ -295,11 +296,24 @@ func (m *WorkflowManifest) EffectivePulseSchedule() WorkflowPulseSchedule {
 }
 
 // WorkflowPulseAutonomy is Goal Work's per-workflow permission setting.
-// Prepare is always on; outward actions and workflow changes always ask.
+// Preparing work is always on. Each level is "auto" (Goal Work does it
+// itself) or "ask" (it prepares the work and creates a decision).
 type WorkflowPulseAutonomy struct {
-	// Run is "auto" (default) or "ask": whether Goal Work may run existing
-	// workflow steps and routes itself.
+	// Run: run existing workflow steps and routes. Default auto.
 	Run string `json:"run,omitempty"`
+	// Outward: post, send or contact anyone beyond what existing steps
+	// normally do. Default ask.
+	Outward string `json:"outward,omitempty"`
+	// Change: edit the plan, step settings and schedules. soul.md goals and
+	// constraints always go to the user. Default ask.
+	Change string `json:"change,omitempty"`
+}
+
+// PulseAutonomyLevels is the resolved setting with defaults applied.
+type PulseAutonomyLevels struct {
+	Run     string `json:"run"`
+	Outward string `json:"outward"`
+	Change  string `json:"change"`
 }
 
 const (
@@ -337,6 +351,37 @@ func normalizePulseAutonomyRun(value string) (string, error) {
 		return "ask", nil
 	}
 	return "", fmt.Errorf("pulse.autonomy.run must be auto or ask")
+}
+
+// normalizePulseAutonomyAskDefault normalizes a level whose default is ask.
+func normalizePulseAutonomyAskDefault(field, value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "ask":
+		return "ask", nil
+	case "auto":
+		return "auto", nil
+	}
+	return "", fmt.Errorf("pulse.autonomy.%s must be auto or ask", field)
+}
+
+// resolvePulseAutonomy applies the defaults and rejects unknown values.
+func resolvePulseAutonomy(a *WorkflowPulseAutonomy) (PulseAutonomyLevels, error) {
+	if a == nil {
+		return PulseAutonomyLevels{Run: "auto", Outward: "ask", Change: "ask"}, nil
+	}
+	run, err := normalizePulseAutonomyRun(a.Run)
+	if err != nil {
+		return PulseAutonomyLevels{}, err
+	}
+	outward, err := normalizePulseAutonomyAskDefault("outward", a.Outward)
+	if err != nil {
+		return PulseAutonomyLevels{}, err
+	}
+	change, err := normalizePulseAutonomyAskDefault("change", a.Change)
+	if err != nil {
+		return PulseAutonomyLevels{}, err
+	}
+	return PulseAutonomyLevels{Run: run, Outward: outward, Change: change}, nil
 }
 
 func validateWorkflowPulseSchedule(schedule *WorkflowPulseSchedule) error {
@@ -1030,10 +1075,8 @@ func ValidateManifest(m *WorkflowManifest) error {
 		if err := validateWorkflowPulseSchedule(m.Pulse.Schedule); err != nil {
 			return err
 		}
-		if m.Pulse.Autonomy != nil {
-			if _, err := normalizePulseAutonomyRun(m.Pulse.Autonomy.Run); err != nil {
-				return err
-			}
+		if _, err := resolvePulseAutonomy(m.Pulse.Autonomy); err != nil {
+			return err
 		}
 		if _, err := normalizePulseFocusAreas(m.Pulse.FocusAreas); err != nil {
 			return err

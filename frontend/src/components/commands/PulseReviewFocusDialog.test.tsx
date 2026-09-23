@@ -10,7 +10,7 @@ import type { CommandContext } from '../../commands/types'
 
 vi.mock('../../commands/user-commands', () => ({ loadAndRegisterUserCommands: vi.fn().mockResolvedValue(undefined) }))
 
-const PULSE_REVIEW_PROMPT = 'Run /pulse-review as a BACKGROUND task. '
+const PULSE_REVIEW_PROMPT = 'Run /run-technical-review as a BACKGROUND task. '
   + 'Call get_workflow_command_guidance(kind="engineering-review", focus="{{context}}"). '
   + 'completion_mode="present_result".'
 
@@ -23,7 +23,7 @@ describe('Pulse review focus picker', () => {
     document.body.append(host)
     root = createRoot(host)
     setProductCommands(toAgentworksCommandDefinitions([
-      { name: 'pulse-review', description: 'Review', icon: 'check-circle', aliases: [], menuHidden: false, prompt: PULSE_REVIEW_PROMPT },
+      { name: 'run-technical-review', description: 'Review', icon: 'check-circle', aliases: ['pulse-review'], menuHidden: false, prompt: PULSE_REVIEW_PROMPT },
       { name: 'pulse-review-database', description: 'DB', icon: 'check-circle', aliases: [], menuHidden: true, prompt: PULSE_REVIEW_PROMPT },
     ]))
   })
@@ -95,10 +95,10 @@ describe('Pulse review focus picker', () => {
       onSelectCommand={onSelect} searchQuery={search} position={{ bottom: 0, left: 0 }} modeCategory="workflow"
       workshopMode="workshop" canWriteWorkflow={canWriteWorkflow} />)
     await act(async () => render('database'))
-    expect(host.textContent).toContain('/pulse-review')
+    expect(host.textContent).toContain('/run-technical-review')
     expect(host.textContent).not.toContain('/pulse-review-database')
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
-    expect(onSelect).toHaveBeenLastCalledWith('pulse-review')
+    expect(onSelect).toHaveBeenLastCalledWith('run-technical-review')
     await act(async () => render('pulse-review-database'))
     await act(async () => document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })))
     expect(onSelect).toHaveBeenLastCalledWith('pulse-review-database')

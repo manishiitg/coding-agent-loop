@@ -22,7 +22,7 @@ profile:
   built_in: true
   # Slash commands the builder ships with itself. Each prompt lives in its
   # own file under commands/; `{{context}}` is replaced with whatever the
-  # user typed before the slash (for pulse-review, the resolved review focus
+  # user typed before the slash (for run-technical-review, the resolved review focus
   # plus that text). /pulse stays a hardcoded builtin: it is an async
   # frontend API call no static prompt can express.
   commands:
@@ -30,10 +30,11 @@ profile:
       description: Comprehensively review the plan, dependent artifacts, and better design options
       icon: git-branch
       file: commands/design-plan.md
-    - name: review-artifact-drift
-      description: Check plan compatibility and prompt quality; apply bounded safe drift repairs
+    - name: run-plan-drift
+      description: Check the plan still fits its steps, reports and schedules; fix small breaks
       icon: refresh-cw
-      file: commands/review-artifact-drift.md
+      aliases: [review-artifact-drift]
+      file: commands/run-plan-drift.md
     - name: design-dashboard
       description: 'Design the dashboard from scratch: one live-data HTML dashboard at db/reports/index.html'
       icon: check-circle
@@ -44,19 +45,25 @@ profile:
       icon: target
       aliases: [define-success]
       file: commands/setup-goals.md
-    - name: pulse-merge
-      description: Semantically consolidate the Pulse issue backlog without changing workflow artifacts
+    - name: merge-pulse-issues
+      description: Merge duplicate Pulse issues without changing the workflow
       icon: layers
-      file: commands/pulse-merge.md
-    - name: strategy-auditor
-      description: Assess reports and outputs, challenge the approach, and propose useful changes for your decision
+      aliases: [pulse-merge]
+      file: commands/merge-pulse-issues.md
+    - name: run-goal-work
+      description: Find and do the work that would move your goals
       icon: target
-      aliases: [goal-advisor]
-      file: commands/strategy-auditor.md
-    - name: pulse-review
-      description: Choose a review focus or let the reviewer decide, then apply bounded safe fixes
+      aliases: [strategy-auditor, goal-advisor]
+      file: commands/run-goal-work.md
+    - name: run-technical-review
+      description: Find and fix what is broken in runs, validation, reports and stores
       icon: check-circle
-      file: commands/pulse-review.md
+      aliases: [pulse-review]
+      file: commands/run-technical-review.md
+    - name: run-architecture-review
+      description: Research better ways to structure the workflow; proposes, never edits
+      icon: git-branch
+      file: commands/run-architecture-review.md
     - name: pulse-fixer
       description: Independently repair one coherent objective from reviewed Pulse issues
       icon: refresh-cw
@@ -77,44 +84,44 @@ profile:
       description: Set up, review, or test agentic notifications
       icon: bell-ring
       file: commands/notify.md
-    # Retained pulse-review focus shortcuts: executable under access checks,
-    # without menu rows. All share the pulse-review prompt; the client
+    # Retained pulse-review-* focus shortcuts: executable under access checks,
+    # without menu rows. All share the run-technical-review prompt; the client
     # resolves each name to its fixed focus before submitting.
     - name: pulse-review-execution-health
       description: 'Pulse review: execution health'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-validation-contract
       description: 'Pulse review: validation contracts'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-report-quality
       description: 'Pulse review: dashboard quality'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-evaluation-quality
       description: 'Pulse review: measurement quality'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-database
       description: 'Pulse review: database integrity'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-knowledge
       description: 'Pulse review: knowledgebase'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
     - name: pulse-review-learnings
       description: 'Pulse review: learnings'
       icon: check-circle
       menu_hidden: true
-      file: commands/pulse-review.md
+      file: commands/run-technical-review.md
 
 branding:
   icon: ""

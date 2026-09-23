@@ -63,3 +63,14 @@ func TestCliDownloadMissingFileOrDirIs404(t *testing.T) {
 		t.Fatalf("missing dir: got %d, want 404", w.Code)
 	}
 }
+
+func TestCliDownloadUsesConfiguredLocalDirectory(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("AGENTWORKS_CLI_DOWNLOAD_DIR", dir)
+	if err := os.WriteFile(filepath.Join(dir, "install-agentworks.sh"), []byte("#!/bin/sh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if w := serveCliDownload(t, "", "install-agentworks.sh"); w.Code != http.StatusOK || w.Body.String() != "#!/bin/sh\n" {
+		t.Fatalf("configured installer not served: %d %q", w.Code, w.Body.String())
+	}
+}

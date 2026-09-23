@@ -7,7 +7,7 @@ import type {
   WorkflowExecutionDefaults,
   WorkflowOwnership,
   WorkflowScheduleEntry,
-  PulseAutonomyRun, PulseReviewerModule,
+  PulseAutonomyLevel, PulseAutonomyRun, PulseReviewerModule,
 } from '../services/api-types'
 import { normalizeWorkspacePath } from '../utils/workspacePathUtils'
 
@@ -41,6 +41,8 @@ export interface WorkflowManifestState {
     pulse_enabled?: boolean
     pulse_disabled_review_modules?: PulseReviewerModule[]
     pulse_autonomy_run?: PulseAutonomyRun
+    pulse_autonomy_outward?: PulseAutonomyLevel
+    pulse_autonomy_change?: PulseAutonomyLevel
     pulse_focus_areas?: string[]
   }) => Promise<WorkflowManifest>
   deleteWorkflow: (workspacePath: string) => Promise<void>

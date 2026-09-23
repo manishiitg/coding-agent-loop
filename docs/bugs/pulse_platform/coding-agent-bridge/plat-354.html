@@ -107,7 +107,7 @@
     <header class="hero">
       <div class="eyebrow">Pulse platform · Coding agent bridge</div>
       <h1>PLAT-354 — Show coding-agent native questions in chat</h1>
-      <div class="meta"><div class="meta-item"><span>Status</span><strong>Question card removed (auto-first everywhere); pane→structured migration continues</strong></div>
+      <div class="meta"><div class="meta-item"><span>Status</span><strong>Question card removed (auto-first everywhere); completion is structured for all five CLIs; submit path next</strong></div>
 <div class="meta-item"><span>Priority</span><strong>P0 contract migration; P1 question flow</strong></div>
 <div class="meta-item"><span>Owner</span><strong>coding agent bridge and frontend chat</strong></div>
 <div class="meta-item"><span>Reported</span><strong>2026-09-23</strong></div>
@@ -459,8 +459,8 @@ parts of this ticket below are historical. Native questions for other CLIs will
 not be built; the remaining work is the pane→structured replacement.
 Verified live: <code>TestMuseCLIRealAutoFirstOptionThreeQuestionsP0</code>,
 <code>PendingQuestionResumeP0</code> and <code>LiveInputQuestionsP0</code> pass on
-the removal. <code>TestMuseCLIRealTmuxLiveInput</code> fails identically with and
-without it (a pre-existing queued-follow-up intake issue).</p>
+the removal. <code>TestMuseCLIRealTmuxLiveInput</code> had failed with and
+without it; the cause was the tests, now fixed (see below).</p>
 <p><strong>Direction:</strong> keep tmux as the process host and keystroke
 transport. Provider JSON, rollout, transcript or database records are the P0
 proof of intake, completion and the final answer. Pane parsing becomes P1
@@ -513,22 +513,65 @@ unit tests are supplementary.</p>
   <code>claude-sonnet-5</code>; the pasted-content regression stays on Haiku,
   because a stronger model can hide that bug. Claude live suite: 34 pass on
   both models.</li>
+<li><strong>Muse live tests match intake by prefix</strong> (<code>53b893c</code>).
+  <code>71fdb70</code> made intake match the accepted intent by prefix (what
+  production passes); four live-test call sites still passed mid-prompt
+  fragments. <code>TmuxCancellation</code>: a Ctrl-C before any output makes
+  Muse restore the prompt into the composer (<code>run_retracted</code>), so
+  the test now clears it as production does. Full Muse live suite 28/28.</li>
+<li><strong>Cursor key and store pinning</strong> (<code>bf44fdc</code>). The tmux
+  launch exports the process <code>CURSOR_API_KEY</code>: a pane inherits the
+  tmux <em>server</em> environment, so "authentication required" appeared
+  whenever a keyless process had started that server. <code>71fdb70</code>
+  resolved the store before the first prompt, pinning a sibling chat in the
+  same workdir and blinding durable ack; it now snapshots only an
+  already-pinned store. <code>DurableAckContract</code> 2/2.</li>
+<li><strong>Cursor completion from store.db</strong> (<code>bf44fdc</code>,
+  <code>cc791c7</code>). Cursor writes no end-of-turn marker, so the shape of
+  this query's baseline-scoped trail decides: a trailing tool call means a tool
+  is running (idle pane = false idle, keep waiting); a trailing tool result
+  means the reply is missing (recovery may fire); trailing assistant prose is
+  the answer. No user row means not taken in: no recovery or no-output error,
+  a stuck draft is resubmitted, and a prompt Cursor 2026.09 holds without
+  starting a turn gets at most two Enter nudges. The pane only reports that
+  the composer is back, and is the fallback when no store exists.
+  <code>cursor_completion_source=store_turn_answer</code> is asserted by
+  <code>TestCursorCLIRealCompletionDetection</code>;
+  <code>DenyBuiltinHookActuallyFires</code> went from 0/5 to 5/5.</li>
+<li><strong>Pi completes on <code>agent_settled</code></strong> (<code>a11889d</code>).
+  The tmux wait already used our marker extension, not the pane, but returned
+  on the first <code>agent_end</code>, which fires inside Pi's post-run loop
+  (retries, multi-step) and can come mid-run. The extension now forwards the
+  once-per-run <code>agent_settled</code>; a build without it falls back to
+  <code>agent_end</code> plus 15&nbsp;s of marker silence.
+  <code>TestPiCLIRealSlowMCPToolDoneDetectionContract</code> asserts
+  <code>pi_completion_source=marker_agent_settled</code>. Test cleanup now
+  stops Pi before removing its temp workdir (<code>8c6472f</code>).</li>
+</ul>
+<ul>
+<li><strong>Claude multi-line input stays the user's message</strong>
+  (<code>60f597e</code>). <code>ExtendedResumeIsolation</code> was not an
+  <code>/exit</code> fusion: Sonnet 5 refused session B's first message as
+  <code>&lt;pasted_content&gt;</code> despite the typed authorization line, and
+  kept refusing on resume. Multi-line or large input is now pasted one line at a
+  time in chunks under the 800-char attachment threshold, with Ctrl-J between
+  lines; the transcript records a plain user message. Typing was rejected (a
+  leading <code>!</code> enters shell mode; <code>@</code> opens the file picker).
+  A message starting with <code>!</code> keeps the whole paste plus the
+  authorization line.</li>
+<li><strong>Submit path:</strong> already two-stage for every CLI: a fast pane
+  receipt, then durable proof from the CLI's own record that promotes the chat
+  tick; a pane misread defers to that record. No further migration needed.</li>
 </ul>
 <p><strong>Open:</strong></p>
 <ul>
-<li>Under Sonnet 5, a resumed Claude session sees our message fused to the
-  <code>/exit</code> the adapter types when closing a retained session
-  (<code>ExtendedResumeIsolation</code>). This is pre-existing.</li>
-<li>The submit path still uses broad pane success polling. Moving it behind the
-  durable proof, with the pane as P1 fast ticks, is the next migration step (see
-  <code>docs/refactor/durable_ack_p0.md</code>).</li>
-<li>Cursor and Pi completion migration.</li>
-<li>The official <code>run-coding-cli-p0.sh</code> gate for Claude Code and Codex
-  is running against the restarted server.</li>
-<li>The review items for the question card remain: dismissing a stuck card,
-  resuming a partial multi-question submit, and wrapped long text. Questions
-  for CLIs other than Muse wait until the pane replacement is done for every
-  CLI.</li>
+<li>Certification: Claude Code and Codex passed. A Cursor/Muse/Pi gate run was
+  stopped at 66 pass / 0 fail to save tokens; all changes since are covered by
+  targeted live tests. <code>p0-certified-cli-versions.json</code> is not
+  updated for those three until a full gate is run on request.</li>
+<li>Seen once in a Pi gate run, not reproduced in 8 later runs: a retry after
+  cancel returned empty content. Likely the early-<code>agent_end</code>
+  completion fixed in <code>a11889d</code>; unconfirmed.</li>
 </ul>
 <h2 id="p0-tmux-contract-replacement">P0 tmux contract replacement</h2>
 <p class="contract-note"><strong>Keep the P0 correctness contracts and live tests.</strong>

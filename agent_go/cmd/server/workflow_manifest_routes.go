@@ -226,6 +226,8 @@ type UpdateWorkflowManifestRequest struct {
 	PulseEnabled               *bool                                        `json:"pulse_enabled,omitempty"`
 	PulseDisabledReviewModules *[]string                                    `json:"pulse_disabled_review_modules,omitempty"`
 	PulseAutonomyRun           *string                                      `json:"pulse_autonomy_run,omitempty"`
+	PulseAutonomyOutward       *string                                      `json:"pulse_autonomy_outward,omitempty"`
+	PulseAutonomyChange        *string                                      `json:"pulse_autonomy_change,omitempty"`
 	PulseFocusAreas            *[]string                                    `json:"pulse_focus_areas,omitempty"`
 	// Notification instruction fields are standalone patches so the Notify
 	// popup can update content guidance without replacing workflow capabilities.
@@ -425,16 +427,30 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 		}
 		manifest.Pulse.DisabledReviewModules = disabled
 	}
-	if req.PulseAutonomyRun != nil {
-		run, runErr := normalizePulseAutonomyRun(*req.PulseAutonomyRun)
-		if runErr != nil {
-			http.Error(w, runErr.Error(), http.StatusBadRequest)
-			return
-		}
+	if req.PulseAutonomyRun != nil || req.PulseAutonomyOutward != nil || req.PulseAutonomyChange != nil {
 		if manifest.Pulse == nil {
 			manifest.Pulse = &WorkflowPulseConfig{}
 		}
-		manifest.Pulse.Autonomy = &WorkflowPulseAutonomy{Run: run}
+		levels, levelsErr := resolvePulseAutonomy(manifest.Pulse.Autonomy)
+		if levelsErr != nil {
+			levels, _ = resolvePulseAutonomy(nil)
+		}
+		next := &WorkflowPulseAutonomy{Run: levels.Run, Outward: levels.Outward, Change: levels.Change}
+		if req.PulseAutonomyRun != nil {
+			next.Run = *req.PulseAutonomyRun
+		}
+		if req.PulseAutonomyOutward != nil {
+			next.Outward = *req.PulseAutonomyOutward
+		}
+		if req.PulseAutonomyChange != nil {
+			next.Change = *req.PulseAutonomyChange
+		}
+		resolved, err := resolvePulseAutonomy(next)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		manifest.Pulse.Autonomy = &WorkflowPulseAutonomy{Run: resolved.Run, Outward: resolved.Outward, Change: resolved.Change}
 	}
 	if req.PulseFocusAreas != nil {
 		areas, areasErr := normalizePulseFocusAreas(*req.PulseFocusAreas)

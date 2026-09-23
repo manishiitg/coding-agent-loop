@@ -23,12 +23,12 @@ function productCommand(name: string, prompt: string, extra?: Partial<Agentworks
 function agentworksFixture(): AgentworksProductCommand[] {
   return [
     productCommand('design-plan', 'Call get_workflow_command_guidance(kind="design-plan", focus="{{context}}") and follow the returned instructions verbatim.'),
-    productCommand('review-artifact-drift', 'Run the /review-artifact-drift review as a BACKGROUND task. Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes with their lifecycle outcomes. Focus: {{context}}.'),
+    productCommand('run-plan-drift', 'Run the /run-plan-drift review as a BACKGROUND task. Part 1 may apply bounded safe compatibility and prompt repairs; Part 2 remains read-only. Persist typed review and repair outcomes with their lifecycle outcomes. Focus: {{context}}.', { aliases: ['review-artifact-drift'] }),
     productCommand('design-dashboard', 'Call get_workflow_command_guidance(kind="design-reporting-ui", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['design-reporting-ui'] }),
     productCommand('setup-goals', 'Call get_workflow_command_guidance(kind="setup-goals", focus="{{context}}") and follow the returned instructions verbatim.', { aliases: ['define-success'] }),
-    productCommand('pulse-merge', 'Consolidate the durable Pulse backlog. Load get_pulse_state(view="backlog", detail="compact") exactly once first. Request detail="full" only for the bounded issue_ids whose identity is uncertain. Call merge_pulse_issues for proven duplicates. do not edit workflow artifacts. Focus: {{context}}.'),
-    productCommand('strategy-auditor', 'Run the /strategy-auditor review as a BACKGROUND task via run_in_background. Call get_workflow_command_guidance(kind="strategy-auditor", focus="{{context}}"). Then present Needs your decision proposals.', { aliases: ['goal-advisor'] }),
-    productCommand('pulse-review', PULSE_REVIEW_PROMPT),
+    productCommand('merge-pulse-issues', 'Consolidate the durable Pulse backlog. Load get_pulse_state(view="backlog", detail="compact") exactly once first. Request detail="full" only for the bounded issue_ids whose identity is uncertain. Call merge_pulse_issues for proven duplicates. do not edit workflow artifacts. Focus: {{context}}.', { aliases: ['pulse-merge'] }),
+    productCommand('run-goal-work', 'Run the /run-goal-work pass as a BACKGROUND task via run_in_background. Call get_workflow_command_guidance(kind="strategy-auditor", focus="{{context}}"). Then present Needs your decision proposals.', { aliases: ['strategy-auditor', 'goal-advisor'] }),
+    productCommand('run-technical-review', PULSE_REVIEW_PROMPT, { aliases: ['pulse-review'] }),
     productCommand('pulse-fixer', 'Run the /pulse-fixer fix pass as a BACKGROUND task. Call get_workflow_command_guidance(kind="pulse-fixer", focus="{{context}}"). completion_mode="present_result".'),
     productCommand('review-code', 'Call get_workflow_command_guidance(kind="design-plan", focus="Architecture focus: inspect saved scripts. Load references/code-authoring.md then references/scripted.md one at a time. Resolve canonical code paths from workflow.json.code_layout_version. do not apply changes in this review. {{context}}").'),
     productCommand('backup', '{{context}} Help me set up or run backup for this workflow.'),
@@ -110,10 +110,15 @@ describe('Pulse slash commands', () => {
     const orgCommands = getCommands('multi-agent').map(command => command.command)
 
     for (const command of [
-      'pulse', 'pulse-merge', 'pulse-review', 'pulse-fixer', 'strategy-auditor',
+      'pulse', 'merge-pulse-issues', 'run-technical-review', 'pulse-fixer', 'run-goal-work', 'run-plan-drift',
     ]) {
       expect(workflowCommands).toContain(command)
       expect(orgCommands).not.toContain(command)
+    }
+    // Old names still run as aliases but no longer have menu rows.
+    for (const renamed of ['pulse-merge', 'pulse-review', 'strategy-auditor', 'review-artifact-drift']) {
+      expect(workflowCommands).not.toContain(renamed)
+      expect(findCommand(renamed, 'workflow', 'workshop')).toBeDefined()
     }
     for (const retiredCommand of ['bug-review', 'review-speed', 'review-cost', 'llm-ops-review', 'ops-review', 'engineering-review', 'specialize-advisors', 'pulse-setup', 'improve-knowledge', 'improve-learnings', 'improve-database', 'improve-report', 'improve-evaluation', 'pulse-review-stores', 'pulse-review-report', 'pulse-review-evaluation', 'pulse-backlog']) {
       expect(workflowCommands).not.toContain(retiredCommand)
@@ -122,7 +127,7 @@ describe('Pulse slash commands', () => {
 
   it('consolidates focused menu entries while preserving every shortcut and its access restrictions', () => {
     const menu = getCommands('workflow', 'workshop').map(command => command.command)
-    expect(menu).toContain('pulse-review')
+    expect(menu).toContain('run-technical-review')
     for (const focus of pulseReviewFocuses) {
       expect(menu).not.toContain(focus.legacyCommand)
       expect(findCommand(focus.legacyCommand, 'workflow', 'workshop')).toBeDefined()
@@ -297,7 +302,7 @@ describe('Pulse slash commands', () => {
       workshopMode: 'workshop',
     } as unknown as CommandContext)
 
-    expect(submitted).toContain('Run the /strategy-auditor review as a BACKGROUND task')
+    expect(submitted).toContain('Run the /run-goal-work pass as a BACKGROUND task')
     expect(submitted).toContain('kind="strategy-auditor"')
     expect(submitted).not.toContain('required_pulse_review_modules')
     expect(submitted).toContain('focus on repeated targets')
@@ -325,7 +330,7 @@ describe('Pulse slash commands', () => {
     } as unknown as CommandContext)
 
     expect(submitted).toContain('get_workflow_command_guidance')
-    expect(submitted).toContain('Run the /strategy-auditor review as a BACKGROUND task')
+    expect(submitted).toContain('Run the /run-goal-work pass as a BACKGROUND task')
     expect(submitted).not.toContain('goal-advisor')
     expect(submitted).toContain('challenge feed concentration')
     expect(submitted).toContain('BACKGROUND task')

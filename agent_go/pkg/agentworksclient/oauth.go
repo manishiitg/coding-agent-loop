@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -52,7 +53,7 @@ func (c *Client) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorizat
 		}
 	}
 	verification, err := url.Parse(result.VerificationURIComplete)
-	if err != nil || verification.Scheme+"://"+verification.Host != c.baseURL || verification.Path != "/oauth/cli" {
+	if err != nil || verification.User != nil || verification.Fragment != "" || verification.Path != "/oauth/cli" || !c.safeVerificationOrigin(verification) {
 		return result, errors.New("server returned an unsafe verification URL")
 	}
 	code := verification.Query().Get("code")
@@ -60,6 +61,25 @@ func (c *Client) StartDeviceAuthorization(ctx context.Context) (DeviceAuthorizat
 		return result, errors.New("server returned a mismatched sign-in code")
 	}
 	return result, nil
+}
+
+func (c *Client) safeVerificationOrigin(verification *url.URL) bool {
+	if verification.Scheme+"://"+verification.Host == c.baseURL {
+		return true
+	}
+	server, err := url.Parse(c.baseURL)
+	if err != nil || server.Scheme != "http" || verification.Scheme != "http" {
+		return false
+	}
+	return oauthLoopbackHost(server.Hostname()) && oauthLoopbackHost(verification.Hostname())
+}
+
+func oauthLoopbackHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c *Client) oauthForm(ctx context.Context, path string, form url.Values) ([]byte, error) {

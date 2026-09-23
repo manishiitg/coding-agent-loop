@@ -8,7 +8,7 @@ import type {
   PulsePlanDriftDueItem,
   PulseReviewFocus,
   PulseReviewerModule,
-  VariablesManifest, PulseNextRun, PulseGoalWorkItem, PulseAutonomyRun } from '../../../services/api-types'
+  VariablesManifest, PulseNextRun, PulseGoalWorkItem, PulseAutonomy } from '../../../services/api-types'
 import type { PulseOverview } from '../PulseView'
 
 export type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
@@ -30,9 +30,9 @@ export interface PulseData {
   finalCommandStates: PulseFinalCommandState[]
   nextRun: PulseNextRun | null
   goalWork: PulseGoalWorkItem[]
-  autonomyRun: PulseAutonomyRun
+  autonomy: PulseAutonomy
   autonomySaving: boolean
-  setAutonomyRun: (run: PulseAutonomyRun) => void
+  setAutonomy: (next: PulseAutonomy) => void
   focusAreas: string[]
   focusSaving: boolean
   saveFocusAreas: (areas: string[]) => Promise<boolean>

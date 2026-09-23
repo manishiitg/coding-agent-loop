@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { CheckCircle2, Crosshair, FileText, Hourglass, Lightbulb, Loader2, Play, Plus, Scale, X } from 'lucide-react'
-import type { PulseAutonomyRun, PulseGoalWorkItem } from '../../services/api-types'
+import type { PulseAutonomy, PulseGoalWorkItem } from '../../services/api-types'
+import { AUTONOMY_LEVELS, autonomyLevelIndex } from './pulseAutonomy'
 import { openReportFileInViewer } from './reportWidgets/tableHelpers'
 
 // Goal Work is Pulse's main job (docs/design/pulse_goal_work.md): work Pulse
@@ -136,12 +137,12 @@ function FocusAreas({ areas, saving, onSave, playbookAreas }: {
   </section>
 }
 
-export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySaving = false, onChangeAutonomyRun, onRunGoalWork, running = false, runBlockedReason, focusAreas = [], focusSaving = false, onSaveFocusAreas, playbookFocusAreas = [] }: {
+export function PulseGoalWork({ workspacePath, items, autonomy, autonomySaving = false, onChangeAutonomy, onRunGoalWork, running = false, runBlockedReason, focusAreas = [], focusSaving = false, onSaveFocusAreas, playbookFocusAreas = [] }: {
   workspacePath: string
   items: PulseGoalWorkItem[]
-  autonomyRun: PulseAutonomyRun
+  autonomy: PulseAutonomy
   autonomySaving?: boolean
-  onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
+  onChangeAutonomy?: (next: PulseAutonomy) => void
   onRunGoalWork?: () => void
   running?: boolean
   runBlockedReason?: string
@@ -181,20 +182,28 @@ export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySavin
       <ul className="mt-2 space-y-1 text-muted-foreground">{keptRules.map(item => <li key={item.id}>{item.constraint_text || item.title}{item.effect_note ? `: ${item.effect_note}` : ''}</li>)}</ul>
     </details>}
 
-    <section aria-label="Pulse permissions" className="rounded-xl border bg-background p-4">
-      <div className="flex items-center gap-2"><Hourglass className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold">Pulse permissions</h3></div>
-      <dl className="mt-3 divide-y text-xs">
-        <div className="flex items-center justify-between gap-3 py-2"><dt>Prepare work (research, drafts, lists)</dt><dd className="text-muted-foreground">Always on</dd></div>
-        <div className="flex items-center justify-between gap-3 py-2"><dt><label htmlFor="pulse-autonomy-run">Run workflow steps</label></dt><dd>
-          <select id="pulse-autonomy-run" value={autonomyRun} disabled={!onChangeAutonomyRun || autonomySaving}
-            onChange={event => onChangeAutonomyRun?.(event.target.value === 'ask' ? 'ask' : 'auto')}
-            className="rounded-md border bg-background px-2 py-1 text-xs disabled:opacity-50">
-            <option value="auto">Run on its own (within your rules)</option>
-            <option value="ask">Ask me first</option>
-          </select></dd></div>
-        <div className="flex items-center justify-between gap-3 py-2"><dt>Post, send or contact anyone</dt><dd className="text-muted-foreground">Always asks you</dd></div>
-        <div className="flex items-center justify-between gap-3 py-2"><dt>Change how the workflow works</dt><dd className="text-muted-foreground">Always asks you</dd></div>
-      </dl>
-    </section>
+    <AutonomySlider autonomy={autonomy} saving={autonomySaving} onChange={onChangeAutonomy} />
   </div>
+}
+
+function AutonomySlider({ autonomy, saving, onChange }: {
+  autonomy: PulseAutonomy
+  saving: boolean
+  onChange?: (next: PulseAutonomy) => void
+}) {
+  const index = autonomyLevelIndex(autonomy)
+  const level = AUTONOMY_LEVELS[index]
+  return <section aria-label="Pulse autonomy" className="rounded-xl border bg-background p-4">
+    <div className="flex items-center justify-between gap-3">
+      <label htmlFor="pulse-autonomy" className="flex items-center gap-2 text-sm font-semibold"><Hourglass className="h-4 w-4 text-primary" />Pulse autonomy</label>
+      <span className="text-xs font-medium text-primary">{level.label}</span>
+    </div>
+    <input id="pulse-autonomy" type="range" min={0} max={AUTONOMY_LEVELS.length - 1} step={1} value={index}
+      disabled={!onChange || saving} aria-valuetext={level.label}
+      className="reasoning-effort-slider mt-3 w-full disabled:opacity-50"
+      style={{ ['--reasoning-effort-fill' as string]: `${(index / (AUTONOMY_LEVELS.length - 1)) * 100}%` }}
+      onChange={event => onChange?.(AUTONOMY_LEVELS[Number(event.target.value)].value)} />
+    <div className="mt-1 flex justify-between text-[11px] text-muted-foreground">{AUTONOMY_LEVELS.map(item => <span key={item.label}>{item.label}</span>)}</div>
+    <p className="mt-2 text-xs text-muted-foreground" title="Your goals and rules in soul.md stay yours at every level: Pulse can challenge a rule, but only you change it.">{level.summary}</p>
+  </section>
 }

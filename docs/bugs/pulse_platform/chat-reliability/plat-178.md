@@ -5,8 +5,8 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Codex |
-| Ticket state | `shared durable conversation-turn dispatcher implemented locally; push, deployment, and fresh-client verification pending` |
-| Last synchronized | `2026-09-22` |
+| Ticket state | `2026-09-23 stale-promotion jam fixed on main (evidence gate, 30m fail-after, dead-pane fast-fail); not deployed; live CLI verification pending` |
+| Last synchronized | `2026-09-23` |
 
 - **Priority:** P1 — real conversation data loss, user-visible and
   confusing (the agent appears to "forget" recent work and asks the user to
@@ -634,7 +634,7 @@ _, retainedRunning := api.retainedMainTurns[sessionID]  // ← stuck entry
 return retainedRunning
 ```
 
-### Agreed fix (not yet implemented)
+### Originally proposed fix (superseded — see Review corrections and Implemented below)
 
 1. **Promotion validation (root cause).** Before promoting `pending[0]`,
    drop leading entries whose embedded creation time predates the
@@ -671,6 +671,73 @@ Occupancy is all in-memory; startup recovery (`recoverConversationTurnQueue`)
 resets `StartedAt`, re-registers queue owners, and kicks — unclaimed
 turns in the queue doc then execute normally. Verified safe for this
 incident: both turns are intact and unclaimed in the queue doc.
+
+### Review corrections (2026-09-23)
+
+- **The stale ID was not re-appended and did not "survive" pruning by
+  accident.** The pending list is FIFO and each settle promotes exactly one
+  entry. When a CLI answers several rapid inputs in one response, inputs are
+  appended faster than completions pop them, so the list lags: the 20:18 and
+  20:35 settles popped older entries and the 20:42 settle reached the 20:00
+  input. Every promotion after the first batch was a phantom. No caller
+  re-marks a finished execution (all callers pass a fresh ID per request);
+  a guard now refuses to queue an already-finished execution anyway.
+- **"Rapid inputs answered in one response" is the trigger**, not only stale
+  IDs. It creates brand-new phantom pendings too, so the timestamp-based
+  fix #1 would not have caught it, and parsing times out of execution IDs is
+  fragile. Replaced by a promotion evidence gate.
+- **Why only some providers jam:** Claude, Codex, Cursor and Pi report an idle
+  composer, so a phantom promotion settles about 1s later on pane-idle. Muse
+  has no pane-ready signal and relies on a durable final response written
+  after the promotion, which a phantom never produces, so it waited forever.
+  Here the pane had also vanished while the tmux control client stayed
+  attached, so the existing stream-closed path never fired.
+
+### Implemented (2026-09-23)
+
+`agent_go/cmd/server/server.go`:
+1. **Promotion evidence gate.** A promoted turn's observer
+   (`observeRetainedMainTurnStreamMode(..., promoted=true)`) must see new CLI
+   output. Without it for `retainedMainTurnPromotionEvidenceGrace` (75s),
+   `settleUnansweredRetainedPromotion` completes the promoted input and the
+   backlog behind it as answered by the previous response
+   (`settled_reason=answered_by_previous_response`). It then emits the
+   completion, which releases the lane and kicks the conversation-turn queue.
+2. **Fail-after backstop.** After `retainedMainTurnStuckFailAfter` (30m) with
+   neither pane-idle nor a durable final response, the turn and its backlog
+   are failed (`failRetainedTurnExecutions`). The lane is released so queued
+   turns drain, and the chat shows the reason.
+3. **Dead-pane fast-fail.** Every `retainedMainTurnPaneCheckInterval` (5s)
+   the observer checks the pane (`display-message`/`has-session`). Three
+   consecutive missing or dead results fail the turn with
+   `retained pane gone`; one transient miss does not.
+4. **Guard.** `markRetainedMainCodingTurnRunningWithOwner` never queues an
+   execution the tracker already finished (`trackedExecutionFinished`).
+
+Tests in `plat178_retained_promotion_test.go` pass with `-race`, 3 runs:
+- finished execution never queued;
+- rapid inputs answered together settle after the grace window and release
+  the lane;
+- a promoted turn with new output is not settled early;
+- fail-after drains the lane and fails the backlog;
+- dead pane fails after 3 misses but not after 1;
+- real-tmux killed pane releases the lane and fails the backlog.
+
+In the real-tmux test, the existing stream-closed path fired because killing
+the session also ends the control client. The orphaned-attach case is only
+covered by the unit test.
+
+The related suites (Retained, LiveAttach, LiveInput, ConversationTurn, Query,
+Steer, CodingAgent, ChatSubmission, Durable, Terminal) pass except 4 tests
+that fail identically on origin/main (`TestProfileQueryModelMustBelong...`,
+`TestAutoPublishedCodingAgentLLMs*` ×2, `TestWorkshopResolveLLMConfig...`).
+
+**Not verified:**
+- A live Muse or Claude retained chat with rapid sends, and a real mid-turn
+  pane kill on a running server.
+- Whether an idle Muse TUI repaints on its own. If it does, that output
+  counts as evidence and a phantom falls through to the 30m backstop
+  instead of the 75s gate.
 
 ## Out of scope
 

@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	server "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server"
 	"github.com/spf13/cobra"
 )
 
@@ -203,9 +205,15 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	}
 	manifest := map[string]interface{}{
 		"schema_version": 1,
-		"id":             presetID,
-		"label":          "E2E Auto Notification Workflow",
-		"objective":      "Exercise workflow start auto-notification wiring.",
+		// A fresh fixture is created on the current workflow contract. Since
+		// contract upgrades became manual-only (428623c07), run_full_workflow
+		// refuses a workflow without it ("workflow_contract_migration_required:
+		// v1.0.0"), which stopped the auto-notification P0 before any step ran.
+		"version":             server.WorkflowContractCurrentVersion,
+		"code_layout_version": 1,
+		"id":                  presetID,
+		"label":               "E2E Auto Notification Workflow",
+		"objective":           "Exercise workflow start auto-notification wiring.",
 		"capabilities": map[string]interface{}{
 			"selected_servers":             []string{},
 			"selected_tools":               []string{},
@@ -239,10 +247,18 @@ func createWorkflowAutoNotificationFixture(workspaceDocs string, keep bool, prov
 	plan := map[string]interface{}{
 		"steps": []map[string]interface{}{
 			{
-				"type":                 "regular",
-				"id":                   "step-auto-notification",
-				"title":                "Auto notification smoke step",
-				"description":          fmt.Sprintf("Use the declared MCP api-bridge execute_shell_command tool, never a built-in shell/file tool, to run exactly this command:\nprintf '%%s\\n' %s > %s && cat %s\nAfter the bridge call succeeds, return exactly these two lines and nothing else. Do not include the tool name, arguments, command, or output envelope:\n%s\nSTATUS: COMPLETED", shellSingleQuoteE2E(completionToken), shellSingleQuoteE2E(bridgeProofPath), shellSingleQuoteE2E(bridgeProofPath), completionToken),
+				// Under the current contract a "regular" step is a scripted step (the
+				// agent authors main.py). This smoke step is conversational, so it is a
+				// one-turn message sequence, the default step type.
+				"type":        "message_sequence",
+				"id":          "step-auto-notification",
+				"title":       "Auto notification smoke step",
+				"description": "Run the bridge smoke command and return the completion token.",
+				"items": []map[string]interface{}{{
+					"id":      "run-bridge-command",
+					"type":    "user_message",
+					"message": fmt.Sprintf("Use the declared MCP api-bridge execute_shell_command tool, never a built-in shell/file tool, to run exactly this command:\nprintf '%%s\\n' %s > %s && cat %s\nAfter the bridge call succeeds, return exactly these two lines and nothing else. Do not include the tool name, arguments, command, or output envelope:\n%s\nSTATUS: COMPLETED", shellSingleQuoteE2E(completionToken), shellSingleQuoteE2E(bridgeProofPath), shellSingleQuoteE2E(bridgeProofPath), completionToken),
+				}},
 				"context_dependencies": []string{},
 				"context_output":       "auto_notification.json",
 			},

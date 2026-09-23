@@ -1765,11 +1765,27 @@ func (hcpo *StepBasedWorkflowOrchestrator) saveMessageSequenceSession(ctx contex
 	return hcpo.WriteWorkspaceFile(ctx, relPath, string(out))
 }
 
+// summarizeMessageSequenceSession is the step's result: what the parent chat's
+// completion notification carries and what saveFinalExecutionSummary stores.
+// It is the last completed authored item's answer, the same thing a regular
+// step reports. A bare "N item(s) completed" count told the user nothing once
+// message_sequence became the default step type. Prevalidation gates and
+// synthetic __...__ items are bookkeeping, not answers, so they are skipped. The
+// count remains the fallback when no authored item produced text.
 func (hcpo *StepBasedWorkflowOrchestrator) summarizeMessageSequenceSession(session *messageSequenceSession) string {
 	completed := 0
 	for _, entry := range session.Entries {
 		if entry.Status == "completed" {
 			completed++
+		}
+	}
+	for i := len(session.Entries) - 1; i >= 0; i-- {
+		entry := session.Entries[i]
+		if entry.Status != "completed" || entry.ItemType == "prevalidation" || strings.HasPrefix(entry.ItemID, "__") {
+			continue
+		}
+		if answer := strings.TrimSpace(entry.Summary); answer != "" {
+			return answer
 		}
 	}
 	return fmt.Sprintf("Message sequence %s completed: %d item(s) completed", session.StepID, completed)

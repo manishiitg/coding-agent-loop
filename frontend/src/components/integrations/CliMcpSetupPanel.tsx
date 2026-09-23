@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Check, Copy, Download, FileText, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
+import { Check, Copy, Download, Globe, KeyRound, Plug, Terminal } from 'lucide-react'
 import { SettingsCard } from '../ui/SettingsCard'
 import { Button } from '../ui/Button'
 import { authApi, externalSkillApi, getApiBaseUrl } from '../../services/api'
@@ -53,6 +53,10 @@ interface Connection {
   token: string
 }
 
+type Destination = 'terminal' | 'local-assistant' | 'hosted-assistant'
+type LocalClient = 'claude-code' | 'codex' | 'json-client'
+type HostedClient = 'chatgpt' | 'cowork'
+
 const CONNECT_TOKEN_NAME = 'Connect tab'
 
 function storageKey(server: string) {
@@ -81,6 +85,9 @@ function loadStored(server: string): Connection | null {
  * when done.
  */
 export function CliMcpSetupPanel() {
+  const [destination, setDestination] = useState<Destination>('terminal')
+  const [localClient, setLocalClient] = useState<LocalClient>('claude-code')
+  const [hostedClient, setHostedClient] = useState<HostedClient>('chatgpt')
   const [connection, setConnection] = useState<Connection | null>(null)
   const [busy, setBusy] = useState(false)
   const [checking, setChecking] = useState(true)
@@ -236,30 +243,55 @@ export function CliMcpSetupPanel() {
   const installer = `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(displayToken)}`
   const mcpJson = JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_SERVER: origin, AGENTWORKS_TOKEN: displayToken } } } }, null, 2)
 
+  const destinations = [
+    { id: 'terminal', icon: Terminal, title: 'Terminal or scripts', description: 'Run agentworks commands yourself.' },
+    { id: 'local-assistant', icon: Plug, title: 'AI app on this computer', description: 'Claude Code, Codex, or another local MCP client.' },
+    { id: 'hosted-assistant', icon: Globe, title: 'Hosted AI app', description: 'ChatGPT or Claude Cowork.' },
+  ] as const
+
   return (
-    <div className="space-y-4">
-      <p className="text-sm text-muted-foreground">
-        Connect this installation to your terminal or an AI assistant. Generate a connection below and paste the
-        commands — the assistant can list workflows, read files, plans, and run logs, and run steps, workflows, and
-        schedules, but cannot change plans or files. One token per account: generating a new one replaces it everywhere.
-        The token expires after 30 days, and you can revoke it here anytime.
-      </p>
+    <div className="space-y-5">
+      <div className="space-y-3">
+        <div>
+          <h3 className="text-base font-semibold text-foreground">Where will you use AgentWorks?</h3>
+          <p className="mt-1 text-sm text-muted-foreground">
+            Choose one setup path. All three use the same connection and can read workflows and run them.
+          </p>
+        </div>
+        <div className="grid gap-2" role="group" aria-label="Connection destination">
+          {destinations.map(({ id, icon: Icon, title, description }) => (
+            <button
+              key={id}
+              type="button"
+              aria-pressed={destination === id}
+              onClick={() => setDestination(id)}
+              className={`flex items-center gap-3 rounded-lg border p-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${destination === id ? 'border-primary bg-primary/5' : 'border-border hover:border-primary/50 hover:bg-muted/30'}`}
+            >
+              <Icon className="h-4 w-4 shrink-0 text-primary" />
+              <span className="flex min-w-0 flex-col gap-0.5">
+                <span className="text-sm font-medium text-foreground">{title}</span>
+                <span className="text-xs text-muted-foreground">{description}</span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
       <SettingsCard
         icon={<KeyRound className="h-4 w-4 text-primary" />}
-        title="Access token"
-        description="One token per account for this installation. It fills in every command and URL below."
+        title="Connection"
+        description="Create one 30-day token that works with any setup path. It can read and run workflows you can access; it cannot edit plans or files."
         actions={
           connection ? (
-            <div className="flex gap-2">
+            <div className="flex flex-wrap gap-2">
               <Button variant="ghost" size="sm" disabled={busy} onClick={() => void copyToken()}>
                 <Copy className="mr-1 h-3.5 w-3.5" />{tokenCopied ? 'Copied' : 'Copy token'}
               </Button>
-              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void generate()}>New token</Button>
+              <Button variant="ghost" size="sm" disabled={busy} onClick={() => void generate()}>Replace token</Button>
               <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
             </div>
           ) : (
             <Button variant="outline" size="sm" disabled={busy || checking} onClick={() => void generate()}>
-              <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Generating…' : 'Generate connection'}
+              <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Creating…' : 'Create connection'}
             </Button>
           )
         }
@@ -270,81 +302,85 @@ export function CliMcpSetupPanel() {
         {checking ? (
           <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
         ) : connection ? (
-          <p className="text-sm text-muted-foreground">Connection active — the commands and URLs below carry a live token. Anyone with them can use it; revoke here when done.</p>
+          <p className="text-sm text-muted-foreground">Connected. The setup instructions below include your token. Replacing it disconnects anything using the previous token.</p>
         ) : (
-          <p className="text-sm text-muted-foreground">Nothing created yet — the previews below use a placeholder until you generate.</p>
+          <p className="text-sm text-muted-foreground">Create a connection to see the instructions for your chosen destination.</p>
         )}
       </SettingsCard>
       <SettingsCard
-        icon={<Terminal className="h-4 w-4 text-primary" />}
-        title="Command line"
-        description={
-          connection
-            ? 'Ready to paste. Installs the CLI and logs it in with this token (reads and runs; never authors).'
-            : 'The command installs the CLI and logs it in.'
-        }
+        icon={destination === 'terminal' ? <Terminal className="h-4 w-4 text-primary" /> : destination === 'local-assistant' ? <Plug className="h-4 w-4 text-primary" /> : <Globe className="h-4 w-4 text-primary" />}
+        title={destination === 'terminal' ? 'Set up the command line' : destination === 'local-assistant' ? 'Connect a local AI app' : 'Connect a hosted AI app'}
+        description={destination === 'terminal' ? 'Use this for terminal commands and scripts.' : destination === 'local-assistant' ? 'Install the CLI on this computer, then add its MCP bridge to your AI app.' : 'Use the HTTPS MCP URL in an AI app that connects from the cloud. No CLI install is needed.'}
       >
         {checking ? (
           <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
-        ) : (
+        ) : !connection ? (
+          <p className="rounded-md border border-dashed border-border p-3 text-sm text-muted-foreground">Create a connection above to get the setup details.</p>
+        ) : destination === 'terminal' ? (
           <div className="space-y-2">
-            {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection to fill in a live token. Nothing is created until you generate.</p>}
-            <CommandRow label="Install and log in command" command={installer} />
+            <p className="text-xs font-medium text-foreground">Paste this in your terminal to install the CLI and sign in.</p>
+            <CommandRow label="Install and sign in" command={installer} />
+          </div>
+        ) : destination === 'local-assistant' ? (
+          <div className="space-y-4">
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-foreground">1. Install the CLI on this computer</p>
+              <CommandRow label="Install CLI for local MCP" command={installer} />
+            </div>
+            <div className="space-y-2">
+              <p className="text-xs font-medium text-foreground">2. Choose your AI app</p>
+              <div className="flex flex-wrap gap-2" role="group" aria-label="Local MCP client">
+                <Button variant={localClient === 'claude-code' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'claude-code'} onClick={() => setLocalClient('claude-code')}>Claude Code</Button>
+                <Button variant={localClient === 'codex' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'codex'} onClick={() => setLocalClient('codex')}>Codex</Button>
+                <Button variant={localClient === 'json-client' ? 'default' : 'outline'} size="sm" aria-pressed={localClient === 'json-client'} onClick={() => setLocalClient('json-client')}>JSON MCP client</Button>
+              </div>
+              {localClient === 'claude-code' ? (
+                <CommandRow label="Add AgentWorks to Claude Code" command={`claude mcp add --transport stdio --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
+              ) : localClient === 'codex' ? (
+                <CommandRow label="Add AgentWorks to Codex" command={`codex mcp add agentworks --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} -- agentworks mcp serve`} />
+              ) : (
+                <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into a JSON-configured local MCP client such as Claude Desktop or Cursor. If it cannot find agentworks, run which agentworks in a terminal and use that full path as the command." />
+              )}
+            </div>
+            {localClient === 'claude-code' && (
+              <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+                <summary className="cursor-pointer font-medium text-foreground">Optional: install the AgentWorks skill</summary>
+                <p className="mt-2 mb-2">The skill teaches Claude Code how to use the available workflow tools.</p>
+                <CommandRow label="Install skill for Claude Code" command="agentworks skills install --dir ~/.claude/skills" />
+              </details>
+            )}
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-2" role="group" aria-label="Hosted MCP client">
+              <Button variant={hostedClient === 'chatgpt' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'chatgpt'} onClick={() => setHostedClient('chatgpt')}>ChatGPT</Button>
+              <Button variant={hostedClient === 'cowork' ? 'default' : 'outline'} size="sm" aria-pressed={hostedClient === 'cowork'} onClick={() => setHostedClient('cowork')}>Claude Cowork</Button>
+            </div>
+            <p className="text-xs text-muted-foreground">
+              {hostedClient === 'chatgpt'
+                ? 'In ChatGPT, open Settings → Apps & Connectors → Developer Mode, then add a custom MCP connector.'
+                : 'In Claude Cowork, open Settings → Connectors → Add custom connector.'}
+            </p>
+            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(displayToken)}`} />
+            {isLoopbackOrigin && (
+              <p className="text-xs text-amber-500">This installation is only reachable on your computer. Hosted apps need a public server URL; open Connect on that server instead.</p>
+            )}
+            <p className="text-xs text-muted-foreground">The URL contains your token. Share it only with the app you are connecting.</p>
+            <details className="rounded-md border border-border p-3 text-xs text-muted-foreground">
+              <summary className="cursor-pointer font-medium text-foreground">Optional: give the assistant workflow guidance</summary>
+              <p className="mt-2">Upload the skill where Skills are supported, or paste its text into the app&apos;s custom instructions. The skill contains no token.</p>
+              <div className="mt-3 flex flex-wrap gap-2">
+                <Button variant="outline" size="sm" disabled={skillBusy !== null} onClick={() => void downloadSkill()}>
+                  <Download className="mr-1 h-3.5 w-3.5" />{skillBusy === 'download' ? 'Downloading…' : 'Download skill .zip'}
+                </Button>
+                <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}>
+                  <Copy className="mr-1 h-3.5 w-3.5" />{skillBusy === 'copy' ? 'Copying…' : 'Copy skill text'}
+                </Button>
+              </div>
+              {skillMsg && <p className="mt-2">{skillMsg}</p>}
+            </details>
           </div>
         )}
-      </SettingsCard>
-      <SettingsCard
-        icon={<Plug className="h-4 w-4 text-primary" />}
-        title="AI assistants"
-        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. Install the CLI above first — the bridge runs through its binary, no separate login needed."
-      >
-        <div className="space-y-2">
-          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live token.</p>}
-          <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
-          <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
-          <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client. If it reports the command was not found, replace agentworks with its full path (run `which agentworks` in a terminal — GUI apps often miss ~/.local/bin on PATH)." />
-        </div>
-      </SettingsCard>
-      <SettingsCard
-        icon={<Globe className="h-4 w-4 text-primary" />}
-        title="Hosted AI assistants"
-        description="ChatGPT and Claude Cowork connect over HTTPS — no local install. Paste this URL as a custom MCP server."
-      >
-        <div className="space-y-2">
-          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live URL.</p>}
-          <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(displayToken)}`} />
-          {isLoopbackOrigin && (
-            <p className="text-xs text-amber-500">This installation is only reachable on your machine — ChatGPT and Cowork need a public server URL. Deploy first, then open that server&apos;s Connect tab.</p>
-          )}
-          <p className="text-xs text-muted-foreground">
-            ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
-            Claude Cowork: Settings → Connectors → Add custom connector.
-            Anyone with this URL can use the token — revoke it here when done.
-          </p>
-        </div>
-      </SettingsCard>
-      <SettingsCard
-        icon={<FileText className="h-4 w-4 text-primary" />}
-        title="Assistant skill"
-        description="Teach the hosted assistant your workflows: upload the skill where Skills are supported, or paste its text as custom instructions."
-        actions={
-          <div className="flex gap-2">
-            <Button variant="outline" size="sm" disabled={skillBusy !== null} onClick={() => void downloadSkill()}>
-              <Download className="mr-1 h-3.5 w-3.5" />{skillBusy === 'download' ? 'Downloading…' : 'Download .zip'}
-            </Button>
-            <Button variant="ghost" size="sm" disabled={skillBusy !== null} onClick={() => void copySkill()}>
-              <Copy className="mr-1 h-3.5 w-3.5" />{skillBusy === 'copy' ? 'Copying…' : 'Copy text'}
-            </Button>
-          </div>
-        }
-      >
-        {skillMsg && <p className="text-xs text-muted-foreground">{skillMsg}</p>}
-        <p className="text-xs text-muted-foreground">
-          ChatGPT (eligible plans): sidebar → Plugins → Skills → Create → Upload from your computer.
-          On plans without Skills, paste the text into Settings → Personalization → Custom Instructions.
-          Claude Cowork: upload as a skill, or paste into the connector&apos;s Instructions field.
-          The skill names this installation but carries no credential.
-        </p>
       </SettingsCard>
     </div>
   )

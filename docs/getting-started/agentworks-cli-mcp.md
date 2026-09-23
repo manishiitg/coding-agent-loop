@@ -10,8 +10,10 @@ paths stay in the server for a future write-enabled API version.
 ## Install the CLI
 
 Open Setup → Integrations → Connect on any installation — server or local —
-and paste the one command: it downloads the CLI build matching that server,
-verifies its checksum, installs it to `~/.local/bin`, and logs in with the
+and choose **Terminal or scripts**, **AI app on this computer**, or
+**Hosted AI app**. Create a connection to reveal instructions for that
+destination. The terminal installer downloads the CLI build matching that
+server, verifies its checksum, installs it to `~/.local/bin`, and logs in with the
 generated token, which reads and runs. macOS and Linux on arm64/amd64 are
 supported.
 One token per account: generating a new one replaces the current token
@@ -143,10 +145,11 @@ file. `AGENTWORKS_SERVER` and `AGENTWORKS_TOKEN` support automation without savi
 credentials. HTTPS is required except on loopback development addresses.
 Redirects are refused to avoid forwarding credentials to another location.
 
-## Connect Claude Code
+## Connect a local AI app
 
-Register the local MCP bridge (copy the exact command from the Connect tab —
-it fills in your server and token):
+Choose **AI app on this computer** in Connect. Install the CLI first, then
+choose Claude Code, Codex, or a JSON-configured MCP client. The commands
+include your server and token. Claude Code uses:
 
 ```sh
 claude mcp add --transport stdio --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… agentworks -- agentworks mcp serve
@@ -155,6 +158,14 @@ claude mcp add --transport stdio --env AGENTWORKS_SERVER=https://your-server --e
 Passing the server and token as env keeps the bridge self-sufficient: it
 works without a prior `agentworks login` on that machine. Log in as well if
 you also use the CLI directly.
+
+Codex uses its own registration command:
+
+```sh
+codex mcp add agentworks --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
+```
+
+The command follows [Codex's documented stdio MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
 
 The bridge runs locally and calls your configured hosted server. It discovers
 all tool schemas from that server at startup. Restart the bridge after upgrading
@@ -177,8 +188,8 @@ which list every tool, the remote surface is exactly two self-describing
 tools: `get_api_spec` (no arguments lists every available tool, names return
 JSON schemas) and `call_tool` (executes by name). The full catalog —
 product.yaml's external tools plus run tools — resolves internally, so the
-surface stays tiny no matter how run mode grows. The Connect tab's **Hosted
-AI assistants** card shows the ready-to-paste URL for the active
+surface stays tiny no matter how run mode grows. Choose **Hosted AI app**
+in Connect to see the ready-to-paste URL for the active
 installation:
 
 ```text
@@ -191,7 +202,8 @@ https://your-server/api/external/v1/mcp?token=aw_pat_…
 - Direct integrations should send the token in the `Authorization: Bearer`
   header instead of the URL.
 
-The Connect tab's **Assistant skill** card downloads the same guidance as an
+The optional **Give the assistant workflow guidance** section downloads the
+same guidance as an
 uploadable skill zip (`GET /api/external/v1/skill.zip`, a SKILL.md following
 the Agent Skills layout ChatGPT, Claude, and Cowork accept) or copies its
 text (`GET /api/external/v1/skill.md`). Upload it via ChatGPT's Plugins →

@@ -7196,7 +7196,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						restoredConversationPathForFallback,
 						restoredConversationWorkspace,
-						len(historyForAgent),
 					)
 				} else {
 					chatQuery = appendRestoredConversationContext(chatQuery, restoredConversationPathForFallback)
@@ -7236,10 +7235,9 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						chatQuery,
 						codingFallbackConversationPath,
 						codingFallbackWorkspace,
-						len(historyForAgent),
 					)
 					historyToReplay = nil
-					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for complete %d-message conversation archive %s", len(historyForAgent), codingFallbackConversationPath)
+					logfWithContext(queryLogCtx, "[CONVERSATION] Native coding-agent continuation unavailable; sending visible archive-read instruction with the current user message for conversation archive %s (in-memory history: %d messages)", codingFallbackConversationPath, len(historyForAgent))
 				} else {
 					// A missing archive is an exceptional durability failure. Preserve
 					// enough immediate context to answer rather than starting blind.
@@ -7258,7 +7256,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 		}
 
 		if modeChangedThisTurn && isCodingAgentProvider(finalProvider, finalModelID) && modeChangeConversationPath != "" {
-			chatQuery = prependCodingAgentContinuityNotice(chatQuery, modeChangeConversationPath, workflowPhaseFolder, len(preModeChangeSnapshot))
+			chatQuery = prependCodingAgentContinuityNotice(chatQuery, modeChangeConversationPath, workflowPhaseFolder)
 		}
 
 		// Store the fully configured agent before streaming starts so ultra-fast background

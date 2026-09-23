@@ -81,9 +81,8 @@ func TestBuildCodingAgentContinuityNoticePointsAtProjectArchive(t *testing.T) {
 	got := buildCodingAgentContinuityNotice(
 		"_users/u/Chats/Work/projects/demo/builder/conversation/2026-09-17/session-chat-conversation.json",
 		"_users/u/Chats/Work/projects/demo",
-		119,
 	)
-	if !strings.Contains(got, "complete 119-message conversation archive") || !strings.Contains(got, "Before answering that message") {
+	if !strings.Contains(got, "read the complete conversation archive") || !strings.Contains(got, "Before answering that message") {
 		t.Fatalf("notice does not require the complete archive read: %s", got)
 	}
 	if !strings.Contains(got, "builder/conversation/2026-09-17/session-chat-conversation.json") {
@@ -98,7 +97,6 @@ func TestBuildCodingAgentContinuityNoticeNormalizesUserPrefixedProjectPath(t *te
 	got := buildCodingAgentContinuityNotice(
 		"_users/u/Chats/Work/projects/demo/builder/conversation/session.json",
 		"Chats/Work/projects/demo",
-		140,
 	)
 	if !strings.Contains(got, "at builder/conversation/session.json (relative to the project workspace)") {
 		t.Fatalf("notice path is not relative to the provider cwd: %s", got)
@@ -113,7 +111,6 @@ func TestPrependCodingAgentContinuityNoticeUsesSameVisibleUserTurn(t *testing.T)
 		"when will it get picked up?",
 		"_users/u/Chats/Work/projects/demo/builder/conversation/session.json",
 		"_users/u/Chats/Work/projects/demo",
-		119,
 	)
 	if !strings.HasPrefix(got, "[AGENTWORKS CONVERSATION CONTINUITY]") {
 		t.Fatalf("combined user turn does not begin with continuity notice: %s", got)

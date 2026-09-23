@@ -40,7 +40,7 @@ describe('shared transcript failure retry', () => {
     const host = await mount([event('continuity', 'user_message', { content: raw })])
     const notice = host.querySelector('[data-testid="conversation-continuity-notice"]')!
     expect(notice.textContent).toContain('Conversation restored')
-    expect(notice.textContent).toContain('423 earlier messages loaded')
+    expect(notice.textContent).toContain('Previous conversation loaded')
     expect((notice as HTMLDetailsElement).open).toBe(false)
     expect(notice.querySelector('summary')?.textContent).not.toContain('builder/conversation/private.json')
   })

@@ -206,7 +206,7 @@ func resolveProfileRuntimeModel(runtime agentprofiles.RuntimePolicy, requestedPr
 		// exactly these ids"). Missing this fell through to the profile's
 		// unrelated default provider option below, discarding both the
 		// requested provider AND model. Caught live: switching SparkQuill's
-		// composer from Luna to Terra (both gpt-5.6, both codex-cli) silently
+		// composer from Luna to Sol (both codex-cli) silently
 		// ran the next turn on claude-code with no prior conversation context.
 		for _, id := range option.Models {
 			if strings.EqualFold(requestedModelID, strings.TrimSpace(id)) {

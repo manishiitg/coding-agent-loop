@@ -1,6 +1,6 @@
 {
   "captured_at": "2026-08-10T12:30:00+05:30",
-  "purpose": "Pre-change baseline for the coding-agent default-tier retune (provider 233f3c6: codex-cli High xhigh->medium, Medium terra/medium->luna/high, claude-code Low high->medium) and for the reflection cost/timing split. Every figure here predates the 12:26 IST restart that made those live.",
+  "purpose": "Pre-change baseline for the coding-agent default-tier retune (provider 233f3c6: codex-cli High xhigh->medium, Medium model/medium->luna/high, claude-code Low high->medium) and for the reflection cost/timing split. Every figure here predates the 12:26 IST restart that made those live.",
   "workflows": {
     "build-in-public": {
       "cost_by_step": {

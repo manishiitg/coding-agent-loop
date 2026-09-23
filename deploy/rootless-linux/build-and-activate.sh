@@ -368,7 +368,15 @@ for path in "${PUBLIC_CHECK_PATHS[@]:-}"; do
   [[ -z "$path" ]] || curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN$path"
 done
 for file in install-agentworks.sh version.json; do
-  curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN/api/downloads/cli/$file"
+  # The agent must serve both assets. A password-gated product returns 401
+  # for anonymous public requests to these paths, just like /api/health.
+  curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$AGENT_PORT/api/downloads/cli/$file"
+  if [[ "$public_code" == 401 ]]; then
+    cli_public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/downloads/cli/$file")"
+    [[ "$cli_public_code" == 401 ]] || { echo "https://$DOMAIN/api/downloads/cli/$file returned $cli_public_code, expected 401" >&2; exit 1; }
+  else
+    curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN/api/downloads/cli/$file"
+  fi
 done
 
 rm -f "$BUILD_DIR/.deploying"

@@ -15,12 +15,8 @@ func TestPriorPreValidationFailuresAreCarriedIntoTheNextRun(t *testing.T) {
 	ctx := context.Background()
 	workspacePath := concernsWorkspace(t)
 
-	if _, err := RecordRunConcerns(ctx, workspacePath, "iteration-0", "", "deliver-briefing",
-		ConcernPhasePreValidation,
-		"CONCERNS: prevalidation gate failed at delivery_receipt.json $.delivery_status: Path $.delivery_status must exist but was not found",
-	); err != nil {
-		t.Fatalf("record concern: %v", err)
-	}
+	seedRunConcerns(t, workspacePath, "iteration-0", "", "deliver-briefing", ConcernPhasePreValidation,
+		"prevalidation gate failed at delivery_receipt.json $.delivery_status: Path $.delivery_status must exist but was not found")
 
 	failures, err := LoadPriorPreValidationFailures(ctx, workspacePath, "deliver-briefing", 10)
 	if err != nil {
@@ -46,13 +42,11 @@ func TestPriorFailuresAreScopedToTheStepAndPhase(t *testing.T) {
 	workspacePath := concernsWorkspace(t)
 
 	for _, c := range []struct{ step, phase, text string }{
-		{"deliver-briefing", ConcernPhasePreValidation, "CONCERNS: mine"},
-		{"other-step", ConcernPhasePreValidation, "CONCERNS: not mine"},
-		{"deliver-briefing", ConcernPhaseExecution, "CONCERNS: different phase"},
+		{"deliver-briefing", ConcernPhasePreValidation, "mine"},
+		{"other-step", ConcernPhasePreValidation, "not mine"},
+		{"deliver-briefing", ConcernPhaseExecution, "different phase"},
 	} {
-		if _, err := RecordRunConcerns(ctx, workspacePath, "iteration-0", "", c.step, c.phase, c.text); err != nil {
-			t.Fatalf("record %s/%s: %v", c.step, c.phase, err)
-		}
+		seedRunConcerns(t, workspacePath, "iteration-0", "", c.step, c.phase, c.text)
 	}
 
 	failures, err := LoadPriorPreValidationFailures(ctx, workspacePath, "deliver-briefing", 10)

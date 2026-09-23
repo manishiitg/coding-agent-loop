@@ -47,7 +47,7 @@ This is a focused regression test for Codex cancel-then-resume behavior.`,
 
 		modelID := viper.GetString("test.model")
 		if modelID == "" {
-			modelID = "gpt-5.3-codex-spark"
+			modelID = "gpt-6-luna"
 		}
 
 		logger.Info("=== Codex Resume After Cancel Test ===")

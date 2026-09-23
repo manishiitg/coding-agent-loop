@@ -121,19 +121,19 @@ profile:
         label: Claude Code
         provider: claude-code
         model_id: claude-sonnet-5
-        models: [claude-sonnet-5]
+        models: [claude-sonnet-5, claude-opus-5-5]
         reasoning_efforts: [low, medium, high]
         options:
           reasoning_effort: high
-        default: true
       - id: codex-cli
         label: Codex
         provider: codex-cli
-        model_id: gpt-6-astra
-        models: [gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]
+        model_id: gpt-6-luna
+        models: [gpt-6-luna, gpt-6-sol, gpt-6-astra]
         reasoning_efforts: [low, medium, high]
         options:
           reasoning_effort: medium
+        default: true
     agent_tools:
       mode: mcp_only
     capabilities:
@@ -247,19 +247,19 @@ profiles:
           label: Claude Code
           provider: claude-code
           model_id: claude-sonnet-5
-          models: [claude-sonnet-5]
+          models: [claude-sonnet-5, claude-opus-5-5]
           reasoning_efforts: [low, medium, high]
           options:
             reasoning_effort: medium
-          default: true
         - id: codex-cli
           label: Codex
           provider: codex-cli
-          model_id: gpt-5.6-luna
-          models: [gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]
+          model_id: gpt-6-luna
+          models: [gpt-6-luna, gpt-6-sol, gpt-6-astra]
           reasoning_efforts: [low, medium, high]
           options:
             reasoning_effort: high
+          default: true
       agent_tools:
         mode: mcp_only
       capabilities:

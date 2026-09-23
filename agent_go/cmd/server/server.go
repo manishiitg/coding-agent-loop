@@ -11167,6 +11167,9 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 					sched.PulseModeReason = strings.TrimSpace(policy.PulseModeReason)
 				}
 				if policy.SetPulseMode {
+					if strings.EqualFold(strings.TrimSpace(policy.PulseMode), schedulepolicy.LegacyFullPulseMode) {
+						return "", schedulepolicy.ValidatePulse(policy.PulseMode, policy.PulseModeReason)
+					}
 					sched.PulseMode = strings.ToLower(strings.TrimSpace(policy.PulseMode))
 				}
 				if policy.SetExecutionMode {
@@ -11204,6 +11207,17 @@ func (api *StreamingAPI) buildSchedulerCallbacks() *todo_creation_human.Schedule
 				}
 				if err := validateScheduleRuntimePolicy(*sched); err != nil {
 					return "", err
+				}
+			}
+			// A stored legacy "full" was not chosen in this request: save it as
+			// basic and keep the workflow's review on its own Pulse schedule.
+			if strings.EqualFold(strings.TrimSpace(sched.PulseMode), schedulepolicy.LegacyFullPulseMode) {
+				sched.PulseMode = schedulepolicy.NormalizePulse(sched.PulseMode)
+				if sched.Enabled {
+					if manifest.Pulse == nil {
+						manifest.Pulse = &WorkflowPulseConfig{}
+					}
+					manifest.Pulse.Enabled = true
 				}
 			}
 			if err := schedulepolicy.ValidatePulse(sched.PulseMode, sched.PulseModeReason); err != nil {

@@ -112,19 +112,19 @@ describe('FamilyWorkspace', () => {
     const files: Record<string, string> = {}
     const ws = new FamilyWorkspace(fakeRequester(files).request)
 
-    await ws.saveEngine('parent', 'codex-cli', 'gpt-6-astra')
-    expect(JSON.parse(files['Chats/SparkQuill/family.json'])).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-astra' })
+    await ws.saveEngine('parent', 'codex-cli', 'gpt-6-sol')
+    expect(JSON.parse(files['Chats/SparkQuill/family.json'])).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-sol' })
 
-    await ws.saveEngine('child', 'codex-cli', 'gpt-5.6-luna')
+    await ws.saveEngine('child', 'codex-cli', 'gpt-6-luna')
     const afterChildPick = JSON.parse(files['Chats/SparkQuill/family.json'])
-    expect(afterChildPick).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-astra', child_model: 'gpt-5.6-luna' })
+    expect(afterChildPick).toEqual({ engine: 'codex-cli', parent_model: 'gpt-6-sol', child_model: 'gpt-6-luna' })
 
     // Switching the child's engine without naming a model drops only the
     // child's old model — the parent's pick is untouched.
     await ws.saveEngine('child', 'claude-code')
     const afterChildEngineSwitch = JSON.parse(files['Chats/SparkQuill/family.json'])
     expect(afterChildEngineSwitch.engine).toBe('claude-code')
-    expect(afterChildEngineSwitch.parent_model).toBe('gpt-6-astra')
+    expect(afterChildEngineSwitch.parent_model).toBe('gpt-6-sol')
     expect(afterChildEngineSwitch.child_model).toBeUndefined()
   })
 

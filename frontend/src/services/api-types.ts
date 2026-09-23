@@ -570,6 +570,7 @@ export interface PulseModuleStateResponse {
   goal_work?: PulseGoalWorkItem[]
   goal_work_error?: string
   autonomy_run?: PulseAutonomyRun
+  focus_areas?: string[]
   error?: string
 }
 
@@ -3427,6 +3428,7 @@ export interface UpdateWorkflowManifestRequest {
   pulse_enabled?: boolean
   pulse_disabled_review_modules?: PulseReviewerModule[]
   pulse_autonomy_run?: PulseAutonomyRun
+  pulse_focus_areas?: string[]
   run_notification_instructions?: string
   pulse_notification_instructions?: string
   run_notification_channels?: string[]

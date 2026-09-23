@@ -29,6 +29,13 @@ still pending. Supersedes the role split in PLAT-303/305 for Strategy.
   `(user request, date)` and `[boundary]` / `[choice]` markers. The UI shows a
   constraint's class on its challenge; the Goals & rules panel is the existing
   soul summary and does not tag each constraint yet.
+- Step concerns: steps end with a plain `CONCERNS:` line per consequential
+  non-fatal problem (scripted steps print it to stdout). Go collects the lines
+  written since the previous Pulse started (`pulse_step_concerns.go`) and hands
+  them to Pulse in `get_pulse_state(view="module").step_concerns` and
+  `view="step_concerns"`. The Gate, Goal Work and Technical use them as leads;
+  nothing turns them into findings automatically. The old `record_run_concern`
+  tool and Go harvester are removed.
 - UI: `PulseWorkspace` has **For you** (goal summary, goal progress, Needs you,
   `PulseGoalWork`: Did for you, Challenging your rules, Next up, Pulse
   permissions) and **Platform health** (Drift, Technical, Architecture,

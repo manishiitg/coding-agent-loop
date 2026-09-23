@@ -1,4 +1,4 @@
-import { intermediateUpdateFromTranscriptChunk } from '../transcriptChunkUpdates'
+import { normalizeTranscriptChunkEvents } from '../transcriptChunkUpdates'
 import { getOwnedTerminalOwnerKeys, getTerminalOwnerPayload } from './eventOwnership'
 import { parseProductInteraction } from '../interactions'
 import { isMainAgentTerminal } from './terminalIdentity'
@@ -879,7 +879,7 @@ export function selectTerminalEvents(
   keepInteractionKinds?: ReadonlySet<string>,
 ): PollingEvent[] {
   if (!events || events.length === 0) return []
-  events = events.map(event => intermediateUpdateFromTranscriptChunk(event) || event)
+  events = normalizeTranscriptChunkEvents(events)
 
   // The normal Chat/Schedule product surface is the main conversation, not a
   // terminal inspector. It intentionally excludes workflow-step and child
@@ -1045,7 +1045,7 @@ export function buildTranscriptItems(events: PollingEvent[]): TranscriptItem[] {
   // Filter wrapper noise before lifecycle deduplication. Otherwise a generic
   // completion can supersede the richer delegated completion and then be
   // removed itself, accidentally hiding both records.
-  const transcriptEvents = events.map(event => intermediateUpdateFromTranscriptChunk(event) || event).filter(isTranscriptEvent)
+  const transcriptEvents = normalizeTranscriptChunkEvents(events).filter(isTranscriptEvent)
   const visibleEvents = dropStaleEmptyThinkingActivity(dropAdjacentFrontendUserEchoes(dropAnswersRepeatedByCompletionCard(
     dropDuplicateExecutionPromptMessages(collapseCompletedLifecycleStarts(transcriptEvents)),
   )))

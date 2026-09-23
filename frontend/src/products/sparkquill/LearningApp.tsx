@@ -65,6 +65,8 @@ import { loadAgentProfileCapabilityEnabled, loadAgentProfileProviderOptions, typ
 import PulseHistoryViewer from './platform/PulseHistoryViewer'
 import type { ProductNotification } from '../../platform/notifications/useProductNotifications'
 import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickoff } from './platform/ChildPlatformChat'
+import { completedSparkQuillTurns } from './platform/turnRefresh'
+import { useChatStore } from '../../stores/useChatStore'
 import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
 import { readReminderSoundPref, persistReminderSoundPref } from './notifySound'
@@ -559,7 +561,7 @@ function SceneFrame({ html, activityDir }: { html: string; activityDir: string }
 // list glyph, and aren't a page to peek into). `large` gives it noticeably
 // more room — used when it's the only item in the activity, so there's
 // nothing else competing for space and more of the real content shows at once.
-function ActivityItemPreview({ path, name, large }: { path: string; name: string; large?: boolean }) {
+function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; name: string; large?: boolean; refreshKey: number }) {
   const [content, setContent] = useState<{ kind: 'html' | 'md'; text: string } | null>(null)
   useEffect(() => {
     let cancelled = false
@@ -574,7 +576,7 @@ function ActivityItemPreview({ path, name, large }: { path: string; name: string
       })
       .catch(() => { if (!cancelled) setContent(null) })
     return () => { cancelled = true }
-  }, [path])
+  }, [path, refreshKey])
   if (!content) {
     return (
       <div className="fl-file-item-row">
@@ -1599,6 +1601,18 @@ export default function LearningApp() {
     setChildViewerPath(path)
     setChildViewerRefreshKey((k) => k + 1)
   }, [])
+  // Editing an existing activity often writes files without calling open_file
+  // or open_activity again. Refresh the current previews when that chat turn
+  // ends, including an activity overview whose item paths have not changed.
+  useEffect(() => useChatStore.subscribe((current, previous) => {
+    const finished = completedSparkQuillTurns(current.chatTabs, previous.chatTabs)
+    if (!finished.parent && !finished.child) return
+    setMapRefreshKey((k) => k + 1)
+    setWsRefreshKey((k) => k + 1)
+    setViewerRefreshKey((k) => k + 1)
+    if (finished.parent) setChildTreeRefreshKey((k) => k + 1)
+    if (finished.child) setChildViewerRefreshKey((k) => k + 1)
+  }), [setChildTreeRefreshKey, setMapRefreshKey, setViewerRefreshKey, setWsRefreshKey])
   const childSceneDir = childActivity?.dir ?? ''
   const renderChildScene = useCallback((html: string) => <SceneFrame html={html} activityDir={childSceneDir} />, [childSceneDir])
   useEffect(() => { loadPins() }, [loadPins, mapRefreshKey])
@@ -2814,7 +2828,7 @@ export default function LearningApp() {
                         <div className="fl-package-detail-items">
                           {act.items.map((item) => (
                             <div key={item.path} className="fl-file-item fl-package-item has-preview">
-                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} />
+                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} refreshKey={mapRefreshKey} />
                               <button
                                 type="button"
                                 className="fl-item-open-btn"
@@ -2919,7 +2933,7 @@ export default function LearningApp() {
                           {showDetails && act.goal && <p className="fl-package-goal"><strong>Goal:</strong> {act.goal}</p>}
                           {expanded && act.items.map((item) => (
                             <div key={item.path} className="fl-file-item fl-package-item has-preview">
-                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} />
+                              <ActivityItemPreview path={item.path} name={item.name} large={act.items.length === 1} refreshKey={mapRefreshKey} />
                               <button
                                 type="button"
                                 className="fl-item-open-btn"

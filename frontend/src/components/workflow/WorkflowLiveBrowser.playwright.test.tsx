@@ -2,7 +2,7 @@
 import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, expect, it, vi } from 'vitest'
-import WorkflowLiveBrowser from './WorkflowLiveBrowser'
+import WorkflowLiveBrowser, { BROWSER_RECONNECT_ATTEMPTS, browserReconnectDelayMs, mapToViewport } from './WorkflowLiveBrowser'
 const api = vi.hoisted(() => ({ get: vi.fn(), post: vi.fn() }))
 vi.mock('../../services/api', () => ({ default: api, getApiBaseUrl: () => 'http://localhost', getAuthToken: () => 'viewer-token' }))
 vi.mock('../../hooks/useCanWriteWorkflow', () => ({ useCanWriteWorkflow: () => true }))
@@ -44,7 +44,7 @@ it('shows both browser types but makes Playwright watch-only even for workflow w
   expect(api.post).not.toHaveBeenCalled()
   await act(async () => {
     FakeSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/', metadata: { deviceWidth: 640, deviceHeight: 480 } }) })
-    FakeSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'tabs', tabs: [{ tabId: 't1', title: 'Checkout', url: 'http://localhost', active: false }] }) })
+    FakeSocket.instances[0].onmessage?.({ data: JSON.stringify({ type: 'tabs', tabs: [{ tabId: 't1', title: 'Checkout', url: 'http://localhost', active: false }, { tabId: 't2', title: 'Home', url: 'http://localhost/home', active: true }] }) })
   })
   expect(host.querySelector('img')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/')
   const tab = [...host.querySelectorAll('button')].find(button => button.textContent === 'Checkout')!
@@ -52,6 +52,8 @@ it('shows both browser types but makes Playwright watch-only even for workflow w
   const selector = host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement
   await act(async () => { selector.value = 'agent-test'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(buttons()).toContain('Take control')
+  expect(buttons()).not.toContain('Start recording')
+  await act(async () => { (host.querySelector('button[aria-label="More browser options"]') as HTMLButtonElement).click() })
   expect(buttons()).toContain('Start recording')
 })
 
@@ -60,16 +62,16 @@ it('fits the browser automatically while preserving its aspect ratio', async () 
   const { host } = await mountBrowser()
   await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/', metadata: { deviceWidth: 900, deviceHeight: 1600 } }) }) })
   const image = host.querySelector('img')!
-  expect(image.className).toContain('max-h-full')
-  expect(image.className).toContain('max-w-full')
-  expect(image.className).toContain('h-auto')
-  expect(image.className).toContain('w-auto')
+  // Fill the panel and letterbox: never cropped, never a tiny centered image.
+  expect(image.className).toContain('object-contain')
+  expect(image.className).toContain('h-full')
+  expect(image.className).toContain('w-full')
 })
 
 const shared = { browser_session: 'shared-browser', workflow_session: 'shared', label: 'Shared browser · all users' }
 const testBrowser = (id: string) => ({ browser_session: id, workflow_session: 'child-run', label: `Login ${id}`, kind: 'playwright', read_only: 'true' })
-async function mountBrowser() {
-  vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] })
+async function mountBrowser(fakeTimeouts = false) {
+  vi.useFakeTimers({ toFake: fakeTimeouts ? ['setInterval', 'clearInterval', 'setTimeout', 'clearTimeout'] : ['setInterval', 'clearInterval'] })
   vi.stubGlobal('IS_REACT_ACT_ENVIRONMENT', true)
   vi.stubGlobal('WebSocket', FakeSocket)
   api.post.mockResolvedValue({ data: { recording: false } })
@@ -77,7 +79,8 @@ async function mountBrowser() {
   const root = createRoot(host)
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   await act(async () => { root.render(<WorkflowLiveBrowser workspacePath="Workflow/test" />) })
-  return { root, host, selector: host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement }
+  const picker = () => host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement
+  return { root, host, picker, get selector() { return picker() } }
 }
 async function pollBrowsers(sessions: unknown[]) {
   api.get.mockResolvedValue({ data: { sessions } })
@@ -85,38 +88,40 @@ async function pollBrowsers(sessions: unknown[]) {
 }
 it('follows new Playwright cases instead of staying on the default shared blank browser', async () => {
   api.get.mockResolvedValue({ data: { sessions: [shared] } })
-  const { host, selector } = await mountBrowser()
-  expect(selector.value).toBe('shared-browser')
+  const { host, picker } = await mountBrowser()
+  expect(picker()).toBeNull()
+  expect(host.querySelector('header')?.textContent).toContain('Shared browser · all users')
+  expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/shared-browser/stream')
   await pollBrowsers([shared, testBrowser('pw-one')])
-  expect(selector.value).toBe('playwright-tests')
+  expect(picker().value).toBe('playwright-tests')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-one/stream')
   await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/' }) }) })
   expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/')
   await pollBrowsers([shared])
-  expect(selector.value).toBe('playwright-tests')
   expect(host.textContent).toContain('Completed')
   expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/')
   expect(host.querySelector('img')?.alt).toBe('Last Playwright test frame')
   await pollBrowsers([shared, testBrowser('pw-two')])
-  expect(selector.value).toBe('playwright-tests')
+  expect(picker().value).toBe('playwright-tests')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-two/stream')
   expect(host.querySelector('img')).toBeNull()
   expect(host.textContent).not.toContain('Completed')
   await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/new' }) }) })
   expect(host.querySelector('img')?.src).toBe('data:image/jpeg;base64,/9j/new')
 })
+const crew = { browser_session: 'crew-browser', workflow_session: 'crew', label: 'Crew browser' }
 it('follows the managed browser while waiting for the next Playwright test', async () => {
-  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  api.get.mockResolvedValue({ data: { sessions: [shared, crew] } })
   const { host, selector } = await mountBrowser()
   expect([...selector.options].map(option => option.textContent)).toContain('Follow browser activity')
   await act(async () => { selector.value = 'playwright-tests'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(sessionStorage.getItem('browser-selection:Workflow/test')).toBe('playwright-tests')
-  await pollBrowsers([shared])
+  await pollBrowsers([shared, crew])
   expect(selector.value).toBe('playwright-tests')
   expect(selector.selectedOptions[0].textContent).toBe('Shared browser · all users · Auto')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/shared-browser/stream')
   expect([...host.querySelectorAll('button')].map(button => button.textContent)).toContain('Take control')
-  await pollBrowsers([shared, testBrowser('pw-selected')])
+  await pollBrowsers([shared, crew, testBrowser('pw-selected')])
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/pw-selected/stream')
 })
 
@@ -131,9 +136,8 @@ it('migrates a saved follow-latest-test selection to the managed Crew browser wh
   const root = createRoot(host)
   cleanups.push(() => { act(() => root.unmount()); host.remove() })
   await act(async () => { root.render(<WorkflowLiveBrowser workspacePath="Chats/Work/projects/gptlive1" scopeNoun="project" />) })
-  const selector = host.querySelector('select[aria-label="Browser session"]') as HTMLSelectElement
-  expect(selector.value).toBe('playwright-tests')
-  expect(selector.selectedOptions[0].textContent).toBe('Persistent browser · Auto')
+  expect(host.querySelector('select[aria-label="Browser session"]')).toBeNull()
+  expect(host.querySelector('header')?.textContent).toContain('Persistent browser')
   expect(String(FakeSocket.instances.at(-1)?.url)).toContain('/crew-browser/stream')
   expect(host.textContent).not.toContain('Waiting for a Playwright test')
 })
@@ -179,7 +183,7 @@ it('does not show a retained test frame when the shared browser is selected', as
   api.get.mockResolvedValue({ data: { sessions: [shared, testBrowser('pw-one')] } })
   const { host, selector } = await mountBrowser()
   await act(async () => { FakeSocket.instances.at(-1)?.onmessage?.({ data: JSON.stringify({ type: 'frame', data: '/9j/test' }) }) })
-  await pollBrowsers([shared])
+  await pollBrowsers([shared, crew])
   await act(async () => { selector.value = 'shared-browser'; selector.dispatchEvent(new Event('change', { bubbles: true })) })
   expect(host.querySelector('img')).toBeNull()
   expect(host.textContent).not.toContain('Completed')
@@ -257,12 +261,159 @@ it('allows tall page resizing only after control and maps clicks to the new view
 })
 
 it('renders the standard header with the session picker below it', async () => {
-  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  api.get.mockResolvedValue({ data: { sessions: [shared, crew] } })
   const { host, selector } = await mountBrowser()
   expect(host.querySelector('header h2')?.textContent).toBe('Browser')
   expect(host.querySelector('header [role="status"]')?.textContent).toBeTruthy()
-  expect(host.textContent).toContain('Watch and control the browser your helper uses.')
+  expect(host.textContent).toContain('See what your helper does in its browser.')
+  expect(host.textContent).not.toContain('streaming-capable')
   const header = host.querySelector('header')!
   expect(header.contains(selector)).toBe(false)
   expect(header.compareDocumentPosition(selector) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+})
+
+const frameMessage = (data = '/9j/') => ({ data: JSON.stringify({ type: 'frame', data, metadata: { deviceWidth: 1280, deviceHeight: 800 } }) })
+const buttonNamed = (host: HTMLElement, name: string) => [...host.querySelectorAll('button')].find(button => button.textContent === name || button.getAttribute('aria-label') === name) as HTMLButtonElement | undefined
+
+it('explains the idle state in plain language without a picker or controls', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [] } })
+  const { host, picker } = await mountBrowser()
+  expect(host.textContent).toContain('Your helper isn’t using a browser right now — it opens one when needed.')
+  expect(picker()).toBeNull()
+  expect(buttonNamed(host, 'Take control')).toBeUndefined()
+  expect(buttonNamed(host, 'Reconnect')).toBeUndefined()
+  expect(FakeSocket.instances).toHaveLength(0)
+})
+
+it('shows a starting message, then a slim live bar with page title and URL', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host } = await mountBrowser()
+  expect(host.textContent).toContain('Starting browser…')
+  expect(host.textContent).not.toContain('streaming-capable')
+  const ws = FakeSocket.instances.at(-1)!
+  await act(async () => {
+    ws.onmessage?.(frameMessage())
+    ws.onmessage?.({ data: JSON.stringify({ type: 'tabs', tabs: [{ tabId: 't1', title: 'Pricing', url: 'https://example.com/pricing', active: true }] }) })
+  })
+  const bar = host.querySelector('.live-browser-bar')!
+  expect(bar).not.toBeNull()
+  expect(host.querySelector('header')).toBeNull()
+  expect(host.textContent).not.toContain('See what your helper does')
+  expect(bar.querySelector('[role="status"]')?.textContent).toBe('Live')
+  expect(bar.textContent).toContain('Pricing')
+  expect(bar.textContent).toContain('https://example.com/pricing')
+  // A single tab needs no tab strip.
+  expect(host.querySelector('[aria-label="Browser tabs"]')).toBeNull()
+  expect(buttonNamed(host, 'Take control')).toBeDefined()
+})
+
+it('reconnects automatically with backoff after the browser restarts', async () => {
+  expect(browserReconnectDelayMs(0)).toBe(1000)
+  expect(browserReconnectDelayMs(1)).toBe(2000)
+  expect(browserReconnectDelayMs(10)).toBe(15000)
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host } = await mountBrowser(true)
+  const first = FakeSocket.instances.at(-1)!
+  await act(async () => { first.onmessage?.(frameMessage()) })
+  await act(async () => { first.onclose?.() })
+  expect(host.textContent).toContain('Browser restarted — reconnecting…')
+  expect(buttonNamed(host, 'Reconnect')).toBeUndefined()
+  expect(buttonNamed(host, 'Try again')).toBeUndefined()
+  await act(async () => { vi.advanceTimersByTime(999) })
+  expect(FakeSocket.instances.at(-1)).toBe(first)
+  await act(async () => { vi.advanceTimersByTime(1) })
+  const second = FakeSocket.instances.at(-1)!
+  expect(second).not.toBe(first)
+  expect(String(second.url)).toContain('/shared-browser/stream')
+  await act(async () => { second.onmessage?.(frameMessage('/9j/back')) })
+  expect(host.querySelector('img')?.getAttribute('src')).toBe('data:image/jpeg;base64,/9j/back')
+  expect(host.textContent).not.toContain('reconnecting')
+})
+
+it('gives up after repeated failures with one friendly line and a single Try again', async () => {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host } = await mountBrowser(true)
+  for (let attempt = 0; attempt < BROWSER_RECONNECT_ATTEMPTS; attempt++) {
+    await act(async () => { FakeSocket.instances.at(-1)!.onclose?.() })
+    await act(async () => { vi.advanceTimersByTime(15000) })
+  }
+  expect(FakeSocket.instances).toHaveLength(BROWSER_RECONNECT_ATTEMPTS + 1)
+  await act(async () => { FakeSocket.instances.at(-1)!.onclose?.() })
+  expect(host.textContent).toContain('We couldn’t reconnect to the browser.')
+  expect([...host.querySelectorAll('button')].filter(button => button.textContent === 'Try again')).toHaveLength(1)
+  expect(host.querySelector('details summary')?.textContent).toBe('Details')
+  expect(warn).toHaveBeenCalled()
+  await act(async () => { vi.advanceTimersByTime(60000) })
+  expect(FakeSocket.instances).toHaveLength(BROWSER_RECONNECT_ATTEMPTS + 1)
+  await act(async () => { buttonNamed(host, 'Try again')!.click() })
+  expect(FakeSocket.instances).toHaveLength(BROWSER_RECONNECT_ATTEMPTS + 2)
+  expect(host.textContent).toContain('Starting browser…')
+  warn.mockRestore()
+})
+
+it('hides the browser picker for one browser and shows it for several', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host, picker } = await mountBrowser()
+  expect(picker()).toBeNull()
+  await pollBrowsers([shared, crew])
+  expect(picker()).not.toBeNull()
+  expect([...picker().options].map(option => option.value)).toEqual(['playwright-tests', 'shared-browser', 'crew-browser'])
+  await pollBrowsers([crew])
+  expect(picker()).toBeNull()
+  expect(host.textContent).toContain('Crew browser')
+})
+
+it('keeps recording and page size in an overflow menu that closes on Escape', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host } = await mountBrowser()
+  const ws = FakeSocket.instances.at(-1)!
+  await act(async () => { ws.onmessage?.(frameMessage()) })
+  expect(buttonNamed(host, 'Start recording')).toBeUndefined()
+  const more = buttonNamed(host, 'More browser options')!
+  expect(more.getAttribute('aria-haspopup')).toBe('menu')
+  expect(more.getAttribute('aria-expanded')).toBe('false')
+  await act(async () => { more.click() })
+  expect(more.getAttribute('aria-expanded')).toBe('true')
+  const items = [...host.querySelectorAll('[role="menu"] [role="menuitem"]')] as HTMLButtonElement[]
+  expect(items.map(item => item.textContent)).toEqual(['Start recording', 'Tall page · 900 × 1200', 'Wide page · 1280 × 800'])
+  expect(items[1].disabled).toBe(true)
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+  expect(host.querySelector('[role="menu"]')).toBeNull()
+  await act(async () => { ws.onmessage?.({ data: JSON.stringify({ type: 'viewer_control', controlling: true }) }) })
+  expect(buttonNamed(host, 'Give back to helper')?.getAttribute('aria-pressed')).toBe('true')
+  await act(async () => { more.click() })
+  const tall = [...host.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.startsWith('Tall')) as HTMLButtonElement
+  expect(tall.disabled).toBe(false)
+  await act(async () => { tall.click() })
+  expect(ws.send).toHaveBeenCalledWith(JSON.stringify({ type: 'resize_viewport', width: 900, height: 1200 }))
+  expect(host.querySelector('[role="menu"]')).toBeNull()
+  await act(async () => { buttonNamed(host, 'Give back to helper')!.click() })
+  expect(ws.send).toHaveBeenLastCalledWith(JSON.stringify({ type: 'release_control' }))
+})
+
+it('expands the live view and exits on Escape unless the user is in control', async () => {
+  api.get.mockResolvedValue({ data: { sessions: [shared] } })
+  const { host } = await mountBrowser()
+  expect(buttonNamed(host, 'Expand browser')).toBeUndefined()
+  const ws = FakeSocket.instances.at(-1)!
+  await act(async () => { ws.onmessage?.(frameMessage()) })
+  const section = host.querySelector('section')!
+  await act(async () => { buttonNamed(host, 'Expand browser')!.click() })
+  expect(section.className).toContain('fixed inset-0')
+  expect(buttonNamed(host, 'Exit expanded view')?.getAttribute('aria-pressed')).toBe('true')
+  await act(async () => { ws.onmessage?.({ data: JSON.stringify({ type: 'viewer_control', controlling: true }) }) })
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+  expect(section.className).toContain('fixed inset-0')
+  await act(async () => { ws.onmessage?.({ data: JSON.stringify({ type: 'viewer_control', controlling: false }) }) })
+  await act(async () => { document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' })) })
+  expect(section.className).not.toContain('fixed inset-0')
+})
+
+it('maps pointer positions through the letterboxed frame', () => {
+  // 1000×1000 page painted into a 1000×500 box: scale 0.5, 250px bars left and right.
+  const rect = { left: 0, top: 0, width: 1000, height: 500 }
+  expect(mapToViewport(500, 250, rect, { width: 1000, height: 1000 })).toEqual({ x: 500, y: 500 })
+  expect(mapToViewport(250, 0, rect, { width: 1000, height: 1000 })).toEqual({ x: 0, y: 0 })
+  expect(mapToViewport(10, 490, rect, { width: 1000, height: 1000 })).toEqual({ x: 0, y: 980 })
 })

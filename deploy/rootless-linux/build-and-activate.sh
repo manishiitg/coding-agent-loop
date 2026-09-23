@@ -32,7 +32,7 @@ for snippet in "${RUNTIME_CONFIG_REQUIRED_SNIPPETS[@]:-}"; do
   }
 done
 
-for command in git go gcc npm python3; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
+for command in git go gcc npm python3 file sha256sum; do command -v "$command" >/dev/null || { echo "Missing $command" >&2; exit 1; }; done
 PRODUCT="$PRODUCT" EXPECTED_PUBLIC_URL="${EXPECTED_PUBLIC_URL:-}" python3 "$SCRIPT_DIR/deployment_checks.py" preflight
 
 builder_revision="$(git -C "$REPO_ROOT" rev-parse HEAD)"
@@ -74,6 +74,25 @@ mv "$BUILD_DIR/bin/video-studio-agent" "$BUILD_DIR/bin/$PRODUCT-agent"
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/video-studio-landlock-runner" "$REPO_ROOT/workspace/cmd/landlock-runner")
 (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/mcpbridge" ./mcpagent/cmd/mcpbridge)
 GOWORK="$DEPLOY_GOWORK" GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -o "$BUILD_DIR/bin/$PRODUCT-gateway" "$REPO_ROOT/deploy/aws-ec2/server/auth-gateway.go"
+
+echo "==> [$RELEASE_ID] Building AgentWorks CLI downloads"
+mkdir -p "$BUILD_DIR/downloads"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  os="${target%-*}"
+  arch="${target#*-}"
+  name="agentworks-$target"
+  (cd "$WORKSPACE_ROOT" && GOWORK="$DEPLOY_GOWORK" GOOS="$os" GOARCH="$arch" CGO_ENABLED=0 go build -ldflags "-X main.cliVersion=$builder_revision" -o "$BUILD_DIR/downloads/$name" "$REPO_ROOT/agent_go/cmd/agentworks")
+  chmod +x "$BUILD_DIR/downloads/$name"
+  (cd "$BUILD_DIR/downloads" && sha256sum "$name" > "$name.sha256" && sha256sum -c "$name.sha256")
+done
+install -m 0644 "$REPO_ROOT/scripts/install-agentworks-cli.sh" "$BUILD_DIR/downloads/install-agentworks.sh"
+printf '{"version":"%s","release":"%s"}\n' "$builder_revision" "$RELEASE_ID" > "$BUILD_DIR/downloads/version.json"
+bash -n "$BUILD_DIR/downloads/install-agentworks.sh"
+for target in darwin-arm64 darwin-amd64 linux-amd64 linux-arm64; do
+  case "$target" in darwin-*) expected=Mach-O ;; linux-*) expected=ELF ;; esac
+  actual="$(file -b "$BUILD_DIR/downloads/agentworks-$target")"
+  [[ "$actual" == *"$expected"* ]] || { echo "Invalid agentworks-$target binary: $actual" >&2; exit 1; }
+done
 
 echo "==> [$RELEASE_ID] Building frontend"
 (cd "$REPO_ROOT/frontend" && npm ci)
@@ -347,6 +366,17 @@ else
 fi
 for path in "${PUBLIC_CHECK_PATHS[@]:-}"; do
   [[ -z "$path" ]] || curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN$path"
+done
+for file in install-agentworks.sh version.json; do
+  # The agent must serve both assets. A password-gated product returns 401
+  # for anonymous public requests to these paths, just like /api/health.
+  curl -fsS -o /dev/null --max-time 10 "http://127.0.0.1:$AGENT_PORT/api/downloads/cli/$file"
+  if [[ "$public_code" == 401 ]]; then
+    cli_public_code="$(curl -sS -o /dev/null -w '%{http_code}' --max-time 10 "https://$DOMAIN/api/downloads/cli/$file")"
+    [[ "$cli_public_code" == 401 ]] || { echo "https://$DOMAIN/api/downloads/cli/$file returned $cli_public_code, expected 401" >&2; exit 1; }
+  else
+    curl -fsS -o /dev/null --max-time 10 "https://$DOMAIN/api/downloads/cli/$file"
+  fi
 done
 
 rm -f "$BUILD_DIR/.deploying"

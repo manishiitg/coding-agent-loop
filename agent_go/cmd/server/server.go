@@ -3322,6 +3322,10 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery, X-Client-Submitted-At")
+		w.Header().Set("Access-Control-Expose-Headers", "Server-Timing")
+		if originAllowed {
+			w.Header().Set("Timing-Allow-Origin", origin)
+		}
 
 		if r.Method == "OPTIONS" {
 			if origin != "" && !originAllowed {
@@ -3371,9 +3375,19 @@ type statusCapturingResponseWriter struct {
 	http.ResponseWriter
 	status int
 	bytes  int
+	start  time.Time
+}
+
+// stampServerTiming adds time-to-headers as Server-Timing before the headers
+// are sent, so the browser shows server time next to network time.
+func (w *statusCapturingResponseWriter) stampServerTiming() {
+	if w.status == 0 && !w.start.IsZero() && w.Header().Get("Server-Timing") == "" {
+		w.Header().Set("Server-Timing", serverTimingValue(time.Since(w.start)))
+	}
 }
 
 func (w *statusCapturingResponseWriter) WriteHeader(status int) {
+	w.stampServerTiming()
 	if w.status == 0 {
 		w.status = status
 	}
@@ -3381,6 +3395,7 @@ func (w *statusCapturingResponseWriter) WriteHeader(status int) {
 }
 
 func (w *statusCapturingResponseWriter) Write(data []byte) (int, error) {
+	w.stampServerTiming()
 	if w.status == 0 {
 		w.status = http.StatusOK
 	}
@@ -3419,6 +3434,8 @@ func (w *statusCapturingResponseWriter) Unwrap() http.ResponseWriter {
 }
 
 func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler {
+	startAPILatencySummary()
+	slow := apiSlowRequestThreshold()
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !shouldLogAPIRequests() {
 			next.ServeHTTP(w, r)
@@ -3426,8 +3443,11 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 		}
 
 		start := time.Now()
-		recorder := &statusCapturingResponseWriter{ResponseWriter: w}
-		traceRequest := shouldTraceAPIRequest(r)
+		recorder := &statusCapturingResponseWriter{ResponseWriter: w, start: start}
+		route := apiRouteTemplate(r)
+		stream := isAPIStreamRequest(r, route)
+		quiet := isQuietAPIRoute(route)
+		traceRequest := shouldTraceAPIRequest(r) && !quiet && !stream
 		var inFlight int64
 		if traceRequest {
 			inFlight = atomic.AddInt64(&apiRequestsInFlight, 1)
@@ -3438,6 +3458,23 @@ func (api *StreamingAPI) apiRequestLogMiddleware(next http.Handler) http.Handler
 			status := recorder.status
 			if status == 0 {
 				status = http.StatusOK
+			}
+			elapsed := time.Since(start)
+			if stream {
+				// Streams are long-lived by design: one line when they close,
+				// never counted in the latency percentiles.
+				logfWithContext(api.httpRequestLogContext(r), "[API] stream closed %s status=%d bytes=%d duration=%s",
+					route, status, recorder.bytes, elapsed.Round(time.Millisecond))
+				return
+			}
+			apiLatency.record(route, status, elapsed)
+			if quiet && (status < http.StatusBadRequest || status == http.StatusConflict) {
+				return
+			}
+			if !traceRequest && status < http.StatusBadRequest && elapsed >= slow {
+				logfWithContext(api.httpRequestLogContext(r), "[API] slow %s %s request_id=%q status=%d bytes=%d duration=%s",
+					r.Method, requestLogPath(r), requestLogID(r), status, recorder.bytes, elapsed.Round(time.Millisecond))
+				return
 			}
 			if traceRequest {
 				remaining := atomic.AddInt64(&apiRequestsInFlight, -1)

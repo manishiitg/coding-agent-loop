@@ -698,6 +698,16 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
   const prevWorkflowWorkspaceViewRef = useRef<string | null>(null)
 
   const workflowHydrationsInFlight = useRef(new Map<string, Promise<void>>())
+  // Tabs of the opened workflow that were not selected: loaded when opened.
+  const deferredWorkflowHydrations = useRef(new Map<string, () => Promise<void>>())
+  useEffect(() => useChatStore.subscribe((current, previous) => {
+    if (current.activeTabId === previous.activeTabId || !current.activeTabId) return
+    const sessionId = current.chatTabs[current.activeTabId]?.sessionId
+    const load = sessionId ? deferredWorkflowHydrations.current.get(sessionId) : undefined
+    if (!sessionId || !load) return
+    deferredWorkflowHydrations.current.delete(sessionId)
+    void load().catch(error => logger.warn('WorkflowLayout', `Failed to restore ${sessionId}:`, error))
+  }), [])
   const rehydrateWorkflowTabs = useCallback(async (tabs: ChatTab[], currentWorkspacePath?: string | null) => {
     // Interactive builder tabs must reconcile against durable history even
     // when the volatile EventStore already supplied a non-empty tail. That
@@ -794,7 +804,8 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
       return task
     }
     return hydrateWorkflowTabsPrioritized(tabsToHydrate, useChatStore.getState().activeTabId, hydrate,
-      (tab, error) => logger.warn('WorkflowLayout', `Failed to restore ${tab.sessionId}:`, error))
+      (tab, error) => logger.warn('WorkflowLayout', `Failed to restore ${tab.sessionId}:`, error),
+      tab => { deferredWorkflowHydrations.current.set(tab.sessionId!, () => hydrate(tab)) })
   }, [])
 
   // Get active workflow preset (file-backed manifests, not DB presets)

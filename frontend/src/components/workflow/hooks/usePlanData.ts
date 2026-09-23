@@ -3,6 +3,7 @@ import { agentApi } from '../../../services/api'
 import type { PlanStep, PlanningResponse, StepConfig, AgentConfigs } from '../../../utils/stepConfigMatching'
 import { isMessageSequenceStep, isTodoTaskStep } from '../../../utils/stepConfigMatching'
 import type { PlanChangelogEntry } from '../../../services/api-types'
+import { whenWorkflowChatSettled } from '../../../utils/whenWorkflowChatSettled'
 
 // Module-level cache to dedupe loadPlan calls across multiple hook instances
 // and to preserve per-workspace data across workflow switches.
@@ -772,12 +773,14 @@ export function usePlanData(workspacePath: string | null): UsePlanDataReturn {
   // the changelog head and re-check on focus for the chat-then-canvas flow.
   useEffect(() => {
     if (!workspacePath) return
-    void checkForExternalPlanChanges()
+    let disposed = false
+    void whenWorkflowChatSettled().then(() => { if (!disposed) void checkForExternalPlanChanges() })
     const timer = setInterval(() => { void checkForExternalPlanChanges() }, 15000)
     const onFocus = () => { void checkForExternalPlanChanges() }
     window.addEventListener('focus', onFocus)
     document.addEventListener('visibilitychange', onFocus)
     return () => {
+      disposed = true
       clearInterval(timer)
       window.removeEventListener('focus', onFocus)
       document.removeEventListener('visibilitychange', onFocus)

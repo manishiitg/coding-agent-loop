@@ -63,10 +63,15 @@ export async function hydrateWorkflowTabsPrioritized<T extends HydratableTab>(
   activeTabId: string | null,
   hydrate: (tab: T) => Promise<void>,
   onError: (tab: T, error: unknown) => void,
+  // When given, only the selected tab loads now; the rest are handed back to
+  // load when opened, so a workflow switch downloads one transcript, not all.
+  defer?: (tab: T) => void,
 ): Promise<number> {
   if (tabs.length === 0) return 0
   const selected = tabs.find(tab => tab.tabId === activeTabId) ?? tabs[0]
-  const queue = [selected, ...tabs.filter(tab => tab !== selected)]
+  const others = tabs.filter(tab => tab !== selected)
+  if (defer) others.forEach(defer)
+  const queue = defer ? [selected] : [selected, ...others]
   let finishSelected!: () => void
   const selectedDone = new Promise<void>(resolve => { finishSelected = resolve })
   let next = 0

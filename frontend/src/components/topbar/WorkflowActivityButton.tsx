@@ -3,6 +3,7 @@ import { Inbox } from 'lucide-react'
 import { agentApi } from '../../services/api'
 import { workflowHasActivity, workflowHasRecentActivity } from '../../utils/workflowActivity'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
+import { whenWorkflowChatSettled } from '../../utils/whenWorkflowChatSettled'
 
 const WORKFLOW_ACTIVITY_REFRESH_MS = 30_000
 
@@ -45,7 +46,7 @@ export function WorkflowActivityButton({ workspacePath, onOpen }: WorkflowActivi
     }
 
     setActivityState({ available: false, recent: false })
-    requestRefresh()
+    void whenWorkflowChatSettled().then(requestRefresh)
     const interval = window.setInterval(requestRefresh, WORKFLOW_ACTIVITY_REFRESH_MS)
     document.addEventListener('visibilitychange', requestRefresh)
     return () => {

@@ -4,6 +4,7 @@ import { createRoot } from 'react-dom/client'
 import { expect, it, vi } from 'vitest'
 import { agentApi } from '../../../services/api'
 import { usePlanData } from './usePlanData'
+vi.mock('../../../utils/whenWorkflowChatSettled', () => ({ whenWorkflowChatSettled: () => Promise.resolve() }))
 vi.mock('../../../services/api',()=>({agentApi:{getPlannerFileContent:vi.fn(),getPlanChangelog:vi.fn()}}))
 vi.mocked(agentApi.getPlanChangelog).mockResolvedValue({success:true,entries:[],count:0})
 Object.assign(globalThis,{IS_REACT_ACT_ENVIRONMENT:true})

@@ -429,6 +429,17 @@ export async function workflowUIControl(session: string, body: Record<string, un
 const DEDUPED_GET_REUSE_MS = 1000
 const dedupedGetRequests = new Map<string, { promise: Promise<unknown>; expiresAt: number }>()
 
+// First durable chat page on open; "Load earlier messages" pages backwards.
+export const DURABLE_CHAT_FIRST_PAGE_LIMIT = 100
+
+export function workflowManifestKey(workspacePath: string): string {
+  return `workflow-manifest:${workspacePath}`
+}
+
+export function invalidateDedupedGet(key: string): void {
+  dedupedGetRequests.delete(key)
+}
+
 function dedupedGet<T>(key: string, request: () => Promise<T>): Promise<T> {
   const now = Date.now()
   const existing = dedupedGetRequests.get(key)
@@ -795,7 +806,7 @@ export const agentApi = {
 
   getRecentChatEvents: async (sessionId: string, workspacePath?: string): Promise<GetEventsResponse> => {
     return agentApi.getSessionEvents(sessionId, undefined, {
-      limit: 300,
+      limit: DURABLE_CHAT_FIRST_PAGE_LIMIT,
       durableChat: true,
       workspacePath,
     })
@@ -2570,23 +2581,29 @@ export const agentApi = {
   },
 
   getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
-    const response = await api.get('/api/workflows/manifest', {
-      params: { workspace_path: workspacePath }
+    // Several panels read the same manifest when a workflow opens; share one request.
+    return dedupedGet(workflowManifestKey(workspacePath), async () => {
+      const response = await api.get('/api/workflows/manifest', {
+        params: { workspace_path: workspacePath }
+      })
+      return response.data
     })
-    return response.data
   },
 
   createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
+    invalidateDedupedGet(workflowManifestKey(request.workspace_path))
     const response = await api.post('/api/workflows/manifest', request)
     return response.data
   },
 
   updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
+    invalidateDedupedGet(workflowManifestKey(request.workspace_path))
     const response = await api.put('/api/workflows/manifest', request)
     return response.data
   },
 
   deleteWorkflowManifest: async (workspacePath: string) => {
+    invalidateDedupedGet(workflowManifestKey(workspacePath))
     const response = await api.delete('/api/workflows/manifest', {
       params: { workspace_path: workspacePath }
     })
@@ -2913,23 +2930,29 @@ export const workflowManifestApi = {
   },
 
   getWorkflowManifest: async (workspacePath: string): Promise<GetWorkflowManifestResponse> => {
-    const response = await api.get('/api/workflows/manifest', {
-      params: { workspace_path: workspacePath }
+    // Several panels read the same manifest when a workflow opens; share one request.
+    return dedupedGet(workflowManifestKey(workspacePath), async () => {
+      const response = await api.get('/api/workflows/manifest', {
+        params: { workspace_path: workspacePath }
+      })
+      return response.data
     })
-    return response.data
   },
 
   createWorkflowManifest: async (request: CreateWorkflowManifestRequest) => {
+    invalidateDedupedGet(workflowManifestKey(request.workspace_path))
     const response = await api.post('/api/workflows/manifest', request)
     return response.data
   },
 
   updateWorkflowManifest: async (request: UpdateWorkflowManifestRequest) => {
+    invalidateDedupedGet(workflowManifestKey(request.workspace_path))
     const response = await api.put('/api/workflows/manifest', request)
     return response.data
   },
 
   deleteWorkflowManifest: async (workspacePath: string) => {
+    invalidateDedupedGet(workflowManifestKey(workspacePath))
     const response = await api.delete('/api/workflows/manifest', {
       params: { workspace_path: workspacePath }
     })

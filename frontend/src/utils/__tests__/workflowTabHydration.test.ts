@@ -138,3 +138,19 @@ describe('prioritized workflow hydration', () => {
     expect(hydrate).toHaveBeenCalledWith(first)
   })
 })
+
+describe('hydrateWorkflowTabsPrioritized with deferral', () => {
+  it('loads only the selected tab and hands the others back for on-open loading', async () => {
+    const tab = (tabId: string) => ({ tabId, sessionId: `s-${tabId}`, metadata: { mode: 'workflow' as const } })
+    const tabs = [tab('a'), tab('selected'), tab('c')]
+    const hydrate = vi.fn(async (_tab: { tabId: string }) => {})
+    const deferred: string[] = []
+
+    await hydrateWorkflowTabsPrioritized(tabs, 'selected', hydrate, vi.fn(), t => deferred.push(t.tabId))
+    await new Promise(resolve => setTimeout(resolve, 0))
+
+    expect(hydrate).toHaveBeenCalledTimes(1)
+    expect(hydrate.mock.calls[0][0].tabId).toBe('selected')
+    expect(deferred).toEqual(['a', 'c'])
+  })
+})

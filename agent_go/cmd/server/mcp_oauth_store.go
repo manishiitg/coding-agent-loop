@@ -23,6 +23,9 @@ import (
 
 const mcpOAuthAccessPrefix = "aw_mcp_"
 const mcpOAuthRefreshPrefix = "aw_mcp_refresh_"
+const cliOAuthAccessPrefix = "aw_cli_"
+const cliOAuthRefreshPrefix = "aw_cli_refresh_"
+const cliOAuthClientID = "agentworks-cli"
 
 type mcpOAuthStore struct{ db *sql.DB }
 
@@ -126,6 +129,8 @@ func openMCPOAuthStore() (*mcpOAuthStore, error) {
 		`CREATE TABLE IF NOT EXISTS codes (hash TEXT PRIMARY KEY, client_id TEXT NOT NULL, redirect_uri TEXT NOT NULL, resource TEXT NOT NULL, scopes TEXT NOT NULL, challenge TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, email TEXT NOT NULL, provider TEXT NOT NULL, expires_at INTEGER NOT NULL)`,
 		`CREATE TABLE IF NOT EXISTS tokens (hash TEXT PRIMARY KEY, kind TEXT NOT NULL, family_id TEXT NOT NULL, client_id TEXT NOT NULL, resource TEXT NOT NULL, scopes TEXT NOT NULL, user_id TEXT NOT NULL, username TEXT NOT NULL, email TEXT NOT NULL, provider TEXT NOT NULL, expires_at INTEGER NOT NULL, used_at INTEGER, revoked_at INTEGER)`,
 		`CREATE INDEX IF NOT EXISTS tokens_family ON tokens(family_id)`,
+		`CREATE TABLE IF NOT EXISTS cli_devices (hash TEXT PRIMARY KEY, verification_hash TEXT UNIQUE NOT NULL, scopes TEXT NOT NULL, status TEXT NOT NULL, expires_at INTEGER NOT NULL, polled_at INTEGER, user_id TEXT NOT NULL DEFAULT '', username TEXT NOT NULL DEFAULT '', email TEXT NOT NULL DEFAULT '', provider TEXT NOT NULL DEFAULT '')`,
+		`INSERT OR IGNORE INTO clients (id,name,redirect_uris,created_at) VALUES ('agentworks-cli','AgentWorks CLI','[]',0)`,
 	} {
 		if _, err = db.Exec(ddl); err != nil {
 			_ = db.Close()
@@ -285,11 +290,15 @@ func (s *mcpOAuthStore) ExchangeCode(ctx context.Context, raw, clientID, redirec
 }
 
 func issueMCPOAuthPair(ctx context.Context, tx *sql.Tx, grant *mcpOAuthGrant) (string, string, error) {
-	access, err := mcpOAuthRandom(mcpOAuthAccessPrefix)
+	accessPrefix, refreshPrefix := mcpOAuthAccessPrefix, mcpOAuthRefreshPrefix
+	if grant.ClientID == cliOAuthClientID {
+		accessPrefix, refreshPrefix = cliOAuthAccessPrefix, cliOAuthRefreshPrefix
+	}
+	access, err := mcpOAuthRandom(accessPrefix)
 	if err != nil {
 		return "", "", err
 	}
-	refresh, err := mcpOAuthRandom(mcpOAuthRefreshPrefix)
+	refresh, err := mcpOAuthRandom(refreshPrefix)
 	if err != nil {
 		return "", "", err
 	}
@@ -324,7 +333,7 @@ func scanMCPOAuthGrant(row interface{ Scan(...any) error }) (mcpOAuthGrant, erro
 const mcpOAuthGrantColumns = `family_id,client_id,resource,scopes,user_id,username,email,provider,expires_at`
 
 func (s *mcpOAuthStore) Authenticate(ctx context.Context, raw string) (mcpOAuthGrant, error) {
-	if !strings.HasPrefix(raw, mcpOAuthAccessPrefix) || strings.HasPrefix(raw, mcpOAuthRefreshPrefix) {
+	if !(strings.HasPrefix(raw, mcpOAuthAccessPrefix) || strings.HasPrefix(raw, cliOAuthAccessPrefix)) || strings.HasPrefix(raw, mcpOAuthRefreshPrefix) || strings.HasPrefix(raw, cliOAuthRefreshPrefix) {
 		return mcpOAuthGrant{}, sql.ErrNoRows
 	}
 	return scanMCPOAuthGrant(s.db.QueryRowContext(ctx, `SELECT `+mcpOAuthGrantColumns+` FROM tokens WHERE hash=? AND kind='access' AND revoked_at IS NULL AND expires_at>?`, mcpOAuthHash(raw), time.Now().Unix()))
@@ -336,7 +345,7 @@ func (s *mcpOAuthStore) ActiveFamily(ctx context.Context, family string) (mcpOAu
 
 func (s *mcpOAuthStore) Refresh(ctx context.Context, raw, clientID, resource string) (mcpOAuthGrant, string, string, error) {
 	var grant mcpOAuthGrant
-	if !strings.HasPrefix(raw, mcpOAuthRefreshPrefix) {
+	if !(strings.HasPrefix(raw, mcpOAuthRefreshPrefix) || strings.HasPrefix(raw, cliOAuthRefreshPrefix)) {
 		return grant, "", "", sql.ErrNoRows
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -360,7 +369,7 @@ func (s *mcpOAuthStore) Refresh(ctx context.Context, raw, clientID, resource str
 		}
 		return grant, "", "", errors.New("refresh token reuse detected")
 	}
-	if revoked.Valid || expiry <= time.Now().Unix() || grant.ClientID != clientID || grant.Resource != resource {
+	if revoked.Valid || expiry <= time.Now().Unix() || grant.ClientID != clientID || grant.Resource != resource || (grant.ClientID == cliOAuthClientID) != strings.HasPrefix(raw, cliOAuthRefreshPrefix) {
 		return grant, "", "", errors.New("invalid refresh token")
 	}
 	if err = json.Unmarshal([]byte(scopes), &grant.Scopes); err != nil {

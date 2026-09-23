@@ -405,11 +405,11 @@ func isMCPOAuthDiscoveryPath(path string) bool {
 }
 
 func isMCPOAuthPublicAPIPath(path string) bool {
-	return path == "/api/oauth/mcp/register" || path == "/api/oauth/mcp/authorize" || path == "/api/oauth/mcp/token" || path == hostedMCPPath
+	return path == "/api/oauth/mcp/register" || path == "/api/oauth/mcp/authorize" || path == "/api/oauth/mcp/token" || path == hostedMCPPath || path == "/api/oauth/cli/device" || path == "/api/oauth/cli/token" || path == "/api/oauth/cli/revoke"
 }
 
 func isAccessTokenCredential(r *http.Request) bool {
-	return strings.HasPrefix(bearerToken(r), accessTokenPrefix)
+	return strings.HasPrefix(bearerToken(r), accessTokenPrefix) || strings.HasPrefix(r.Header.Get("Authorization"), "Bearer aw_cli_")
 }
 
 // agentPublicPath mirrors the agent API's own unauthenticated routes

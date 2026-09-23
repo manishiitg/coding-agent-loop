@@ -107,7 +107,7 @@ func authenticateAccessToken(w http.ResponseWriter, r *http.Request, raw string)
 	t, err := store.Authenticate(r.Context(), raw, time.Now())
 	if err != nil {
 		if errors.Is(err, accesstokens.ErrInvalid) {
-			externalError(w, 401, "invalid_token", "Access token is invalid, expired, or revoked. Generate a replacement in your account menu.")
+			externalError(w, 401, "invalid_token", "Legacy access token is invalid, expired, or revoked. Sign in again with agentworks login.")
 		} else {
 			externalError(w, 503, "auth_unavailable", "Access token validation is unavailable.")
 		}

@@ -45,8 +45,8 @@ func cliDownloadsDir() string {
 
 // handleCliDownload serves one CLI distribution file. The route is public on
 // both the gateway and the app (same as the CDP launcher zip): the binaries
-// are useless without a per-user access token, which the installer collects
-// separately and the app verifies on every call.
+// require a per-user browser approval (or a legacy personal token), which
+// the app verifies on every call.
 func (api *StreamingAPI) handleCliDownload(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["file"]
 	contentType, ok := cliDownloadFiles[name]

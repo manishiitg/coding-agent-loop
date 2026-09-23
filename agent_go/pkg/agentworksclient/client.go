@@ -35,9 +35,27 @@ func (e *APIError) Error() string {
 }
 
 type Client struct {
-	baseURL string
-	token   string
-	http    *http.Client
+	baseURL       string
+	token         string
+	tokenProvider func(context.Context) (string, error)
+	http          *http.Client
+}
+
+// WithTokenProvider resolves a browser-login credential before each request.
+// Long-running MCP bridges can refresh without restarting.
+func (c *Client) WithTokenProvider(provider func(context.Context) (string, error)) *Client {
+	c.tokenProvider = provider
+	return c
+}
+
+func (c *Client) authToken(ctx context.Context) (string, error) {
+	if c.tokenProvider != nil {
+		return c.tokenProvider(ctx)
+	}
+	if c.token == "" {
+		return "", errors.New("not logged in: use agentworks login or AGENTWORKS_TOKEN")
+	}
+	return c.token, nil
 }
 
 // ValidateServer requires TLS except for explicitly local development servers.
@@ -88,10 +106,11 @@ func (c *Client) request(ctx context.Context, method, path string, body any, aut
 		return nil, err
 	}
 	if auth {
-		if c.token == "" {
-			return nil, errors.New("not logged in: use agentworks login or AGENTWORKS_TOKEN")
+		token, err := c.authToken(ctx)
+		if err != nil {
+			return nil, err
 		}
-		req.Header.Set("Authorization", "Bearer "+c.token)
+		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Header.Set("Accept", "application/json")
 	if body != nil {

@@ -234,6 +234,87 @@ func TestLoginLogoutAndServerCredentialIsolation(t *testing.T) {
 	}
 }
 
+func TestBrowserLoginRefreshAndLogout(t *testing.T) {
+	var serverURL string
+	var polls, refreshes, revokes atomic.Int32
+	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/oauth/cli/device":
+			_ = json.NewEncoder(w).Encode(map[string]any{"device_code": "cli_device_example", "verification_uri_complete": serverURL + "/oauth/cli?code=cli_verify_" + strings.Repeat("a", 64), "user_code": "AAAAAAAA", "expires_in": 30, "interval": 1})
+		case "/api/oauth/cli/token":
+			if err := r.ParseForm(); err != nil {
+				t.Error(err)
+			}
+			if r.Form.Get("resource") != serverURL+"/api/external/v1" || r.Form.Get("client_id") != "agentworks-cli" {
+				t.Errorf("wrong OAuth audience: %v", r.Form)
+			}
+			if r.Form.Get("grant_type") == "refresh_token" {
+				refreshes.Add(1)
+				if r.Form.Get("refresh_token") != "aw_cli_refresh_first" {
+					t.Errorf("wrong refresh credential")
+				}
+				_, _ = w.Write([]byte(`{"access_token":"aw_cli_second","refresh_token":"aw_cli_refresh_second","expires_in":3600}`))
+				return
+			}
+			if polls.Add(1) == 1 {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = w.Write([]byte(`{"error":"authorization_pending"}`))
+				return
+			}
+			_, _ = w.Write([]byte(`{"access_token":"aw_cli_first","refresh_token":"aw_cli_refresh_first","expires_in":3600}`))
+		case "/api/external/v1/tools":
+			if r.Header.Get("Authorization") != "Bearer aw_cli_second" {
+				t.Errorf("tools used stale credential: %q", r.Header.Get("Authorization"))
+			}
+			_, _ = w.Write([]byte(`{"tools":[]}`))
+		case "/api/oauth/cli/revoke":
+			revokes.Add(1)
+			_ = r.ParseForm()
+			if r.Form.Get("token") != "aw_cli_refresh_second" {
+				t.Errorf("logout used stale refresh credential")
+			}
+		default:
+			t.Errorf("unexpected request: %s", r.URL.Path)
+		}
+	}))
+	defer s.Close()
+	serverURL = s.URL
+	path := filepath.Join(t.TempDir(), "config.json")
+	var stdout, stderr bytes.Buffer
+	env := func(string) string { return "" }
+	if code := run(context.Background(), []string{"--config", path, "--server", serverURL, "login", "--no-browser"}, strings.NewReader(""), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("login failed: %s", &stderr)
+	}
+	if polls.Load() != 2 || !strings.Contains(stderr.String(), serverURL+"/oauth/cli") || !strings.Contains(stderr.String(), "AAAAAAAA") || strings.Contains(stdout.String()+stderr.String(), "aw_cli_") {
+		t.Fatalf("unexpected login output or polling: polls=%d out=%s err=%s", polls.Load(), &stdout, &stderr)
+	}
+	cfg, err := agentworksclient.LoadConfig(path)
+	if err != nil || cfg.Token != "aw_cli_first" || cfg.RefreshToken != "aw_cli_refresh_first" {
+		t.Fatalf("browser login not saved: %#v %v", cfg, err)
+	}
+	cfg.ExpiresAt = time.Now().Add(-time.Minute)
+	if err := agentworksclient.SaveConfig(path, cfg); err != nil {
+		t.Fatal(err)
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"--config", path, "tools", "list"}, strings.NewReader(""), &stdout, &stderr, env); code != 0 {
+		t.Fatalf("refresh failed: %s", &stderr)
+	}
+	if refreshes.Load() != 1 {
+		t.Fatalf("refresh count=%d", refreshes.Load())
+	}
+	stdout.Reset()
+	stderr.Reset()
+	if code := run(context.Background(), []string{"--config", path, "logout"}, strings.NewReader(""), &stdout, &stderr, env); code != 0 || revokes.Load() != 1 {
+		t.Fatalf("logout code=%d revokes=%d stderr=%s", code, revokes.Load(), &stderr)
+	}
+	cfg, err = agentworksclient.LoadConfig(path)
+	if err != nil || cfg.Token != "" || cfg.RefreshToken != "" {
+		t.Fatalf("credentials retained after logout: %#v %v", cfg, err)
+	}
+}
+
 func TestStructuredConflictExit(t *testing.T) {
 	s := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(409)

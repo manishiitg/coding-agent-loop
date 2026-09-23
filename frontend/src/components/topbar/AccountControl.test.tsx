@@ -3,7 +3,6 @@ import React, { act } from 'react'
 import { createRoot } from 'react-dom/client'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 vi.mock('../../stores/useAuthStore', () => ({ useAuthStore: vi.fn() }))
-vi.mock('./AccessTokensDialog', () => ({ default: () => <div role="dialog">Manage access tokens</div> }))
 vi.mock('./ChangePasswordDialog', () => ({ default: () => null }))
 import { useAuthStore } from '../../stores/useAuthStore'
 import { TooltipProvider } from '../ui/tooltip'
@@ -21,7 +20,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllGlobals())
 
 describe('Account menu availability', () => {
-  it.each([false, true])('exposes token management with multi-user mode %s', async (isMultiUserMode) => {
+  it.each([false, true])('keeps token controls out of the account menu in multi-user mode %s', async (isMultiUserMode) => {
     vi.mocked(useAuthStore).mockReturnValue({ user: { id: 'user', username: 'Alex' }, isMultiUserMode, logout: vi.fn() })
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
     try {
@@ -30,12 +29,10 @@ describe('Account menu availability', () => {
       expect(trigger.getAttribute('aria-label')).toBe(isMultiUserMode ? 'Account: Alex' : 'Account: Local account')
       await act(async () => trigger.click())
       expect(host.textContent).toContain(`AgentWorks v${APP_VERSION}`)
-      expect(host.textContent).toContain('Access tokens')
+      expect(host.textContent).not.toContain('Access tokens')
       expect(host.textContent?.includes('Change password')).toBe(isMultiUserMode)
       expect(host.textContent).not.toContain('Users & access')
       expect(host.textContent?.includes('Sign out')).toBe(isMultiUserMode)
-      await act(async () => Array.from(host.querySelectorAll('button')).find(b => b.textContent?.includes('Access tokens'))!.click())
-      expect(host.querySelector('[role="dialog"]')?.textContent).toBe('Manage access tokens')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
   it('keeps user management out of the account menu even for an admin', async () => {

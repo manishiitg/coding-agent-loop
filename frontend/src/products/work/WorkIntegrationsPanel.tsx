@@ -31,7 +31,7 @@ const INTEGRATION_TAB_ASK_AI_MESSAGE: Record<WorkIntegrationTab, string> = {
   slack: "Help me with this Crew project's Slack bot. Explain what's connected and ask what I want to change.",
   whatsapp: "Help me with this Crew project's WhatsApp bot. Explain what's connected and ask what I want to change.",
   gmail: "Help me with this Crew project's Gmail. Explain the setup and ask what I want to change.",
-  cli: "Help me connect the command line or an AI assistant to this installation. Explain access tokens, the login command, and the MCP bridge, and ask what I want to do first.",
+  cli: "Help me connect the command line or an AI assistant to this installation. Explain browser sign-in, the login command, and the MCP bridge, and ask what I want to do first.",
 }
 
 function WorkMCPTabBody({ tabId, projectId, workspacePath, onAsk, onSelectedServersChange }: {

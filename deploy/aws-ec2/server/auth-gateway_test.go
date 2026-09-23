@@ -556,6 +556,7 @@ func TestMCPOAuthDiscoveryAndChallengeReachAgentWithoutGatewaySession(t *testing
 			"/.well-known/oauth-protected-resource/api/external/v1/mcp",
 			"/.well-known/oauth-authorization-server",
 			"/api/oauth/mcp/register", "/api/oauth/mcp/authorize", "/api/oauth/mcp/token",
+			"/api/oauth/cli/device", "/api/oauth/cli/token", "/api/oauth/cli/revoke",
 		} {
 			req := httptest.NewRequest(http.MethodGet, path, nil)
 			req.Header.Set("X-User-ID", "spoofed")
@@ -578,6 +579,13 @@ func TestMCPOAuthDiscoveryAndChallengeReachAgentWithoutGatewaySession(t *testing
 		g.ServeHTTP(w, req)
 		if w.Code != http.StatusOK {
 			t.Fatalf("disableGate=%v OAuth bearer got %d", disableGate, w.Code)
+		}
+		req = httptest.NewRequest(http.MethodGet, "/api/external/v1/tools", nil)
+		req.Header.Set("Authorization", "Bearer aw_cli_test")
+		w = httptest.NewRecorder()
+		g.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("disableGate=%v CLI bearer got %d", disableGate, w.Code)
 		}
 		upstream.Close()
 	}

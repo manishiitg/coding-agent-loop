@@ -3,6 +3,7 @@ import { useAuthStore } from "../stores/useAuthStore";
 import { Login } from "../pages/Login";
 import { AuthCallback } from "../pages/AuthCallback";
 import { MCPOAuthConsent } from "../pages/MCPOAuthConsent";
+import { CLIOAuthConsent } from "../pages/CLIOAuthConsent";
 import { SharedFile } from "../pages/SharedFile";
 import { SharedFolder } from "../pages/SharedFolder";
 import { ReportPage } from "../pages/ReportPage";
@@ -54,6 +55,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   const [sharedUid, setSharedUid] = useState<string | null>(null);
   const [isAuthCallback, setIsAuthCallback] = useState(false);
   const [isMcpConsent, setIsMcpConsent] = useState(false);
+  const [isCliConsent, setIsCliConsent] = useState(false);
   const [singleUserAuthAttempted, setSingleUserAuthAttempted] = useState(false);
 
   // Check for shared file/folder URL or OAuth callback
@@ -64,6 +66,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       setReportWorkspacePath(null);
       setIsAuthCallback(false);
       setIsMcpConsent(false);
+      setIsCliConsent(false);
       setSharedUid(null);
       const path = window.location.pathname;
       const params = new URLSearchParams(window.location.search);
@@ -124,6 +127,10 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
       }
       if (path === "/oauth/consent") {
         setIsMcpConsent(true);
+        return;
+      }
+      if (path === "/oauth/cli") {
+        setIsCliConsent(true);
         return;
       }
     };
@@ -206,6 +213,7 @@ export function AuthWrapper({ children }: AuthWrapperProps) {
   }
 
   if (isMcpConsent && isAuthenticated) return <MCPOAuthConsent />;
+  if (isCliConsent && isAuthenticated) return <CLIOAuthConsent />;
 
   // Single-user mode: no auth required, render children directly
   if (!isMultiUserMode) {

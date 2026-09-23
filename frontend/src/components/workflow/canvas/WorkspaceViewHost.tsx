@@ -33,6 +33,8 @@ import type {
   PulseReviewerModule,
   PulseShadowSignalObservation,
   PulseNextRun,
+  PulseGoalWorkItem,
+  PulseAutonomyRun,
   VariablesManifest,
 } from '../../../services/api-types'
 import { PULSE_FIXED_COMMANDS, PULSE_MODULE_COMMANDS } from './pulseSections'
@@ -200,6 +202,10 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             planDriftDueError={pulse.planDriftDueError}
             finalCommandStates={pulse.finalCommandStates}
             nextRun={pulse.nextRun}
+            goalWork={pulse.goalWork}
+            autonomyRun={pulse.autonomyRun}
+            autonomySaving={pulse.autonomySaving}
+            onChangeAutonomyRun={pulse.setAutonomyRun}
             reviewFocuses={pulse.reviewFocuses}
             reviewFocusSelections={pulse.reviewFocusSelections}
             statusError={pulse.statusError}
@@ -342,8 +348,25 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const [pulseReviewFocusSelections, setPulseReviewFocusSelections] = useState<PulseReviewFocus[]>([])
   const [pulseLoopClosureObservation, setPulseLoopClosureObservation] = useState<PulseShadowSignalObservation | null>(null)
   const [pulseNextRun, setPulseNextRun] = useState<PulseNextRun | null>(null)
+  const [pulseGoalWork, setPulseGoalWork] = useState<PulseGoalWorkItem[]>([])
+  const [pulseAutonomyRun, setPulseAutonomyRunState] = useState<PulseAutonomyRun>('auto')
+  const [pulseAutonomySaving, setPulseAutonomySaving] = useState(false)
   const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
+
+  const setPulseAutonomyRun = useCallback((run: PulseAutonomyRun) => {
+    if (!workspacePath || pulseAutonomySaving || run === pulseAutonomyRun) return
+    const previous = pulseAutonomyRun
+    setPulseAutonomyRunState(run)
+    setPulseAutonomySaving(true)
+    void updateWorkflowManifest(workspacePath, { pulse_autonomy_run: run })
+      .then(() => useChatStore.getState().addToast(run === 'auto' ? 'Pulse can now run workflow steps on its own' : 'Pulse will ask before running workflow steps', 'success'))
+      .catch(error => {
+        setPulseAutonomyRunState(previous)
+        useChatStore.getState().addToast(error instanceof Error ? error.message : 'Could not update Pulse permissions', 'error')
+      })
+      .finally(() => setPulseAutonomySaving(false))
+  }, [workspacePath, pulseAutonomySaving, pulseAutonomyRun, updateWorkflowManifest])
 
   const refreshPulseModuleStates = useCallback(async (showLoading = true) => {
     if (!workspacePath) {
@@ -370,6 +393,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       setPlanDriftDueItems(resp.plan_drift_due_items || [])
       setPlanDriftDueError(resp.plan_drift_due_error || null)
       setPulseNextRun(resp.next_pulse || null)
+      setPulseGoalWork(resp.goal_work || [])
+      setPulseAutonomyRunState(resp.autonomy_run === 'ask' ? 'ask' : 'auto')
       setPulseFinalCommandStates(resp.commands || [])
       setPulseReviewFocuses(resp.review_focus_history || [])
       setPulseReviewFocusSelections(resp.review_focus_selections || [])
@@ -448,6 +473,10 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     planDriftDueError,
     finalCommandStates: pulseFinalCommandStates,
     nextRun: pulseNextRun,
+    goalWork: pulseGoalWork,
+    autonomyRun: pulseAutonomyRun,
+    autonomySaving: pulseAutonomySaving,
+    setAutonomyRun: setPulseAutonomyRun,
     reviewFocuses: pulseReviewFocuses,
     reviewFocusSelections: pulseReviewFocusSelections,
     statusError: pulseStatusError,
@@ -455,7 +484,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     overview: pulseOverview,
     refresh: refreshPulseModuleStates,
   }), [
-    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates, pulseNextRun,
+    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates, pulseNextRun, pulseGoalWork, pulseAutonomyRun, pulseAutonomySaving, setPulseAutonomyRun,
     pulseReviewFocuses, pulseReviewFocusSelections, pulseStatusError, pulseStatusLoading,
     pulseOverview, refreshPulseModuleStates,
   ])

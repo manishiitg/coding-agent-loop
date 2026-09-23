@@ -3,7 +3,7 @@ import { PulseWorkspace } from './PulseWorkspace'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
-import type { PulseFinalCommandState, PulseModuleState, PulseNextRun, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
+import type { PulseAutonomyRun, PulseFinalCommandState, PulseGoalWorkItem, PulseModuleState, PulseNextRun, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
 export interface PulseOverview {
   recorded: number
@@ -25,6 +25,10 @@ interface PulseViewProps {
   planDriftDueError: string | null
   finalCommandStates: PulseFinalCommandState[]
   nextRun?: PulseNextRun | null
+  goalWork?: PulseGoalWorkItem[]
+  autonomyRun?: PulseAutonomyRun
+  autonomySaving?: boolean
+  onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null
@@ -56,6 +60,10 @@ export default function PulseView({
   planDriftDueError,
   finalCommandStates,
   nextRun = null,
+  goalWork = [],
+  autonomyRun = 'auto',
+  autonomySaving = false,
+  onChangeAutonomyRun,
   reviewFocuses,
   reviewFocusSelections,
   statusError,
@@ -103,6 +111,10 @@ export default function PulseView({
               reviewModuleSaving={reviewModuleSaving}
               onToggleReviewModule={onToggleReviewModule}
               statusError={statusError}
+              goalWork={goalWork}
+              autonomyRun={autonomyRun}
+              autonomySaving={autonomySaving}
+              onChangeAutonomyRun={onChangeAutonomyRun}
             />
           )}
         </div>

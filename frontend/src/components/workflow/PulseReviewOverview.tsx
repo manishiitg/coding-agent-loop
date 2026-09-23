@@ -47,7 +47,10 @@ function FocusDetails({ items, findings }: { items: PulseReviewFocus[]; findings
   </div>
 }
 
-export function PulseReviewOverview({ moduleStates, planDriftDue = false, planDriftDueItems = [], planDriftDueError = null, coverage, audits, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [], disabledReviewModules = [], reviewModuleSaving = null, onToggleReviewModule, runningReviewModule = null, onRunReviewModule, strategySupplement }: {
+export function PulseReviewOverview({ platformOnly = false, moduleStates, planDriftDue = false, planDriftDueItems = [], planDriftDueError = null, coverage, audits, findings, moduleFilter, onSelectModule, reviewFocusSelections = [], playbookFocuses = [], disabledReviewModules = [], reviewModuleSaving = null, onToggleReviewModule, runningReviewModule = null, onRunReviewModule, strategySupplement }: {
+  /** Platform health tab: Drift, Technical and Architecture only. Goal Work
+   * (strategic_review) has its own "For you" view. */
+  platformOnly?: boolean;
   moduleStates: PulseModuleState[]; coverage: PulseReviewFocus[]; audits: PulseReviewAudit[];
   planDriftDue?: boolean; planDriftDueItems?: PulsePlanDriftDueItem[]; planDriftDueError?: string | null;
   findings: PulseFindingLifecycle[]; moduleFilter: string | null;
@@ -119,13 +122,13 @@ export function PulseReviewOverview({ moduleStates, planDriftDue = false, planDr
   }
   return <section className="space-y-4" aria-label="Pulse reviews">
     <div aria-label="Pulse work areas" className="space-y-4">
-      <section aria-labelledby="pulse-strategy-heading">
+      {!platformOnly && <section aria-labelledby="pulse-strategy-heading">
         <div className="mb-2"><h3 id="pulse-strategy-heading" className="text-sm font-semibold">Goals, metrics &amp; strategy</h3><p className="mt-1 text-xs text-muted-foreground">The user-facing view: is this workflow producing the right outcome, and what should improve?</p></div>
         {reviewCard(areas.find(area => area.id === 'strategic_review')!, true)}
         {strategySupplement && <div className="mt-3">{strategySupplement}</div>}
-      </section>
+      </section>}
       <section aria-labelledby="pulse-platform-heading">
-        <div className="mb-2"><h3 id="pulse-platform-heading" className="text-sm font-semibold">Platform health &amp; stability</h3><p className="mt-1 text-xs text-muted-foreground">Maintenance checks Pulse normally handles to keep the plan correct and reliable.</p></div>
+        <div className="mb-2"><h3 id="pulse-platform-heading" className="text-sm font-semibold">Platform health &amp; stability</h3><p className="mt-1 text-xs text-muted-foreground">Maintenance Pulse handles in the background to keep the workflow correct and reliable. Goal Work does not wait for it.</p></div>
         <div className="grid gap-2 md:grid-cols-2">
           {areas.filter(area => ['technical_review', 'architecture_review'].includes(area.id)).map(area => reviewCard(area))}
         </div>
@@ -134,8 +137,8 @@ export function PulseReviewOverview({ moduleStates, planDriftDue = false, planDr
           <span className="min-w-0 flex-1">
             <span className="block text-sm font-semibold">Plan Drift is due</span>
             <span className="mt-1 block text-xs leading-5">{planDriftDueItems.length > 0
-              ? `${planDriftDueItems.length} ${planDriftDueItems.length === 1 ? 'step needs' : 'steps need'} compatibility review before Technical, Architecture, or Strategy can run.`
-              : 'A drift review is pending. Technical, Architecture, and Strategy wait until the plan is current.'}</span>
+              ? `${planDriftDueItems.length} ${planDriftDueItems.length === 1 ? 'step needs' : 'steps need'} compatibility review before Technical or Architecture can run. Goal Work continues but will not run workflow steps.`
+              : 'A drift review is pending. Technical and Architecture wait until the plan is current; Goal Work continues without running steps.'}</span>
             {planDriftDueItems.length > 0 && <span className="mt-2 flex flex-wrap gap-1.5">{planDriftDueItems.slice(0, 5).map(item => <span key={item.step_id} title={item.reason} className="rounded-full border border-amber-500/30 bg-background/70 px-2 py-0.5 text-[10px] font-medium">{item.step_id === '__workflow_drift_review__' ? 'Deleted-step dependencies' : item.step_id}</span>)}{planDriftDueItems.length > 5 && <span className="px-1 py-0.5 text-[10px]">+{planDriftDueItems.length - 5} more</span>}</span>}
           </span>
           <span className="flex shrink-0 flex-wrap items-center gap-2">

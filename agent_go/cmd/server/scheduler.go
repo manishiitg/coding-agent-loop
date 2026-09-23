@@ -2682,14 +2682,16 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 			} else if planDriftDue {
 				steps = append(steps, pulseLifecyclePlanDriftReviewStep(pulseRunID))
 			}
-			// Plan Drift is an exclusive prerequisite pass. Other reviewers resume
-			// on the next Pulse cycle, after they can assess a current plan rather
-			// than producing conclusions against a baseline already known to drift.
-			if !planDriftDue {
-				for _, module := range pulsemodules.PostDriftExecutionOrder() {
-					if due, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, module); err != nil || due {
-						steps = append(steps, pulseLifecycleModuleReviewStep(pulseRunID, module))
-					}
+			// Plan Drift is a prerequisite for platform upkeep: Architecture and
+			// Technical resume on the next Pulse cycle rather than judging a plan
+			// already known to drift. Goal Work still runs (without its Run
+			// permission, enforced in the background review scope).
+			for _, module := range pulsemodules.PostDriftExecutionOrder() {
+				if planDriftDue && !pulsemodules.RunsWhileDriftDue(module) {
+					continue
+				}
+				if due, err := pulseWorklistModulesDue(ctx, sctx.WorkspacePath, pulseRunID, module); err != nil || due {
+					steps = append(steps, pulseLifecycleModuleReviewStep(pulseRunID, module))
 				}
 			}
 			steps = append(steps, pulseLifecycleFinalSteps(pulseRunID, notificationInstructionsFromCapabilities(sctx.Capabilities))...)
@@ -3042,11 +3044,11 @@ func pulseLifecycleModuleReviewStep(pulseRunID, module string) pulseLifecycleSte
 	case pulseModuleArchitectureReview:
 		label, reference, contract = "architecture-review", "architecture-review", "Improve the construction of a working workflow, including evidence-based execution tier/model choices. Use actual quality, retries, cost and latency evidence; preserve explicit user pins and propose measured trials with a checkpoint and rollback through architecture decisions. Runtime does not change tiers from run counts. Research and propose bounded improvements; do not mutate implementation in the review."
 	case pulseModuleStrategicReview:
-		label, reference, contract = "strategic-review", "strategy-auditor", "Investigate the goal and strategy using workflow evidence, authorized MCP data, browser and external research. Read get_goal_metrics early, connect proposals to outcome metrics and a concrete next evidence boundary, and propose bounded measurement additions or repairs when metrics are missing or inadequate. Persist only canonical issues, genuine human decisions and one terminal review result. Do not mutate implementation or perform business actions."
+		label, reference, contract = "strategic-review", "strategy-auditor", "GOAL WORK: this is Pulse's main job. Do work that moves the user's goals, not only proposals. Read soul.md and get_goal_metrics early, follow up earlier Goal Work items (get_pulse_state view=goal_work), find what would move the primary metric that nobody is doing or the user does not know, and complete 1-3 bounded items now within the permission levels the runtime granted (prepare under pulse/work/; run existing steps only when Run is auto; never act outward or edit the workflow yourself; put those to the user as ready decisions). Record each with record_pulse_goal_work. Challenge soul.md constraints only with evidence through a keep/test/change decision; boundary constraints only get clarification; never break one meanwhile. This module is not blocked by a due Plan Drift; when Drift is due, prepare and research but do not run steps."
 	}
 	return pulseLifecycleStep{label: label, query: fmt.Sprintf(`PULSE MODULE REVIEW DISPATCH. pulse_run_id=%q. This step owns ONLY module=%q. Earlier lifecycle steps have finished; later modules must not be dispatched here.
 Read the durable Gate worklist. If this module is not due or already has a terminal result, stop. Otherwise launch exactly one run_in_background executor with review_module=%q, pulse_run_id=%q, and an instruction to read get_pulse_state(view="review_notes", module=%q) once for relevant prior reasoning. Load read_skill(skills=[{"name":"builder-reference","path":"references/%s.md"}]). %s
-Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist only canonical issues, a human decision when genuinely required, and one terminal review result for this module. Put the expected benefit, baseline, guardrails and next outcome boundary in the issue or review summary rather than a separate proposal/impact lifecycle. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
+Use saved notes and typed records for interrupted work; read an old Markdown file only if a specific historical record points to it. Do not create or maintain mandatory Markdown checkpoints. Persist only canonical issues (and, for strategic_review, Goal Work items with record_pulse_goal_work), a human decision when genuinely required, and one terminal review result for this module. Put the expected benefit, baseline, guardrails and next outcome boundary in the issue or review summary rather than a separate proposal/impact lifecycle. Finish with one record_pulse_result using reason and optional review_note for new reasoning, limitations and next steps. No separate reporting turn or repeated history scan. Reuse existing records. Applied is not evidence of improved outcomes. The shared pass mode must not suppress another module's research.
 After dispatch end this parent turn. The runtime waits for the child before proceeding to the next module. Do not render a dashboard, back up, publish or notify here.`, pulseRunID, module, module, pulseRunID, module, reference, contract)}
 }
 

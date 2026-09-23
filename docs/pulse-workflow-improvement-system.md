@@ -4,6 +4,14 @@ Implemented first release: 2026-09-10. Platform tracking: PLAT-305, PLAT-303
 and PLAT-326 (persistence simplification, 2026-09-18). Last synchronized with
 code: 2026-09-23.
 
+> **2026-09-23:** Strategy is now **Goal Work**, Pulse's main job: it does work
+> that moves the user's goals within permission levels, follows up whether it
+> worked, and challenges `soul.md` constraints with evidence. It runs right
+> after Plan Drift and is not blocked by it. The full Pulse runs on its own
+> self-deciding schedule; normal schedules only back up, publish and notify.
+> See [design/pulse_goal_work.md](design/pulse_goal_work.md). Sections below
+> describe the platform-upkeep reviewers and older history.
+
 ## Responsibilities
 
 | Perspective | Question | Output |
@@ -24,21 +32,24 @@ technical optimization reviews are not silently reassigned to Architecture.
 
 ## Pass order and scheduling
 
-A Pulse pass runs after a normal scheduled run whose `pulse_mode` is `full`
-(`off` = nothing, `basic` = backup/publish/notify only), or from a manual
-launch. The old dedicated `pulse_review_only` schedule was retired on
-2026-08-30 (`de8f24a95`) and is migrated into `pulse.enabled`. Code:
-`EffectivePulseMode` in `workflow_manifest.go`, `pulsemodules.ExecutionOrder`
-and `cmd/server/scheduler.go`.
+A Pulse pass runs on the workflow's own Pulse schedule (`pulse.schedule`,
+self-deciding by default: each pass picks its next run with
+`record_pulse_next_run`, bounded to once a day and once a week) or from a
+manual launch. Normal schedules are `off` or `basic` (backup, publish, notify)
+only. Code: `pulse_schedule.go`, `EffectivePulseMode` in
+`workflow_manifest.go`, `pulsemodules.ExecutionOrder` and
+`cmd/server/scheduler.go`.
 
 1. **Gate** reads compact evidence and records one worklist with a decision per
    module. It does not review, fix, or launch reviewers.
 2. **Plan Drift** is due whenever `plan_drift_candidates` is non-empty (the
-   backend rejects a worklist that says otherwise). When it is due it runs
-   **alone**: Architecture, Technical and Strategy wait for the next pass so
-   they never judge a plan already known to drift.
-3. Otherwise the due reviewers run in order **Architecture → Technical →
-   Strategy**, one `run_in_background` child per blocking step.
+   backend rejects a worklist that says otherwise). When it is due,
+   Architecture and Technical wait for the next pass so they never judge a plan
+   already known to drift.
+3. Then the due reviewers run in order **Goal Work (strategic_review) →
+   Architecture → Technical**, one `run_in_background` child per blocking step.
+   While Plan Drift is due only Goal Work runs, without permission to run
+   workflow steps.
 4. **Finalizer**: Backup, Publish, Notify.
 
 Each stage checks only its own result and records only its own interrupted

@@ -567,7 +567,34 @@ export interface PulseModuleStateResponse {
   plan_drift_due_items?: PulsePlanDriftDueItem[]
   plan_drift_due_error?: string
   next_pulse?: PulseNextRun | null
+  goal_work?: PulseGoalWorkItem[]
+  goal_work_error?: string
+  autonomy_run?: PulseAutonomyRun
   error?: string
+}
+
+/** Goal Work's Run permission: auto lets it run existing workflow steps itself. */
+export type PulseAutonomyRun = 'auto' | 'ask'
+
+/** Work Pulse did (or plans) to move the user's goals, and constraint challenges. */
+export interface PulseGoalWorkItem {
+  id: string
+  kind: 'goal_work' | 'constraint_challenge'
+  title: string
+  detail?: string
+  status: 'idea' | 'in_progress' | 'needs_user' | 'done' | 'dropped'
+  action_taken?: string
+  links: string[]
+  metric?: string
+  expected_direction?: string
+  check_at?: string
+  effect?: '' | 'worked' | 'no_effect' | 'unclear'
+  effect_note?: string
+  decision_id?: string
+  constraint_text?: string
+  constraint_class?: '' | 'boundary' | 'choice' | 'unconfirmed'
+  created_at: string
+  updated_at: string
 }
 
 /** The workflow's own Pulse schedule. Normal schedules only back up, publish
@@ -3399,6 +3426,7 @@ export interface UpdateWorkflowManifestRequest {
   run_retention_count?: number
   pulse_enabled?: boolean
   pulse_disabled_review_modules?: PulseReviewerModule[]
+  pulse_autonomy_run?: PulseAutonomyRun
   run_notification_instructions?: string
   pulse_notification_instructions?: string
   run_notification_channels?: string[]

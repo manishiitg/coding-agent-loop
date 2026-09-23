@@ -209,13 +209,13 @@ func TestManualPulseCommandsKeepRunSetupReviewAndFixBoundariesSeparate(t *testin
 			"A no-issue conclusion is valid",
 		},
 		"strategy-auditor": {
-			"STANDALONE STRATEGY AUDITOR",
+			// strategic_review is Goal Work (docs/design/pulse_goal_work.md);
+			// the manual command runs the same pass and holds its permission
+			// levels itself because the Builder chat is not runtime-restricted.
+			"STANDALONE GOAL WORK",
 			"without running Pulse Gate, Goal Advisor",
-			// aad50dfb0 "stabilize pulse orchestration and scheduled sessions"
-			// renamed this dispatch instruction from "READ-ONLY REVIEW" to
-			// "READ-ONLY STRATEGY AUDIT".
-			"READ-ONLY STRATEGY AUDIT",
-			"classify individual findings",
+			"hold the permission levels yourself",
+			"classify\n   individual findings",
 			// data-module="strategy_auditor" was builder/improve.html dashboard
 			// markup, retired along with the rest of that doc.
 			"Do not launch `/goal-advisor` automatically",
@@ -699,58 +699,40 @@ func TestPulseGuidanceRejudgesActiveExperimentCadenceFromCurrentEvidence(t *test
 }
 
 func TestStrategyAdvisorGuidanceBalancesExplorationEvidenceAndHumanDecisions(t *testing.T) {
+	// strategic_review is Goal Work (docs/design/pulse_goal_work.md): it does
+	// goal-advancing work within permission levels instead of only proposing.
 	auditor, err := renderFromRegistry("strategy-auditor", tmplData{}, referenceKinds)
 	if err != nil {
 		t.Fatalf("render strategy-auditor: %v", err)
 	}
 	for _, want := range []string{
-		"current plan's strategy",
-		"Workflow Strategy Advisor",
-		"Reports and actual outputs first",
-		"Plan and intent",
-		"Feedback and outcome context",
-		"Execution detail only by exception",
-		"No obligatory raw-log pass or per-step log inventory",
-		"optional reasoning lenses",
-		"Deferred or unexamined areas are unassessed",
-		"Missing measurement is not a prerequisite failure",
-		"Successful report production or ticket reconciliation alone does not establish strategic effectiveness",
-		"strategic_opportunity",
-		"Do not force one primary classification over a mixed review",
-		"Every actionable strategic suggestion must reach Needs your decision",
-		"apply_contract",
-		"human_input_id",
-		"before declaring the review complete",
-		"A suggestion is not implementation authority",
-		"goal -> plan version -> run/group -> action -> target/cohort -> source/channel",
-		"stable target",
-		"new from repeated targets",
-		"activity, opportunity/yield, and business outcome",
-		"repeated targeting or audience saturation",
-		"exploitation without enough discovery or exploration",
-		"perfect-execution counterfactual",
+		"Goal Work",
+		"whether the workflow is achieving its goal",
+		"doing that work",
 		"get_goal_metrics(workspace_path=...)",
-		"which metric should move and why",
-		"Missing or inadequate metrics are actionable review findings",
-		"verify one real observation",
-		"Waiting for a correctly collected outcome to mature",
-		"No extra metric scorecard",
-		"strategy_flaw",
-		"execution_bug",
-		"measurement_gap",
-		"insufficient_evidence",
-		"no_material_problem",
-		"Missing target/source/outcome linkage",
-		"Keep only new reasoning in review_note",
-		"Never edit workflow files or databases directly",
-		"Consider alternatives in this review",
-		"does not wait for Engineering/Ops conclusions",
-		"Needs your decision",
+		`get_pulse_state(view="goal_work")`,
+		"Undone work",
+		"Unknown to the user",
+		"Binding constraints",
+		"if every step ran perfectly",
+		"record_pulse_goal_work",
+		"pulse/work/",
+		"Permission levels",
+		"Never edit the plan, steps or schedules",
+		"Never yourself",
+		"create_human_input_request",
+		"Challenging constraints",
+		"never propose loosening",
+		"Never break a constraint while challenging it",
+		"materially new evidence",
+		"never zero",
+		"Activity (posting more) is not proof of growth",
+		"Never change metric definitions or targets yourself",
 		"record_pulse_finding",
-		"non-trackable conclusion",
+		"A technical handoff alone is not a Goal Work result",
 	} {
 		if !containsNormalizedText(auditor, want) {
-			t.Fatalf("strategy-auditor guidance missing %q:\n%s", want, auditor)
+			t.Fatalf("Goal Work guidance missing %q:\n%s", want, auditor)
 		}
 	}
 
@@ -1619,11 +1601,9 @@ func TestPulseResearchReviewsUseDifferentHorizonsAndStrategyDoesNotLoopOnSymptom
 		t.Fatal(err)
 	}
 	for _, want := range []string{
-		"Stay on strategy, not recurring execution symptoms",
-		"Technical findings are constraints and handoff context",
-		`such as "booking-heavy"`,
-		"assume the symptom is fixed",
-		"A technical handoff alone is not a Strategic Review result",
+		"assume it is fixed, and continue with the goal",
+		"A technical handoff alone is not a Goal Work result",
+		"Do not let a recurring operational symptom consume repeated passes",
 	} {
 		if !containsNormalizedText(strategy, want) {
 			t.Fatalf("strategy reviewer missing symptom-loop guard %q", want)

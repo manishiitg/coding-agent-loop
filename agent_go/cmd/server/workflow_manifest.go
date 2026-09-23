@@ -219,7 +219,10 @@ type WorkflowPulseConfig struct {
 	Enabled bool `json:"enabled,omitempty"`
 	// Schedule controls when the full Pulse runs. Nil means the defaults of
 	// EffectivePulseSchedule: self-deciding, at most daily, at least weekly.
-	Schedule              *WorkflowPulseSchedule         `json:"schedule,omitempty"`
+	Schedule *WorkflowPulseSchedule `json:"schedule,omitempty"`
+	// Autonomy holds Goal Work's permission levels. Nil means the defaults:
+	// Run is auto (Goal Work may run existing steps itself).
+	Autonomy              *WorkflowPulseAutonomy         `json:"autonomy,omitempty"`
 	AdvisorSpecialization *WorkflowAdvisorSpecialization `json:"advisor_specialization,omitempty"`
 	// DisabledReviewModules is the owner-controlled denylist for optional Pulse
 	// reviewers. Gate still records these modules in each worklist for an
@@ -285,6 +288,24 @@ func (m *WorkflowManifest) EffectivePulseSchedule() WorkflowPulseSchedule {
 		schedule.Timezone = best
 	}
 	return schedule
+}
+
+// WorkflowPulseAutonomy is Goal Work's per-workflow permission setting.
+// Prepare is always on; outward actions and workflow changes always ask.
+type WorkflowPulseAutonomy struct {
+	// Run is "auto" (default) or "ask": whether Goal Work may run existing
+	// workflow steps and routes itself.
+	Run string `json:"run,omitempty"`
+}
+
+func normalizePulseAutonomyRun(value string) (string, error) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "", "auto":
+		return "auto", nil
+	case "ask":
+		return "ask", nil
+	}
+	return "", fmt.Errorf("pulse.autonomy.run must be auto or ask")
 }
 
 func validateWorkflowPulseSchedule(schedule *WorkflowPulseSchedule) error {
@@ -977,6 +998,11 @@ func ValidateManifest(m *WorkflowManifest) error {
 		}
 		if err := validateWorkflowPulseSchedule(m.Pulse.Schedule); err != nil {
 			return err
+		}
+		if m.Pulse.Autonomy != nil {
+			if _, err := normalizePulseAutonomyRun(m.Pulse.Autonomy.Run); err != nil {
+				return err
+			}
 		}
 	}
 

@@ -38,6 +38,8 @@ var pulseReviewerWriteToolNames = []string{
 var pulseScheduleToolNames = []string{
 	"record_pulse_next_run",
 	"record_pulse_fast_request",
+	// Goal Work items and constraint challenges (docs/design/pulse_goal_work.md).
+	"record_pulse_goal_work",
 }
 
 // pulseRemovedToolNames must never reappear. Each was folded into one of the

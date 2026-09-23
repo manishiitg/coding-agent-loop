@@ -1,7 +1,39 @@
 # Pulse Goal Work: doing work for the user's goals
 
-Status: **design, not implemented** (2026-09-23). Supersedes the role split in
-PLAT-303/305 for Strategy. Builds on PLAT-326 storage.
+Status: **implemented, all phases** (2026-09-23): Phase 0 in `2d002e061`,
+Phases 1–4 in the following commit. Live verification on a real Pulse run is
+still pending. Supersedes the role split in PLAT-303/305 for Strategy.
+
+### As built (differences from the design below)
+
+- Goal Work items and constraint challenges live in their own workflow table,
+  `pulse_goal_work`, written by one tool, `record_pulse_goal_work`, and read by
+  `get_pulse_state(view="goal_work")`. They are not `pulse_issues` rows: their
+  lifecycle (idea / in progress / needs user / done / dropped, then an effect)
+  does not fit the bug lifecycle.
+- The storage identity (`strategic_review`) and the guidance kind name
+  (`strategy-auditor`) are unchanged; only their content, permissions and UI
+  label changed. `templates/system/strategy-auditor.md` is the Goal Work
+  contract; `templates/review/strategy-auditor.md` is the manual pass.
+- Permissions: `background_review_scope.go` gives Goal Work the research tools
+  plus `record_pulse_goal_work`, writes to `runs/pulse/<run>/` and
+  `pulse/work/`, and `execute_step` / `run_full_workflow` only when
+  `pulse.autonomy.run` is `auto` (the default) and no Plan Drift is due.
+  Plan, schedule and dispatch tools stay withheld. Outward actions are a prompt
+  contract: the workflow's own MCP and browser access cannot be filtered per
+  action. The manual pass in Builder chat is not runtime-restricted and holds
+  the levels by contract.
+- Order: Plan Drift → Goal Work → Architecture → Technical
+  (`pulsemodules.ExecutionOrder`). Only Goal Work runs while Drift is due.
+- Constraint provenance and class are written by `/setup-goals` as
+  `(user request, date)` and `[boundary]` / `[choice]` markers. The UI shows a
+  constraint's class on its challenge; the Goals & rules panel is the existing
+  soul summary and does not tag each constraint yet.
+- UI: `PulseWorkspace` has **For you** (goal summary, goal progress, Needs you,
+  `PulseGoalWork`: Did for you, Challenging your rules, Next up, Pulse
+  permissions) and **Platform health** (Drift, Technical, Architecture,
+  Open/Closed maintenance issues, run history). `PulseImprovements` (the
+  retired impact ledger) was removed.
 
 ## Why
 

@@ -1,16 +1,71 @@
 package step_based_workflow
 
 import (
+	"encoding/json"
 	"fmt"
 	"github.com/manishiitg/multi-llm-provider-go/llmtypes"
 	"strings"
 )
 
 type backgroundReviewScopeKey struct{}
-type backgroundReviewScope struct{ Module, RunID string }
+type backgroundReviewScope struct {
+	Module, RunID string
+	// RunSteps is the workflow's pulse.autonomy.run permission for Goal Work:
+	// true (the default, "auto") lets it run existing steps and routes itself.
+	RunSteps bool
+}
 
+// researchOnly is Architecture: research and propose, never act.
 func (s backgroundReviewScope) researchOnly() bool {
-	return s.Module == "architecture_review" || s.Module == "strategic_review"
+	return s.Module == "architecture_review"
+}
+
+// goalWork is the strategic_review module in its Goal Work role: it does
+// goal-advancing work for the user instead of only proposing it. It prepares
+// work in pulse/work/ and, when RunSteps, runs existing workflow steps.
+func (s backgroundReviewScope) goalWork() bool {
+	return s.Module == "strategic_review"
+}
+
+// goalWorkRunTools are the workflow execution tools Goal Work may use when the
+// workflow's Run permission is auto. Plan/schedule edits stay withheld.
+var goalWorkRunTools = map[string]bool{
+	"execute_step": true, "query_step": true, "send_step_message": true, "stop_step": true,
+	"run_full_workflow": true, "list_executions": true,
+}
+
+func goalWorkToolAllowed(name string, runSteps bool) bool {
+	return researchReviewToolAllowed(name) || name == "record_pulse_goal_work" || (runSteps && goalWorkRunTools[name])
+}
+
+func filterGoalWorkTools(tools []llmtypes.Tool, executors map[string]interface{}, runSteps bool) ([]llmtypes.Tool, map[string]interface{}) {
+	result := []llmtypes.Tool{}
+	handlers := map[string]interface{}{}
+	for _, tool := range tools {
+		if tool.Function != nil && goalWorkToolAllowed(tool.Function.Name, runSteps) {
+			result = append(result, tool)
+			if handler, ok := executors[tool.Function.Name]; ok {
+				handlers[tool.Function.Name] = handler
+			}
+		}
+	}
+	return result, handlers
+}
+
+// pulseAutonomyRunSteps reads workflow.json pulse.autonomy.run. Only an
+// explicit "ask" turns step running off; missing or unreadable means auto.
+func pulseAutonomyRunSteps(manifestJSON string) bool {
+	var manifest struct {
+		Pulse *struct {
+			Autonomy *struct {
+				Run string `json:"run"`
+			} `json:"autonomy"`
+		} `json:"pulse"`
+	}
+	if err := json.Unmarshal([]byte(manifestJSON), &manifest); err != nil || manifest.Pulse == nil || manifest.Pulse.Autonomy == nil {
+		return true
+	}
+	return !strings.EqualFold(strings.TrimSpace(manifest.Pulse.Autonomy.Run), "ask")
 }
 func validateBackgroundReviewScope(module, runID string) error {
 	if module != "technical_review" && module != "architecture_review" && module != "strategic_review" {

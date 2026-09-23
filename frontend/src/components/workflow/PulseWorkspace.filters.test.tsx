@@ -77,6 +77,8 @@ describe('Pulse workspace filter interactions', () => {
     document.body.append(container)
     root = createRoot(container)
     await act(async () => render())
+    // Maintenance lives on the Platform health tab; For you is Goal Work.
+    await click('Platform health')
   })
   afterEach(async () => {
     await act(async () => root.unmount())
@@ -84,86 +86,55 @@ describe('Pulse workspace filter interactions', () => {
   })
 
   it('reloads changed findings on a decision update without resetting the selected filter', async () => {
-    await click('Queued for Pulse')
-    shownCount(2)
+    await click('Closed')
+    shownCount(11)
     vi.mocked(agentApi.getPulseFindings).mockResolvedValue({ success: true,
       findings: records.map(item => item.finding_id === 'PUL-Q1' ? { ...item, status: 'resolved' } : item),
     })
     await act(async () => window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT)))
-    expect(button('Queued for Pulse').getAttribute('aria-pressed')).toBe('true')
-    shownCount(1)
-    expect(container.textContent).not.toContain('PUL-Q1')
-    expect(container.textContent).toContain('PUL-Q2')
+    expect(button('Closed').getAttribute('aria-pressed')).toBe('true')
+    shownCount(12)
+    expect(container.textContent).toContain('PUL-Q1')
   })
 
-  it('clicks all nine queues and resets both category and area', async () => {
-    for (const [label, expected] of [
-      ['Current', 10], ['Pulse to fix', 0], ['Queued for Pulse', 2], ['Waiting for evidence', 4],
-      ['Your decisions', 0], ['Ideas', 0], ['Paused', 0], ['Platform repair pending', 4], ['Resolved', 11],
-    ] as const) {
+  it('has only Open and Closed filters and resets both filter and area', async () => {
+    for (const [label, expected] of [['Open', 10], ['Closed', 11]] as const) {
       await click(label)
       expect(count(label)).toBe(expected)
       shownCount(expected)
       expect(shown()).toBe(expected)
       expect(button(label).getAttribute('aria-pressed')).toBe('true')
     }
+    for (const retired of ['Pulse to fix', 'Queued for Pulse', 'Waiting for evidence', 'Your decisions', 'Paused', 'Platform repair pending']) {
+      expect([...container.querySelectorAll('button')].some((node) => node.textContent?.startsWith(retired))).toBe(false)
+    }
     await click('Drift check')
-    await click('Resolved')
-    expect(count('Resolved')).toBe(3)
+    await click('Closed')
+    expect(count('Closed')).toBe(3)
     shownCount(3)
     await click('Clear filter')
     shownCount(10)
-    expect(count('Resolved')).toBe(11)
+    expect(count('Closed')).toBe(11)
     expect(container.querySelector('[aria-label="Clear review area filter"]')).toBeNull()
   })
 
   it('keeps step-reported technical issues visible and badges scoped', async () => {
     await click('Technical')
-    expect(count('Current')).toBe(5)
-    expect(count('Queued for Pulse')).toBe(2)
-    expect(count('Platform repair pending')).toBe(3)
-    expect(count('Waiting for evidence')).toBe(0)
-    await click('Queued for Pulse')
-    shownCount(2)
+    expect(count('Open')).toBe(5)
+    shownCount(5)
     expect(container.textContent).toContain('PUL-Q1')
     expect(container.textContent).toContain('PUL-Q2')
     expect(container.textContent).toContain('Step-Revise-Draft')
     expect(container.textContent).toContain('Technical review › Execution health')
   })
 
-  it('shows evidence waits, resets category on every area switch, and removes only the area', async () => {
-    await click('Strategy')
-    expect(container.textContent).toContain('Budgets align with the workflow goal')
-    expect(container.textContent).toContain('Browser Performance Validation · Performance strategy')
-    expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    expect(count('Waiting for evidence')).toBe(4)
-    expect(count('Ideas')).toBe(0)
-    await click('Waiting for evidence')
-    shownCount(4)
-    await act(async () => [...container.querySelectorAll<HTMLElement>('[role="button"][aria-expanded]')]
-      .find((node) => node.textContent?.includes('PUL-E0'))!.click())
-    expect(container.textContent).toContain('After ten completed growth days')
-    await click('Ideas')
-    shownCount(0)
-    await click('Technical')
-    expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    shownCount(5)
-    await click('Strategy')
-    await click('Platform repair pending')
-    expect(count('Platform repair pending')).toBe(0)
-    shownCount(0)
-    await act(async () => (container.querySelector('[aria-label="Clear review area filter"]') as HTMLButtonElement).click())
-    expect(button('Platform repair pending').getAttribute('aria-pressed')).toBe('true')
-    shownCount(4)
-  })
-
-  it('keeps custom playbook focus on strategy and not architecture', async () => {
+  it('shows only platform upkeep reviewers on the platform tab', async () => {
+    expect(button('Technical')).toBeTruthy()
     expect(button('Architecture').textContent).not.toContain('Strategic focus')
+    expect([...container.querySelectorAll('button')].some((node) => node.textContent?.startsWith('Strategy'))).toBe(false)
     await click('Architecture')
     expect(container.textContent).not.toContain('Strategic playbook focus')
-    await click('Strategy')
-    expect(container.textContent).toContain('Strategic playbook focus')
-    expect(container.textContent).toContain('Budgets align with the workflow goal')
+    expect(container.querySelector('[aria-label="Strategy content"]')).toBeNull()
   })
 
   it('shows reviewer run counts and dates at the bottom', async () => {
@@ -185,39 +156,38 @@ describe('Pulse workspace filter interactions', () => {
     expect(card('Strategic').textContent).toContain('1 run')
   })
 
-
-  it('opens drift content and resolved findings together when no current findings remain', async () => {
-    expect(container.querySelector('[aria-label="Strategy content"]')).not.toBeNull()
+  it('opens drift content and closed findings together when no open findings remain', async () => {
     await click('Drift check')
     expect(button('Drift check').getAttribute('aria-pressed')).toBe('true')
     expect(container.querySelector('[aria-label="Drift check content"]')?.textContent).toContain('No current drift findings.')
-    expect(container.querySelector('[aria-label="Strategy content"]')).toBeNull()
     expect(container.textContent).not.toContain('View drift findings')
-    expect(button('Resolved').getAttribute('aria-pressed')).toBe('true')
+    expect(button('Closed').getAttribute('aria-pressed')).toBe('true')
     shownCount(3)
     expect(container.textContent).toContain('PUL-R0')
-    await click('Strategy')
+    await click('Technical')
     expect(container.querySelector('[aria-label="Drift check content"]')).toBeNull()
-    expect(container.querySelector('[aria-label="Strategy content"]')).not.toBeNull()
-    shownCount(4)
+    expect(container.querySelector('[aria-label="Technical content"]')).not.toBeNull()
+    shownCount(5)
   })
 
   it('opens an explicit empty drift view when no findings were recorded', async () => {
     vi.mocked(agentApi.getPulseFindings).mockResolvedValue({ success: true, findings: [] })
     await act(async () => window.dispatchEvent(new CustomEvent(WORKFLOW_LOG_REFRESH_EVENT)))
     await click('Drift check')
-    expect(button('Current').getAttribute('aria-pressed')).toBe('true')
+    expect(button('Open').getAttribute('aria-pressed')).toBe('true')
     shownCount(0)
     expect(container.textContent).toContain('Completed drift checks and their details are shown above.')
     expect(container.textContent).not.toContain('Nothing in this queue')
   })
 
-  it('does not carry filters into another workflow', async () => {
+  it('does not carry the tab or filters into another workflow', async () => {
     await click('Drift check')
-    await click('Resolved')
+    await click('Closed')
     await act(async () => render('Workflow/another'))
-    expect(button('Current').getAttribute('aria-pressed')).toBe('true')
-    expect(button('Strategy').getAttribute('aria-pressed')).toBe('true')
+    expect(button('For you').getAttribute('aria-selected')).toBe('true')
+    await click('Platform health')
+    expect(button('Open').getAttribute('aria-pressed')).toBe('true')
+    expect(container.querySelector('[aria-label="Drift check content"]')).toBeNull()
     shownCount(10)
   })
 })

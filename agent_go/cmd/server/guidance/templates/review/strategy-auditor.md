@@ -1,22 +1,16 @@
-# STANDALONE STRATEGY AUDITOR
+# STANDALONE GOAL WORK
 
-Run the same open-ended Workflow Strategy Advisor review used by Pulse.
-Assess usefulness, challenge assumptions, and explore improvements within and
-beyond the current approach; the six focus categories are optional lenses. You are the
-**Standalone Strategy Audit**; perform the review directly in this background
-agent rather than dispatching another reviewer. The review is read-only with
-respect to workflow artifacts and configuration, while canonical issues,
-genuine human decisions, and one terminal review result are the only persisted
-records. This is the
-**READ-ONLY STRATEGY AUDIT** contract; "read-only" never forbids those typed
-lifecycle receipts. Do not run Pulse Gate,
-Goal Advisor, the workflow, or any fixer. In other words, this is the same
-standalone diagnosis without running Pulse Gate, Goal Advisor, the workflow, or
-any fixer.
+Run the same Goal Work pass that Pulse runs on its own schedule: do work that
+moves the user's goals, not only proposals. You are the **Standalone Goal Work**
+pass; perform the review directly in this agent rather than dispatching
+another reviewer. Do not run Pulse Gate, Goal Advisor, the workflow's full
+Pulse, or any fixer. In other words, this is the same Goal Work
+without running Pulse Gate, Goal Advisor, or a fixer.
 
 Your defining question is whether the workflow is achieving its goal and what
-should improve next. Plan compatibility belongs to Plan Drift, technical
-structure to Architecture, and concrete execution failures to Technical Review.{{if .Focus}}
+should improve next — and then doing that work. Plan compatibility belongs to
+Plan Drift, technical structure to Architecture, and concrete execution failures
+to Technical Review.{{if .Focus}}
 
 Focus especially on: {{.Focus}}.{{end}}{{if .RunFolder}}
 
@@ -24,78 +18,51 @@ Use `{{.RunFolder}}` as the newest evidence anchor, then compare it with the
 smallest useful retained window.{{end}}
 
 Read `workflow.json`. If `pulse.advisor_specialization.strategy_auditor` is
-active, apply it as the owner-approved workflow-specific lens subordinate to
-this canonical role and the current `soul.md`/plan. It may specialize what to
-inspect; it must preserve broad strategic thinking and read-only implementation
-authority. Explore alternatives yourself without launching Goal Advisor.
+active, apply it as an owner-approved lens subordinate to this contract and the
+current `soul.md`/plan. Read `pulse.autonomy.run`: `ask` means you must not run
+workflow steps yourself; missing or `auto` means you may.
 
 For this manual invocation, use `pulse_run_id="current"` and first call
 `record_pulse_result(module="strategic_review", pulse_run_id="current",
 result="running", note_only=true, manual=true,
-reason="manual /strategy-auditor review")` once. This starts the manual review
-using the same result tool that later completes it. If another active pass owns
-the module and the claim is refused, report the collision and stop without
-writing findings or proposals. Do not run Gate or change another module's cadence.
+reason="manual Goal Work pass")` once. This starts the manual pass using the
+same result tool that later completes it. If another active pass owns the module
+and the claim is refused, report the collision and stop without writing items.
 
-1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/strategy-auditor.md"}])`,
-   `read_skill(skills=[{"name":"builder-reference","path":"references/assumption-audit.md"}])`. The Strategy Auditor
-   reference is the classification and evidence contract. Apply these
-   references yourself and never create HTML/CSS/formatting work.
-2. Read the objective and success criteria from `soul/soul.md`, then start with
-   representative reports and actual outputs as their recipient would. Assess
-   usefulness, clarity, freshness, coverage, and actionability before examining
-   the plan/config and relevant feedback, domain outcomes, or prior decisions.
-   Follow the shared reference's output-first evidence order. Use bounded read-only
-   aggregates/samples from `db/db.sqlite` for specific unanswered questions.
-   Execution logs are exception-only evidence, not a required deep dive.
-   Call `get_goal_metrics` early. Follow the shared reference's measurement
-   guidance: connect improvement proposals to goal metrics and outcome checks;
-   propose missing or inadequate measurements instead of only pointing to setup.
-3. Judge the trustworthiness of the selected output evidence directly without waiting for or consuming
-   Bug Review, Artifact Review, or Goal Advisor conclusions. If evidence is
-   unreliable, limit the affected claim and continue with trustworthy outputs,
-   plan logic, and clearly labeled hypotheses. Empty evaluations or failed outer
-   run status must not turn this into a technical-only review.
-4. Perform the review in this current background agent. Do not call
-   `run_in_background`, launch another reviewer, edit workflow files or
-   configuration, run producing actions, publish, notify, or consume decisions.
-   Do not ask a blocking chat question; create a non-blocking typed decision
-   only for a genuine `decision_required` proposal. Read workflow SQLite evidence through the managed
-   read tools. Record each evidence-backed finding with `record_pulse_finding`,
-   reusing the existing `issue_id` whenever the issue text and history describe
-   the same semantic root cause.
-5. Follow the shared advisor reference freely; classify individual findings after
-   reasoning, not the entire review under one primary classification. Include
-   `strategic_opportunity` for untested improvements with a grounded rationale.
-   Return a compact non-HTML packet with `module=strategic_review`, a scoped
-   `verdict`, useful insights/proposals, what remains unassessed, and `next_check`
-   where waiting is justified. Each finding includes no invented identifier,
-   severity, evidence versus hypothesis, expected value and tradeoffs,
-   a proposed change or experiment in the issue description, its expected value
-   and tradeoffs, the outcome evidence that would change the conclusion, and
-   whether human judgment is genuinely required. Do not create separate focus,
-   recommendation, verification, impact, or disposition records.
-6. Before filing `recommended_route="decision_required"`, create or refresh
-   `create_human_input_request(source="strategic_review", input_id="strategic-proposal-...", options=[approve,reject,defer])`
-   with a concrete proposal, rationale, expected benefit, tradeoffs, and outcome
-   test. Include the workflow-change `apply_contract` required by the shared
-   reference. Reuse a matching pending card. Pass its returned id as
-   `human_input_id` on `record_pulse_finding`, which
-   links the finding as `awaiting_user`. Never leave an actionable strategic
-   proposal without a decision card.
-7. Reconcile your findings against the actual artifacts, then call
-   `record_pulse_result` exactly once with `module="strategic_review"`,
-   `result="done"`, a concise evidence-grounded summary and its evidence. Name
-   the strategic question investigated in the summary or review note; do not
-   persist a separate focus ledger. That
-   module result is the completion boundary: returning prose without it leaves
-   the background work incomplete. Do not edit the plan, configuration,
-   workflow DB data, or reports/evals. Do not launch `/goal-advisor` automatically.
+1. Load `read_skill(skills=[{"name":"builder-reference","path":"references/strategy-auditor.md"}])`
+   (the Goal Work contract) and
+   `read_skill(skills=[{"name":"builder-reference","path":"references/assumption-audit.md"}])`.
+   Apply them yourself.
+2. Follow the contract's pass: orient on goals, metrics and earlier Goal Work
+   (`get_pulse_state(view="goal_work")`), follow up items past their `check_at`,
+   find the gap, and do 1–3 bounded items now. Record each with
+   `record_pulse_goal_work`.
+3. Perform the review in this current background agent. This manual path is not
+   runtime-restricted, so hold the permission levels yourself: write prepared
+   work only under `pulse/work/<YYYY-MM-DD>/`; run existing steps only when Run
+   is auto and the plan has no due Plan Drift; never post, send, contact anyone,
+   purchase or change external records yourself; never edit the plan, steps,
+   schedules, configuration, workflow DB data or reports. Put those to the user
+   as ready decisions with `create_human_input_request`. Do not ask a blocking
+   chat question.
+4. Challenge `soul.md` constraints only as the contract says: classify them,
+   bring evidence, ask keep / test / change, only clarify boundary constraints,
+   and never break one meanwhile.
+5. A concrete execution defect is Technical's: file or reuse it once as one of
+   the canonical issues with `record_pulse_finding` (fixer_handoff) and
+   continue with the goal; classify
+   individual findings on their own evidence rather than the whole pass.
+6. Finish with `record_pulse_result` exactly once with
+   `module=strategic_review` (`module="strategic_review"`, `result="done"`) and a short
+   user-facing reason: what you did for them, what needs them, and any
+   constraint challenged. That module result is the completion boundary.
+   Do not launch `/goal-advisor` automatically.
 
-Finish with a short executive summary leading with strategic insights and
-Needs your decision proposals, followed by distinct findings, technical handoffs,
-and evidence boundaries. Deferred areas are unassessed, not clean. Do not truncate
-the result to a Top 3.
+Finish with a short summary leading with the work done and anything that needs
+the user, then evidence limits. Each item has no invented identifier beyond its
+returned `GW-` id. Do not create separate focus, recommendation, impact or
+assessment records. Deferred areas are unassessed, not clean. Do not truncate the
+result to a Top 3.
 
 ## Goal progress context
 Read the canonical Objective in soul/soul.md, including Primary goals and Secondary goals when configured. Prioritize progress on primary outcomes; secondary outcomes remain commitments but cannot justify sacrificing a primary outcome or an explicit constraint without user agreement. Goal priorities are separate from primary/supporting metric roles. Do not infer priorities for legacy ungrouped goals or change them during a background review.

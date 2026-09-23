@@ -34,6 +34,12 @@ Run Backup, Publish, then Notify. Before and after each, call
    before deciding and compare semantic state, blockers, decisions, findings,
    routes, and outcomes—not timestamps or wording.
 
+   A `pulse_summary` leads with Goal Work, in the user's words: what Pulse did
+   for them (with the work linked), what needs them, and any rule it is
+   challenging. Read `get_pulse_state(view="goal_work")` for the items. Platform
+   upkeep (Drift, Technical, Architecture) follows in a short line unless it
+   needs the user.
+
    The terminal `record_pulse_result(module=...)` calls are the single source for
    **What Pulse did**. The backend projects their user-readable reasons into one
    Activity item for the Pulse run. Do not publish, rewrite, or duplicate a Pulse

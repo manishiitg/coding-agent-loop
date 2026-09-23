@@ -1526,6 +1526,7 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"mark_changelog_artifact_reviewed",
 		"record_pulse_next_run",
 		"record_pulse_fast_request",
+		"record_pulse_goal_work",
 	}
 
 	var tools []string
@@ -2658,7 +2659,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 					"type":        "string",
 					"description": "Opening-turn instructions for the background agent. This is the agent's task — be specific about what it should do, inputs, expected outputs.",
 				},
-				"review_module":    map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}, "description": "Pulse review role. Architecture and Strategy retain research access but cannot edit workflow implementation."},
+				"review_module":    map[string]interface{}{"type": "string", "enum": []string{"technical_review", "architecture_review", "strategic_review"}, "description": "Pulse review role. Architecture has research access but cannot edit workflow implementation. strategic_review is Goal Work: it can also prepare work under pulse/work/ and, when the workflow's Run permission is auto, run existing steps; it never edits the plan or acts outward."},
 				"pulse_run_id":     map[string]interface{}{"type": "string", "description": "Exact scheduler Pulse run id; required with review_module."},
 				"message_sequence": backgroundMessageSequenceSchema(),
 				"agent_type": map[string]interface{}{
@@ -2738,7 +2739,14 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				execCtx = context.WithValue(execCtx, backgroundReadOnlyKey{}, true)
 			}
 			if reviewModule != "" {
-				execCtx = context.WithValue(execCtx, backgroundReviewScopeKey{}, backgroundReviewScope{Module: reviewModule, RunID: reviewRunID})
+				scope := backgroundReviewScope{Module: reviewModule, RunID: reviewRunID}
+				if scope.goalWork() {
+					scope.RunSteps = true
+					if manifestJSON, readErr := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); readErr == nil {
+						scope.RunSteps = pulseAutonomyRunSteps(manifestJSON)
+					}
+				}
+				execCtx = context.WithValue(execCtx, backgroundReviewScopeKey{}, scope)
 			}
 			// Inject correlation IDs for sub-agent event tagging (same pattern as execute_step)
 			agentSessionID := fmt.Sprintf("workshop-bg-%s-%d", nameSlug, time.Now().UnixNano())
@@ -8867,6 +8875,26 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		writePaths = []string{}
 	}
 	reviewScope, _ := ctx.Value(backgroundReviewScopeKey{}).(backgroundReviewScope)
+	if reviewScope.goalWork() && reviewScope.RunSteps {
+		// A due (or unknown) Plan Drift means the plan may not match its
+		// dependents; Goal Work still prepares and researches but runs nothing.
+		if items, driftErr := CollectPlanDriftDueItems(workspacePath); driftErr != nil || len(items) > 0 {
+			reviewScope.RunSteps = false
+		}
+	}
+	if reviewScope.goalWork() {
+		if !iwm.isRunModeRestricted() {
+			writePaths = []string{
+				fmt.Sprintf("%s/runs/pulse/%s", workspacePath, reviewScope.RunID),
+				fmt.Sprintf("%s/pulse/work", workspacePath),
+			}
+		}
+		runLevel := "Run permission: ask. Do not run workflow steps; prepare the work fully and create a decision asking the user to run it."
+		if reviewScope.RunSteps {
+			runLevel = "Run permission: auto. You may run existing workflow steps or routes yourself (execute_step, run_full_workflow) when that directly advances the goal, within every soul.md constraint."
+		}
+		instruction += "\nGOAL WORK: do goal-advancing work for the user, not only proposals. Write prepared work (research, drafts, lists, plans) under pulse/work/<YYYY-MM-DD>/ and link it in record_pulse_finding(issue_kind=\"goal_work\") and your result. " + runLevel + " Never post, send, contact anyone, purchase or change external records yourself: prepare it and create a decision for the user to approve. Never edit the plan, steps or schedules; propose them with a ready patch through a decision. Never break a soul.md constraint, even one you are challenging."
+	}
 	if reviewScope.researchOnly() {
 		if !iwm.isRunModeRestricted() {
 			writePaths = []string{fmt.Sprintf("%s/runs/pulse/%s", workspacePath, reviewScope.RunID)}
@@ -8930,10 +8958,11 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	if err != nil {
 		return "", err
 	}
-	if reviewScope.researchOnly() {
+	if reviewScope.researchOnly() || reviewScope.goalWork() {
 		filtered := workshopToolDefinitions[:0]
 		for _, tool := range workshopToolDefinitions {
-			if researchReviewToolAllowed(tool.Name) {
+			if (reviewScope.researchOnly() && researchReviewToolAllowed(tool.Name)) ||
+				(reviewScope.goalWork() && goalWorkToolAllowed(tool.Name, reviewScope.RunSteps)) {
 				filtered = append(filtered, tool)
 			}
 		}
@@ -8963,6 +8992,9 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	executorsToUse := iwm.controller.WorkspaceToolExecutors
 	if reviewScope.researchOnly() {
 		toolsToRegister, executorsToUse = filterResearchReviewTools(toolsToRegister, executorsToUse)
+	}
+	if reviewScope.goalWork() {
+		toolsToRegister, executorsToUse = filterGoalWorkTools(toolsToRegister, executorsToUse, reviewScope.RunSteps)
 	}
 
 	if readOnlyTask {
@@ -9074,7 +9106,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		"BrowserPrompt":    browserPrompt,
 	}
 
-	if reviewScope.researchOnly() || readOnlyTask {
+	if reviewScope.researchOnly() || reviewScope.goalWork() || readOnlyTask {
 		templateVars["DBGuidance"] = BuildManagedWorkflowDBGuidance(DBAccessRead)
 	}
 	if readOnlyTask {

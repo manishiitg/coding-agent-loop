@@ -56,7 +56,20 @@ Reviewers must not trade away a primary goal to improve a secondary one without
 the user's agreement. Keep goal priorities in this canonical objective section,
 not a duplicate database or report. Metrics retain their separate typed contract.
 
-Preserve user constraints under ## Constraints. Keep nonnumeric acceptance conditions
+Preserve user constraints under ## Constraints. Give every constraint its
+provenance and class so Goal Work can tell a real boundary from an old choice:
+end the bullet with `(user request, YYYY-MM-DD)` when the user stated or
+confirmed it, and mark its class `[boundary]` (safety, legal, ethics, account
+safety, no fabrication, spend limits) or `[choice]` (theme, format, length,
+cadence, channel, audience, pricing, tone). A constraint the user has not
+confirmed stays without a user-request marker; ask the user to confirm or remove
+it rather than inventing provenance. When the user answers a Goal Work
+constraint challenge with "change", apply exactly the agreed revision here with
+the new date, keep the old wording in the changelog, and update the linked
+Goal Work item (`record_pulse_goal_work` with its item_id, status done, and
+action_taken naming the change). "keep" leaves the constraint unchanged.
+
+Keep nonnumeric acceptance conditions
 under ## Success Criteria. Keep this required section even when all acceptance is numeric: refer to the configured goal metric targets and agreed boundaries without duplicating their numbers. Metric targets belong in typed definitions, not a
 second manually maintained metric table. Move implementation details to the
 appropriate plan/config through its managed tools, preserving behavior and

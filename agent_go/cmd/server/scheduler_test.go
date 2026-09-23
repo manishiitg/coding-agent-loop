@@ -1247,7 +1247,8 @@ func TestCreateAndUpdatePulseReviewOnlyScheduleSkipsGroupNamesRequirement(t *tes
 
 func TestPostRunMonitorUsesDynamicModulesAndSingleFinalizer(t *testing.T) {
 	steps := pulseLifecycleSteps()
-	want := []string{"gate", "plan-drift-review", "architecture-review", "technical-review", "strategic-review", "finalize"}
+	// Goal Work (strategic-review) runs right after Plan Drift; platform upkeep follows.
+	want := []string{"gate", "plan-drift-review", "strategic-review", "architecture-review", "technical-review", "finalize"}
 	if len(steps) != len(want) {
 		t.Fatalf("stages=%d, want %d", len(steps), len(want))
 	}

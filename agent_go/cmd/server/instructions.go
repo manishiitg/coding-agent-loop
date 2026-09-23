@@ -305,8 +305,8 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
 
   Reviews (recommend, don't apply; record typed Pulse findings):
     - review-artifact-drift  → plan-changelog-to-artifact drift audit
-    - strategy-auditor       → open-ended read-only workflow strategy advice and human decision proposals; no workflow edits
-    - goal-advisor           → compatibility alias for strategy-auditor; use the same strategic review flow
+    - strategy-auditor       → Goal Work: do goal-advancing work within the permission levels (prepare, run steps when allowed), challenge constraints with evidence; no plan edits or outward actions
+    - goal-advisor           → compatibility alias for strategy-auditor; use the same Goal Work flow
 
   Improvements:
     - setup-goals              → goal and metric setup, submitted by /setup-goals

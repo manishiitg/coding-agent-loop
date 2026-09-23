@@ -225,6 +225,7 @@ type UpdateWorkflowManifestRequest struct {
 	WorkflowContextPaths       *[]string                                    `json:"workflow_context_paths,omitempty"`
 	PulseEnabled               *bool                                        `json:"pulse_enabled,omitempty"`
 	PulseDisabledReviewModules *[]string                                    `json:"pulse_disabled_review_modules,omitempty"`
+	PulseAutonomyRun           *string                                      `json:"pulse_autonomy_run,omitempty"`
 	// Notification instruction fields are standalone patches so the Notify
 	// popup can update content guidance without replacing workflow capabilities.
 	RunNotificationInstructions   *string   `json:"run_notification_instructions,omitempty"`
@@ -422,6 +423,17 @@ func (api *StreamingAPI) handleUpdateWorkflowManifest(w http.ResponseWriter, r *
 			manifest.Pulse = &WorkflowPulseConfig{}
 		}
 		manifest.Pulse.DisabledReviewModules = disabled
+	}
+	if req.PulseAutonomyRun != nil {
+		run, runErr := normalizePulseAutonomyRun(*req.PulseAutonomyRun)
+		if runErr != nil {
+			http.Error(w, runErr.Error(), http.StatusBadRequest)
+			return
+		}
+		if manifest.Pulse == nil {
+			manifest.Pulse = &WorkflowPulseConfig{}
+		}
+		manifest.Pulse.Autonomy = &WorkflowPulseAutonomy{Run: run}
 	}
 	if req.RunNotificationInstructions != nil || req.PulseNotificationInstructions != nil ||
 		req.RunNotificationChannels != nil || req.PulseNotificationChannels != nil ||

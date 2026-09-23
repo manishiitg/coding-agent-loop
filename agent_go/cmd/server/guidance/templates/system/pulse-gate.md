@@ -14,9 +14,11 @@ The canonical modules are:
 - `architecture_review`: improve working prompts, orchestration, scripted execution,
   learning, KB, DB, reports, execution tier/model fitness and efficiency. Research and propose measurable changes;
   it is independent of correctness repair and business strategy.
-- `strategic_review`: one retained strategic reviewer sequence. It audits the
-  current strategy and measurement system, and conditionally explores
-  materially different approaches. It is never folded into Technical Review.
+- `strategic_review`: **Goal Work**, Pulse's main job. It does work that moves
+  the user's goals (work nobody is doing, or the user does not know about),
+  follows up earlier Goal Work, and challenges soul.md constraints with
+  evidence. It is never folded into Technical Review, and a due Plan Drift does
+  not block it.
 - `plan_drift_review`: event-triggered, not cadenced — due whenever
   `get_pulse_state(view="module")`'s `plan_drift_candidates` is non-empty
   (a canonical plan step has no `drift_review` record, or has one flagged
@@ -26,8 +28,9 @@ The canonical modules are:
 
 The role boundary is fixed: Plan Drift preserves an approved plan after a
 change; Architecture proposes a better technical structure; Technical repairs
-concrete execution failures; Strategic improves goals, outcomes, measurement
-and direction.
+concrete execution failures; Goal Work (strategic_review) moves the user's goals
+forward by doing the work. Drift, Architecture and Technical are platform
+upkeep; Goal Work is what the user relies on Pulse for.
 
 Do not emit retired module names such as `workflow_review`, `llm_ops_review`,
 `strategy_auditor`, or `goal_advisor`. Historical rows using those names are
@@ -128,6 +131,8 @@ merely because both are research reviews. Preserve an existing future boundary;
 when choosing a new one, prefer a later evidence boundary that can reveal stable
 cost, quality, latency, or orchestration patterns. A new severe structural risk
 or an approved proposal reaching its checkpoint can override that longer wait.
+Without such evidence, do not select Architecture more often than about once
+every two weeks.
 
 ## Decide whether Technical Review is due
 
@@ -135,6 +140,8 @@ Technical Review is exception-driven. Ordinary healthy runs and the passage of
 time do not require an engineering review. Select it for a concrete unresolved
 outcome, an available repair, or new evidence that supports a bounded diagnosis
 of material impact. Do not tour every technical lens as a recurring checklist.
+A known platform defect (`harness_issue`) is not a reason to select Technical
+Review again: it belongs to the platform register, not this workflow's upkeep.
 Examples include:
 
 - a failed or suspiciously successful production run;
@@ -240,16 +247,24 @@ When DB, knowledgebase, or learnings integrity is selected, explicitly name the
 Stores Health scope in the reason. Stores Health remains a technical lens, not
 a separate module.
 
-## Decide whether Strategic Review is due
+## Decide whether Goal Work (Strategic Review) is due
 
-Select Strategic Review for a useful product/goal question or grounded opportunity,
-not merely a free slot. New goals, user feedback, material plan changes, overlooked
+Goal Work is due on **almost every Pulse pass**. Pulse now chooses its own run
+times (record_pulse_next_run), so a pass normally exists because goal evidence
+matured, a decision was answered, or a Goal Work item reached its `check_at`.
+Mark it not due only when all of these hold, and say so in the reason: no new
+producing-run outcomes or metric observations since the last Goal Work, no
+answered or new user decision or feedback, no Goal Work item past its
+`check_at`, and the last Goal Work recorded no open idea worth doing now.
+A pending decision alone is not a reason to skip; there is usually other work.
+
+Select it too for a useful product/goal question or grounded opportunity. New goals, user feedback, material plan changes, overlooked
 needs, and revisable assumptions can warrant exploration before outcome evidence
 matures. Completed evaluations and a proven strategy ceiling are not prerequisites.
 Strategic Review uses the shorter research horizon: reconsider it at the next
 meaningful outcome, feedback, experiment, decision, or measurement checkpoint,
-even when Architecture still needs several more comparable runs. This does not
-mean running it on every Pulse tick when nothing strategic changed.
+even when Architecture still needs several more comparable runs. It still skips a
+pass when genuinely nothing changed (above).
 Accumulated outcomes may also warrant review, for example:
 
 - the goal metric is flat, unmeasurable, or contradicted by outcomes;

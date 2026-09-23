@@ -1,5 +1,5 @@
 import { GoalProgress } from './GoalProgress'
-import { PulseImprovements } from './PulseImprovements'
+import { PulseGoalWork } from './PulseGoalWork'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   CheckCircle2,
@@ -11,7 +11,9 @@ import { playbooksApi } from '../../api/playbooks'
 import { useChatStore } from '../../stores/useChatStore'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type {
+  PulseAutonomyRun,
   PulseFinalCommandState,
+  PulseGoalWorkItem,
   PulseFindingLifecycle,
   PulseImpactLedger,
   PulseModuleState,
@@ -94,7 +96,7 @@ function reviewRunDate(value: string): string {
 export function manualPulseReviewMessage(module: string, workspacePath = '<this workflow>'): string {
   switch (module) {
     case 'strategic_review':
-      return 'Run the Strategic Review for this workflow now. Call get_workflow_command_guidance(kind="strategy-auditor", focus="Manual Strategic Review requested from the Pulse UI") and follow the returned instructions exactly. Run it as a background review so this chat stays responsive.'
+      return 'Run a Goal Work pass for this workflow now. Call get_workflow_command_guidance(kind="strategy-auditor", focus="Manual Goal Work requested from the Pulse UI") and follow the returned instructions exactly. Run it as a background task so this chat stays responsive.'
     case 'architecture_review':
       return `Run a manual Architecture Review for this workflow now. First call record_pulse_result(workspace_path=${JSON.stringify(workspacePath)}, module="architecture_review", pulse_run_id="current", result="running", note_only=true, manual=true, reason="Manual Architecture Review requested from the Pulse UI"). If another Pulse pass owns it, report that collision and stop. Otherwise load read_skill(skills=[{"name":"builder-reference","path":"references/architecture-review.md"}]) and follow it exactly as a read-only review. Persist findings, decisions, impact records, and one terminal architecture_review result with focuses included; do not edit the workflow.`
     case 'technical_review':
@@ -118,6 +120,10 @@ export function PulseWorkspace({
   reviewModuleSaving = null,
   onToggleReviewModule,
   statusError,
+  goalWork = [],
+  autonomyRun = 'auto',
+  autonomySaving = false,
+  onChangeAutonomyRun,
 }: {
   workspacePath: string
   moduleStates: PulseModuleState[]
@@ -131,6 +137,10 @@ export function PulseWorkspace({
   reviewModuleSaving?: PulseReviewerModule | null
   onToggleReviewModule?: (module: PulseReviewerModule) => void
   statusError: string | null
+  goalWork?: PulseGoalWorkItem[]
+  autonomyRun?: PulseAutonomyRun
+  autonomySaving?: boolean
+  onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
 }) {
   const loadVersion = useRef(0)
   const [findings, setFindings] = useState<PulseFindingLifecycle[]>([])
@@ -141,7 +151,10 @@ export function PulseWorkspace({
   const [playbookFocuses, setPlaybookFocuses] = useState<InstalledPlaybookReviewFocus[]>([])
   const [focus, setFocus] = useState<PulseFocus>('all')
   const [moduleFilter, setModuleFilter] = useState<string | null>(null)
-  const [selectedReviewModule, setSelectedReviewModule] = useState<string>('strategic_review')
+  // For you = Goal Work (Pulse's main job); Platform health = Drift,
+  // Technical and Architecture upkeep (docs/design/pulse_goal_work.md).
+  const [tab, setTab] = useState<'for_you' | 'platform'>('for_you')
+  const [selectedReviewModule, setSelectedReviewModule] = useState<string>('')
   const [manualReviewStarting, setManualReviewStarting] = useState<string | null>(null)
   const [expandedFinding, setExpandedFinding] = useState<string | null>(null)
   const [showCompleteBacklog, setShowCompleteBacklog] = useState(false)
@@ -219,7 +232,8 @@ export function PulseWorkspace({
   useEffect(() => {
     setFocus('all')
     setModuleFilter(null)
-    setSelectedReviewModule('strategic_review')
+    setSelectedReviewModule('')
+    setTab('for_you')
     setExpandedFinding(null)
     setShowCompleteBacklog(false)
     setCoverage([])
@@ -236,7 +250,7 @@ export function PulseWorkspace({
     setManualReviewStarting(module)
     try {
       await sendWorkspacePaneMessageToChat({ workspacePath, message: manualPulseReviewMessage(module, workspacePath) })
-      useChatStore.getState().addToast(`${module === 'strategic_review' ? 'Strategic' : module === 'architecture_review' ? 'Architecture' : module === 'technical_review' ? 'Technical' : 'Plan Drift'} Review opened in chat`, 'success')
+      useChatStore.getState().addToast(`${module === 'strategic_review' ? 'Goal Work' : module === 'architecture_review' ? 'Architecture Review' : module === 'technical_review' ? 'Technical Review' : 'Plan Drift'} opened in chat`, 'success')
     } catch (err) {
       useChatStore.getState().addToast(err instanceof Error ? err.message : 'Could not start the review', 'error')
     } finally {
@@ -334,23 +348,45 @@ export function PulseWorkspace({
     )
   }
 
+  const openIssueCount = pulseWorkspaceQueueCounts(findings).all
+  const driftBlocksRun = planDriftDue || !!planDriftDueError
   return (
     <div className="space-y-4">
-      <SoulViewer workspacePath={workspacePath} pulseSummary />
-      <GoalProgress workspacePath={workspacePath} impact={impact} />
+      <div role="tablist" aria-label="Pulse views" className="flex gap-1 rounded-lg border bg-muted/30 p-1">
+        {([['for_you', 'For you'], ['platform', 'Platform health']] as const).map(([value, label]) => (
+          <button key={value} type="button" role="tab" aria-selected={tab === value} onClick={() => setTab(value)}
+            className={`flex flex-1 items-center justify-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors ${tab === value ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}>
+            {label}
+            {value === 'platform' && (openIssueCount > 0 || planDriftDue) && <span className={`rounded-full px-1.5 py-0.5 text-[9px] tabular-nums ${planDriftDue ? 'bg-amber-500/15 text-amber-700 dark:text-amber-300' : 'bg-muted text-muted-foreground'}`}>{planDriftDue ? 'Drift due' : openIssueCount}</span>}
+          </button>
+        ))}
+      </div>
 
-      <PulseReviewOverview moduleStates={moduleStates} planDriftDue={planDriftDue} planDriftDueItems={planDriftDueItems} planDriftDueError={planDriftDueError} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
-        audits={audits} findings={findings} moduleFilter={selectedReviewModule} reviewFocusSelections={reviewFocusSelections}
+      {(error || statusError) && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
+          Some Pulse data could not be loaded: {[statusError, error].filter(Boolean).join(' ')}
+        </div>
+      )}
+
+      {tab === 'for_you' ? <>
+        <SoulViewer workspacePath={workspacePath} pulseSummary />
+        <GoalProgress workspacePath={workspacePath} impact={impact} />
+        <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
+        <PulseGoalWork workspacePath={workspacePath} items={goalWork} autonomyRun={autonomyRun} autonomySaving={autonomySaving}
+          onChangeAutonomyRun={onChangeAutonomyRun} onRunGoalWork={() => { void runReviewNow('strategic_review') }}
+          running={manualReviewStarting === 'strategic_review'}
+          runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps.' : undefined} />
+        {(openIssueCount > 0 || planDriftDue) && (
+          <button type="button" onClick={() => setTab('platform')} className="w-full rounded-lg border bg-muted/20 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/40">
+            <span className="font-medium text-foreground">Platform health:</span> {planDriftDue ? 'a Plan Drift check is due. ' : ''}{openIssueCount > 0 ? `${openIssueCount} open maintenance issue${openIssueCount === 1 ? '' : 's'}. ` : ''}Pulse handles these in the background.
+          </button>
+        )}
+      </> : <>
+      <PulseReviewOverview platformOnly moduleStates={moduleStates} planDriftDue={planDriftDue} planDriftDueItems={planDriftDueItems} planDriftDueError={planDriftDueError} coverage={mergePulseReviewCoverage(coverage, reviewFocuses, reviewFocusSelections)}
+        audits={audits} findings={findings} moduleFilter={selectedReviewModule || null} reviewFocusSelections={reviewFocusSelections}
         playbookFocuses={playbookFocuses}
         disabledReviewModules={disabledReviewModules} reviewModuleSaving={reviewModuleSaving} onToggleReviewModule={onToggleReviewModule}
         runningReviewModule={manualReviewStarting} onRunReviewModule={runReviewNow}
-        strategySupplement={<PulseImprovements
-          impact={impact}
-          kinds={['strategy_experiment']}
-          title="Strategic proposals"
-          description="What Strategic Review proposed, whether it was approved or applied, and what happened to the goal metrics."
-          emptyMessage="Strategic Review has not recorded a proposal yet. Its latest conclusion and review notes are shown below."
-        />}
         onSelectModule={module => {
           const counts = pulseWorkspaceQueueCounts(findings.filter(item => pulseFindingReviewAreas(item, reviewFocusSelections).includes(module)))
           setSelectedReviewModule(module)
@@ -360,20 +396,12 @@ export function PulseWorkspace({
           setExpandedFinding(null)
         }} />
 
-      <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
-
-      {(error || statusError) && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-300">
-          Some Pulse data could not be loaded: {[statusError, error].filter(Boolean).join(' ')}
-        </div>
-      )}
-
       <div className="grid gap-4">
         <section className="overflow-hidden rounded-xl border bg-background">
           <div className="border-b px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
-                <h3 className="text-sm font-semibold text-foreground">Issues and follow-through</h3>
+                <h3 className="text-sm font-semibold text-foreground">Maintenance issues</h3>
                 <p className="mt-0.5 text-[11px] text-muted-foreground">
                   {FOCUS_TITLES[focus]}
                   {moduleFilter && (
@@ -423,15 +451,8 @@ export function PulseWorkspace({
             </div>
             <div className="mt-3 flex flex-wrap gap-1.5" aria-label="Issue filters">
               {([
-                ['all', 'Current', queueCounts.all],
-                ['needs_action', 'Pulse to fix', queueCounts.needs_action],
-                ['queued_repair', 'Queued for Pulse', queueCounts.queued_repair],
-                ['waiting_proof', 'Waiting for evidence', queueCounts.waiting_proof],
-                ['decisions', 'Your decisions', queueCounts.decisions],
-                ['proposals', 'Ideas', queueCounts.proposals],
-                ['blocked', 'Paused', queueCounts.blocked],
-                ['platform', 'Platform repair pending', queueCounts.platform],
-                ['resolved', 'Resolved', queueCounts.resolved],
+                ['all', 'Open', queueCounts.all],
+                ['resolved', 'Closed', queueCounts.resolved],
               ] as Array<[PulseFocus, string, number]>).map(([value, label, count]) => (
                 <button
                   key={value}
@@ -491,12 +512,6 @@ export function PulseWorkspace({
 
       </div>
 
-      <PulseImprovements
-        impact={impact}
-        kinds={['fix_bundle', 'architecture_improvement']}
-        title="Platform improvements"
-        description="Technical and architecture changes, from application through observed outcome."
-      />
 
       <section className="overflow-hidden rounded-xl border bg-background" aria-label="Review run history">
         <div className="border-b px-4 py-3">
@@ -534,6 +549,7 @@ export function PulseWorkspace({
           ))}
         </div>
       </section>
+      </>}
 
     </div>
   )

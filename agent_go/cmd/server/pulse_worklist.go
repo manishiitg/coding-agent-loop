@@ -3200,6 +3200,11 @@ func readPulseModuleStateView(ctx context.Context, workspacePath, pulseRunID str
 		// Steps' CONCERNS: lines since the previous Pulse, collected by Go so no
 		// reviewer has to search run folders. Leads, not findings.
 		"step_concerns": collectStepConcerns(workspacePath, stepConcernWindowStart(ctx, workspacePath)),
+		// Whether each enabled schedule's recent runs actually ran the
+		// workflow. Direct-message schedules may legitimately run nothing;
+		// a schedule whose job is to run steps but keeps running nothing is
+		// a Technical issue.
+		"schedule_run_health": scheduleRunHealthForView(ctx, workspacePath),
 		"pulse_store_navigation": map[string]string{
 			"issues":                "Canonical repair roots. Reuse the existing public PUL issue_id for the same semantic root cause.",
 			"closed_issues":         "Previously handled roots. Matching new evidence reopens the same root rather than creating a duplicate.",

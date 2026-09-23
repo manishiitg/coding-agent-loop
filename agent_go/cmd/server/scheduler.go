@@ -2355,6 +2355,11 @@ func (s *SchedulerService) runJob(ctx context.Context, sctx *ScheduleContext, ru
 	if err := UpdateScheduleRun(persistenceCtx, sctx.WorkspacePath, runID, status, errMsg, &durationMs, runFolder, sessionID); err != nil {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] Failed to update run entry for %s: %v", schedID, err)
 	}
+	if !sctx.PulseOnly && sctx.WebhookInput == nil {
+		if err := SetScheduleRunRanWorkflow(persistenceCtx, sctx.WorkspacePath, runID, sctx.ProducedRunEvidence); err != nil {
+			s.logf(sctx, "[SCHEDULER] could not record ran_workflow for %s: %v", runID, err)
+		}
+	}
 
 	// Pulse runs after a normal schedule only when its effective pulse mode is
 	// basic or full. Basic performs backup, report publishing, and run-summary
@@ -2521,6 +2526,15 @@ func (s *SchedulerService) runPulseLifecycle(ctx context.Context, sctx *Schedule
 	contractupgrade.Revoke(sessionID)
 	defer contractupgrade.Revoke(sessionID)
 	s.sessionLogf(sctx, sessionID, "[PULSE] starting pulse for %s (run_folder=%s status=%s)", sctx.Schedule.ID, runFolder, runStatus)
+	if pulseMode == schedulePulseModeFull {
+		// Retire unowned legacy step observations and hand platform-owned
+		// findings off before Gate reads the backlog. Idempotent.
+		if reconciled, err := stepworkflow.ReconcilePulseActionableBacklog(ctx, sctx.WorkspacePath); err != nil {
+			s.sessionLogf(sctx, sessionID, "[PULSE] backlog reconciliation failed (continuing): %v", err)
+		} else if reconciled.RetiredLegacyObservations > 0 || reconciled.PlatformHandoffs > 0 {
+			s.sessionLogf(sctx, sessionID, "[PULSE] backlog reconciliation retired %d legacy step observation(s) and handed off %d platform finding(s)", reconciled.RetiredLegacyObservations, reconciled.PlatformHandoffs)
+		}
+	}
 	introSent := false
 	recoveryNotes := []string{}
 	runStep := func(st pulseLifecycleStep) pulseLifecycleStepRunResult {
@@ -3390,12 +3404,15 @@ func validatePulseTechnicalRepairDrain(ctx context.Context, workspacePath, pulse
 	if !due {
 		return nil
 	}
-	remaining, err := stepworkflow.CountPulseActionableWorkflowIssues(ctx, workspacePath)
+	// Only the work this pass owns: issues routed to the fixer and issues seen
+	// since the previous Pulse. A large historical backlog no longer fails
+	// every Technical pass (social-media: 87 stale rows).
+	remaining, err := stepworkflow.CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, stepConcernWindowStart(ctx, workspacePath))
 	if err != nil {
 		return fmt.Errorf("read actionable Pulse repair backlog: %w", err)
 	}
 	if remaining > 0 {
-		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s); the repair drain is incomplete", remaining)
+		return fmt.Errorf("Review+Fix left %d actionable workflow-owned Pulse issue(s) routed to it or new since the previous Pulse; the repair drain is incomplete", remaining)
 	}
 	return nil
 }
@@ -3849,6 +3866,13 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// (BUG-20260729-10, social-media 2026-07-29: the scheduler recorded
 	// "success" for a run that fully failed at its first posting step).
 	postRunFolders, postRunFoldersErr := s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
+	// The listing fails when the workspace service is briefly down (restarts,
+	// shutdown). Retry before judging, so a transient outage neither passes a
+	// run unchecked nor fails a healthy one.
+	for attempt := 1; postRunFoldersErr != nil && attempt <= 3 && ctx.Err() == nil; attempt++ {
+		time.Sleep(time.Duration(attempt*2) * time.Second)
+		postRunFolders, postRunFoldersErr = s.api.loadRunFoldersInternal(ctx, sctx.WorkspacePath)
+	}
 	postRunFolders = webhookInvocationFolders(postRunFolders, runFolder, sctx.WebhookInput != nil)
 	postRunFolders = scheduleInvocationFolders(postRunFolders, runFolder, sctx.ScheduledRunFolder != "")
 	sctx.ProducedRunEvidence = workshopRunProducedEvidence(preRunFolderNames, postRunFolders, invocationStartedAt)
@@ -3858,6 +3882,14 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	}
 	if !sctx.ProducedRunEvidence {
 		s.sessionLogf(sctx, sessionID, "[SCHEDULER] no run folder was created or restarted during this invocation for %s; Pulse evidence-dependent stages will be skipped", sctx.Schedule.ID)
+		// A plain workflow schedule exists to run the workflow; finishing its
+		// turns without starting a run is a failure, not a success (for example
+		// the agent refused or misread the scheduled message). Schedules with
+		// their own messages, a query or an execution mode may legitimately run
+		// no workflow; their runs record ran_workflow=false for Pulse to judge.
+		if scheduleExpectsWorkflowRun(sctx) && postRunFoldersErr == nil && runFolderBaselineKnown {
+			return sessionID, runFolder, fmt.Errorf("the scheduled workflow did not start: the session finished without creating or restarting a run folder")
+		}
 	}
 	// Reconciliation is a set difference, so it is only meaningful when both
 	// sides are real. When either listing failed, skip it and say so rather than
@@ -3867,9 +3899,13 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 	// safe here — the run's own metadata remains the durable record, and the
 	// next invocation reconciles normally once the listing recovers.
 	if !runFolderBaselineKnown || postRunFoldersErr != nil {
+		// Without both listings the outcome cannot be checked. Recording
+		// success here made runs that stopped when the workspace service went
+		// down look complete (jobsearch finished 2 of 8 steps as "success").
 		s.sessionLogf(sctx, sessionID,
-			"[SCHEDULER] skipping run-outcome reconciliation for %s: run-folder listing unavailable (pre-run err=%v, post-run err=%v); this invocation's outcome stands on its session result alone",
+			"[SCHEDULER] run outcome for %s could not be verified: run-folder listing unavailable (pre-run err=%v, post-run err=%v)",
 			sctx.Schedule.ID, preRunFoldersErr, postRunFoldersErr)
+		return sessionID, runFolder, fmt.Errorf("run outcome could not be verified: the run-folder listing was unavailable (pre-run err=%v, post-run err=%v)", preRunFoldersErr, postRunFoldersErr)
 	} else if failedFolder, found := reconcileWorkshopRunOutcome(preRunFolderNames, postRunFolders, invocationStartedAt); found {
 		for _, folder := range postRunFolders {
 			if folder.Name == failedFolder && folder.Metadata != nil && folder.Metadata.Recovery["status"] == "step_recovered_run_unverified" {
@@ -3882,6 +3918,17 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 
 	s.sessionLogf(sctx, sessionID, "[SCHEDULER] ✅ Workshop execution completed for %s, session=%s, folder=%s", sctx.Schedule.ID, sessionID, runFolder)
 	return sessionID, runFolder, nil
+}
+
+// scheduleExpectsWorkflowRun is true for a plain workflow schedule: no custom
+// messages, no query and no execution mode, so its only job is to run the
+// workflow. Pulse-only, webhook and manual Pulse invocations are excluded.
+func scheduleExpectsWorkflowRun(sctx *ScheduleContext) bool {
+	if sctx == nil || sctx.PulseOnly || sctx.WebhookInput != nil {
+		return false
+	}
+	sched := sctx.Schedule
+	return len(sched.Messages) == 0 && strings.TrimSpace(sched.Query) == "" && strings.TrimSpace(sched.ExecutionMode) == ""
 }
 
 func runFolderNameSet(folders []RunFolderInfo) map[string]bool {

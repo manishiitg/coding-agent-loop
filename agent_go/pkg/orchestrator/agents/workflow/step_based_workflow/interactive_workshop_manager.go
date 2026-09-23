@@ -1293,7 +1293,10 @@ func (iwm *InteractiveWorkshopManager) persistWorkflowConfigToManifest(ctx conte
 		return fmt.Errorf("marshal workflow.json: %w", err)
 	}
 
-	if err := iwm.controller.WriteWorkspaceFile(ctx, manifestPath, string(updated)); err != nil {
+	// Go-owned structured write of the workflow's own manifest (PLAT-304):
+	// background and Pulse sessions have no raw grant to workflow.json, and
+	// the typed tool that led here already wrote it the managed way.
+	if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); err != nil {
 		return fmt.Errorf("write workflow.json: %w", err)
 	}
 
@@ -4841,7 +4844,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return fmt.Sprintf("Unable to create folder request: %v", updateErr), nil
 			}
 			if !existing {
-				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+				if writeErr := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); writeErr != nil {
 					return fmt.Sprintf("Unable to save folder request: %v", writeErr), nil
 				}
 			}
@@ -5554,7 +5557,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if marshalErr != nil {
 					return fmt.Sprintf("Failed to marshal workflow.json: %v", marshalErr), nil
 				}
-				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+				if writeErr := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); writeErr != nil {
 					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
 				}
 
@@ -5648,7 +5651,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if marshalErr != nil {
 					return fmt.Sprintf("Failed to marshal workflow.json: %v", marshalErr), nil
 				}
-				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+				if writeErr := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); writeErr != nil {
 					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
 				}
 
@@ -5821,7 +5824,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if marshalErr != nil {
 					return fmt.Sprintf("Failed to marshal workflow.json: %v", marshalErr), nil
 				}
-				if writeErr := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); writeErr != nil {
+				if writeErr := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); writeErr != nil {
 					return fmt.Sprintf("Failed to write workflow.json: %v", writeErr), nil
 				}
 
@@ -6045,7 +6048,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil {
 					return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
 				}
-				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+				if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(out)); err != nil {
 					return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
 				}
 
@@ -6088,7 +6091,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil {
 					return "", err
 				}
-				if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+				if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); err != nil {
 					return "", err
 				}
 				anyChanged = true
@@ -6144,7 +6147,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil {
 					return "", err
 				}
-				if err = iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+				if err = iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); err != nil {
 					return "", err
 				}
 				refreshWorkflowFolderAccessSession(ctx, iwm.controller.GetWorkspacePath())
@@ -6191,7 +6194,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				if err != nil {
 					return "", err
 				}
-				if err = iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+				if err = iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); err != nil {
 					return "", err
 				}
 				anyChanged = true
@@ -6298,7 +6301,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if err != nil {
 				return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
 			}
-			if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(updated)); err != nil {
+			if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(updated)); err != nil {
 				// Nothing changed on disk, so the turn keeps its one stamp.
 				contractupgrade.Restore(sessionID, version)
 				return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
@@ -7485,7 +7488,7 @@ func registerWorkshopLLMTools(iwm *InteractiveWorkshopManager, mcpAgent Definiti
 			if err != nil {
 				return fmt.Sprintf("Failed to marshal workflow.json: %v", err), nil
 			}
-			if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", string(out)); err != nil {
+			if err := iwm.controller.writeManagedWorkflowManifest(ctx, string(out)); err != nil {
 				return fmt.Sprintf("Failed to write workflow.json: %v", err), nil
 			}
 
@@ -8690,7 +8693,7 @@ func (iwm *InteractiveWorkshopManager) activateApprovedAdvisorSpecialization(ctx
 		return nil, false, err
 	}
 	if !alreadyActive {
-		if err := iwm.controller.WriteWorkspaceFile(ctx, "workflow.json", updatedContent); err != nil {
+		if err := iwm.controller.writeManagedWorkflowManifest(ctx, updatedContent); err != nil {
 			return nil, false, err
 		}
 		oldState := "absent"

@@ -212,3 +212,77 @@ func readStepConcernsView(ctx context.Context, workspacePath string) (string, er
 	out, err := json.MarshalIndent(collectStepConcerns(workspacePath, stepConcernWindowStart(ctx, workspacePath)), "", "  ")
 	return string(out), err
 }
+
+// ScheduleRunHealth summarizes whether a schedule's recent invocations
+// actually ran the workflow. Plain workflow schedules now fail when nothing
+// starts; direct-message schedules may legitimately run nothing, so Pulse
+// judges those from this summary.
+type ScheduleRunHealth struct {
+	ScheduleID        string `json:"schedule_id"`
+	Name              string `json:"name"`
+	CustomMessages    bool   `json:"custom_messages"`
+	RecentRuns        int    `json:"recent_runs"`
+	RanWorkflow       int    `json:"ran_workflow"`
+	RanNothing        int    `json:"ran_nothing"`
+	Unknown           int    `json:"unknown"`
+	LastRanWorkflowAt string `json:"last_ran_workflow_at,omitempty"`
+	LastStatus        string `json:"last_status,omitempty"`
+	LastStartedAt     string `json:"last_started_at,omitempty"`
+}
+
+const scheduleRunHealthWindow = 10
+
+func collectScheduleRunHealth(ctx context.Context, workspacePath string, manifest *WorkflowManifest) []ScheduleRunHealth {
+	out := []ScheduleRunHealth{}
+	if manifest == nil {
+		return out
+	}
+	runs, err := ReadScheduleRuns(ctx, workspacePath)
+	if err != nil {
+		return out
+	}
+	for _, sched := range manifest.Schedules {
+		if !sched.Enabled || sched.ID == "" {
+			continue
+		}
+		health := ScheduleRunHealth{ScheduleID: sched.ID, Name: sched.Name, CustomMessages: len(sched.Messages) > 0 || strings.TrimSpace(sched.Query) != ""}
+		var mine []ScheduleRunEntry
+		for _, run := range runs {
+			if run.ScheduleID == sched.ID && run.TriggerSource != "manual" {
+				mine = append(mine, run)
+			}
+		}
+		sort.Slice(mine, func(i, j int) bool { return mine[i].StartedAt.After(mine[j].StartedAt) })
+		for i, run := range mine {
+			if i == 0 {
+				health.LastStatus = run.Status
+				health.LastStartedAt = run.StartedAt.UTC().Format(time.RFC3339)
+			}
+			if run.RanWorkflow != nil && *run.RanWorkflow && health.LastRanWorkflowAt == "" {
+				health.LastRanWorkflowAt = run.StartedAt.UTC().Format(time.RFC3339)
+			}
+			if i >= scheduleRunHealthWindow {
+				continue
+			}
+			health.RecentRuns++
+			switch {
+			case run.RanWorkflow == nil:
+				health.Unknown++
+			case *run.RanWorkflow:
+				health.RanWorkflow++
+			default:
+				health.RanNothing++
+			}
+		}
+		out = append(out, health)
+	}
+	return out
+}
+
+func scheduleRunHealthForView(ctx context.Context, workspacePath string) []ScheduleRunHealth {
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found {
+		return []ScheduleRunHealth{}
+	}
+	return collectScheduleRunHealth(ctx, workspacePath, manifest)
+}

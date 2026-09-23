@@ -1548,3 +1548,58 @@ func TestChangedUnverifiedClosesWithoutSeparateVerificationBoundary(t *testing.T
 // the one value the Fixer's own contract tells it to send, against 149 for an
 // omitted filter on social-media. It only did any work by falling back to
 // omitting the module.
+
+// Live on social-media 2026-09-23: 87 rows filed by steps through the retired
+// record_run_concern tool (typed, never routed) kept Technical failing every
+// pass. The cleanup retires them; reviewer-filed and prevalidation rows stay.
+func TestReconcileRetiresUnroutedStepFiledTypedRows(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := concernsWorkspace(t)
+	stepRow := func(step, phase, text string) {
+		t.Helper()
+		seedRunConcerns(t, workspacePath, "run-1", "", step, phase, text)
+		db, err := openRunConcernsDB(ctx, workspacePath, false)
+		if err != nil || db == nil {
+			t.Fatalf("open db: %v", err)
+		}
+		defer db.Close()
+		fp := concernFingerprint(step, text)
+		marker := pulseFindingDetailMarker{Concern: text, Module: step, PulseFindingDetails: PulseFindingDetails{IssueKind: IssueKindWorkflow, Summary: text}}
+		if err := recordPulseFindingDetailAt(ctx, db, workspacePath, "run-1", step, marker, fp, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+			t.Fatalf("attach details: %v", err)
+		}
+	}
+	stepRow("execute-remediate", ConcernPhaseExecution, "step draft ignores learnings")
+	stepRow("sequence-a", ConcernPhaseMessageSequence, "sequence skipped a target")
+	recordTestReviewFinding(t, workspacePath, "pulse-1", testReviewFinding(pulsemodules.TechnicalReviewID, "reviewer-filed defect stays"))
+
+	result, err := ReconcilePulseActionableBacklog(ctx, workspacePath)
+	if err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	if result.RetiredLegacyObservations != 2 {
+		t.Fatalf("retired = %d, want the 2 step-filed rows", result.RetiredLegacyObservations)
+	}
+	active := activeRunConcernRows(t, workspacePath)
+	if len(active) != 1 || active[0].Text != "reviewer-filed defect stays" {
+		t.Fatalf("active after reconcile = %+v", active)
+	}
+}
+
+func TestCountActionableWorkflowIssuesForPassIgnoresOldUnroutedBacklog(t *testing.T) {
+	ctx := context.Background()
+	workspacePath := concernsWorkspace(t)
+	recordTestReviewFinding(t, workspacePath, "pulse-old", testReviewFinding(pulsemodules.TechnicalReviewID, "old unrouted defect"))
+	handoff := testReviewFinding(pulsemodules.TechnicalReviewID, "routed to the fixer")
+	handoff.RecommendedRoute = pulseFindingRouteFixerHandoff
+	recordTestReviewFinding(t, workspacePath, "pulse-old", handoff)
+
+	future := time.Now().UTC().Add(time.Hour)
+	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, future); err != nil || n != 1 {
+		t.Fatalf("count since after both were seen = %d (%v), want only the fixer handoff", n, err)
+	}
+	past := time.Now().UTC().Add(-time.Hour)
+	if n, err := CountPulseActionableWorkflowIssuesForPass(ctx, workspacePath, past); err != nil || n != 2 {
+		t.Fatalf("count since before both were seen = %d (%v), want both", n, err)
+	}
+}

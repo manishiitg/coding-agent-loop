@@ -3905,7 +3905,7 @@ func (s *SchedulerService) executeWorkshopJob(ctx context.Context, sctx *Schedul
 		s.sessionLogf(sctx, sessionID,
 			"[SCHEDULER] run outcome for %s could not be verified: run-folder listing unavailable (pre-run err=%v, post-run err=%v)",
 			sctx.Schedule.ID, preRunFoldersErr, postRunFoldersErr)
-		return sessionID, runFolder, fmt.Errorf("run outcome could not be verified: the run-folder listing was unavailable (pre-run err=%v, post-run err=%v)", preRunFoldersErr, postRunFoldersErr)
+		return sessionID, runFolder, fmt.Errorf("run outcome could not be verified: the run-folder listing was unavailable: %w", errors.Join(preRunFoldersErr, postRunFoldersErr))
 	} else if failedFolder, found := reconcileWorkshopRunOutcome(preRunFolderNames, postRunFolders, invocationStartedAt); found {
 		for _, folder := range postRunFolders {
 			if folder.Name == failedFolder && folder.Metadata != nil && folder.Metadata.Recovery["status"] == "step_recovered_run_unverified" {

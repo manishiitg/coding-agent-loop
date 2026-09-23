@@ -45,6 +45,16 @@ describe('shared transcript failure retry', () => {
     expect(notice.querySelector('summary')?.textContent).not.toContain('builder/conversation/private.json')
   })
 
+  it('shows the typed message beside a continuity notice', async () => {
+    const raw = '[AGENTWORKS CONVERSATION CONTINUITY]\nThis provider session was restarted.\n[/AGENTWORKS CONVERSATION CONTINUITY]\n\n[USER MESSAGE]\nhi'
+    const host = await mount([event('user:sub-1', 'user_message', { content: raw, metadata: { client_message_id: 'sub-1', display_content: 'hi' } })])
+    expect(host.querySelector('[data-testid="conversation-continuity-notice"]')).not.toBeNull()
+    const bubbles = Array.from(host.querySelectorAll('div.whitespace-pre-wrap'))
+      .filter(element => !element.closest('[data-testid="conversation-continuity-notice"]'))
+    expect(bubbles.map(element => element.textContent)).toEqual(['hi'])
+    expect(host.querySelectorAll('[data-testid="conversation-continuity-notice"]')).toHaveLength(1)
+  })
+
   it('renders Muse progress as an assistant response without a Thinking disclosure', async () => {
     const host = await mount([event('muse-update', 'conversation_thinking', {
       thinking: 'Checking the supplied files.', metadata: { presentation: 'assistant_update' },

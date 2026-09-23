@@ -295,7 +295,7 @@ func (api *StreamingAPI) executeQueuedConversationTurn(turn queuedConversationTu
 		outcome, proof = "failed", "conversation_turn_failed"
 		logTurnQueue("turn %s failed: %v", turn.ID, err)
 	}
-	api.recordLiveInputConfirmed(turn.SessionID, turn.ID, outcome, proof, turn.Request.Provider, time.Since(turn.CreatedAt).Milliseconds())
+	api.recordLiveInputConfirmed(turn.SessionID, turn.ID, outcome, proof, turn.Request.Provider, time.Since(turn.CreatedAt).Milliseconds(), sanitizeClientMessageID(turn.SubmissionID))
 	storageCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	if removeErr := api.removeConversationTurn(storageCtx, turn); removeErr != nil {
 		logTurnQueue("cannot persist completion for %s: %v", turn.ID, removeErr)
@@ -357,7 +357,14 @@ func (api *StreamingAPI) queuedConversationTurnContext(turn queuedConversationTu
 }
 
 func (api *StreamingAPI) recordQueuedConversationUserMessage(sessionID string, turn queuedConversationTurn) {
-	api.recordLiveCodingAgentUserMessage(sessionID, turn.Request.Query, turn.Request.Provider, turn.ID, "queued_for_turn")
+	// A keyed submission already shows as a provisional queued bubble in the
+	// submitting browser. Its durable row is the turn's own user_message, which
+	// the event store stamps with the same client id when the turn starts, so it
+	// lands after the answer it waited behind instead of above it.
+	if sanitizeClientMessageID(turn.SubmissionID) != "" {
+		return
+	}
+	api.recordLiveCodingAgentUserMessage(sessionID, turn.Request.Query, turn.Request.Provider, turn.ID, "queued_for_turn", "")
 }
 
 func (api *StreamingAPI) registerQueuedTurnWaiter(turnID string, callback func(event *unifiedevents.AgentEvent)) <-chan queuedConversationTurnResult {

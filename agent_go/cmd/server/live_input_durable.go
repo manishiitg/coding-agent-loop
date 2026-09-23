@@ -25,12 +25,32 @@ const liveInputDurableWatchTimeout = 6 * time.Minute
 // event (matched by message_id) when the CLI's own durable record
 // confirms the send. Providers without SupportsDurableAck are ignored.
 func (api *StreamingAPI) watchLiveInputDurable(sessionID, provider, messageID, message string) {
+	api.watchLiveInputDurableRecording(sessionID, provider, messageID, message, "", nil)
+}
+
+// liveInputHasDurableAck reports whether the provider can tell us when its CLI
+// actually took a steered message (as opposed to it waiting in the pane).
+func liveInputHasDurableAck(provider string) bool {
+	contract, ok := llmproviders.GetCodingAgentProviderContract(llmproviders.Provider(strings.TrimSpace(provider)), "")
+	return ok && contract.SupportsDurableAck
+}
+
+// watchLiveInputDurableRecording is watchLiveInputDurable that, when deferred
+// is set, records that user_message only once the CLI has taken it. A message
+// steered into a busy CLI waits in its input until the current answer ends, so
+// recording it at submit time placed the in-flight answer under it.
+func (api *StreamingAPI) watchLiveInputDurableRecording(sessionID, provider, messageID, message, clientMessageID string, deferred *events.Event) {
 	provider = strings.TrimSpace(provider)
 	if api == nil || api.eventStore == nil || sessionID == "" || messageID == "" || strings.TrimSpace(message) == "" {
+		if deferred != nil && api != nil && api.eventStore != nil && sessionID != "" {
+			api.eventStore.AddEvent(sessionID, *deferred)
+		}
 		return
 	}
-	contract, ok := llmproviders.GetCodingAgentProviderContract(llmproviders.Provider(provider), "")
-	if !ok || !contract.SupportsDurableAck {
+	if !liveInputHasDurableAck(provider) {
+		if deferred != nil {
+			api.eventStore.AddEvent(sessionID, *deferred)
+		}
 		return
 	}
 	go func() {
@@ -55,7 +75,12 @@ func (api *StreamingAPI) watchLiveInputDurable(sessionID, provider, messageID, m
 			log.Printf("[LIVE-INPUT-DURABLE] session=%s provider=%s message=%s outcome=%s err=%v",
 				sessionID, provider, messageID, outcome, err)
 		}
-		api.recordLiveInputConfirmed(sessionID, messageID, outcome, proof, provider, latencyMs)
+		// Whatever the verdict, the message was sent: record it now, at the
+		// point the CLI took it (or gave up), then its receipt.
+		if deferred != nil {
+			api.eventStore.AddEvent(sessionID, deferredUserMessageAt(*deferred, time.Now()))
+		}
+		api.recordLiveInputConfirmed(sessionID, messageID, outcome, proof, provider, latencyMs, clientMessageID)
 	}()
 }
 
@@ -99,11 +124,17 @@ func (api *StreamingAPI) awaitLiveInputDurable(ctx context.Context, provider llm
 // event so it reaches chat over SSE and survives reconnect replay like
 // the user_message row it upgrades. The event ID derives
 // deterministically from the message so redelivery is idempotent.
-func (api *StreamingAPI) recordLiveInputConfirmed(sessionID, messageID, outcome, proofSource, provider string, latencyMs int64) {
+func (api *StreamingAPI) recordLiveInputConfirmed(sessionID, messageID, outcome, proofSource, provider string, latencyMs int64, clientMessageID string) {
 	if api == nil || api.eventStore == nil || sessionID == "" || messageID == "" {
 		return
 	}
 	eventData := unifiedevents.NewLiveInputConfirmedEvent(messageID, outcome, proofSource, provider, latencyMs)
+	if clientMessageID != "" {
+		if eventData.Metadata == nil {
+			eventData.Metadata = map[string]interface{}{}
+		}
+		eventData.Metadata["client_message_id"] = clientMessageID
+	}
 	agentEvent := unifiedevents.NewAgentEvent(eventData)
 	agentEvent.SessionID = sessionID
 	agentEvent.Component = "coding_agent_live_input"
@@ -115,4 +146,21 @@ func (api *StreamingAPI) recordLiveInputConfirmed(sessionID, messageID, outcome,
 		SessionID: sessionID,
 	}
 	api.eventStore.AddEvent(sessionID, event)
+}
+
+// deferredUserMessageAt dates a deferred steer at the moment the CLI took it,
+// so any time-ordered view agrees with its journal position.
+func deferredUserMessageAt(event events.Event, at time.Time) events.Event {
+	event.Timestamp = at
+	if event.Data != nil {
+		agentEvent := *event.Data
+		agentEvent.Timestamp = at
+		if message, ok := agentEvent.Data.(*unifiedevents.UserMessageEvent); ok && message != nil {
+			copied := *message
+			copied.Timestamp = at
+			agentEvent.Data = &copied
+		}
+		event.Data = &agentEvent
+	}
+	return event
 }

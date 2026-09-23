@@ -85,7 +85,7 @@ func compactDurableChatEvent(event Event) Event {
 	}
 	if metadata, ok := payload["metadata"].(map[string]interface{}); ok {
 		boundedMetadata := make(map[string]interface{})
-		for _, key := range []string{"kind", "message_id", "turn_id", "provider", "confirmation", "delivery_status"} {
+		for _, key := range []string{"kind", "message_id", "client_message_id", "display_content", "turn_id", "provider", "confirmation", "delivery_status"} {
 			if value, exists := metadata[key]; exists && isDurableScalar(value) {
 				boundedMetadata[key] = value
 			}

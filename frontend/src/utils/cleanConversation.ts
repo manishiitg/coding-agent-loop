@@ -145,8 +145,11 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
     if (event.type === 'user_message') {
       const content = displaySafeUserMessage(firstText(payload.content, asRecord(event.data)?.content))
       if (!content) continue
+      const metadata = asRecord(payload.metadata)
+      const displayContent = typeof metadata?.display_content === 'string' ? metadata.display_content.trim() : ''
       if (isConversationContinuityNotice(content)) {
         pushUnique({ id: event.id, role: 'continuity', content, timestamp: event.timestamp })
+        if (displayContent) pushUnique({ id: `${event.id}:typed`, role: 'user', content: displayContent, timestamp: event.timestamp })
         continue
       }
       if (content.startsWith('[AUTO-NOTIFICATION]')) {
@@ -167,7 +170,7 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
 					continue
 				}
 			}
-			pushUnique({ id: event.id, role: 'user', content, timestamp: event.timestamp })
+			pushUnique({ id: event.id, role: 'user', content: displayContent || content, timestamp: event.timestamp })
       completedAssistantAwaitingUsage = undefined
       continue
     }

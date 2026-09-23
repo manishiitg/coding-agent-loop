@@ -657,15 +657,18 @@ type EventStore struct {
 	sessionStartIndices map[string]int    // sessionID -> startIndex (offset for events in memory)
 	sessionOwners       map[string]string // sessionID -> userID
 	persistenceClasses  map[string]SessionPersistenceClass
-	mu                  sync.RWMutex
-	maxEvents           int // Maximum events per session
-	cleanupTicker       *time.Ticker
-	stopCh              chan struct{}
-	activityCallback    ActivityCallback // Optional callback to update session activity
-	eventAddedCallback  EventAddedCallback
-	durableJournal      DurableEventJournal
-	hydratedSessions    map[string]bool
-	hydrateMu           sync.Mutex
+	// expectedClientMessages: sessionID -> client identity for the next
+	// main-agent user_message (see ExpectClientUserMessage). Guarded by mu.
+	expectedClientMessages map[string]expectedClientMessage
+	mu                     sync.RWMutex
+	maxEvents              int // Maximum events per session
+	cleanupTicker          *time.Ticker
+	stopCh                 chan struct{}
+	activityCallback       ActivityCallback // Optional callback to update session activity
+	eventAddedCallback     EventAddedCallback
+	durableJournal         DurableEventJournal
+	hydratedSessions       map[string]bool
+	hydrateMu              sync.Mutex
 	// journalProbed caches "journal has no history for this session" so an
 	// unclassified live-only session pays for the probe once, not per event.
 	journalProbed map[string]bool
@@ -952,6 +955,7 @@ func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
 		es.sessionStartIndices[sessionID] = 0
 	}
 	event.ensureExecutionOwnership(sessionID, es.events[sessionID])
+	es.stampExpectedClientUserMessage(sessionID, &event)
 	if event.TerminalOwnerID == "" {
 		event.TerminalOwnerID = ResolveTerminalOwnerID(sessionID, event, nil)
 	}

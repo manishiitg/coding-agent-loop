@@ -38,6 +38,7 @@ import { appendTimelineAndApplyConfirmations, hydrateTabEvents, restoreSession }
 import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
 import { isExecutionConversationTab } from '../utils/sessionEventSource'
 import { nextForwardCursor } from '../utils/forwardCursor'
+import { clientMessageEventId, readClientMessageId } from '../utils/clientMessageIdentity'
 import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { logger } from '../utils/logger'
 
@@ -107,7 +108,7 @@ function getEventTimestampMs(event: PollingEvent): number | null {
   return Number.isFinite(parsed) ? parsed : null
 }
 
-function createNextOptimisticUserMessage(sessionId: string, content: string, existing: PollingEvent[]): PollingEvent {
+function createNextOptimisticUserMessage(sessionId: string, content: string, existing: PollingEvent[], clientMessageId: string): PollingEvent {
   const indexed = existing.filter(event => typeof event.event_index === 'number')
   const eventIndex = indexed.length > 0
     ? indexed.reduce((maxIndex, event) => Math.max(maxIndex, event.event_index as number), -1) + 1
@@ -116,12 +117,21 @@ function createNextOptimisticUserMessage(sessionId: string, content: string, exi
     const timestamp = getEventTimestampMs(event)
     return timestamp === null ? latest : Math.max(latest, timestamp)
   }, 0)
-  return createUserMessageEvent(
+  const event = createUserMessageEvent(
     content,
     eventIndex,
     new Date(Math.max(Date.now(), latestTimestamp + 1)).toISOString(),
     sessionId,
   )
+  // Shares the id of the server's durable row for this submission, which
+  // replaces it (and repositions it) when it arrives.
+  const outer = event.data as unknown as Record<string, unknown>
+  const inner = (outer.data ?? {}) as Record<string, unknown>
+  return {
+    ...event,
+    id: clientMessageEventId(clientMessageId),
+    data: { ...outer, data: { ...inner, metadata: { client_message_id: clientMessageId, provisional: true } } } as PollingEvent['data'],
+  }
 }
 
 function formatAutoNotificationTime(event: PollingEvent): string {
@@ -1853,7 +1863,10 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // (avoids duplicate user message bubbles in the chat). Internal
       // [AUTO-NOTIFICATION] messages still enter the event store, but the
       // displayEvents filter keeps them out of the human timeline.
-      if (event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
+      // Keyed echoes reconcile by id in the store (the durable row replaces its
+      // provisional bubble). Text matching remains only for legacy rows.
+      const isKeyedUserEcho = event.type === 'user_message' && Boolean(readClientMessageId(event))
+      if (!isKeyedUserEcho && event.type === 'user_message' && hasFrontendUserMessage && !event.id?.startsWith('user-message-')) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
@@ -1879,7 +1892,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       // Allow distinct backend user_message events through when there's no
       // matching frontend-created message. Internal auto-notifications are
       // retained here for orchestration and filtered only at display time.
-      if (event.type === 'user_message' && hasFrontendUserMessage) {
+      if (!isKeyedUserEcho && event.type === 'user_message' && hasFrontendUserMessage) {
         const msgContent = getDisplaySafeUserMessageContent(getUserMessageContent(event))
         if (
           !msgContent.startsWith(AUTO_NOTIFICATION_PREFIX) &&
@@ -3056,6 +3069,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
         tabSessionId,
         displayQueryWithContext,
         chatStore.getTabEvents(tabSessionId),
+        receipt.id,
       )
       optimisticUserEventID = optimisticUserMessage.id
       chatStore.addTabEvents(tabSessionId, [optimisticUserMessage])
@@ -3404,10 +3418,11 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     const retryTarget = pending?.message === query.trim() && pending.targetTabId
       ? useChatStore.getState().getTab(pending.targetTabId) : undefined
     const retry = retryTarget && retryTarget.sessionId === pending?.sessionId ? pending : undefined
+    const submissionId = options?.submissionId ?? retry?.id ?? crypto.randomUUID()
     const captured: ChatSubmissionOptions = { ...options, identity,
       sourceTabId: sourceTab?.tabId,
       sourceSessionId: options?.sourceSessionId ?? (!isBuilder ? sourceTab?.sessionId ?? undefined : undefined),
-      submissionId: options?.submissionId ?? retry?.id ?? crypto.randomUUID(),
+      submissionId,
       submittedAtPerformanceMS: options?.submittedAtPerformanceMS ?? performance.now(),
       submittedAtClientTime: options?.submittedAtClientTime ?? new Date().toISOString(),
       builderHandoff: retry ? { tabId: retry.targetTabId, sessionId: retry.sessionId } : builder?.target,
@@ -3432,6 +3447,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           sourceTab.sessionId,
           query.trim(),
           store.getTabEvents(sourceTab.sessionId),
+          submissionId,
         )
         captured.optimisticUserEventId = optimistic.id
         store.addTabEvents(sourceTab.sessionId, [optimistic])

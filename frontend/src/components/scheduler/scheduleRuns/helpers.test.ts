@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import type { ScheduledJob } from '../../../services/api-types'
-import { defaultSchedulePanelView, jobMatchesWorkflowScope, timeScheduledJobs } from './helpers'
+import { defaultSchedulePanelView, getPotentialScheduleOverlaps, jobMatchesWorkflowScope, timeScheduledJobs } from './helpers'
 
 describe('defaultSchedulePanelView', () => {
   it('opens global views on the per-workflow grouping', () => {
@@ -49,5 +49,22 @@ describe('jobMatchesWorkflowScope', () => {
       workflowId: 'project-1',
       workspacePath: 'Chats/Work/projects/project-1',
     }, new Map())).toBe(false)
+  })
+})
+
+describe('getPotentialScheduleOverlaps', () => {
+  it('flags close starts only within the same sequential workflow when duration history exists', () => {
+    const jobs = [
+      { id: 'first', name: 'First', workflow_id: 'one', enabled: true, next_run_at: '2026-09-23T09:00:00Z', avg_duration_ms: 30 * 60_000 },
+      { id: 'second', name: 'Second', workflow_id: 'one', enabled: true, next_run_at: '2026-09-23T09:15:00Z' },
+      { id: 'other-workflow', name: 'Other', workflow_id: 'two', enabled: true, next_run_at: '2026-09-23T09:10:00Z' },
+      { id: 'parallel', name: 'Parallel', workflow_id: 'one', enabled: true, concurrency_mode: 'parallel', next_run_at: '2026-09-23T09:10:00Z' },
+    ] as ScheduledJob[]
+
+    const overlaps = getPotentialScheduleOverlaps(jobs, new Map())
+    expect(overlaps.get('first')).toBe('Second')
+    expect(overlaps.get('second')).toBe('First')
+    expect(overlaps.has('other-workflow')).toBe(false)
+    expect(overlaps.has('parallel')).toBe(false)
   })
 })

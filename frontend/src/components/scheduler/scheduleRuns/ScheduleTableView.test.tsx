@@ -16,17 +16,24 @@ describe('global schedule table', () => {
       messages: ['Collect evidence and prepare the daily report.'], missed_run_count: 2,
       next_run_at: '2026-09-13T08:00:00Z', last_run_at: '2026-09-12T08:00:00Z',
       collision_policy: 'queue_latest', max_start_delay_minutes: 120,
+      avg_duration_ms: 18 * 60_000, avg_duration_samples: 10, consecutive_failures: 2,
       after_schedule_ids: ['collector', 'guard'], after_terminal_status: 'completed', after_delay_minutes: 5, dependency_deadline: '10:30',
     } as ScheduledJob
     const trigger = vi.fn()
-    const panel = { focusedScheduleId: null as string | null, filteredJobs: [job], presetMap: new Map(), isSchedulerPaused: true, isReadOnlyUser,
+    const panel = { focusedScheduleId: null as string | null, filteredJobs: [job], presetMap: new Map(), potentialOverlaps: new Map<string, string>(), isSchedulerPaused: true, isReadOnlyUser,
       triggering: null, handleStopRun: vi.fn(), handleTrigger: trigger, handleToggle: vi.fn(), handleDelete: vi.fn(),
       openActionMenuJobId: null, setOpenActionMenuJobId: vi.fn(),
+      expandedRunHistoryJobIds: new Set<string>(), runsByJob: {}, runsLoadingJobIds: new Set<string>(), toggleRunHistory: vi.fn(), openScheduledRun: vi.fn(),
     }
     const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
     try {
       await act(async () => root.render(<ScheduleTableView panel={panel} />))
       expect(host.textContent).toContain('Paused globally')
+      expect(host.textContent).toContain('Failed')
+      expect(host.textContent).toContain('18m 0s')
+      expect(host.textContent).toContain('last 10 successful')
+      expect(host.textContent).toContain('2 missed')
+      expect(host.textContent).toContain('2 failures in a row')
       expect(host.textContent).not.toContain(job.last_error)
       expect(host.textContent).not.toContain(job.messages![0])
       const toggle = host.querySelector<HTMLButtonElement>('[aria-label="Show Daily report details"]')!

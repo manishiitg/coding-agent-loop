@@ -16,10 +16,12 @@ import {
   WORKFLOW_SCHEDULE_PANEL_LIMIT,
   defaultSchedulePanelView,
   getMissedScheduleDelayMs,
+  getPotentialScheduleOverlaps,
   getWorkflowFilterMeta,
   getWorkflowScopeLabel,
   isMissedSchedule,
   isScheduleIssueStatus,
+  isScheduleWaitingStatus,
   jobMatchesWorkflowScope,
   sortJobs,
   timeScheduledJobs,
@@ -46,6 +48,16 @@ export type UseScheduleRunsDataArgs = {
   workflowScope?: WorkflowScope
   entityType?: 'workflow' | 'product'
   canManage?: boolean
+}
+
+// Mutation responses do not include the list's recent-run aggregate. Keep it
+// until the next list refresh so toggling a schedule does not blank the metric.
+function retainDurationAverage(updated: ScheduledJob, previous: ScheduledJob): ScheduledJob {
+  return {
+    ...updated,
+    avg_duration_ms: updated.avg_duration_ms ?? previous.avg_duration_ms,
+    avg_duration_samples: updated.avg_duration_samples ?? previous.avg_duration_samples,
+  }
 }
 
 export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, entityType = 'workflow', canManage, active = true }: UseScheduleRunsDataArgs) {
@@ -169,6 +181,10 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   const hasRunningJob = panelJobs.some(j => j.last_status === 'running')
   const activeScheduleCount = panelJobs.filter(j => j.enabled).length
   const isSchedulerPaused = !!schedulerConfig?.globally_paused
+  const potentialOverlaps = useMemo(
+    () => isSchedulerPaused ? new Map<string, string>() : getPotentialScheduleOverlaps(panelJobs, presetMap),
+    [panelJobs, presetMap, isSchedulerPaused],
+  )
 
   const workflowScheduleSummary = useMemo(() => {
     const workflows = new Map<string, { enabled: number; paused: number; running: number; attention: boolean }>()
@@ -198,6 +214,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     const running = panelJobs.filter(j => j.last_status === 'running').length
     const missed = panelJobs.filter(isMissedSchedule).length
     const issues = panelJobs.filter(j => isScheduleIssueStatus(j.last_status)).length
+    const waiting = panelJobs.filter(j => isScheduleWaitingStatus(j.last_status)).length
     const paused = panelJobs.filter(j => !j.enabled).length
     const lastRunAt = panelJobs.reduce<string | undefined>((latest, job) => {
       if (!job.last_run_at) return latest
@@ -207,12 +224,14 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       running,
       missed,
       issues,
+      waiting,
+      overlap: potentialOverlaps.size,
       paused,
       enabled: activeScheduleCount,
       total: panelJobs.length,
       lastRunAt,
     }
-  }, [panelJobs, activeScheduleCount])
+  }, [panelJobs, activeScheduleCount, potentialOverlaps])
 
   const normalizedSearch = searchQuery.trim().toLowerCase()
   const workflowOptions = useMemo(() => {
@@ -261,6 +280,9 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
           case 'running':
             if (job.last_status !== 'running') return false
             break
+          case 'waiting':
+            if (!isScheduleWaitingStatus(job.last_status)) return false
+            break
           case 'enabled':
             if (!job.enabled) return false
             break
@@ -279,6 +301,9 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
             // succeeded, Pulse finalized partial, and the schedule became
             // unfindable.
             if (!isScheduleIssueStatus(job.last_status)) return false
+            break
+          case 'overlap':
+            if (!potentialOverlaps.has(job.id)) return false
             break
           case 'all':
           default:
@@ -309,7 +334,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
 
         return haystack.includes(normalizedSearch)
       })
-  }, [panelJobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter])
+  }, [panelJobs, activeFilter, normalizedSearch, presetMap, selectedWorkflowFilter, potentialOverlaps])
 
   // When the panel or explicit workflow filter already identifies one
   // automation, repeating "Automation / <name>" on every schedule adds noise.
@@ -332,6 +357,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
         running: 0,
         missed: 0,
         issues: 0,
+        overlap: 0,
         enabled: 0,
         paused: 0,
         nextRunAt: undefined,
@@ -344,6 +370,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       if (job.last_status === 'running') group.running += 1
       if (isMissedSchedule(job)) group.missed += 1
       if (isScheduleIssueStatus(job.last_status)) group.issues += 1
+      if (potentialOverlaps.has(job.id)) group.overlap += 1
       if (job.enabled) group.enabled += 1
       else group.paused += 1
 
@@ -368,7 +395,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
         if (b.nextRunAt) return 1
         return a.label.localeCompare(b.label)
       })
-  }, [filteredJobs, presetMap])
+  }, [filteredJobs, presetMap, potentialOverlaps])
 
   const monthlyCalendar = useMemo(() => {
     const year = calendarMonth.getFullYear()
@@ -461,14 +488,14 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
       const updated = job.enabled
         ? await schedulerApi.disableJob(job.id)
         : await schedulerApi.enableJob(job.id)
-      setJobs(prev => prev.map(j => j.id === job.id ? updated : j))
+      setJobs(prev => prev.map(j => j.id === job.id ? retainDurationAverage(updated, j) : j))
     } catch { /* ignore */ }
   }
 
   const handleRunDestination = async (job: ScheduledJob, runDestination: 'crew_chat' | 'isolated') => {
     try {
       const updated = await schedulerApi.updateJob(job.id, { run_destination: runDestination })
-      setJobs(previous => previous.map(candidate => candidate.id === job.id ? updated : candidate))
+      setJobs(previous => previous.map(candidate => candidate.id === job.id ? retainDurationAverage(updated, candidate) : candidate))
       useChatStore.getState().addToast(runDestination === 'isolated'
         ? `“${job.name}” will run in its own automation conversation.`
         : `“${job.name}” will queue in the Crew chat.`, 'success')
@@ -492,7 +519,10 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
         targets.map(j => shouldPause ? schedulerApi.disableJob(j.id) : schedulerApi.enableJob(j.id))
       )
       const updatedById = new Map(updated.map(u => [u.id, u]))
-      setJobs(prev => prev.map(j => updatedById.get(j.id) ?? j))
+      setJobs(prev => prev.map(j => {
+        const updated = updatedById.get(j.id)
+        return updated ? retainDurationAverage(updated, j) : j
+      }))
     } catch (e) {
       console.error('Failed to toggle workflow schedules:', e)
       loadJobs()
@@ -700,6 +730,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
   }, [workflowScope?.workspacePath])
 
   const handleToggleGlobalPause = async () => {
+    if (!isSchedulerPaused && !window.confirm(`Pause all ${summary.enabled} active schedules? Timed runs will not start until scheduling is resumed.`)) return
     setIsUpdatingSchedulerPause(true)
     try {
       const updated = await schedulerApi.updateConfig({
@@ -733,10 +764,12 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
 
   const filterPills: Array<{ key: JobFilter; label: string; count: number }> = [
     { key: 'running', label: 'Running', count: summary.running },
+    { key: 'waiting', label: 'Queued / waiting', count: summary.waiting },
     { key: 'enabled', label: 'Enabled', count: summary.enabled },
     { key: 'paused', label: 'Paused', count: summary.paused },
     { key: 'missed', label: 'Missed', count: summary.missed },
     { key: 'issues', label: 'Issues', count: summary.issues },
+    { key: 'overlap', label: 'Possible overlap', count: summary.overlap },
     { key: 'all', label: 'All', count: summary.total },
   ]
   const activeFilterLabel = filterPills.find((pill) => pill.key === activeFilter)?.label ?? 'All'
@@ -782,6 +815,7 @@ export function useScheduleRunsData({ onClose, onJobsLoaded, workflowScope, enti
     filteredJobs,
     showWorkflowIdentityInScheduleRows,
     workflowGroups,
+    potentialOverlaps,
     monthlyCalendar,
     selectedCalendarCell,
     handleToggle,

@@ -3047,6 +3047,8 @@ export interface ScheduledJob {
   last_status?: 'success' | 'error' | 'running' | 'partial' | 'stopped' | 'interrupted' | 'waiting_for_capacity' | 'waiting_for_workflow'
   last_error?: string
   last_duration_ms?: number
+  avg_duration_ms?: number
+  avg_duration_samples?: number
   run_count: number
   consecutive_failures: number
   execution_mode?: 'close_only'

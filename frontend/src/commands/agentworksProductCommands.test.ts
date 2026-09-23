@@ -62,9 +62,9 @@ describe('toAgentworksCommandDefinitions', () => {
     expect(hidden.menuHidden).toBe(true)
   })
 
-  it('attaches focus search terms only to pulse-review', () => {
+  it('attaches focus search terms only to run-technical-review', () => {
     const [review, other] = toAgentworksCommandDefinitions([
-      command({ name: 'pulse-review' }),
+      command({ name: 'run-technical-review' }),
       command({ name: 'design-plan' }),
     ])
     expect(review.searchTerms).toContain('pulse-review-database')
@@ -106,7 +106,7 @@ describe('executeAgentworksProductCommand', () => {
   })
 
   it('resolves pulse-review focus from picker selection or first word', () => {
-    const prompt = command({ name: 'pulse-review', prompt: 'Review focus={{context}}.' })
+    const prompt = command({ name: 'run-technical-review', prompt: 'Review focus={{context}}.' })
     const submit = (beforeSlash: string, pulseReviewFocus?: string) => {
       const onSubmit = vi.fn()
       executeAgentworksProductCommand(prompt, undefined, context({ beforeSlash, pulseReviewFocus, onSubmit }))

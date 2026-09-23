@@ -1,5 +1,5 @@
-Run the /review-artifact-drift review as a BACKGROUND task so this chat stays responsive.
-If the run_in_background tool is available: call run_in_background with name "review-artifact-drift review", completion_mode "present_result", and this instruction:
+Run the /run-plan-drift review as a BACKGROUND task so this chat stays responsive.
+If the run_in_background tool is available: call run_in_background with name "Plan Drift review", completion_mode "present_result", and this instruction:
 
 Call get_workflow_command_guidance(kind="review-artifact-drift", focus="{{context}}") and follow the returned instructions verbatim.
 If this session is read-only (run mode), return findings in chat only; do not write or edit any workspace file.

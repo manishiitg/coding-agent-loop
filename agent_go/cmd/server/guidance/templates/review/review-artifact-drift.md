@@ -32,7 +32,7 @@ Run this full audit for scheduled Pulse or an explicit user request. Ordinary pl
 
 First call `record_pulse_result(pulse_run_id="current", module=
 "plan_drift_review", result="running", note_only=true, manual=true,
-reason="manual /review-artifact-drift invocation")`. This starts the manual
+reason="manual /run-plan-drift invocation")`. This starts the manual
 review and establishes its due claim through the same tool used to complete it.
 
 If that initial `record_pulse_result` refuses because a real scheduled Pulse pass is

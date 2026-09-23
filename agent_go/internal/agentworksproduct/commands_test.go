@@ -1,6 +1,7 @@
 package agentworksproduct
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -33,14 +34,14 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 		aliases[cmd.Name] = cmd.Aliases
 	}
 	for name, wantKind := range map[string]string{
-		"design-plan":           `kind="design-plan"`,
-		"review-artifact-drift": `kind="review-artifact-drift"`,
-		"design-dashboard":      `kind="design-reporting-ui"`,
-		"setup-goals":           `kind="setup-goals"`,
-		"strategy-auditor":      `kind="strategy-auditor"`,
-		"pulse-review":          `kind="engineering-review"`,
-		"pulse-fixer":           `kind="pulse-fixer"`,
-		"review-code":           `kind="design-plan"`,
+		"design-plan":          `kind="design-plan"`,
+		"run-plan-drift":       `kind="review-artifact-drift"`,
+		"design-dashboard":     `kind="design-reporting-ui"`,
+		"setup-goals":          `kind="setup-goals"`,
+		"run-goal-work":        `kind="strategy-auditor"`,
+		"run-technical-review": `kind="engineering-review"`,
+		"pulse-fixer":          `kind="pulse-fixer"`,
+		"review-code":          `kind="design-plan"`,
 	} {
 		prompt, ok := byName[name]
 		if !ok {
@@ -50,7 +51,7 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 			t.Fatalf("command %q prompt does not name its guidance kind %s", name, wantKind)
 		}
 	}
-	for _, name := range []string{"pulse-merge", "backup", "publish", "notify"} {
+	for _, name := range []string{"merge-pulse-issues", "run-architecture-review", "backup", "publish", "notify"} {
 		if _, ok := byName[name]; !ok {
 			t.Fatalf("command %q missing from product.yaml", name)
 		}
@@ -61,12 +62,15 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 		t.Fatal("command pulse must stay a hardcoded builtin, not a yaml prompt")
 	}
 	for name, wantAliases := range map[string][]string{
-		"design-dashboard": {"design-reporting-ui"},
-		"setup-goals":      {"define-success"},
-		"strategy-auditor": {"goal-advisor"},
+		"design-dashboard":     {"design-reporting-ui"},
+		"setup-goals":          {"define-success"},
+		"run-goal-work":        {"strategy-auditor", "goal-advisor"},
+		"run-plan-drift":       {"review-artifact-drift"},
+		"run-technical-review": {"pulse-review"},
+		"merge-pulse-issues":   {"pulse-merge"},
 	} {
 		got := aliases[name]
-		if len(got) != len(wantAliases) || (len(got) > 0 && got[0] != wantAliases[0]) {
+		if !slices.Equal(got, wantAliases) {
 			t.Fatalf("command %q aliases = %v, want %v", name, got, wantAliases)
 		}
 	}
@@ -87,11 +91,11 @@ func TestAgentWorksCommandsResolvePrompts(t *testing.T) {
 		if !hidden[name] {
 			t.Fatalf("retained shortcut %q must stay menu-hidden", name)
 		}
-		if prompt != byName["pulse-review"] {
-			t.Fatalf("retained shortcut %q must share the pulse-review prompt", name)
+		if prompt != byName["run-technical-review"] {
+			t.Fatalf("retained shortcut %q must share the run-technical-review prompt", name)
 		}
 	}
-	if len(byName) != 12+len(legacy) {
-		t.Fatalf("product.yaml carries %d commands, want %d", len(byName), 12+len(legacy))
+	if len(byName) != 13+len(legacy) {
+		t.Fatalf("product.yaml carries %d commands, want %d", len(byName), 13+len(legacy))
 	}
 }

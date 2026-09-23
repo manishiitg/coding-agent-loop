@@ -293,7 +293,7 @@ If an evaluation or strategy review finds a missing or vague objective in ` + "`
 
 Returns the canonical guided-flow text for any workflow slash command. Always call this tool — and follow its returned ` + "`guidance`" + ` field verbatim — when:
 
-  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/pulse-review`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
+  1. The user invokes a slash command (` + "`/design-plan`" + `, ` + "`/run-technical-review`" + `, etc.). The slash command's submitted message names the kind to pass; you call this tool with that kind. Do NOT improvise the flow yourself.
   2. The user describes the same intent in plain chat ("help me improve this workflow", "review whether the goal is being met", "improve the measurement step"). Recognize the intent, pick the matching kind, and call the tool. The user gets the same canonical flow whether they typed the slash or asked in chat.
   3. You're running on a schedule (e.g. the scheduled Goal Advisor message). The schedule message names the kind to call.
 
@@ -304,14 +304,14 @@ Returns the canonical guided-flow text for any workflow slash command. Always ca
     - design-reporting-ui    → dashboard authoring flow, submitted by /design-dashboard
 
   Reviews (recommend, don't apply; record typed Pulse findings):
-    - review-artifact-drift  → plan-changelog-to-artifact drift audit
-    - strategy-auditor       → Goal Work: do goal-advancing work within the permission levels (prepare, run steps when allowed), challenge constraints with evidence; no plan edits or outward actions
+    - review-artifact-drift  → Plan Drift: plan-changelog-to-artifact drift audit, submitted by /run-plan-drift (run-plan-drift is an alias kind)
+    - strategy-auditor       → Goal Work, submitted by /run-goal-work (run-goal-work is an alias kind): do goal-advancing work within the workflow's Pulse autonomy (run steps, new outward actions and workflow edits each auto or ask), challenge soul.md constraints with evidence
     - goal-advisor           → compatibility alias for strategy-auditor; use the same Goal Work flow
 
   Improvements:
     - setup-goals              → goal and metric setup, submitted by /setup-goals
     - define-success           → compatibility alias for setup-goals; use the same setup flow
-    - engineering-review       → read-only Technical Review phase; /pulse-review supplies an ordered Fix message after the completed review receipt
+    - engineering-review       → read-only Technical Review phase (run-technical-review is an alias kind); /run-technical-review supplies an ordered Fix message after the completed review receipt
     - pulse-fixer              → apply bounded safe fixes from existing review findings; standalone recovery command does not rerun reviewers
 
 **Optional parameters:**

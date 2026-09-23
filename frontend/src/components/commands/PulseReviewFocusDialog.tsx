@@ -89,7 +89,7 @@ export function PulseReviewFocusDialog({ initialContext, onClose, onStart }: Pul
                 placeholder="For example: check whether the latency report explains regressions clearly."
                 className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-ring" />
             </div>
-            <p className="text-xs text-muted-foreground">Shortcut: type /pulse-review database to start a focused review directly.</p>
+            <p className="text-xs text-muted-foreground">Shortcut: type /run-technical-review database to start a focused review directly.</p>
           </div>
           <div className="flex justify-end gap-2 border-t border-border p-4">
             <Button type="button" variant="outline" onClick={onClose}>Cancel</Button>

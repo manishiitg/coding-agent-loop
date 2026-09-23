@@ -41,7 +41,7 @@ beforeEach(() => {
   root = createRoot(host)
   useWorkspaceStore.setState({ files: [{ filepath: 'Workflow', type: 'folder', children: [{ filepath: 'Workflow/report.md', type: 'file' }] }, { filepath: 'plan.json', type: 'file' }] })
   setProductCommands(toAgentworksCommandDefinitions([
-    { name: 'pulse-review', description: 'Review', icon: 'check-circle', aliases: [], menuHidden: false, prompt: 'Review {{context}}.' },
+    { name: 'run-technical-review', description: 'Review', icon: 'check-circle', aliases: ['pulse-review'], menuHidden: false, prompt: 'Review {{context}}.' },
   ]))
 })
 afterEach(async () => {

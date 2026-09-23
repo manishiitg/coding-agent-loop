@@ -1,5 +1,5 @@
-Run /pulse-review as a BACKGROUND task so this chat stays responsive.
-If the run_in_background tool is available: call run_in_background with name "pulse-review review + fix", completion_mode "present_result", the review instruction below, and a message_sequence with one follow-up message (id "fix") carrying the fix instruction below.
+Run /run-technical-review as a BACKGROUND task so this chat stays responsive.
+If the run_in_background tool is available: call run_in_background with name "Technical review + fix", completion_mode "present_result", the review instruction below, and a message_sequence with one follow-up message (id "fix") carrying the fix instruction below.
 
 Review instruction:
 

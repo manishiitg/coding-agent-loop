@@ -79,12 +79,16 @@ var allKinds = map[string]kindMeta{
 	"strategy-auditor":      {Group: "review", Description: "Goal Work (strategic_review): do work that moves the user's goals within the workflow's permission levels, follow up earlier Goal Work, and challenge soul.md constraints with evidence through keep/test/change decisions", Modes: []string{"workshop"}},
 
 	// Improvements — evidence-driven reliability and strategy flows
-	"setup-goals":         {Group: "improve", AliasOf: "define-success", Description: "Set up primary and secondary outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
-	"define-success":      {Group: "improve", Description: "Set up primary and secondary outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
-	"engineering-review":  {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
-	"pulse-fixer":         {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
-	"goal-advisor":        {Group: "review", AliasOf: "strategy-auditor", Description: "Compatibility alias for strategy-auditor; use strategy-auditor for strategic reviews and opportunity proposals", Modes: []string{"workshop"}},
-	"design-reporting-ui": {Group: "report", Description: "Design one or more workflow-owned db/reports/*.html views with shared toolbar discovery: live goal/measurement/cost helpers, optional prebuilt metric widgets and daisyUI, report-owned approval buttons, and direct requests via window.report.sendChatMessage.", Modes: []string{"workshop"}},
+	"setup-goals":        {Group: "improve", AliasOf: "define-success", Description: "Set up primary and secondary outcome goals, primary and supporting metrics, collection and targets for new or existing workflows", Modes: []string{"workshop"}},
+	"define-success":     {Group: "improve", Description: "Set up primary and secondary outcome goals and measurable progress; also available as setup-goals", Modes: []string{"workshop"}},
+	"engineering-review": {Group: "improve", Description: "Read-only Technical Review phase: choose useful investigations, persist material findings, and leave bounded repairs to an explicitly supplied Fix phase", Modes: []string{"workshop"}},
+	"pulse-fixer":        {Group: "improve", Description: "Apply reviewed bounded repairs with proportional immediate checks; close applied fixes and reopen only on reproduction", Modes: []string{"workshop"}},
+	"goal-advisor":       {Group: "review", AliasOf: "strategy-auditor", Description: "Compatibility alias for strategy-auditor; use strategy-auditor for strategic reviews and opportunity proposals", Modes: []string{"workshop"}},
+	// Slash-command names matching the Pulse module labels (2026-09-23).
+	"run-plan-drift":       {Group: "review", AliasOf: "review-artifact-drift", Description: "Same as review-artifact-drift: the /run-plan-drift command", Modes: []string{"workshop"}},
+	"run-goal-work":        {Group: "review", AliasOf: "strategy-auditor", Description: "Same as strategy-auditor: the /run-goal-work command", Modes: []string{"workshop"}},
+	"run-technical-review": {Group: "improve", AliasOf: "engineering-review", Description: "Same as engineering-review: the /run-technical-review command's review phase", Modes: []string{"workshop"}},
+	"design-reporting-ui":  {Group: "report", Description: "Design one or more workflow-owned db/reports/*.html views with shared toolbar discovery: live goal/measurement/cost helpers, optional prebuilt metric widgets and daisyUI, report-owned approval buttons, and direct requests via window.report.sendChatMessage.", Modes: []string{"workshop"}},
 }
 
 // referenceKinds is the registry of system reference docs — content that
@@ -326,7 +330,7 @@ type DefinitionToolRegistrar interface {
 func RegisterGuidanceTool(agent DefinitionToolRegistrar, currentMode string, logger loggerv2.Logger) {
 	desc := "Get the canonical guided-flow text for any workflow command. " +
 		"Call this tool — and follow the returned instructions verbatim — when (1) the user invokes a slash command " +
-		"like /design-plan or /pulse-review — for most commands the slash name IS the kind, but a focused Pulse " +
+		"like /design-plan or /run-technical-review — for most commands the slash name IS the kind, but a focused Pulse " +
 		"review alias (e.g. /pulse-review-validation-contract, /pulse-review-execution-health) maps to a DIFFERENT " +
 		"kind and a specific focus; when the dispatch message explicitly states kind=... and focus=... (as these " +
 		"aliases do), use those exact literal values — never derive kind from the alias text itself. Pass the " +
@@ -457,7 +461,7 @@ func buildSystemToolsSkillWithMCP(mode string, mcpManagement bool) *llmtypes.Ski
 	if !mcpManagement {
 		referenceExamples = strings.ReplaceAll(referenceExamples, "`integration-discovery` before connecting a new third-party service/MCP server, ", "")
 	}
-	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, pulse-review, strategy-auditor, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
+	proceduralGuidance := "- `get_workflow_command_guidance(kind, focus?)` — canonical procedural flows (design-plan, run-plan-drift, run-goal-work, run-technical-review, define-success, etc.). The returned text is your instructions for that turn; follow it verbatim.\n"
 	if strings.EqualFold(strings.TrimSpace(mode), "run") {
 		referenceExamples = "`runtime-context` before answering from workflow state, `running-steps` before execution, or `human-in-the-loop` when work needs a user decision"
 		proceduralGuidance = ""

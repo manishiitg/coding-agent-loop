@@ -68,7 +68,10 @@ PLAT ticket and mark the finding external_action_required with the exact owner
 and reopen condition; do not repeatedly patch around it in each workflow.
 
 Apply safe workflow-owned repairs in this retained task using normal typed
-Builder tools. Preserve the goal and constraints. Use existing human decisions
+Builder tools. When `pulse.autonomy.run` is `auto` (the default; see
+`get_pulse_state(view="goal_work")`), resume or re-run the steps a recovery
+needs yourself with `execute_step`/`run_full_workflow` once the duplicate risk
+is ruled out; only `ask` turns that into a decision. Preserve the goal and constraints. Use existing human decisions
 and apply contracts for behavior changes requiring approval. Continue until no
 actionable workflow-owned repair remains; platform handoffs, pending decisions
 and evidence waits are not repair debt. Do not claim completion while an

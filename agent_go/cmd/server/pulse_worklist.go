@@ -2337,6 +2337,7 @@ func (api *StreamingAPI) handleGetPulseModuleState(w http.ResponseWriter, r *htt
 		"goal_work":                  goalWork,
 		"goal_work_error":            goalWorkError,
 		"autonomy_run":               pulseAutonomyRunForView(r.Context(), workspacePath),
+		"autonomy":                   pulseAutonomyForView(r.Context(), workspacePath),
 		"focus_areas":                pulseFocusAreasForView(r.Context(), workspacePath),
 	})
 }

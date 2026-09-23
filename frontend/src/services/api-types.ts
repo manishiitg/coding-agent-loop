@@ -570,12 +570,23 @@ export interface PulseModuleStateResponse {
   goal_work?: PulseGoalWorkItem[]
   goal_work_error?: string
   autonomy_run?: PulseAutonomyRun
+  autonomy?: PulseAutonomy
   focus_areas?: string[]
   error?: string
 }
 
+/** One Pulse permission: auto lets Goal Work do it itself; ask makes it prepare the work and create a decision. */
+export type PulseAutonomyLevel = 'auto' | 'ask'
 /** Goal Work's Run permission: auto lets it run existing workflow steps itself. */
-export type PulseAutonomyRun = 'auto' | 'ask'
+export type PulseAutonomyRun = PulseAutonomyLevel
+/** Goal Work's permissions. Run defaults to auto; outward and change to ask. */
+export interface PulseAutonomy {
+  run: PulseAutonomyLevel
+  outward: PulseAutonomyLevel
+  change: PulseAutonomyLevel
+}
+export type PulseAutonomyKey = keyof PulseAutonomy
+export const DEFAULT_PULSE_AUTONOMY: PulseAutonomy = { run: 'auto', outward: 'ask', change: 'ask' }
 
 /** Work Pulse did (or plans) to move the user's goals, and constraint challenges. */
 export interface PulseGoalWorkItem {
@@ -3428,6 +3439,8 @@ export interface UpdateWorkflowManifestRequest {
   pulse_enabled?: boolean
   pulse_disabled_review_modules?: PulseReviewerModule[]
   pulse_autonomy_run?: PulseAutonomyRun
+  pulse_autonomy_outward?: PulseAutonomyLevel
+  pulse_autonomy_change?: PulseAutonomyLevel
   pulse_focus_areas?: string[]
   run_notification_instructions?: string
   pulse_notification_instructions?: string

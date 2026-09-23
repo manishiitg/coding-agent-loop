@@ -75,7 +75,7 @@ hand those off once and keep your pass on the goal.
    approach, the metric and how it is attributed (for example which audience
    new followers came from), the run length or sample needed, and a stop
    rule. Name all of them; do not defer them to later formalization. Prepare it; running it goes
-   through the Run level and any account action through a decision.
+   through the Run level and any new outward action through the Outward level.
 5. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
    `reason` is the short user-facing result: what you did for them, what needs
    them, and any constraint you are challenging. A pass with nothing worth doing
@@ -84,15 +84,17 @@ hand those off once and keep your pass on the goal.
 
 ## Permission levels
 
-The runtime enforces these; the instruction you were launched with states
-whether the Run level is `auto` or `ask` for this workflow.
+The user sets Run, Outward and Change to `auto` or `ask` per workflow; the
+runtime enforces them and the instruction you were launched with states each
+one. `auto` means do it yourself and record it as a `done` item; `ask` means
+prepare it fully and create a decision so the user's part is one approval.
 
 | Level | What you may do |
 |---|---|
 | Prepare | Always. Research, analysis, drafts, lists and plans written under `pulse/work/<YYYY-MM-DD>/`. |
 | Run | When `auto`: run existing workflow steps or routes yourself (`execute_step`, `run_full_workflow`) when that directly advances the goal, within every constraint. When `ask`: prepare it and create a decision asking the user to run it. |
-| Outward | Never yourself. Anything visible outside — post, send, comment, contact anyone, purchase, change external records — is prepared fully and put to the user as a decision (`needs_user`), so their part is one approval. |
-| Change the workflow | Never edit the plan, steps or schedules. Propose the change with an exact ready patch through a decision; the existing decision flow applies it after approval. |
+| Outward | Posting, sending, commenting or contacting anyone beyond what existing steps normally do. When `auto`: do it yourself with the workflow's own accounts and tools, within soul.md limits and the workflow's caps and dedupe records; verify it landed and record it where the workflow records its own actions. When `ask`: prepare it fully and create a decision (`needs_user`). Never purchase or spend money yourself. |
+| Change the workflow | Plan, step and schedule edits. When `auto`: make them yourself with the typed Builder tools (they are recorded, and Plan Drift reviews dependents next pass); never delete steps or schedules. When `ask`: propose the change with an exact ready patch through a decision; the existing decision flow applies it after approval. soul.md goals and constraints are never yours to edit at any level: challenge them. |
 
 Running a workflow step is not an outward action by you, but the step may act
 outward (for example an engagement step). Only run a step when its normal

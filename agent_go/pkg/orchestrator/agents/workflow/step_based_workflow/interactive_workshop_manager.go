@@ -2744,9 +2744,9 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 			if reviewModule != "" {
 				scope := backgroundReviewScope{Module: reviewModule, RunID: reviewRunID}
 				if scope.goalWork() {
-					scope.RunSteps = true
+					scope.Permissions = goalWorkPermissions{Run: true}
 					if manifestJSON, readErr := iwm.controller.ReadWorkspaceFile(ctx, "workflow.json"); readErr == nil {
-						scope.RunSteps = pulseAutonomyRunSteps(manifestJSON)
+						scope.Permissions = pulseAutonomyPermissions(manifestJSON)
 					}
 				}
 				execCtx = context.WithValue(execCtx, backgroundReviewScopeKey{}, scope)
@@ -8878,11 +8878,13 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		writePaths = []string{}
 	}
 	reviewScope, _ := ctx.Value(backgroundReviewScopeKey{}).(backgroundReviewScope)
-	if reviewScope.goalWork() && reviewScope.RunSteps {
+	if reviewScope.goalWork() && (reviewScope.Permissions.Run || reviewScope.Permissions.Change) {
 		// A due (or unknown) Plan Drift means the plan may not match its
-		// dependents; Goal Work still prepares and researches but runs nothing.
+		// dependents; Goal Work still prepares and researches but neither runs
+		// steps nor edits the workflow until Drift has reviewed it.
 		if items, driftErr := CollectPlanDriftDueItems(workspacePath); driftErr != nil || len(items) > 0 {
-			reviewScope.RunSteps = false
+			reviewScope.Permissions.Run = false
+			reviewScope.Permissions.Change = false
 		}
 	}
 	if reviewScope.goalWork() {
@@ -8892,11 +8894,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 				fmt.Sprintf("%s/pulse/work", workspacePath),
 			}
 		}
-		runLevel := "Run permission: ask. Do not run workflow steps; prepare the work fully and create a decision asking the user to run it."
-		if reviewScope.RunSteps {
-			runLevel = "Run permission: auto. You may run existing workflow steps or routes yourself (execute_step, run_full_workflow) when that directly advances the goal, within every soul.md constraint."
-		}
-		instruction += "\nGOAL WORK: do goal-advancing work for the user, not only proposals. Write prepared work (research, drafts, lists, plans) under pulse/work/<YYYY-MM-DD>/ and link it in record_pulse_finding(issue_kind=\"goal_work\") and your result. " + runLevel + " Never post, send, contact anyone, purchase or change external records yourself: prepare it and create a decision for the user to approve. Never edit the plan, steps or schedules; propose them with a ready patch through a decision. Never break a soul.md constraint, even one you are challenging."
+		instruction += "\nGOAL WORK: do goal-advancing work for the user, not only proposals. Write prepared work (research, drafts, lists, plans) under pulse/work/<YYYY-MM-DD>/ and link it in record_pulse_finding(issue_kind=\"goal_work\") and your result. " + goalWorkPermissionInstructions(reviewScope.Permissions) + " Never purchase or spend money yourself. Never break a soul.md constraint, even one you are challenging. Record everything you did yourself as a done record_pulse_goal_work item so the user sees it."
 	}
 	if reviewScope.researchOnly() {
 		if !iwm.isRunModeRestricted() {
@@ -8965,7 +8963,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		filtered := workshopToolDefinitions[:0]
 		for _, tool := range workshopToolDefinitions {
 			if (reviewScope.researchOnly() && researchReviewToolAllowed(tool.Name)) ||
-				(reviewScope.goalWork() && goalWorkToolAllowed(tool.Name, reviewScope.RunSteps)) {
+				(reviewScope.goalWork() && goalWorkToolAllowed(tool.Name, reviewScope.Permissions)) {
 				filtered = append(filtered, tool)
 			}
 		}
@@ -8997,7 +8995,7 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 		toolsToRegister, executorsToUse = filterResearchReviewTools(toolsToRegister, executorsToUse)
 	}
 	if reviewScope.goalWork() {
-		toolsToRegister, executorsToUse = filterGoalWorkTools(toolsToRegister, executorsToUse, reviewScope.RunSteps)
+		toolsToRegister, executorsToUse = filterGoalWorkTools(toolsToRegister, executorsToUse, reviewScope.Permissions)
 	}
 
 	if readOnlyTask {

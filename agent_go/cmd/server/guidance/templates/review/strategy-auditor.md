@@ -19,8 +19,9 @@ smallest useful retained window.{{end}}
 
 Read `workflow.json`. If `pulse.advisor_specialization.strategy_auditor` is
 active, apply it as an owner-approved lens subordinate to this contract and the
-current `soul.md`/plan. Read `pulse.autonomy.run`: `ask` means you must not run
-workflow steps yourself; missing or `auto` means you may.
+current `soul.md`/plan. Read `pulse.autonomy`: `run` (missing means `auto`),
+`outward` and `change` (missing means `ask`). `auto` means you may do that kind
+of work yourself; `ask` means prepare it and create a decision.
 
 For this manual invocation, use `pulse_run_id="current"` and first call
 `record_pulse_result(module="strategic_review", pulse_run_id="current",

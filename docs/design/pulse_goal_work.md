@@ -100,12 +100,19 @@ A new `pulse.autonomy` block in `workflow.json`, set from the Pulse UI:
 | Level | What Pulse may do | Default |
 |---|---|---|
 | Prepare | Research, analysis, drafts, lists and plans, written to `pulse/work/<date>/` | always on |
-| Run | Run existing routes or steps (`execute_step`, `run_full_workflow`) extra times or on new targets, within every constraint | **auto** (user can switch to ask) |
-| Outward | Anything visible outside: send, post, contact, purchase, change external records | always asks per item; fully prepared, one-click approve |
-| Change the workflow | Plan, step or schedule edits | proposal with a ready-to-apply patch; applied by the existing decision-drain after approval |
+| Run (`pulse.autonomy.run`) | Run existing routes or steps (`execute_step`, `run_full_workflow`) extra times or on new targets, including what they normally post, within every constraint. Technical Review uses it too, to resume or re-run steps a recovery needs. | **auto** |
+| Outward (`pulse.autonomy.outward`) | New posts, messages or outreach Pulse prepared itself, beyond what existing steps do, with the workflow's own accounts, caps and dedupe records | **ask** |
+| Change the workflow (`pulse.autonomy.change`) | Plan, step-setting and schedule edits through the typed Builder tools (changelogged, so Plan Drift reviews dependents next pass). Never deletes steps or schedules. | **ask** |
 
-The Outward level never auto-executes. Pulse still does all the preparation, so
-the user's part is only the approval.
+Each level is `auto` (do it, record it as a `done` item) or `ask` (prepare it
+fully and create a decision, so the user's part is one approval). The user sets
+them with one **Pulse autonomy** slider (2026-09-23; Outward and Change were
+fixed at ask before): Ask first (all ask) → Run steps (run) → Edit workflow
+(run + change) → Full (all three). A stored mix no stop describes shows as the
+highest stop it fully covers. Purchases and spending always ask.
+`soul.md` goals and constraints are never Pulse's to edit at any level: it
+challenges them and the user decides. While Plan Drift is due, Run and Change
+are both withheld from Goal Work.
 
 ### Challenging constraints
 

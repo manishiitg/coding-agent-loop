@@ -7,11 +7,12 @@ import {
   X,
 } from 'lucide-react'
 import { agentApi } from '../../services/api'
+import { DEFAULT_PULSE_AUTONOMY } from '../../services/api-types'
 import { playbooksApi } from '../../api/playbooks'
 import { useChatStore } from '../../stores/useChatStore'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import type {
-  PulseAutonomyRun,
+  PulseAutonomy,
   PulseFinalCommandState,
   PulseGoalWorkItem,
   PulseFindingLifecycle,
@@ -121,9 +122,9 @@ export function PulseWorkspace({
   onToggleReviewModule,
   statusError,
   goalWork = [],
-  autonomyRun = 'auto',
+  autonomy = DEFAULT_PULSE_AUTONOMY,
   autonomySaving = false,
-  onChangeAutonomyRun,
+  onChangeAutonomy,
   focusAreas = [],
   focusSaving = false,
   onSaveFocusAreas,
@@ -141,9 +142,9 @@ export function PulseWorkspace({
   onToggleReviewModule?: (module: PulseReviewerModule) => void
   statusError: string | null
   goalWork?: PulseGoalWorkItem[]
-  autonomyRun?: PulseAutonomyRun
+  autonomy?: PulseAutonomy
   autonomySaving?: boolean
-  onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
+  onChangeAutonomy?: (next: PulseAutonomy) => void
   focusAreas?: string[]
   focusSaving?: boolean
   onSaveFocusAreas?: (areas: string[]) => Promise<boolean>
@@ -378,12 +379,12 @@ export function PulseWorkspace({
         <SoulViewer workspacePath={workspacePath} pulseSummary />
         <GoalProgress workspacePath={workspacePath} impact={impact} />
         <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
-        <PulseGoalWork workspacePath={workspacePath} items={goalWork} autonomyRun={autonomyRun} autonomySaving={autonomySaving}
-          onChangeAutonomyRun={onChangeAutonomyRun} onRunGoalWork={() => { void runReviewNow('strategic_review') }}
+        <PulseGoalWork workspacePath={workspacePath} items={goalWork} autonomy={autonomy} autonomySaving={autonomySaving}
+          onChangeAutonomy={onChangeAutonomy} onRunGoalWork={() => { void runReviewNow('strategic_review') }}
           focusAreas={focusAreas} focusSaving={focusSaving} onSaveFocusAreas={onSaveFocusAreas}
           playbookFocusAreas={playbookFocuses.flatMap(item => item.focusAreas.map(area => ({ area, source: item.playbookTitle })))}
           running={manualReviewStarting === 'strategic_review'}
-          runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps.' : undefined} />
+          runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps or change the workflow.' : undefined} />
         {(openIssueCount > 0 || planDriftDue) && (
           <button type="button" onClick={() => setTab('platform')} className="w-full rounded-lg border bg-muted/20 px-3 py-2 text-left text-xs text-muted-foreground hover:bg-muted/40">
             <span className="font-medium text-foreground">Platform health:</span> {planDriftDue ? 'a Plan Drift check is due. ' : ''}{openIssueCount > 0 ? `${openIssueCount} open maintenance issue${openIssueCount === 1 ? '' : 's'}. ` : ''}Pulse handles these in the background.

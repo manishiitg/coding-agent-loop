@@ -3,7 +3,8 @@ import { PulseWorkspace } from './PulseWorkspace'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
-import type { PulseAutonomyRun, PulseFinalCommandState, PulseGoalWorkItem, PulseModuleState, PulseNextRun, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
+import { DEFAULT_PULSE_AUTONOMY } from '../../services/api-types'
+import type { PulseAutonomy, PulseFinalCommandState, PulseGoalWorkItem, PulseModuleState, PulseNextRun, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
 export interface PulseOverview {
   recorded: number
@@ -26,9 +27,9 @@ interface PulseViewProps {
   finalCommandStates: PulseFinalCommandState[]
   nextRun?: PulseNextRun | null
   goalWork?: PulseGoalWorkItem[]
-  autonomyRun?: PulseAutonomyRun
+  autonomy?: PulseAutonomy
   autonomySaving?: boolean
-  onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
+  onChangeAutonomy?: (next: PulseAutonomy) => void
   focusAreas?: string[]
   focusSaving?: boolean
   onSaveFocusAreas?: (areas: string[]) => Promise<boolean>
@@ -64,9 +65,9 @@ export default function PulseView({
   finalCommandStates,
   nextRun = null,
   goalWork = [],
-  autonomyRun = 'auto',
+  autonomy = DEFAULT_PULSE_AUTONOMY,
   autonomySaving = false,
-  onChangeAutonomyRun,
+  onChangeAutonomy,
   focusAreas = [],
   focusSaving = false,
   onSaveFocusAreas,
@@ -118,9 +119,9 @@ export default function PulseView({
               onToggleReviewModule={onToggleReviewModule}
               statusError={statusError}
               goalWork={goalWork}
-              autonomyRun={autonomyRun}
+              autonomy={autonomy}
               autonomySaving={autonomySaving}
-              onChangeAutonomyRun={onChangeAutonomyRun}
+              onChangeAutonomy={onChangeAutonomy}
               focusAreas={focusAreas}
               focusSaving={focusSaving}
               onSaveFocusAreas={onSaveFocusAreas}

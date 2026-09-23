@@ -253,6 +253,8 @@ func readPulseGoalWorkView(ctx context.Context, workspacePath string, limit int)
 		return "", err
 	}
 	out, err := json.MarshalIndent(map[string]interface{}{
+		"autonomy":         pulseAutonomyForView(ctx, workspacePath),
+		"autonomy_note":    "The user's Pulse permissions: auto means do it yourself and record it; ask means prepare it and create a decision. run covers existing steps, outward covers new posts/messages/contacts, change covers plan, step and schedule edits.",
 		"focus_areas":      pulseFocusAreasForView(ctx, workspacePath),
 		"focus_areas_note": "The user's current priorities for Goal Work. Start each pass here; they direct attention, they do not limit what you may consider or override soul.md goals and constraints.",
 		"goal_work":        items,
@@ -271,6 +273,21 @@ func pulseFocusAreasForView(ctx context.Context, workspacePath string) []string 
 		return []string{}
 	}
 	return areas
+}
+
+// pulseAutonomyForView is the workflow's Goal Work permissions with defaults
+// applied.
+func pulseAutonomyForView(ctx context.Context, workspacePath string) PulseAutonomyLevels {
+	defaults, _ := resolvePulseAutonomy(nil)
+	manifest, found, err := ReadWorkflowManifest(ctx, workspacePath)
+	if err != nil || !found || manifest.Pulse == nil {
+		return defaults
+	}
+	levels, err := resolvePulseAutonomy(manifest.Pulse.Autonomy)
+	if err != nil {
+		return defaults
+	}
+	return levels
 }
 
 // pulseAutonomyRunForView is the workflow's Goal Work Run permission for the

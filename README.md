@@ -359,13 +359,6 @@ cd .. && ./deploy_vm.sh <VM_IP_ADDRESS> all
 ```
 > **[Read the Azure VM Deployment Blueprint](deploy/azure/README.md)**
 
-### **2. Kubernetes (High-Availability Swarms)**
-Designed for massive scale and resilience using standard Helm-like manifests.
-```bash
-./deploy/k8s/scripts/deploy-k8s.sh --build
-```
-> **[Read the Kubernetes Deployment Blueprint](deploy/k8s/README.md)**
-
 ---
 
 ## 🤝 Join the Revolution

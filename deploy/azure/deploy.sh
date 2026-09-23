@@ -169,7 +169,7 @@ build_agent() {
      cp -r "$REPO_ROOT/workspace" "$CONTEXT_DIR/coding-agent-loop/"
   fi
 
-  # MCP config: use deploy/azure/mcp_config.json if present (like K8s deploy/k8s/agent/mcp_config.json); else use repo default
+  # MCP config: use deploy/azure/mcp_config.json if present; else use repo default
   if [ -f "$SCRIPT_DIR/mcp_config.json" ]; then
     cp "$SCRIPT_DIR/mcp_config.json" "$CONTEXT_DIR/coding-agent-loop/agent_go/configs/mcp_servers_clean_user.json"
   else

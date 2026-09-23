@@ -104,6 +104,18 @@ func TestGetSessionEventsReadsDurableChatBySequence(t *testing.T) {
 	if len(newer.Events) != 2 || newer.Events[0].ID != "event-4" || newer.Events[1].ID != "event-5" || newer.LastProcessedIndex != 5 {
 		t.Fatalf("newer = %+v", newer)
 	}
+	caughtUp := request("since=5")
+	if len(caughtUp.Events) != 0 || caughtUp.LastProcessedIndex != 5 || caughtUp.LatestSequence != 5 || caughtUp.HasMore {
+		t.Fatalf("empty forward page must keep the cursor, not reset it to 0: %+v", caughtUp)
+	}
+	ahead := request("since=9")
+	if len(ahead.Events) != 0 || ahead.LastProcessedIndex != 5 {
+		t.Fatalf("a cursor ahead of the journal must clamp to the tip: %+v", ahead)
+	}
+	fromStart := request("since=0")
+	if len(fromStart.Events) != 5 || fromStart.Events[0].ID != "event-1" || fromStart.LastProcessedIndex != 5 {
+		t.Fatalf("since=0 = %+v", fromStart)
+	}
 }
 
 func TestGetSessionEventsCannotPromoteExecutionToDurableChat(t *testing.T) {

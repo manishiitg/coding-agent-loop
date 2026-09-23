@@ -663,6 +663,7 @@ func cleanupChatHistoryHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
+		api.deleteDurableChatSessionsAfterBulkDelete("chat history cleanup", durableSessionIDsFromConversationPaths(result.DeletedPaths))
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
@@ -1158,32 +1159,41 @@ func deleteChatHistorySessionHandler(api *StreamingAPI) http.HandlerFunc {
 			http.Error(w, "workflow access denied", http.StatusForbidden)
 			return
 		}
+		platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
 		if workflowScoped {
-			data, readErr := ReadChatHistoryConversation(userID, sessionID, workspacePath)
-			if readErr != nil {
-				http.Error(w, "Session not found", http.StatusNotFound)
-				return
-			}
-			ownerID, _ := chatHistoryConversationIdentity(data)
-			platformAdmin := userAccessForClaims(GetUserFromContext(r.Context())).Admin
-			if strings.TrimSpace(ownerID) != strings.TrimSpace(userID) && !platformAdmin {
-				http.Error(w, "only the chat author or a platform administrator can delete it", http.StatusForbidden)
-				return
+			// A missing transcript is not "not found": its durable rows may
+			// outlive it (a previous delete removed the JSON but not the log).
+			if data, readErr := ReadChatHistoryConversation(userID, sessionID, workspacePath); readErr == nil {
+				ownerID, _ := chatHistoryConversationIdentity(data)
+				if strings.TrimSpace(ownerID) != strings.TrimSpace(userID) && !platformAdmin {
+					http.Error(w, "only the chat author or a platform administrator can delete it", http.StatusForbidden)
+					return
+				}
 			}
 		}
+		durableOwner, ownerErr := api.eventStore.DurableChatOwner(sessionID)
+		if ownerErr != nil {
+			http.Error(w, "failed to authorize durable chat deletion", http.StatusInternalServerError)
+			return
+		}
+		durableOwnedByCaller := durableOwner != "" && (durableOwner == userID || platformAdmin)
 
 		result, err := DeleteChatHistorySession(userID, sessionID, workspacePath)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		if result.DeletedCount == 0 {
+		if result.DeletedCount == 0 && !durableOwnedByCaller {
 			http.Error(w, "Session not found", http.StatusNotFound)
 			return
 		}
-		if err := api.eventStore.DeleteDurableChatSession(sessionID); err != nil {
-			http.Error(w, "conversation was deleted but its durable event log could not be removed", http.StatusInternalServerError)
-			return
+		// Never remove another user's log just because the caller deleted a
+		// same-named transcript of their own.
+		if durableOwner == "" || durableOwnedByCaller {
+			if err := api.eventStore.DeleteDurableChatSession(sessionID); err != nil {
+				http.Error(w, "conversation was deleted but its durable event log could not be removed", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		w.Header().Set("Content-Type", "application/json")

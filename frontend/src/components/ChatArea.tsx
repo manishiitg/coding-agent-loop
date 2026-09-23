@@ -37,6 +37,7 @@ import type { ChatTab } from '../stores/useChatStore'
 import { appendTimelineAndApplyConfirmations, hydrateTabEvents, restoreSession } from '../utils/sessionRestore'
 import { hydrateExecutionConversation } from '../utils/executionConversationRestore'
 import { isExecutionConversationTab } from '../utils/sessionEventSource'
+import { nextForwardCursor } from '../utils/forwardCursor'
 import { conversationToRestoredEvents } from '../../shared/session/restore'
 import { logger } from '../utils/logger'
 
@@ -1723,13 +1724,17 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
     // SSE backfill may contain only streaming events (handled immediately in handleSSEMessage),
     // leaving the batched events array empty. Without updating the index here, tabEventIndices
     // stays at 0 and every SSE reconnection re-fetches all events from the beginning.
+    // Every caller here is a forward read, where has_more means "newer rows",
+    // so it must never drive the older-history pager.
     if (response.last_processed_index !== undefined && response.last_processed_index >= 0) {
       const newLastEventIndex = response.last_processed_index
       if (tab) {
-        setTabLastEventIndex(actualSessionId, newLastEventIndex)
-        if (response.has_more !== undefined) {
-          chatStore.setTabHasMoreOlderEvents(actualSessionId, response.has_more)
-        }
+        setTabLastEventIndex(actualSessionId, nextForwardCursor(
+          getTabLastEventIndex(actualSessionId),
+          newLastEventIndex,
+          response.events.length,
+          !isExecutionConversationTab(tab),
+        ))
       } else {
         setLastEventIndex(newLastEventIndex)
       }

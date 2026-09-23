@@ -119,11 +119,9 @@ export default function WorkflowCapabilitiesPanel({ section, workspacePath }: Wo
   const [refreshingServers, setRefreshingServers] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [tab, setTab] = usePersistentTab<McpTab>('agentworks.tab.workflow-mcp', 'apps', MCP_TABS.map(option => option.value))
-  const isMultiUserMode = useAuthStore(state => state.isMultiUserMode)
-  // The Connect tab points at this installation's hosted API origin, so it
-  // only exists on multi-user servers — never on local installs. A persisted
-  // 'cli' tab on local falls back to the first visible tab.
-  const mcpTabs = useMemo(() => MCP_TABS.filter(option => option.value !== 'cli' || isMultiUserMode), [isMultiUserMode])
+  // The Connect tab points at this installation's API origin, on servers and
+  // local installs alike.
+  const mcpTabs = useMemo(() => MCP_TABS, [])
   const activeMcpTab = mcpTabs.some(option => option.value === tab) ? tab : mcpTabs[0].value
   const [identityTab, setIdentityTab] = usePersistentTab<IdentityTab>('agentworks.tab.workflow-identity', 'general', IDENTITY_TABS.map(option => option.value))
   // "Available to select for this workflow" means connected -- you can't

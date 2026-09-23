@@ -224,8 +224,17 @@ export function CliMcpSetupPanel() {
 
   const quoted = (value: string) => `'${value.replace(/'/g, `'\\''`)}'`
   const origin = server.replace(/\/+$/, '')
-  const installer = connection ? `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(connection.token)}` : ''
-  const mcpJson = connection ? JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_TOKEN: connection.token } } } }, null, 2) : ''
+  const isLoopbackOrigin = (() => {
+    try {
+      const host = new URL(origin).hostname
+      return host === 'localhost' || host === '127.0.0.1' || host === '0.0.0.0' || host === '::1'
+    } catch {
+      return false
+    }
+  })()
+  const displayToken = connection ? connection.token : 'YOUR_TOKEN'
+  const installer = `curl -fsSL ${JSON.stringify(`${origin}/api/downloads/cli/install-agentworks.sh`)} | sh -s -- --server ${JSON.stringify(origin)} --token ${quoted(displayToken)}`
+  const mcpJson = JSON.stringify({ mcpServers: { agentworks: { command: 'agentworks', args: ['mcp', 'serve'], env: { AGENTWORKS_SERVER: origin, AGENTWORKS_TOKEN: displayToken } } } }, null, 2)
 
   return (
     <div className="space-y-4">
@@ -236,13 +245,9 @@ export function CliMcpSetupPanel() {
         The token expires after 30 days, and you can revoke it here anytime.
       </p>
       <SettingsCard
-        icon={<Terminal className="h-4 w-4 text-primary" />}
-        title="Command line"
-        description={
-          connection
-            ? 'Ready to paste. Installs the CLI and logs it in with this token (reads and runs; never authors).'
-            : 'Generate a token for this installation. The command installs the CLI and logs it in.'
-        }
+        icon={<KeyRound className="h-4 w-4 text-primary" />}
+        title="Access token"
+        description="One token per account for this installation. It fills in every command and URL below."
         actions={
           connection ? (
             <div className="flex gap-2">
@@ -253,7 +258,7 @@ export function CliMcpSetupPanel() {
               <Button variant="outline" size="sm" className="text-destructive" disabled={busy} onClick={() => void revoke()}>Revoke</Button>
             </div>
           ) : (
-            <Button size="sm" disabled={busy || checking} onClick={() => void generate()}>
+            <Button variant="outline" size="sm" disabled={busy || checking} onClick={() => void generate()}>
               <KeyRound className="mr-1 h-3.5 w-3.5" />{busy ? 'Generating…' : 'Generate connection'}
             </Button>
           )
@@ -264,10 +269,26 @@ export function CliMcpSetupPanel() {
         )}
         {checking ? (
           <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
-        ) : !connection ? (
-          <p className="text-sm text-muted-foreground">The command appears here with the token filled in. Nothing is created until you generate.</p>
+        ) : connection ? (
+          <p className="text-sm text-muted-foreground">Connection active — the commands and URLs below carry a live token. Anyone with them can use it; revoke here when done.</p>
+        ) : (
+          <p className="text-sm text-muted-foreground">Nothing created yet — the previews below use a placeholder until you generate.</p>
+        )}
+      </SettingsCard>
+      <SettingsCard
+        icon={<Terminal className="h-4 w-4 text-primary" />}
+        title="Command line"
+        description={
+          connection
+            ? 'Ready to paste. Installs the CLI and logs it in with this token (reads and runs; never authors).'
+            : 'The command installs the CLI and logs it in.'
+        }
+      >
+        {checking ? (
+          <p className="text-sm text-muted-foreground">Looking for an existing connection…</p>
         ) : (
           <div className="space-y-2">
+            {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection to fill in a live token. Nothing is created until you generate.</p>}
             <CommandRow label="Install and log in command" command={installer} />
           </div>
         )}
@@ -275,35 +296,32 @@ export function CliMcpSetupPanel() {
       <SettingsCard
         icon={<Plug className="h-4 w-4 text-primary" />}
         title="AI assistants"
-        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. Install the CLI above first — the bridge runs through it."
+        description="Let Claude Code, Codex, or another assistant read your workflows through the same connection. Install the CLI above first — the bridge runs through its binary, no separate login needed."
       >
-        {!connection ? (
-          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
-        ) : (
-          <div className="space-y-2">
-            <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_TOKEN=${quoted(connection.token)} agentworks -- agentworks mcp serve`} />
-            <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
-            <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client." />
-          </div>
-        )}
+        <div className="space-y-2">
+          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live token.</p>}
+          <CommandRow label="Register MCP bridge command" command={`claude mcp add --transport stdio --env AGENTWORKS_SERVER=${quoted(origin)} --env AGENTWORKS_TOKEN=${quoted(displayToken)} agentworks -- agentworks mcp serve`} />
+          <CommandRow label="Install skill command" command="agentworks skills install --dir ~/.claude/skills" />
+          <JsonBlock label="MCP client config" json={mcpJson} hint="Paste into Claude Desktop, Cursor, or another JSON-configured MCP client. If it reports the command was not found, replace agentworks with its full path (run `which agentworks` in a terminal — GUI apps often miss ~/.local/bin on PATH)." />
+        </div>
       </SettingsCard>
       <SettingsCard
         icon={<Globe className="h-4 w-4 text-primary" />}
         title="Hosted AI assistants"
         description="ChatGPT and Claude Cowork connect over HTTPS — no local install. Paste this URL as a custom MCP server."
       >
-        {!connection ? (
-          <p className="text-sm text-muted-foreground">Generate a connection above first.</p>
-        ) : (
-          <div className="space-y-2">
-            <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(connection.token)}`} />
-            <p className="text-xs text-muted-foreground">
-              ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
-              Claude Cowork: Settings → Connectors → Add custom connector.
-              Anyone with this URL can use the token — revoke it here when done.
-            </p>
-          </div>
-        )}
+        <div className="space-y-2">
+          {!connection && <p className="text-xs text-muted-foreground">Preview with a placeholder — generate a connection above for a live URL.</p>}
+          <CommandRow label="Remote MCP URL" command={`${origin}/api/external/v1/mcp?token=${encodeURIComponent(displayToken)}`} />
+          {isLoopbackOrigin && (
+            <p className="text-xs text-amber-500">This installation is only reachable on your machine — ChatGPT and Cowork need a public server URL. Deploy first, then open that server&apos;s Connect tab.</p>
+          )}
+          <p className="text-xs text-muted-foreground">
+            ChatGPT: Settings → Apps &amp; Connectors → Developer Mode → add a custom MCP connector.
+            Claude Cowork: Settings → Connectors → Add custom connector.
+            Anyone with this URL can use the token — revoke it here when done.
+          </p>
+        </div>
       </SettingsCard>
       <SettingsCard
         icon={<FileText className="h-4 w-4 text-primary" />}

@@ -1841,10 +1841,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
+	carryOverLegacyStateRoot()
 	eventStateRoot, err := workflowCLIStateRoot()
 	if err != nil {
 		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
 	}
+	migrateDurableChatsAtStartup(eventStateRoot)
 	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events-v2.sqlite"))
 	if err != nil {
 		log.Fatalf("Failed to initialize durable structured-event journal: %v", err)
@@ -3316,7 +3318,7 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery, X-Client-Submitted-At")
 
 		if r.Method == "OPTIONS" {
 			if origin != "" && !originAllowed {
@@ -6045,9 +6047,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			// chat and writable Crew chat. Workflow-phase agents already have their
 			// own execution lifecycle, and read-only Crew runs must not gain a new
 			// process/write path.
-			backgroundCodeSurface := resolvedProfile == nil ||
-				(strings.TrimSpace(resolvedProfile.Definition.ID) == "work" && isActiveWorkProjectWorkspace(currentUserID, req.SelectedFolder))
-			if !isWorkflowPhase && !crewReadOnly && backgroundCodeSurface {
+			canTriggerAutoNotify := triggerAutoNotifyAvailable(resolvedProfile, currentUserID, req.SelectedFolder, isWorkflowPhase, crewReadOnly, toolGate)
+			if canTriggerAutoNotify {
 				if err := api.registerBackgroundCodeTools(llmAgent, req, sessionID, currentUserID); err != nil {
 					logfWithContext(queryLogCtx, "[BACKGROUND CODE] Failed to register tools: %v", err)
 					sendError(fmt.Sprintf("Failed to register background code tools: %v", err), true)
@@ -6228,7 +6229,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 					}
 				}
 			}
-
 			// 2. CONTEXT — skills. Attaching a skill is not an instruction
 			//    section (AttachSkill, not AddInstructions), so it stays here
 			//    rather than in the prompt-section registry below.
@@ -6277,14 +6277,15 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			//    assembler logs what it applied. See prompt_sections.go for why
 			//    these stopped being inline ifs.
 			promptCtx := promptContext{
-				Provider:            req.Provider,
-				HasProfile:          resolvedProfile != nil,
-				IsWorkflowPhase:     isWorkflowPhase,
-				ShellRoot:           shellRoot,
-				PerUserChatsFolder:  perUserChatsFolder,
-				WorkflowPhaseFolder: workflowPhaseFolder,
-				ProfileWorkspace:    agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder),
-				CapabilitySection:   buildLLMCapabilityPromptSection(r.Context()),
+				Provider:                 req.Provider,
+				HasProfile:               resolvedProfile != nil,
+				IsWorkflowPhase:          isWorkflowPhase,
+				HasTriggerAutoNotifyTool: canTriggerAutoNotify,
+				ShellRoot:                shellRoot,
+				PerUserChatsFolder:       perUserChatsFolder,
+				WorkflowPhaseFolder:      workflowPhaseFolder,
+				ProfileWorkspace:         agentProfileRuntimeWorkspace(currentUserID, req.SelectedFolder),
+				CapabilitySection:        buildLLMCapabilityPromptSection(r.Context()),
 				// The snapshot instructs the agent to call these. The gate is the
 				// authority on whether it can, so ask it rather than assuming.
 				HasLLMCapabilityTools: toolGate.Admit("list_llm_capabilities") ||
@@ -9050,6 +9051,29 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
 	log.Printf("[HUMAN_FEEDBACK] Emitted blocking_human_feedback event (request_id: %s, session: %s)", requestID, e.sessionID)
+}
+
+// EmitHumanFeedbackResolved records a durable answer/expiry marker for a
+// blocking request so restore does not show an answered prompt as pending.
+func (e *sessionEventEmitter) EmitHumanFeedbackResolved(requestID, outcome string) {
+	now := time.Now()
+	e.eventStore.AddEvent(e.sessionID, events.Event{
+		ID:        fmt.Sprintf("%s_human_feedback_resolved_%s", e.sessionID, requestID),
+		Type:      "human_feedback_resolved",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      unifiedevents.EventType("human_feedback_resolved"),
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "delegation",
+			Data: events.NewGenericEventData("human_feedback_resolved", map[string]interface{}{
+				"request_id": requestID,
+				"outcome":    outcome,
+				"session_id": e.sessionID,
+			}),
+		},
+	})
 }
 
 // EmitProductInteraction publishes the identical event a product.yaml tool

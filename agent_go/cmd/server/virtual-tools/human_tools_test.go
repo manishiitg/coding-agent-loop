@@ -29,7 +29,14 @@ type capturedHumanFeedbackEvent struct {
 }
 
 type testHumanFeedbackEmitter struct {
-	events chan capturedHumanFeedbackEvent
+	events   chan capturedHumanFeedbackEvent
+	resolved chan string
+}
+
+func (e *testHumanFeedbackEmitter) EmitHumanFeedbackResolved(requestID, outcome string) {
+	if e.resolved != nil {
+		e.resolved <- requestID + ":" + outcome
+	}
 }
 
 func (e *testHumanFeedbackEmitter) EmitBlockingHumanFeedback(requestID, question, context string, _ bool, _, _ string, options ...string) {
@@ -305,7 +312,7 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 		return nil
 	})
 
-	emitter := &testHumanFeedbackEmitter{events: make(chan capturedHumanFeedbackEvent, 1)}
+	emitter := &testHumanFeedbackEmitter{events: make(chan capturedHumanFeedbackEvent, 1), resolved: make(chan string, 1)}
 	ctx := context.WithValue(context.Background(), BGAgentSessionIDKey, "workflow-session")
 	ctx = context.WithValue(ctx, SessionEventEmitterKey, SessionEventEmitter(emitter))
 	type result struct {
@@ -371,6 +378,14 @@ func TestHandleHumanFeedbackWaitsForDirectHumanResponseWithoutParentRelay(t *tes
 		}
 	case <-time.After(time.Second):
 		t.Fatal("human_feedback did not return the direct human response")
+	}
+	select {
+	case resolution := <-emitter.resolved:
+		if resolution != "req-1:answered" {
+			t.Fatalf("resolution marker = %q, want req-1:answered", resolution)
+		}
+	default:
+		t.Fatal("answered request emitted no durable resolution marker")
 	}
 
 	select {

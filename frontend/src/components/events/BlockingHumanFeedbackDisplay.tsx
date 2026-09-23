@@ -7,6 +7,8 @@ import {
   hasSubmittedFeedback,
   markFeedbackSubmitted,
 } from '../../utils/notificationDedup'
+import { isHumanFeedbackRequestResolved } from '../../utils/humanFeedbackAttention'
+import { useChatStore } from '../../stores/useChatStore'
 
 export interface BlockingHumanFeedbackEvent {
   question?: string
@@ -46,7 +48,12 @@ export const BlockingHumanFeedbackDisplay: React.FC<BlockingHumanFeedbackDisplay
   const cachedSubmission = event.data.request_id ? hasSubmittedFeedback(event.data.request_id) : false
   const [feedback, setFeedback] = useState<string>('')
   const [isSubmittingFeedback, setIsSubmittingFeedback] = useState(false)
-  const [hasSubmitted, setHasSubmitted] = useState(cachedSubmission)
+  const [submittedLocally, setHasSubmitted] = useState(cachedSubmission)
+  // The local cache only knows this browser's answers; the durable
+  // human_feedback_resolved marker covers other devices and refreshes.
+  const resolvedByServer = useChatStore(state =>
+    isHumanFeedbackRequestResolved(state.tabEvents, event.data.request_id || ''))
+  const hasSubmitted = submittedLocally || resolvedByServer
   const [submitError, setSubmitError] = useState('')
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission>('default')
   const electronAPI = (window as unknown as {

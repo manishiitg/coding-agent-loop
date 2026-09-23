@@ -47,6 +47,12 @@ type DurableEventJournalMigrator interface {
 	MarkMigrationComplete(sessionID string) error
 }
 
+// DurableEventJournalSessionProbe reports whether the journal already holds a
+// session, and its durable tip, without loading any payloads.
+type DurableEventJournalSessionProbe interface {
+	KnownSession(sessionID string) (known bool, lastSequence int64, err error)
+}
+
 type DurableEventJournalOwnership interface {
 	RegisterOwner(sessionID, ownerID string) error
 	Owner(sessionID string) (string, error)
@@ -144,6 +150,21 @@ func (j *SQLiteEventJournal) Owner(sessionID string) (string, error) {
 		return "", nil
 	}
 	return ownerID, err
+}
+
+func (j *SQLiteEventJournal) KnownSession(sessionID string) (bool, int64, error) {
+	if j == nil || j.db == nil || sessionID == "" {
+		return false, 0, nil
+	}
+	var lastSequence sql.NullInt64
+	var owned int
+	err := j.db.QueryRow(`SELECT
+		(SELECT last_sequence FROM structured_chat_sequences WHERE session_id = ?),
+		EXISTS(SELECT 1 FROM structured_chat_sessions WHERE session_id = ?)`, sessionID, sessionID).Scan(&lastSequence, &owned)
+	if err != nil {
+		return false, 0, err
+	}
+	return lastSequence.Valid || owned == 1, lastSequence.Int64, nil
 }
 
 func (j *SQLiteEventJournal) MigrationComplete(sessionID string) (bool, error) {

@@ -305,6 +305,10 @@ func (api *StreamingAPI) handleDeleteAgentProfileConversation(w http.ResponseWri
 		writeAgentProfileError(w, http.StatusInternalServerError, "delete conversation transcript: "+err.Error())
 		return
 	}
+	if err := api.deleteDurableChatSessions([]string{sessionID}); err != nil {
+		writeAgentProfileError(w, http.StatusInternalServerError, "delete conversation event log: "+err.Error())
+		return
+	}
 	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"ok": true, "deleted_paths": result.DeletedPaths})
 }
 
@@ -359,11 +363,14 @@ func (api *StreamingAPI) handleDeleteAgentProfileProject(w http.ResponseWriter, 
 		writeAgentProfileError(w, http.StatusInternalServerError, "remove project conversation binding: "+err.Error())
 		return
 	}
+	removedIDs := make([]string, 0, len(removed))
 	for _, record := range removed {
 		// The project folder deletion normally removed the transcript itself;
 		// this also clears any durable index or compatibility copy elsewhere.
 		_, _ = DeleteChatHistorySession(userID, record.SessionID, "")
+		removedIDs = append(removedIDs, record.SessionID)
 	}
+	api.deleteDurableChatSessionsAfterBulkDelete("project delete", removedIDs)
 	writeAgentProfileJSON(w, http.StatusOK, map[string]interface{}{"success": true})
 }
 

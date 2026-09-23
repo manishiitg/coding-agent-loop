@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/workproduct"
 )
 
 type triggerToolRecordingRegistrar struct{ names []string }
@@ -28,6 +30,31 @@ func TestRegisterTriggerAndAutoNotifyIsOneTool(t *testing.T) {
 	}
 	if len(registrar.names) != 1 || registrar.names[0] != "trigger_and_auto_notify" {
 		t.Fatalf("registered tools = %v", registrar.names)
+	}
+}
+
+func TestTriggerAndAutoNotifyIsExposedInWritableCrew(t *testing.T) {
+	if !triggerAutoNotifyAvailable(nil, "user-1", "", false, false, newProductToolGate(nil)) {
+		t.Fatal("ordinary Builder chat must expose the trigger tool")
+	}
+	profile := &resolvedAgentProfile{Definition: workproduct.BuiltinAgentProfile()}
+	gate := newProductToolGate(profile)
+	workspace := "_users/user-1/Chats/Work/projects/demo"
+	if !triggerAutoNotifyAvailable(profile, "user-1", workspace, false, false, gate) {
+		t.Fatal("writable Crew project must expose the trigger tool")
+	}
+	registrar := &gateRecordingRegistrar{gate: gate}
+	api := &StreamingAPI{bgAgentRegistry: NewBackgroundAgentRegistry()}
+	if err := api.registerBackgroundCodeTools(registrar, QueryRequest{SelectedFolder: workspace}, "session-1", "user-1"); err != nil {
+		t.Fatal(err)
+	}
+	if len(registrar.admitted) != 1 || registrar.admitted[0] != "trigger_and_auto_notify" {
+		t.Fatalf("Crew admitted tools = %v", registrar.admitted)
+	}
+	if triggerAutoNotifyAvailable(profile, "user-1", workspace, false, true, gate) ||
+		triggerAutoNotifyAvailable(profile, "user-1", "Chats/Work/projects", false, false, gate) ||
+		triggerAutoNotifyAvailable(profile, "user-1", workspace, true, false, gate) {
+		t.Fatal("trigger tool escaped Crew reader, landing-chat, or workflow-phase boundary")
 	}
 }
 

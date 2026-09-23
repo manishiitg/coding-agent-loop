@@ -79,4 +79,30 @@ describe('getBlockingHumanFeedbackDetails', () => {
     expect(result).toHaveLength(1)
     expect(result[0]).toMatchObject({ requestId: 'active', sessionId: 'background-session' })
   })
+
+  it('treats a request with a durable resolution marker as answered after refresh', () => {
+    const now = Date.parse('2026-07-18T10:05:00.000Z')
+    const request = {
+      id: 'answered-feedback',
+      type: 'blocking_human_feedback',
+      timestamp: '2026-07-18T10:04:00.000Z',
+      data: {
+        type: 'blocking_human_feedback',
+        data: { request_id: 'answered', question: 'Approve?', context: 'This request expires in 300 seconds.' },
+      },
+    } as PollingEvent
+    const resolution = {
+      id: 'answered-resolved',
+      type: 'human_feedback_resolved',
+      timestamp: '2026-07-18T10:04:30.000Z',
+      data: {
+        type: 'human_feedback_resolved',
+        data: { request_id: 'answered', outcome: 'answered', event_type: 'human_feedback_resolved' },
+      },
+    } as unknown as PollingEvent
+
+    // No local submission record: the answer came from another device or Slack.
+    expect(collectPendingHumanFeedback({ chat: [request] }, () => false, now)).toHaveLength(1)
+    expect(collectPendingHumanFeedback({ chat: [request, resolution] }, () => false, now)).toHaveLength(0)
+  })
 })

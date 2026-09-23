@@ -152,8 +152,19 @@ func TestSessionPersistenceClassificationIsImmutableAndPrecedesEvents(t *testing
 	if err := store.SetSessionPersistenceClass("chat-1", SessionPersistenceInteractiveChat); err != nil {
 		t.Fatal(err)
 	}
-	if err := store.SetSessionPersistenceClass("chat-1", SessionPersistenceExecution); err == nil {
-		t.Fatal("persistence class change unexpectedly succeeded")
+	// An automated (cron/webhook) turn into an interactive chat keeps the
+	// chat's class instead of failing the request.
+	if err := store.SetSessionPersistenceClass("chat-1", SessionPersistenceExecution); err != nil {
+		t.Fatalf("automated turn into interactive chat was refused: %v", err)
+	}
+	if !store.IsDurableChatSession("chat-1") {
+		t.Fatal("interactive chat was downgraded by a later execution request")
+	}
+	if err := store.SetSessionPersistenceClass("run-1", SessionPersistenceExecution); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSessionPersistenceClass("run-1", SessionPersistenceInteractiveChat); err == nil {
+		t.Fatal("execution session was promoted to interactive chat")
 	}
 	store.AddEvent("unknown-1", journalTestEvent("event-1", "live"))
 	if err := store.SetSessionPersistenceClass("unknown-1", SessionPersistenceInteractiveChat); err == nil {

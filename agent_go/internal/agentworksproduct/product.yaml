@@ -311,8 +311,9 @@ chat:
       - stop_step
       - test_slack_bot_connection
       - trigger_schedule
-    # Withheld from direct external invocation while run channels keep
-    # them. runs:execute authority, stated precisely: a token may invoke the
+    # Withheld from direct external invocation and from token-backed Run
+    # sessions; Slack/WhatsApp Run channels keep them. runs:execute authority,
+    # stated precisely: a token may invoke the
     # run operations of the workflows it can see, converse with those
     # workflows' Run-mode assistant, and trigger those workflows' own saved
     # schedules. "Never authors" means no plan, configuration, schedule,

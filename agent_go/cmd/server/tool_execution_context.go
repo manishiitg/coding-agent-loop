@@ -36,6 +36,9 @@ func (api *StreamingAPI) bindToolExecutionContextForSession(requestCtx context.C
 		if bound == nil || strings.TrimSpace(bound.UserID) == "" || strings.TrimSpace(authoritySession) == "" || strings.TrimSpace(toolSession) == "" {
 			return nil, fmt.Errorf("%s requires an authenticated session", tool)
 		}
+		if accessTokenRunToolDenied(bound, tool) {
+			return nil, fmt.Errorf("%s is unavailable to external access tokens", tool)
+		}
 		callerSession := executor.SessionIDFromContext(ctx)
 		if callerSession == "" {
 			callerSession, _ = ctx.Value(common.ChatSessionIDKey).(string)

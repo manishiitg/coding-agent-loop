@@ -124,6 +124,19 @@ func TestExternalListExecutionsEmpty(t *testing.T) {
 	}
 }
 
+func TestExternalListExecutionsIncludesRunningSteps(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
+		"step-1":         {ExecutionID: "step-1", SessionID: "session-1", WorkspacePath: "Workflow/invoices", Source: trackedExecutionSourceWorkshopBackground, Kind: "step", Status: trackedExecutionStatusRunning},
+		"other-workflow": {ExecutionID: "other-workflow", SessionID: "session-2", WorkspacePath: "Workflow/secret", Source: trackedExecutionSourceWorkshopBackground, Kind: "step", Status: trackedExecutionStatusRunning},
+	}
+	body := externalTestBody(t, f.call(t, "owner", "list_executions", map[string]any{"workflow_id": "invoices"}), 200)
+	executions, _ := body["executions"].([]any)
+	if len(executions) != 1 || executions[0].(map[string]any)["query_id"] != "step-1" {
+		t.Fatalf("running workflow steps = %v", executions)
+	}
+}
+
 func TestReadOnlyForRequest(t *testing.T) {
 	if !readOnlyForRequest(WorkflowAccessRead, QueryRequest{}) {
 		t.Fatal("reader without pin is not read-only")

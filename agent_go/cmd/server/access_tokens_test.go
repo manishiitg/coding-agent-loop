@@ -72,7 +72,7 @@ func TestAccessTokenHTTPManagementAndRestrictions(t *testing.T) {
 	for _, tool := range catalogBody.Tools {
 		visible[tool.Name] = true
 	}
-	if !visible["read_file"] || visible["write_file"] || visible["builder_chat"] {
+	if !visible["read_file"] || !visible["list_step_code"] || visible["write_file"] || visible["builder_chat"] {
 		t.Fatal(catalog.Code, catalog.Body)
 	}
 	for _, path := range []string{"/api/auth/access-tokens", "/api/auth/password", "/api/wp/api/documents", "/api/query"} {
@@ -289,6 +289,10 @@ func TestAccessTokenWorkflowFilterAndAccountIntersection(t *testing.T) {
 	w = call("read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md"})
 	if w.Code != 403 {
 		t.Fatal("token scope not enforced", w.Code, w.Body)
+	}
+	w = call("list_step_code", map[string]any{"workflow_id": "invoices"})
+	if w.Code != 403 {
+		t.Fatal("code inventory scope not enforced", w.Code, w.Body)
 	}
 }
 

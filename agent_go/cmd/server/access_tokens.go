@@ -260,7 +260,7 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 		return t.Allows("runs:execute")
 	}
 	switch tool.Name {
-	case "list_files", "read_file", "search_files", "get_file_link":
+	case "list_files", "read_file", "search_files", "list_step_code", "get_file_link":
 		return t.Allows("files:read")
 	case "write_file", "patch_file":
 		return t.Allows("files:write")

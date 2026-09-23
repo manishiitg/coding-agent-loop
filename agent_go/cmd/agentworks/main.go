@@ -38,7 +38,7 @@ var cliOperationGroups = []struct {
 	operations        []struct{ command, tool string }
 }{
 	{"workflows", "Discover workflows", []struct{ command, tool string }{{"list", "list_workflows"}, {"get", "get_workflow"}}},
-	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
+	{"files", "Read ordinary workspace files", []struct{ command, tool string }{{"code", "list_step_code"}, {"link", "get_file_link"}, {"list", "list_files"}, {"read", "read_file"}, {"search", "search_files"}}},
 	{"runs", "Start, steer, stop, and inspect runs", []struct{ command, tool string }{{"list", "list_runs"}, {"get", "get_run"}, {"logs", "get_logs"}, {"start-step", "execute_step"}, {"start-workflow", "run_full_workflow"}, {"status", "run_status"}, {"message", "send_step_message"}, {"stop", "stop_step"}, {"stop-all", "stop_all_executions"}, {"executions", "list_executions"}, {"reply", "run_reply_input"}}},
 	{"schedules", "List, inspect, and trigger schedules", []struct{ command, tool string }{{"list", "list_schedules"}, {"runs", "get_schedule_runs"}, {"trigger", "trigger_schedule"}}},
 	{"chat", "Chat with the workflow assistant", []struct{ command, tool string }{{"ask", "chat"}}},
@@ -322,12 +322,18 @@ func addOperationFlags(cmd *cobra.Command, tool string) {
 	if tool == "get_guidance_topic" {
 		f.String("topic", "", "Guidance topic from guidance topics")
 	}
-	if tool == "list_workflows" || tool == "list_files" || tool == "search_files" || tool == "list_runs" || tool == "get_run" || tool == "get_logs" || tool == "run_status" || tool == "get_schedule_runs" {
+	if tool == "list_workflows" || tool == "list_files" || tool == "search_files" || tool == "list_step_code" || tool == "list_runs" || tool == "get_run" || tool == "get_logs" || tool == "run_status" || tool == "get_schedule_runs" {
 		f.Int("limit", 0, "Maximum results")
 		f.Int("offset", 0, "Result offset")
 	}
 	if tool == "list_files" || tool == "search_files" {
 		f.Int("depth", 0, "Directory traversal depth (1..8)")
+	}
+	if tool == "list_files" || tool == "search_files" || tool == "list_step_code" {
+		f.String("glob", "", "File path glob relative to the selected directory, e.g. '**/*.py'")
+	}
+	if tool == "list_step_code" {
+		f.String("step-id", "", "Optional plan step ID to inventory")
 	}
 	if tool == "search_files" || tool == "list_workflows" {
 		f.String("query", "", "Search query")
@@ -408,7 +414,7 @@ func operationArguments(cmd *cobra.Command, stdin io.Reader) (map[string]any, er
 			return nil, errors.New("--input must contain exactly one JSON object")
 		}
 	}
-	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic", "step-id": "step_id", "execution-id": "execution_id", "schedule-id": "schedule_id", "group": "group_name", "human-input": "human_input", "tier": "tier"} {
+	for flagName, field := range map[string]string{"workflow": "workflow_id", "expected-revision": "expected_revision", "path": "path", "query": "query", "glob": "glob", "run-folder": "run_folder", "session": "session_id", "message": "message", "provider": "provider", "model": "model_id", "step": "existing_step_id", "title": "title", "reason": "reason", "request-id": "request_id", "response": "response", "action": "action", "topic": "topic", "step-id": "step_id", "execution-id": "execution_id", "schedule-id": "schedule_id", "group": "group_name", "human-input": "human_input", "tier": "tier"} {
 		if cmd.Flags().Changed(flagName) {
 			value, _ := cmd.Flags().GetString(flagName)
 			arguments[field] = value

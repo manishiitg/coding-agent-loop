@@ -222,6 +222,30 @@ agentworks files read --workflow WORKFLOW_ID --path docs/process.md
 agentworks plan get --workflow WORKFLOW_ID
 ```
 
+Find workflow-owned Python test code without paging through installed
+packages or caches:
+
+```sh
+agentworks files list --workflow WORKFLOW_ID --path code --glob '**/*.py' --depth 8
+agentworks files search --workflow WORKFLOW_ID --path code --glob '**/*.py' --query 'test_login' --depth 8
+agentworks files code --workflow WORKFLOW_ID
+agentworks files code --workflow WORKFLOW_ID --step-id run-basic-smoke
+agentworks files read --workflow WORKFLOW_ID --path code/run-basic-smoke/modules/auth.py
+```
+
+MCP `list_files` and `search_files` accept the same optional `path` and
+`glob` arguments. The glob is relative to `path`; `**` matches any number
+of directories, including zero. Filtering happens before pagination and,
+for `search_files`, before file content is scanned. Hidden workspace paths,
+runtime caches, and installed packages (including `.cache`, `.local`,
+`__pycache__`, `.venv`, `node_modules`, and `site-packages`) are unavailable
+to file listing, search, direct reading, and preview links. To identify
+a workflow step for a test script, use MCP `list_step_code` or CLI
+`files code`. The inventory defaults to Python files and annotates each
+entry with its step ID, plan title, and whether that step is still in the
+plan. Current workflows read `code/<step-id>/`; legacy workflows read
+`learnings/<step-id>/`.
+
 Load guidance and knowledge for the task:
 
 ```sh
@@ -275,7 +299,8 @@ agentworks schedules trigger --workflow WORKFLOW_ID --schedule-id daily
 
 `runs:execute` implies workflow visibility (`list_workflows`, `get_plan`,
 run evidence, status). Direct file content (`list_files`, `search_files`,
-`read_file`, `get_file_link`, knowledge reads) stays behind `files:read` —
+`list_step_code`, `read_file`, `get_file_link`, knowledge reads) stays behind
+`files:read` —
 but a run or chat session necessarily reads its own workflow's files to
 execute, so `runs:execute` includes those in-session reads and the results
 derived from them. Sessions are scoped to the single workflow they run:

@@ -65,6 +65,7 @@ func externalTools() ([]externalTool, error) {
 			p = page()
 			p["path"] = externalString("Workflow-relative directory; defaults to root.")
 			p["depth"] = externalInteger(1, 8)
+			p["glob"] = externalString("Optional file path glob relative to path, e.g. **/*.py. ** matches directories recursively. Filters results before pagination and content search.")
 			required := []string{}
 			if name == "search_files" {
 				p["query"] = externalString("Case-insensitive literal text to find.")
@@ -72,6 +73,10 @@ func externalTools() ([]externalTool, error) {
 			}
 			add(name, "Browse or search workflow files. Private paths and symbolic links are excluded. Results are bounded and paginated.", false, true, p, required...)
 		}
+		p = page()
+		p["step_id"] = externalString("Optional plan step ID; limits the inventory to its saved code directory.")
+		p["glob"] = externalString("Optional path glob inside the code directory; defaults to **/*.py.")
+		add("list_step_code", "List saved Python code by workflow step, with plan step IDs and titles where available. Uses code/<step-id>/ for current workflows and learnings/<step-id>/ for legacy workflows.", false, true, p)
 		add("get_file_link", "Get an existing file or folder’s authenticated browser preview URL. Files also include an authenticated download URL, size and content type. Links never contain credentials; recipients need workflow access.", false, true, map[string]any{"path": externalString("Workflow-relative file or folder path.")}, "path")
 		add("read_file", "Read a workflow file up to 2 MiB. Binary content is base64.", false, true, map[string]any{"path": externalString("Workflow-relative file path.")}, "path")
 		// Tokens read and run, like the Slack and WhatsApp run-mode channels:
@@ -351,6 +356,10 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 		externalJSON(w, selected)
 		return
 	}
+	if tool.Name == "list_step_code" {
+		api.externalListStepCode(w, r, *selected, args)
+		return
+	}
 	// Run operations dispatch before the workflow lock: proxy turns forward
 	// to the asynchronous query runtime (which must never run under this
 	// lock), and the status and schedule readers need no lock.
@@ -408,7 +417,7 @@ func externalFailure(w http.ResponseWriter, err error) {
 	externalError(w, status, code, err.Error())
 }
 func (api *StreamingAPI) externalFileCall(w http.ResponseWriter, r *http.Request, name string, args map[string]any, workflow DiscoveredWorkflow) {
-	req := wf.Request{Root: workflow.WorkspacePath, Path: externalArg(args, "path"), Query: externalArg(args, "query"), Offset: externalInt(args, "offset", 0), Limit: externalInt(args, "limit", 100), Depth: externalInt(args, "depth", 4)}
+	req := wf.Request{Root: workflow.WorkspacePath, Path: externalArg(args, "path"), Query: externalArg(args, "query"), Glob: externalArg(args, "glob"), Offset: externalInt(args, "offset", 0), Limit: externalInt(args, "limit", 100), Depth: externalInt(args, "depth", 4)}
 	switch name {
 	case "read_file":
 		req.Operation = "read"

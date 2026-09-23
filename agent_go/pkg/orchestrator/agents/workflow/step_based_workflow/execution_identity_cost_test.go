@@ -27,7 +27,7 @@ func TestExecutionKeyedCostLedgerSeparatesIterationZeroReuse(t *testing.T) {
 	} {
 		err := hcpo.PersistTokenUsage(ctx, runFolder,
 			&orchestrator.StepTokenData{Phase: "execution_only", StepID: "collect", ExecutionID: event.executionID},
-			&orchestrator.ModelTokenData{Provider: "codex-cli", ModelID: "gpt-5.6-terra", InputTokens: event.input, LLMCallCount: 1},
+			&orchestrator.ModelTokenData{Provider: "codex-cli", ModelID: "gpt-6-sol", InputTokens: event.input, LLMCallCount: 1},
 		)
 		if err != nil {
 			t.Fatalf("PersistTokenUsage(%s): %v", event.executionID, err)
@@ -46,10 +46,10 @@ func TestExecutionKeyedCostLedgerSeparatesIterationZeroReuse(t *testing.T) {
 	if len(daily.Executions) != 2 || daily.Executions["execution-A"] == nil || daily.Executions["execution-B"] == nil {
 		t.Fatalf("executions = %#v, want separate execution-A and execution-B records", daily.Executions)
 	}
-	if daily.Executions["execution-A"].TokenUsage.ByModel["gpt-5.6-terra"].InputTokens != 100 {
+	if daily.Executions["execution-A"].TokenUsage.ByModel["gpt-6-sol"].InputTokens != 100 {
 		t.Fatal("execution-A was merged with a later reuse of iteration-0/default")
 	}
-	if daily.Executions["execution-B"].TokenUsage.ByModel["gpt-5.6-terra"].InputTokens != 250 {
+	if daily.Executions["execution-B"].TokenUsage.ByModel["gpt-6-sol"].InputTokens != 250 {
 		t.Fatal("execution-B token total was not retained independently")
 	}
 

@@ -13,10 +13,9 @@ export type Requester = <T>(method: string, path: string, body?: unknown) => Pro
 // engine (which AI provider) is family-wide by design — it corresponds to
 // which paid account the family has (Settings: "The AI behind both your
 // chat and {child}'s tutor... pick whichever account you already pay for").
-// The MODEL within that engine is not: product.yaml declares a different
-// model_id per profile (parent's codex-cli default is gpt-6-astra, child's
-// is gpt-5.6-luna) precisely so a family can run a stronger model for the
-// parent and a lighter/cheaper one for the child on the same account. A
+// The MODEL within that engine is not: product.yaml declares a model_id per
+// profile so a family can choose different models for parent and child on the
+// same account. Both currently default to GPT-6 Luna on Codex. A
 // single shared `model` field (now legacy, read-only going forward) let
 // whichever side picked last silently overwrite the other's — parent_model/
 // child_model are the fix. familyRuntime() falls back to each profile's own

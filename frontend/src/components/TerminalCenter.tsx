@@ -26,6 +26,8 @@ import { useTheme } from '../hooks/useTheme'
 import { useSessionExecutionTree } from '../hooks/useSessionExecutionTree'
 import type { Theme } from '../contexts/ThemeContext'
 import { normalizeAnsiForEmbeddedXterm } from '../utils/ansiSanitize'
+import { installDisplayOnlyXtermGuards, xtermCopyText } from '../utils/displayOnlyXterm'
+import { copyToClipboard } from '../utils/textUtils'
 import { preserveTerminalContinuity } from '../utils/terminalContinuity'
 import { isMainAgentTerminal, preferredTerminalForContext } from '../utils/terminalIdentity'
 import { hasFreshTerminalDetailBody } from '../utils/terminalDetailFreshness'
@@ -1530,6 +1532,7 @@ const LiveAttachXtermPaneInner: React.FC<{
     term.loadAddon(fit)
     term.open(mount)
     applyRawXtermTheme(term, xtermTheme)
+    const displayGuards = installDisplayOnlyXtermGuards(term)
     terminalRef.current = term
     onScrollToBottomReady?.(() => {
       if (!scrollCurrentXtermToBottom(term, terminalRef.current)) return
@@ -1903,6 +1906,7 @@ const LiveAttachXtermPaneInner: React.FC<{
     return () => {
       closed = true
       scrollDisposable.dispose()
+      displayGuards.dispose()
       resizeObserver.disconnect()
       if (fitTimer !== undefined) window.clearTimeout(fitTimer)
       if (reconnectTimer !== undefined) window.clearTimeout(reconnectTimer)
@@ -2027,6 +2031,7 @@ const LiveAttachXtermPaneInner: React.FC<{
           )}
         </div>
       )}
+      <XtermCopyButton terminalRef={terminalRef} />
       <div
         ref={mountRef}
         className="runloop-raw-xterm h-full w-full p-1.5 [&_.xterm]:h-full"
@@ -2082,6 +2087,36 @@ const TerminalWaitingPane: React.FC<{
   </div>
 )
 
+// Copies the xterm selection, or the visible screen when nothing is selected.
+// Sits outside the xterm element so pressing it never clears the selection.
+const XtermCopyButton: React.FC<{ terminalRef: React.RefObject<XTerm | null> }> = ({ terminalRef }) => {
+  const [copied, setCopied] = useState(false)
+  useEffect(() => {
+    if (!copied) return
+    const timer = window.setTimeout(() => setCopied(false), 1500)
+    return () => window.clearTimeout(timer)
+  }, [copied])
+  const handleCopy = useCallback(async () => {
+    const term = terminalRef.current
+    if (!term) return
+    const text = xtermCopyText(term)
+    if (text && await copyToClipboard(text)) setCopied(true)
+  }, [terminalRef])
+  return (
+    <button
+      type="button"
+      onMouseDown={event => event.preventDefault()}
+      onClick={() => { void handleCopy() }}
+      title="Copy selection (or visible screen)"
+      aria-label="Copy terminal text"
+      className="absolute bottom-2 right-4 z-10 inline-flex items-center gap-1 rounded border border-neutral-700/80 bg-neutral-950/80 px-1.5 py-0.5 font-mono text-[10px] text-neutral-300 opacity-60 shadow-sm transition-opacity hover:opacity-100 focus-visible:opacity-100"
+    >
+      {copied ? <Check className="h-3 w-3" /> : <Copy className="h-3 w-3" />}
+      {copied ? 'Copied' : 'Copy'}
+    </button>
+  )
+}
+
 const StaticXtermPaneInner: React.FC<{
   content: string
   className?: string
@@ -2119,6 +2154,7 @@ const StaticXtermPaneInner: React.FC<{
     term.loadAddon(fit)
     term.open(mount)
     applyRawXtermTheme(term, xtermTheme)
+    const displayGuards = installDisplayOnlyXtermGuards(term)
     terminalRef.current = term
     fitRef.current = fit
     onScrollToBottomReady?.(() => {
@@ -2149,6 +2185,7 @@ const StaticXtermPaneInner: React.FC<{
 
     return () => {
       scrollDisposable.dispose()
+      displayGuards.dispose()
       resizeObserver.disconnect()
       if (fitTimer !== undefined) window.clearTimeout(fitTimer)
       onScrollToBottomReady?.(null)
@@ -2179,6 +2216,10 @@ const StaticXtermPaneInner: React.FC<{
     } catch {
       // Fit can fail while the pane is briefly hidden during tab/layout changes.
     }
+    // A refreshed snapshot must not yank a user who scrolled up back to the
+    // bottom; restore their line instead (the snapshot is append-mostly).
+    const previousViewportY = term.buffer.active.viewportY
+    const followBottom = term.buffer.active.baseY - previousViewportY <= 1
     term.reset()
     if (!content) {
       onViewportStickChangeRef.current?.(true)
@@ -2193,6 +2234,15 @@ const StaticXtermPaneInner: React.FC<{
         }
       } catch {
         // ignore
+      }
+      if (!followBottom) {
+        if (terminalRef.current !== term) return
+        try {
+          term.scrollToLine(Math.min(previousViewportY, term.buffer.active.baseY))
+        } catch {
+          // The pane can be disposed before this write callback runs.
+        }
+        return
       }
       if (!scrollCurrentXtermToBottom(term, terminalRef.current)) return
       onViewportStickChangeRef.current?.(true)
@@ -2218,9 +2268,10 @@ const StaticXtermPaneInner: React.FC<{
   return (
     <div
       ref={contentRef}
-      className={className}
+      className={`relative ${className || ''}`}
       style={{ backgroundColor: xtermTheme.background }}
     >
+      <XtermCopyButton terminalRef={terminalRef} />
       <div
         ref={mountRef}
         className="runloop-raw-xterm h-full w-full p-1.5 [&_.xterm]:h-full"

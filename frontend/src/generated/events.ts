@@ -13,6 +13,7 @@ export interface UnifiedEventsComplete {
   background_agent_started?: BackgroundAgentStartedEvent;
   background_agent_terminated?: BackgroundAgentTerminatedEvent;
   coding_agent_background_task?: CodingAgentBackgroundTaskEvent;
+  coding_agent_question?: MuseQuestionEvent;
   context_cancelled?: ContextCancelledEvent;
   conversation_end?: ConversationEndEvent;
   conversation_error?: ConversationErrorEvent;
@@ -197,6 +198,44 @@ export interface CodingAgentBackgroundTaskEvent {
   task_id?: string;
   timestamp?: string;
   trace_id?: string;
+}
+export interface MuseQuestionEvent {
+  answers?: QuestionAnswer[];
+  component?: string;
+  correlation_id?: string;
+  event_id?: string;
+  hierarchy_level?: number;
+  is_end_event?: boolean;
+  kind?: string;
+  metadata?: {
+    [k: string]: unknown;
+  };
+  native_sequence?: number;
+  native_session_id?: string;
+  outcome?: string;
+  parent_id?: string;
+  prompt_id?: string;
+  provider?: string;
+  questions?: Question[];
+  run_id?: string;
+  session_id?: string;
+  span_id?: string;
+  timestamp?: string;
+  trace_id?: string;
+}
+export interface QuestionAnswer {
+  id?: string;
+  selected_label?: string;
+}
+export interface Question {
+  header?: string;
+  id?: string;
+  options?: QuestionOption[];
+  question?: string;
+}
+export interface QuestionOption {
+  description?: string;
+  label?: string;
 }
 export interface ContextCancelledEvent {
   component?: string;

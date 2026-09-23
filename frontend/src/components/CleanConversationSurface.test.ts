@@ -14,6 +14,19 @@ function event(id: string, type: string, data: Record<string, unknown>, extra: P
 }
 
 describe('buildCleanConversationItems', () => {
+  it('shows native Muse options and settles the same chat choice', () => {
+    const requested = event('q1', 'coding_agent_question', {
+      kind: 'user_input_prompt_requested', prompt_id: 'prompt-1',
+      questions: [{ id: 'scope', header: 'Scope', question: 'Choose a scope', options: [{ label: 'One', description: 'Small' }, { label: 'Two', description: 'Wide' }] }],
+    })
+    const pending = buildCleanConversationItems([requested])
+    expect(pending[0].museQuestion).toEqual(expect.objectContaining({ state: 'pending', promptId: 'prompt-1' }))
+    const settled = buildCleanConversationItems([requested, event('q2', 'coding_agent_question', {
+      kind: 'user_input_prompt_settled', prompt_id: 'prompt-1', outcome: 'answered', answers: [{ id: 'scope', selected_label: 'Two' }],
+    })])
+    expect(settled).toHaveLength(1)
+    expect(settled[0].museQuestion).toEqual(expect.objectContaining({ state: 'answered', answers: [{ id: 'scope', selectedLabel: 'Two' }] }))
+  })
   it('keeps Muse background updates after the foreground answer in journal order', () => {
     const items = buildCleanConversationItems([
       event('task-start', 'coding_agent_background_task', { kind: 'task_backgrounded', task_id: 'task-a' }),

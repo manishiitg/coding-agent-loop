@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -213,10 +214,9 @@ func TestCursorCLIAuthProbeKeepsLastConfirmedLoginOnTransientFailure(t *testing.
 
 	previous := cursorCLIStatusJSON
 	resetCursorCLIAuthProbeCache()
-	probeCalls := 0
+	var probeCalls atomic.Int32
 	cursorCLIStatusJSON = func(context.Context) ([]byte, error) {
-		probeCalls++
-		if probeCalls == 1 {
+		if probeCalls.Add(1) == 1 {
 			return []byte(`{"status":"authenticated","isAuthenticated":true}`), nil
 		}
 		return nil, context.DeadlineExceeded
@@ -231,16 +231,38 @@ func TestCursorCLIAuthProbeKeepsLastConfirmedLoginOnTransientFailure(t *testing.
 		t.Fatalf("first probe = authenticated:%v conclusive:%v, want true/true", authenticated, conclusive)
 	}
 
+	// A stale entry is served immediately; the transient failure happens in the
+	// background refresh and must not flip a confirmed login to logged out.
 	cursorCLIAuthProbeCache.Lock()
 	cursorCLIAuthProbeCache.checkedAt = time.Now().Add(-31 * time.Second)
 	cursorCLIAuthProbeCache.Unlock()
 	authenticated, conclusive = cursorCLILocalAuthState()
 	if !authenticated || !conclusive {
-		t.Fatalf("transient retry = authenticated:%v conclusive:%v, want preserved true/true", authenticated, conclusive)
+		t.Fatalf("stale read = authenticated:%v conclusive:%v, want cached true/true", authenticated, conclusive)
 	}
-	if probeCalls != 2 {
-		t.Fatalf("status probe calls = %d, want 2", probeCalls)
+	waitForAuthRefresh(t, &cursorCLIAuthProbeCache)
+	if got := probeCalls.Load(); got != 2 {
+		t.Fatalf("status probe calls = %d, want 2", got)
 	}
+	authenticated, conclusive = cursorCLILocalAuthState()
+	if !authenticated || !conclusive {
+		t.Fatalf("after transient refresh = authenticated:%v conclusive:%v, want preserved true/true", authenticated, conclusive)
+	}
+}
+
+func waitForAuthRefresh(t *testing.T, cache *cliAuthProbeCache) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		cache.Lock()
+		done := !cache.refreshing && time.Since(cache.checkedAt) < cliAuthProbeTTL
+		cache.Unlock()
+		if done {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	t.Fatal("background auth refresh did not finish")
 }
 
 func TestValidateCursorCLIReportsLoginRequiredBeforeTmuxRun(t *testing.T) {

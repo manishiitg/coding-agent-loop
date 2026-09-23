@@ -243,6 +243,7 @@ func readFileFromWorkspace(ctx context.Context, filePath string) (string, bool, 
 // deleteWorkspaceFile deletes a file from the workspace via the workspace API.
 // Returns nil if the file doesn't exist (404) or was successfully deleted.
 func deleteWorkspaceFile(ctx context.Context, configPath string) error {
+	noteWorkspaceMutation(configPath, false)
 	pathSegments := strings.Split(configPath, "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
@@ -278,6 +279,7 @@ func deleteWorkspaceFile(ctx context.Context, configPath string) error {
 
 // writeFileToWorkspace writes content to a file in the workspace via the workspace API
 func writeFileToWorkspace(ctx context.Context, filePath, content string) error {
+	noteWorkspaceMutation(filePath, false)
 	pathSegments := strings.Split(filePath, "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {
@@ -4651,6 +4653,7 @@ func stringFromStepOrAgentConfig(step map[string]interface{}, agentConfigs map[s
 
 // writeRawFileToWorkspace writes raw string content to a file in the workspace API
 func writeRawFileToWorkspace(ctx context.Context, filePath string, content string) error {
+	noteWorkspaceMutation(filePath, false)
 	// URL-encode the filepath segments
 	pathSegments := strings.Split(filePath, "/")
 	encodedSegments := make([]string, len(pathSegments))
@@ -4753,6 +4756,7 @@ func collectWorkspaceFilePaths(items []virtualtools.WorkspaceFolderItem, out *[]
 }
 
 func deleteWorkspaceFolder(ctx context.Context, folderPath string) error {
+	noteWorkspaceMutation(folderPath, true)
 	pathSegments := strings.Split(folderPath, "/")
 	encodedSegments := make([]string, len(pathSegments))
 	for i, segment := range pathSegments {

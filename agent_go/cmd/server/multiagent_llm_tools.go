@@ -21,6 +21,7 @@ type cliAuthProbeCache struct {
 	checkedAt     time.Time
 	authenticated bool
 	conclusive    bool
+	refreshing    bool
 }
 
 var (
@@ -321,27 +322,13 @@ func piProviderAuthConfigured(keys *llm.ProviderAPIKeys) bool {
 	return false
 }
 
-var piCLIAuthProbeCache struct {
-	sync.Mutex
-	checkedAt     time.Time
-	authenticated bool
-	conclusive    bool
-}
+var piCLIAuthProbeCache cliAuthProbeCache
 
 func piCLILocalAuthState() (authenticated, conclusive bool) {
-	piCLIAuthProbeCache.Lock()
-	defer piCLIAuthProbeCache.Unlock()
-	if !piCLIAuthProbeCache.checkedAt.IsZero() && time.Since(piCLIAuthProbeCache.checkedAt) < 30*time.Second {
-		return piCLIAuthProbeCache.authenticated, piCLIAuthProbeCache.conclusive
-	}
-
-	models, err := listPiCLIModelsFn()
-	authenticated = err == nil && len(models) > 0
-	conclusive = err == nil
-	piCLIAuthProbeCache.checkedAt = time.Now()
-	piCLIAuthProbeCache.authenticated = authenticated
-	piCLIAuthProbeCache.conclusive = conclusive
-	return authenticated, conclusive
+	return piCLIAuthProbeCache.serve(func() (bool, bool, error) {
+		models, err := listPiCLIModelsFn()
+		return err == nil && len(models) > 0, err == nil, err
+	}, false)
 }
 
 func claudeCLILocalAuthState() (authenticated, conclusive bool) {
@@ -378,26 +365,13 @@ func cachedCLIAuthState(runtime string, cache *cliAuthProbeCache, probe func(con
 	if _, err := exec.LookPath(runtime); err != nil {
 		return false, false
 	}
-	cache.Lock()
-	defer cache.Unlock()
-	if !cache.checkedAt.IsZero() && time.Since(cache.checkedAt) < 30*time.Second {
-		return cache.authenticated, cache.conclusive
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	out, err := probe(ctx)
-	authenticated, conclusive = parse(out)
-	if err != nil && !conclusive && cache.conclusive && cache.authenticated {
-		// A transient command failure must not turn a previously confirmed
-		// connection into a logged-out state.
-		authenticated = true
-		conclusive = true
-	}
-	cache.checkedAt = time.Now()
-	cache.authenticated = authenticated
-	cache.conclusive = conclusive
-	return authenticated, conclusive
+	return cache.serve(func() (bool, bool, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := probe(ctx)
+		a, k := parse(out)
+		return a, k, err
+	}, true)
 }
 
 func claudeCLIAuthStatus(out []byte) (authenticated, conclusive bool) {
@@ -428,33 +402,15 @@ func cursorCLILocalAuthState() (authenticated, conclusive bool) {
 	if _, err := exec.LookPath("cursor-agent"); err != nil {
 		return false, false
 	}
-
-	cursorCLIAuthProbeCache.Lock()
-	defer cursorCLIAuthProbeCache.Unlock()
-
-	if !cursorCLIAuthProbeCache.checkedAt.IsZero() && time.Since(cursorCLIAuthProbeCache.checkedAt) < 30*time.Second {
-		return cursorCLIAuthProbeCache.authenticated, cursorCLIAuthProbeCache.conclusive
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	out, err := cursorCLIStatusJSON(ctx)
-	authenticated, conclusive = cursorCLIAuthStatus(out)
-	if err != nil && !conclusive {
-		// A timeout or transient status-command failure is not evidence that the
-		// user logged out. Preserve a previously confirmed login and otherwise
-		// report an inconclusive probe so execution can try the real adapter.
-		if cursorCLIAuthProbeCache.conclusive && cursorCLIAuthProbeCache.authenticated {
-			authenticated = true
-			conclusive = true
-		}
-	}
-
-	cursorCLIAuthProbeCache.checkedAt = time.Now()
-	cursorCLIAuthProbeCache.authenticated = authenticated
-	cursorCLIAuthProbeCache.conclusive = conclusive
-	return authenticated, conclusive
+	// A timeout or transient status-command failure is not evidence that the
+	// user logged out: serve keeps a previously confirmed login.
+	return cursorCLIAuthProbeCache.serve(func() (bool, bool, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		out, err := cursorCLIStatusJSON(ctx)
+		a, k := cursorCLIAuthStatus(out)
+		return a, k, err
+	}, true)
 }
 
 // museCLILocalAuthState probes stored `muse login` state. `muse auth status`

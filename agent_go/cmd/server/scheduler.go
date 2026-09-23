@@ -229,12 +229,9 @@ type SchedulerService struct {
 	workspaceIndex   map[string]string // scheduleID → workspacePath
 	workspaceIndexMu sync.RWMutex
 
-	workflowManifestCacheMu        sync.Mutex
-	workflowManifestCacheExpiresAt time.Time
-	workflowManifestCache          []DiscoveredWorkflow
-	queuedResumeMu                 sync.Mutex
-	queuedLaunchMu                 sync.Mutex
-	queuedLaunching                map[string]bool
+	queuedResumeMu  sync.Mutex
+	queuedLaunchMu  sync.Mutex
+	queuedLaunching map[string]bool
 }
 
 func (s *SchedulerService) logf(sctx *ScheduleContext, format string, args ...interface{}) {
@@ -258,38 +255,11 @@ func NewSchedulerService(api *StreamingAPI) *SchedulerService {
 }
 
 func (s *SchedulerService) DiscoverWorkflowManifestsCached(ctx context.Context, ttl time.Duration) ([]DiscoveredWorkflow, error) {
-	now := time.Now()
-
-	s.workflowManifestCacheMu.Lock()
-	if ttl > 0 && now.Before(s.workflowManifestCacheExpiresAt) && s.workflowManifestCache != nil {
-		cached := append([]DiscoveredWorkflow(nil), s.workflowManifestCache...)
-		s.workflowManifestCacheMu.Unlock()
-		return cached, nil
-	}
-	s.workflowManifestCacheMu.Unlock()
-
-	discovered, err := DiscoverWorkflowManifests(ctx)
-	if err != nil {
-		return nil, err
-	}
-
-	s.workflowManifestCacheMu.Lock()
-	s.workflowManifestCache = append([]DiscoveredWorkflow(nil), discovered...)
-	if ttl > 0 {
-		s.workflowManifestCacheExpiresAt = now.Add(ttl)
-	} else {
-		s.workflowManifestCacheExpiresAt = time.Time{}
-	}
-	s.workflowManifestCacheMu.Unlock()
-
-	return discovered, nil
+	return workflowManifests.discover(ctx, ttl)
 }
 
 func (s *SchedulerService) InvalidateWorkflowManifestCache() {
-	s.workflowManifestCacheMu.Lock()
-	s.workflowManifestCache = nil
-	s.workflowManifestCacheExpiresAt = time.Time{}
-	s.workflowManifestCacheMu.Unlock()
+	invalidateWorkflowManifestIndex()
 }
 
 // Start scans all workspace folders for workflow.json manifests, loads enabled schedules,
@@ -885,6 +855,7 @@ func (s *SchedulerService) removeJobByKey(key string) error {
 	s.runtimeStatesMu.Lock()
 	if state := s.runtimeStates[key]; state == nil || state.ActiveRunID == "" {
 		delete(s.runtimeStates, key)
+		noteScheduleSummaryChange()
 	}
 	s.runtimeStatesMu.Unlock()
 
@@ -4486,6 +4457,7 @@ func (api *StreamingAPI) refreshSessionTmuxSnapshotsForIdleCheck(ctx context.Con
 func (s *SchedulerService) updateRuntimeState(scheduleID string, update func(*ScheduleRuntimeState)) ScheduleRuntimeState {
 	s.runtimeStatesMu.Lock()
 	defer s.runtimeStatesMu.Unlock()
+	defer noteScheduleSummaryChange()
 	state, ok := s.runtimeStates[scheduleID]
 	if !ok {
 		state = &ScheduleRuntimeState{}
@@ -4551,6 +4523,7 @@ func (s *SchedulerService) cleanupRemovedScheduleRuntimeState(runtimeKey string)
 	s.runtimeStatesMu.Lock()
 	if state := s.runtimeStates[runtimeKey]; state == nil || state.ActiveRunID == "" {
 		delete(s.runtimeStates, runtimeKey)
+		noteScheduleSummaryChange()
 	}
 	s.runtimeStatesMu.Unlock()
 }
@@ -4714,6 +4687,7 @@ func (s *SchedulerService) getRuntimeStateLocked(scheduleID string) *ScheduleRun
 	}
 	state := &ScheduleRuntimeState{}
 	s.runtimeStates[scheduleID] = state
+	noteScheduleSummaryChange()
 	return state
 }
 

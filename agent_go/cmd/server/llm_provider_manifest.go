@@ -215,11 +215,11 @@ func probeCodingCLIVersions(ctx context.Context, providers []string) map[string]
 			continue
 		}
 		wg.Add(1)
-		go func(provider, floor string) {
+		go func(provider, floor, binary string) {
 			defer wg.Done()
 			probeCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 			defer cancel()
-			version, err := llm.CodingAgentCLIVersion(probeCtx, llm.Provider(provider))
+			version, err := cachedCodingCLIVersion(probeCtx, provider, binary)
 			result := codingCLIVersion{floor: floor, status: "unknown"}
 			if err == nil {
 				result.installed = version
@@ -228,7 +228,7 @@ func probeCodingCLIVersions(ctx context.Context, providers []string) map[string]
 			mu.Lock()
 			out[provider] = result
 			mu.Unlock()
-		}(provider, contract.MinCLIVersion)
+		}(provider, contract.MinCLIVersion, contract.RuntimeBinary)
 	}
 	wg.Wait()
 	return out

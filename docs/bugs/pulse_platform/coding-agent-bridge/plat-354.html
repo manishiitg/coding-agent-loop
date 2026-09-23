@@ -548,14 +548,23 @@ unit tests are supplementary.</p>
   <code>pi_completion_source=marker_agent_settled</code>. Test cleanup now
   stops Pi before removing its temp workdir (<code>8c6472f</code>).</li>
 </ul>
+<ul>
+<li><strong>Claude multi-line input stays the user's message</strong>
+  (<code>60f597e</code>). <code>ExtendedResumeIsolation</code> was not an
+  <code>/exit</code> fusion: Sonnet 5 refused session B's first message as
+  <code>&lt;pasted_content&gt;</code> despite the typed authorization line, and
+  kept refusing on resume. Multi-line or large input is now pasted one line at a
+  time in chunks under the 800-char attachment threshold, with Ctrl-J between
+  lines; the transcript records a plain user message. Typing was rejected (a
+  leading <code>!</code> enters shell mode; <code>@</code> opens the file picker).
+  A message starting with <code>!</code> keeps the whole paste plus the
+  authorization line.</li>
+<li><strong>Submit path:</strong> already two-stage for every CLI: a fast pane
+  receipt, then durable proof from the CLI's own record that promotes the chat
+  tick; a pane misread defers to that record. No further migration needed.</li>
+</ul>
 <p><strong>Open:</strong></p>
 <ul>
-<li>Under Sonnet 5, a resumed Claude session sees our message fused to the
-  <code>/exit</code> the adapter types when closing a retained session
-  (<code>ExtendedResumeIsolation</code>). This is pre-existing.</li>
-<li>The submit path still uses broad pane success polling. Moving it behind the
-  durable proof, with the pane as P1 fast ticks, is the next migration step (see
-  <code>docs/refactor/durable_ack_p0.md</code>).</li>
 <li>Certification: Claude Code and Codex passed. A Cursor/Muse/Pi gate run was
   stopped at 66 pass / 0 fail to save tokens; all changes since are covered by
   targeted live tests. <code>p0-certified-cli-versions.json</code> is not

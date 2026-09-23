@@ -26,7 +26,10 @@ func (class SessionPersistenceClass) valid() bool {
 
 // SetSessionPersistenceClass explicitly classifies a session. An interactive
 // chat must be classified before its first event so no live-only prefix can be
-// mistaken for complete durable history. Classification is immutable.
+// mistaken for complete durable history, unless the journal already holds the
+// session (restart/eviction). Classification never changes once set: a later
+// automated turn (cron, webhook, queue) into an interactive chat keeps the
+// chat's class, while promoting any other class to interactive is refused.
 func (es *EventStore) SetSessionPersistenceClass(sessionID string, class SessionPersistenceClass) error {
 	if es == nil {
 		return fmt.Errorf("event store is nil")
@@ -39,13 +42,13 @@ func (es *EventStore) SetSessionPersistenceClass(sessionID string, class Session
 		return fmt.Errorf("invalid session persistence class %q", class)
 	}
 
+	es.adoptJournaledSession(sessionID)
 	es.mu.Lock()
 	if existing, ok := es.persistenceClasses[sessionID]; ok {
-		if existing != class {
-			es.mu.Unlock()
+		es.mu.Unlock()
+		if existing != class && class == SessionPersistenceInteractiveChat {
 			return fmt.Errorf("session %s persistence class is already %q, cannot change to %q", sessionID, existing, class)
 		}
-		es.mu.Unlock()
 		return nil
 	}
 	if class == SessionPersistenceInteractiveChat && len(es.events[sessionID]) > 0 {
@@ -76,5 +79,6 @@ func (es *EventStore) IsDurableChatSession(sessionID string) bool {
 	if es == nil {
 		return false
 	}
+	es.adoptJournaledSession(sessionID)
 	return es.sessionUsesDurableChatJournal(sessionID)
 }

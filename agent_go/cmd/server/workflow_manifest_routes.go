@@ -637,10 +637,20 @@ func (api *StreamingAPI) handleDeleteWorkflowFolder(w http.ResponseWriter, r *ht
 		return
 	}
 
+	// Enumerate before deleting: once the folder is gone its chat IDs are
+	// unrecoverable and their durable journal rows would be orphaned.
+	var builderSessionIDs []string
+	if workflowDir, ok := resolveLocalWorkflowDir(workspacePath); ok {
+		if files, listErr := workflowBuilderConversationFiles(workflowDir); listErr == nil {
+			builderSessionIDs = durableSessionIDsFromConversationPaths(files)
+		}
+	}
+
 	if err := deleteWorkspaceFolder(r.Context(), workspacePath); err != nil {
 		http.Error(w, fmt.Sprintf("Failed to delete workflow folder: %v", err), http.StatusInternalServerError)
 		return
 	}
+	api.deleteDurableChatSessionsAfterBulkDelete("workflow folder delete", builderSessionIDs)
 
 	deleteWorkflowRuntime(manifest.ID)
 

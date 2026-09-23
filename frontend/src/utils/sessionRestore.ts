@@ -149,11 +149,10 @@ async function doRestoreSession(
         appendRestoredLiveTail(sessionId, runtime.events)
       }
       const cursor = runtime.latest_sequence ?? runtime.last_processed_index
+      // A forward `since` read: has_more means "newer rows", so it must not
+      // touch the older-history pager established by the initial restore.
       if (cursor !== undefined) {
         chatStore.setTabLastEventIndex(sessionId, cursor)
-      }
-      if (runtime.has_more !== undefined) {
-        chatStore.setTabHasMoreOlderEvents(sessionId, runtime.has_more)
       }
       console.log(`${TAG} [${src}] Refreshed runtime state for existing tab ${tabId}`)
     } else {

@@ -219,7 +219,7 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 				http.Error(w, "Failed to authorize durable chat", http.StatusInternalServerError)
 				return
 			}
-			if ownerID == "" || ownerID != currentUserID {
+			if ownerID == "" || !durableChatReadAllowed(r, sessionID, ownerID, workspacePath) {
 				http.Error(w, "Session not found or access denied", http.StatusNotFound)
 				return
 			}
@@ -320,6 +320,11 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		sessionEvents = page.Events
 		exists = page.Exists || existsInActive
 		lastProcessedIndex = int(page.LatestSequence)
+		if len(page.Events) == 0 && (pageOpts.AfterSequence > 0 || pageOpts.FromStart) {
+			// An empty forward page is "caught up", not "rewind to zero": since=0
+			// reads from the first row, so a zero cursor would re-walk history.
+			lastProcessedIndex = int(durableForwardCursor(pageOpts.AfterSequence, page.JournalLatestSequence))
+		}
 		if cursorOnly && page.Exists {
 			// Tail page limit=1 returns the durable tip.
 			lastProcessedIndex = int(page.LatestSequence)
@@ -411,6 +416,16 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		http.Error(w, fmt.Sprintf("Failed to encode response: %v", err), http.StatusInternalServerError)
 		return
 	}
+}
+
+// durableForwardCursor clamps a caller's cursor to the journal tip so a cursor
+// that ran ahead of the journal (pre-cutover volatile index) rewinds instead of
+// skipping rows appended below it.
+func durableForwardCursor(requested, journalLatest int64) int64 {
+	if requested > journalLatest {
+		return journalLatest
+	}
+	return requested
 }
 
 func firstEventSequence(events []events.Event) int64 {

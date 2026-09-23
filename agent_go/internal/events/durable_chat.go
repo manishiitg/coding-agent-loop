@@ -25,6 +25,7 @@ var durableChatEventTypes = map[string]bool{
 	"conversation_end":            true,
 	"conversation_error":          true,
 	"conversation_resumed":        true,
+	"human_feedback_resolved":     true,
 	"live_input_confirmed":        true,
 	"orchestrator_end":            true,
 	"plan_approval":               true,
@@ -159,6 +160,7 @@ func (es *EventStore) ReadDurableChatPage(sessionID string, opts DurableEventPag
 	if es == nil || strings.TrimSpace(sessionID) == "" {
 		return DurableEventPage{Events: []Event{}}, nil
 	}
+	es.adoptJournaledSession(sessionID)
 	es.mu.RLock()
 	journal, ok := es.durableJournal.(DurableEventJournalPageReader)
 	class := es.persistenceClasses[sessionID]
@@ -179,7 +181,20 @@ func (es *EventStore) DeleteDurableChatSession(sessionID string) error {
 	if !ok || journal == nil {
 		return nil
 	}
-	return journal.DeleteSession(sessionID)
+	// Hold the session's append lock so an in-flight turn cannot write a row
+	// after the delete, then drop the in-memory class and buffer: a still
+	// running turn continues live-only instead of re-creating ownerless rows.
+	sessionLock := es.sessionAppendLock(sessionID)
+	sessionLock.Lock()
+	defer sessionLock.Unlock()
+	if err := journal.DeleteSession(sessionID); err != nil {
+		return err
+	}
+	es.RemoveSession(sessionID)
+	es.mu.Lock()
+	es.journalProbed[sessionID] = true
+	es.mu.Unlock()
+	return nil
 }
 
 // ImportDurableChatEvents seeds the canonical journal without publishing old

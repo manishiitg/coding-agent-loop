@@ -1840,10 +1840,12 @@ func runServer(cmd *cobra.Command, args []string) {
 		}
 	}
 	eventStore := events.NewEventStore(maxSessionEvents)
+	carryOverLegacyStateRoot()
 	eventStateRoot, err := workflowCLIStateRoot()
 	if err != nil {
 		log.Fatalf("Failed to resolve durable structured-event state: %v", err)
 	}
+	migrateDurableChatsAtStartup(eventStateRoot)
 	eventJournal, err := events.OpenSQLiteEventJournal(filepath.Join(eventStateRoot, "structured-chat-events-v2.sqlite"))
 	if err != nil {
 		log.Fatalf("Failed to initialize durable structured-event journal: %v", err)
@@ -3315,7 +3317,7 @@ func (api *StreamingAPI) corsMiddleware(next http.Handler) http.Handler {
 		}
 
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery")
+		w.Header().Set("Access-Control-Allow-Headers", "Accept, Content-Type, Content-Length, Accept-Encoding, X-CSRF-Token, Authorization, X-Session-ID, Idempotency-Key, X-Conversation-Continuation, X-Queued-Chat-Delivery, X-Client-Submitted-At")
 
 		if r.Method == "OPTIONS" {
 			if origin != "" && !originAllowed {
@@ -9048,6 +9050,29 @@ func (e *sessionEventEmitter) EmitBlockingHumanFeedback(requestID, question, con
 	}
 	e.eventStore.AddEvent(e.sessionID, event)
 	log.Printf("[HUMAN_FEEDBACK] Emitted blocking_human_feedback event (request_id: %s, session: %s)", requestID, e.sessionID)
+}
+
+// EmitHumanFeedbackResolved records a durable answer/expiry marker for a
+// blocking request so restore does not show an answered prompt as pending.
+func (e *sessionEventEmitter) EmitHumanFeedbackResolved(requestID, outcome string) {
+	now := time.Now()
+	e.eventStore.AddEvent(e.sessionID, events.Event{
+		ID:        fmt.Sprintf("%s_human_feedback_resolved_%s", e.sessionID, requestID),
+		Type:      "human_feedback_resolved",
+		Timestamp: now,
+		SessionID: e.sessionID,
+		Data: &unifiedevents.AgentEvent{
+			Type:      unifiedevents.EventType("human_feedback_resolved"),
+			Timestamp: now,
+			SessionID: e.sessionID,
+			Component: "delegation",
+			Data: events.NewGenericEventData("human_feedback_resolved", map[string]interface{}{
+				"request_id": requestID,
+				"outcome":    outcome,
+				"session_id": e.sessionID,
+			}),
+		},
+	})
 }
 
 // EmitProductInteraction publishes the identical event a product.yaml tool

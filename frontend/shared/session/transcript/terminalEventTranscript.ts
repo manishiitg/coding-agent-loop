@@ -97,6 +97,9 @@ const NON_TRANSCRIPT_TYPES = new Set([
   // from rendering it as an unknown card.
   'mcp_server_connection_start',
   'mcp_server_connection_end',
+  // Durable answer/expiry marker for a blocking human-input request; read by
+  // the pending-prompt logic, never rendered as its own card.
+  'human_feedback_resolved',
 ])
 
 // The developer diagnostics rail shows the conversation, not the trace:

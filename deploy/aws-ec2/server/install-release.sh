@@ -90,9 +90,13 @@ docker compose up -d --force-recreate
 systemctl daemon-reload
 systemctl enable video-studio-workspace video-studio-agent video-studio-gateway
 systemctl stop video-studio-agent 2>/dev/null || true
-runuser -u video-studio -- "$RELEASE_DIR/bin/video-studio-agent" server migrate-chat-events \
+# Not fatal: the agent runs the same marker-backed import at startup and
+# retries until it completes, so a bad legacy file must not leave it stopped.
+if ! runuser -u video-studio -- "$RELEASE_DIR/bin/video-studio-agent" server migrate-chat-events \
   --docs-root /data/video-studio/docs \
-  --state-root /var/lib/video-studio/agentworks-state
+  --state-root /var/lib/video-studio/agentworks-state; then
+  echo "WARNING: legacy chat import failed; the agent retries it at startup" >&2
+fi
 systemctl restart video-studio-workspace video-studio-agent video-studio-gateway
 systemctl is-active --quiet video-studio-workspace video-studio-agent video-studio-gateway
 rm -f "$RELEASE_DIR/.deploying"

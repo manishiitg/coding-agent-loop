@@ -43,6 +43,13 @@ func workflowCLIStateRoot() (string, error) {
 		}
 		return filepath.Clean(configured), nil
 	}
+	return defaultWorkflowCLIStateRoot()
+}
+
+// defaultWorkflowCLIStateRoot is the root used when no launcher pins
+// AGENTWORKS_STATE_ROOT. Deployments that start pinning it carry state from
+// here once (carryOverLegacyStateRoot) instead of silently starting empty.
+func defaultWorkflowCLIStateRoot() (string, error) {
 	if userData := strings.TrimSpace(os.Getenv("RUNLOOP_USER_DATA_DIR")); userData != "" {
 		if !filepath.IsAbs(userData) {
 			return "", fmt.Errorf("RUNLOOP_USER_DATA_DIR must be an absolute path")

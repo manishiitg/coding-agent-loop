@@ -341,6 +341,11 @@ export const EventDispatcher: React.FC<EventDispatcherProps> = React.memo(({
   if (isEventType(event, 'mcp_server_selection')) {
     return null
   }
+  // Durable answer/expiry marker for a blocking prompt; consumed by the
+  // pending-prompt logic, never a card of its own.
+  if (event.type === 'human_feedback_resolved') {
+    return null
+  }
 
   // Conversation Events
   if (isEventType(event, 'conversation_start')) {

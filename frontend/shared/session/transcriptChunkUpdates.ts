@@ -45,3 +45,34 @@ export function intermediateUpdateFromTranscriptChunk(event: PollingEvent): Poll
     } as PollingEvent['data'],
   }
 }
+
+// Live SSE delivers a narration row already projected (id `<chunk>-update`),
+// while a durable page, catch-up or persisted tab carries the same row as its
+// raw streaming_chunk. Projected here they share one id, and two transcript
+// items with one key let React/Virtuoso omit the text. Keep one row per id at
+// the first row's position; the durable carrier (it has a sequence) wins.
+export function normalizeTranscriptChunkEvents(events: PollingEvent[]): PollingEvent[] {
+  const positions = new Map<string, number>()
+  const normalized: PollingEvent[] = []
+  for (const raw of events) {
+    const event = intermediateUpdateFromTranscriptChunk(raw) || raw
+    if (!isTranscriptChunkUpdate(event)) {
+      normalized.push(event)
+      continue
+    }
+    const seen = positions.get(event.id!)
+    if (seen === undefined) {
+      positions.set(event.id!, normalized.length)
+      normalized.push(event)
+    } else if (normalized[seen].sequence === undefined && event.sequence !== undefined) {
+      normalized[seen] = event
+    }
+  }
+  return normalized
+}
+
+export function isTranscriptChunkUpdate(event: PollingEvent): boolean {
+  if (event.type !== 'llm_generation_end' || !event.id?.endsWith('-update')) return false
+  const inner = (event.data as { data?: Record<string, unknown> } | undefined)?.data
+  return inner?.restored_intermediate_update === true
+}

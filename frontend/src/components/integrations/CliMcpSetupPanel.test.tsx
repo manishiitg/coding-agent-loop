@@ -58,4 +58,14 @@ describe('CLI and MCP setup', () => {
       expect(host.textContent).not.toContain('AgentWorks CLI')
     } finally { await act(async () => root.unmount()); host.remove() }
   })
+
+  it('keeps setup usable when an older server returns HTML for connected apps', async () => {
+    vi.mocked(api.get).mockResolvedValue({ data: '<!doctype html><html></html>' })
+    const host = document.createElement('div'); document.body.append(host); const root = await renderPanel(host)
+    try {
+      expect(host.textContent).toContain('install-agentworks.sh')
+      expect(host.textContent).toContain('Restart or update the AgentWorks server')
+      expect(host.textContent).not.toContain('Revoke')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
 })

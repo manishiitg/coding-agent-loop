@@ -44,6 +44,7 @@ export function CliMcpSetupPanel() {
   const [localClient, setLocalClient] = useState<LocalClient>('claude-code')
   const [hostedClient, setHostedClient] = useState<HostedClient>('chatgpt')
   const [connections, setConnections] = useState<OAuthConnection[]>([])
+  const [connectionLoadError, setConnectionLoadError] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [skillBusy, setSkillBusy] = useState<'download' | 'copy' | null>(null)
   const [skillMsg, setSkillMsg] = useState<string | null>(null)
@@ -56,7 +57,15 @@ export function CliMcpSetupPanel() {
   useEffect(() => {
     let cancelled = false
     api.get<{ connections: OAuthConnection[] }>('/api/oauth/mcp/connections')
-      .then(({ data }) => { if (!cancelled) setConnections(data.connections) })
+      .then(({ data }) => {
+        if (cancelled) return
+        if (Array.isArray(data?.connections)) {
+          setConnections(data.connections)
+          return
+        }
+        setConnections([])
+        setConnectionLoadError(true)
+      })
       .catch(() => { /* Setup instructions remain available. */ })
     return () => { cancelled = true }
   }, [])
@@ -147,6 +156,7 @@ export function CliMcpSetupPanel() {
         </details>
       </div>}
     </SettingsCard>
+    {connectionLoadError && <p role="alert" className="text-sm text-amber-600">Connected apps are unavailable. Restart or update the AgentWorks server to use browser sign-in.</p>}
     {connections.length > 0 && <SettingsCard icon={<Plug className="h-4 w-4 text-primary" />} title="Connected apps" description="Revoke access to a CLI or hosted AI app when you are done.">
       <div className="space-y-2">{connections.map(item => <div key={item.id} className="flex items-center justify-between gap-2 text-sm"><span className="min-w-0 truncate">{item.client_name}</span><Button variant="outline" size="sm" onClick={() => void revoke(item.id)}>Revoke</Button></div>)}</div>
       {error && <p role="alert" className="text-xs text-destructive">{error}</p>}

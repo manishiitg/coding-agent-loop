@@ -1,3 +1,4 @@
+import { referenceTag, removeReferenceTags, textMentionsReference } from '../utils/referenceTags'
 import { routeForQueuedMessage, splitQueuedMessages } from '../utils/queuedMessageDelivery'
 import { askAIDisplayText } from '../utils/askAIMessage'
 import { resolvePiModelGroup } from '../utils/llmDisplay'
@@ -1933,7 +1934,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const nextFiles = reconcileFileReferences(previousValue, newValue, chatFileContext)
     const filesChanged = nextFiles.length !== chatFileContext.length
     const workflowContext = tabConfig?.workflowContext || []
-    const nextWorkflows = workflowContext.filter(workflow => !previousValue.includes('#' + workflow.label) || newValue.includes('#' + workflow.label))
+    const nextWorkflows = workflowContext.filter(workflow => !textMentionsReference(previousValue, workflow) || textMentionsReference(newValue, workflow))
     if ((pastedAttachmentsChanged || filesChanged || nextWorkflows.length !== workflowContext.length) && activeTabId) {
       writeComposerText(newValue, { pastedAttachments: nextPastedAttachments, fileContext: nextFiles, workflowContext: nextWorkflows })
     } else {
@@ -2494,7 +2495,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     const beforeHash = inputText.substring(0, hashPosition)
     const afterSearch = inputText.substring(hashPosition + 1 + workflowSearchQuery.length)
-    const newQuery = beforeHash + '#' + workflow.label + ' ' + afterSearch
+    const tag = referenceTag(workflow)
+    const newQuery = beforeHash + tag + ' ' + afterSearch
 
     // Update local state immediately
     setLocalInputText(newQuery)
@@ -2525,7 +2527,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     setTimeout(() => {
       if (textareaRef.current) {
         textareaRef.current.focus()
-        const cursorPosition = beforeHash.length + '#'.length + workflow.label.length + ' '.length
+        const cursorPosition = beforeHash.length + tag.length + ' '.length
         textareaRef.current.setSelectionRange(cursorPosition, cursorPosition)
       }
     }, 0)
@@ -3021,9 +3023,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                       if (activeTabId) {
                         const remaining = tabConfig!.workflowContext.filter(wc => wc.presetId !== w.presetId)
                         setTabConfig(activeTabId, { workflowContext: remaining })
-                        const ref = '#' + w.label
-                        if (inputText.includes(ref)) {
-                          const newText = inputText.replace(ref, '').replace(/  +/g, ' ').trim()
+                        if (textMentionsReference(inputText, w)) {
+                          const newText = removeReferenceTags(inputText, w)
                           setLocalInputText(newText)
                           setTabConfig(activeTabId, { inputText: newText })
                         }
@@ -3043,11 +3044,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 type="button"
                 onClick={() => {
                   if (activeTabId) {
-                    const labels = tabConfig!.workflowContext.map(w => '#' + w.label)
+                    const references = tabConfig!.workflowContext
                     setTabConfig(activeTabId, { workflowContext: [] })
                     let newText = inputText
-                    labels.forEach(ref => { newText = newText.replace(ref, '') })
-                    newText = newText.replace(/  +/g, ' ').trim()
+                    references.forEach(reference => { newText = removeReferenceTags(newText, reference) })
                     setLocalInputText(newText)
                     setTabConfig(activeTabId, { inputText: newText })
                   }

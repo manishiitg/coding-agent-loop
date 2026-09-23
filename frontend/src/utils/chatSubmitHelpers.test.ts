@@ -58,6 +58,7 @@ describe('agent profile query binding', () => {
       enabled_servers: ['workspace_advanced'],
       selected_skills: ['builder-reference'],
       workflow_context_paths: ['Workflow/customer-research'],
+      workflow_context_refs: [{ path: 'Workflow/customer-research', label: 'Customer Research', kind: 'workflow' }],
       restored_conversation_path: 'Chats/dominion-history.json',
     } as unknown as AgentQueryRequest
 
@@ -67,6 +68,7 @@ describe('agent profile query binding', () => {
       enabled_servers: ['workspace_advanced'],
       selected_skills: ['builder-reference'],
       workflow_context_paths: ['Workflow/customer-research'],
+      workflow_context_refs: [{ path: 'Workflow/customer-research', label: 'Customer Research', kind: 'workflow' }],
     })
   })
 

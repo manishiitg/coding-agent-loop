@@ -184,13 +184,13 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 		return err
 	}
 	if !readOnly {
-		if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this trigger's own persistent automation conversation. Return the one-time secret immediately. Use kind=internal with a workflow caller to bind a calling workflow without a public URL or secret.", map[string]interface{}{
+		if err := register("create_project_trigger", "Create an authenticated webhook trigger for this Work project. Choose crew_chat to queue work in the main Crew conversation, or isolated for this trigger's own persistent automation conversation. Return the one-time secret immediately. Use kind=internal with a workflow or crew caller (one of your own Crews) to let that workflow or Crew call this project without a public URL or secret; connect_to_target does this in one step from the caller's side.", map[string]interface{}{
 			"type": "object", "properties": map[string]interface{}{
 				"name": map[string]interface{}{"type": "string"}, "message": map[string]interface{}{"type": "string"},
 				"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"},
 				"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
 				"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
-				"caller":          triggerCallerToolSchema(triggerCallerWorkflow),
+				"caller":          triggerCallerToolSchema(triggerCallerWorkflow, triggerCallerCrew),
 			}, "required": []string{"name", "message"},
 		}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			name, _ := args["name"].(string)
@@ -217,7 +217,7 @@ func (api *StreamingAPI) registerWorkScheduleTools(registrar definitionToolRegis
 				"auth_mode": map[string]interface{}{"type": "string", "enum": []string{"bearer", "github"}}, "enabled": map[string]interface{}{"type": "boolean"}, "rotate_secret": map[string]interface{}{"type": "boolean"},
 				"run_destination": map[string]interface{}{"type": "string", "enum": []string{runDestinationCrewChat, runDestinationIsolated}},
 				"kind":            map[string]interface{}{"type": "string", "enum": []string{"internal"}},
-				"caller":          triggerCallerToolSchema(triggerCallerWorkflow),
+				"caller":          triggerCallerToolSchema(triggerCallerWorkflow, triggerCallerCrew),
 			}, "required": []string{"id"},
 		}, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			id, _ := args["id"].(string)

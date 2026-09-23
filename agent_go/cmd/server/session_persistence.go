@@ -15,6 +15,13 @@ func sessionPersistenceClassForRequest(req QueryRequest) storeevents.SessionPers
 	if strings.TrimSpace(req.ParentSessionID) != "" || strings.TrimSpace(req.SessionKind) != "" {
 		return storeevents.SessionPersistenceExecution
 	}
+	// A product chat (a Crew's conversation) is a chat whatever started it.
+	// Its first turn is often a trigger or schedule; classifying the session
+	// from that turn would lock the chat as "execution" and reject every
+	// later message from a person or a calling Crew.
+	if strings.TrimSpace(req.AgentProfileID) != "" && isToolBackedChatMode(mode) {
+		return storeevents.SessionPersistenceInteractiveChat
+	}
 	if mode == "workflow" || trigger == "cron" || trigger == "webhook" || strings.Contains(trigger, "schedule") || strings.Contains(trigger, "queue") {
 		return storeevents.SessionPersistenceExecution
 	}

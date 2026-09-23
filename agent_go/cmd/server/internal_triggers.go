@@ -70,6 +70,22 @@ func validateTriggerCaller(caller *triggerCaller, wantType string) error {
 	return nil
 }
 
+// validateAnyTriggerCaller accepts either caller type: a Crew and a workflow
+// may each call the other and themselves' kind (crew→crew, workflow→workflow).
+func validateAnyTriggerCaller(caller *triggerCaller) error {
+	if caller == nil {
+		return fmt.Errorf("internal trigger requires a caller")
+	}
+	switch strings.ToLower(strings.TrimSpace(caller.Type)) {
+	case triggerCallerWorkflow:
+		return validateTriggerCaller(caller, triggerCallerWorkflow)
+	case triggerCallerCrew:
+		return validateTriggerCaller(caller, triggerCallerCrew)
+	default:
+		return fmt.Errorf("internal trigger caller type must be %q or %q", triggerCallerWorkflow, triggerCallerCrew)
+	}
+}
+
 // triggerCallerToolSchema describes the caller stamp for agent tools.
 // validTypes restricts the accepted caller types when provided.
 func triggerCallerToolSchema(validTypes ...string) map[string]interface{} {
@@ -146,6 +162,8 @@ type internalCrewTriggerCall struct {
 	DeliveryID     string
 	Event          string
 	Payload        []byte
+	// CallerLabel is the caller's display name for the turn's source note.
+	CallerLabel string
 }
 
 // internalWorkflowTriggerCall invokes a workflow trigger from a Crew run.
@@ -178,6 +196,17 @@ func (c *triggerCaller) matchesPresented(wantType string, presented triggerCalle
 		return false
 	}
 	return true
+}
+
+// matchesAnyPresented is matchesPresented for bindings that accept either
+// caller type: the presented type must be a known caller type and equal the
+// binding's own type.
+func (c *triggerCaller) matchesAnyPresented(presented triggerCaller) bool {
+	wantType := strings.ToLower(strings.TrimSpace(presented.Type))
+	if wantType != triggerCallerWorkflow && wantType != triggerCallerCrew {
+		return false
+	}
+	return c.matchesPresented(wantType, presented)
 }
 
 // checkInternalPayload enforces the same 1 MiB JSON guardrail as the public

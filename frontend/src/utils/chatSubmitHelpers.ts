@@ -3,6 +3,7 @@
  * and WorkflowLayout.tsx handleStartPhase to reduce complexity.
  */
 
+import { workflowContextRefs } from './referenceTags'
 import type { PollingEvent, ExtendedLLMConfiguration, AgentProfileChatRequest, AgentQueryRequest, ExecutionOptions } from '../services/api-types'
 import type { ChatTab } from '../stores/useChatStore'
 import type { ModeCategory } from '../stores/useModeStore'
@@ -186,6 +187,9 @@ export function buildQueryRequestPayload(params: {
     workflow_context_paths: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
       ? currentTab.config.workflowContext.map(w => w.workspacePath)
       : undefined,
+    workflow_context_refs: (isChatWithExtras || selectedModeCategory === 'workflow') && currentTab?.config?.workflowContext?.length
+      ? workflowContextRefs(currentTab.config.workflowContext)
+      : undefined,
     restored_conversation_path: restoredConversationPath?.trim() || undefined,
   }
 }
@@ -217,6 +221,7 @@ export function buildAgentProfileChatRequest(payload: AgentQueryRequest, convers
     ...(payload.enabled_servers?.length ? { enabled_servers: payload.enabled_servers } : {}),
     ...(payload.selected_skills?.length ? { selected_skills: payload.selected_skills } : {}),
     ...(payload.workflow_context_paths?.length ? { workflow_context_paths: payload.workflow_context_paths } : {}),
+    ...(payload.workflow_context_refs?.length ? { workflow_context_refs: payload.workflow_context_refs } : {}),
   }
 }
 

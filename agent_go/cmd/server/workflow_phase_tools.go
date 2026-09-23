@@ -69,6 +69,14 @@ func (api *StreamingAPI) installWorkflowPhaseTools(
 	if err := api.registerWebhookTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
 		return err
 	}
+	// Builder chat can call Crews and other workflows (workflow→crew,
+	// workflow→workflow) under the same interactive authoring gate as
+	// trigger management.
+	if policy.Mode == "builder" && policy.Origin == "interactive" && policy.allows("plan_authoring") {
+		if err := api.registerTriggerLinkTools(definitionAgent, userID, sessionID, syntheticReq, workflowTriggerLinkCaller(phaseWorkspacePath)); err != nil {
+			return err
+		}
+	}
 	if err := api.registerUserAccessTools(definitionAgent, userID, phaseWorkspacePath, policy); err != nil {
 		return err
 	}

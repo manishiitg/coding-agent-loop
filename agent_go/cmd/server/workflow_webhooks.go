@@ -130,7 +130,7 @@ func validateWebhookSchedule(s WorkflowSchedule) error {
 		return errors.New("webhook kind must be \"internal\"")
 	}
 	if isInternalTriggerKind(s.Kind) {
-		if err := validateTriggerCaller(s.Caller, triggerCallerCrew); err != nil {
+		if err := validateAnyTriggerCaller(s.Caller); err != nil {
 			return err
 		}
 		if s.Webhook != nil && strings.TrimSpace(s.Webhook.EncryptedSecret) != "" {
@@ -548,11 +548,27 @@ func (s *SchedulerService) saveWorkflowWebhook(w http.ResponseWriter, r *http.Re
 		return
 	}
 	if internal {
-		if err := validateTriggerCaller(caller, triggerCallerCrew); err != nil {
+		if err := validateAnyTriggerCaller(caller); err != nil {
 			http.Error(w, err.Error(), 400)
 			return
 		}
-		if s.api == nil || s.api.productSchedules == nil || !s.api.productSchedules.crewProjectExists(r.Context(), productWorkspaceUserID(r.Context()), caller.ProfileID, caller.ID) {
+		if strings.EqualFold(strings.TrimSpace(caller.Type), triggerCallerWorkflow) {
+			// workflow→workflow: the caller must be a workflow the requester
+			// can open, and never this workflow itself.
+			callerPath, _, err := findWorkflowManifestByID(r.Context(), caller.ID)
+			if err != nil {
+				http.Error(w, "caller workflow not found", 400)
+				return
+			}
+			if manifest != nil && strings.TrimSpace(caller.ID) == strings.TrimSpace(manifest.ID) {
+				http.Error(w, "a workflow cannot bind a trigger to itself", 400)
+				return
+			}
+			if _, err := authorizeWorkflowContextPaths(r.Context(), []string{callerPath}); err != nil {
+				http.Error(w, "caller workflow is unavailable or access denied", 400)
+				return
+			}
+		} else if s.api == nil || s.api.productSchedules == nil || !s.api.productSchedules.crewProjectExists(r.Context(), productWorkspaceUserID(r.Context()), caller.ProfileID, caller.ID) {
 			http.Error(w, "caller crew project not found", 400)
 			return
 		}
@@ -801,7 +817,7 @@ func (receiver webhookReceiver) dispatchInternal(ctx context.Context, workspaceP
 	if err != nil {
 		return internalTriggerDeliveryResult{}, err
 	}
-	if !sched.Caller.matchesPresented(triggerCallerCrew, call.Caller) {
+	if !sched.Caller.matchesAnyPresented(call.Caller) {
 		return internalTriggerDeliveryResult{}, ErrInternalCallerMismatch
 	}
 	deliveryID := strings.TrimSpace(call.DeliveryID)

@@ -43,6 +43,8 @@ type AgentProfileChatRequest struct {
 	EnabledServers       []string `json:"enabled_servers,omitempty"`
 	SelectedSkills       []string `json:"selected_skills,omitempty"`
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	// WorkflowContextRefs are the # tag labels for WorkflowContextPaths.
+	WorkflowContextRefs []workflowContextRef `json:"workflow_context_refs,omitempty"`
 }
 
 type AgentProfileConversationRequest struct {
@@ -177,6 +179,7 @@ func queryRequestForAgentProfileChat(profile agentprofiles.Profile, input AgentP
 	if profile.Runtime.Capabilities.WorkflowReferences != "" && profile.Runtime.Capabilities.WorkflowReferences != agentprofiles.CapabilityDisabled {
 		req.WorkflowContextPaths = appendUniqueStrings(nil, conversation.ProjectWorkflowContextPaths...)
 		req.WorkflowContextPaths = appendUniqueStrings(req.WorkflowContextPaths, input.WorkflowContextPaths...)
+		req.WorkflowContextRefs = append([]workflowContextRef(nil), input.WorkflowContextRefs...)
 	} else if len(input.WorkflowContextPaths) > 0 {
 		return QueryRequest{}, fmt.Errorf("profile %q does not accept workflow references", profile.ID)
 	}

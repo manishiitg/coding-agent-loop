@@ -570,7 +570,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           </div>
         </div>
       )}
-      {!minimal && (readOnly || sessions.some(item => item.recording_state)) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
+      {!minimal && sessions.some(item => item.kind === 'playwright' && item.recording_state) && <p className="shrink-0 border-b border-border bg-muted/30 px-3 py-1.5 text-xs">Closing this panel deletes its Playwright recordings. Download any videos you want to keep. Temporary recordings expire after 1 hour.</p>}
       {currentBrowser?.recording_error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{currentBrowser.recording_error}</p>}
       {error && <p className="px-3 py-1.5 text-xs text-destructive" role="alert">{error}</p>}
       {!minimal && browserTabs}

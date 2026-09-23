@@ -13,7 +13,7 @@ This connection reads and runs, like the Slack and WhatsApp run-mode channels: t
 
 ```sh
 printf '%s' '<token>' | agentworks login --server https://your-server --token-stdin
-claude mcp add --transport stdio --env AGENTWORKS_TOKEN='<token>' agentworks -- agentworks mcp serve
+claude mcp add --transport stdio --env AGENTWORKS_SERVER='https://your-server' --env AGENTWORKS_TOKEN='<token>' agentworks -- agentworks mcp serve
 ```
 
 Tokens read (`workflows:read`, `files:read`) and, when granted, run (`runs:execute`); all are limited to workflows the account can access. Unavailable tools are omitted from the catalog.

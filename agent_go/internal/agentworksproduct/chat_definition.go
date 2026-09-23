@@ -49,6 +49,20 @@ func validateChatDefinitions(fsys fs.FS, m ProductManifest) error {
 		} else if len(def.ExternalTools) != 0 {
 			return fmt.Errorf("chat %s: external_tools belong on the run mode only", mode)
 		}
+		if mode != "run" && len(def.ExternalDenylist) != 0 {
+			return fmt.Errorf("chat %s: external_denylist belongs on the run mode only", mode)
+		}
+		denySeen := map[string]bool{}
+		for _, name := range def.ExternalDenylist {
+			name = strings.TrimSpace(name)
+			if name == "" || denySeen[name] {
+				return fmt.Errorf("chat %s: empty or duplicate external_denylist entry %q", mode, name)
+			}
+			denySeen[name] = true
+			if !toolSeen[name] {
+				return fmt.Errorf("chat %s: external_denylist entry %q is not a run tool", mode, name)
+			}
+		}
 	}
 	return nil
 }
@@ -86,12 +100,23 @@ func RunExternalTools() []string {
 }
 
 // RunTools returns the run-mode chat tool list. This is the single source of
-// truth for the run surface: the server proxies every name here to a pinned
-// Run-mode session, so a tool added to run mode is automatically callable
-// externally under the runs:execute scope. Names with an external-native
-// implementation keep that implementation (see external_tools.go).
+// truth for the run surface: the server proxies every name here except the
+// external denylist to a pinned Run-mode session, so a tool added to run
+// mode is automatically callable externally under the runs:execute scope.
+// Names with an external-native implementation keep that implementation
+// (see external_tools.go).
 func RunTools() []string {
 	return ChatTools("run")
+}
+
+// RunExternalDenylist returns run.tools names withheld from the external
+// CLI/MCP API. Run channels keep them; external callers never see them.
+func RunExternalDenylist() []string {
+	def, ok := mustAgentWorksManifest().Chat["run"]
+	if !ok {
+		panic(fmt.Errorf("unknown AgentWorks chat mode %q", "run"))
+	}
+	return append([]string(nil), def.ExternalDenylist...)
 }
 
 // ChatPromptTemplate returns trusted template source; callers inject runtime

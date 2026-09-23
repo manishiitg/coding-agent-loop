@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/guidance"
+	step_based_workflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	wf "github.com/manishiitg/coding-agent-loop/workspace/workflowfiles"
 )
 
@@ -50,13 +51,13 @@ type externalGuidanceTopic struct {
 // mix internal and external tools carry an ExternalNote with the mapping.
 var externalGuidanceTopics = []externalGuidanceTopic{
 	{Name: "plan-change-impact", Description: "Plan-change impact analysis: trace and reconcile the blast radius across downstream steps, measurement, reports, db, learnings, and KB. Load before treating a plan change as done.", ExternalNote: "External mapping: read_skill, get_goal_metrics, mark_changelog_artifact_reviewed, and review-artifact-drift are not in your catalog. Do the combined compatibility check yourself with search_files/read_file and report dispositions in your reply. read_skill pointers to builder-reference files outside this topic list (measurement-plan, reporting-policy, stores) have no external equivalent; describe the needed change in your reply instead of attempting it. Never edit changelog files directly."},
-	{Name: "plan-design", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns. Load when designing a new plan or restructuring one.", ExternalNote: "External mapping: read_skill is not in your catalog; the readable reference surface is list_guidance_topics/get_guidance_topic. execute_step and run_full_workflow ARE in your catalog when the token allows runs:execute: validate a design by running it and polling run_status. Tokens never author plans — describe design changes in your reply instead of attempting them."},
+	{Name: "plan-design", Description: "Plan-design playbook: step boundaries, step-type selection, context flow, validation/failure design, anti-patterns. Load when designing a new plan or restructuring one.", ExternalNote: "External mapping: read_skill, add_step, update_step, and update_step_config are not in your catalog; the readable reference surface is list_guidance_topics/get_guidance_topic. execute_step and run_full_workflow ARE in your catalog when the token allows runs:execute: validate a design by running it and polling run_status. Tokens never author plans — describe design changes in your reply instead of attempting them."},
 	{Name: "planning-steps", Description: "Workshop plan composition: take-action-by-default discipline, step-type selection, validation_schema requirements, forward-only context flow. Load before adding or editing plan steps.", ExternalNote: "External mapping: read_skill is not in your catalog; the readable reference surface is list_guidance_topics/get_guidance_topic."},
 	{Name: "step-description", Description: "How to write an optimized step description and validation_schema: earn every word, let the schema name the output shape. Load before writing or editing any step description.", ExternalNote: "External mapping: get_step_prompts is not in your catalog; verify saved-run prompts through get_run/get_logs and file reads instead."},
-	{Name: "step-config", Description: "Per-step config reference: store-access modes, locks, execution mode, model selection, validation_schema, skills, clearing fields. Load before tuning a step.", ExternalNote: "External mapping: update_step_config is not in your catalog; tokens never author. read_skill, query_workflow_db, mutate_workflow_db, and other config tools named here are not either; describe the needed change in your reply instead of attempting it."},
-	{Name: "skill-management", Description: "Skill lifecycle and attachment model: workflow-selected skills are discovery context only, per-step enabled_skills is the runtime attachment, learnings/_global/SKILL.md is shared know-how. Load before reasoning about skills.", ExternalNote: "External mapping: list_skills, search_skills, install_skill, import_skill, update_workflow_config, and uninstall_skill are not in your catalog. Use list_workflow_knowledge to inspect wiring; installs and changes are not exposed, so say so instead of attempting them."},
+	{Name: "step-config", Description: "Per-step config reference: store-access modes, locks, execution mode, model selection, validation_schema, skills, clearing fields. Load before tuning a step.", ExternalNote: "External mapping: update_step_config, add_step, update_step, change_step_type, and update_validation_schema are not in your catalog; tokens never author. read_skill, query_workflow_db, mutate_workflow_db, and other config tools named here are not either; describe the needed change in your reply instead of attempting it."},
+	{Name: "skill-management", Description: "Skill lifecycle and attachment model: workflow-selected skills are discovery context only, per-step enabled_skills is the runtime attachment, learnings/_global/SKILL.md is shared know-how. Load before reasoning about skills.", ExternalNote: "External mapping: install_skill, import_skill, uninstall_skill, update_workflow_config, and update_step_config are not in your catalog. list_skills and search_skills ARE in your catalog when the token allows runs:execute; use list_workflow_knowledge to inspect wiring. Installs and changes are not exposed, so say so instead of attempting them."},
 	{Name: "file-layout", Description: "Workspace file layout reference and path discipline."},
-	{Name: "secure-share-links", Description: "Share existing workflow files and folders with authenticated links: path rules and the difference between access-controlled sharing and public publishing.", ExternalNote: "External mapping: get_file_link IS in your catalog; get_report_link is not. Use files download for local copies."},
+	{Name: "secure-share-links", Description: "Share existing workflow files and folders with authenticated links: path rules and the difference between access-controlled sharing and public publishing.", ExternalNote: "External mapping: get_file_link IS in your catalog; get_report_link and manage_internet_share are not. Use files download for local copies."},
 }
 
 // externalToolMutates reports whether a catalog tool performs mutations.
@@ -278,27 +279,27 @@ func externalAllowedSkillFolders(workflow DiscoveredWorkflow, stepSkills map[str
 }
 
 // externalStepSkills extracts per-step enabled_skills from the workflow's
-// step config without mutating anything.
+// step config without mutating anything. It unmarshals into the production
+// StepConfigFile shape ({"steps": [{id, agent_configs: {enabled_skills}}]})
+// so discovery can never drift from what the runner reads; validation is
+// skipped because a malformed file must hide skills, not fail the call.
 func externalStepSkills(ctx context.Context, workflow DiscoveredWorkflow) map[string][]string {
 	out := map[string][]string{}
 	result, err := externalFileRequest(ctx, wf.Request{Root: workflow.WorkspacePath, Operation: "read", Path: "planning/step_config.json"})
 	if err != nil || !result.Exists {
 		return out
 	}
-	var configs []map[string]any
-	if err := json.Unmarshal([]byte(result.Content), &configs); err != nil {
+	var configFile step_based_workflow.StepConfigFile
+	if err := json.Unmarshal([]byte(result.Content), &configFile); err != nil {
 		return out
 	}
-	for _, c := range configs {
-		id, _ := c["step_id"].(string)
-		if id == "" {
-			id, _ = c["id"].(string)
+	for _, step := range configFile.Steps {
+		if step.ID == "" || step.AgentConfigs == nil {
+			continue
 		}
-		if skills, ok := c["enabled_skills"].([]any); ok && id != "" {
-			for _, s := range skills {
-				if name, ok := s.(string); ok && name != "" {
-					out[id] = append(out[id], name)
-				}
+		for _, name := range step.AgentConfigs.EnabledSkills {
+			if name != "" {
+				out[step.ID] = append(out[step.ID], name)
 			}
 		}
 	}

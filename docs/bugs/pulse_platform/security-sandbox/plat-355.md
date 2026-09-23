@@ -5,7 +5,7 @@
 | Coordination | Value |
 |---|---|
 | Assigned agent | Claude Code |
-| Ticket state | `implemented locally; focused tests green; live acceptance pending` |
+| Ticket state | `fixed; live-verified 2026-09-23` |
 | Last synchronized | `2026-09-23` |
 | Priority | `P0 execution` |
 | Category | security-sandbox (runner-up: step-execution) |
@@ -64,6 +64,21 @@ The existing safeguards still hold:
 - A session that has its own registry is unchanged.
 - The no-borrow rule for existing registries still holds.
 
+### Refinement (mcpagent `af11626`)
+
+A self-review found that the first version could turn a working call into a
+failure, in two ways:
+
+- It also applied the parent chat's per-turn allow list to the step script.
+- It returned "not registered" for a tool the parent never registered, where
+  the legacy lookup had resolved it (for example `record_goal_observations`
+  or `get_human_input_request`).
+
+The parent is now used only after the calling session's own allow-list check,
+and only when the parent actually registered that tool. Otherwise the call
+behaves exactly as before. `TestCallCustomToolWithSessionParentResolutionIsConservative`
+fails on `445e64f` and passes on `af11626`.
+
 ## Regression coverage
 
 `TestCallCustomToolWithSessionUsesRegisteredParentRegistry` (mcpagent
@@ -80,9 +95,23 @@ with other `ToolExecutionContext|WorkflowDB` tests, with or without this fix,
 and passes on its own. It is an existing shared-state/ordering problem, not
 caused by this change.
 
-## Pending
+## Live acceptance
 
-- Restart the server and run a workflow whose scripted step calls
-  `$MCP_CUSTOM` tools while another scheduled run starts.
-- Optionally drop the retry wrapper from
-  `Workflow/websiteaeo/code/collect-goal-observations/main.py`.
+Verified on 2026-09-23 on the local server (restarted 11:51:44 with mcpagent
+`445e64f`; the refinement is not live-run yet), in `websiteaeo` run `workflow-full-mudpu2g001`, launched from the
+builder chat:
+
+- Step `collect-goal-observations` is the scripted step that failed at 11:08.
+  It ran at 12:05:19. Every tool call on its bridge session
+  `session-group-default-1790144533809580000` logged `Resolved child session
+  to its parent run's tool registry` (parent `6eaa17e1-…`).
+- There were zero `falling back to global` lines and zero ownership errors.
+- The script exited 0 on its first attempt in about 2s and passed
+  validation. Its retry helper never retried.
+
+## Follow-up
+
+The six-attempt retry wrapper that the self-repair added to
+`Workflow/websiteaeo/code/collect-goal-observations/main.py` is no longer
+needed. `code-authoring.md` now tells scripts to fail fast on tool-boundary
+errors instead of retrying them.

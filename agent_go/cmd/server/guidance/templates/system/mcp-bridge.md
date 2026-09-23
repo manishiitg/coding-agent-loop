@@ -146,8 +146,11 @@ language of your choice. For reusable helpers saved to `main.py`
    parameter shape if you haven't called this tool before.
 3. Use `execute_shell_command` to write and run the code that calls the
    tool via the HTTP bridge.
-4. Parse `success`/`result`/`error` from the response. Retry with adjusted
-   args on transient failure; bail with a clear message on hard failure.
+4. Parse `success`/`result`/`error` from the response. Retry only transient
+   failures (connection errors, timeouts, 429/502/503/504). Stop on hard
+   failures with a clear message: validation/SQL errors and tool-boundary errors
+   such as `caller does not own this tool session`. The full list is in
+   "Calling platform tools from main.py" in `code-authoring.md`.
 
 ## Single-call discipline (agentic mode)
 

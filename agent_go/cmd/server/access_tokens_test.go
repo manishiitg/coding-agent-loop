@@ -167,6 +167,29 @@ func TestAccessTokenIssuingReplacesPreviousToken(t *testing.T) {
 	}
 }
 
+func TestTokenSessionWorkflowReadRoot(t *testing.T) {
+	tokenClaims := &UserClaims{UserID: "owner", AccessToken: &accesstokens.Token{ID: "t"}}
+	appClaims := &UserClaims{UserID: "owner"}
+	cases := []struct {
+		name   string
+		claims *UserClaims
+		folder string
+		want   string
+	}{
+		{"token session scoped to its workflow", tokenClaims, "Workflow/Invoices", "Workflow/Invoices/"},
+		{"token session trims trailing slash", tokenClaims, "Workflow/Invoices/", "Workflow/Invoices/"},
+		{"app session keeps full grant", appClaims, "Workflow/Invoices", "Workflow/"},
+		{"nil claims keep full grant", nil, "Workflow/Invoices", "Workflow/"},
+		{"unresolved folder keeps full grant", tokenClaims, "", "Workflow/"},
+		{"blank folder keeps full grant", tokenClaims, "   ", "Workflow/"},
+	}
+	for _, tc := range cases {
+		if got := tokenSessionWorkflowReadRoot(tc.claims, tc.folder); got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
 func TestAccessTokenIdentityFailsClosed(t *testing.T) {
 	tokenTestSetup(t)
 	t.Setenv("MULTI_USER_MODE", "true")

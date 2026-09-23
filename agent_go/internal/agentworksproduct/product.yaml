@@ -311,15 +311,32 @@ chat:
       - stop_step
       - test_slack_bot_connection
       - trigger_schedule
+    # Withheld from direct external invocation while run channels keep
+    # them. runs:execute authority, stated precisely: a token may invoke the
+    # run operations of the workflows it can see, converse with those
+    # workflows' Run-mode assistant, and trigger those workflows' own saved
+    # schedules. "Never authors" means no plan, configuration, schedule,
+    # secret, or file change outside the run's own execution outputs;
+    # executing a run still performs the workflow's configured steps,
+    # including its configured notifications. Only account-scoped tools
+    # are withheld: google_workspace_cli runs arbitrary commands against
+    # the account's default Google connection, which is not bound to any
+    # workflow. Deliberately kept: send_slack_message (configured workflow
+    # routes only; arbitrary channels are rejected), notify_user (the
+    # user's own channels), trigger_schedule (this workflow's own
+    # schedules). Adding a name here is a deliberate API change; pinning
+    # test: TestExternalRunAuthorityBoundary.
+    external_denylist:
+      - google_workspace_cli
     # External-native tools: scoped readers plus run operations with no chat
     # equivalent, each with a server implementation. The run-mode `tools`
     # list above is the single source of truth for the run surface and is
-    # additionally exposed in full (see RunTools): names with a native
-    # implementation keep it, the rest are proxied to a pinned Run-mode
-    # session. A name here without an implemented external tool fails server
-    # startup, as does an implemented tool missing from both lists. Admitting
-    # an authoring mutation here is a deliberate API change, not a drive-by
-    # edit: tokens read and run, never author.
+    # additionally exposed except the denylist (see RunTools): names with a
+    # native implementation keep it, the rest are proxied to a pinned
+    # Run-mode session. A name here without an implemented external tool
+    # fails server startup, as does an implemented tool missing from both
+    # lists. Admitting an authoring mutation here is a deliberate API
+    # change, not a drive-by edit: tokens read and run, never author.
     external_tools:
       - list_workflows
       - get_workflow

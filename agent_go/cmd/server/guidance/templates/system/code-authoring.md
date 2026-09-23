@@ -99,6 +99,17 @@ For an authorized migration, using `set_code_layout_version`:
 - The platform displays this as the script's reported refusal, not proof the guard was correct. Exit code 2 without a complete record still stops automatic repair conservatively, but the notification states that the reason is unverified and includes captured output. Existing plain-text refusals remain stopped; malformed records never enable an automatic workaround.
 - Get this distinction right: `sys.exit(1)` on a guard that should be terminal lets an agentic retry read your own refusal, agree it was correct, and then perform the exact write the guard existed to prevent — which has happened live. `sys.exit(2)` on an ordinary bug wrongly aborts the step instead of letting the normal repair loop fix the script.
 
+**Calling platform tools from main.py — which errors to retry**
+- A retry helper must sort errors into two kinds, never "retry everything". Retrying an error that cannot go away only delays the failure and hides a platform defect. A helper that retried every error six times turned a platform bug into a random 30-second delay.
+- Retry only failures that can pass on a second attempt: connection refused or reset, timeouts, and HTTP 429, 502, 503 or 504. Bound it to about 3 attempts with capped exponential backoff (for example 1s, 2s, 4s), and print each failed attempt's error.
+- Fail on the first attempt for errors a retry cannot change:
+  - validation and SQL errors (HTTP 400, `no such column`, `statements must contain 1-20 operations`) — fix the call instead;
+  - HTTP 401/403;
+  - any tool-boundary error: `requires an authenticated session`, `session permissions changed`, `session ownership changed`, `session origin changed`, `caller identity conflicts`, `caller does not own this tool session`.
+- The script cannot cause a tool-boundary error, and it also cannot cause `workflow database context is ambiguous`, `workflow database context is unavailable`, or `custom tool ... is not registered for session`. These are platform issues. Print the error verbatim and exit 1. Do not work around it by retrying, rewriting the script, or bypassing the bridge. A repair agent that meets one reports it as a platform issue in its repair report and leaves the script's logic alone.
+- Make every write safe to repeat before letting the helper retry it: use a natural key with `INSERT ... ON CONFLICT DO NOTHING` / `DO UPDATE`, or check-then-insert inside one transaction. Give external sends (email, Slack, posts) a stable idempotency key. If a write cannot be made safe to repeat, do not retry it.
+- State the retry policy — what is retried, how often, and why the writes are safe to repeat — in a comment next to the helper.
+
 **Logging**
 - `VERBOSE = os.environ.get('SCRIPT_VERBOSE', '') == '1'`. Guard debug prints with `if VERBOSE:`. Log state before and after each major action. Stdout is the ONLY debugging channel available to the fix loop.
 

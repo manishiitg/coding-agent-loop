@@ -17,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	workspacehandlers "github.com/manishiitg/coding-agent-loop/workspace/handlers"
 	"github.com/spf13/viper"
@@ -153,6 +154,9 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 		for _, name := range agentworksproduct.RunTools() {
 			want[name] = true
 		}
+		for _, name := range agentworksproduct.RunExternalDenylist() {
+			delete(want, name)
+		}
 		if !ok || len(definitions) != len(want) {
 			t.Fatalf("unexpected catalog size %d, want %d", len(definitions), len(want))
 		}
@@ -160,7 +164,7 @@ func TestExternalToolsHTTPCatalogCompilesSchemasAndRequiresIdentity(t *testing.T
 		for _, name := range agentworksproduct.RunExternalTools() {
 			native[name] = true
 		}
-		for _, name := range []string{"list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule"} {
+		for _, name := range []string{"list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule", "stop_step", "stop_all_executions"} {
 			native[name] = true
 		}
 		names := map[string]bool{}
@@ -209,8 +213,15 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 	}
 	admitted := agentworksproduct.RunExternalTools()
 	run := agentworksproduct.RunTools()
+	denied := map[string]bool{}
+	for _, name := range agentworksproduct.RunExternalDenylist() {
+		denied[name] = true
+	}
 	wantCatalog := append([]string(nil), admitted...)
 	for _, name := range run {
+		if denied[name] {
+			continue
+		}
 		seen := false
 		for _, prior := range wantCatalog {
 			if prior == name {
@@ -240,6 +251,12 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 		byName[tool.Name] = tool
 	}
 	for _, name := range run {
+		if denied[name] {
+			if _, ok := byName[name]; ok {
+				t.Fatalf("denylisted run tool %s is exposed", name)
+			}
+			continue
+		}
 		if name == "get_file_link" || name == "list_executions" || name == "list_schedules" || name == "get_schedule_runs" {
 			if byName[name].executes {
 				t.Fatalf("native read %s is marked executes", name)
@@ -249,6 +266,9 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 		if !byName[name].executes {
 			t.Fatalf("run tool %s is not marked executes", name)
 		}
+	}
+	if !denied["google_workspace_cli"] {
+		t.Fatal("google_workspace_cli must stay on the external denylist: account-wide arbitrary actions exceed token authority")
 	}
 	if byName["run_status"].executes {
 		t.Fatal("run_status is marked executes")
@@ -277,6 +297,40 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 		if run[i] != name {
 			t.Fatalf("run.tools[%d] = %s, want %s", i, run[i], name)
 		}
+	}
+}
+
+func TestExternalRunAuthorityBoundary(t *testing.T) {
+	// Pins the runs:execute authority statement in product.yaml: only
+	// account-scoped tools are withheld; workflow-bound side effects stay
+	// because they are the workflow running as configured, not the token
+	// acting beyond it. Changing either list is a deliberate API change.
+	denied := agentworksproduct.RunExternalDenylist()
+	if len(denied) != 1 || denied[0] != "google_workspace_cli" {
+		t.Fatalf("external denylist = %v, want exactly [google_workspace_cli]", denied)
+	}
+	catalog, err := externalTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	byName := map[string]externalTool{}
+	for _, tool := range catalog {
+		byName[tool.Name] = tool
+	}
+	for _, name := range []string{"send_slack_message", "notify_user", "trigger_schedule"} {
+		tool, ok := byName[name]
+		if !ok {
+			t.Fatalf("deliberately kept run tool %s is not exposed", name)
+		}
+		if !tool.executes {
+			t.Fatalf("kept run tool %s is not marked executes", name)
+		}
+	}
+	// Denied tools are unknown to the API, not merely scope-gated.
+	f := newExternalToolsFixture(t)
+	body := externalTestBody(t, f.call(t, "owner", "google_workspace_cli", map[string]any{"workflow_id": "invoices"}), 404)
+	if body["error"].(map[string]any)["code"] != "unknown_tool" {
+		t.Fatalf("wrong error for denylisted tool: %v", body)
 	}
 }
 
@@ -332,8 +386,113 @@ func TestExternalToolsHTTPRejectsUnknownArguments(t *testing.T) {
 	externalTestBody(t, f.call(t, "owner", "read_file", map[string]any{"workflow_id": "invoices", "path": "docs/process.md", "managed": true}), 400)
 	// Reads reach plan files; there is no write path to protect in v1.
 	externalTestBody(t, f.call(t, "owner", "read_file", map[string]any{"workflow_id": "invoices", "path": "planning/plan.json"}), 200)
+	// Denylisted run tools answer unknown_tool: the name never enters the
+	// catalog, so dispatch cannot reach the proxy.
+	denied := f.call(t, "owner", "google_workspace_cli", map[string]any{"workflow_id": "invoices"})
+	if denied.Code != http.StatusNotFound || !strings.Contains(denied.Body.String(), "unknown_tool") {
+		t.Fatalf("denylisted call status %d: %s", denied.Code, denied.Body.String())
+	}
 	if f.read(t, "Workflow/invoices/planning/plan.json") != before {
 		t.Fatal("invalid request changed plan")
+	}
+}
+
+func TestExternalStopStepDirectExecution(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.api.stoppedSessions = map[string]bool{}
+	f.api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
+		"exec-1": {ExecutionID: "exec-1", SessionID: "sess-1", WorkspacePath: "Workflow/invoices", Status: trackedExecutionStatusRunning, Source: trackedExecutionSourceWorkflowRun},
+	}
+	// Missing execution_id fails schema validation before dispatch.
+	externalTestBody(t, f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices"}), 400)
+	// Unknown execution resolves to nothing.
+	missing := f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices", "execution_id": "nope"})
+	if missing.Code != http.StatusNotFound || !strings.Contains(missing.Body.String(), "execution_not_found") {
+		t.Fatalf("unknown execution status %d: %s", missing.Code, missing.Body.String())
+	}
+	// A session filter that does not own the execution rejects.
+	mismatch := f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices", "execution_id": "exec-1", "session_id": "sess-9"})
+	if mismatch.Code != http.StatusNotFound {
+		t.Fatalf("session mismatch status %d, want 404", mismatch.Code)
+	}
+	// Success cancels exactly the execution's session runtime.
+	stopped := f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices", "execution_id": "exec-1"})
+	body := externalTestBody(t, stopped, 200)
+	if body["stopped"] != true || body["session_id"] != "sess-1" {
+		t.Fatalf("stop result %v", body)
+	}
+	if !f.api.stoppedSessions["sess-1"] {
+		t.Fatal("execution session was not marked stopped")
+	}
+	if got := f.api.trackedWorkflowExecutions["exec-1"].Status; got != trackedExecutionStatusCanceled {
+		t.Fatalf("tracked execution status %q, want canceled", got)
+	}
+}
+
+func TestExternalStopOwnershipAcrossTokens(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.api.stoppedSessions = map[string]bool{}
+	f.api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
+		"exec-1": {ExecutionID: "exec-1", SessionID: "pat-other-s1", WorkspacePath: "Workflow/invoices", Status: trackedExecutionStatusRunning, Source: trackedExecutionSourceWorkflowRun},
+	}
+	claims := &UserClaims{UserID: "owner", Username: "owner", AccessToken: &accesstokens.Token{ID: "t1", Scopes: []string{"workflows:read", "files:read", "runs:execute"}, AllWorkflows: true}}
+	data, _ := json.Marshal(map[string]any{"name": "stop_step", "arguments": map[string]any{"workflow_id": "invoices", "execution_id": "exec-1"}})
+	w := httptest.NewRecorder()
+	f.api.handleExternalCall(w, adminRequest(http.MethodPost, "/api/external/call", string(data), claims, nil))
+	if w.Code != http.StatusNotFound || !strings.Contains(w.Body.String(), "execution_not_found") {
+		t.Fatalf("foreign execution status %d: %s", w.Code, w.Body.String())
+	}
+	if f.api.stoppedSessions["pat-other-s1"] {
+		t.Fatal("foreign session was stopped")
+	}
+}
+
+func TestExternalStopAllExecutions(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.api.stoppedSessions = map[string]bool{}
+	// App callers must scope to one session.
+	scopeless := f.call(t, "owner", "stop_all_executions", map[string]any{"workflow_id": "invoices"})
+	if scopeless.Code != http.StatusBadRequest {
+		t.Fatalf("unscoped app call status %d, want 400", scopeless.Code)
+	}
+	// Token callers stop exactly their own sessions in the workflow.
+	f.api.accessTokenSessions.sessions = map[string]accessTokenSession{
+		"pat-t1-s1": {tokenID: "t1", sessionID: "pat-t1-s1", workspace: "Workflow/invoices"},
+		"pat-t1-s2": {tokenID: "t1", sessionID: "pat-t1-s2", workspace: "Workflow/invoices"},
+		"pat-t1-x":  {tokenID: "t1", sessionID: "pat-t1-x", workspace: "Workflow/secret"},
+		"pat-t2-s1": {tokenID: "t2", sessionID: "pat-t2-s1", workspace: "Workflow/invoices"},
+	}
+	claims := &UserClaims{UserID: "owner", Username: "owner", AccessToken: &accesstokens.Token{ID: "t1", Scopes: []string{"workflows:read", "files:read", "runs:execute"}, AllWorkflows: true}}
+	data, _ := json.Marshal(map[string]any{"name": "stop_all_executions", "arguments": map[string]any{"workflow_id": "invoices"}})
+	w := httptest.NewRecorder()
+	f.api.handleExternalCall(w, adminRequest(http.MethodPost, "/api/external/call", string(data), claims, nil))
+	body := externalTestBody(t, w, 200)
+	raw, _ := body["stopped_sessions"].([]any)
+	stopped := make([]string, 0, len(raw))
+	for _, item := range raw {
+		if sid, ok := item.(string); ok {
+			stopped = append(stopped, sid)
+		}
+	}
+	if len(stopped) != 2 || stopped[0] != "pat-t1-s1" || stopped[1] != "pat-t1-s2" {
+		t.Fatalf("stopped %v, want exactly the token's invoices sessions", stopped)
+	}
+	for _, sid := range []string{"pat-t1-s1", "pat-t1-s2"} {
+		if !f.api.stoppedSessions[sid] {
+			t.Fatalf("session %s was not marked stopped", sid)
+		}
+	}
+	for _, sid := range []string{"pat-t1-x", "pat-t2-s1"} {
+		if f.api.stoppedSessions[sid] {
+			t.Fatalf("out-of-scope session %s was stopped", sid)
+		}
+	}
+	// A named session outside the token's ownership rejects before any lookup.
+	foreign, _ := json.Marshal(map[string]any{"name": "stop_all_executions", "arguments": map[string]any{"workflow_id": "invoices", "session_id": "pat-t2-s1"}})
+	fw := httptest.NewRecorder()
+	f.api.handleExternalCall(fw, adminRequest(http.MethodPost, "/api/external/call", string(foreign), claims, nil))
+	if fw.Code != http.StatusNotFound {
+		t.Fatalf("foreign session status %d, want 404", fw.Code)
 	}
 }
 

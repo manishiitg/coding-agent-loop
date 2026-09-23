@@ -37,6 +37,10 @@ type ChatModeDefinition struct {
 	Skills        []string         `yaml:"skills"`
 	Tools         []string         `yaml:"tools,omitempty"`
 	ExternalTools []string         `yaml:"external_tools,omitempty"`
+	// ExternalDenylist withholds run.tools names from the external CLI/MCP
+	// API while run channels keep them. Use it for tools whose authority
+	// exceeds the workflow (account-wide connections, arbitrary actions).
+	ExternalDenylist []string `yaml:"external_denylist,omitempty"`
 }
 
 type ChatPromptSource struct {

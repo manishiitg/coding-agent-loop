@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="color-scheme" content="light">
-  <title>PLAT-354 — Show Muse native multiple-choice questions in chat</title>
+  <title>PLAT-354 — Show coding-agent native questions in chat</title>
   <style>
     :root { --ink:#20283b; --muted:#68728a; --line:#dfe4ed; --paper:#fff;
       --surface:#f5f7fb; --accent:#4255b9; --accent-pale:#eef1ff; }
@@ -106,8 +106,8 @@
     <a class="back" href="../../pulse_platform_issue_register.md">← Pulse platform issue index</a>
     <header class="hero">
       <div class="eyebrow">Pulse platform · Coding agent bridge</div>
-      <h1>PLAT-354 — Show Muse native multiple-choice questions in chat</h1>
-      <div class="meta"><div class="meta-item"><span>Status</span><strong>Muse contract migration in progress; question flow proposed</strong></div>
+      <h1>PLAT-354 — Show coding-agent native questions in chat</h1>
+      <div class="meta"><div class="meta-item"><span>Status</span><strong>Shared question card implemented; Muse delivery proven</strong></div>
 <div class="meta-item"><span>Priority</span><strong>P0 contract migration; P1 question flow</strong></div>
 <div class="meta-item"><span>Owner</span><strong>coding agent bridge and frontend chat</strong></div>
 <div class="meta-item"><span>Reported</span><strong>2026-09-23</strong></div>
@@ -155,6 +155,34 @@ question events and returning the user's selection through a verified input
 path could let us <a href="#future-hybrid-revisit">revisit hybrid later</a>.
 PLAT-354 documents that path; it does not enable hybrid now.</p>
 <h2 id="current-delivery-focus">Current delivery focus: Muse first</h2>
+<p><strong>Shared chat contract:</strong> One
+<code>coding_agent_question</code> event uses <code>provider</code>,
+<code>prompt_id</code>, and a provider-neutral <code>requested</code> or
+<code>settled</code> kind. Questions contain IDs, headers, text, ordered
+options, descriptions, and <code>multi_select</code>. Answers contain
+<code>selected_labels</code>, allowing one choice for Muse or several for a
+Claude <code>AskUserQuestion</code> with <code>multiSelect</code>. The reusable
+chat card renders radio buttons or checkboxes accordingly. Claude's
+<code>tool_use.id</code> can serve as <code>prompt_id</code>; a later matching
+<code>tool_result.tool_use_id</code> can settle it. Claude question emission
+and validated native answer delivery are future provider work; the shared
+answer route currently dispatches only to the proven Muse adapter.</p>
+<p><strong>Structured question choice in chat:</strong> The Muse persistent
+session now leaves native <code>request_user_input</code> prompts open. A
+session-scoped reader follows newline-committed <code>user_input_prompt_requested</code>
+and <code>user_input_prompt_settled</code> rows and emits durable
+<code>coding_agent_question</code> events keyed by native session and sequence.
+The chat renders each question, option label, and description; it waits for the
+settled event before marking a submitted choice complete. The answer endpoint
+requires the current <code>prompt_id</code> and validates question IDs and
+option labels against the latest pending JSONL record. It checks the live Muse
+widget before moving the cursor and sending Enter through tmux, including the
+multi-question review. A stale prompt returns a conflict. Direct Muse adapter
+callers retain first-option automatic selection unless they opt into the chat
+choice mode. The real Muse P0 choice test selected the third option in a
+single question, then selected the last option in each of three questions on
+the same retained session and observed answered settlements on 2026-09-23.
+The composer waits while a choice is pending.</p>
 <p>Finish the P0/P1 split for <strong>Muse</strong> before changing another
 coding-agent adapter. The next providers are Claude Code, Codex CLI, Cursor
 CLI, and Pi CLI with Gemini, each with its own native record shape and live

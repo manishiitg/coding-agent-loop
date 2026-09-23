@@ -9,7 +9,7 @@ workflow or Crew project (whole-root read grant) therefore made every
 sessions and in Crew chats with other Crews attached. The resolver now checks
 the session's own writable roots and working directory first, then read
 grants, then knowledgebase grants. The costs tool shares the same resolver.
-Implemented locally; live acceptance pending.
+Live-verified 2026-09-23.
 
 ## Scripted-step tool calls borrowed another run's executor — PLAT-355
 
@@ -20,7 +20,7 @@ own, so `CallCustomToolWithSession` fell back to the global executor map. The
 last agent to start overwrites that map, so a concurrently starting schedule
 could leave it bound to another run. mcpagent now resolves a live, registered
 child to its parent run's registry and allow list. Unregistered children keep
-the legacy path. Implemented locally; live acceptance pending.
+the legacy path. Live-verified 2026-09-23.
 
 ## Show Muse native multiple-choice questions in chat — PLAT-354
 

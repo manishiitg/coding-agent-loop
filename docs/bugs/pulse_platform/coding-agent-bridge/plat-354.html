@@ -489,9 +489,10 @@ active work plan. The remaining provider cards are the later queue.</p>
   <section class="contract-card" aria-labelledby="p0-claude">
     <h3 id="p0-claude">Claude Code</h3>
     <p><strong>Retire from pane parsing:</strong> intake proof, wrapped final
-    answer, tool activity, and question-menu text. Move prompt-shape
-    <code>done_detection</code> behind the current-turn
-    <code>end_turn</code> proof once live certified.</p>
+    answer, tool activity, and question-menu text. Done
+    (2026-09-23, multi-llm-provider-go <code>51a58ca</code>): prompt-shape
+    <code>done_detection</code> now sits behind the current-turn
+    <code>end_turn</code> proof. See the Claude Code state below.</p>
     <p><strong>Use instead:</strong> JSONL user row; assistant
     <code>text</code> and <code>tool_use</code>; matching
     <code>tool_result</code>; <code>AskUserQuestion</code> input; and
@@ -580,10 +581,25 @@ never complete the current turn.</p>
 <li><strong>Replace:</strong> Pane-rendered answer and tool activity, question-menu text,
   and prompt-shape completion detection.</li>
 <li><strong>State:</strong> The final <code>end_turn</code> answer, usage, and durable intake already
-  come from JSONL; mid-turn transcript streaming is opt-in. Add a dedicated
-  question event and make <code>end_turn</code> the primary completion gate. The
-  <code>AskUserQuestion</code> result is text, so verify its answer encoding before
-  showing a selected option as confirmed.</li>
+  come from JSONL; mid-turn transcript streaming is opt-in.
+  <strong><code>end_turn</code> is now the primary completion gate</strong>
+  (2026-09-23, <code>51a58ca</code>). Whenever a transcript exists, a turn ends
+  when its latest assistant/user record is a committed <code>end_turn</code>
+  answer and the transcript has been quiet for 1.5&nbsp;s; a continuation after
+  <code>end_turn</code> resets the wait. The pane wait runs alongside, but it
+  settles a turn on its own only when no transcript is readable. Results carry
+  <code>claude_code_completion_source</code>
+  (<code>jsonl_end_turn</code> | <code>tmux_pane</code>).
+  <code>TestClaudeCodeTmuxRealStructuredCompletionP0</code> passed live 3/3: a
+  12&nbsp;s MCP tool turn and a retained follow-up. The full Claude live suite
+  had no new failures. <code>DurableAckContract</code>,
+  <code>HaikuExtendedResumeIsolation</code> and
+  <code>HaikuLiveInputAndEscape</code> fail on the unchanged baseline too
+  (Haiku refuses the prompts as injection, or the paste never settles), and
+  <code>TranscriptStreamingBridgeLive</code> is flaky on both. Questions are
+  deferred until every CLI's pane replacement is done. The
+  <code>AskUserQuestion</code> result is text, so verify its answer encoding
+  before showing a selected option as confirmed.</li>
 </ul>
 <h3 id="codex-cli">Codex CLI</h3>
 <ul>

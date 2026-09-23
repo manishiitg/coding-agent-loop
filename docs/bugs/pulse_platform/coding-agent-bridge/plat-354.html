@@ -107,7 +107,7 @@
     <header class="hero">
       <div class="eyebrow">Pulse platform · Coding agent bridge</div>
       <h1>PLAT-354 — Show coding-agent native questions in chat</h1>
-      <div class="meta"><div class="meta-item"><span>Status</span><strong>Shared question card implemented; Muse delivery proven</strong></div>
+      <div class="meta"><div class="meta-item"><span>Status</span><strong>Muse migration certified; Claude Code next</strong></div>
 <div class="meta-item"><span>Priority</span><strong>P0 contract migration; P1 question flow</strong></div>
 <div class="meta-item"><span>Owner</span><strong>coding agent bridge and frontend chat</strong></div>
 <div class="meta-item"><span>Reported</span><strong>2026-09-23</strong></div>
@@ -193,7 +193,7 @@ change every adapter in parallel.</p>
   <tbody>
     <tr><td><code>durable_ack</code></td><td>Current send's <code>runtime.user_intent.accepted</code> row, scoped by sequence and exact prompt.</td><td>Fast pane receipt and queue display are P1. tmux still sends the keys.</td><td>Already implemented; retain the live busy and idle steering proof.</td></tr>
     <tr><td><code>final_extraction</code> and <code>reply_formatting_fidelity</code></td><td>Current run's <code>assistant_message_committed</code> text from <code>session.jsonl</code>, with the accepted intent/run ID preventing an older or concurrent answer from winning.</td><td>Wrapped pane text and scrollback are P1 presentation evidence.</td><td>Implemented in the adapter; live retained-session and formatting tests pass.</td></tr>
-    <tr><td><code>structured_streaming</code> and <code>stream_no_history_replay</code></td><td>Sequence-scoped assistant commits, tool calls, and tool-result batches; pair tools by <code>call_id</code>.</td><td>Raw pane snapshots remain a separate P1 terminal stream.</td><td>The tailer now starts from the pre-submit sequence, including fast commits after submit without replaying prior history. Unit proof passes; production live stream certification remains.</td></tr>
+    <tr><td><code>structured_streaming</code> and <code>stream_no_history_replay</code></td><td>Sequence-scoped assistant commits, tool calls, and tool-result batches; pair tools by <code>call_id</code>.</td><td>Raw pane snapshots remain a separate P1 terminal stream.</td><td>The tailer now starts from the pre-submit sequence, including fast commits after submit without replaying prior history. Certified live 2026-09-23: <code>TestMuseCLIRealTmuxTranscriptStreamP0</code> streams an early commit and a paired tool call on one retained session with no history replay across three turns.</td></tr>
     <tr><td><code>done_detection</code> and <code>slow_tool_false_idle</code></td><td>A <code>runtime.session</code> event with <code>payload.kind=run</code>, <code>event.kind=terminal</code>, <code>event.terminal=completed</code>, and the current turn's resolved <code>run_id</code>. Treat cancelled/failed as terminal errors.</td><td>Spinner and settled-pane appearance are P1. tmux still handles transport, pending questions, and trust/auth gates.</td><td>Implemented for foreground turns. Live multi-turn, retained-session, slow-tool, and pending-question checks pass. Background-task lifecycle after foreground completion needs its own contract.</td></tr>
     <tr><td>Blocker and input safety</td><td>Use native question and approval records when they cover a specific blocker.</td><td>Keep pane trust/auth checks, pending widget validation, and stuck-draft detection as P0 until equivalent structured proof exists; tmux remains the input transport.</td><td>Explicit exception to a blanket “tmux is P1” rule.</td></tr>
   </tbody>
@@ -214,9 +214,12 @@ the test. Then repeat this process for the next provider.</p>
 <code>TestMuseCLIRealPersistentStopThenNewMessage</code> passed on
 2026-09-23. The Stop test first exposed a retained editor draft; the adapter
 now clears only its own visibly matching stopped draft before the next
-submission. A changed draft blocks submission. The remaining Muse gate is a
-live production stream check including an early commit, plus a separate
-background-task lifecycle case. Other provider migrations remain queued.</p>
+submission. A changed draft blocks submission. The last Muse gates are closed:
+<code>TestMuseCLIRealBackgroundTaskAfterRunTerminal</code> covers the
+background-task lifecycle, and
+<code>TestMuseCLIRealTmuxTranscriptStreamP0</code> (passed live 2026-09-23 in
+108s) certifies production streaming including an early commit. Claude Code is
+the next provider migration.</p>
 <p>In the observed logs, <code>runtime.session</code>
 <code>event.kind=completed</code> has <code>payload.kind=task</code> and can
 appear repeatedly during one run. <code>model_completed</code> can end with
@@ -469,11 +472,19 @@ active work plan. The remaining provider cards are the later queue.</p>
     <p><strong>Keep for now:</strong> tmux keystrokes and live widget
     validation. The production completion gate now uses the current run's
     <code>terminal</code> event; the old pane/quiet-log waiter remains only
-    in legacy test paths. The live background-task lifecycle case now passes;
-    replace the
-    <code>TestMuseCLIRealAutoFirstOptionThreeQuestionsP0</code> auto-first
-    expectation with a live choice of options 2/3 and a matching settled
-    record; do not simply delete the test.</p>
+    in legacy test paths. The live background-task lifecycle and stream
+    certifications pass. User choice is certified by
+    <code>TestMuseCLIRealStructuredQuestionChoiceP0</code> (option 3 of one
+    question, then the last option of each of three questions, with matching
+    settled records).
+    <code>TestMuseCLIRealAutoFirstOptionThreeQuestionsP0</code> is kept, not
+    replaced. Automatic answering is the correct behaviour whenever no person
+    attends the chat. Schedules, webhooks, bots, child sessions and runtime
+    stages keep auto-answering: only <code>codingAgentRequestHasAttendingUser</code>
+    enables user choice (mcpagent <code>757cf40</code>, builder
+    <code>2ebd0972f</code>). Before that fix, a scheduled Muse run that asked a
+    question waited forever. That test is now the unattended-mode
+    certification.</p>
   </section>
   <section class="contract-card" aria-labelledby="p0-claude">
     <h3 id="p0-claude">Claude Code</h3>

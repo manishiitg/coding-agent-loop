@@ -54,6 +54,13 @@ Use `get_pulse_state(view="backlog", detail="compact")` and semantic issue IDs.
 New step-raised `CONCERNS:` lines since the previous Pulse are in
 `get_pulse_state(view="step_concerns")`; treat them as leads to verify against
 the run evidence, not as findings.
+Also read `get_pulse_state(view="step_outputs")`: each step's own summary of
+its latest runs side by side. Every status can be success while a step does no
+new work, for example by re-checking or rebuilding an earlier run's output.
+Compare runs of the same step, confirm against the system of record (new DB
+rows, receipts, published items), and file a step that stopped producing new
+work as a defect. Check the plan as a likely root cause: a message sequence
+whose items only verify, with no item that instructs the work itself.
 A failed child call alone is not a failed outcome. Establish required-output
 impact and recovery before filing a defect. Merge duplicate symptoms into one
 canonical root. If the same defect affects several workflows, link the platform

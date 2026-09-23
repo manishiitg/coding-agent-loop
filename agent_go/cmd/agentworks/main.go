@@ -9,10 +9,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
 	"github.com/mark3labs/mcp-go/server"
@@ -211,33 +214,84 @@ func (o *options) connection(forLogin bool) (agentworksclient.Config, string, er
 	// A command targeting another host must never reuse saved credentials.
 	if saved != normalized {
 		cfg.Token = ""
+		cfg.RefreshToken = ""
+		cfg.ExpiresAt = time.Time{}
 	}
 	cfg.Server = normalized
 	if !forLogin {
 		if token := o.getenv("AGENTWORKS_TOKEN"); token != "" {
 			cfg.Token = token
+			cfg.RefreshToken = ""
 		}
 	}
 	return cfg, path, nil
 }
 
 func (o *options) client() (*agentworksclient.Client, error) {
-	cfg, _, err := o.connection(false)
+	cfg, path, err := o.connection(false)
 	if err != nil {
 		return nil, err
 	}
-	return agentworksclient.New(cfg.Server, cfg.Token)
+	client, err := agentworksclient.New(cfg.Server, cfg.Token)
+	if err != nil {
+		return nil, err
+	}
+	if cfg.RefreshToken != "" {
+		client.WithTokenProvider(agentworksclient.ConfigTokenProvider(cfg.Server, path))
+	}
+	return client, nil
 }
 
 func loginCommand(o *options) *cobra.Command {
 	var tokenStdin bool
-	cmd := &cobra.Command{Use: "login", Args: cobra.NoArgs, Short: "Connect using an access token generated in your AgentWorks account menu", Long: "Generate an access token in AgentWorks: account menu → Access tokens.\nThen run: agentworks login --server https://your-server --token-stdin\nSupply the token on stdin. Password login is only available in the app.", RunE: func(cmd *cobra.Command, _ []string) error {
-		if !tokenStdin {
-			return errors.New("generate an access token in the AgentWorks account menu, then use --token-stdin")
-		}
+	var noBrowser bool
+	cmd := &cobra.Command{Use: "login", Args: cobra.NoArgs, Short: "Sign in through your browser", Long: "Open AgentWorks in your browser, approve this CLI, and save a private renewable connection. Use --no-browser on a remote terminal and open the printed URL yourself.", RunE: func(cmd *cobra.Command, _ []string) error {
 		cfg, path, err := o.connection(true)
 		if err != nil {
 			return err
+		}
+		if !tokenStdin {
+			client, err := agentworksclient.New(cfg.Server, "")
+			if err != nil {
+				return err
+			}
+			device, err := client.StartDeviceAuthorization(cmd.Context())
+			if err != nil {
+				return fmt.Errorf("start browser sign in: %w", err)
+			}
+			fmt.Fprintln(o.stderr, "Open this link to sign in and approve AgentWorks CLI:")
+			fmt.Fprintln(o.stderr, device.VerificationURIComplete)
+			fmt.Fprintln(o.stderr, "Confirm the browser shows code:", device.UserCode)
+			if !noBrowser {
+				openLoginBrowser(device.VerificationURIComplete)
+			}
+			waitCtx, cancel := context.WithTimeout(cmd.Context(), time.Duration(device.ExpiresIn)*time.Second)
+			defer cancel()
+			interval := time.Duration(device.Interval) * time.Second
+			for {
+				tokens, err := client.PollDeviceAuthorization(waitCtx, device.DeviceCode)
+				if err == nil {
+					cfg.Token = tokens.AccessToken
+					cfg.RefreshToken = tokens.RefreshToken
+					cfg.ExpiresAt = time.Now().Add(time.Duration(tokens.ExpiresIn) * time.Second)
+					if err := agentworksclient.SaveConfig(path, cfg); err != nil {
+						return err
+					}
+					return o.output(map[string]any{"server": cfg.Server, "logged_in": true})
+				}
+				var apiErr *agentworksclient.APIError
+				if !errors.As(err, &apiErr) || (apiErr.Code != "authorization_pending" && apiErr.Code != "slow_down") {
+					return fmt.Errorf("browser sign in: %w", err)
+				}
+				if apiErr.Code == "slow_down" {
+					interval += 2 * time.Second
+				}
+				select {
+				case <-waitCtx.Done():
+					return fmt.Errorf("browser sign in expired: %w", waitCtx.Err())
+				case <-time.After(interval):
+				}
+			}
 		}
 		secret, err := io.ReadAll(io.LimitReader(o.stdin, 1025))
 		if err != nil {
@@ -245,9 +299,11 @@ func loginCommand(o *options) *cobra.Command {
 		}
 		value := strings.TrimSpace(string(secret))
 		if !strings.HasPrefix(value, "aw_pat_") || len(value) != 71 {
-			return errors.New("expected an AgentWorks access token from account menu → Access tokens")
+			return errors.New("expected a legacy AgentWorks personal access token (aw_pat_...)")
 		}
 		cfg.Token = value
+		cfg.RefreshToken = ""
+		cfg.ExpiresAt = time.Time{}
 		client, err := agentworksclient.New(cfg.Server, cfg.Token)
 		if err != nil {
 			return err
@@ -260,8 +316,21 @@ func loginCommand(o *options) *cobra.Command {
 		}
 		return o.output(map[string]any{"server": cfg.Server, "logged_in": true})
 	}}
-	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "Read an app-generated personal access token from stdin")
+	cmd.Flags().BoolVar(&tokenStdin, "token-stdin", false, "Read a legacy personal access token from stdin")
+	cmd.Flags().BoolVar(&noBrowser, "no-browser", false, "Print the approval link without opening a browser")
 	return cmd
+}
+
+func openLoginBrowser(link string) {
+	command := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		command = "open"
+	}
+	cmd := exec.Command(command, link)
+	_ = cmd.Start()
+	if cmd.Process != nil {
+		_ = cmd.Process.Release()
+	}
 }
 
 func skillsCommand(o *options) *cobra.Command {
@@ -285,7 +354,7 @@ func skillsCommand(o *options) *cobra.Command {
 }
 
 func logoutCommand(o *options) *cobra.Command {
-	return &cobra.Command{Use: "logout", Args: cobra.NoArgs, Short: "Remove saved credentials (does not revoke tokens or unset environment variables)", RunE: func(_ *cobra.Command, _ []string) error {
+	return &cobra.Command{Use: "logout", Args: cobra.NoArgs, Short: "Revoke the browser connection and remove saved credentials", RunE: func(cmd *cobra.Command, _ []string) error {
 		path, err := o.path()
 		if err != nil {
 			return err
@@ -295,7 +364,17 @@ func logoutCommand(o *options) *cobra.Command {
 			return err
 		}
 		if cfg.Server != "" {
+			if cfg.RefreshToken != "" {
+				client, err := agentworksclient.New(cfg.Server, "")
+				if err == nil {
+					if revokeErr := client.RevokeOAuth(cmd.Context(), cfg.RefreshToken); revokeErr != nil {
+						fmt.Fprintln(o.stderr, "Warning: server revocation failed; revoke the CLI connection in AgentWorks Connect.")
+					}
+				}
+			}
 			cfg.Token = ""
+			cfg.RefreshToken = ""
+			cfg.ExpiresAt = time.Time{}
 			if err := agentworksclient.SaveConfig(path, cfg); err != nil {
 				return err
 			}

@@ -6,11 +6,14 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 )
 
 type Config struct {
-	Server string `json:"server"`
-	Token  string `json:"token,omitempty"`
+	Server       string    `json:"server"`
+	Token        string    `json:"token,omitempty"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	ExpiresAt    time.Time `json:"expires_at,omitempty"`
 }
 
 func DefaultConfigPath() (string, error) {

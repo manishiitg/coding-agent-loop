@@ -22,6 +22,10 @@ hand those off once and keep your pass on the goal.
    steps wrote since the previous Pulse. Those about outcomes (a source ran
    dry, results falling, the audience not responding) are goal evidence for
    you; concrete defects are Technical's.
+   Read `get_pulse_state(view="step_outputs")` for the steps that should move
+   the goal: a step that keeps completing without new actions or items is
+   undone work, whatever its status says. Check the date of its newest real
+   output in the database and connect it to any drop in the goal metric.
 2. **Follow up.** For each earlier `done` item whose `check_at` has passed, look
    at the comparable metric and set `effect` to `worked`, `no_effect` or
    `unclear` with a short `effect_note` (`record_pulse_goal_work` with its

@@ -12,11 +12,11 @@ This connection reads and runs, like the Slack and WhatsApp run-mode channels: t
 ## Connect
 
 ```sh
-printf '%s' '<token>' | agentworks login --server https://your-server --token-stdin
-claude mcp add agentworks -e AGENTWORKS_SERVER='https://your-server' -e AGENTWORKS_TOKEN='<token>' -- agentworks mcp serve
+agentworks login --server https://your-server
+claude mcp add agentworks -e AGENTWORKS_SERVER='https://your-server' -- agentworks mcp serve
 ```
 
-Tokens read (`workflows:read`, `files:read`) and, when granted, run (`runs:execute`); all are limited to workflows the account can access. Unavailable tools are omitted from the catalog.
+Approve the CLI in your browser. The CLI and MCP bridge share that connection. Its scopes allow reading (`workflows:read`, `files:read`) and running (`runs:execute`) workflows the account can access. Unavailable tools are omitted from the catalog.
 
 ## First step
 

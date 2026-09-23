@@ -1,16 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
-import { HelpCircle, Keyboard, KeyRound, LogOut, Terminal } from 'lucide-react'
+import { HelpCircle, Keyboard, KeyRound, LogOut } from 'lucide-react'
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip'
 import { useAuthStore } from '../../stores/useAuthStore'
 import NotificationsControl from './NotificationsControl'
 import ChangePasswordDialog from './ChangePasswordDialog'
-import AccessTokensDialog from './AccessTokensDialog'
 import { APP_VERSION } from '../../version'
 
 /**
  * AccountControl - the signed-in user's avatar (their initial) which opens a
- * small account menu for hosted and local installations. Local single-user
- * installs expose access tokens after automatic session initialization. Same outside-click /
+ * small account menu for hosted and local installations. Same outside-click /
  * Escape behaviour as IconPopover; not reusing it because the trigger here
  * is the round avatar itself rather than a padded icon button.
  */
@@ -23,7 +21,6 @@ export default function AccountControl({ onOpenWalkthrough, onOpenShortcuts }: A
   const { user, logout, isMultiUserMode } = useAuthStore()
   const [open, setOpen] = useState(false)
   const [changingPassword, setChangingPassword] = useState(false)
-  const [managingTokens, setManagingTokens] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -107,13 +104,6 @@ export default function AccountControl({ onOpenWalkthrough, onOpenShortcuts }: A
             <KeyRound className="w-4 h-4 text-gray-500 dark:text-gray-400" />
             Change password
           </button>}
-          <button type="button" role="menuitem" className={itemClass} onClick={() => {
-            setOpen(false)
-            setManagingTokens(true)
-          }}>
-            <Terminal className="w-4 h-4 text-gray-500 dark:text-gray-400" />
-            Access tokens
-          </button>
           { /* User management lives in the workspace Access view, not the account menu. */ }
           {isMultiUserMode && <button
             type="button"
@@ -130,7 +120,6 @@ export default function AccountControl({ onOpenWalkthrough, onOpenShortcuts }: A
         </div>
       )}
 
-      {managingTokens && <AccessTokensDialog onClose={() => setManagingTokens(false)} />}
       <ChangePasswordDialog isOpen={changingPassword} onClose={() => setChangingPassword(false)} />
     </div>
   )

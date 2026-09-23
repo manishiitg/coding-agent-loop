@@ -5,11 +5,10 @@
 # shown prefilled on the Connect tab (Setup → Integrations). Single command:
 #
 #   curl -fsSL https://<server>/api/downloads/cli/install-agentworks.sh | \
-#     sh -s -- --server https://<server> --token <access-token>
+#     sh -s -- --server https://<server>
 #
-# The token is the read-only Connect-tab token: the CLI can list workflows
-# and read files, plans, and run logs, but cannot change anything.
-# AGENTWORKS_SERVER / AGENTWORKS_TOKEN work in place of the flags.
+# Browser sign-in grants read and run access without copying a credential.
+# Existing --token / AGENTWORKS_TOKEN installations remain supported.
 set -eu
 
 SERVER="${AGENTWORKS_SERVER:-}"
@@ -17,7 +16,7 @@ TOKEN="${AGENTWORKS_TOKEN:-}"
 INSTALL_DIR="${HOME:-/tmp}/.local/bin"
 
 usage() {
-  echo "usage: sh install-agentworks.sh --server https://<server> --token <access-token> [--dir DIR]" >&2
+  echo "usage: sh install-agentworks.sh --server https://<server> [--dir DIR] [--no-login]" >&2
 }
 
 while [ $# -gt 0 ]; do
@@ -25,17 +24,16 @@ while [ $# -gt 0 ]; do
     --server) SERVER="${2:-}"; shift 2 ;;
     --token) TOKEN="${2:-}"; shift 2 ;;
     --dir) INSTALL_DIR="${2:-}"; shift 2 ;;
+    --no-login) NO_LOGIN=1; shift ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 2 ;;
   esac
 done
 
 [ -n "$SERVER" ] || { echo "missing --server (or AGENTWORKS_SERVER)" >&2; usage; exit 2; }
-[ -n "$TOKEN" ] || { echo "missing --token (or AGENTWORKS_TOKEN)" >&2; usage; exit 2; }
-case "$TOKEN" in
-  aw_pat_*) ;;
-  *) echo "expected an AgentWorks access token (aw_pat_...); generate one on the Connect tab" >&2; exit 2 ;;
-esac
+if [ -n "$TOKEN" ]; then
+  case "$TOKEN" in aw_pat_*) ;; *) echo "expected an AgentWorks access token (aw_pat_...)" >&2; exit 2 ;; esac
+fi
 command -v curl >/dev/null 2>&1 || { echo "curl is required to install the AgentWorks CLI" >&2; exit 1; }
 
 OS="$(uname -s)"
@@ -85,8 +83,14 @@ else
   echo "  export PATH=\"$INSTALL_DIR:\$PATH\"" >&2
 fi
 
-echo "Logging in to $SERVER ..."
-printf '%s' "$TOKEN" | "$INSTALL_DIR/agentworks" login --server "$SERVER" --token-stdin
+if [ "${NO_LOGIN:-0}" != 1 ]; then
+  echo "Signing in to $SERVER ..."
+  if [ -n "$TOKEN" ]; then
+    printf '%s' "$TOKEN" | "$INSTALL_DIR/agentworks" login --server "$SERVER" --token-stdin
+  else
+    "$INSTALL_DIR/agentworks" login --server "$SERVER"
+  fi
+fi
 
 echo "Done. Try: agentworks workflows list"
 echo "For AI assistants, paste the MCP command from the Connect tab."

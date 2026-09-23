@@ -78,6 +78,9 @@ rows as a queue. A concern can explain an incomplete output, failed side effect,
 recovery, or goal/measurement gap. Gate uses it to judge review value; the later
 reviewer decides whether it warrants a durable issue. Absence of a concern is
 not proof of success: scripted steps and crashed agents may emit none.
+`get_pulse_state(view="step_outputs")` shows each step's own summary of its
+latest runs side by side. A step whose recent runs all completed without new
+work (re-checked or rebuilt an earlier run's output) makes Technical Review due.
 
 If retention no longer covers the period since the last check, record that
 coverage gap honestly. Do not treat a partial sample as complete.

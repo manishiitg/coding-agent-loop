@@ -2712,10 +2712,11 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				"additionalProperties": false,
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
-					"view":           map[string]interface{}{"type": "string", "enum": pulseStateViewValues, "description": "Which Pulse state to read: module cadence, the finding backlog, one saved review, the focus coverage agenda, review_notes (latest concise notes, optionally filtered by module and pulse_run_id), goal_work (Goal Work items and constraint challenges, newest first), or step_concerns (CONCERNS: lines steps wrote since the previous Pulse; leads, not findings)."},
+					"view":           map[string]interface{}{"type": "string", "enum": pulseStateViewValues, "description": "Which Pulse state to read: module cadence, the finding backlog, one saved review, the focus coverage agenda, review_notes (latest concise notes, optionally filtered by module and pulse_run_id), goal_work (Goal Work items and constraint challenges, newest first), step_concerns (CONCERNS: lines steps wrote since the previous Pulse; leads, not findings), or step_outputs (each step's own summary of its latest runs side by side, optionally one step_id; shows steps that complete but do no new work)."},
 					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Optional Pulse run id. With view=module, returns that Gate's persisted pass mode; with view=review_notes, selects notes for that exact run."},
 					"module":         map[string]interface{}{"type": "string", "description": "Optional owning-module filter for backlog or review_notes (omit for all modules). Required for view=\"review\" and view=\"focus_agenda\". Ignored for view=\"module\"."},
 					"review_run_id":  map[string]interface{}{"type": "string", "description": "Required for view=\"review\": the review run id from the reviewer's completion notification."},
+					"step_id":        map[string]interface{}{"type": "string", "description": "For view=\"step_outputs\" only: limit the lineup to one plan step id."},
 					"detail":         map[string]interface{}{"type": "string", "enum": []string{"compact", "full"}, "description": "For view=\"backlog\" only. compact (default) returns active issues/observations and the closed canonical issue index for semantic reuse. full requires issue_ids and returns complete lifecycle evidence only for those ids."},
 					"issue_ids": map[string]interface{}{
 						"type": "array", "minItems": 1, "maxItems": 20, "uniqueItems": true,
@@ -2907,6 +2908,8 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				return readPulseGoalWorkView(ctx, workspacePath, intToolArg(args, "limit"))
 			case "step_concerns":
 				return readStepConcernsView(ctx, workspacePath)
+			case "step_outputs":
+				return readStepOutputsView(workspacePath, stringToolArg(args, "step_id"))
 			case pulseStateViewFocusAgenda:
 				module, _ := args["module"].(string)
 				return readPulseFocusAgendaView(ctx, workspacePath, module, stringToolArg(args, "route_scope"), intToolArg(args, "limit"))
@@ -3068,7 +3071,7 @@ const (
 
 // pulseStateViewValues is the closed view set shared by the schema enum, the
 // accept check, and the rejection message.
-var pulseStateViewValues = []string{pulseStateViewBacklog, pulseStateViewModule, pulseStateViewReview, pulseStateViewFocusAgenda, "review_notes", "goal_work", "step_concerns"}
+var pulseStateViewValues = []string{pulseStateViewBacklog, pulseStateViewModule, pulseStateViewReview, pulseStateViewFocusAgenda, "review_notes", "goal_work", "step_concerns", "step_outputs"}
 
 // pulseResultValues is the union of the module and final-command result sets.
 // Each target validates its own subset and names it on rejection; the schema

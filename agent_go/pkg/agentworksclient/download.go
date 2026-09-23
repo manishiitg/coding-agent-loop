@@ -31,10 +31,11 @@ func (c *Client) Download(ctx context.Context, workflowID, path, output string) 
 	if err != nil {
 		return 0, err
 	}
-	if c.token == "" {
-		return 0, errors.New("login is required")
+	token, err := c.authToken(ctx)
+	if err != nil {
+		return 0, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	req.Header.Set("Authorization", "Bearer "+token)
 	response, err := c.http.Do(req)
 	if err != nil {
 		return 0, err

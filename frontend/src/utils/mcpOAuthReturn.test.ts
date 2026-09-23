@@ -1,6 +1,6 @@
 // @vitest-environment happy-dom
 import { beforeEach, describe, expect, it } from 'vitest'
-import { consumeMcpConsentReturnPath, mcpConsentReturnPath, rememberMcpConsentReturnPath } from './mcpOAuthReturn'
+import { cliConsentReturnPath, consumeMcpConsentReturnPath, mcpConsentReturnPath, rememberMcpConsentReturnPath } from './mcpOAuthReturn'
 
 const path = `/oauth/consent?request=mcp_req_${'a'.repeat(64)}`
 
@@ -24,6 +24,15 @@ describe('MCP consent return', () => {
     expect(mcpConsentReturnPath(`//evil.example${path}`)).toBeNull()
     expect(mcpConsentReturnPath(path + '&next=https://evil.example')).toBeNull()
     expect(mcpConsentReturnPath('/oauth/consent?request=wrong')).toBeNull()
+  })
+
+  it('accepts only a local CLI approval link', () => {
+    const cliPath = `/oauth/cli?code=cli_verify_${'b'.repeat(64)}`
+    expect(cliConsentReturnPath(cliPath)).toBe(cliPath)
+    expect(cliConsentReturnPath(`https://evil.example${cliPath}`)).toBeNull()
+    expect(cliConsentReturnPath(cliPath + '&next=https://evil.example')).toBeNull()
+    rememberMcpConsentReturnPath(cliPath, 'state-cli')
+    expect(consumeMcpConsentReturnPath('state-cli')).toBe(cliPath)
   })
 
   it('binds the return path to the sign-in state and consumes it once', () => {

@@ -2243,6 +2243,10 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/oauth/mcp/consent", api.handleMCPOAuthConsent).Methods("GET", "POST")
 	apiRouter.HandleFunc("/oauth/mcp/connections", api.handleMCPOAuthConnections).Methods("GET")
 	apiRouter.HandleFunc("/oauth/mcp/connections/{id}", api.handleMCPOAuthConnections).Methods("DELETE")
+	apiRouter.HandleFunc("/oauth/cli/device", api.handleCLIOAuthDevice).Methods("POST")
+	apiRouter.HandleFunc("/oauth/cli/consent", api.handleCLIOAuthConsent).Methods("GET", "POST")
+	apiRouter.HandleFunc("/oauth/cli/token", api.handleCLIOAuthToken).Methods("POST")
+	apiRouter.HandleFunc("/oauth/cli/revoke", api.handleCLIOAuthRevoke).Methods("POST")
 	// Per-workflow ownership and sharing (workflow_access.go).
 	apiRouter.HandleFunc("/workflow/access", api.handleGetWorkflowAccess).Methods("GET", "OPTIONS")
 	apiRouter.HandleFunc("/workflow/access", api.handleSetWorkflowAccess).Methods("PUT", "POST")

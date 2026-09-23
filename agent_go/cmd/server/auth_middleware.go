@@ -202,6 +202,14 @@ func AuthMiddleware(next http.Handler) http.Handler {
 		}
 
 		tokenString := strings.TrimPrefix(authHeader, "Bearer ")
+		if strings.HasPrefix(tokenString, cliOAuthAccessPrefix) {
+			claims, ok := authenticateCLIOAuthToken(w, r, tokenString)
+			if !ok {
+				return
+			}
+			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), UserContextKey, claims)))
+			return
+		}
 		if strings.HasPrefix(tokenString, mcpOAuthAccessPrefix) {
 			claims, ok := authenticateMCPOAuthToken(w, r, tokenString)
 			if !ok {
@@ -298,6 +306,9 @@ func shouldSkipAuth(path string) bool {
 		mcpOAuthRegisterPath,
 		mcpOAuthAuthorizePath,
 		mcpOAuthTokenPath,
+		cliOAuthDevicePath,
+		cliOAuthTokenPath,
+		cliOAuthRevokePath,
 	}
 
 	for _, p := range publicPaths {

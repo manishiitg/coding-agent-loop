@@ -382,5 +382,9 @@ func (api *StreamingAPI) handleMCPOAuthConnections(w http.ResponseWriter, r *htt
 
 // Keep the generic read-and-run scope check identical for PAT and OAuth grants.
 func mcpOAuthTokenForGrant(grant mcpOAuthGrant) accesstokens.Token {
-	return accesstokens.Token{ID: "oauth-" + grant.FamilyID, Name: "MCP OAuth", UserID: grant.UserID, Username: grant.Username, Email: grant.Email, Provider: grant.Provider, Scopes: grant.Scopes, AllWorkflows: true, ExpiresAt: grant.Expires}
+	name := "MCP OAuth"
+	if grant.ClientID == cliOAuthClientID {
+		name = "AgentWorks CLI"
+	}
+	return accesstokens.Token{ID: "oauth-" + grant.FamilyID, Name: name, UserID: grant.UserID, Username: grant.Username, Email: grant.Email, Provider: grant.Provider, Scopes: grant.Scopes, AllWorkflows: true, ExpiresAt: grant.Expires}
 }

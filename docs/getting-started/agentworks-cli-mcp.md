@@ -11,14 +11,11 @@ paths stay in the server for a future write-enabled API version.
 
 Open Setup → Integrations → Connect on any installation — server or local —
 and choose **Terminal or scripts**, **AI app on this computer**, or
-**Hosted AI app**. Create a personal token for either local option; the hosted
+**Hosted AI app**. The local options use browser sign-in; the hosted
 option shows its OAuth URL immediately. The terminal installer downloads the
 CLI build matching that server, verifies its checksum, installs it to
-`~/.local/bin`, and logs in with the
-generated token, which reads and runs. macOS and Linux on arm64/amd64 are
+`~/.local/bin`, and opens a browser approval link. macOS and Linux on arm64/amd64 are
 supported.
-One token per account: generating a new one replaces the current token
-everywhere it was pasted.
 Local installs can drive the CLI and local MCP bridges, but ChatGPT and
 Cowork need a public server URL — deploy first, then open that server's
 Connect tab for the remote URL.
@@ -29,8 +26,10 @@ the CLI always matches the API it talks to. `agentworks version` prints the
 build; `agentworks update` (or `update --check`) self-updates from the
 connected server. Confida and other rootless deployments build and package
 all supported CLI binaries with each release, then verify the public installer
-URL before marking the deploy successful. Developers can still build from
-source as below.
+URL before marking the deploy successful. The local `run_server_with_logging.sh`
+script packages the native CLI for its machine before starting the server, so
+the same installer command works against a loopback URL. Developers can still
+build from source as below.
 
 ## Build and server setup
 
@@ -87,34 +86,28 @@ does not execute the copied workflow, and does not test a live Builder model
 conversation. See [local workflow isolation](isolated-workflow-testing.md) for
 the procedure for live agent testing.
 
-## Connect to a hosted server
+## Connect the CLI
 
-In the app, open your account menu and choose **Access tokens**. This is
-available in both hosted and local installations. Single-user installs show a
-**Local account** menu after the local app session initializes; multi-user
-installs show it beside **Change password**. Give the token a name, choose its workflow
-access, then select a 7-, 30-, or 90-day expiry. Copy the token when it is shown;
-the app cannot display its secret again. The connection command in the dialog
-uses the active installation's API URL, including the local desktop server's
-loopback address and port.
+Run the installer shown under **Setup → Integrations → Connect → Terminal or
+scripts**, or sign in with an installed binary:
 
 ```sh
-agentworks login --server https://agentworks.example.com --token-stdin
+agentworks login --server https://agentworks.example.com
 ```
 
-Supply the generated `aw_pat_…` token on stdin. For interactive stdin on
-macOS/Linux, paste it, press Enter, then Ctrl-D. A credential manager can also
-pipe the token into this command. The CLI verifies access before saving it.
-Username/password flags and app-session JWTs are no longer accepted by CLI
-login. The app keeps its existing password and SSO sign-in flows.
+The CLI opens the AgentWorks sign-in page. Confirm its eight-character code
+matches the terminal, approve access, then return to the terminal. On a remote terminal, use `agentworks login --no-browser`
+and open the printed link yourself. Each login creates a separate connection
+that you can revoke under **Connect → Connected apps**. The CLI renews its
+short-lived access automatically. `agentworks logout` revokes that connection
+and clears the local credentials.
 
-One token per account: generating a new token revokes the current one
-immediately, everywhere it was pasted. Tokens run in full run mode —
+CLI grants run in full run mode —
 `workflows:read`, `files:read`, and `runs:execute` — over all currently and
-future accessible workflows or specific workflow IDs. Write permissions
+future accessible workflows. Write permissions
 (`files:write`, `plan:write`, `builder:chat`) are not issued in v1. Every
-call checks both the token restrictions and the user's current workflow
-access. Tokens cannot call account management, the general query endpoint,
+call checks the grant scopes and the user's current workflow
+access. CLI grants cannot call account management, the general query endpoint,
 or the workspace proxy; only the external tool, asset-content, skill, and
 remote MCP endpoints accept them. A token still cannot exceed the user's
 normal account permissions.
@@ -129,44 +122,34 @@ service shells — `google_workspace_cli` stays out of the external catalog
 and token-backed chat sessions for exactly this reason. Slack and WhatsApp
 Run-mode bot channels retain it under their own route grants.
 
-In the account menu, inspect the token's expiry and last-used time, revoke
-it, or generate a replacement. Every CLI/MCP HTTP request checks the
-persisted token record. Revocation — explicit or by replacement — rejects
-subsequent calls, including calls from an MCP bridge already running, and
-requests immediate cancellation of that token's sessions.
-
-PATs do not silently refresh or extend their lifetime. Rotate by generating
-a replacement, logging in with it, and restarting the MCP bridge to load
-it; the old token is already dead, so update pasted copies (CLI logins,
-local MCP client configs, scripts) promptly. Expired/revoked tokens require a
-replacement from the app. `agentworks logout` removes the local
-credential; it does not revoke the token on the server or unset environment
-variables. There is no browser/device-login or refresh-token flow in this CLI.
+Every CLI/MCP HTTP request checks the persisted grant. Revocation rejects
+subsequent calls, including calls from an MCP bridge already running.
 
 Configuration is stored in the OS user-config directory under
 `agentworks/config.json`, with private permissions. `--config` selects another
-file. `AGENTWORKS_SERVER` and `AGENTWORKS_TOKEN` support automation without saving
-credentials. HTTPS is required except on loopback development addresses.
+file. `AGENTWORKS_SERVER` selects the server for automation. Existing personal
+access tokens still work through `AGENTWORKS_TOKEN` or `login --token-stdin`
+for older scripts; they are no longer created or displayed in Connect.
+HTTPS is required except on loopback development addresses.
 Redirects are refused to avoid forwarding credentials to another location.
 
 ## Connect a local AI app
 
 Choose **AI app on this computer** in Connect. Install the CLI first, then
 choose Claude Code, Codex, or a JSON-configured MCP client. The commands
-include your server and token. Claude Code uses:
+include your server; the bridge reads the CLI's saved browser login. Claude Code uses:
 
 ```sh
-claude mcp add agentworks -e AGENTWORKS_SERVER=https://your-server -e AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
+claude mcp add agentworks -e AGENTWORKS_SERVER=https://your-server -- agentworks mcp serve
 ```
 
-Passing the server and token as env keeps the bridge self-sufficient: it
-works without a prior `agentworks login` on that machine. Log in as well if
-you also use the CLI directly.
+Run `agentworks login` on that computer first. The CLI and bridge share the
+saved connection and refresh credentials when needed.
 
 Codex uses its own registration command:
 
 ```sh
-codex mcp add agentworks --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
+codex mcp add agentworks --env AGENTWORKS_SERVER=https://your-server -- agentworks mcp serve
 ```
 
 The command follows [Codex's documented stdio MCP setup](https://learn.chatgpt.com/docs/extend/mcp).
@@ -208,8 +191,8 @@ https://your-server/api/external/v1/mcp
 The assistant discovers AgentWorks OAuth metadata from the server. Sign in to
 Confida when prompted, review the requested permissions, and allow access.
 The connection uses short-lived MCP-only access tokens and rotating refresh
-tokens. Revoke it under **Connect → Hosted AI app → Connected apps**. The CLI
-and local stdio MCP bridge continue to use personal access tokens.
+tokens. Revoke it under **Connect → Connected apps**. The CLI and local stdio
+MCP bridge use their own browser-approved OAuth connections.
 
 The optional **Give the assistant workflow guidance** section downloads the
 same guidance as an
@@ -224,7 +207,7 @@ app session or a PAT.
 Schemas, scopes, and per-request authorization are identical to the REST
 external API: `get_api_spec` only lists and describes tools the grant may
 use, and every `call_tool` runs through the same dispatcher. Existing PAT
-connections remain supported; direct integrations should send a PAT in the
+connections remain supported for older integrations; direct PAT integrations send it in the
 `Authorization: Bearer` header. The legacy `?token=` form is supported for
 older clients, but credentials in URLs can leak into proxy logs and history.
 
@@ -591,7 +574,7 @@ it appears in `external_denylist`.
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
 `POST/GET/DELETE /api/external/v1/mcp` (get_api_spec + call_tool over the same catalog). The CLI
-uses a PAT in the Bearer header; app sessions
+uses a browser-approved OAuth access token in the Bearer header; app sessions
 can also use these endpoints with their normal JWT. Account token management is
 `GET/POST /api/auth/access-tokens` and `DELETE /api/auth/access-tokens/{id}`, using
 an app session only. Call bodies
@@ -621,7 +604,7 @@ The server stores SHA-256 token hashes and metadata in SQLite under its private
 `AGENTWORKS_STATE_ROOT/auth/` directory (with the normal durable runtime root as
 a fallback). The directory is 0700 and database is 0600, outside workspace files.
 The database is bound to `AUTH_SECRET`; rotating that secret invalidates previous
-PATs, MCP OAuth grants, and app sessions. OAuth access and refresh tokens are
+PATs, CLI and MCP OAuth grants, and app sessions. OAuth access and refresh tokens are
 hashed in a separate SQLite database in the same directory. Tokens are not
 stored in workflow documents or returned by listing endpoints. Creation
 responses use `Cache-Control: no-store`.

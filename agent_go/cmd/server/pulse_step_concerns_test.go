@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -101,5 +102,52 @@ func TestStepConcernWindowStartsAtThePreviousPulse(t *testing.T) {
 	// While p2 runs, its evidence window starts where p1 started.
 	if got := stepConcernWindowStart(ctx, ws); !got.Equal(first) {
 		t.Fatalf("window start = %v, want the previous Pulse start %v", got, first)
+	}
+}
+
+func TestCollectStepOutputsLinesUpEachStepsLatestRuns(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("WORKSPACE_DOCS_PATH", root)
+	runs := filepath.Join(root, "Workflow", "example", "runs")
+	base := time.Date(2026, 9, 22, 0, 0, 0, 0, time.UTC)
+	for i, text := range []string{
+		"Found 10 builders and followed all 10.\nSTATUS: COMPLETED",
+		"Rebuilt the output from the previous run; no new actions were performed.\nCONCERNS: no fresh run today",
+		"Rebuilt the output from the previous run again.",
+	} {
+		run := fmt.Sprintf("iteration-%d", i+1)
+		writeStepSummary(t, filepath.Join(runs, run, "default", "execution", "connect", "session.json"),
+			map[string]interface{}{"step_id": "connect", "run_folder": run, "entries": []map[string]string{
+				{"item_type": "user_message", "summary": text},
+				{"item_type": "prevalidation", "summary": "prevalidation passed"},
+			}}, base.Add(time.Duration(i)*time.Hour))
+		// The generic sequence summary carries no account of the work.
+		writeStepSummary(t, filepath.Join(runs, run, "default", "logs", "connect", "execution", "execution-final-summary.json"),
+			map[string]string{"step_id": "connect", "run_folder": run, "execution_result": "Message sequence connect completed: 2 item(s) completed"}, base.Add(time.Duration(i)*time.Hour))
+	}
+	writeStepSummary(t, filepath.Join(runs, "iteration-3", "default", "logs", "collect", "execution", "execution-final-summary.json"),
+		map[string]string{"step_id": "collect", "run_folder": "iteration-3", "execution_result": "wrote 4 rows"}, base)
+	writeStepSummary(t, filepath.Join(runs, "pulse", "p1", "logs", "x", "execution", "execution-final-summary.json"),
+		map[string]string{"step_id": "x", "execution_result": "reviewer text"}, base)
+
+	view := collectStepOutputs("Workflow/example", "")
+	if len(view.Steps) != 2 {
+		t.Fatalf("steps = %+v, want connect and collect only", view.Steps)
+	}
+	connect := view.Steps[0]
+	if connect.StepID != "connect" || len(connect.Runs) != 3 {
+		t.Fatalf("connect = %+v", connect)
+	}
+	if connect.Runs[0].RunFolder != "iteration-3" || connect.Runs[0].Result != "Rebuilt the output from the previous run again." {
+		t.Fatalf("newest run = %+v", connect.Runs[0])
+	}
+	if got := connect.Runs[1].Result; got != "Rebuilt the output from the previous run; no new actions were performed." {
+		t.Fatalf("CONCERNS line should be dropped from the result, got %q", got)
+	}
+	if got := connect.Runs[2].Result; got != "Found 10 builders and followed all 10." {
+		t.Fatalf("STATUS line should be dropped from the result, got %q", got)
+	}
+	if only := collectStepOutputs("Workflow/example", "collect"); len(only.Steps) != 1 || only.Steps[0].Runs[0].Result != "wrote 4 rows" {
+		t.Fatalf("step filter = %+v", only)
 	}
 }

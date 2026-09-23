@@ -26,15 +26,17 @@ var cliDownloadFiles = map[string]string{
 	"version.json":                   "application/json",
 }
 
-// cliDownloadsDirOverride pins the downloads directory in tests. Empty means
-// resolve from the running executable: releases lay out <release>/bin/<agent>
-// with <release>/downloads beside it, so the served CLI always matches the
-// running server. Dev checkouts have no such directory and 404.
+// cliDownloadsDirOverride pins the downloads directory in tests. Production
+// releases place downloads next to bin; the local run script sets an explicit
+// directory for the native CLI and installer it packages before startup.
 var cliDownloadsDirOverride string
 
 func cliDownloadsDir() string {
 	if cliDownloadsDirOverride != "" {
 		return cliDownloadsDirOverride
+	}
+	if configured := os.Getenv("AGENTWORKS_CLI_DOWNLOAD_DIR"); filepath.IsAbs(configured) {
+		return configured
 	}
 	exe, err := os.Executable()
 	if err != nil {
@@ -45,8 +47,8 @@ func cliDownloadsDir() string {
 
 // handleCliDownload serves one CLI distribution file. The route is public on
 // both the gateway and the app (same as the CDP launcher zip): the binaries
-// are useless without a per-user access token, which the installer collects
-// separately and the app verifies on every call.
+// require a per-user browser approval (or a legacy personal token), which
+// the app verifies on every call.
 func (api *StreamingAPI) handleCliDownload(w http.ResponseWriter, r *http.Request) {
 	name := mux.Vars(r)["file"]
 	contentType, ok := cliDownloadFiles[name]

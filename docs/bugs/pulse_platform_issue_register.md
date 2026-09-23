@@ -55,8 +55,10 @@ chat-only SQLite journal per interactive session, read by sequence range for
 restore, resume and pagination. Shipped on main and deployed to RTS on
 2026-09-23 with its review fixes (cursor, deletes, per-session journal lock,
 startup import on every launch path, access-token carry-over, CORS, stream
-start cursor). Still open: stable client/server message IDs and a journal
-retention/size policy with artifact storage for large messages.
+start cursor). The final phase adds stable client message IDs with
+delivery-time ordering, artifact storage for oversized rows (with a
+"Show full" view), and retention that keeps every chat while compacting old
+bulk under a size cap. Complete on main; RTS verification pending.
 
 ## Retained turns settle on durable runner outcome when the pane never idles — PLAT-351
 

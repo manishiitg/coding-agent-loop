@@ -28,6 +28,7 @@ import { DeliveryTick } from './events/system/DeliveryTick'
 import { deliveryTickState } from './events/system/deliveryTickState'
 import { askAIDisplayText, hasAskAIMessage } from '../utils/askAIMessage'
 import { isChatDeliveryTelemetryEvent, recordChatDeliveryTelemetry } from '../utils/chatDeliveryTelemetry'
+import { ShowFullContentButton, chatArtifactRef, useChatArtifactText } from './ChatArtifactExpander'
 
 // Message text sizes multiply --chat-scale (default 1), so a product can offer
 // a bigger reading size (SparkQuill's Child Mode "T" button sets it on the
@@ -385,13 +386,20 @@ function buildTurnSlots(data: TranscriptRenderItem[]): TurnSlot[] {
   return slots
 }
 
+const ASSISTANT_ARTIFACT_KEYS = ['content', 'final_result', 'result'] as const
+
 const AssistantTranscriptMessage: React.FC<{ event: PollingEvent; content: string; timestamp: string; label?: string; icon?: React.ReactNode; framed?: boolean }> = ({ event, content, timestamp, label = 'Agent', icon, framed = true }) => {
+  const artifact = useMemo(() => chatArtifactRef(event), [event])
+  const full = useChatArtifactText(artifact, ASSISTANT_ARTIFACT_KEYS)
   return (
     <article data-testid="terminal-clear-assistant-message" className={framed ? `my-4 ${AGENT_BLOCK_CLASS}` : 'py-1'}>
       {framed && <AssistantTurnHeader event={event} timestamp={timestamp} label={label} icon={icon} />}
       <div className="[&_li]:!text-[length:calc(14px*var(--chat-scale,1))] [&_p]:!text-[length:calc(14px*var(--chat-scale,1))] [&_li]:!leading-[calc(24px*var(--chat-scale,1))] [&_p]:!leading-[calc(24px*var(--chat-scale,1))]">
-        <ConversationMarkdownRenderer content={content} framed={false} maxHeight="none" />
+        <ConversationMarkdownRenderer content={full.text || content} framed={false} maxHeight="none" />
       </div>
+      {artifact && !full.text && (
+        <ShowFullContentButton ref_={artifact} loading={full.loading} error={full.error} onLoad={() => { void full.load() }} label="Show full response" />
+      )}
     </article>
   )
 }
@@ -526,8 +534,18 @@ const RunActivityEvent: React.FC<{ label: string; target: string; state: 'starte
   </div>
 )
 
+const TOOL_ARTIFACT_KEYS = ['result', 'output', 'error'] as const
+
 const ToolCallCard: React.FC<{ pair: PairedToolCall }> = ({ pair }) => {
   const [open, toggleOpen] = useDisclosure(`tool:${pair.key}`)
+  const artifact = useMemo(() => {
+    for (const event of pair.events) {
+      const ref = chatArtifactRef(event)
+      if (ref) return ref
+    }
+    return null
+  }, [pair.events])
+  const fullOutput = useChatArtifactText(artifact, TOOL_ARTIFACT_KEYS)
   const hasDetail = Boolean(pair.args || pair.result)
   const resultFormatting = useMemo(
     () => pair.result ? formatToolCallResult(pair.result) : null,
@@ -580,7 +598,10 @@ const ToolCallCard: React.FC<{ pair: PairedToolCall }> = ({ pair }) => {
       {open && (
         <div className="space-y-2 border-t border-border/70 px-2 py-2">
           {pair.args && <ToolCallField label="Arguments" value={pair.args} />}
-          {pair.result && <ToolCallField label="Output" value={pair.result} />}
+          {(fullOutput.text || pair.result) && <ToolCallField label="Output" value={fullOutput.text || pair.result || ''} />}
+          {artifact && !fullOutput.text && (
+            <ShowFullContentButton ref_={artifact} loading={fullOutput.loading} error={fullOutput.error} onLoad={() => { void fullOutput.load() }} label="Load full output" />
+          )}
           {!hasDetail && (
             <p className="text-[11px] leading-5 text-muted-foreground">
               This coding-CLI call did not retain its arguments or output. New calls will include them once the bridge trace update is running.

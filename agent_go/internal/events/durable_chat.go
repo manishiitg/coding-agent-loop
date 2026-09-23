@@ -3,9 +3,6 @@ package events
 import (
 	"encoding/json"
 	"strings"
-	"unicode/utf8"
-
-	pkgevents "github.com/manishiitg/mcpagent/events"
 )
 
 const maxDurableChatEventBytes = 64 * 1024
@@ -59,80 +56,14 @@ func IsDurableChatEvent(event Event) bool {
 	return kind == "" || kind == "main" || kind == "main_agent" || kind == "chat" || durableChildSummaryTypes[event.Type]
 }
 
+// projectDurableChatEvent selects the rows that belong to chat history. Size
+// bounding happens in the journal itself, which moves an oversized row into a
+// private artifact and stores its summary (see spillOversizedEvent).
 func projectDurableChatEvent(event Event) (Event, bool) {
 	if !IsDurableChatEvent(event) {
 		return Event{}, false
 	}
-	return compactDurableChatEvent(event), true
-}
-
-func compactDurableChatEvent(event Event) Event {
-	encoded, err := json.Marshal(event)
-	if err != nil || len(encoded) <= maxDurableChatEventBytes {
-		return event
-	}
-	payload := eventPayloadMap(&event)
-	fields := make(map[string]interface{}, 16)
-	for _, key := range []string{"content", "final_result", "result", "error", "message", "question", "tool_name", "tool_call_id", "name", "status", "role", "source"} {
-		value, exists := payload[key]
-		if !exists {
-			continue
-		}
-		if text, ok := value.(string); ok {
-			fields[key] = truncateDurableText(text, 48*1024)
-		} else if value == nil || isDurableScalar(value) {
-			fields[key] = value
-		}
-	}
-	if metadata, ok := payload["metadata"].(map[string]interface{}); ok {
-		boundedMetadata := make(map[string]interface{})
-		for _, key := range []string{"kind", "message_id", "client_message_id", "display_content", "turn_id", "provider", "confirmation", "delivery_status"} {
-			if value, exists := metadata[key]; exists && isDurableScalar(value) {
-				boundedMetadata[key] = value
-			}
-		}
-		if len(boundedMetadata) > 0 {
-			fields["metadata"] = boundedMetadata
-		}
-	}
-	fields["payload_truncated"] = true
-	fields["original_size_bytes"] = len(encoded)
-	fields["artifact_source"] = "conversation_json"
-	fields["artifact_event_id"] = event.ID
-	event.Data = &pkgevents.AgentEvent{
-		Type:      pkgevents.EventType(event.Type),
-		Timestamp: event.Timestamp,
-		SessionID: event.SessionID,
-		Data:      NewGenericEventData(event.Type, fields),
-	}
-	if compact, marshalErr := json.Marshal(event); marshalErr == nil && len(compact) > maxDurableChatEventBytes {
-		for key, value := range fields {
-			if text, ok := value.(string); ok && len(text) > 4*1024 {
-				fields[key] = truncateDurableText(text, 4*1024)
-			}
-		}
-	}
-	if compact, marshalErr := json.Marshal(event); marshalErr == nil && len(compact) > maxDurableChatEventBytes {
-		minimal := map[string]interface{}{
-			"payload_truncated":   true,
-			"original_size_bytes": len(encoded),
-			"artifact_source":     "conversation_json",
-			"artifact_event_id":   event.ID,
-		}
-		for _, key := range []string{"content", "final_result", "result", "error", "message", "question"} {
-			if text, ok := fields[key].(string); ok && text != "" {
-				minimal[key] = truncateDurableText(text, 16*1024)
-				break
-			}
-		}
-		for _, key := range []string{"tool_name", "tool_call_id", "name", "status", "role", "source"} {
-			if value, ok := fields[key]; ok {
-				minimal[key] = value
-			}
-		}
-		event.Data.Data = NewGenericEventData(event.Type, minimal)
-	}
-	return event
+	return event, true
 }
 
 func isDurableScalar(value interface{}) bool {
@@ -142,17 +73,6 @@ func isDurableScalar(value interface{}) bool {
 	default:
 		return false
 	}
-}
-
-func truncateDurableText(value string, limit int) string {
-	if len(value) <= limit {
-		return value
-	}
-	value = value[:limit]
-	for len(value) > 0 && !utf8.ValidString(value) {
-		value = value[:len(value)-1]
-	}
-	return value + "\n\n[Full payload retained in conversation JSON diagnostics]"
 }
 
 // ReadDurableChatPage reads the canonical SQLite conversation log directly.

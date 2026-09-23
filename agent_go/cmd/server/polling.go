@@ -167,6 +167,9 @@ type GetEventsResponse struct {
 	RuntimeState               *RuntimeSnapshot `json:"runtime_state,omitempty"`
 	OldestSequence             int64            `json:"oldest_sequence,omitempty"`
 	LatestSequence             int64            `json:"latest_sequence,omitempty"`
+	// PendingMessages are the viewer's queued messages the CLI has not taken
+	// yet (no durable row exists until it does). Restore reads only.
+	PendingMessages []PendingQueuedMessage `json:"pending_messages,omitempty"`
 }
 
 // --- POLLING API HANDLERS ---
@@ -204,25 +207,11 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		return
 	}
 	if durableChat {
-		if _, _, allowed := chatHistoryWorkspaceAccess(r, workspacePath); !allowed {
-			http.Error(w, "workflow access denied", http.StatusForbidden)
+		if status, message := api.authorizeDurableChatRead(r, sessionID, workspacePath); status != 0 {
+			http.Error(w, message, status)
 			return
 		}
-		if existsInActive {
-			if !api.eventStore.IsDurableChatSession(sessionID) {
-				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
-				return
-			}
-		} else {
-			ownerID, ownerErr := api.eventStore.DurableChatOwner(sessionID)
-			if ownerErr != nil {
-				http.Error(w, "Failed to authorize durable chat", http.StatusInternalServerError)
-				return
-			}
-			if ownerID == "" || !durableChatReadAllowed(r, sessionID, ownerID, workspacePath) {
-				http.Error(w, "Session not found or access denied", http.StatusNotFound)
-				return
-			}
+		if !existsInActive {
 			if err := api.eventStore.SetSessionPersistenceClass(sessionID, events.SessionPersistenceInteractiveChat); err != nil {
 				http.Error(w, "Session is not an interactive chat", http.StatusConflict)
 				return
@@ -410,6 +399,9 @@ func (api *StreamingAPI) handleGetSessionEvents(w http.ResponseWriter, r *http.R
 		RuntimeState:               &runtimeState,
 		OldestSequence:             firstEventSequence(sessionEvents),
 		LatestSequence:             lastEventSequence(sessionEvents, int64(lastProcessedIndex)),
+	}
+	if durableChat && !cursorOnly && sinceStr == "" && beforeSequenceStr == "" {
+		response.PendingMessages = api.pendingQueuedMessages(r.Context(), currentUserID, sessionID)
 	}
 
 	if err := json.NewEncoder(w).Encode(response); err != nil {

@@ -5,7 +5,7 @@ import { agentApi } from '../services/api'
 import type { PollingEvent } from '../services/api-types'
 import { truncateTabTitle } from './textUtils'
 import { applyLiveInputConfirmations, resolveLiveInputConfirmations, splitLiveInputConfirmations } from './liveInputReceipt'
-import { keepUnechoedProvisionals } from './clientMessageIdentity'
+import { keepUnechoedProvisionals, pendingQueuedProvisionals } from './clientMessageIdentity'
 import type { LiveInputConfirmationUpdate } from './liveInputReceipt'
 import axios from 'axios'
 
@@ -277,6 +277,7 @@ export async function hydrateTabEvents(
   const concurrentEvents = eventsNow.filter(event => event.id && !startingIDs.has(event.id))
   // A provisional bubble survives only until its durable row is on the page.
   const restored = keepUnechoedProvisionals(response.events, eventsNow)
+  restored.push(...pendingQueuedProvisionals(response.pending_messages, restored, sessionId))
   chatStore.setTabEvents(sessionId, resolveLiveInputConfirmations(restored))
   if (concurrentEvents.length > 0) appendRestoredLiveTail(sessionId, concurrentEvents)
   const cursor = response.latest_sequence ?? response.last_processed_index

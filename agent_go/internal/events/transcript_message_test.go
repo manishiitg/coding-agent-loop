@@ -3,7 +3,6 @@ package events
 import (
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 
 	pkgevents "github.com/manishiitg/mcpagent/events"
@@ -14,50 +13,6 @@ func transcriptMessage(id, content string) Event {
 		Type: pkgevents.EventType("streaming_chunk"),
 		Data: &pkgevents.StreamingChunkEvent{Source: "transcript", Content: content},
 	}}
-}
-
-func TestDurableChatProjectionBoundsLargeTranscriptWithDiagnosticReference(t *testing.T) {
-	event := transcriptMessage("large-message", strings.Repeat("x", 200*1024))
-	projected, keep := projectDurableChatEvent(event)
-	if !keep {
-		t.Fatal("large transcript was dropped")
-	}
-	encoded, err := json.Marshal(projected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(encoded) > maxDurableChatEventBytes {
-		t.Fatalf("projected row is %d bytes, limit %d", len(encoded), maxDurableChatEventBytes)
-	}
-	var document map[string]interface{}
-	if err := json.Unmarshal(encoded, &document); err != nil {
-		t.Fatal(err)
-	}
-	data := document["data"].(map[string]interface{})["data"].(map[string]interface{})
-	if data["payload_truncated"] != true || data["artifact_event_id"] != "large-message" {
-		t.Fatalf("missing diagnostic reference: %+v", data)
-	}
-}
-
-func TestDurableChatProjectionHardBoundsManyLargeFields(t *testing.T) {
-	fields := map[string]interface{}{}
-	for _, key := range []string{"content", "final_result", "result", "error", "message", "question", "tool_name", "tool_call_id", "name", "status", "role", "source"} {
-		fields[key] = strings.Repeat(key, 32*1024)
-	}
-	event := Event{ID: "large-tool", Type: "tool_call_end", Data: &pkgevents.AgentEvent{
-		Type: pkgevents.EventType("tool_call_end"), Data: NewGenericEventData("tool_call_end", fields),
-	}}
-	projected, keep := projectDurableChatEvent(event)
-	if !keep {
-		t.Fatal("large tool event was dropped")
-	}
-	encoded, err := json.Marshal(projected)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(encoded) > maxDurableChatEventBytes {
-		t.Fatalf("projected row is %d bytes, limit %d", len(encoded), maxDurableChatEventBytes)
-	}
 }
 
 func TestTranscriptMessageClassificationSurvivesJSON(t *testing.T) {

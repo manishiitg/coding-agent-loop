@@ -1,4 +1,5 @@
 import type { PollingEvent } from '../services/api-types'
+import type { PendingQueuedMessage } from '../../shared/session/types'
 
 // A submitted message's identity is its submission id (the Idempotency-Key the
 // chat journal already requires). The browser's provisional bubble and the
@@ -88,4 +89,41 @@ export function keepUnechoedProvisionals(
 export function userMessageDisplayContent(event: PollingEvent): string {
   const display = userMessageMetadata(event).display_content
   return typeof display === 'string' ? display.trim() : ''
+}
+
+// Messages still waiting in the server's turn queue have no durable row yet.
+// Restore shows them as queued provisional bubbles (same id as the durable row
+// that will replace them) so a reload or another tab does not lose them.
+export function pendingQueuedProvisionals(
+  pending: PendingQueuedMessage[] | undefined,
+  present: PollingEvent[],
+  sessionId: string,
+): PollingEvent[] {
+  if (!pending?.length) return []
+  const presentIds = new Set(present.map(event => event.id))
+  return pending
+    .filter(message => message.client_message_id && !presentIds.has(clientMessageEventId(message.client_message_id)))
+    .map(message => {
+      const timestamp = message.queued_at || new Date().toISOString()
+      return {
+        id: clientMessageEventId(message.client_message_id),
+        type: 'user_message',
+        timestamp,
+        session_id: sessionId,
+        data: {
+          type: 'user_message',
+          timestamp,
+          data: {
+            content: message.content,
+            timestamp,
+            metadata: {
+              client_message_id: message.client_message_id,
+              provisional: true,
+              delivery_status: 'queued_for_turn',
+              ...(message.queue_position ? { queue_position: message.queue_position } : {}),
+            },
+          },
+        },
+      } as unknown as PollingEvent
+    })
 }

@@ -120,3 +120,20 @@ describe('store ordering (RTS A/B incident)', () => {
     expect(useChatStore.getState().getTabEvents(SESSION).map(event => event.id)).toEqual(['user:one', 'user:two'])
   }, 60000)
 })
+
+describe('pendingQueuedProvisionals', () => {
+  it('shows queued messages without a durable row as queued provisional bubbles', async () => {
+    const { pendingQueuedProvisionals } = await import('./clientMessageIdentity')
+    const present = [{ id: 'user:sub-1', type: 'user_message' }] as never
+    const rows = pendingQueuedProvisionals([
+      { client_message_id: 'sub-1', content: 'already echoed' },
+      { client_message_id: 'sub-2', content: 'still queued', queue_position: 1, queued_at: '2026-09-23T05:00:00Z' },
+    ], present, 'chat-1')
+    expect(rows).toHaveLength(1)
+    const row = rows[0] as unknown as { id: string; session_id: string; data: { data: { content: string; metadata: Record<string, unknown> } } }
+    expect(row.id).toBe('user:sub-2')
+    expect(row.session_id).toBe('chat-1')
+    expect(row.data.data.content).toBe('still queued')
+    expect(row.data.data.metadata).toMatchObject({ client_message_id: 'sub-2', provisional: true, delivery_status: 'queued_for_turn', queue_position: 1 })
+  })
+})

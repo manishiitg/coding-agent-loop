@@ -82,11 +82,21 @@ func OpenSQLiteEventJournal(path string) (*SQLiteEventJournal, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return nil, err
 	}
+	_, statErr := os.Stat(path)
+	freshDatabase := errors.Is(statErr, os.ErrNotExist)
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, err
 	}
 	db.SetMaxOpenConns(1)
+	if freshDatabase {
+		// Must precede the first table; existing files keep their mode and are
+		// reported by maintenance as needing a one-time VACUUM instead.
+		if _, err := db.Exec(`PRAGMA auto_vacuum=INCREMENTAL`); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("initialize structured event journal: %w", err)
+		}
+	}
 	for _, statement := range []string{
 		`PRAGMA journal_mode=WAL`,
 		`PRAGMA synchronous=FULL`,
@@ -191,6 +201,12 @@ func (j *SQLiteEventJournal) MarkMigrationComplete(sessionID string) error {
 func (j *SQLiteEventJournal) Append(sessionID string, event Event) (Event, bool, error) {
 	if j == nil || j.db == nil || sessionID == "" || event.ID == "" {
 		return Event{}, false, fmt.Errorf("structured event journal requires session_id and event_id")
+	}
+	// Written before the transaction so file IO never holds the database; a
+	// replayed duplicate simply rewrites the same artifact content.
+	event, err := j.spillOversizedEvent(sessionID, event)
+	if err != nil {
+		return Event{}, false, err
 	}
 	tx, err := j.db.BeginTx(context.Background(), &sql.TxOptions{})
 	if err != nil {
@@ -406,6 +422,9 @@ func (j *SQLiteEventJournal) DeleteSession(sessionID string) error {
 		return err
 	}
 	if err := tx.Commit(); err != nil {
+		return err
+	}
+	if err := j.removeSessionArtifacts(sessionID); err != nil {
 		return err
 	}
 	return j.Checkpoint()

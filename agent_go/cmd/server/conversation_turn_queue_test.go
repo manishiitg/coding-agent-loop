@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
@@ -141,4 +142,30 @@ func (api *StreamingAPI) mustReadTurnQueueForTest(t *testing.T, userID string) [
 		t.Fatal(err)
 	}
 	return turns
+}
+
+func TestPendingQueuedMessagesListOnlyUnstartedKeyedTurnsOfTheSession(t *testing.T) {
+	started := time.Now()
+	document := conversationTurnQueueDocument{Version: conversationTurnQueueVersion, Turns: []queuedConversationTurn{
+		{ID: "t1", UserID: "alice", SessionID: "chat", SubmissionID: "sub-running", Request: QueryRequest{Query: "running"}, StartedAt: &started},
+		{ID: "t2", UserID: "alice", SessionID: "chat", SubmissionID: "sub-next", Request: QueryRequest{Query: "queued one"}, CreatedAt: started},
+		{ID: "t3", UserID: "alice", SessionID: "chat", Request: QueryRequest{Query: "unkeyed"}},
+		{ID: "t4", UserID: "alice", SessionID: "other", SubmissionID: "sub-other", Request: QueryRequest{Query: "elsewhere"}},
+		{ID: "t5", UserID: "alice", SessionID: "chat", SubmissionID: "sub-later", Request: QueryRequest{Query: "queued two"}},
+	}}
+	raw, err := json.Marshal(document)
+	if err != nil {
+		t.Fatal(err)
+	}
+	api := newConversationTurnQueueTestAPI(map[string]string{conversationTurnQueuePath("alice"): string(raw)})
+	pending := api.pendingQueuedMessages(context.Background(), "alice", "chat")
+	if len(pending) != 2 || pending[0].ClientMessageID != "sub-next" || pending[1].ClientMessageID != "sub-later" {
+		t.Fatalf("pending = %+v, want sub-next then sub-later", pending)
+	}
+	if pending[0].Content != "queued one" || pending[0].QueuePosition != 1 || pending[1].QueuePosition != 2 {
+		t.Fatalf("pending details = %+v", pending)
+	}
+	if other := api.pendingQueuedMessages(context.Background(), "bob", "chat"); len(other) != 0 {
+		t.Fatalf("another user's queue leaked: %+v", other)
+	}
 }

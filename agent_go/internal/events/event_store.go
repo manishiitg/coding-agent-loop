@@ -77,7 +77,6 @@ const InitialEventsLimit = 300
 
 const (
 	durableAppendSlowThreshold = 50 * time.Millisecond
-	journalSizeWarningBytes    = 512 * 1024 * 1024
 )
 
 // STRUCTURAL_EVENTS are required to preserve hierarchy and important terminal
@@ -665,11 +664,16 @@ type EventStore struct {
 	maxEvents              int // Maximum events per session
 	cleanupTicker          *time.Ticker
 	stopCh                 chan struct{}
-	activityCallback       ActivityCallback // Optional callback to update session activity
-	eventAddedCallback     EventAddedCallback
-	durableJournal         DurableEventJournal
-	hydratedSessions       map[string]bool
-	hydrateMu              sync.Mutex
+	// journalMaintenanceStarted guards the single compaction/size-guard loop.
+	journalMaintenanceStarted bool
+	// steerOrdering holds answer rows behind a deferred steered message.
+	steerOrderingOnce  sync.Once
+	steerOrdering      *steerOrdering
+	activityCallback   ActivityCallback // Optional callback to update session activity
+	eventAddedCallback EventAddedCallback
+	durableJournal     DurableEventJournal
+	hydratedSessions   map[string]bool
+	hydrateMu          sync.Mutex
 	// journalProbed caches "journal has no history for this session" so an
 	// unclassified live-only session pays for the probe once, not per event.
 	journalProbed map[string]bool
@@ -723,6 +727,10 @@ func (es *EventStore) SetDurableJournal(journal DurableEventJournal) {
 	es.mu.Lock()
 	defer es.mu.Unlock()
 	es.durableJournal = journal
+	if _, compacts := journal.(DurableEventJournalCompactor); compacts && !es.journalMaintenanceStarted {
+		es.journalMaintenanceStarted = true
+		go es.runJournalMaintenanceLoop(LoadJournalMaintenanceConfig())
+	}
 }
 
 func (es *EventStore) hydrateSession(sessionID string) {
@@ -934,6 +942,13 @@ func (es *EventStore) AddEvent(sessionID string, event Event) {
 // acceptance boundary. Canonical producer bridges use this method so a failed
 // append can stop or retry upstream delivery.
 func (es *EventStore) AddEventChecked(sessionID string, event Event) error {
+	if es.holdForDeferredSteer(sessionID, event) {
+		return nil
+	}
+	return es.addEventUnheld(sessionID, event)
+}
+
+func (es *EventStore) addEventUnheld(sessionID string, event Event) error {
 	es.hydrateSession(sessionID)
 	// The per-session lock spans sequence assignment, the durable append and the
 	// in-memory insert, so a session's events stay ordered while mu is released
@@ -1562,31 +1577,11 @@ func (es *EventStore) cleanupRoutine() {
 		select {
 		case <-es.cleanupTicker.C:
 			es.cleanupInactiveSessions()
-			es.logDurableJournalStats()
 		case <-es.stopCh:
 			es.cleanupTicker.Stop()
 			return
 		}
 	}
-}
-
-func (es *EventStore) logDurableJournalStats() {
-	es.mu.RLock()
-	journal, ok := es.durableJournal.(DurableEventJournalStats)
-	es.mu.RUnlock()
-	if !ok {
-		return
-	}
-	stats, err := journal.Stats()
-	if err != nil {
-		log.Printf("[EventStore] structured journal stats failed: %v", err)
-		return
-	}
-	level := "info"
-	if stats.SizeBytes >= journalSizeWarningBytes {
-		level = "warning"
-	}
-	log.Printf("[EventStore] structured journal stats level=%s bytes=%d events=%d path=%s", level, stats.SizeBytes, stats.Events, stats.Path)
 }
 
 // cleanupInactiveSessions removes sessions that haven't been active recently

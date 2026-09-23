@@ -101,6 +101,50 @@ func TestSteeredMessageIsRecordedAfterTheInFlightAnswer(t *testing.T) {
 	}
 }
 
+// Fast-answer race: the CLI took B and journalled the start of its answer
+// before the durable ack arrived. B's answer must still follow B.
+func TestSteeredAnswerJournalledBeforeTheAckStillFollowsTheQuestion(t *testing.T) {
+	const session = "crew-steer-race"
+	store := openClientIdentityTestStore(t, session)
+	release := make(chan struct{})
+	api := &StreamingAPI{eventStore: store,
+		internalDurableAckHandler: func(ctx context.Context, _ llmproviders.Provider, _, _ string) (llmtypes.DurableAck, error) {
+			select {
+			case <-release:
+			case <-ctx.Done():
+			}
+			return llmtypes.DurableAck{Outcome: llmtypes.DurableAckConfirmed, ProofSource: "transcript"}, nil
+		},
+	}
+	completion := func(id, text string) internalevents.Event {
+		return internalevents.Event{ID: id, Type: "unified_completion", Timestamp: time.Now(), Data: &pkgevents.AgentEvent{
+			Type: pkgevents.EventType("unified_completion"),
+			Data: internalevents.NewGenericEventData("unified_completion", map[string]interface{}{"final_result": text}),
+		}}
+	}
+
+	store.AddEvent(session, testUserMessage("user:sub-a", "this ticket <url>"))
+	api.recordLiveCodingAgentUserMessage(session, "whats the title of this ticket?", string(llmproviders.ProviderClaudeCode), "steer-b", "sent_to_cli", "sub-b")
+	store.AddEvent(session, testAssistantMessage("answer-a", "This is WEB-1681 ..."))
+	store.AddEvent(session, completion("completion-a", "This is WEB-1681 ..."))
+	// The CLI took B and answered before the ack watcher confirmed it.
+	store.AddEvent(session, testAssistantMessage("answer-b", "Centralize shared database migrations in lib-core"))
+	store.AddEvent(session, completion("completion-b", "Centralize shared database migrations in lib-core"))
+	close(release)
+	waitForLiveInputConfirmed(t, store, session)
+
+	want := []string{"user:sub-a", "answer-a", "completion-a", "user:sub-b", "answer-b", "completion-b", "steer-b:confirmed"}
+	got := durableChatIDs(t, store, session)
+	if len(got) != len(want) {
+		t.Fatalf("journal order = %v, want %v", got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("journal order = %v, want %v", got, want)
+		}
+	}
+}
+
 func TestSteerWithoutDurableAckIsRecordedImmediately(t *testing.T) {
 	const session = "steer-no-ack"
 	store := openClientIdentityTestStore(t, session)

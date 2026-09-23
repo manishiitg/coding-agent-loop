@@ -47,6 +47,7 @@ import type {
   SharedProjectFileEntry,
   SharedProjectSummary,
   GetEventsResponse,
+  PollingEvent,
   TerminalEventsResponse,
   MCPServerConfig,
   ChatHistoryConversation,
@@ -798,6 +799,14 @@ export const agentApi = {
       durableChat: true,
       workspacePath,
     })
+  },
+
+  // Complete event behind a journal row that was summarized for size.
+  getChatArtifact: async (sessionId: string, artifactId: string, workspacePath?: string): Promise<PollingEvent> => {
+    const response = await api.get(`/api/sessions/${encodeURIComponent(sessionId)}/chat-artifacts/${encodeURIComponent(artifactId)}`, {
+      params: workspacePath ? { workspace_path: workspacePath } : undefined,
+    })
+    return response.data
   },
 
   // Refresh needs runtime state and the SSE resume position, not the retained

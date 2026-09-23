@@ -2455,6 +2455,7 @@ func runServer(cmd *cobra.Command, args []string) {
 	// active sessions + workflow schedule counts in one round trip.
 	apiRouter.HandleFunc("/header-summary", api.handleGetHeaderSummary).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/events", api.handleGetSessionEvents).Methods("GET")
+	apiRouter.HandleFunc("/sessions/{session_id}/chat-artifacts/{artifact_id}", api.handleGetChatArtifact).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/ui-control", api.handleUIControl).Methods("POST")
 	apiRouter.HandleFunc("/sessions/{session_id}/events/stream", api.handleSSEStream).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/reconnect", api.handleReconnectSession).Methods("POST")

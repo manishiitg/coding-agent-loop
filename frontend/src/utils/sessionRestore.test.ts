@@ -75,6 +75,19 @@ describe('hydrateTabEvents SQLite source', () => {
   })
 
 
+  it('shows messages still waiting in the server queue after a reload', async () => {
+    mocks.getRecentChatEvents.mockResolvedValue({
+      events: [{ id: 'user:sub-1', type: 'user_message', sequence: 4 }],
+      session_status: 'running', last_processed_index: 4, has_more: false,
+      pending_messages: [{ client_message_id: 'sub-2', content: 'next question', queue_position: 1 }],
+    })
+
+    await hydrateTabEvents('chat-1')
+
+    const rows = mocks.setTabEvents.mock.lastCall?.[1] as Array<{ id: string }>
+    expect(rows.map(row => row.id)).toEqual(['user:sub-1', 'user:sub-2'])
+  })
+
   it('restores a never-used chat (404) as an empty conversation instead of failing', async () => {
     mocks.getRecentChatEvents.mockRejectedValue(
       Object.assign(new Error('Not Found'), { isAxiosError: true, response: { status: 404 } }),

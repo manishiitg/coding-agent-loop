@@ -433,3 +433,40 @@ func (api *StreamingAPI) recoverConversationTurnQueue(ctx context.Context) {
 func logTurnQueue(format string, args ...interface{}) {
 	scheduleLogf("[CONVERSATION-TURN-QUEUE] "+format, args...)
 }
+
+// PendingQueuedMessage is a keyed message waiting in the durable turn queue.
+type PendingQueuedMessage struct {
+	ClientMessageID string    `json:"client_message_id"`
+	Content         string    `json:"content"`
+	QueuedAt        time.Time `json:"queued_at"`
+	QueuePosition   int       `json:"queue_position"`
+}
+
+// pendingQueuedMessages lists the viewer's not-yet-started keyed turns for a
+// session so a reload or another tab can show them before the CLI takes them.
+func (api *StreamingAPI) pendingQueuedMessages(ctx context.Context, userID, sessionID string) []PendingQueuedMessage {
+	if api == nil || userID == "" || sessionID == "" {
+		return nil
+	}
+	turns, err := api.readConversationTurnQueue(ctx, userID)
+	if err != nil {
+		return nil
+	}
+	var pending []PendingQueuedMessage
+	for _, turn := range turns {
+		if turn.SessionID != sessionID || turn.StartedAt != nil {
+			continue
+		}
+		clientMessageID := sanitizeClientMessageID(turn.SubmissionID)
+		if clientMessageID == "" {
+			continue
+		}
+		pending = append(pending, PendingQueuedMessage{
+			ClientMessageID: clientMessageID,
+			Content:         turn.Request.Query,
+			QueuedAt:        turn.CreatedAt,
+			QueuePosition:   len(pending) + 1,
+		})
+	}
+	return pending
+}

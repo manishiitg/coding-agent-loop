@@ -81,6 +81,15 @@ export interface GetEventsResponse {
   runtime_state?: RuntimeSnapshot
   oldest_sequence?: number
   latest_sequence?: number
+  // The viewer's queued messages the CLI has not taken yet (restore reads only).
+  pending_messages?: PendingQueuedMessage[]
+}
+
+export interface PendingQueuedMessage {
+  client_message_id: string
+  content: string
+  queued_at?: string
+  queue_position?: number
 }
 
 export interface TerminalEventsResponse {

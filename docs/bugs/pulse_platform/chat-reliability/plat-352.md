@@ -4,7 +4,7 @@
 
 | Field | Value |
 |---|---|
-| Status | `chat-only journal shipped (main 0c737fdae; RTS 5cef1d8 on 2026-09-23); message-ID contract + retention open` |
+| Status | `complete on main; RTS verification of the final phase pending` |
 | Priority | P2 architecture |
 | Owner | platform (chat reliability) |
 | Reported | 2026-09-22 |
@@ -452,16 +452,59 @@ Decisions:
 - The historical batch-4 note that `workflow_error` has no emitter was wrong:
   `server.go` emits it and it stays live.
 
-Still open:
-1. Stable client/server message IDs. Plan: reuse the existing
-   `Idempotency-Key` / submission id as `client_message_id`, stamp it on every
-   keyed `user_message` with event id `user:<id>` (the journal's unique key
-   makes retries idempotent) and on `live_input_confirmed`, reconcile optimistic
-   rows by id, then delete the content-based identity transfer. Fresh-turn
-   echoes come from mcpagent, so the bridge must carry the submission id.
-2. Journal retention/size policy with referenced-artifact cleanup, together
-   with storing >64 KiB messages as artifacts instead of the current silent
-   48 KiB truncation.
+### Final phase (2026-09-23)
+
+Message IDs and ordering (`eb899b9e4`):
+- The submission id (`Idempotency-Key`) is the `client_message_id`. Keyed user
+  rows use event id `user:<id>` (retries dedupe on the journal key) and carry
+  it in metadata, as does `live_input_confirmed`. The browser's provisional
+  bubble shares the id and is replaced by its durable echo in arrival order;
+  content-based identity transfer is deleted.
+- A message steered into a busy CLI is journalled when the CLI confirms it
+  took the message (durable ack), not when it was sent, so the in-flight
+  answer no longer renders under the new question.
+
+Large messages and retention (this change):
+- Rows whose encoded size exceeds 64 KiB are written in full to a private
+  artifact (`<state>/chat-artifacts/<hash(session)>/<hash(event)>.json`, 0700
+  directories, 0600 files, atomic rename) and the journal keeps a bounded
+  summary with `truncated`, `artifact_id` and `original_size_bytes`. This
+  replaces the old silent 48 KiB cut. Live appends and the legacy import share
+  the path (it lives in `SQLiteEventJournal.Append`).
+- `GET /api/sessions/{id}/chat-artifacts/{artifact_id}` returns the full
+  event under exactly the durable-read authorization (one shared helper,
+  `authorizeDurableChatRead`, now also used by event pages). Artifact ids are
+  hashes validated as 32 hex characters, so no caller text reaches a path.
+  The transcript shows "Show full response" / "Load full output" on
+  summarized rows.
+- Deleting a chat removes its artifact directory with its rows.
+- Retention keeps every conversation. A maintenance pass (two minutes after
+  start, then daily) moves rows older than `CHAT_JOURNAL_COMPACT_AFTER_DAYS`
+  (30) and larger than `CHAT_JOURNAL_COMPACT_MIN_BYTES` (8 KiB) into artifacts
+  in place (same event id and sequence; never `user_message`; idempotent),
+  under each session's append lock. Above `CHAT_JOURNAL_MAX_BYTES` (2 GB) it
+  logs an alert and steps the age threshold down (14 d, 7 d, 1 d, 0), oldest
+  rows first, until under the cap. It then checkpoints the WAL and runs an
+  incremental vacuum. New journals are created with
+  `auto_vacuum=INCREMENTAL`; an existing journal reports
+  `needs_one_time_vacuum=true` in the maintenance log line instead of
+  blocking startup.
+
+Risks from the message-ID work:
+- Fast-answer race: resolved. While a deferred steer awaits its ack, answer
+  rows pass until the in-flight answer's `unified_completion`; later main-agent
+  answer rows (transcript messages, tool calls, completion) are held and
+  released right after the steered user row (20 s safety timeout). Covered by
+  a journal-level test where the answer is written before the ack.
+- Reload / other tabs: a keyed message still waiting in the durable turn
+  queue is returned as `pending_messages` on the restore read and shown as a
+  queued provisional bubble until its durable row replaces it. Accepted: a
+  message already handed to a busy CLI but not yet taken appears in other tabs
+  only once the CLI takes it (a second or less after the in-flight answer).
+
+Dropped from scope: the versioned canonical envelope and type renames.
+
+Remaining: none beyond verifying this final phase on RTS.
 
 Small follow-ups (done, 2026-09-23):
 - `orchestrator_agent_error` is visible again in the diagnostics rail; it is
@@ -477,6 +520,22 @@ Small follow-ups (done, 2026-09-23):
 - Per-session append locks are reference counted and pruned once idle.
 - `prune-releases.py` waits up to 180s for health; a failed prune on a healthy
   release is a warning, an unhealthy agent still fails the deploy.
+
+### Related infra (2026-09-23)
+
+The slow conversation loading investigated under this ticket also had
+infrastructure causes, fixed on RTS the same day:
+- Caddy had been hand-switched to HTTP/1.1 on 2026-09-22, so each open chat's
+  SSE stream consumed one of the browser's six per-origin connections and
+  other requests queued. HTTP/2 is re-enabled and pinned in
+  `deploy/aws-ec2/server/Caddyfile`.
+- The box used `cubic`; to lossy long-haul clients (India to us-west-2, ~44%
+  retransmits) that collapsed throughput. BBR is enabled
+  (`/etc/sysctl.d/90-bbr.conf`, also in the Caddy container namespace).
+- `video.realtrainingsys.com` is now served through CloudFront
+  (distribution `E1OYOJGT2ZANUB`; `/assets/*` cached at the edge, everything
+  else passed through). Every `./deploy.sh rts` reports its usage against the
+  free tier.
 
 ## Caveats
 

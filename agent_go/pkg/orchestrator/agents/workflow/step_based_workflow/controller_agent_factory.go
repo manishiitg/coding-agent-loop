@@ -1069,18 +1069,37 @@ func (hcpo *StepBasedWorkflowOrchestrator) selectPulseLLM(agentPurpose string) *
 	}
 }
 
+// selectPulseUpkeepLLM is the model for Pulse's platform-upkeep work (Plan
+// Drift, Technical and Architecture reviews, KB maintenance): the workflow's
+// Medium tier, so pulse_llm stays reserved for Goal Work. Without a Medium
+// tier it falls back to the Pulse model, then the phase model.
+func (hcpo *StepBasedWorkflowOrchestrator) selectPulseUpkeepLLM(agentPurpose string) *orchestrator.LLMConfig {
+	if hcpo.tierResolver != nil {
+		if cfg := hcpo.tierResolver.ResolveTier(TierMedium); cfg != nil {
+			hcpo.GetLogger().Info(fmt.Sprintf("🔧 Using Medium tier for Pulse upkeep %s: %s/%s",
+				agentPurpose, cfg.Primary.Provider, cfg.Primary.ModelID))
+			return cfg
+		}
+	}
+	return hcpo.selectPulseLLM(agentPurpose)
+}
+
 // selectBackgroundTaskLLM picks the model for a run_in_background child. A
-// child launched by a scheduler Pulse turn is a Pulse review agent (plan drift,
-// technical or strategic review) and gets the Pulse model; any other
-// background task follows the Builder (phase) model like the chat that spawned
-// it. This is the seam that makes pulse_llm real: the parent conversation keeps
-// its retained coding CLI and cannot change model mid-turn, but a background
-// child always starts its own process.
-func (hcpo *StepBasedWorkflowOrchestrator) selectBackgroundTaskLLM(pulseLifecycleTurn bool, agentPurpose string) *orchestrator.LLMConfig {
-	if pulseLifecycleTurn {
+// child launched by a scheduler Pulse turn is a Pulse agent: Goal Work
+// (review module strategic_review) gets the Pulse model, and every other Pulse
+// child (Plan Drift, Technical, Architecture) gets the cheaper upkeep model.
+// Any other background task follows the Builder (phase) model like the chat
+// that spawned it. The parent conversation keeps its retained coding CLI and
+// cannot change model mid-turn, but a background child always starts its own
+// process, so this is where the choice takes effect.
+func (hcpo *StepBasedWorkflowOrchestrator) selectBackgroundTaskLLM(pulseLifecycleTurn bool, reviewModule, agentPurpose string) *orchestrator.LLMConfig {
+	if !pulseLifecycleTurn {
+		return hcpo.selectPhaseLLM(agentPurpose)
+	}
+	if reviewModule == "strategic_review" {
 		return hcpo.selectPulseLLM(agentPurpose)
 	}
-	return hcpo.selectPhaseLLM(agentPurpose)
+	return hcpo.selectPulseUpkeepLLM(agentPurpose)
 }
 
 // createKBConsolidateAgent builds the one-shot KB consolidate agent. Same folder-guard
@@ -1101,7 +1120,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBConsolidateAgent(ctx context.
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB consolidate agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectPulseLLM("KB consolidate agent")
+	llmConfig := hcpo.selectPulseUpkeepLLM("KB consolidate agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB consolidate agent")
 	}
@@ -1163,7 +1182,7 @@ func (hcpo *StepBasedWorkflowOrchestrator) createKBReorganizeAgent(ctx context.C
 	hcpo.SetWorkspacePathForFolderGuard(readPaths, writePaths)
 	hcpo.GetLogger().Info(fmt.Sprintf("🔒 Setting folder guard for KB reorganize agent - Read: %v, Write: %v", readPaths, writePaths))
 
-	llmConfig := hcpo.selectPulseLLM("KB reorganize agent")
+	llmConfig := hcpo.selectPulseUpkeepLLM("KB reorganize agent")
 	if llmConfig == nil {
 		return nil, fmt.Errorf("no valid LLM configuration found for KB reorganize agent")
 	}

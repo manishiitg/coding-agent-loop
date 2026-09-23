@@ -31,10 +31,10 @@ type RoleRow = {
 
 const ROLE_ROWS: RoleRow[] = [
   { key: 'tier_1', label: 'High reasoning', description: 'First runs and complex execution.', group: 'Execution' },
-  { key: 'tier_2', label: 'Medium reasoning', description: 'Execution after useful learnings exist.', group: 'Execution' },
+  { key: 'tier_2', label: 'Medium reasoning', description: 'Execution after useful learnings exist, and Pulse upkeep (Plan Drift, Technical, Architecture).', group: 'Execution' },
   { key: 'tier_3', label: 'Low reasoning', description: 'Validation and mature learned tasks.', group: 'Execution' },
   { key: 'builder_llm', label: 'Builder', description: 'Chat, planning, evaluation design, scheduled runs, and the post-run Pulse conversation.', group: 'Workflow agents' },
-  { key: 'pulse_llm', label: 'Pulse', description: 'Background review agents Pulse launches (plan drift, technical, strategic) and KB maintenance.', group: 'Workflow agents' },
+  { key: 'pulse_llm', label: 'Pulse Goal Work', description: 'Goal Work: the Pulse pass that does work toward your goals. Pick your strongest model here.', group: 'Workflow agents' },
 ]
 
 const CODING_AGENT_PROVIDER_ORDER = ['claude-code', 'codex-cli', 'cursor-cli', 'pi-cli', 'muse-cli']

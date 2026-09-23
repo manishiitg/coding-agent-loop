@@ -8918,8 +8918,11 @@ func (iwm *InteractiveWorkshopManager) runBackgroundTaskAgentSequence(ctx contex
 	purpose := "background task agent"
 	if pulseTurn {
 		purpose = "Pulse review agent"
+		if reviewScope.Module != "" {
+			purpose = "Pulse " + reviewScope.Module + " agent"
+		}
 	}
-	llmConfigToUse := iwm.controller.selectBackgroundTaskLLM(pulseTurn, purpose)
+	llmConfigToUse := iwm.controller.selectBackgroundTaskLLM(pulseTurn, reviewScope.Module, purpose)
 	if llmConfigToUse == nil && iwm.presetLLM != nil && iwm.presetLLM.Provider != "" && iwm.presetLLM.ModelID != "" {
 		llmConfigToUse = workflowAgentLLMConfig(iwm.presetLLM, iwm.controller.GetAPIKeys())
 	}

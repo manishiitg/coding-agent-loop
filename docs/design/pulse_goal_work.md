@@ -336,3 +336,14 @@ Answered by the user on 2026-09-23:
    proposes loosening them.
 4. **Guards:** at most daily, at least weekly; first run after migration at
    06:00 local.
+
+### Models (2026-09-23)
+
+`pulse_llm` ("Pulse Goal Work" in the LLM settings) is used by Goal Work only:
+the strategic_review background agent of a scheduled Pulse. Plan Drift,
+Technical (including its Fixer) and Architecture review agents, plus
+knowledgebase maintenance, run on the workflow's Medium tier (`tier_2`), which
+falls back to the Pulse model and then the Builder model when missing. The Pulse
+conversation itself (Gate, dispatch, finalizer) stays on the Builder model
+because its retained coding CLI cannot switch models mid-conversation. Manual
+review commands run on the Builder model. See `selectBackgroundTaskLLM`.

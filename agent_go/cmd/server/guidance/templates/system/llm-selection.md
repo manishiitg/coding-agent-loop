@@ -12,11 +12,14 @@ A workflow always resolves these roles:
   retained coding CLI, so it runs on one model throughout.
 - **High execution**: first-time, ambiguous, or difficult step work.
 - **Medium execution**: established work with useful context and learnings.
+  Also Pulse upkeep: the Plan Drift, Technical and Architecture review agents
+  and knowledgebase maintenance run on the Medium tier.
 - **Low execution**: deterministic validation and mature routine work.
-- **Pulse**: the background review agents a Pulse turn launches with
-  `run_in_background` (plan drift review, technical review, architecture review, strategic review)
-  and knowledgebase maintenance -- work that starts its own process, which is
-  where a different model can actually take effect. Not the Gate, worklist,
+- **Pulse** (`pulse_llm`): Goal Work only -- the strategic_review agent a
+  Pulse turn launches with `run_in_background`, which does work toward the
+  user's goals. It starts its own process, which is where a different model
+  can actually take effect. Use the strongest model here; upkeep reviews use
+  the cheaper Medium tier. Not the Gate, worklist,
   report or notification turns themselves: those are Builder.
 
 The config has two modes:

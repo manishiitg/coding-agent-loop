@@ -48,6 +48,8 @@ type ScheduledJobResponse struct {
 	LastStatus           string                 `json:"last_status,omitempty"`
 	LastError            string                 `json:"last_error,omitempty"`
 	LastDurationMs       *int64                 `json:"last_duration_ms,omitempty"`
+	AvgDurationMs        *int64                 `json:"avg_duration_ms,omitempty"`
+	AvgDurationSamples   int                    `json:"avg_duration_samples,omitempty"`
 	RunCount             int                    `json:"run_count"`
 	ConsecutiveFailures  int                    `json:"consecutive_failures"`
 	// DeferredReason is set while a due product schedule is held back by its
@@ -561,6 +563,29 @@ func listScheduledJobsHandler(svc *SchedulerService) http.HandlerFunc {
 			allJobs = allJobs[offset:end]
 		}
 
+		// One history read per workspace keeps the list useful without making a
+		// separate request for every schedule. Missing history is not a list error.
+		durationByWorkspace := make(map[string]map[string]scheduleRunDurationAverage)
+		for i := range allJobs {
+			job := &allJobs[i]
+			if job.WorkspacePath == "" {
+				continue
+			}
+			averages, ok := durationByWorkspace[job.WorkspacePath]
+			if !ok {
+				runs, err := ReadScheduleRuns(r.Context(), job.WorkspacePath)
+				if err == nil {
+					averages = recentSuccessfulRunAverages(runs, 10)
+				}
+				durationByWorkspace[job.WorkspacePath] = averages
+			}
+			if average, found := averages[job.ID]; found {
+				value := average.DurationMs
+				job.AvgDurationMs = &value
+				job.AvgDurationSamples = average.Samples
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"jobs":   allJobs,
@@ -904,6 +929,11 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		}
 		if req.DependencyDeadline != nil {
 			sched.DependencyDeadline = strings.TrimSpace(*req.DependencyDeadline)
+		}
+		// A persisted legacy "full" was not chosen in this request; save it as
+		// its effective value. Explicitly requesting full is still rejected.
+		if req.PulseMode == nil {
+			sched.PulseMode = schedulepolicy.NormalizePulse(sched.PulseMode)
 		}
 		if err := schedulepolicy.ValidatePulse(sched.PulseMode, sched.PulseModeReason); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

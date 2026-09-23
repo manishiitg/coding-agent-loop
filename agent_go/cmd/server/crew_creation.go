@@ -628,6 +628,11 @@ func validateCrewCreationSkills(names []string) ([]string, error) {
 		return nil, err
 	}
 	for _, name := range checked {
+		// Built-in skills (agent-browser and product skills) are served from the
+		// in-memory registry, exactly as attachment resolves them, not skills/.
+		if skills.IsBuiltinSkill(name) {
+			continue
+		}
 		if _, err := skills.GetSkill(getWorkspaceAPIURL(), name); err != nil {
 			return nil, fmt.Errorf("crew skill %q is not installed; install it first or drop it: %w", name, err)
 		}

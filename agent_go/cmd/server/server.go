@@ -5994,6 +5994,10 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 						log.Printf("[CUSTOM TOOLS] Skipping human tool %s because AgentWorks product.yaml does not admit it in %s mode", toolName, chatMode)
 						continue
 					}
+					if isWorkflowPhase && accessTokenRunToolDenied(GetUserFromContext(r.Context()), toolName) {
+						log.Printf("[CUSTOM TOOLS] Skipping external-token-denied tool %s in session %s", toolName, sessionID)
+						continue
+					}
 
 					// Skip workspace tools - already registered above.
 					switch toolCategories[toolName] {

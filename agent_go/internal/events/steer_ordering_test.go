@@ -1,6 +1,7 @@
 package events
 
 import (
+	"reflect"
 	"testing"
 	"time"
 
@@ -14,6 +15,20 @@ func steerCompletion(id string) Event {
 	}}
 }
 
+func steerRow(id, eventType string) Event {
+	return Event{ID: id, Type: eventType, Data: &pkgevents.AgentEvent{
+		Type: pkgevents.EventType(eventType),
+		Data: NewGenericEventData(eventType, map[string]interface{}{"tool_name": id}),
+	}}
+}
+
+func steerUser(id string) Event {
+	return Event{ID: id, Type: "user_message", Data: &pkgevents.AgentEvent{
+		Type: pkgevents.EventType("user_message"),
+		Data: NewGenericEventData("user_message", map[string]interface{}{"content": id}),
+	}}
+}
+
 func liveIDs(store *EventStore, sessionID string) []string {
 	result := store.GetEvents(sessionID, GetEventsOptions{SinceIndex: -1})
 	ids := make([]string, 0, len(result.Events))
@@ -23,49 +38,112 @@ func liveIDs(store *EventStore, sessionID string) []string {
 	return ids
 }
 
-func TestDeferredSteerHoldReleasesOnTimeoutWithoutAck(t *testing.T) {
+func expectIDs(t *testing.T, store *EventStore, sessionID string, want ...string) {
+	t.Helper()
+	if got := liveIDs(store, sessionID); !(len(got) == 0 && len(want) == 0) && !reflect.DeepEqual(got, want) {
+		t.Fatalf("order = %v, want %v", got, want)
+	}
+}
+
+func waitForIDs(t *testing.T, store *EventStore, sessionID string, count int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for len(liveIDs(store, sessionID)) < count {
+		if time.Now().After(deadline) {
+			t.Fatalf("rows never released: %v", liveIDs(store, sessionID))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
+func TestDeferredSteerIntoBusySessionLetsInFlightAnswerFinish(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", transcriptMessage("answer-a", "in flight"))
+
+	user := steerUser("user:b")
+	store.BeginDeferredSteer("chat", user)
+	store.AddEvent("chat", steerRow("tool-a", "tool_call_start"))
+	store.AddEvent("chat", steerCompletion("completion-a"))
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to b"))
+	expectIDs(t, store, "chat", "answer-a", "tool-a", "completion-a")
+
+	store.CompleteDeferredSteer("chat", user)
+	expectIDs(t, store, "chat", "answer-a", "tool-a", "completion-a", "user:b", "answer-b")
+}
+
+// RTS, Cursor: an idle retained session; the reply's first tool call reached
+// the journal ~0.7s before the durable ack wrote the user's message.
+func TestDeferredSteerIntoIdleSessionHoldsTheReplyImmediately(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", transcriptMessage("answer-a", "earlier answer"))
+	store.AddEvent("chat", steerCompletion("completion-a"))
+
+	user := steerUser("user:yes")
+	store.BeginDeferredSteer("chat", user)
+	store.AddEvent("chat", steerRow("tool-b", "tool_call_start"))
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply to yes"))
+	expectIDs(t, store, "chat", "answer-a", "completion-a")
+
+	store.CompleteDeferredSteer("chat", user)
+	expectIDs(t, store, "chat", "answer-a", "completion-a", "user:yes", "tool-b", "answer-b")
+}
+
+func TestDeferredSteerIntoFreshSessionHoldsImmediately(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	user := steerUser("user:first")
+	store.BeginDeferredSteer("chat", user)
+	store.AddEvent("chat", transcriptMessage("answer", "reply"))
+	expectIDs(t, store, "chat")
+	store.CompleteDeferredSteer("chat", user)
+	expectIDs(t, store, "chat", "user:first", "answer")
+}
+
+func TestTurnEndWithoutCompletionCountsAsIdle(t *testing.T) {
+	store := NewEventStore(100)
+	defer store.Stop()
+	store.AddEvent("chat", transcriptMessage("answer-a", "cancelled answer"))
+	store.AddEvent("chat", steerRow("end-a", "context_cancelled"))
+
+	user := steerUser("user:b")
+	store.BeginDeferredSteer("chat", user)
+	store.AddEvent("chat", transcriptMessage("answer-b", "reply"))
+	store.CompleteDeferredSteer("chat", user)
+	expectIDs(t, store, "chat", "answer-a", "end-a", "user:b", "answer-b")
+}
+
+func TestDeferredSteerTimeoutWritesUserBeforeReleasingReply(t *testing.T) {
 	previous := deferredSteerHoldTimeout
 	deferredSteerHoldTimeout = 50 * time.Millisecond
 	defer func() { deferredSteerHoldTimeout = previous }()
 	store := NewEventStore(100)
 	defer store.Stop()
 
-	store.BeginDeferredSteer("chat")
-	store.AddEvent("chat", transcriptMessage("answer-a", "first answer"))
-	store.AddEvent("chat", steerCompletion("completion-a"))
-	store.AddEvent("chat", transcriptMessage("answer-b", "held until release"))
-	if got := liveIDs(store, "chat"); len(got) != 2 {
-		t.Fatalf("rows after the boundary were not held: %v", got)
-	}
-	deadline := time.Now().Add(2 * time.Second)
-	for len(liveIDs(store, "chat")) < 3 {
-		if time.Now().After(deadline) {
-			t.Fatalf("held row never released: %v", liveIDs(store, "chat"))
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	// A late End after the timeout is harmless.
-	store.EndDeferredSteer("chat")
+	user := steerUser("user:slow")
+	store.BeginDeferredSteer("chat", user)
+	store.AddEvent("chat", transcriptMessage("answer", "reply before any ack"))
+	expectIDs(t, store, "chat")
+	waitForIDs(t, store, "chat", 2)
+	expectIDs(t, store, "chat", "user:slow", "answer")
+
+	// The late ack must not write the user row a second time.
+	store.CompleteDeferredSteer("chat", user)
 	store.AddEvent("chat", transcriptMessage("after", "flows normally"))
-	if got := liveIDs(store, "chat"); got[len(got)-1] != "after" {
-		t.Fatalf("rows after release were not appended in order: %v", got)
-	}
+	expectIDs(t, store, "chat", "user:slow", "answer", "after")
 }
 
 func TestDeferredSteerDoesNotHoldOtherSessionsOrChildRows(t *testing.T) {
 	store := NewEventStore(100)
 	defer store.Stop()
-	store.BeginDeferredSteer("chat")
-	defer store.EndDeferredSteer("chat")
-	store.AddEvent("chat", steerCompletion("completion-a"))
+	user := steerUser("user:b")
+	store.BeginDeferredSteer("chat", user)
+	defer store.CompleteDeferredSteer("chat", user)
 	child := transcriptMessage("child", "sub-agent output")
 	child.ExecutionKind = "delegation"
 	store.AddEvent("chat", child)
 	store.AddEvent("other", transcriptMessage("other-answer", "unrelated"))
-	if got := liveIDs(store, "chat"); len(got) != 2 {
-		t.Fatalf("child row was held: %v", got)
-	}
-	if got := liveIDs(store, "other"); len(got) != 1 {
-		t.Fatalf("other session was held: %v", got)
-	}
+	expectIDs(t, store, "chat", "child")
+	expectIDs(t, store, "other", "other-answer")
 }

@@ -517,6 +517,29 @@ func (api *StreamingAPI) listRunningWorkflowExecutionsForWorkspace(workspacePath
 	return list
 }
 
+// The external run API needs step IDs as well as the top-level workflow rows
+// shown by the UI. Its stop_step operation accepts IDs from this list.
+func (api *StreamingAPI) listRunningExternalExecutionsForWorkspace(workspacePath string) []ActiveWorkflowExecution {
+	normalizedWorkspace := normalizeTrackedWorkspacePath(workspacePath)
+	api.trackedWorkflowExecutionsMux.RLock()
+	list := make([]ActiveWorkflowExecution, 0, len(api.trackedWorkflowExecutions))
+	for _, exec := range api.trackedWorkflowExecutions {
+		if exec == nil || exec.Status != trackedExecutionStatusRunning || normalizeTrackedWorkspacePath(exec.WorkspacePath) != normalizedWorkspace {
+			continue
+		}
+		if !trackedExecutionAppearsInRunningWorkflowList(exec) && exec.Source != trackedExecutionSourceWorkshopBackground {
+			continue
+		}
+		list = append(list, trackedExecutionToActive(exec))
+	}
+	api.trackedWorkflowExecutionsMux.RUnlock()
+	for i := range list {
+		api.enrichActiveWorkflowExecutionLifecycle(&list[i])
+	}
+	sort.Slice(list, func(i, j int) bool { return list[i].StartedAt.After(list[j].StartedAt) })
+	return list
+}
+
 // enrichActiveWorkflowExecutionLifecycle is the sole projection used by both
 // Global Monitor and workspace-scoped activity. It reads the same canonical
 // runtime snapshot whose tracked query-root records drive scheduled-message

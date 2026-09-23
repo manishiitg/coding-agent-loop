@@ -15,6 +15,7 @@ function buildGroup(overrides: Partial<WorkflowScheduleGroup> & { key: string; l
     running: 0,
     missed: 0,
     issues: 0,
+    overlap: 0,
     enabled: jobs.filter(j => j.enabled).length,
     paused: jobs.filter(j => !j.enabled).length,
     runCount: 0,
@@ -61,6 +62,20 @@ describe('schedule groups view', () => {
       await act(async () => host.querySelector<HTMLButtonElement>('[aria-label="View Alpha schedules"]')!.click())
       expect(panel.setSelectedWorkflowFilter).toHaveBeenCalledWith('wf-alpha')
       expect(panel.setActiveFilter).toHaveBeenCalledWith('all')
+      expect(panel.setActiveView).toHaveBeenCalledWith('schedules')
+    } finally { await act(async () => root.unmount()); host.remove() }
+  })
+
+  it('routes a workflow attention count to the affected schedules', async () => {
+    const panel = buildPanel([buildGroup({ key: 'wf-alpha', label: 'Alpha', jobs: alpha.jobs, missed: 2, issues: 1 })])
+    const host = document.createElement('div'); document.body.append(host); const root = createRoot(host)
+    try {
+      await act(async () => root.render(<ScheduleGroupsView panel={panel} />))
+      expect(host.textContent).toContain('1 active · 1 paused')
+      const missedButton = Array.from(host.querySelectorAll('button')).find(button => button.textContent === '2 with missed runs')!
+      await act(async () => missedButton.click())
+      expect(panel.setSelectedWorkflowFilter).toHaveBeenCalledWith('wf-alpha')
+      expect(panel.setActiveFilter).toHaveBeenCalledWith('missed')
       expect(panel.setActiveView).toHaveBeenCalledWith('schedules')
     } finally { await act(async () => root.unmount()); host.remove() }
   })

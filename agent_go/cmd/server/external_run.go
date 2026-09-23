@@ -14,6 +14,7 @@ import (
 	"github.com/google/uuid"
 	virtualtools "github.com/manishiitg/coding-agent-loop/agent_go/cmd/server/virtual-tools"
 	storeevents "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 )
 
 // externalRunToolHints documents the heavily used proxied run tools for the
@@ -208,7 +209,7 @@ func (api *StreamingAPI) externalRunCall(w http.ResponseWriter, r *http.Request,
 	case "stop_all_executions":
 		api.externalStopAllExecutions(w, r, args, workflow)
 	case "list_executions":
-		executions := api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath)
+		executions := api.listRunningExternalExecutionsForWorkspace(workflow.WorkspacePath)
 		if executions == nil {
 			executions = []ActiveWorkflowExecution{}
 		}
@@ -224,10 +225,8 @@ func (api *StreamingAPI) externalRunCall(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// externalStopStep cancels one running execution directly. The execution_id
-// from run_status or list_executions resolves to a tracked execution whose
-// session must belong to this connection; unlike the assistant-mediated
-// proxy, the target and the action are exact.
+// externalStopStep cancels one running execution directly. Resolve against the
+// full tracker: the workflow-list projection omits ordinary step executions.
 func (api *StreamingAPI) externalStopStep(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {
 	claims := GetUserFromContext(r.Context())
 	execID, err := externalBuilderString(args, "execution_id")
@@ -240,28 +239,47 @@ func (api *StreamingAPI) externalStopStep(w http.ResponseWriter, r *http.Request
 		externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
 		return
 	}
-	var target *ActiveWorkflowExecution
-	for _, execution := range api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath) {
-		if execution.QueryID == execID {
-			match := execution
-			target = &match
-			break
-		}
+	api.trackedWorkflowExecutionsMux.RLock()
+	tracked := api.trackedWorkflowExecutions[execID]
+	targetSessionID := ""
+	if tracked != nil && tracked.Status == trackedExecutionStatusRunning &&
+		normalizeTrackedWorkspacePath(tracked.WorkspacePath) == normalizeTrackedWorkspacePath(workflow.WorkspacePath) {
+		targetSessionID = tracked.SessionID
 	}
-	if target == nil {
+	api.trackedWorkflowExecutionsMux.RUnlock()
+	if targetSessionID == "" {
 		externalError(w, http.StatusNotFound, "execution_not_found", "No running execution with that ID in this workflow; see run_status or list_executions")
 		return
 	}
-	if sessionFilter != "" && sessionFilter != target.SessionID {
+	if sessionFilter != "" && sessionFilter != targetSessionID {
 		externalError(w, http.StatusNotFound, "execution_not_found", "That execution is not in the given session")
 		return
 	}
-	if claims.AccessToken != nil && !strings.HasPrefix(target.SessionID, accessTokenSessionPrefix(claims)) {
+	if claims.AccessToken != nil && !strings.HasPrefix(targetSessionID, accessTokenSessionPrefix(claims)) {
 		externalError(w, http.StatusNotFound, "execution_not_found", "This access token does not own that execution.")
 		return
 	}
-	api.cancelSessionRuntimeWork(target.SessionID, "external stop_step", runtimePhaseCanceled)
-	externalJSON(w, map[string]any{"stopped": true, "execution_id": execID, "session_id": target.SessionID})
+	rawSession, ok := api.workshopChatSessions.Load(targetSessionID)
+	if !ok {
+		externalError(w, http.StatusConflict, "execution_not_cancelable", "The execution's run session is no longer available")
+		return
+	}
+	session, ok := rawSession.(*stepworkflow.WorkshopChatSession)
+	if !ok || session == nil {
+		externalError(w, http.StatusConflict, "execution_not_cancelable", "The execution's run session is no longer available")
+		return
+	}
+	exec, err := session.StopExecution(execID)
+	if errors.Is(err, stepworkflow.ErrWorkshopExecutionNotFound) || errors.Is(err, stepworkflow.ErrWorkshopExecutionNotCancelable) {
+		externalError(w, http.StatusConflict, "execution_not_cancelable", "The execution is not running or cannot be stopped individually")
+		return
+	}
+	if err != nil {
+		externalError(w, http.StatusInternalServerError, "stop_failed", "Could not stop execution")
+		return
+	}
+	api.completeTrackedExecution(execID, trackedExecutionStatusCanceled, "execution terminated", nil)
+	externalJSON(w, map[string]any{"stopped": true, "execution_id": execID, "session_id": targetSessionID, "step_id": exec.StepID})
 }
 
 // externalStopAllExecutions cancels running work directly: one owned
@@ -351,7 +369,7 @@ func (api *StreamingAPI) externalRunStatus(w http.ResponseWriter, r *http.Reques
 	response["pending_inputs"] = pending
 	response["needs_user_input"] = len(pending) > 0
 	executions := []ActiveWorkflowExecution{}
-	for _, execution := range api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath) {
+	for _, execution := range api.listRunningExternalExecutionsForWorkspace(workflow.WorkspacePath) {
 		if execution.SessionID == sessionID {
 			executions = append(executions, execution)
 		}

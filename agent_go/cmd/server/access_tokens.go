@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/gorilla/mux"
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/fsutil"
 )
@@ -277,6 +278,20 @@ func externalTokenAllows(c *UserClaims, tool externalTool) bool {
 // Only PAT-created conversations are controlled by a PAT. A full-access PAT
 // cannot inherit a browser conversation (or one owned by another token).
 func accessTokenSessionPrefix(c *UserClaims) string { return "pat-" + c.AccessToken.ID + "-" }
+
+// The external catalog and token-backed Run assistant must enforce the same
+// denied tool set. A catalog-only check leaves the tool callable via chat.
+func accessTokenRunToolDenied(claims *UserClaims, name string) bool {
+	if claims == nil || claims.AccessToken == nil {
+		return false
+	}
+	for _, denied := range agentworksproduct.RunExternalDenylist() {
+		if denied == name {
+			return true
+		}
+	}
+	return false
+}
 
 type accessTokenSession struct {
 	tokenID, sessionID, workspace string

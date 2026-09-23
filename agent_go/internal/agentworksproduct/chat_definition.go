@@ -102,7 +102,7 @@ func RunExternalTools() []string {
 // RunTools returns the run-mode chat tool list. This is the single source of
 // truth for the run surface: the server proxies every name here except the
 // external denylist to a pinned Run-mode session, so a tool added to run
-// mode is automatically callable externally under the runs:execute scope.
+// mode is callable externally under runs:execute unless denylisted.
 // Names with an external-native implementation keep that implementation
 // (see external_tools.go).
 func RunTools() []string {
@@ -110,7 +110,7 @@ func RunTools() []string {
 }
 
 // RunExternalDenylist returns run.tools names withheld from the external
-// CLI/MCP API. Run channels keep them; external callers never see them.
+// CLI/MCP catalog and token-backed Run sessions. Bot Run channels keep them.
 func RunExternalDenylist() []string {
 	def, ok := mustAgentWorksManifest().Chat["run"]
 	if !ok {

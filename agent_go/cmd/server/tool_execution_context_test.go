@@ -6,11 +6,33 @@ import (
 	"testing"
 
 	events "github.com/manishiitg/coding-agent-loop/agent_go/internal/events"
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/chathistory"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
 	"github.com/manishiitg/mcpagent/executor"
 	"github.com/manishiitg/mcpagent/mcpclient"
 )
+
+func TestAccessTokenRunToolDenylistAppliesAtExecution(t *testing.T) {
+	claims := &UserClaims{UserID: "alice", AccessToken: &accesstokens.Token{ID: "token-1", Scopes: []string{"runs:execute"}, AllWorkflows: true}}
+	resolve := (&StreamingAPI{}).bindToolExecutionContext(
+		context.WithValue(context.Background(), UserContextKey, claims),
+		"pat-token-1-session", QueryRequest{}, true,
+	)
+	if _, err := resolve(context.Background(), "google_workspace_cli"); err == nil {
+		t.Fatal("token-backed assistant can invoke a tool hidden from the external catalog")
+	}
+	child := (&StreamingAPI{}).bindToolExecutionContextForSession(
+		context.WithValue(context.Background(), UserContextKey, claims),
+		"pat-token-1-session", "delegated-child", QueryRequest{}, true,
+	)
+	if _, err := child(context.Background(), "google_workspace_cli"); err == nil {
+		t.Fatal("token-backed delegated agent can invoke a denylisted tool")
+	}
+	if accessTokenRunToolDenied(&UserClaims{UserID: "alice"}, "google_workspace_cli") {
+		t.Fatal("ordinary Run-mode sessions lost the Google tool")
+	}
+}
 
 func TestToolExecutionContextUsesAuthenticatedQueryForAllTransports(t *testing.T) {
 	t.Setenv("MULTI_USER_MODE", "false")

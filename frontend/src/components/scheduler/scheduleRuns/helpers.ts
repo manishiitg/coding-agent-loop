@@ -1,7 +1,7 @@
 import type { ScheduledJob } from '../../../services/api-types'
 import { normalizeWorkspacePath } from '../../../utils/workspacePathUtils'
 
-export type JobFilter = 'running' | 'enabled' | 'paused' | 'missed' | 'issues' | 'all'
+export type JobFilter = 'running' | 'waiting' | 'enabled' | 'paused' | 'missed' | 'issues' | 'overlap' | 'all'
 export type SchedulePanelView = 'overview' | 'calendar' | 'by-workflow' | 'schedules'
 
 /** Global views open on the per-workflow grouping with drill-down into each
@@ -45,11 +45,42 @@ export type WorkflowScheduleGroup = {
   running: number
   missed: number
   issues: number
+  overlap: number
   enabled: number
   paused: number
   nextRunAt?: string
   lastRunAt?: string
   runCount: number
+}
+
+/** A forecast, not a confirmed collision: two enabled schedules in the same
+ * workflow have next starts closer together than the first one's observed
+ * average duration. The scheduler's actual policy still decides what happens. */
+export function getPotentialScheduleOverlaps(jobs: ScheduledJob[], presetMap: PresetMap): Map<string, string> {
+  const byWorkflow = new Map<string, ScheduledJob[]>()
+  for (const job of jobs) {
+    if (!job.enabled || !job.next_run_at || job.concurrency_mode === 'parallel') continue
+    const key = getWorkflowFilterMeta(job, presetMap).value
+    byWorkflow.set(key, [...(byWorkflow.get(key) ?? []), job])
+  }
+
+  const overlaps = new Map<string, string>()
+  for (const workflowJobs of byWorkflow.values()) {
+    workflowJobs.sort((a, b) => (a.next_run_at ?? '').localeCompare(b.next_run_at ?? ''))
+    for (let i = 0; i < workflowJobs.length; i += 1) {
+      const first = workflowJobs[i]
+      const firstStart = new Date(first.next_run_at!).getTime()
+      if (!Number.isFinite(firstStart) || !first.avg_duration_ms || first.avg_duration_ms <= 0) continue
+      for (let j = i + 1; j < workflowJobs.length; j += 1) {
+        const second = workflowJobs[j]
+        const secondStart = new Date(second.next_run_at!).getTime()
+        if (!Number.isFinite(secondStart) || secondStart >= firstStart + first.avg_duration_ms) break
+        overlaps.set(first.id, second.name)
+        overlaps.set(second.id, first.name)
+      }
+    }
+  }
+  return overlaps
 }
 
 export type CalendarEntry = {

@@ -58,6 +58,42 @@ type ScheduleRunEntry struct {
 
 const maxScheduleRuns = 200
 
+type scheduleRunDurationAverage struct {
+	DurationMs int64
+	Samples    int
+}
+
+// recentSuccessfulRunAverages uses the latest successful, timed runs for each
+// schedule. Missed, running, failed and stopped occurrences do not describe
+// the duration of a completed run.
+func recentSuccessfulRunAverages(runs []ScheduleRunEntry, sampleLimit int) map[string]scheduleRunDurationAverage {
+	result := make(map[string]scheduleRunDurationAverage)
+	if sampleLimit <= 0 {
+		return result
+	}
+	ordered := append([]ScheduleRunEntry(nil), runs...)
+	sort.Slice(ordered, func(i, j int) bool {
+		return ordered[i].StartedAt.After(ordered[j].StartedAt)
+	})
+	for _, run := range ordered {
+		if run.ScheduleID == "" || run.TriggerSource == "manual" || run.Status != "success" || run.DurationMs == nil || *run.DurationMs <= 0 {
+			continue
+		}
+		average := result[run.ScheduleID]
+		if average.Samples >= sampleLimit {
+			continue
+		}
+		average.DurationMs += *run.DurationMs
+		average.Samples++
+		result[run.ScheduleID] = average
+	}
+	for id, average := range result {
+		average.DurationMs /= int64(average.Samples)
+		result[id] = average
+	}
+	return result
+}
+
 var scheduleRunFileLocks sync.Map
 
 func scheduleRunFileLock(path string) *sync.Mutex {

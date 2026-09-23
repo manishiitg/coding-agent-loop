@@ -981,6 +981,17 @@ func (r *WorkshopStepRegistry) Cancel(id string) (WorkshopStepSnapshot, error) {
 	return r.cancelWithNotification(id, nil)
 }
 
+func stopWorkshopExecution(registry *WorkshopStepRegistry, notifier WorkshopExecutionNotifier, executionID string) (WorkshopStepSnapshot, error) {
+	if registry == nil {
+		return WorkshopStepSnapshot{}, ErrWorkshopExecutionNotFound
+	}
+	return registry.cancelWithNotification(executionID, func(exec WorkshopStepSnapshot) {
+		if notifier != nil {
+			notifier.OnExecutionTerminated(executionID, exec.StepID)
+		}
+	})
+}
+
 // Publish cancellation before the context unwinds so children cannot report
 // that explicit stop as an unrelated runtime failure.
 func (r *WorkshopStepRegistry) cancelWithNotification(id string, notify func(WorkshopStepSnapshot)) (WorkshopStepSnapshot, error) {
@@ -3368,11 +3379,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				return "execution_id must be a non-empty string", nil
 			}
 
-			exec, err := iwm.stepRegistry.cancelWithNotification(execID, func(exec WorkshopStepSnapshot) {
-				if iwm.executionNotifier != nil {
-					iwm.executionNotifier.OnExecutionTerminated(execID, exec.StepID)
-				}
-			})
+			exec, err := stopWorkshopExecution(iwm.stepRegistry, iwm.executionNotifier, execID)
 			if errors.Is(err, ErrWorkshopExecutionNotFound) {
 				return fmt.Sprintf("execution %q not found", execID), nil
 			}

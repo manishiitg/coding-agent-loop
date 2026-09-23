@@ -23,22 +23,23 @@ export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel })
     bulkUpdatingGroupKey,
   } = panel
 
-  const openWorkflowSchedules = (workflowKey: string) => {
+  const openWorkflowSchedules = (workflowKey: string, filter: 'all' | 'missed' | 'issues' = 'all') => {
     setSelectedWorkflowFilter(workflowKey)
-    setActiveFilter('all')
+    setActiveFilter(filter)
     setActiveView('schedules')
   }
 
   return (
     <div className="px-4 py-3 sm:px-6">
       <div className="overflow-x-auto rounded-lg border border-border">
-        <table className="w-full min-w-[680px] text-left text-sm">
+        <table className="w-full min-w-[860px] text-left text-sm">
           <thead className="border-b border-border bg-muted/30 text-xs text-muted-foreground">
             <tr>
               <th className="px-4 py-2 font-medium">Automation</th>
-              <th className="px-3 py-2 font-medium">State</th>
-              <th className="px-3 py-2 font-medium">Next run</th>
-              <th className="px-3 py-2 font-medium">Last activity</th>
+              <th className="px-3 py-2 font-medium">Schedules</th>
+              <th className="px-3 py-2 font-medium">Needs attention</th>
+              <th className="px-3 py-2 font-medium">Next run (local)</th>
+              <th className="px-3 py-2 font-medium">Last run</th>
               <th className="px-4 py-2 text-right font-medium">Actions</th>
             </tr>
           </thead>
@@ -47,7 +48,7 @@ export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel })
               const fullyPaused = group.enabled === 0
               const partlyPaused = !fullyPaused && group.paused > 0
               const isRunning = group.running > 0
-              const stateLabel = isRunning ? 'Running' : fullyPaused ? 'Paused' : partlyPaused ? 'Partly paused' : 'Enabled'
+              const stateLabel = isRunning ? `${group.running} running` : fullyPaused ? 'All paused' : partlyPaused ? 'Partly paused' : 'All active'
               return (
                 <tr key={group.key} className="transition-colors hover:bg-muted/20">
                   <td className="px-4 py-4">
@@ -57,10 +58,16 @@ export const ScheduleGroupsView: React.FC<ScheduleGroupsViewProps> = ({ panel })
                     <div className="mt-0.5 text-xs text-muted-foreground">{group.jobs.length} schedule{group.jobs.length === 1 ? '' : 's'}</div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-4">
-                    <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                      <span className={`h-1.5 w-1.5 rounded-full ${isRunning ? 'animate-pulse bg-warning' : fullyPaused ? 'bg-muted-foreground/50' : partlyPaused ? 'bg-warning' : 'bg-success'}`} />
-                      {stateLabel}
-                    </span>
+                    <div className="text-xs text-foreground">{group.enabled} active · {group.paused} paused</div>
+                    <div className="mt-0.5 text-xs text-muted-foreground">{stateLabel}</div>
+                  </td>
+                  <td className="px-3 py-4">
+                    <div className="flex max-w-[270px] flex-wrap gap-1.5 text-xs">
+                      {group.missed > 0 && <button type="button" onClick={() => openWorkflowSchedules(group.key, 'missed')} className="rounded bg-warning/15 px-1.5 py-0.5 text-warning hover:bg-warning/25">{group.missed} with missed runs</button>}
+                      {group.issues > 0 && <button type="button" onClick={() => openWorkflowSchedules(group.key, 'issues')} className="rounded bg-destructive/15 px-1.5 py-0.5 text-destructive hover:bg-destructive/25">{group.issues} with run issues</button>}
+                      {group.overlap > 0 && <span className="rounded bg-warning/10 px-1.5 py-0.5 text-warning" title="Next starts may overlap based on recent average durations">{group.overlap} at overlap risk</span>}
+                      {group.missed === 0 && group.issues === 0 && group.overlap === 0 && <span className="text-muted-foreground">None</span>}
+                    </div>
                   </td>
                   <td className="whitespace-nowrap px-3 py-4 text-xs text-foreground">
                     {fullyPaused || isSchedulerPaused ? <span className="text-muted-foreground">{isSchedulerPaused && !fullyPaused ? 'Paused globally' : '—'}</span> : formatLocalScheduleTime(group.nextRunAt)}

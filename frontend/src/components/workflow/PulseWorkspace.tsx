@@ -124,6 +124,9 @@ export function PulseWorkspace({
   autonomyRun = 'auto',
   autonomySaving = false,
   onChangeAutonomyRun,
+  focusAreas = [],
+  focusSaving = false,
+  onSaveFocusAreas,
 }: {
   workspacePath: string
   moduleStates: PulseModuleState[]
@@ -141,6 +144,9 @@ export function PulseWorkspace({
   autonomyRun?: PulseAutonomyRun
   autonomySaving?: boolean
   onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
+  focusAreas?: string[]
+  focusSaving?: boolean
+  onSaveFocusAreas?: (areas: string[]) => Promise<boolean>
 }) {
   const loadVersion = useRef(0)
   const [findings, setFindings] = useState<PulseFindingLifecycle[]>([])
@@ -374,6 +380,8 @@ export function PulseWorkspace({
         <ReportHumanInputPanel workspacePath={workspacePath} contentMode="all" providedImpact={impact} />
         <PulseGoalWork workspacePath={workspacePath} items={goalWork} autonomyRun={autonomyRun} autonomySaving={autonomySaving}
           onChangeAutonomyRun={onChangeAutonomyRun} onRunGoalWork={() => { void runReviewNow('strategic_review') }}
+          focusAreas={focusAreas} focusSaving={focusSaving} onSaveFocusAreas={onSaveFocusAreas}
+          playbookFocusAreas={playbookFocuses.flatMap(item => item.focusAreas.map(area => ({ area, source: item.playbookTitle })))}
           running={manualReviewStarting === 'strategic_review'}
           runBlockedReason={driftBlocksRun ? 'Plan Drift is due: Goal Work will prepare and research but not run workflow steps.' : undefined} />
         {(openIssueCount > 0 || planDriftDue) && (

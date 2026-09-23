@@ -41,6 +41,7 @@ export interface WorkflowManifestState {
     pulse_enabled?: boolean
     pulse_disabled_review_modules?: PulseReviewerModule[]
     pulse_autonomy_run?: PulseAutonomyRun
+    pulse_focus_areas?: string[]
   }) => Promise<WorkflowManifest>
   deleteWorkflow: (workspacePath: string) => Promise<void>
   duplicateWorkflow: (sourceWorkspacePath: string, targetWorkspacePath: string, newLabel?: string) => Promise<WorkflowManifest>

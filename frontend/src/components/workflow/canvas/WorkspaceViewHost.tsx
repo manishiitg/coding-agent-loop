@@ -206,6 +206,9 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             autonomyRun={pulse.autonomyRun}
             autonomySaving={pulse.autonomySaving}
             onChangeAutonomyRun={pulse.setAutonomyRun}
+            focusAreas={pulse.focusAreas}
+            focusSaving={pulse.focusSaving}
+            onSaveFocusAreas={pulse.saveFocusAreas}
             reviewFocuses={pulse.reviewFocuses}
             reviewFocusSelections={pulse.reviewFocusSelections}
             statusError={pulse.statusError}
@@ -351,6 +354,8 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const [pulseGoalWork, setPulseGoalWork] = useState<PulseGoalWorkItem[]>([])
   const [pulseAutonomyRun, setPulseAutonomyRunState] = useState<PulseAutonomyRun>('auto')
   const [pulseAutonomySaving, setPulseAutonomySaving] = useState(false)
+  const [pulseFocusAreas, setPulseFocusAreas] = useState<string[]>([])
+  const [pulseFocusSaving, setPulseFocusSaving] = useState(false)
   const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
 
@@ -367,6 +372,22 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       })
       .finally(() => setPulseAutonomySaving(false))
   }, [workspacePath, pulseAutonomySaving, pulseAutonomyRun, updateWorkflowManifest])
+
+  const savePulseFocusAreas = useCallback(async (areas: string[]) => {
+    if (!workspacePath || pulseFocusSaving) return false
+    setPulseFocusSaving(true)
+    try {
+      await updateWorkflowManifest(workspacePath, { pulse_focus_areas: areas })
+      setPulseFocusAreas(areas)
+      useChatStore.getState().addToast('Goal Work focus areas saved', 'success')
+      return true
+    } catch (error) {
+      useChatStore.getState().addToast(error instanceof Error ? error.message : 'Could not save focus areas', 'error')
+      return false
+    } finally {
+      setPulseFocusSaving(false)
+    }
+  }, [workspacePath, pulseFocusSaving, updateWorkflowManifest])
 
   const refreshPulseModuleStates = useCallback(async (showLoading = true) => {
     if (!workspacePath) {
@@ -395,6 +416,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       setPulseNextRun(resp.next_pulse || null)
       setPulseGoalWork(resp.goal_work || [])
       setPulseAutonomyRunState(resp.autonomy_run === 'ask' ? 'ask' : 'auto')
+      setPulseFocusAreas(resp.focus_areas || [])
       setPulseFinalCommandStates(resp.commands || [])
       setPulseReviewFocuses(resp.review_focus_history || [])
       setPulseReviewFocusSelections(resp.review_focus_selections || [])
@@ -477,6 +499,9 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     autonomyRun: pulseAutonomyRun,
     autonomySaving: pulseAutonomySaving,
     setAutonomyRun: setPulseAutonomyRun,
+    focusAreas: pulseFocusAreas,
+    focusSaving: pulseFocusSaving,
+    saveFocusAreas: savePulseFocusAreas,
     reviewFocuses: pulseReviewFocuses,
     reviewFocusSelections: pulseReviewFocusSelections,
     statusError: pulseStatusError,
@@ -484,7 +509,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     overview: pulseOverview,
     refresh: refreshPulseModuleStates,
   }), [
-    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates, pulseNextRun, pulseGoalWork, pulseAutonomyRun, pulseAutonomySaving, setPulseAutonomyRun,
+    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates, pulseNextRun, pulseGoalWork, pulseAutonomyRun, pulseAutonomySaving, setPulseAutonomyRun, pulseFocusAreas, pulseFocusSaving, savePulseFocusAreas,
     pulseReviewFocuses, pulseReviewFocusSelections, pulseStatusError, pulseStatusLoading,
     pulseOverview, refreshPulseModuleStates,
   ])

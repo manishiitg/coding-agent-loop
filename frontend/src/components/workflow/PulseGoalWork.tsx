@@ -1,4 +1,5 @@
-import { CheckCircle2, FileText, Hourglass, Lightbulb, Loader2, Play, Scale } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { CheckCircle2, Crosshair, FileText, Hourglass, Lightbulb, Loader2, Play, Plus, Scale, X } from 'lucide-react'
 import type { PulseAutonomyRun, PulseGoalWorkItem } from '../../services/api-types'
 import { openReportFileInViewer } from './reportWidgets/tableHelpers'
 
@@ -82,7 +83,56 @@ function Section({ title, hint, icon: Icon, items, empty, workspacePath }: {
   </section>
 }
 
-export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySaving = false, onChangeAutonomyRun, onRunGoalWork, running = false, runBlockedReason }: {
+const MAX_FOCUS_AREAS = 10
+
+// FocusAreas: the user's own priorities for Goal Work (workflow.json
+// pulse.focus_areas), editable here, with installed playbooks' strategy focus
+// shown read-only underneath so there is one place to see what Goal Work is
+// pointed at.
+function FocusAreas({ areas, saving, onSave, playbookAreas }: {
+  areas: string[]; saving: boolean; onSave?: (areas: string[]) => Promise<boolean>
+  playbookAreas: Array<{ area: string; source: string }>
+}) {
+  const [draft, setDraft] = useState<string[]>(areas)
+  const [adding, setAdding] = useState('')
+  useEffect(() => { setDraft(areas) }, [areas])
+  const dirty = draft.join('\n') !== areas.join('\n')
+  const add = () => {
+    const value = adding.trim()
+    if (!value || draft.length >= MAX_FOCUS_AREAS || draft.some(item => item.toLowerCase() === value.toLowerCase())) return
+    setDraft([...draft, value])
+    setAdding('')
+  }
+  return <section aria-label="Focus areas" className="rounded-xl border bg-background p-4">
+    <div className="flex items-center gap-2"><Crosshair className="h-4 w-4 text-primary" /><h3 className="text-sm font-semibold">Focus areas</h3></div>
+    <p className="mt-1 text-xs text-muted-foreground">Where Goal Work should look first. It still considers anything that moves your goals, and your goals and rules always win.</p>
+    <ul className="mt-3 space-y-1.5">
+      {draft.map((area, index) => <li key={area} className="flex items-start gap-2 rounded-md border bg-muted/20 px-2.5 py-1.5 text-xs">
+        <span className="min-w-0 flex-1">{area}</span>
+        <button type="button" aria-label={`Remove focus area ${area}`} disabled={!onSave || saving} onClick={() => setDraft(draft.filter((_, i) => i !== index))}
+          className="shrink-0 rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground disabled:opacity-50"><X className="h-3 w-3" /></button>
+      </li>)}
+      {draft.length === 0 && <li className="rounded-md border border-dashed px-2.5 py-2 text-xs text-muted-foreground">No focus areas yet. Goal Work picks its own priorities from your goals.</li>}
+    </ul>
+    {onSave && <div className="mt-2 flex flex-wrap items-center gap-2">
+      <input value={adding} onChange={event => setAdding(event.target.value)} maxLength={300} disabled={saving || draft.length >= MAX_FOCUS_AREAS}
+        onKeyDown={event => { if (event.key === 'Enter') { event.preventDefault(); add() } }}
+        placeholder={draft.length >= MAX_FOCUS_AREAS ? 'Up to 10 focus areas' : 'e.g. Find more audience strategies like SaaS Builder'}
+        aria-label="New focus area" className="min-w-0 flex-1 rounded-md border bg-background px-2 py-1 text-xs" />
+      <button type="button" onClick={add} disabled={!adding.trim() || saving || draft.length >= MAX_FOCUS_AREAS}
+        className="inline-flex items-center gap-1 rounded-md border px-2 py-1 text-xs font-medium hover:bg-muted disabled:opacity-50"><Plus className="h-3 w-3" />Add</button>
+      {dirty && <button type="button" onClick={() => { void onSave(draft) }} disabled={saving}
+        className="inline-flex items-center gap-1 rounded-md border border-primary/40 bg-primary/10 px-2 py-1 text-xs font-semibold text-primary hover:bg-primary/15 disabled:opacity-50">
+        {saving ? <Loader2 className="h-3 w-3 animate-spin" /> : null}Save</button>}
+    </div>}
+    {playbookAreas.length > 0 && <div className="mt-3 border-t pt-2">
+      <p className="text-[11px] font-medium text-muted-foreground">From installed playbooks</p>
+      <ul className="mt-1 space-y-1 text-[11px] text-muted-foreground">{playbookAreas.map(item => <li key={`${item.source}:${item.area}`}>{item.area} <span className="opacity-70">· {item.source}</span></li>)}</ul>
+    </div>}
+  </section>
+}
+
+export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySaving = false, onChangeAutonomyRun, onRunGoalWork, running = false, runBlockedReason, focusAreas = [], focusSaving = false, onSaveFocusAreas, playbookFocusAreas = [] }: {
   workspacePath: string
   items: PulseGoalWorkItem[]
   autonomyRun: PulseAutonomyRun
@@ -91,6 +141,10 @@ export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySavin
   onRunGoalWork?: () => void
   running?: boolean
   runBlockedReason?: string
+  focusAreas?: string[]
+  focusSaving?: boolean
+  onSaveFocusAreas?: (areas: string[]) => Promise<boolean>
+  playbookFocusAreas?: Array<{ area: string; source: string }>
 }) {
   const work = items.filter(item => item.kind === 'goal_work')
   const didForYou = work.filter(item => item.status === 'done' || item.status === 'in_progress' || item.status === 'needs_user')
@@ -109,6 +163,8 @@ export function PulseGoalWork({ workspacePath, items, autonomyRun, autonomySavin
         {running ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}{running ? 'Starting…' : 'Run Goal Work now'}
       </button>
     </section>
+
+    <FocusAreas areas={focusAreas} saving={focusSaving} onSave={onSaveFocusAreas} playbookAreas={playbookFocusAreas} />
 
     <Section title="Did for you" hint="Work Pulse completed or prepared, what it should move, and whether it worked." icon={CheckCircle2}
       items={didForYou} empty="Nothing yet. After its next pass, Pulse lists the work it did here." workspacePath={workspacePath} />

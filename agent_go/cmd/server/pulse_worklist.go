@@ -1351,12 +1351,15 @@ func applyDisabledPulseReviewModules(ctx context.Context, workspacePath string, 
 	return updated, nil
 }
 
-// enforcePlanDriftExclusivePass prevents reviewers from judging a workflow
-// against a plan that this same worklist already says is stale. Plan Drift is
-// the prerequisite repair pass; Technical, Architecture, and Strategic resume
-// on a later Pulse cycle after the plan has a current drift receipt. A pending
-// review-recovery row is not lost by this deferral: it remains pending and is
-// forced due again by forcePendingPulseReviewRecoveries on the next cycle.
+// enforcePlanDriftExclusivePass prevents platform upkeep from judging a
+// workflow against a plan that this same worklist already says is stale. Plan
+// Drift is their prerequisite repair pass; Technical and Architecture resume on
+// a later Pulse cycle after the plan has a current drift receipt. Goal Work
+// (strategic_review) is not deferred: it is Pulse's main job and runs without
+// its Run permission while Drift is due (docs/design/pulse_goal_work.md). A
+// pending review-recovery row is not lost by this deferral: it remains pending
+// and is forced due again by forcePendingPulseReviewRecoveries on the next
+// cycle.
 func enforcePlanDriftExclusivePass(decisions []PulseWorklistDecision) []PulseWorklistDecision {
 	if !pulsePlanDriftDue(decisions) {
 		return decisions
@@ -1365,7 +1368,7 @@ func enforcePlanDriftExclusivePass(decisions []PulseWorklistDecision) []PulseWor
 	isolated := append([]PulseWorklistDecision(nil), decisions...)
 	for index := range isolated {
 		module := normalizePulseModule(isolated[index].Module)
-		if module == pulseModulePlanDriftReview {
+		if module == pulseModulePlanDriftReview || pulsemodules.RunsWhileDriftDue(module) {
 			continue
 		}
 		isolated[index].Due = false
@@ -2334,6 +2337,7 @@ func (api *StreamingAPI) handleGetPulseModuleState(w http.ResponseWriter, r *htt
 		"goal_work":                  goalWork,
 		"goal_work_error":            goalWorkError,
 		"autonomy_run":               pulseAutonomyRunForView(r.Context(), workspacePath),
+		"focus_areas":                pulseFocusAreasForView(r.Context(), workspacePath),
 	})
 }
 

@@ -96,23 +96,26 @@ func TestLatestAssistantExecutionSummaryUsesFinalAssistantTurn(t *testing.T) {
 	}
 }
 
-func TestMessageSequenceSummaryPropagatesItemConcerns(t *testing.T) {
+// The step result is what the parent chat's completion notification and later
+// steps' context see, so it is the last authored item's answer, not a count.
+// Prevalidation gates and synthetic __...__ items are bookkeeping, and the
+// count is only the fallback when no authored item produced text.
+func TestMessageSequenceSummaryIsLastAuthoredAnswer(t *testing.T) {
+	o := &StepBasedWorkflowOrchestrator{}
 	session := &messageSequenceSession{
 		StepID: "publish-sequence",
 		Entries: []messageSequenceEntry{
 			{ItemID: "draft", Status: "completed", Summary: "Drafted post.\nSTATUS: COMPLETED"},
-			{ItemID: "publish", Status: "completed", Summary: "Published post.\nCONCERNS: analytics receipt was unavailable.\nSTATUS: COMPLETED"},
+			{ItemID: "publish", Status: "completed", Summary: "Published post.\nSTATUS: COMPLETED"},
+			{ItemID: "__automatic_final_validation__", ItemType: "prevalidation", Status: "completed", Summary: "prevalidation passed"},
 		},
 	}
-
-	got := (&StepBasedWorkflowOrchestrator{}).summarizeMessageSequenceSession(session)
-	for _, want := range []string{"Message sequence publish-sequence completed: 2 item(s) completed"} {
-		if !strings.Contains(got, want) {
-			t.Fatalf("message-sequence summary missing %q: %s", want, got)
-		}
+	if got := o.summarizeMessageSequenceSession(session); got != "Published post.\nSTATUS: COMPLETED" {
+		t.Fatalf("message-sequence result = %q, want the last authored item's answer", got)
 	}
-	if strings.Contains(got, "CONCERNS:") {
-		t.Fatalf("message-sequence summary must not parse item prose into concerns: %s", got)
+	empty := &messageSequenceSession{StepID: "s", Entries: []messageSequenceEntry{{ItemID: "a", Status: "completed"}}}
+	if got := o.summarizeMessageSequenceSession(empty); got != "Message sequence s completed: 1 item(s) completed" {
+		t.Fatalf("fallback = %q", got)
 	}
 }
 

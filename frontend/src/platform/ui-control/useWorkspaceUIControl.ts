@@ -10,6 +10,21 @@ import { applyUIAction, workspaceHost, type UIAction, type UISnapshot } from './
 const kinds = ['workflow.ui-action']
 export const UI_CONTROL_BACKUP_POLL_MS = 10_000
 type Binding = { binding: string; token: string; workspace: string }
+// Why a sync ran. A dormant lease (its chat has no live agent session) ignores
+// the backup poll and view changes; only SSE wakes, the chat going live, or the
+// page becoming visible try to bind again. The server queues an agent's UI
+// action and pushes workflow.ui-action over SSE, so no pre-bind is needed.
+type SyncReason = 'mount' | 'poll' | 'view' | 'wake' | 'live' | 'visible'
+
+type LivenessState = {
+  chatTabs: Record<string, { sessionId?: string | null; isStreaming?: boolean }>
+  activeSessionsCache: Array<{ session_id: string }>
+}
+
+export function sessionLooksLive(state: LivenessState, session: string): boolean {
+  return Object.values(state.chatTabs).some(tab => tab.sessionId === session && tab.isStreaming)
+    || state.activeSessionsCache.some(active => active.session_id === session)
+}
 
 export type WorkspaceUIControlAdapter = {
   getView: () => string
@@ -28,8 +43,11 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
   const adapterRef = useRef(adapter)
   adapterRef.current = adapter
   const events = usePresentationEvents(session, kinds)
+  // usePresentationEvents yields a new array on every chat event (streaming
+  // chunks included); wake only when a new UI action actually arrives.
+  const latestAction = events.length ? `${events.length}:${events[events.length - 1].presentationId}` : ''
   const wake = useRef<(() => void) | null>(null)
-  useEffect(() => { wake.current?.() }, [events])
+  useEffect(() => { if (latestAction) wake.current?.() }, [latestAction])
   useEffect(() => { wake.current?.() }, [adapter])
   useEffect(() => {
     if (!session) return
@@ -41,6 +59,9 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
     let revision = 0
     let lastVisible = false
     let lastTarget: string | undefined
+    let dormant = false
+    let queuedReason: SyncReason = 'poll'
+    const weakReason = (reason: SyncReason) => reason === 'poll' || reason === 'view'
     const controller = new AbortController()
     const state = (): UISnapshot => {
       const configured = adapterRef.current
@@ -65,9 +86,17 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
       binding = undefined
       if (previous) await workflowUIControl(session, { version: UI_CONTROL_CONTRACT.version, operation: 'unbind', binding: previous.binding, token: previous.token }).catch(() => {})
     }
-    const sync = async () => {
+    const sync = async (reason: SyncReason = 'wake') => {
       if (stopped) return
-      if (busy) { syncQueued = true; return }
+      if (!binding && dormant) {
+        if (weakReason(reason)) return
+        dormant = false
+      }
+      if (busy) {
+        syncQueued = true
+        if (!weakReason(reason) || weakReason(queuedReason)) queuedReason = reason
+        return
+      }
       if (document.visibilityState !== 'visible') { await release(); return }
       busy = true
       try {
@@ -125,7 +154,11 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
         const response = (error as { response?: { status?: number; data?: unknown } })?.response
         const code = typeof response?.data === 'string' && /^[a-z_]+\s*$/.test(response.data)
           ? response.data.trim() : 'connection_failed'
-        console.warn(`[WorkspaceUIControl] ${binding ? 'sync' : 'bind'} status=${response?.status ?? 'network_error'} code=${code}`)
+        if (!binding && response?.status === 409 && code === 'session_not_active') {
+          dormant = true
+        } else {
+          console.warn(`[WorkspaceUIControl] ${binding ? 'sync' : 'bind'} status=${response?.status ?? 'network_error'} code=${code}`)
+        }
         // An uncertain outcome is never replayed. A new lease cannot ACK or
         // claim the previous lease's commands; the server expires those.
         await release()
@@ -133,33 +166,41 @@ export function useWorkspaceUIControl(session: string | undefined, adapter?: Wor
         busy = false
         if (syncQueued && !stopped) {
           syncQueued = false
-          queueMicrotask(() => { void sync() })
+          const next = queuedReason
+          queuedReason = 'poll'
+          queueMicrotask(() => { void sync(next) })
         }
       }
     }
     const onVisibility = () => {
       if (document.visibilityState !== 'visible') void release()
-      else void sync()
+      else void sync('visible')
     }
-    wake.current = () => { void sync() }
+    wake.current = () => { void sync('wake') }
     const unsubscribeViewState = useWorkflowStore.subscribe((current, previous) => {
       if (current.workflowWorkspaceView !== previous.workflowWorkspaceView
         || current.lastCanvasView !== previous.lastCanvasView
         || current.workspaceViewTarget !== previous.workspaceViewTarget) {
-        void sync()
+        void sync('view')
       }
     })
     // SSE presentation events and local view changes are the primary wake-up
     // paths. This slower poll only renews the 15-second lease and recovers if
     // an event is lost while the stream reconnects.
-    const timer = setInterval(() => { void sync() }, UI_CONTROL_BACKUP_POLL_MS)
+    const timer = setInterval(() => { void sync('poll') }, UI_CONTROL_BACKUP_POLL_MS)
+    // Bind as soon as the chat goes live.
+    const unsubscribeLiveness = useChatStore.subscribe((current, previous) => {
+      if (binding) return
+      if (sessionLooksLive(current, session) && !sessionLooksLive(previous, session)) void sync('live')
+    })
     document.addEventListener('visibilitychange', onVisibility)
-    void sync()
+    void sync('mount')
     return () => {
       stopped = true
       controller.abort()
       clearInterval(timer)
       unsubscribeViewState()
+      unsubscribeLiveness()
       wake.current = null
       document.removeEventListener('visibilitychange', onVisibility)
       void release()

@@ -469,6 +469,209 @@ reconciliation. Focused Go tests pass; all 31 frontend
 build, and Electron build pass. Both commits are pushed to `main`; deployment
 and a fresh-client retained-turn check remain pending.
 
+## 2026-09-23 queued-turn recurrence — stale promotion jams the lane forever
+
+Local Work chat session `work:project:75db2aa1-a719-4365-a871-824d74b6930a`
+(muse-cli over a retained tmux pane, multi-agent mode): two submits —
+"yes" at 21:01:08 and a ULIP-investment review at 21:01:27 IST — were
+durably queued with positions 0/1 and stayed `queued` in the UI
+indefinitely. No replies ever arrived. The queue doc
+(`workspace-docs/_users/default/chat_history/conversation-turn-dispatch.json`)
+still holds both turns with no `StartedAt`: never claimed, never
+executed. The UI was telling the truth — the backend accepted the turns
+and then never ran them.
+
+### Timeline (IST, `agent_go/logs/server_debug.log`)
+
+- 20:00–20:42 — normal retained turns over tmux, each settling via
+  `Settled retained main-agent turn from structured unified_completion
+  event` (20:18:50, 20:35:01, 20:42:07). Note every settle in this session
+  carries a non-empty `next_execution`: the promotion branch fires on
+  every completion, not just rapid-fire ones.
+- 20:40:36 / 20:40:39 — rapid-fire submits ("setup purpose yourself",
+  "you know the different dashboards") while a response is active; their
+  execution IDs stack onto `retainedMainTurnPendingExecutionIDs`.
+- 20:42:07 — settle logs `state=completed
+  next_execution=query_1790173821969293000`. The `1790173821…` timestamp
+  embedded in that ID is 20:00:23 — the same ID appears in the 20:00:23
+  `[CODING_AGENT_DELIVERY]` line. So the "next" execution is a turn that
+  completed ~42 minutes earlier. It survived two intervening settles
+  (20:18, 20:35 promoted other IDs) because nothing ever prunes the
+  pending list — entries only leave via promotion or the failed-state
+  branch.
+- 20:42–21:01 — gap census for the session shows only the settle, one
+  chat-history persist, and timeline echoes. No new turn starts, no API
+  submits, no delivery. The lane goes busy with no live turn behind it.
+- 21:01:08 / 21:01:27 — both POSTs return 200 in ~150ms with
+  `status=accepted, delivery_status=queued_for_turn` (+ position). The
+  frontend stamps the clock tick purely from that response
+  (`ChatArea` → `withLiveInputReceipt`; there is no optimistic
+  client-side queued state — verified by code search and `git log -S`).
+- 21:12:07 — `[RETAINED_TURN] WARNING: turn still observed with no
+  pane-idle and no durable final response … elapsed=30m1s quiet=7s`.
+  Elapsed counts from the 20:42 re-arm, confirming the watcher has been
+  waiting on the phantom ever since.
+
+### How the jam holds (mechanism)
+
+1. The 20:42 settle takes the promotion branch
+   (`observeRetainedMainTurnEvent`, `server.go` ~8686–8704): pending is
+   non-empty and state is not failed, so it promotes `pending[0]`,
+   re-arms `retainedMainTurns[sessionID] = time.Now()`, starts a fresh
+   `observeRetainedMainTurnStream` watcher, and returns with
+   `promotedExecutionID != ""`.
+2. Because promotion happened, the settle skips
+   `kickConversationTurnQueue` (`server.go:8760-8762`) and re-marks the
+   session busy/running. Correct for a live next turn; fatal for a phantom.
+3. The watcher (`observeRetainedMainTurnStream`, `server.go:8362`) can exit
+   only via ctx-cancel, stream close/capture error, durable-sidecar
+   settle, or pane-ready settle. None can fire here: the retained tmux
+   session is gone (`tmux ls` shows only an unrelated Sept-19 session;
+   only an orphaned `tmux -CC attach` process from 20:42 remains), the
+   muse CLI session (`01a0ce94-…`) has been idle since ~19:37 (last writes
+   are `resource_pressure.observed` noise), and the durable sidecar holds
+   no *new* final response — the completion for this execution ID already
+   happened at 20:00. The 30-min stuck warning (`retainedMainTurnStuckWarnAfter`)
+   is log-only; the loop then `continue`s forever.
+4. `conversationTurnOccupied` (`conversation_turn_queue.go:184`) stays true
+   via the re-armed `retainedMainTurns[sessionID]` entry (one of six
+   checks; the others are lane token, dispatch-pending, active cancel,
+   stored turn flag, retained `ActiveTurnID`). Every kick — at enqueue,
+   at every later submit, from every completion hook — returns early at
+   the occupancy guard. The queued turns sit unclaimed; no failure is ever
+   recorded, so the UI shows `queued`, never `failed`.
+
+Net: a single stale-string promotion converts the lane into a permanent
+busy signal with no timeout and no failure path. Every later submit in
+that session queues behind nothing, forever.
+
+### Evidence (verbatim — the diagnosing machine's logs are not shared)
+
+Environment: local dev server on the reporter's laptop
+(`run_server_with_logging.sh --with-workspace`; agent `:18743`,
+workspace `:18744`, docs-dir `workspace-docs`), Work product chat,
+user `default`, session `work:project:75db2aa1-a719-4365-a871-824d74b6930a`,
+provider `muse-cli`, transport tmux, retained terminal
+`…:main:work:project:75db2aa1-…`. All times IST (UTC+5:30) on 2026-09-23.
+
+Stale ID origin — 20:00:23 delivery line whose JSON contains
+`"query_1790173821969293000"` (ID suffix `1790173821…` = 20:00:23 UTC+5:30):
+
+```
+2026/09/23 20:00:23 [username=user workflow=new-project-75db2aa1 mode=multi-agent …] [CODING_AGENT_DELIVERY] {"cli_accepted_at":"2026-09-23T14:30:23.414383Z",… "query_1790173821969293000"…}
+```
+
+Phantom promotion — 20:42:07 settle promotes that same 42-minute-old ID:
+
+```
+2026/09/23 20:42:07 [RETAINED_TURN] Settled retained main-agent turn from structured unified_completion event session=work:project:75db2aa1-a719-4365-a871-824d74b6930a terminal=work:project:75db2aa1-a719-4365-a871-824d74b6930a:main:work:project:75db2aa1-a719-4365-a871-824d74b6930a state=completed next_execution=query_1790173821969293000 username=user workflow=new-project-75db2aa1
+```
+
+Queued submits — both POSTs return the small `accepted` JSON in ~150–217ms
+(full-body submit path would take seconds and emit delivery lines):
+
+```
+2026/09/23 21:01:08 […] [API] <-- POST /api/agent-profiles/work/query request_id="-" status=200 bytes=299 duration=217ms in_flight=0
+2026/09/23 21:01:27 […] [API] <-- POST /api/agent-profiles/work/query request_id="-" status=200 bytes=299 duration=157ms in_flight=0
+```
+
+Watcher warning — elapsed counts from the 20:42 re-arm (30m1s):
+
+```
+2026/09/23 21:12:07 [RETAINED_TURN] WARNING: turn still observed with no pane-idle and no durable final response session=work:project:75db2aa1-a719-4365-a871-824d74b6930a terminal=work:project:75db2aa1-a719-4365-a871-824d74b6930a:main:work:project:75db2aa1-a719-4365-a871-824d74b6930a provider=muse-cli elapsed=30m1s quiet=7s username=user workflow=new-project-75db2aa1
+```
+
+Queue doc (both turns intact, neither claimed — `StartedAt` absent):
+
+```json
+{
+  "version": 1,
+  "turns": [
+    {"id": "963aaea7-d26f-4c8b-b637-50479b5e5e7e", "user_id": "default",
+     "session_id": "work:project:75db2aa1-a719-4365-a871-824d74b6930a",
+     "request": {"query": "yes", "provider": "muse-cli", "agent_mode": "multi-agent", …},
+     "submission_id": "c07aa81d-7b2d-4528-bd26-b0b942d00936",
+     "created_at": "2026-09-23T15:31:08.8654Z"},
+    {"id": "2ae0b9d2-96cc-464d-88d6-58acb7811c23", "user_id": "default",
+     "session_id": "work:project:75db2aa1-a719-4365-a871-824d74b6930a",
+     "request": {"query": "also can you review my ulip invesments.. i added some new", …},
+     "submission_id": "47d70eba-145d-4db2-9a35-9bc08a5d3b84",
+     "created_at": "2026-09-23T15:31:27.53754Z"}
+  ]
+}
+```
+
+Dead pane — no tmux session for the retained terminal (only an unrelated
+Sept-19 session; the work session's attach process from 20:42 is orphaned):
+
+```
+$ tmux ls
+mlp-muse-query-1789836676715690000: 1 windows (created Sat Sep 19 22:21:18 2026)
+$ ps … | grep tmux
+76808 … 0:00.01 tmux -CC attach -t mlp-muse-work-project-75db2aa1-a719-4365-a871-82…
+```
+
+Idle CLI — retained muse session `01a0ce94-1149-7842-acdc-c32571a8314c`
+(dir mtime 19:37 IST; tail is only `session.resource_pressure.observed`
+noise, no turn activity since ~19:37).
+
+Gap census — every log line for the session in 20:42–21:01 is one of:
+the 20:42:07 settle, one chat-history persist, three timeline echoes.
+No turn start, no submit, no delivery. The lane went busy with nothing
+behind it.
+
+Occupancy gate that never clears (`conversation_turn_queue.go:184`):
+
+```go
+if api.sessionTurnInProgress(sessionID) || api.conversationTurnDispatchPending(sessionID) ||
+    api.hasActiveTurnCancel(sessionID) || api.storedAgentTurnInProgress(sessionID) {
+    return true
+}
+if retained, ok := mcpagent.LookupSession(sessionID); ok && retained.ActiveTurnID() != "" {
+    return true
+}
+_, retainedRunning := api.retainedMainTurns[sessionID]  // ← stuck entry
+return retainedRunning
+```
+
+### Agreed fix (not yet implemented)
+
+1. **Promotion validation (root cause).** Before promoting `pending[0]`,
+   drop leading entries whose embedded creation time predates the
+   completing turn's `startedAt` (already in scope at the promotion
+   branch), logging each drop. Anything older than the turn that just
+   completed cannot be live input the CLI is about to answer — legit
+   rapid-fire pendings are seconds old, so this cannot misfire on the
+   real case. If nothing fresh remains, fall through to the existing
+   delete-tracking + release + kick path.
+2. **Watcher fail-after (defense in depth).** Add
+   `retainedMainTurnStuckFailAfter` (e.g. 60–90 min, a multiple of the
+   30-min warn threshold so genuine long turns survive); past it, emit a
+   failed stream completion and return. The existing `failed` branch
+   already deletes all four tracking maps, releases the lane, fails
+   pending IDs, and kicks the queue — queued turns then drain and the UI
+   flips to failed-with-reason instead of hanging. Thresholds are already
+   package vars mutated in `terminal_live_attach_test.go`, so this stays
+   testable the same way.
+3. **Dead-pane fast-fail.** In the watcher recheck, test `tmux has-session`
+   for `snapshot.TmuxSession`; after N consecutive misses (3, to ride out
+   transient tmux hiccups), fail the turn immediately with reason
+   `retained pane gone`. A dead pane can never yield pane-idle or a new
+   durable response, so waiting is pure loss. (The capture-error →
+   `handleRetainedMainTurnStreamClosed` path covers *some* pane death, but
+   this incident captured successfully while the session was gone, so an
+   explicit existence check closes the hole.)
+
+Tests: promotion skips stale pendings and frees the lane; watcher fails
+after the fail-after threshold (var override); dead-pane fast-fail after
+consecutive misses while a single transient miss does not fail.
+
+Immediate relief for a jammed session: restart the agent server.
+Occupancy is all in-memory; startup recovery (`recoverConversationTurnQueue`)
+resets `StartedAt`, re-registers queue owners, and kicks — unclaimed
+turns in the queue doc then execute normally. Verified safe for this
+incident: both turns are intact and unclaimed in the queue doc.
+
 ## Out of scope
 
 - Not investigating why the tmux pane died in this specific incident — the

@@ -17,7 +17,7 @@ describe('PulseWorkspace information hierarchy', () => {
         { id: 'GW-2', kind: 'goal_work', title: 'Try a weekly carousel', status: 'idea', links: [], created_at: '2026-09-23', updated_at: '2026-09-23' },
         { id: 'GW-3', kind: 'constraint_challenge', title: 'Longer posts may grow followers', status: 'needs_user', decision_id: 'goal-work-length', constraint_text: 'Posts remain 150-350 words', constraint_class: 'choice', links: [], created_at: '2026-09-23', updated_at: '2026-09-23' },
       ]}
-      autonomyRun="auto" />)
+      autonomyRun="auto" focusAreas={['Find more audience strategies like SaaS Builder']} onSaveFocusAreas={async () => true} />)
     expect(html).toContain('For you')
     expect(html).toContain('Platform health')
     expect(html.indexOf('Progress toward goals')).toBeLessThan(html.indexOf('Needs your decision'))
@@ -31,6 +31,9 @@ describe('PulseWorkspace information hierarchy', () => {
     expect(html).toContain('Try a weekly carousel')
     expect(html).toContain('Posts remain 150-350 words')
     expect(html).toContain('Choice: open to a test')
+    expect(html).toContain('Focus areas')
+    expect(html).toContain('Find more audience strategies like SaaS Builder')
+    expect(html.indexOf('Focus areas')).toBeLessThan(html.indexOf('Did for you'))
     expect(html).toContain('Run Goal Work now')
     expect(html).toContain('Run on its own (within your rules)')
     expect(html).toContain('Always asks you')

@@ -745,6 +745,14 @@ func TestPlanDriftDueCreatesExclusiveReviewPass(t *testing.T) {
 			}
 			continue
 		}
+		// Goal Work is Pulse's main job and keeps running while Drift is due
+		// (without its Run permission); only platform upkeep waits.
+		if state.Module == pulseModuleStrategicReview {
+			if state.LastDecision != "due" {
+				t.Fatalf("Goal Work decision = %q, want due while Plan Drift is due", state.LastDecision)
+			}
+			continue
+		}
 		if state.LastDecision != "skipped" {
 			t.Fatalf("%s decision = %q, want skipped while Plan Drift is due", state.Module, state.LastDecision)
 		}

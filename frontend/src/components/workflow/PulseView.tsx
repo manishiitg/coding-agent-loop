@@ -29,6 +29,9 @@ interface PulseViewProps {
   autonomyRun?: PulseAutonomyRun
   autonomySaving?: boolean
   onChangeAutonomyRun?: (run: PulseAutonomyRun) => void
+  focusAreas?: string[]
+  focusSaving?: boolean
+  onSaveFocusAreas?: (areas: string[]) => Promise<boolean>
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null
@@ -64,6 +67,9 @@ export default function PulseView({
   autonomyRun = 'auto',
   autonomySaving = false,
   onChangeAutonomyRun,
+  focusAreas = [],
+  focusSaving = false,
+  onSaveFocusAreas,
   reviewFocuses,
   reviewFocusSelections,
   statusError,
@@ -115,6 +121,9 @@ export default function PulseView({
               autonomyRun={autonomyRun}
               autonomySaving={autonomySaving}
               onChangeAutonomyRun={onChangeAutonomyRun}
+              focusAreas={focusAreas}
+              focusSaving={focusSaving}
+              onSaveFocusAreas={onSaveFocusAreas}
             />
           )}
         </div>

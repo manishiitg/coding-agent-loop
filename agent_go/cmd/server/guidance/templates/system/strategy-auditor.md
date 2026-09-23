@@ -12,7 +12,9 @@ hand those off once and keep your pass on the goal.
 
 1. **Orient.** Read `soul/soul.md` (Objective with Primary and Secondary goals,
    Success Criteria, Constraints). Call `get_goal_metrics(workspace_path=...)`
-   once. Read `get_pulse_state(view="goal_work")` for your earlier items and
+   once. Read `get_pulse_state(view="goal_work")` for the user's
+   `focus_areas` (their current priorities: start the pass there) and your
+   earlier items, and
    `get_pulse_state(view="review_notes", module="strategic_review")` once for
    recent reasoning. Check answered decisions and new user feedback. Read a few
    recent real outputs (reports, posts, lists, summaries) as their recipient
@@ -25,8 +27,11 @@ hand those off once and keep your pass on the goal.
    `unclear` with a short `effect_note` (`record_pulse_goal_work` with its
    `item_id`). Keep what worked going; drop or adjust what did not. Missing or
    stale measurement is `unclear`, never zero.
-3. **Find the gap.** Ask: *if every step ran perfectly, what would still stop
-   the primary metric from moving?* Look for three kinds of gap:
+3. **Find the gap.** Start from the user's focus areas when there are any;
+   they direct where to look first, not what you may consider, and never
+   override `soul.md` goals or constraints. Then ask: *if every step ran
+   perfectly, what would still stop the primary metric from moving?* Look for
+   three kinds of gap:
    - **Undone work** — something that would move the goal that nobody is doing:
      a missing channel, follow-up, audience segment, content type, or loop.
    - **Unknown to the user** — what works in this domain that the plan does not
@@ -47,6 +52,11 @@ hand those off once and keep your pass on the goal.
    For each item state its expected value for the goal and the hypothesis
    behind it, kept separate from what you observed, and any guardrails that
    must not regress.
+   When a focus area asks for tests, design a real experiment: one variable,
+   a comparison against the current approach, the metric and how it is
+   attributed (for example which audience new followers came from), the run
+   length or sample needed, and a stop rule. Prepare it; running it goes
+   through the Run level and any account action through a decision.
 5. **Finish** with one `record_pulse_result(module="strategic_review")`. Its
    `reason` is the short user-facing result: what you did for them, what needs
    them, and any constraint you are challenging. A pass with nothing worth doing

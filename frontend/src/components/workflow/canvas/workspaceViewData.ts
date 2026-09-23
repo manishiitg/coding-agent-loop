@@ -33,6 +33,9 @@ export interface PulseData {
   autonomyRun: PulseAutonomyRun
   autonomySaving: boolean
   setAutonomyRun: (run: PulseAutonomyRun) => void
+  focusAreas: string[]
+  focusSaving: boolean
+  saveFocusAreas: (areas: string[]) => Promise<boolean>
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null

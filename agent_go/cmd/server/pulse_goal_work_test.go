@@ -78,3 +78,66 @@ func TestPulseGoalWorkViewEmptyWorkflow(t *testing.T) {
 		t.Fatalf("empty view = %s", view)
 	}
 }
+
+func TestPulseFocusAreasNormalizeAndReachGoalWork(t *testing.T) {
+	areas, err := normalizePulseFocusAreas([]string{"  Find more audience strategies like SaaS Builder ", "", "find more audience strategies like saas builder", "Design tests that grow non-SaaS subscribers"})
+	if err != nil || len(areas) != 2 || areas[0] != "Find more audience strategies like SaaS Builder" {
+		t.Fatalf("normalize = %q, %v", areas, err)
+	}
+	many := make([]string, 11)
+	for i := range many {
+		many[i] = strings.Repeat("x", i+1)
+	}
+	if _, err := normalizePulseFocusAreas(many); err == nil {
+		t.Fatal("more than 10 focus areas accepted")
+	}
+	if _, err := normalizePulseFocusAreas([]string{strings.Repeat("y", 301)}); err == nil {
+		t.Fatal("over-long focus area accepted")
+	}
+	m := NewWorkflowManifest("Focus")
+	m.Pulse = &WorkflowPulseConfig{Enabled: true, FocusAreas: many}
+	if err := ValidateManifest(m); err == nil {
+		t.Fatal("manifest with 11 focus areas validated")
+	}
+}
+
+// Found in the live check on 2026-09-23: the Gate's worklist deferred Goal Work
+// whenever Plan Drift was due, although Goal Work must keep running then.
+func TestPlanDriftDueStillLeavesGoalWorkDue(t *testing.T) {
+	decisions := enforcePlanDriftExclusivePass([]PulseWorklistDecision{
+		{Module: pulseModulePlanDriftReview, Due: true, Reason: "plan changed"},
+		{Module: pulseModuleStrategicReview, Due: true, Reason: "new follower data"},
+		{Module: pulseModuleTechnicalReview, Due: true, Reason: "failed run"},
+		{Module: pulseModuleArchitectureReview, Due: true, Reason: "structure"},
+	})
+	due := map[string]bool{}
+	for _, d := range decisions {
+		due[normalizePulseModule(d.Module)] = d.Due
+	}
+	if !due[pulseModulePlanDriftReview] || !due[pulseModuleStrategicReview] {
+		t.Fatalf("Drift and Goal Work must stay due: %+v", decisions)
+	}
+	if due[pulseModuleTechnicalReview] || due[pulseModuleArchitectureReview] {
+		t.Fatalf("platform upkeep must wait for Drift: %+v", decisions)
+	}
+}
+
+// Also from the live check: saving a Pulse setting wrote a plan changelog
+// entry, which made the next Pulse spend its pass on a drift review.
+func TestPulseSettingsChangesDoNotTriggerDriftReview(t *testing.T) {
+	before := `{"id":"wf","updated_at":"2026-09-23T10:00:00Z","pulse":{"enabled":true}}`
+	onlyPulse := `{"id":"wf","updated_at":"2026-09-23T11:00:00Z","pulse":{"enabled":true,"autonomy":{"run":"ask"},"focus_areas":["x"]}}`
+	if changes := withoutPulseSettingsManifestChanges(workflowManifestChangelogChanges(before, onlyPulse)); len(changes) != 0 {
+		t.Fatalf("Pulse-only settings change recorded for drift review: %+v", changes)
+	}
+	withPlan := `{"id":"wf","label":"renamed","updated_at":"2026-09-23T11:00:00Z","pulse":{"enabled":true,"autonomy":{"run":"ask"}}}`
+	changes := withoutPulseSettingsManifestChanges(workflowManifestChangelogChanges(before, withPlan))
+	if len(changes) == 0 {
+		t.Fatal("a real manifest change must still be recorded")
+	}
+	for _, c := range changes {
+		if strings.HasPrefix(c.Field, "workflow.json.pulse") {
+			t.Fatalf("Pulse field leaked into drift changelog: %+v", c)
+		}
+	}
+}

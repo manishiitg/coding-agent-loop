@@ -374,6 +374,9 @@ type StreamingAPI struct {
 	// CLI. Production dispatch falls back to the provider's typed
 	// durable-ack await (live_input_durable.go).
 	internalDurableAckHandler func(context.Context, llmproviders.Provider, string, string) (llmtypes.DurableAck, error)
+	// internalLiveInputDeliver replaces the synchronous live-input send in
+	// tests of the fast-response window.
+	internalLiveInputDeliver func(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string) bool
 	// internalSteerTransportReady lets gate tests observe steer
 	// readiness without a real CLI registry. Production dispatch
 	// checks the provider's interactive-session registration.
@@ -9656,10 +9659,114 @@ func liveInputErrorProvesNoTarget(err error) bool {
 // the incoming /api/query message to that CLI instead of requiring a separate
 // foreground-turn/busy proof. Returns true if it handled and responded to the
 // request; false lets handleQuery start a normal new turn.
+//
+// Delivery into a busy CLI can take minutes (pane retries, durable-ack
+// budgets), but the gateway/CloudFront cut a request at 30-60s and show the
+// user a hard failure for a message that may still land. So the send runs on
+// a request-detached context and the HTTP reply waits at most
+// liveInputFastResponseWindow: a send that finishes in time answers exactly as
+// before; a slower one answers "accepted" (delivery_status "delivering") at
+// once and records its real outcome later (journal + chat receipt).
 func (api *StreamingAPI) tryDeliverQueryAsLiveInput(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string, receivedAt ...time.Time) bool {
 	if api == nil || strings.TrimSpace(message) == "" {
 		return false
 	}
+	detached := r.WithContext(context.WithoutCancel(r.Context()))
+	detached.Header = r.Header.Clone()
+	recorded := &internalResponseCapture{header: http.Header{}}
+	done := make(chan bool, 1)
+	go func() {
+		handled := false
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				log.Printf("[QUERY->LIVE] Delivery panicked for session %s: %v", sessionID, recovered)
+				recorded = &internalResponseCapture{header: http.Header{}}
+				writeSubmissionUncertain(recorded, detached.Header.Get("Idempotency-Key"))
+				handled = true
+			}
+			done <- handled
+		}()
+		if api.internalLiveInputDeliver != nil {
+			handled = api.internalLiveInputDeliver(recorded, detached, sessionID, message, queryID)
+			return
+		}
+		handled = api.deliverQueryAsLiveInputNow(recorded, detached, sessionID, message, queryID, receivedAt...)
+	}()
+	timer := time.NewTimer(liveInputFastResponseWindow)
+	defer timer.Stop()
+	select {
+	case handled := <-done:
+		if handled {
+			copyInternalResponse(w, recorded)
+		}
+		return handled
+	case <-timer.C:
+	}
+
+	submission, _ := r.Context().Value(chatSubmissionContextKey{}).(chatSubmissionContext)
+	clientMessageID := clientMessageIDFromContext(r.Context())
+	log.Printf("[QUERY->LIVE] Delivery for session %s still running after %s; answering accepted and finishing in the background", sessionID, liveInputFastResponseWindow)
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusAccepted)
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"success": true, "status": "accepted", "session_id": sessionID, "query_id": queryID,
+		"delivery_status": liveInputDeliveryInProgress,
+		"message":         "Still delivering to the coding agent; the chat updates when it lands",
+	})
+	go func() {
+		handled := <-done
+		status := recorded.status
+		if status == 0 {
+			status = http.StatusOK
+		}
+		body := recorded.body.Bytes()
+		failed := !handled || status >= 400 || submissionStateForResponse(status, body) == "delivery_uncertain"
+		if failed {
+			log.Printf("[QUERY->LIVE] Background delivery for session %s did not complete (handled=%t status=%d); marking uncertain", sessionID, handled, status)
+			if !handled || status < 400 {
+				recorded = &internalResponseCapture{header: http.Header{}}
+				writeSubmissionUncertain(recorded, submission.ID)
+				status, body = recorded.status, recorded.body.Bytes()
+			}
+			submission.handle.resolveLate(status, body)
+			receiptID := clientMessageID
+			if receiptID == "" {
+				receiptID = queryID
+			}
+			api.recordLiveInputConfirmed(sessionID, "late-delivery-"+receiptID, string(llmtypes.DurableAckFailed), "", "", 0, clientMessageID)
+			return
+		}
+		submission.handle.resolveLate(status, body)
+		log.Printf("[QUERY->LIVE] Background delivery for session %s completed (status=%d)", sessionID, status)
+	}()
+	return true
+}
+
+// liveInputFastResponseWindow bounds how long a /query waits on live-input
+// delivery before answering "accepted"; well under CloudFront's 30s origin
+// timeout. A var so tests can shorten it.
+var liveInputFastResponseWindow = 12 * time.Second
+
+// liveInputDeliveryInProgress is the delivery_status of an early "accepted"
+// reply whose send is still running in the background.
+const liveInputDeliveryInProgress = "delivering"
+
+// copyInternalResponse replays a buffered response onto the real writer.
+func copyInternalResponse(w http.ResponseWriter, recorded *internalResponseCapture) {
+	for key, values := range recorded.header {
+		w.Header()[key] = values
+	}
+	status := recorded.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	w.WriteHeader(status)
+	_, _ = w.Write(recorded.body.Bytes())
+}
+
+// deliverQueryAsLiveInputNow performs the delivery synchronously; see
+// tryDeliverQueryAsLiveInput for the response-time bound around it.
+func (api *StreamingAPI) deliverQueryAsLiveInputNow(w http.ResponseWriter, r *http.Request, sessionID, message, queryID string, receivedAt ...time.Time) bool {
 	requestReceivedAt := time.Now()
 	if len(receivedAt) > 0 && !receivedAt[0].IsZero() {
 		requestReceivedAt = receivedAt[0]

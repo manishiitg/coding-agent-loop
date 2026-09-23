@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -42,7 +43,51 @@ type chatSubmissionStore struct {
 	write          func(context.Context, string, string) error
 }
 type chatSubmissionContextKey struct{}
-type chatSubmissionContext struct{ ID, Owner, Session, Message string }
+type chatSubmissionContext struct {
+	ID, Owner, Session, Message string
+	// handle lets a dispatch that outlives the HTTP response (live input to a
+	// busy CLI) record its real outcome after the early "accepted" reply.
+	handle *chatSubmissionHandle
+}
+
+// chatSubmissionHandle serializes the request's own journal write (finish)
+// with a later background resolution. Once resolved late, finish no longer
+// overwrites the record with the early reply.
+type chatSubmissionHandle struct {
+	mu      sync.Mutex
+	late    bool
+	persist func(status int, body []byte)
+}
+
+// resolveLate records the dispatch's real outcome after the response was sent.
+func (h *chatSubmissionHandle) resolveLate(status int, body []byte) {
+	if h == nil || h.persist == nil {
+		return
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.late = true
+	h.persist(status, body)
+}
+
+// submissionStateForResponse maps a dispatch response to its journal state.
+func submissionStateForResponse(status int, body []byte) string {
+	state := "accepted"
+	if status >= 400 {
+		state = "rejected"
+	}
+	var response map[string]interface{}
+	if json.Unmarshal(body, &response) == nil {
+		if response["delivery_status"] == "sent_to_cli" {
+			state = "delivery_confirmed"
+		}
+		if response["delivery_status"] == "delivery_uncertain" {
+			state = "delivery_uncertain"
+		}
+	}
+	return state
+}
+
 type chatSubmissionUnknownProjectKey struct{}
 
 const queuedChatSubmissionDedupeWindow = 2 * time.Minute
@@ -246,6 +291,15 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 	// for a provider or risking a second send.
 	lock.Unlock()
 	capture := &internalResponseCapture{header: w.Header().Clone()}
+	handle := &chatSubmissionHandle{}
+	handle.persist = func(status int, body []byte) {
+		record.HTTPStatus = status
+		record.Response = string(body)
+		record.State = submissionStateForResponse(status, body)
+		if err := save(); err != nil {
+			log.Printf("[CHAT_SUBMISSION] Could not record late outcome for submission %s: %v", id, err)
+		}
+	}
 	finish := func() {
 		// A response buffered before a panic is not a dispatch acknowledgement.
 		// Keep the durable pre-dispatch uncertainty, then preserve HTTP recovery.
@@ -256,36 +310,30 @@ func (api *StreamingAPI) beginChatSubmission(w http.ResponseWriter, r *http.Requ
 		if status == 0 {
 			status = http.StatusOK
 		}
-		record.HTTPStatus = status
-		record.Response = capture.body.String()
-		record.State = "accepted"
-		if status >= 400 {
-			record.State = "rejected"
-		}
-		var response map[string]interface{}
-		if json.Unmarshal(capture.body.Bytes(), &response) == nil {
-			if response["delivery_status"] == "sent_to_cli" {
-				record.State = "delivery_confirmed"
+		handle.mu.Lock()
+		if !handle.late {
+			record.HTTPStatus = status
+			record.Response = capture.body.String()
+			record.State = submissionStateForResponse(status, capture.body.Bytes())
+			if record.Response == "" {
+				handle.mu.Unlock()
+				writeSubmissionUncertain(w, id)
+				return
 			}
-			if response["delivery_status"] == "delivery_uncertain" {
-				record.State = "delivery_uncertain"
+			if err := save(); err != nil {
+				handle.mu.Unlock()
+				writeSubmissionUncertain(w, id)
+				return
 			}
 		}
-		if record.Response == "" {
-			writeSubmissionUncertain(w, id)
-			return
-		}
-		if err := save(); err != nil {
-			writeSubmissionUncertain(w, id)
-			return
-		}
+		handle.mu.Unlock()
 		for key, values := range capture.header {
 			w.Header()[key] = values
 		}
 		w.WriteHeader(status)
 		_, _ = w.Write(capture.body.Bytes())
 	}
-	r = r.WithContext(context.WithValue(r.Context(), chatSubmissionContextKey{}, chatSubmissionContext{ID: id, Owner: owner, Session: session, Message: message}))
+	r = r.WithContext(context.WithValue(r.Context(), chatSubmissionContextKey{}, chatSubmissionContext{ID: id, Owner: owner, Session: session, Message: message, handle: handle}))
 	return capture, r, finish, true
 }
 

@@ -74,6 +74,45 @@ func TestSQLiteEventJournalAssignsSequenceAndDeduplicates(t *testing.T) {
 	}
 }
 
+func TestMuseBackgroundTaskPersistsAfterForegroundCompletion(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "events.sqlite")
+	journal, err := OpenSQLiteEventJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := NewEventStore(20)
+	store.SetDurableJournal(journal)
+	const sessionID = "chat-muse-background"
+	classifyInteractiveTestSession(t, store, sessionID)
+	if err := store.AddEventChecked(sessionID, Event{ID: "foreground", Type: "unified_completion", Timestamp: time.Now(), SessionID: sessionID,
+		Data: &agentevents.AgentEvent{Type: agentevents.EventTypeUnifiedCompletion, Timestamp: time.Now(), SessionID: sessionID}}); err != nil {
+		t.Fatal(err)
+	}
+	native := &agentevents.AgentEvent{Type: agentevents.CodingAgentBackgroundTask, Timestamp: time.Now(), SessionID: sessionID,
+		Data: &agentevents.CodingAgentBackgroundTaskEvent{BaseEventData: agentevents.BaseEventData{EventID: "muse:native:3"}, Provider: "muse-cli", NativeSessionID: "native", RunID: "run", TaskID: "task", NativeSequence: 3, Kind: "completed"}}
+	late := Event{ID: StableAgentEventID("bridge", native), Type: string(native.Type), Timestamp: time.Now(), SessionID: sessionID, Data: native}
+	if err := store.AddEventChecked(sessionID, late); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.AddEventChecked(sessionID, late); err != nil {
+		t.Fatal(err)
+	}
+	store.Stop()
+	journal.Close()
+	reopened, err := OpenSQLiteEventJournal(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer reopened.Close()
+	page, err := reopened.ReadPage(sessionID, DurableEventPageOptions{Limit: 10, FromStart: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Events) != 2 || page.Events[0].Type != "unified_completion" || page.Events[1].Type != string(agentevents.CodingAgentBackgroundTask) {
+		t.Fatalf("durable events=%v", journalEventIDs(page.Events))
+	}
+}
+
 func TestSQLiteEventJournalForwardPagesStartAtFirstRow(t *testing.T) {
 	journal, err := OpenSQLiteEventJournal(filepath.Join(t.TempDir(), "events.sqlite"))
 	if err != nil {

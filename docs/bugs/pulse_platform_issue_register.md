@@ -24,7 +24,7 @@ the legacy path. Implemented locally; live acceptance pending.
 
 ## Show Muse native multiple-choice questions in chat — PLAT-354
 
-[PLAT-354](pulse_platform/coding-agent-bridge/plat-354.md) proposes reading
+[PLAT-354](pulse_platform/coding-agent-bridge/plat-354.html) proposes reading
 Muse's structured `user_input_prompt_requested` questions and options from its
 native `session.jsonl`, presenting them in chat, then submitting the user's
 selections through the live tmux widget. The matching

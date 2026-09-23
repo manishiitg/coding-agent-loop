@@ -313,7 +313,8 @@ const shouldRetainEvent = (event: PollingEvent): boolean => {
     // Background owners - required by tree event continuity
     'background_agent_started',
     'background_agent_completed',
-    'background_agent_terminated'
+    'background_agent_terminated',
+    'coding_agent_background_task'
   ]
   return importantTypes.includes(event.type)
 }

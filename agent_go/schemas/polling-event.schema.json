@@ -525,6 +525,67 @@
       "additionalProperties": false,
       "type": "object"
     },
+    "CodingAgentBackgroundTaskEvent": {
+      "properties": {
+        "timestamp": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "trace_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "component": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "native_session_id": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "native_sequence": {
+          "type": "integer"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "type": "object"
+    },
     "ContextCancelledEvent": {
       "properties": {
         "timestamp": {
@@ -956,6 +1017,9 @@
         "background_agent_terminated": {
           "$ref": "#/$defs/BackgroundAgentTerminatedEvent"
         },
+        "coding_agent_background_task": {
+          "$ref": "#/$defs/CodingAgentBackgroundTaskEvent"
+        },
         "synthetic_turn_ready": {
           "$ref": "#/$defs/SyntheticTurnReadyEvent"
         },
@@ -1022,6 +1086,7 @@
         "background_agent_started",
         "background_agent_terminated",
         "blocking_human_feedback",
+        "coding_agent_background_task",
         "context_cancelled",
         "conversation_end",
         "conversation_error",

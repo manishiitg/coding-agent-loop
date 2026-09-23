@@ -13,7 +13,7 @@ import { isConversationContinuityNotice } from '../components/ConversationContin
 
 export type ConversationItem = {
   id: string
-  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification' | 'continuity'
+  role: 'user' | 'assistant' | 'progress' | 'reasoning' | 'error' | 'notification' | 'continuity' | 'background'
   content: string
   timestamp?: string
   assistantUpdate?: boolean
@@ -176,6 +176,22 @@ export function buildCleanConversationItems(events: PollingEvent[]): Conversatio
     }
 
     if (isChildExecution(event, payload)) continue
+
+    if (event.type === 'coding_agent_background_task') {
+      const kind = firstText(payload.kind)
+      if (['task_backgrounded', 'status', 'output', 'completed', 'failed', 'cancelled', 'rejected'].includes(kind)) {
+        const label = kind === 'task_backgrounded' ? 'started' : kind
+        const message = firstText(payload.message)
+        const task = firstText(payload.task_id).slice(0, 8)
+        pushUnique({
+          id: event.id,
+          role: 'background',
+          content: `Background task${task ? ` ${task}` : ''} ${label}${message ? `: ${message}` : ''}`,
+          timestamp: event.timestamp,
+        })
+      }
+      continue
+    }
 
     if (event.type === 'conversation_thinking') {
       const content = firstText(payload.thinking)

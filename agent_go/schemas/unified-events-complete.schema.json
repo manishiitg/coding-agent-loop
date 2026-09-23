@@ -400,6 +400,67 @@
       },
       "type": "object"
     },
+    "CodingAgentBackgroundTaskEvent": {
+      "additionalProperties": false,
+      "properties": {
+        "component": {
+          "type": "string"
+        },
+        "correlation_id": {
+          "type": "string"
+        },
+        "event_id": {
+          "type": "string"
+        },
+        "hierarchy_level": {
+          "type": "integer"
+        },
+        "is_end_event": {
+          "type": "boolean"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "metadata": {
+          "type": "object"
+        },
+        "native_sequence": {
+          "type": "integer"
+        },
+        "native_session_id": {
+          "type": "string"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "run_id": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "span_id": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "timestamp": {
+          "format": "date-time",
+          "type": "string"
+        },
+        "trace_id": {
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
     "ContextCancelledEvent": {
       "additionalProperties": false,
       "properties": {
@@ -2829,6 +2890,9 @@
     },
     "background_agent_terminated": {
       "$ref": "#/$defs/BackgroundAgentTerminatedEvent"
+    },
+    "coding_agent_background_task": {
+      "$ref": "#/$defs/CodingAgentBackgroundTaskEvent"
     },
     "context_cancelled": {
       "$ref": "#/$defs/ContextCancelledEvent"

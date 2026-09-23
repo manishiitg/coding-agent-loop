@@ -19,7 +19,7 @@ import (
 
 // newPreValidationConcernTestOrchestrator wires a REAL workspace-docs HTTP
 // server (for SavePreValidationLog's file write) AND WORKSPACE_DOCS_PATH (for
-// RecordRunConcerns' direct sqlite write) at the SAME root, so a test can
+// the run_concerns sqlite store) at the SAME root, so a test can
 // verify both real artifacts SavePreValidationLog produces.
 func newPreValidationConcernTestOrchestrator(t *testing.T) (*StepBasedWorkflowOrchestrator, string) {
 	t.Helper()
@@ -77,10 +77,7 @@ func TestSavePreValidationLogKeepsFailureOutOfPulseRegister(t *testing.T) {
 		targetingAuditFailure("$.our_follower_count", "unknown key our_follower_count"), nil,
 		hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName)
 
-	concerns, err := LoadOpenRunConcerns(ctx, hcpo.GetWorkspacePath(), 25)
-	if err != nil {
-		t.Fatalf("LoadOpenRunConcerns: %v", err)
-	}
+	concerns := activeRunConcerns(t, hcpo.GetWorkspacePath())
 	if len(concerns) != 0 {
 		t.Fatalf("prevalidation evidence must not create a raw Pulse concern: %+v", concerns)
 	}
@@ -105,10 +102,7 @@ func TestSavePreValidationLogRepeatedFailuresStayOutOfPulseRegister(t *testing.T
 			hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName)
 	}
 
-	concerns, err := LoadOpenRunConcerns(ctx, hcpo.GetWorkspacePath(), 25)
-	if err != nil {
-		t.Fatalf("LoadOpenRunConcerns: %v", err)
-	}
+	concerns := activeRunConcerns(t, hcpo.GetWorkspacePath())
 	if len(concerns) != 0 {
 		t.Fatalf("repeated prevalidation evidence must remain in retained logs, not raw Pulse concerns: %+v", concerns)
 	}
@@ -135,10 +129,7 @@ func TestSavePreValidationLogDoesNotCreateCollapsedPulseConcern(t *testing.T) {
 	SavePreValidationLog(ctx, hcpo.BaseOrchestrator, logPath, stepID, stepID,
 		failure, nil, hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName)
 
-	concerns, err := LoadOpenRunConcerns(ctx, hcpo.GetWorkspacePath(), 25)
-	if err != nil {
-		t.Fatalf("LoadOpenRunConcerns: %v", err)
-	}
+	concerns := activeRunConcerns(t, hcpo.GetWorkspacePath())
 	if len(concerns) != 0 {
 		t.Fatalf("failed checks must remain retained evidence until Technical Review classifies them: %+v", concerns)
 	}
@@ -148,10 +139,7 @@ func TestSavePreValidationLogDoesNotCreateCollapsedPulseConcern(t *testing.T) {
 	SavePreValidationLog(ctx, hcpo.BaseOrchestrator, logPath, stepID, stepID,
 		targetingAuditFailure("$.new_field", "still missing"), nil,
 		hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName)
-	concerns, err = LoadOpenRunConcerns(ctx, hcpo.GetWorkspacePath(), 25)
-	if err != nil {
-		t.Fatalf("reload concerns: %v", err)
-	}
+	concerns = activeRunConcerns(t, hcpo.GetWorkspacePath())
 	if len(concerns) != 0 {
 		t.Fatalf("same-run retry must not create Pulse register noise: %+v", concerns)
 	}
@@ -169,10 +157,7 @@ func TestSavePreValidationLogPassNoConcern(t *testing.T) {
 		&WorkspaceVerificationResult{OverallPass: true, Summary: ValidationSummary{TotalChecks: 1, PassedChecks: 1}}, nil,
 		hcpo.GetWorkspacePath(), hcpo.selectedRunFolder, hcpo.currentGroupName)
 
-	concerns, err := LoadOpenRunConcerns(ctx, hcpo.GetWorkspacePath(), 25)
-	if err != nil {
-		t.Fatalf("LoadOpenRunConcerns: %v", err)
-	}
+	concerns := activeRunConcerns(t, hcpo.GetWorkspacePath())
 	if len(concerns) != 0 {
 		t.Fatalf("expected no concerns for a passing result, got %+v", concerns)
 	}

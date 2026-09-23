@@ -190,12 +190,7 @@ func TestGetPulseStateViewsReturnWhatTheirPredecessorsReturned(t *testing.T) {
 	}
 
 	// view="backlog" — what get_pulse_finding_backlog returned.
-	if _, err := step_based_workflow.RecordRunConcerns(
-		ctx, workspacePath, "pulse-view", "", pulseModuleTechnicalReview,
-		step_based_workflow.ConcernPhaseReview, "CONCERNS: the collector writes a null column",
-	); err != nil {
-		t.Fatalf("file concern: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, "pulse-view", pulseModuleTechnicalReview, "the collector writes a null column")
 	raw, err = execute(ctx, map[string]interface{}{"workspace_path": workspacePath, "view": "backlog"})
 	if err != nil {
 		t.Fatalf(`get_pulse_state(view="backlog"): %v`, err)

@@ -22,52 +22,6 @@ func concernsWorkspace(t *testing.T) string {
 	return ws
 }
 
-func TestParseConcernLinesExtractsPayloadOnly(t *testing.T) {
-	summary := "Did the work.\nCONCERNS: step description says 1% but soul.md says 1.5%\nSTATUS: COMPLETED"
-	got := ParseConcernLines(summary)
-	if len(got) != 1 || got[0] != "step description says 1% but soul.md says 1.5%" {
-		t.Fatalf("got %#v", got)
-	}
-	// A bare marker carries nothing; recording it would create a permanent
-	// fingerprinted row with no content.
-	if got := ParseConcernLines("CONCERNS:\nSTATUS: COMPLETED"); len(got) != 0 {
-		t.Fatalf("empty payload must be ignored, got %#v", got)
-	}
-	if got := ParseConcernLines("all good\nSTATUS: COMPLETED"); len(got) != 0 {
-		t.Fatalf("no marker should yield nothing, got %#v", got)
-	}
-}
-
-// PLAT-211: a legacy review/advisor summary can render the marker as a Markdown
-// inline-code span. Live on HDFC-Personal-Accounts, six such findings vanished
-// silently -- no error, review still recorded completed -- because the bare
-// prefix check never matched a line starting with a backtick.
-func TestParseConcernLinesUnwrapsMarkdownCodeSpan(t *testing.T) {
-	summary := "Did the work.\n`CONCERNS: step description says 1% but soul.md says 1.5%`\nSTATUS: COMPLETED"
-	got := ParseConcernLines(summary)
-	if len(got) != 1 || got[0] != "step description says 1% but soul.md says 1.5%" {
-		t.Fatalf("backtick-wrapped marker should still be extracted, got %#v", got)
-	}
-	// Whitespace between the fence and the marker text is normal Markdown and
-	// must not defeat the unwrap.
-	if got := ParseConcernLines("` CONCERNS: extra space inside the span `"); len(got) != 1 || got[0] != "extra space inside the span" {
-		t.Fatalf("got %#v", got)
-	}
-	// A line that merely mentions a backtick, or opens a span it never
-	// closes, must not be misinterpreted -- only a genuine whole-line wrap.
-	if got := ParseConcernLines("CONCERNS: the `foo` field is stale"); len(got) != 1 || got[0] != "the `foo` field is stale" {
-		t.Fatalf("an internal backtick must not be treated as a wrapper, got %#v", got)
-	}
-	if got := ParseConcernLines("`CONCERNS: unterminated span"); len(got) != 0 {
-		t.Fatalf("an unterminated code span must not match the marker, got %#v", got)
-	}
-	// Two adjacent spans on one line ("`a` CONCERNS: `b`") are not a single
-	// whole-line wrap; leave them alone rather than guess which is real.
-	if got := ParseConcernLines("`context` CONCERNS: `detail`"); len(got) != 0 {
-		t.Fatalf("multiple spans on one line must not be unwrapped, got %#v", got)
-	}
-}
-
 // Magnitude is the interesting part of a recurring concern, so two reports that
 // differ only in a number must stay distinct rows.
 func TestConcernFingerprintKeepsDigitsButIgnoresFormatting(t *testing.T) {
@@ -87,17 +41,14 @@ func TestConcernFingerprintKeepsDigitsButIgnoresFormatting(t *testing.T) {
 
 // The whole point of the table: a concern reported every run collapses to one
 // row whose seen_count is the signal. Twelve rows would bury it.
-func TestRecordRunConcernsDedupesAndCountsRecurrence(t *testing.T) {
+func TestRunConcernUpsertDedupesAndCountsRecurrence(t *testing.T) {
 	ws := concernsWorkspace(t)
 	ctx := context.Background()
-	summary := "CONCERNS: db_health rows have NULL pnl_inr\nSTATUS: COMPLETED"
 
 	for i := 0; i < 3; i++ {
-		if _, err := RecordRunConcerns(ctx, ws, "iteration-0/g", "g", "step-a", ConcernPhaseExecution, summary); err != nil {
-			t.Fatalf("record %d: %v", i, err)
-		}
+		seedRunConcerns(t, ws, "iteration-0/g", "g", "step-a", ConcernPhaseExecution, "db_health rows have NULL pnl_inr")
 	}
-	open, err := LoadOpenRunConcerns(ctx, ws, 10)
+	open, err := LoadPulseFindingLifecycles(ctx, ws, "", 10)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -112,49 +63,12 @@ func TestRecordRunConcernsDedupesAndCountsRecurrence(t *testing.T) {
 	}
 }
 
-func TestAdvisorConcernsRequireDurableRouting(t *testing.T) {
-	ctx := context.Background()
-	workspacePath := concernsWorkspace(t)
-	concern := "the current target mix cannot reach enough new accounts"
-
-	if _, err := RecordRunConcerns(ctx, workspacePath, "pulse-1", "", pulsemodules.LegacyStrategyAuditorID,
-		ConcernPhaseReview, "CONCERNS: "+concern); err == nil || !strings.Contains(err.Error(), "missing its PULSE_FINDING_JSON routing marker") {
-		t.Fatalf("bare strategy concern was accepted: %v", err)
-	}
-
-	evidenceWait := strings.Join([]string{
-		`PULSE_FINDING_JSON: {"module":"strategy_auditor","concern":"` + concern + `","issue_kind":"workflow_issue","recommended_route":"evidence_wait","next_check":"after three completed acquisition runs"}`,
-		"CONCERNS: " + concern,
-	}, "\n")
-	if _, err := RecordRunConcerns(ctx, workspacePath, "pulse-1", "", pulsemodules.LegacyStrategyAuditorID,
-		ConcernPhaseReview, evidenceWait); err != nil {
-		t.Fatalf("routed strategy concern was rejected: %v", err)
-	}
-	findings, err := LoadPulseFindingLifecycles(ctx, workspacePath, pulsemodules.LegacyStrategyAuditorID, 10)
-	if err != nil || len(findings) != 1 || findings[0].Details == nil {
-		t.Fatalf("load routed strategy concern: findings=%+v err=%v", findings, err)
-	}
-	if findings[0].Details.RecommendedRoute != pulseFindingRouteEvidenceWait ||
-		findings[0].Details.NextCheck != "after three completed acquisition runs" {
-		t.Fatalf("advisor route was not persisted: %+v", findings[0].Details)
-	}
-
-	noneConcern := strings.Join([]string{
-		`PULSE_FINDING_JSON: {"module":"goal_advisor","concern":"no material strategic gap","issue_kind":"workflow_issue","recommended_route":"none"}`,
-		"CONCERNS: no material strategic gap",
-	}, "\n")
-	if _, err := RecordRunConcerns(ctx, concernsWorkspace(t), "pulse-2", "", pulsemodules.LegacyGoalAdvisorID,
-		ConcernPhaseReview, noneConcern); err == nil || !strings.Contains(err.Error(), "must not have been filed") && !strings.Contains(err.Error(), "omit the CONCERNS line") {
-		t.Fatalf("recommended_route=none was accepted as an active concern: %v", err)
-	}
-}
-
 // A fix that did not hold is more important than the original report, so a
 // resolved concern that comes back reopens. A rejected one does not: someone
 // judged it a non-issue and recurrence is not new evidence against that.
 func TestRecurrenceReopensResolvedButNotRejected(t *testing.T) {
 	ctx := context.Background()
-	summary := "CONCERNS: selector drifted again\nSTATUS: COMPLETED"
+	concern := "selector drifted again"
 
 	for _, tc := range []struct {
 		name       string
@@ -166,20 +80,16 @@ func TestRecurrenceReopensResolvedButNotRejected(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			ws := concernsWorkspace(t)
-			if _, err := RecordRunConcerns(ctx, ws, "run-1", "g", "step-a", ConcernPhaseExecution, summary); err != nil {
-				t.Fatalf("record: %v", err)
-			}
-			open, _ := LoadOpenRunConcerns(ctx, ws, 10)
+			seedRunConcerns(t, ws, "run-1", "g", "step-a", ConcernPhaseExecution, concern)
+			open := activeRunConcerns(t, ws)
 			if len(open) != 1 {
 				t.Fatalf("setup: expected 1 row, got %d", len(open))
 			}
 			if err := ResolveRunConcern(ctx, ws, open[0].Fingerprint, tc.status, "pulse_fixer", "note"); err != nil {
 				t.Fatalf("resolve: %v", err)
 			}
-			if _, err := RecordRunConcerns(ctx, ws, "run-2", "g", "step-a", ConcernPhaseExecution, summary); err != nil {
-				t.Fatalf("re-record: %v", err)
-			}
-			reloaded, _ := LoadOpenRunConcerns(ctx, ws, 10)
+			seedRunConcerns(t, ws, "run-2", "g", "step-a", ConcernPhaseExecution, concern)
+			reloaded := activeRunConcerns(t, ws)
 			if tc.wantStatus == ConcernStatusOpen {
 				if len(reloaded) != 1 || reloaded[0].Status != ConcernStatusOpen {
 					t.Fatalf("expected reopened row, got %#v", reloaded)
@@ -191,15 +101,15 @@ func TestRecurrenceReopensResolvedButNotRejected(t *testing.T) {
 	}
 }
 
-func TestLoadOpenRunConcernsRanksByRecurrence(t *testing.T) {
+func TestFindingBacklogRanksByRecurrence(t *testing.T) {
 	ws := concernsWorkspace(t)
 	ctx := context.Background()
 	for i := 0; i < 2; i++ {
-		_, _ = RecordRunConcerns(ctx, ws, "r", "g", "step-a", ConcernPhaseExecution, "CONCERNS: seen twice")
+		seedRunConcerns(t, ws, "r", "g", "step-a", ConcernPhaseExecution, "seen twice")
 	}
-	_, _ = RecordRunConcerns(ctx, ws, "r", "g", "step-b", ConcernPhaseLearnings, "CONCERNS: seen once")
+	seedRunConcerns(t, ws, "r", "g", "step-b", ConcernPhaseLearnings, "seen once")
 
-	open, err := LoadOpenRunConcerns(ctx, ws, 10)
+	open, err := LoadPulseFindingLifecycles(ctx, ws, "", 10)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}
@@ -211,21 +121,18 @@ func TestLoadOpenRunConcernsRanksByRecurrence(t *testing.T) {
 	}
 }
 
-func TestLoadOpenRunConcernsNegativeLimitReturnsCompleteBacklog(t *testing.T) {
+func TestFindingBacklogNegativeLimitReturnsCompleteBacklog(t *testing.T) {
 	ws := concernsWorkspace(t)
 	ctx := context.Background()
 	for i := 0; i < 63; i++ {
-		summary := fmt.Sprintf("CONCERNS: distinct backlog concern %02d", i)
-		if _, err := RecordRunConcerns(ctx, ws, "run", "g", "step-a", ConcernPhaseExecution, summary); err != nil {
-			t.Fatalf("record concern %d: %v", i, err)
-		}
+		seedRunConcerns(t, ws, "run", "g", "step-a", ConcernPhaseExecution, fmt.Sprintf("distinct backlog concern %02d", i))
 	}
 
-	preview, err := LoadOpenRunConcerns(ctx, ws, 25)
+	preview, err := LoadPulseFindingLifecycles(ctx, ws, "", 25)
 	if err != nil {
 		t.Fatalf("load preview: %v", err)
 	}
-	complete, err := LoadOpenRunConcerns(ctx, ws, -1)
+	complete, err := LoadPulseFindingLifecycles(ctx, ws, "", -1)
 	if err != nil {
 		t.Fatalf("load complete backlog: %v", err)
 	}
@@ -236,9 +143,9 @@ func TestLoadOpenRunConcernsNegativeLimitReturnsCompleteBacklog(t *testing.T) {
 
 // A workflow that has never raised a concern has no table; that must read as
 // "nothing to report", not as an error the Gate has to handle.
-func TestLoadOpenRunConcernsQuietWhenNeverUsed(t *testing.T) {
+func TestFindingBacklogQuietWhenNeverUsed(t *testing.T) {
 	ws := concernsWorkspace(t)
-	got, err := LoadOpenRunConcerns(context.Background(), ws, 10)
+	got, err := LoadPulseFindingLifecycles(context.Background(), ws, "", 10)
 	if err != nil {
 		t.Fatalf("missing table should not error: %v", err)
 	}
@@ -250,8 +157,8 @@ func TestLoadOpenRunConcernsQuietWhenNeverUsed(t *testing.T) {
 func TestResolveRunConcernRejectsUnknownStatus(t *testing.T) {
 	ws := concernsWorkspace(t)
 	ctx := context.Background()
-	_, _ = RecordRunConcerns(ctx, ws, "r", "g", "step-a", ConcernPhaseExecution, "CONCERNS: something")
-	open, _ := LoadOpenRunConcerns(ctx, ws, 10)
+	seedRunConcerns(t, ws, "r", "g", "step-a", ConcernPhaseExecution, "something")
+	open := activeRunConcerns(t, ws)
 	if err := ResolveRunConcern(ctx, ws, open[0].Fingerprint, "ignored", "x", ""); err == nil {
 		t.Fatal("unknown status must be rejected")
 	}
@@ -267,21 +174,17 @@ func TestRelatedStepConcernsOutrankAnIsolatedRecurrence(t *testing.T) {
 
 	// Four distinct behavioral symptoms, each seen once, share one step.
 	for _, symptom := range []string{"wrong source", "stale selector", "missing retry", "incorrect destination"} {
-		artifact := "## Findings\n\nCONCERNS: execution contract: " + symptom + "\n"
-		if _, err := RecordRunConcerns(ctx, ws, "run-1", "", "execute-find-opportunities", ConcernPhaseExecution, artifact); err != nil {
-			t.Fatalf("record %s: %v", symptom, err)
-		}
+		seedRunConcerns(t, ws, "run-1", "", "execute-find-opportunities", ConcernPhaseExecution, "execution contract: "+symptom)
 	}
 
 	// An unrelated finding that genuinely recurred.
-	recurring := "## Findings\n\nCONCERNS: daily digest was not delivered\n"
+	recurring := testReviewFinding(pulsemodules.TechnicalReviewID, "daily digest was not delivered")
+	recurring.StepID = "execute-digest"
 	for _, run := range []string{"run-1", "run-2", "run-3"} {
-		if _, err := RecordRunConcerns(ctx, ws, run, "", "execute-digest", ConcernPhaseReview, recurring); err != nil {
-			t.Fatalf("record recurring: %v", err)
-		}
+		recordTestReviewFinding(t, ws, run, recurring)
 	}
 
-	open, err := LoadOpenRunConcerns(ctx, ws, -1)
+	open, err := LoadPulseFindingLifecycles(ctx, ws, "", -1)
 	if err != nil {
 		t.Fatalf("load: %v", err)
 	}

@@ -36,10 +36,7 @@ func TestPulseAppliedFixClosesThroughMCPBridge(t *testing.T) {
 	})); err != nil {
 		t.Fatalf("record prior worklist: %v", err)
 	}
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, priorRunID, "", pulseModuleTechnicalReview, step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: collector omits the populated latency value after a producing run"); err != nil {
-		t.Fatalf("file concern: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, priorRunID, pulseModuleTechnicalReview, "collector omits the populated latency value after a producing run")
 	backlog, err := step_based_workflow.LoadPulseFindingLifecycles(ctx, workspacePath, pulseModuleTechnicalReview, -1)
 	if err != nil || len(backlog) != 1 {
 		t.Fatalf("load filed concern: count=%d err=%v", len(backlog), err)

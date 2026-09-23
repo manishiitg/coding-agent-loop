@@ -35,7 +35,6 @@ import {
   Pin,
   PinOff,
   Bell,
-  MessagesSquare,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -66,6 +65,7 @@ import PulseHistoryViewer from './platform/PulseHistoryViewer'
 import type { ProductNotification } from '../../platform/notifications/useProductNotifications'
 import ChildPlatformChat, { forgetChildChat, submitToChildChat, type ChildKickoff } from './platform/ChildPlatformChat'
 import { completedSparkQuillTurns } from './platform/turnRefresh'
+import { withPreviewPositionScript } from './platform/previewPosition'
 import { useChatStore } from '../../stores/useChatStore'
 import { api } from './api'
 import { VoiceSettings } from './voice/VoiceSettings'
@@ -563,9 +563,20 @@ function SceneFrame({ html, activityDir }: { html: string; activityDir: string }
 // nothing else competing for space and more of the real content shows at once.
 function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; name: string; large?: boolean; refreshKey: number }) {
   const [content, setContent] = useState<{ kind: 'html' | 'md'; text: string } | null>(null)
+  const frameRef = useRef<HTMLIFrameElement>(null)
+  const scrollYRef = useRef(0)
+  const nonce = useMemo(() => crypto.randomUUID(), [])
+  useEffect(() => {
+    const onMsg = (e: MessageEvent) => {
+      if (e.source !== frameRef.current?.contentWindow) return
+      const m = e.data as { __sq?: number; op?: string; y?: number } | null
+      if (m?.__sq === 1 && m.op === 'preview-scroll' && typeof m.y === 'number') scrollYRef.current = m.y
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [])
   useEffect(() => {
     let cancelled = false
-    setContent(null)
     api.readFile(path)
       .then((d) => {
         if (cancelled) return
@@ -577,6 +588,10 @@ function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; 
       .catch(() => { if (!cancelled) setContent(null) })
     return () => { cancelled = true }
   }, [path, refreshKey])
+  const previewSrcDoc = useMemo(
+    () => content?.kind === 'html' ? withPreviewPositionScript(content.text, scrollYRef.current, nonce) : '',
+    [content, nonce],
+  )
   if (!content) {
     return (
       <div className="fl-file-item-row">
@@ -588,7 +603,7 @@ function ActivityItemPreview({ path, name, large, refreshKey }: { path: string; 
   return (
     <div className={`fl-item-preview${large ? ' is-large' : ''}`}>
       {content.kind === 'html' ? (
-        <iframe className="fl-item-preview-frame" title="" sandbox="" srcDoc={content.text} />
+        <iframe ref={frameRef} className="fl-item-preview-frame" title="" sandbox="allow-scripts" srcDoc={previewSrcDoc} />
       ) : (
         <div className="fl-item-preview-md"><Markdown text={content.text} /></div>
       )}
@@ -1384,6 +1399,7 @@ export default function LearningApp() {
   const childViewerScrollRef = useRef<Record<string, number>>({})
   useEffect(() => {
     const onMsg = (ev: MessageEvent) => {
+      if (ev.source !== childIframeRef.current?.contentWindow) return
       const m = ev.data as { __sq?: number; op?: string; y?: number } | null
       if (!m || m.__sq !== 1 || m.op !== 'viewer-scroll' || typeof m.y !== 'number') return
       const path = childViewerPathRef.current
@@ -1507,6 +1523,26 @@ export default function LearningApp() {
   const [viewerActivityDir, setViewerActivityDir] = useState<string | null>(null)
   const viewerContent = useSparkQuillWorkspaceStore((s) => s.viewerContent)
   const setViewerContent = useSparkQuillWorkspaceStore((s) => s.setViewerContent)
+  const viewerScrollRef = useRef<Record<string, number>>({})
+  useEffect(() => {
+    const onMsg = (ev: MessageEvent) => {
+      if (ev.source !== iframeRef.current?.contentWindow) return
+      const m = ev.data as { __sq?: number; op?: string; y?: number } | null
+      if (m?.__sq === 1 && m.op === 'viewer-scroll' && typeof m.y === 'number' && viewerPath) {
+        viewerScrollRef.current[viewerPath] = m.y
+      }
+    }
+    window.addEventListener('message', onMsg)
+    return () => window.removeEventListener('message', onMsg)
+  }, [viewerPath])
+  const viewerSrcDoc = useMemo(
+    () => withViewerPositionScript(
+      withViewerLinkBridge(withDiagramLib(viewerContent?.content ?? '')),
+      undefined,
+      viewerScrollRef.current[viewerPath ?? ''] ?? 0,
+    ),
+    [viewerContent, viewerPath],
+  )
   const [viewerMeta, setViewerMeta] = useState<Record<string, unknown> | null>(null)
   const [metaOpen, setMetaOpen] = useState(false)
   // Which activity's goal (the parent's own instructions for that activity)
@@ -2774,7 +2810,7 @@ export default function LearningApp() {
                   ) : !viewerContent.isText ? (
                     <NonPreviewableFile path={viewerPath} meta={viewerMeta} />
                   ) : (viewerPath.endsWith('.html') || viewerPath.endsWith('.htm')) ? (
-                    <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={withViewerLinkBridge(withDiagramLib(viewerContent.content))} />
+                    <iframe ref={iframeRef} className="fl-viewer-frame" title="File preview" sandbox="allow-scripts" srcDoc={viewerSrcDoc} />
                   ) : (viewerPath.endsWith('.md') || viewerPath.endsWith('.markdown')) ? (
                     <div className="fl-viewer-md"><Markdown text={viewerContent.content} /></div>
                   ) : (viewerPath.endsWith('.json') || viewerPath.endsWith('.jsonl')) ? (

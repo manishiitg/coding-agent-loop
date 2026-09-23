@@ -2238,10 +2238,8 @@ func LoadPulseFindingLifecycles(ctx context.Context, workspacePath, module strin
 	// one-offs, and successive Bug Review passes worked the top of the list and
 	// left all 39 untouched.
 	//
-	// Clustering only helped where it was applied. LoadOpenRunConcerns was
-	// reordered first, but that backs get_pulse_state(view="module") while the
-	// Fixer reads this query through view="backlog" — so the fix landed on
-	// a path the Fixer never reads and the backlog did not move.
+	// Clustering only helped where it was applied: an earlier reorder landed on
+	// a view the Fixer never reads, so this backlog query is where it matters.
 	query := fmt.Sprintf(`SELECT c.fingerprint, c.issue_id, c.step_id, c.phase, c.group_name, c.text,
 			c.first_seen_run, c.first_seen_at, c.last_seen_run, c.last_seen_at, c.seen_count,
 			c.status, c.resolution_note, COALESCE(d.detail_json, '')

@@ -1094,13 +1094,7 @@ func TestMarkPulseModuleResultStoresMinimalDurableAudit(t *testing.T) {
 
 	ctx := mcpexecutor.WithSessionID(context.Background(), sessionID)
 	_, executors, _ := createPulseWorklistTools()
-	if _, err := step_based_workflow.RecordRunConcerns(
-		ctx, workspacePath, pulseRunID, "", pulseModuleTechnicalReview,
-		step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: stale run binding in planning/step_config.json",
-	); err != nil {
-		t.Fatalf("record reviewer finding: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, pulseRunID, pulseModuleTechnicalReview, "stale run binding in planning/step_config.json")
 	findings, err := step_based_workflow.LoadPulseFindingLifecycles(ctx, workspacePath, pulseModuleTechnicalReview, 10)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("load reviewer finding: findings=%+v err=%v", findings, err)
@@ -1227,13 +1221,7 @@ func TestRecordPulseResultAcceptsFixerSupplementalDispositionsAfterReviewerTermi
 
 	// A finding the reviewer recorded, later repaired by a separately
 	// dispatched Fixer background agent -- the split contract this reproduces.
-	if _, err := step_based_workflow.RecordRunConcerns(
-		ctx, workspacePath, pulseRunID, "", pulseModuleTechnicalReview,
-		step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: stale run binding in planning/step_config.json",
-	); err != nil {
-		t.Fatalf("record reviewer finding: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, pulseRunID, pulseModuleTechnicalReview, "stale run binding in planning/step_config.json")
 	findings, err := step_based_workflow.LoadPulseFindingLifecycles(ctx, workspacePath, pulseModuleTechnicalReview, 10)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("load reviewer finding: findings=%+v err=%v", findings, err)
@@ -1749,13 +1737,7 @@ func TestHandleGetPulseFindingsReturnsFiledLifecycle(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/example"
-	if _, err := step_based_workflow.RecordRunConcerns(
-		ctx, workspacePath, "pulse-run-1", "", pulseModuleTechnicalReview,
-		step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: selector keeps targeting the same accounts",
-	); err != nil {
-		t.Fatalf("record finding: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, "pulse-run-1", pulseModuleTechnicalReview, "selector keeps targeting the same accounts")
 
 	req := httptest.NewRequest(
 		http.MethodGet,
@@ -1785,7 +1767,7 @@ func TestHandleGetPulseFindingsReturnsFiledLifecycle(t *testing.T) {
 		t.Fatalf("reviewer finding kind=%q, want canonical issue", finding.Kind)
 	}
 	if finding.Issue.ID == "" || finding.Issue.Title != "selector keeps targeting the same accounts" ||
-		finding.Issue.Status != "backlog" || finding.Issue.Priority != "none" {
+		finding.Issue.Status != "backlog" || finding.Issue.Priority != "medium" {
 		t.Fatalf("compact issue projection missing: %+v", finding.Issue)
 	}
 	if finding.FindingID != finding.Issue.ID || !strings.HasPrefix(finding.FindingID, "PUL-") {
@@ -1819,14 +1801,8 @@ func TestPulseBacklogViewKeepsWorkflowObservationsOutOfFixerFeed(t *testing.T) {
 	ctx := context.Background()
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/example"
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, "execution-1", "default", "collect", step_based_workflow.ConcernPhaseExecution,
-		"CONCERNS: broad collector scan repeats on every run"); err != nil {
-		t.Fatalf("record observation: %v", err)
-	}
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, "review-1", "", pulseModuleWorkflowReview, step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: collector silently drops failed records"); err != nil {
-		t.Fatalf("record canonical issue: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, "review-1", pulseModuleWorkflowReview, "collector silently drops failed records")
+	seedLegacyStepObservation(t, workspacePath, "execution-1", "default", "collect", "broad collector scan repeats on every run")
 
 	raw, err := readPulseBacklogView(ctx, workspacePath, "")
 	if err != nil {
@@ -1865,10 +1841,7 @@ func TestPulseBacklogCompactIncludesClosedIssueTextForSemanticReuse(t *testing.T
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/example"
 	const concern = "collector silently drops failed records"
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, "review-1", "", pulseModuleTechnicalReview,
-		step_based_workflow.ConcernPhaseReview, "CONCERNS: "+concern); err != nil {
-		t.Fatalf("record issue: %v", err)
-	}
+	recordTestReviewFinding(t, ctx, workspacePath, "review-1", pulseModuleTechnicalReview, concern)
 	findings, err := step_based_workflow.LoadPulseFindingLifecycles(ctx, workspacePath, "", -1)
 	if err != nil || len(findings) != 1 {
 		t.Fatalf("load issue: findings=%+v err=%v", findings, err)
@@ -1902,14 +1875,9 @@ func TestPulseBacklogFullDetailRequiresAndFiltersPublicIDs(t *testing.T) {
 	t.Setenv("WORKSPACE_DOCS_PATH", t.TempDir())
 	workspacePath := "Workflow/example"
 	largeEvidence := "unique-large-evidence-marker-" + strings.Repeat("evidence ", 40000)
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, "review-large", "", pulseModuleWorkflowReview, step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: "+largeEvidence); err != nil {
-		t.Fatalf("record large canonical issue: %v", err)
-	}
-	if _, err := step_based_workflow.RecordRunConcerns(ctx, workspacePath, "review-other", "", pulseModuleWorkflowReview, step_based_workflow.ConcernPhaseReview,
-		"CONCERNS: unrelated second issue"); err != nil {
-		t.Fatalf("record second canonical issue: %v", err)
-	}
+	recordTestReviewFindingWithEvidence(t, ctx, workspacePath, "review-large", pulseModuleWorkflowReview,
+		"unique-large-evidence-marker collector drops failed records", []string{largeEvidence})
+	recordTestReviewFinding(t, ctx, workspacePath, "review-other", pulseModuleWorkflowReview, "unrelated second issue")
 
 	compact, err := readPulseBacklogViewWithOptions(ctx, workspacePath, "", "compact", nil)
 	if err != nil {

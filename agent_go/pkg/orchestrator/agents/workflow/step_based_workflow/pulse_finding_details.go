@@ -403,51 +403,6 @@ func isPulseAdvisorModule(module string) bool {
 	return module == pulsemodules.StrategicReviewID || module == pulsemodules.ArchitectureReviewID
 }
 
-// validatePulseAdvisorFindingRoutes makes the advisor-to-lifecycle handoff a
-// stored contract rather than prose the next agent has to infer. An advisor
-// concern is not an engineering repair by default: it must identify whether it
-// needs a decision, future evidence, or an explicit Fixer handoff.
-func validatePulseAdvisorFindingRoutes(module, summary string) error {
-	module = pulsemodules.Normalize(module)
-	if !isPulseAdvisorModule(module) {
-		return nil
-	}
-	concerns := ParseConcernLines(summary)
-	if len(concerns) == 0 {
-		return nil
-	}
-	markers := map[string]pulseFindingDetailMarker{}
-	for _, marker := range ParsePulseFindingDetailMarkers(summary) {
-		key := strings.ToLower(strings.Join(strings.Fields(marker.Concern), " "))
-		if _, duplicate := markers[key]; duplicate {
-			return fmt.Errorf("%s concern %q has duplicate PULSE_FINDING_JSON routing markers", module, marker.Concern)
-		}
-		marker.Module = pulsemodules.Normalize(marker.Module)
-		if marker.Module != module {
-			return fmt.Errorf("%s concern %q must use module=%q in PULSE_FINDING_JSON; got %q", module, marker.Concern, module, marker.Module)
-		}
-		switch marker.RecommendedRoute {
-		case pulseFindingRouteDecisionRequired, pulseFindingRouteFixerHandoff:
-		case pulseFindingRouteEvidenceWait:
-			if marker.NextCheck == "" {
-				return fmt.Errorf("%s concern %q uses recommended_route=evidence_wait without an exact next_check", module, marker.Concern)
-			}
-		case pulseFindingRouteNone:
-			return fmt.Errorf("%s concern %q uses recommended_route=none but is still emitted as CONCERNS; omit the CONCERNS line for a non-trackable conclusion", module, marker.Concern)
-		default:
-			return fmt.Errorf("%s concern %q must set recommended_route to decision_required, evidence_wait, fixer_handoff, or none", module, marker.Concern)
-		}
-		markers[key] = marker
-	}
-	for _, concern := range concerns {
-		key := strings.ToLower(strings.Join(strings.Fields(concern), " "))
-		if _, ok := markers[key]; !ok {
-			return fmt.Errorf("%s concern %q is missing its PULSE_FINDING_JSON routing marker", module, concern)
-		}
-	}
-	return nil
-}
-
 // ParsePulseFindingDetailMarkers supports old run summaries and one-way legacy
 // review migration. Live Pulse reviewers use record_pulse_finding instead.
 func ParsePulseFindingDetailMarkers(summary string) []pulseFindingDetailMarker {
@@ -510,48 +465,6 @@ func pulseFindingCanonicalFingerprint(stepID string, marker pulseFindingDetailMa
 		scope = "__structured_finding__:module:" + strings.ToLower(strings.TrimSpace(stepID))
 	}
 	return concernFingerprint(scope, "target_key:"+strings.ToLower(identity))
-}
-
-func pulseFindingFingerprintsByConcern(summary, stepID string) map[string]string {
-	out := map[string]string{}
-	for _, marker := range ParsePulseFindingDetailMarkers(summary) {
-		normalized := strings.ToLower(strings.Join(strings.Fields(marker.Concern), " "))
-		out[normalized] = pulseFindingCanonicalFingerprint(stepID, marker)
-	}
-	return out
-}
-
-func recordPulseFindingDetailsAt(
-	ctx context.Context,
-	db pulseFindingLifecycleDB,
-	workspacePath, runFolder, stepID, summary, observedAt string,
-	concernLines []string,
-	fingerprints map[string]string,
-) error {
-	markers := ParsePulseFindingDetailMarkers(summary)
-	if len(markers) == 0 {
-		return nil
-	}
-	knownConcerns := make(map[string]bool, len(concernLines))
-	for _, concern := range concernLines {
-		knownConcerns[strings.ToLower(strings.Join(strings.Fields(concern), " "))] = true
-	}
-	for _, marker := range markers {
-		normalizedConcern := strings.ToLower(strings.Join(strings.Fields(marker.Concern), " "))
-		// Structured details may only decorate a concern filed in the same
-		// artifact. This prevents a malformed marker from creating a hidden issue.
-		if !knownConcerns[normalizedConcern] {
-			continue
-		}
-		fingerprint := fingerprints[normalizedConcern]
-		if fingerprint == "" {
-			fingerprint = pulseFindingCanonicalFingerprint(stepID, marker)
-		}
-		if err := recordPulseFindingDetailAt(ctx, db, workspacePath, runFolder, stepID, marker, fingerprint, observedAt); err != nil {
-			return err
-		}
-	}
-	return nil
 }
 
 func recordPulseFindingDetailAt(

@@ -94,7 +94,12 @@ the private session-scoped custom-tool HTTP endpoint.`,
 
 		fmt.Printf("Running workflow auto-notification e2e provider=%s model=%s session=%s workflow=%s\n", provider, model, sessionID, relWorkflow)
 
-		query := `Call run_full_workflow exactly once with group_name="default". Do not call execute_step or use shell/curl to start the workflow. After run_full_workflow returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not ask a question.`
+		// run_full_workflow is a direct tool for some providers and, in code
+		// execution mode (Codex), reachable only through the MCP bridge's HTTP
+		// API (get_api_spec, then POST /tools/custom/run_full_workflow). The old
+		// "do not use shell/curl" wording forbade Codex's only route, so it
+		// passed or refused depending on whether the model obeyed it.
+		query := `Call the run_full_workflow tool exactly once with group_name="default". If it is not a direct tool in this session, call it through the MCP bridge API that get_api_spec describes. Do not call execute_step and do not start the workflow any other way. After run_full_workflow returns, reply exactly RUN_WORKFLOW_TOOL_STARTED. Do not ask a question.`
 		queryID, err := client.startQuery(ctx, sessionID, provider, model, query)
 		if err != nil {
 			return fmt.Errorf("start main agent run_workflow turn: %w", err)

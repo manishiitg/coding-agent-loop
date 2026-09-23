@@ -96,12 +96,12 @@ func TestResolveAgentProfileForQueryGlobalScopeDefersToRequestedModel(t *testing
 	api := &StreamingAPI{agentProfiles: registry}
 	req := QueryRequest{
 		AgentMode: "multi-agent", AgentProfileID: "global-assistant",
-		Provider: "codex-cli", ModelID: "gpt-5.6-terra",
+		Provider: "codex-cli", ModelID: "gpt-6-sol",
 	}
 	if _, err := api.resolveAgentProfileForQuery(context.Background(), &req, "user-1", "session-1"); err != nil {
 		t.Fatalf("resolveAgentProfileForQuery() error = %v", err)
 	}
-	if req.Provider != "codex-cli" || req.ModelID != "gpt-5.6-terra" {
+	if req.Provider != "codex-cli" || req.ModelID != "gpt-6-sol" {
 		t.Fatalf("expected the request's own model selection to win, got provider=%q model=%q", req.Provider, req.ModelID)
 	}
 }
@@ -144,7 +144,7 @@ func TestResolveAgentProfileForQueryProjectScopeStaysAuthoritative(t *testing.T)
 		AgentMode: "multi-agent", AgentProfileID: "video-studio",
 		SelectedFolder:      "Chats/Video Studio/projects/demo",
 		AgentProfileContext: agentprofiles.PromptContext{ProjectTitle: "Demo"},
-		Provider:            "codex-cli", ModelID: "gpt-5.6-terra",
+		Provider:            "codex-cli", ModelID: "gpt-6-sol",
 	}
 	if _, err := api.resolveAgentProfileForQuery(context.Background(), &req, "user-1", "session-1"); err != nil {
 		t.Fatalf("resolveAgentProfileForQuery() error = %v", err)
@@ -519,11 +519,11 @@ func TestResolveProfileRuntimeModelUsesOnlyYAMLProviderOptions(t *testing.T) {
 		Provider: "claude-code", ModelID: "claude-sonnet-5",
 		ProviderOptions: []agentprofiles.ProviderOption{
 			{ID: "claude-code", Label: "Claude Code", Provider: "claude-code", ModelID: "claude-sonnet-5", Default: true},
-			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-5.6-terra", Models: []string{"gpt-5.6-terra"}},
+			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-sol", Models: []string{"gpt-6-sol"}},
 			{ID: "cursor", Label: "Cursor", Provider: "cursor-cli", ModelID: "auto"},
 		},
 	}
-	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-5.6-terra"); provider != "codex-cli" || model != "gpt-5.6-terra" {
+	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-6-sol"); provider != "codex-cli" || model != "gpt-6-sol" {
 		t.Fatalf("approved YAML option was not selected: provider=%q model=%q", provider, model)
 	}
 	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-5.6-sol"); provider != "claude-code" || model != "claude-sonnet-5" {
@@ -535,19 +535,19 @@ func TestResolveProfileRuntimeModelAcceptsCatalogModelsWhenUncurated(t *testing.
 	runtime := agentprofiles.RuntimePolicy{
 		Provider: "claude-code", ModelID: "claude-sonnet-5",
 		ProviderOptions: []agentprofiles.ProviderOption{
-			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-5.6-terra"},
+			{ID: "codex", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-luna"},
 		},
 	}
-	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-5.6-sol"); provider != "codex-cli" || model != "gpt-5.6-sol" {
+	if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", "gpt-6-sol"); provider != "codex-cli" || model != "gpt-6-sol" {
 		t.Fatalf("catalog model was not accepted: provider=%q model=%q", provider, model)
 	}
 }
 
 // A provider option's ModelID is only its own default model — Models is the
 // full curated list a turn may request within it (matches SparkQuill's real
-// product.yaml: one codex-cli option with model_id gpt-6-astra and
-// models: [gpt-6-astra, gpt-5.6-sol, gpt-5.6-terra, gpt-5.6-luna]). Caught
-// live: switching the composer's model from Luna to Terra (both codex-cli)
+// product.yaml: one codex-cli option with model_id gpt-6-luna and
+// models: [gpt-6-luna, gpt-6-sol, gpt-6-astra]). Caught
+// live: switching the composer's model from Luna to another Codex model
 // only ever matched against ModelID, missed every Models entry, and fell
 // through to the profile's unrelated default provider option (claude-code)
 // — losing both the requested provider and the conversation's context.
@@ -557,12 +557,12 @@ func TestResolveProfileRuntimeModelAcceptsCuratedModelsListEntries(t *testing.T)
 		ProviderOptions: []agentprofiles.ProviderOption{
 			{ID: "claude-code", Label: "Claude Code", Provider: "claude-code", ModelID: "claude-fable-5-1", Default: true},
 			{
-				ID: "codex-cli", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-astra",
-				Models: []string{"gpt-6-astra", "gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"},
+				ID: "codex-cli", Label: "Codex", Provider: "codex-cli", ModelID: "gpt-6-luna",
+				Models: []string{"gpt-6-luna", "gpt-6-sol", "gpt-6-astra"},
 			},
 		},
 	}
-	for _, modelID := range []string{"gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol", "gpt-6-astra"} {
+	for _, modelID := range []string{"gpt-6-luna", "gpt-6-sol", "gpt-6-astra"} {
 		t.Run(modelID, func(t *testing.T) {
 			if provider, model := resolveProfileRuntimeModel(runtime, "codex-cli", modelID); provider != "codex-cli" || model != modelID {
 				t.Fatalf("resolveProfileRuntimeModel(codex-cli, %q) = (%q, %q), want (codex-cli, %q)", modelID, provider, model, modelID)

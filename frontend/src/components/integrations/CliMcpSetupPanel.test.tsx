@@ -60,7 +60,7 @@ describe('CLI & MCP setup panel', () => {
       expect(host.textContent).not.toContain('MCP client config')
 
       await act(async () => button(host, 'AI app on this computer').click())
-      expect(host.textContent).toContain(`--env AGENTWORKS_TOKEN='aw_pat_test' agentworks -- agentworks mcp serve`)
+      expect(host.textContent).toContain(`claude mcp add agentworks -e AGENTWORKS_SERVER='https://agentworks.example.com' -e AGENTWORKS_TOKEN='aw_pat_test' -- agentworks mcp serve`)
       expect(host.textContent).not.toContain('Remote MCP URL')
       const codex = Array.from(host.querySelectorAll('button')).find(item => item.textContent === 'Codex')!
       await act(async () => codex.click())

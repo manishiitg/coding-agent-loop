@@ -26,7 +26,10 @@ The binaries and installer are served by the server itself at
 `/api/downloads/cli/` (public, like the existing launcher downloads), so
 the CLI always matches the API it talks to. `agentworks version` prints the
 build; `agentworks update` (or `update --check`) self-updates from the
-connected server. Developers can still build from source as below.
+connected server. Confida and other rootless deployments build and package
+all supported CLI binaries with each release, then verify the public installer
+URL before marking the deploy successful. Developers can still build from
+source as below.
 
 ## Build and server setup
 
@@ -152,7 +155,7 @@ choose Claude Code, Codex, or a JSON-configured MCP client. The commands
 include your server and token. Claude Code uses:
 
 ```sh
-claude mcp add --transport stdio --env AGENTWORKS_SERVER=https://your-server --env AGENTWORKS_TOKEN=aw_pat_… agentworks -- agentworks mcp serve
+claude mcp add agentworks -e AGENTWORKS_SERVER=https://your-server -e AGENTWORKS_TOKEN=aw_pat_… -- agentworks mcp serve
 ```
 
 Passing the server and token as env keeps the bridge self-sufficient: it

@@ -52,6 +52,8 @@ class SharedRootlessDeploymentTest(unittest.TestCase):
             "AGENT_EXTRA_ENV",
             "deployment_checks.py",
             "prune-releases.py",
+            '"$BUILD_DIR/downloads/install-agentworks.sh"',
+            '"https://$DOMAIN/api/downloads/cli/$file"',
         ):
             self.assertIn(expected, build)
 

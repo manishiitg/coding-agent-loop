@@ -15,7 +15,7 @@ const AUTO_BROWSER = 'playwright-tests'
 
 type Recording = { recording: boolean; validation?: string; directory?: string; errors?: string[] }
 
-type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string; state?: string; recording_state?: string; recording_error?: string }
+type BrowserSession = { browser_session: string; workflow_session: string; label?: string; kind?: string; read_only?: string; state?: string; recording_state?: string; recording_error?: string; last_action?: string; last_action_at?: string }
 function testBrowserLabel(browser: BrowserSession): string {
   const name = browser.label?.trim() || 'Test browser'
   const run = browser.browser_session.replace(/^pw-/, '').slice(0, 8)
@@ -404,6 +404,12 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
   const showPicker = !minimal && (sessions.length > 1 || hasTests)
   const singleBrowserLabel = !showPicker ? (currentBrowser?.label || managedBrowsers[0]?.label || '') : ''
   const slim = !minimal && Boolean(displayFrame) && !replayURL
+  const lastActionBrowser = currentBrowser?.last_action ? currentBrowser : managedBrowsers.find(item => item.last_action)
+  const lastAction = lastActionBrowser?.last_action ? (
+    <span className="live-browser-last-action hidden min-w-0 max-w-72 shrink truncate text-xs text-muted-foreground md:inline" title={lastActionBrowser.last_action_at ? `${lastActionBrowser.last_action} · ${new Date(lastActionBrowser.last_action_at).toLocaleTimeString()}` : lastActionBrowser.last_action}>
+      Last: {lastActionBrowser.last_action}
+    </span>
+  ) : null
   const canResize = connected && canControl && !minimal
   const menuItems = (session && canControl) || canResize
 
@@ -490,6 +496,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
         <div className="live-browser-header flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
           <h3 className="text-sm font-medium">Browser</h3>
           <span className="text-xs text-muted-foreground" role="status">{statusLabel}</span>
+          {lastAction}
           {browserTabs}
           <div className="live-browser-actions ml-auto flex gap-2">
             {controlToggle}
@@ -510,6 +517,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
               {activeTab.title && activeTab.url && <span className="hidden truncate text-muted-foreground sm:inline">{activeTab.url}</span>}
             </span>
           ) : <span className="min-w-0 flex-1 truncate text-xs text-muted-foreground">{singleBrowserLabel}</span>}
+          {lastAction}
           {recordingIndicator}
           {controlToggle}
           {replayURL && <a href={replayURL} download="playwright-replay.mp4" className={tertiaryButtonClass}>Download video</a>}
@@ -522,7 +530,7 @@ export default function WorkflowLiveBrowser({ workspacePath, toolbar, scopeNoun 
           icon={Monitor}
           title="Browser"
           subtitle="See what your helper does in its browser. Take control anytime."
-          context={<span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}{singleBrowserLabel && <span className="text-muted-foreground/80">· {singleBrowserLabel}</span>}</span>}
+          context={<span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status"><span className={`h-2 w-2 rounded-full ${statusDot}`} aria-hidden="true" />{statusLabel}{singleBrowserLabel && <span className="text-muted-foreground/80">· {singleBrowserLabel}</span>}{lastAction && <span className="text-muted-foreground/80">·</span>}{lastAction}</span>}
           actions={<>
             {recordingIndicator}
             {controlToggle}

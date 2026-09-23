@@ -50,6 +50,8 @@ type browserSessionInfo struct {
 	captureOwner      string
 	captureWorkspace  string
 	createdAt         time.Time
+	lastAction        string
+	lastActionAt      time.Time
 }
 
 // SessionTracker tracks active headless browser sessions to prevent unbounded growth.
@@ -327,13 +329,18 @@ func (t *SessionTracker) ActiveSessions() []map[string]string {
 	defer t.mu.Unlock()
 	result := make([]map[string]string, 0, len(t.sessions))
 	for _, s := range t.sessions {
-		result = append(result, map[string]string{
+		item := map[string]string{
 			"browser_session":  s.browserSession,
 			"agent_session":    s.agentSessionID,
 			"workflow_session": s.workflowSessionID,
 			"age":              time.Since(s.createdAt).Round(time.Second).String(),
 			"idle":             time.Since(s.lastUsed).Round(time.Second).String(),
-		})
+		}
+		if s.lastAction != "" {
+			item["last_action"] = s.lastAction
+			item["last_action_at"] = s.lastActionAt.UTC().Format(time.RFC3339)
+		}
+		result = append(result, item)
 	}
 	return result
 }

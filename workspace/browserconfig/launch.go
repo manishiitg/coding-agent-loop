@@ -25,11 +25,14 @@ func SharedEnabled() bool { return SharedProfile() != "" }
 // Managed Chrome keeps its native user agent and uses a persistent profile.
 func HeadlessArgs() []string { return HeadlessArgsForSession("") }
 
-// IsUserSession recognizes persistent managed user, guest, workflow, and
-// owner-scoped product-workspace browsers, including an optional deployment
-// prefix. The name is retained for compatibility.
-var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:user|guest|workflow|workspace)-[a-f0-9]{16}--browser$`)
+// IsUserSession recognizes persistent managed browsers: one per workflow, one
+// per project, and a per-session fallback, including an optional deployment
+// prefix. The legacy per-user kinds (user, guest, workspace) stay recognized
+// so browsers started before per-project isolation are still tracked and
+// reaped. The name is retained for compatibility.
+var userSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?(?:workflow|project|session|user|guest|workspace)-[a-f0-9]{16}--browser$`)
 var workflowSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?workflow-[a-f0-9]{16}--browser$`)
+var projectSession = regexp.MustCompile(`^(?:[A-Za-z0-9_-]+--)?project-[a-f0-9]{16}--browser$`)
 
 func IsUserSession(session string) bool { return userSession.MatchString(session) }
 
@@ -45,6 +48,8 @@ func ProfilePathForSession(session string) string {
 		profileRoot := profile + "-users"
 		if workflowSession.MatchString(session) {
 			profileRoot = profile + "-workflows"
+		} else if projectSession.MatchString(session) {
+			profileRoot = profile + "-projects"
 		}
 		profile = filepath.Join(profileRoot, session)
 	}

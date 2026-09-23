@@ -78,6 +78,9 @@ func externalRemoteReadFile(ctx context.Context, root, p string) (wf.File, error
 }
 
 func externalRemoteListFiles(ctx context.Context, req wf.Request, p string) (wf.Result, error) {
+	if err := wf.ValidateGlob(req.Glob); err != nil {
+		return wf.Result{}, &externalUpstreamError{400, err.Error()}
+	}
 	if req.Limit <= 0 {
 		req.Limit = 100
 	}
@@ -99,6 +102,18 @@ func externalRemoteListFiles(ctx context.Context, req wf.Request, p string) (wf.
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
+		if response.StatusCode == http.StatusBadRequest {
+			// The shared-assets list endpoint reports a missing directory as
+			// 400. Confirm with stat so callers can distinguish an empty code
+			// inventory from a malformed request.
+			stat, statErr := externalRemoteAssetCall(ctx, req.Root, p, "stat")
+			if statErr == nil {
+				stat.Body.Close()
+				if stat.StatusCode == http.StatusNotFound {
+					return wf.Result{}, &externalUpstreamError{404, "path does not exist: " + p}
+				}
+			}
+		}
 		return wf.Result{}, &externalUpstreamError{response.StatusCode, fmt.Sprintf("workspace file list returned %d", response.StatusCode)}
 	}
 	var listing struct {
@@ -129,6 +144,9 @@ func externalRemoteListFiles(ctx context.Context, req wf.Request, p string) (wf.
 			continue
 		}
 		entry := wf.Entry{Path: item.Path, Type: item.Type, Size: item.Size}
+		if !wf.MatchGlob(req.Glob, rel) {
+			continue
+		}
 		if req.Operation == "list" {
 			all = append(all, entry)
 		} else if item.Type == "file" && item.Size <= wf.MaxFileBytes {

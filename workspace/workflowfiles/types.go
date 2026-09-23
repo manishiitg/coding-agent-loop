@@ -17,6 +17,7 @@ type Request struct {
 	Operation string `json:"operation"`
 	Path      string `json:"path,omitempty"`
 	Query     string `json:"query,omitempty"`
+	Glob      string `json:"glob,omitempty"`
 	Offset    int    `json:"offset,omitempty"`
 	Limit     int    `json:"limit,omitempty"`
 	Depth     int    `json:"depth,omitempty"`
@@ -66,15 +67,75 @@ func CleanRelative(p string) (string, error) {
 // ordinary workflow files; the list mirrors managedCodingAgentProjectionWritePaths.
 func Private(p string) bool {
 	for _, part := range strings.Split(strings.ToLower(p), "/") {
-		if part == ".git" || part == "builder" || part == "secrets" || part == "keys" || part == ".ssh" || part == ".agentworks" || strings.HasPrefix(part, ".agentworks-") || strings.HasPrefix(part, ".env") {
+		// Hidden workspace folders may hold credentials, tool state, and
+		// downloaded packages. Expose workflow-authored source through its
+		// ordinary code/, learnings/, and knowledgebase/ paths instead.
+		if strings.HasPrefix(part, ".") && part != "." {
 			return true
 		}
-		if part == ".agents" || part == ".claude" || part == ".codex" || part == ".cursor" || part == ".gemini" || part == ".pi" {
+		if part == "builder" || part == "secrets" || part == "keys" {
 			return true
 		}
 		if part == "agents.md" || part == "agent.md" || part == "claude.md" || part == "gemini.md" {
 			return true
 		}
+		// Runtime caches and installed packages are not workflow source. Keep
+		// them out of discovery and direct reads alike.
+		switch part {
+		case "__pycache__", "venv", "node_modules", "site-packages":
+			return true
+		}
 	}
 	return false
+}
+
+// ValidateGlob accepts workflow-relative path globs. ** must occupy a full
+// path segment and matches zero or more directories.
+func ValidateGlob(pattern string) error {
+	if pattern == "" {
+		return nil
+	}
+	if len(pattern) > 256 {
+		return fmt.Errorf("glob exceeds 256 bytes")
+	}
+	clean, err := CleanRelative(pattern)
+	if err != nil || clean != pattern || clean == "." {
+		return fmt.Errorf("glob must be a clean relative path pattern")
+	}
+	for _, segment := range strings.Split(pattern, "/") {
+		if strings.Contains(segment, "**") && segment != "**" {
+			return fmt.Errorf("** must be a complete path segment")
+		}
+		if segment != "**" {
+			if _, err := path.Match(segment, ""); err != nil {
+				return fmt.Errorf("invalid glob: %w", err)
+			}
+		}
+	}
+	return nil
+}
+
+// MatchGlob matches a path relative to the directory selected by a file tool.
+// Call ValidateGlob once before walking the directory.
+func MatchGlob(pattern, relative string) bool {
+	if pattern == "" {
+		return true
+	}
+	parts := strings.Split(pattern, "/")
+	pathParts := strings.Split(relative, "/")
+	var match func(int, int) bool
+	match = func(i, j int) bool {
+		if i == len(parts) {
+			return j == len(pathParts)
+		}
+		if parts[i] == "**" {
+			return match(i+1, j) || (j < len(pathParts) && match(i, j+1))
+		}
+		if j >= len(pathParts) {
+			return false
+		}
+		ok, _ := path.Match(parts[i], pathParts[j])
+		return ok && match(i+1, j+1)
+	}
+	return match(0, 0)
 }

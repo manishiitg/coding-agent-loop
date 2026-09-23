@@ -343,6 +343,7 @@ chat:
       - get_workflow
       - list_files
       - search_files
+      - list_step_code
       - get_file_link
       - read_file
       - get_plan

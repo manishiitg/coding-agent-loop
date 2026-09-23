@@ -281,7 +281,7 @@ func TestExternalCatalogMatchesProductYAMLAdmission(t *testing.T) {
 	}
 	// Golden pin: changing the exposed surface means editing product.yaml and
 	// these lists together, deliberately.
-	wantExternal := []string{"list_workflows", "get_workflow", "list_files", "search_files", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs", "run_status", "chat", "run_reply_input"}
+	wantExternal := []string{"list_workflows", "get_workflow", "list_files", "search_files", "list_step_code", "get_file_link", "read_file", "get_plan", "get_agent_context", "list_guidance_topics", "get_guidance_topic", "list_workflow_knowledge", "read_workflow_knowledge", "list_runs", "get_run", "get_logs", "run_status", "chat", "run_reply_input"}
 	if len(admitted) != len(wantExternal) {
 		t.Fatalf("admitted %d tools, want %d", len(admitted), len(wantExternal))
 	}
@@ -396,6 +396,50 @@ func TestExternalToolsHTTPRejectsUnknownArguments(t *testing.T) {
 	if f.read(t, "Workflow/invoices/planning/plan.json") != before {
 		t.Fatal("invalid request changed plan")
 	}
+}
+
+func TestExternalToolsHTTPFileGlobAndRuntimeExclusions(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.write(t, "Workflow/invoices/code/run-basic-smoke/main.py", "def test_login(): pass\n")
+	f.write(t, "Workflow/invoices/code/.local/lib/installed.py", "def test_hidden(): pass\n")
+	args := map[string]any{"workflow_id": "invoices", "path": "code", "glob": "**/*.py", "depth": 8}
+	listed := externalTestBody(t, f.call(t, "owner", "list_files", args), 200)
+	entries := listed["entries"].([]any)
+	if len(entries) != 1 || entries[0].(map[string]any)["path"] != "code/run-basic-smoke/main.py" {
+		t.Fatalf("glob list = %v", listed)
+	}
+	for _, path := range []string{"code/.local/lib/installed.py", "code/.local"} {
+		body := externalTestBody(t, f.call(t, "owner", "read_file", map[string]any{"workflow_id": "invoices", "path": path}), 403)
+		if body["error"].(map[string]any)["code"] != "protected_path" {
+			t.Fatalf("private read = %v", body)
+		}
+	}
+}
+
+func TestExternalToolsHTTPListStepCode(t *testing.T) {
+	f := newExternalToolsFixture(t)
+	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","label":"Invoice processing","created_by":"owner","access":{"owners":["owner"],"readers":["reader"]},"code_layout_version":1}`)
+	f.write(t, "Workflow/invoices/code/fetch-invoices/main.py", "def main(): pass\n")
+	f.write(t, "Workflow/invoices/code/orphan/main.py", "def old(): pass\n")
+	f.write(t, "Workflow/invoices/code/fetch-invoices/.cache/installed.py", "def hidden(): pass\n")
+	body := externalTestBody(t, f.call(t, "owner", "list_step_code", map[string]any{"workflow_id": "invoices"}), 200)
+	entries := body["entries"].([]any)
+	if len(entries) != 2 {
+		t.Fatalf("code inventory = %v", body)
+	}
+	first := entries[0].(map[string]any)
+	if first["path"] != "code/fetch-invoices/main.py" || first["step_id"] != "fetch-invoices" || first["step_title"] != "Fetch invoices" || first["in_plan"] != true {
+		t.Fatalf("plan code entry = %v", first)
+	}
+	second := entries[1].(map[string]any)
+	if second["step_id"] != "orphan" || second["in_plan"] != false {
+		t.Fatalf("orphan code entry = %v", second)
+	}
+	selected := externalTestBody(t, f.call(t, "reader", "list_step_code", map[string]any{"workflow_id": "invoices", "step_id": "fetch-invoices"}), 200)
+	if len(selected["entries"].([]any)) != 1 {
+		t.Fatalf("selected code = %v", selected)
+	}
+	externalTestBody(t, f.call(t, "owner", "list_step_code", map[string]any{"workflow_id": "invoices", "step_id": "../secret"}), 400)
 }
 
 func TestExternalStopStepDoesNotCancelSession(t *testing.T) {

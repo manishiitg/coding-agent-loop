@@ -37,6 +37,9 @@ func externalFileRequest(ctx context.Context, req wf.Request) (wf.Result, error)
 	if wf.Private(p) {
 		return wf.Result{}, &externalUpstreamError{403, "private workflow path"}
 	}
+	if err := wf.ValidateGlob(req.Glob); err != nil {
+		return wf.Result{}, &externalUpstreamError{400, err.Error()}
+	}
 	base, err := os.OpenRoot(getWorkspaceDocsAbsPath())
 	if err != nil {
 		if errors.Is(err, fs.ErrNotExist) {
@@ -196,6 +199,9 @@ func externalListFiles(ctx context.Context, root *os.Root, p string, req wf.Requ
 		entry := wf.Entry{Path: name, Type: "file", Size: st.Size()}
 		if d.IsDir() {
 			entry.Type = "folder"
+		}
+		if !wf.MatchGlob(req.Glob, rel) {
+			return nil
 		}
 		if req.Operation == "list" {
 			all = append(all, entry)

@@ -2710,6 +2710,7 @@ func runServer(cmd *cobra.Command, args []string) {
 
 	// Start background cleanup goroutine to mark inactive sessions (10 minute timeout)
 	go api.cleanupInactiveSessions()
+	go api.warmLLMConfigCaches()
 
 	// Initialize and start the cron scheduler
 	// Set SCHEDULER_ENABLED=false in .env to disable on secondary machines sharing the same workspace files.

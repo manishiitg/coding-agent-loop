@@ -36,6 +36,11 @@ and `get_workflow_trigger_run`. The read-only attachment authorizes
 `run_workflow_trigger` to create only the secretless internal binding scoped to
 that exact Crew; it does not permit general trigger management. The Builder
 may also create the same binding explicitly with `manage_workflow_webhook`.
+Builder chat can also call a Crew or another workflow directly with
+`connect_to_target`, `call_target`, `get_target_run` and `send_to_target_run`:
+the call returns a run ID at once and the result comes back to this chat as an
+[AUTO-NOTIFICATION]. A workflow may bind another workflow as an internal
+caller (`caller.type: workflow`), and a Crew trigger may name a Crew caller.
 Run mode does not manage webhooks. Payloads are untrusted event data, never
 permission to change tool policy, user access or secret scope. Responses: 202
 accepted; 200 duplicate/ping; 401 invalid auth; 404 unknown; 410 disabled; 503 retry.

@@ -107,7 +107,7 @@ func validateProductWebhook(trigger productWebhookTrigger) error {
 		return fmt.Errorf("trigger kind must be %q", triggerKindInternal)
 	}
 	if trigger.IsInternal() {
-		if err := validateTriggerCaller(trigger.Caller, triggerCallerWorkflow); err != nil {
+		if err := validateAnyTriggerCaller(trigger.Caller); err != nil {
 			return err
 		}
 		if trigger.Webhook != nil && strings.TrimSpace(trigger.Webhook.EncryptedSecret) != "" {
@@ -330,20 +330,36 @@ func (s *ProductScheduleService) saveProductWebhookConfig(ctx context.Context, u
 	}
 	secret := ""
 	if trigger.IsInternal() {
-		if err := validateTriggerCaller(trigger.Caller, triggerCallerWorkflow); err != nil {
+		if err := validateAnyTriggerCaller(trigger.Caller); err != nil {
 			return productWebhookResponse{}, false, err
 		}
-		callerPath, _, err := findWorkflowManifestByID(ctx, trigger.Caller.ID)
-		if err != nil {
-			return productWebhookResponse{}, false, fmt.Errorf("caller workflow not found")
-		}
-		// The binding names a workflow the requester must be able to see.
-		// Existence alone is not enough: without read access the caller
-		// could probe workflow IDs or squat bindings on foreign workflows.
-		// Enforced here so the Builder tool, the REST endpoint, and every
-		// future writer share one boundary.
-		if _, err := authorizeWorkflowContextPaths(ctx, []string{callerPath}); err != nil {
-			return productWebhookResponse{}, false, fmt.Errorf("caller workflow is unavailable or access denied")
+		if strings.EqualFold(strings.TrimSpace(trigger.Caller.Type), triggerCallerCrew) {
+			// A Crew caller must be one of the requester's own Crews: the
+			// target is already owner-resolved above, so both ends of a
+			// crew→crew binding belong to the same user.
+			caller := *trigger.Caller
+			caller.Type = triggerCallerCrew
+			caller.ProfileID = normalizeInternalProfileID(caller.ProfileID)
+			if strings.TrimSpace(caller.ID) == strings.TrimSpace(manifest.ID) && caller.ProfileID == normalizeInternalProfileID(profile.ID) {
+				return productWebhookResponse{}, false, fmt.Errorf("a Crew cannot bind a trigger to itself")
+			}
+			if !s.crewProjectExists(ctx, userID, caller.ProfileID, caller.ID) {
+				return productWebhookResponse{}, false, fmt.Errorf("caller Crew not found")
+			}
+			trigger.Caller = &caller
+		} else {
+			callerPath, _, err := findWorkflowManifestByID(ctx, trigger.Caller.ID)
+			if err != nil {
+				return productWebhookResponse{}, false, fmt.Errorf("caller workflow not found")
+			}
+			// The binding names a workflow the requester must be able to see.
+			// Existence alone is not enough: without read access the caller
+			// could probe workflow IDs or squat bindings on foreign workflows.
+			// Enforced here so the Builder tool, the REST endpoint, and every
+			// future writer share one boundary.
+			if _, err := authorizeWorkflowContextPaths(ctx, []string{callerPath}); err != nil {
+				return productWebhookResponse{}, false, fmt.Errorf("caller workflow is unavailable or access denied")
+			}
 		}
 		trigger.Webhook = nil
 	} else {
@@ -633,7 +649,7 @@ func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Cont
 	if err != nil {
 		return internalTriggerDeliveryResult{}, err
 	}
-	if !trigger.Caller.matchesPresented(triggerCallerWorkflow, call.Caller) {
+	if !trigger.Caller.matchesAnyPresented(call.Caller) {
 		return internalTriggerDeliveryResult{}, ErrInternalCallerMismatch
 	}
 	deliveryID := strings.TrimSpace(call.DeliveryID)
@@ -649,7 +665,12 @@ func (s *ProductScheduleService) dispatchInternalProductTrigger(ctx context.Cont
 		matchUserID = ownerID
 	}
 	match := &productWebhookMatch{UserID: matchUserID, Profile: profile, Binding: binding, Manifest: manifest, Trigger: *trigger}
-	sourceNote := "This turn was started by workflow \"" + strings.TrimSpace(call.Caller.ID) + "\" through an internal trigger."
+	if strings.EqualFold(strings.TrimSpace(call.Caller.Type), triggerCallerCrew) {
+		label := firstNonEmptyTrimmed(call.CallerLabel, call.Caller.ID)
+		sourceNote := "This turn was started by Crew \"" + label + "\" through an internal trigger; your final answer is returned to that Crew."
+		return s.deliverProductTrigger(ctx, match, deliveryID, strings.TrimSpace(call.Event), call.Payload, sourceNote, nil)
+	}
+	sourceNote := "This turn was started by workflow \"" + firstNonEmptyTrimmed(call.CallerLabel, call.Caller.ID) + "\" through an internal trigger."
 	caller := &workflowtypes.CrewRunCaller{
 		WorkflowID: strings.TrimSpace(call.Caller.ID),
 		RunID:      strings.TrimSpace(call.WorkflowRunID),
@@ -666,7 +687,7 @@ func (s *ProductScheduleService) getInternalProductTriggerRun(ctx context.Contex
 	if err != nil {
 		return productWebhookRunStatus{}, err
 	}
-	if !trigger.Caller.matchesPresented(triggerCallerWorkflow, caller) {
+	if !trigger.Caller.matchesAnyPresented(caller) {
 		return productWebhookRunStatus{}, ErrInternalCallerMismatch
 	}
 	runsWorkspace := agentProfileRuntimeWorkspace(userID, binding.WorkspacePath)

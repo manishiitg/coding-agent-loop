@@ -15,6 +15,8 @@ func TestSessionPersistenceClassForRequest(t *testing.T) {
 		{name: "direct chat", req: QueryRequest{AgentMode: "multi-agent"}, want: storeevents.SessionPersistenceInteractiveChat},
 		{name: "Crew chat", req: QueryRequest{AgentMode: "multi-agent", AgentProfileID: "work"}, want: storeevents.SessionPersistenceInteractiveChat},
 		{name: "product chat", req: QueryRequest{AgentMode: "multi-agent", AgentProfileID: "video-studio"}, want: storeevents.SessionPersistenceInteractiveChat},
+		{name: "Crew chat whose first turn is a trigger", req: QueryRequest{AgentMode: "multi-agent", AgentProfileID: "work", TriggeredBy: "webhook"}, want: storeevents.SessionPersistenceInteractiveChat},
+		{name: "Crew chat whose first turn is a schedule", req: QueryRequest{AgentMode: "multi-agent", AgentProfileID: "work", TriggeredBy: "cron"}, want: storeevents.SessionPersistenceInteractiveChat},
 		{name: "bot conversation", req: QueryRequest{AgentMode: "multi-agent", TriggeredBy: "bot:slack", BotPlatform: "slack"}, want: storeevents.SessionPersistenceInteractiveChat},
 		{name: "workflow builder", req: QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "manual"}, want: storeevents.SessionPersistenceInteractiveChat},
 		{name: "scheduled workflow", req: QueryRequest{AgentMode: "workflow_phase", TriggeredBy: "cron"}, want: storeevents.SessionPersistenceExecution},

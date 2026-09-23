@@ -696,6 +696,37 @@ Use this access to create and update custom sub-agent templates.
 // ordinary workflows could inflate a projected AGENTS.md beyond 100 KB and
 // that stale snapshot was less reliable than reading the source files.
 func buildWorkflowContextPrompt(paths []string, _ string) string {
+	return buildWorkflowContextPromptWithLabels(paths, nil)
+}
+
+// workflowContextRef is one # reference as the user saw it in the composer.
+type workflowContextRef struct {
+	Path  string `json:"path"`
+	Label string `json:"label"`
+	Kind  string `json:"kind,omitempty"`
+}
+
+// workflowContextLabels maps each reference's canonical path to a sanitized
+// display label. Labels are client-supplied display text only.
+func workflowContextLabels(refs []workflowContextRef) map[string]string {
+	labels := make(map[string]string, len(refs))
+	for _, ref := range refs {
+		label := strings.Join(strings.Fields(strings.NewReplacer("`", "", "*", "").Replace(ref.Label)), " ")
+		if len([]rune(label)) > 80 {
+			label = string([]rune(label)[:80])
+		}
+		key := normalizeConversationWorkspace(strings.TrimSuffix(strings.TrimSpace(ref.Path), "/"))
+		if label != "" && key != "" {
+			labels[key] = label
+		}
+	}
+	return labels
+}
+
+// buildWorkflowContextPromptWithLabels lists each reference under the typed
+// tag the user saw (#crew:<label> / #workflow:<label>), with its kind derived
+// from the path, so the agent never mistakes a reference for a Slack channel.
+func buildWorkflowContextPromptWithLabels(paths []string, labels map[string]string) string {
 	if len(paths) == 0 {
 		return ""
 	}
@@ -706,17 +737,21 @@ func buildWorkflowContextPrompt(paths []string, _ string) string {
 		if wsPath == "" {
 			continue
 		}
-		kind := "workflow"
-		if strings.HasPrefix(wsPath, "Chats/Work/projects/") {
-			kind = "Crew"
+		kind, tagKind := "workflow", "workflow"
+		if isCrewProjectPath(wsPath) {
+			kind, tagKind = "Crew", "crew"
 		}
-		references = append(references, fmt.Sprintf("- **%s:** (%s) `%s/`", path.Base(wsPath), kind, wsPath))
+		label := labels[normalizeConversationWorkspace(wsPath)]
+		if label == "" {
+			label = path.Base(wsPath)
+		}
+		references = append(references, fmt.Sprintf("- **#%s:%s** (%s) `%s/`", tagKind, label, kind, wsPath))
 	}
 	if len(references) == 0 {
 		return ""
 	}
 	return "\n## Workflow Context (Read-Only)\n\n" +
-		"The following exact AgentWorks workflow or same-account Crew folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these projects. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory or the parent of an attached Crew: that parent is intentionally not granted, and failure to list that parent does not mean the attached child folder is inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `product.json`, `MEMORY.md`, `soul/soul.md`, `planning/plan.json`, `planning/step_config.json`, `code/`, `db/`, or `builder/conversation/` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot. A `#Name` mention in the user's message refers to one of these attached references — match it by project name; it is never a Slack channel. Slack channels are always exact IDs like `C1234567890`, never `#name`, so do not offer Slack setup for a `#Name` that matches an attached reference.\n\n" +
+		"The following exact AgentWorks workflow or same-account Crew folders are authorized as reference context for this message. Read only the files needed for the user's request; do not modify or execute these projects. The coding CLI starts inside another working directory, so resolve each listed path from the workspace root—for shell calls use `$WORKSPACE_DOCS_PATH/<listed-path>/...`, not `<listed-path>/...` relative to the current directory. Do not list or probe the parent `Workflow/` directory or the parent of an attached Crew: that parent is intentionally not granted, and failure to list that parent does not mean the attached child folder is inaccessible. Verify access against an exact listed folder or file before reporting it unavailable. Start with `workflow.json`, `product.json`, `MEMORY.md`, `soul/soul.md`, `planning/plan.json`, `planning/step_config.json`, `code/`, `db/`, or `builder/conversation/` when relevant, and inspect other files on demand. Treat the files as the source of truth rather than relying on a copied prompt snapshot. A `#crew:<name>` or `#workflow:<name>` tag (or an older bare `#Name`) in the user's message refers to the matching entry below; it is never a Slack channel. Slack channels are always exact IDs like `C1234567890`, never `#name`, so do not offer Slack setup for such a tag. When the user asks to connect to, call, or send work to a tagged Crew or workflow, use `connect_to_target` / `call_target` if available.\n\n" +
 		strings.Join(references, "\n") + "\n"
 }
 

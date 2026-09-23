@@ -821,6 +821,10 @@ type QueryRequest struct {
 	SelectedGlobalSecrets *[]string `json:"selected_global_secrets,omitempty"`
 	// Workspace paths of workflows to inject context for (via # selector in chat)
 	WorkflowContextPaths []string `json:"workflow_context_paths,omitempty"`
+	// WorkflowContextRefs carries the label the user saw for each # reference
+	// (#crew:<label> / #workflow:<label>). Display only: authorization and
+	// kind always come from the paths.
+	WorkflowContextRefs []workflowContextRef `json:"workflow_context_refs,omitempty"`
 	// authorizedWorkflowContextReadPaths are server-resolved folder-guard roots.
 	// They differ from WorkflowContextPaths for same-account Crew references,
 	// whose durable logical path resolves below _users/<id>/ at authorization.
@@ -6371,7 +6375,7 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				if len(promptPaths) == 0 {
 					promptPaths = req.WorkflowContextPaths
 				}
-				promptCtx.WorkflowContext = buildWorkflowContextPrompt(promptPaths, getWorkspaceAPIURL())
+				promptCtx.WorkflowContext = buildWorkflowContextPromptWithLabels(promptPaths, workflowContextLabels(req.WorkflowContextRefs))
 			}
 			if resolvedProfile != nil && resolvedProfile.Definition.ID == "work" {
 				promptCtx.WorkFolders = workproduct.BuildAttachedFoldersPrompt(workFolderGrantsForClaims(r.Context(), GetUserFromContext(r.Context())))

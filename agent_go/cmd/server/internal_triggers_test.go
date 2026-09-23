@@ -83,10 +83,16 @@ func TestValidateProductWebhookInternal(t *testing.T) {
 	if err := validateProductWebhook(withSecret); err == nil {
 		t.Fatal("internal trigger with a secret must be rejected")
 	}
+	// Crews may call Crews (crew→crew); unknown caller types still fail.
+	crewCaller := base
+	crewCaller.Caller = &triggerCaller{Type: "crew", ID: "other", ProfileID: "work"}
+	if err := validateProductWebhook(crewCaller); err != nil {
+		t.Fatalf("internal crew trigger with a crew caller rejected: %v", err)
+	}
 	wrongCaller := base
-	wrongCaller.Caller = &triggerCaller{Type: "crew", ID: "other"}
+	wrongCaller.Caller = &triggerCaller{Type: "slack", ID: "other"}
 	if err := validateProductWebhook(wrongCaller); err == nil {
-		t.Fatal("internal crew trigger with a crew caller must be rejected")
+		t.Fatal("internal crew trigger with an unknown caller type must be rejected")
 	}
 	noCaller := base
 	noCaller.Caller = nil
@@ -131,10 +137,16 @@ func TestValidateWebhookScheduleInternal(t *testing.T) {
 	if err := validateWebhookSchedule(withSecret); err == nil {
 		t.Fatal("internal schedule with a secret must be rejected")
 	}
+	// Workflows may call workflows (workflow→workflow); unknown types fail.
+	workflowCaller := base
+	workflowCaller.Caller = &triggerCaller{Type: "workflow", ID: "other"}
+	if err := validateWebhookSchedule(workflowCaller); err != nil {
+		t.Fatalf("internal workflow schedule with a workflow caller rejected: %v", err)
+	}
 	wrongCaller := base
-	wrongCaller.Caller = &triggerCaller{Type: "workflow", ID: "other"}
+	wrongCaller.Caller = &triggerCaller{Type: "slack", ID: "other"}
 	if err := validateWebhookSchedule(wrongCaller); err == nil {
-		t.Fatal("internal workflow schedule with a workflow caller must be rejected")
+		t.Fatal("internal workflow schedule with an unknown caller type must be rejected")
 	}
 	noCaller := base
 	noCaller.Caller = nil

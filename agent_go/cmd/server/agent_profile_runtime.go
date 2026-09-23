@@ -638,6 +638,12 @@ func (api *StreamingAPI) registerAgentProfileTools(registrar definitionToolRegis
 		if err := api.registerCrewWorkflowRunTools(registrar, userID, sessionID, workspacePath); err != nil {
 			return err
 		}
+		// Crew Run-mode readers never trigger other Crews or workflows.
+		if !readOnly {
+			if err := api.registerTriggerLinkTools(registrar, userID, sessionID, QueryRequest{SelectedFolder: workspacePath}, crewTriggerLinkCaller(workspacePath)); err != nil {
+				return err
+			}
+		}
 	}
 	if !readOnly && activeWorkProject && agentprofiles.HasFeature(resolved.Definition, "files") {
 		if err := api.registerWorkShareLinkTool(registrar, userID, workspacePath); err != nil {

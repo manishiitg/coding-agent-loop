@@ -129,6 +129,8 @@ export interface AgentQueryRequest {
   selected_global_secrets?: string[]
   // Workspace paths of workflows to inject context for (via # selector in chat)
   workflow_context_paths?: string[]
+  // Same references with the label and kind the user saw as #crew:/#workflow: tags
+  workflow_context_refs?: { path: string; label: string; kind: 'crew' | 'workflow' }[]
   // Conversation JSON selected from a previous chat panel. The backend
   // can use its runtime metadata for native coding-agent resume.
   restored_conversation_path?: string
@@ -229,6 +231,7 @@ export interface AgentProfileChatRequest {
   // profile must explicitly enable workflow_references; the server authorizes
   // every path and exposes it read-only.
   workflow_context_paths?: string[]
+  workflow_context_refs?: { path: string; label: string; kind: 'crew' | 'workflow' }[]
 }
 
 export interface AgentProfileConversationRequest {

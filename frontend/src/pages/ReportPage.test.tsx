@@ -35,7 +35,7 @@ describe("standalone report page", () => {
   it("does not open a personal Work dashboard for a different account", async () => {
     const view = await renderReport("Chats/Work/projects/demo", "work-user", "other-user");
     try {
-      expect(view.host.textContent).toContain("belongs to a different signed-in account");
+      expect(view.host.textContent).toContain("Only the crew owner can open this dashboard");
       expect(view.host.textContent).not.toContain("Dashboard runtime");
     } finally {
       await act(async () => view.root.unmount());

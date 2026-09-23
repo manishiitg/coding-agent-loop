@@ -2708,7 +2708,7 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				"additionalProperties": false,
 				"properties": map[string]interface{}{
 					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/social-media."},
-					"view":           map[string]interface{}{"type": "string", "enum": pulseStateViewValues, "description": "Which Pulse state to read: module cadence, the finding backlog, one saved review, the focus coverage agenda, review_notes (latest concise notes, optionally filtered by module and pulse_run_id), or goal_work (Goal Work items and constraint challenges, newest first)."},
+					"view":           map[string]interface{}{"type": "string", "enum": pulseStateViewValues, "description": "Which Pulse state to read: module cadence, the finding backlog, one saved review, the focus coverage agenda, review_notes (latest concise notes, optionally filtered by module and pulse_run_id), goal_work (Goal Work items and constraint challenges, newest first), or step_concerns (CONCERNS: lines steps wrote since the previous Pulse; leads, not findings)."},
 					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "Optional Pulse run id. With view=module, returns that Gate's persisted pass mode; with view=review_notes, selects notes for that exact run."},
 					"module":         map[string]interface{}{"type": "string", "description": "Optional owning-module filter for backlog or review_notes (omit for all modules). Required for view=\"review\" and view=\"focus_agenda\". Ignored for view=\"module\"."},
 					"review_run_id":  map[string]interface{}{"type": "string", "description": "Required for view=\"review\": the review run id from the reviewer's completion notification."},
@@ -2901,6 +2901,8 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 				return readPulseReviewNotesView(ctx, workspacePath, stringToolArg(args, "module"), stringToolArg(args, "pulse_run_id"), intToolArg(args, "limit"))
 			case "goal_work":
 				return readPulseGoalWorkView(ctx, workspacePath, intToolArg(args, "limit"))
+			case "step_concerns":
+				return readStepConcernsView(ctx, workspacePath)
 			case pulseStateViewFocusAgenda:
 				module, _ := args["module"].(string)
 				return readPulseFocusAgendaView(ctx, workspacePath, module, stringToolArg(args, "route_scope"), intToolArg(args, "limit"))
@@ -3062,7 +3064,7 @@ const (
 
 // pulseStateViewValues is the closed view set shared by the schema enum, the
 // accept check, and the rejection message.
-var pulseStateViewValues = []string{pulseStateViewBacklog, pulseStateViewModule, pulseStateViewReview, pulseStateViewFocusAgenda, "review_notes", "goal_work"}
+var pulseStateViewValues = []string{pulseStateViewBacklog, pulseStateViewModule, pulseStateViewReview, pulseStateViewFocusAgenda, "review_notes", "goal_work", "step_concerns"}
 
 // pulseResultValues is the union of the module and final-command result sets.
 // Each target validates its own subset and names it on rejection; the schema
@@ -3191,6 +3193,9 @@ func readPulseModuleStateView(ctx context.Context, workspacePath, pulseRunID str
 		"workflow_observations":      []map[string]interface{}{},
 		"workflow_observation_count": len(observations),
 		"workflow_observations_note": "Historical observation rows are retained for audit only and are no longer an active Pulse intake. Technical Review reads retained run artifacts and deterministic receipts directly; do not load or classify these rows as a queue.",
+		// Steps' CONCERNS: lines since the previous Pulse, collected by Go so no
+		// reviewer has to search run folders. Leads, not findings.
+		"step_concerns": collectStepConcerns(workspacePath, stepConcernWindowStart(ctx, workspacePath)),
 		"pulse_store_navigation": map[string]string{
 			"issues":                "Canonical repair roots. Reuse the existing public PUL issue_id for the same semantic root cause.",
 			"closed_issues":         "Previously handled roots. Matching new evidence reopens the same root rather than creating a duplicate.",

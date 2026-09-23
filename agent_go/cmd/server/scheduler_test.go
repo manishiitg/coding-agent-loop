@@ -446,34 +446,21 @@ func TestListFireDecisionsSurfacesSkippedOccurrences(t *testing.T) {
 }
 
 func TestPulseScheduleTimingSummaryOmitsSectionWhenPulseIsDisabled(t *testing.T) {
-	if got := pulseScheduleTimingSummary(nil); got != "" {
+	ctx := context.Background()
+	if got := pulseScheduleTimingSummary(ctx, "Workflow/demo", nil); got != "" {
 		t.Fatalf("nil manifest: want empty summary (section omitted), got %q", got)
 	}
-
-	noSchedules := &WorkflowManifest{ID: "demo"}
-	if got := pulseScheduleTimingSummary(noSchedules); got != "" {
-		t.Fatalf("no schedules: want empty summary (section omitted), got %q", got)
-	}
-
-	disabledOnly := &WorkflowManifest{ID: "demo", Schedules: []WorkflowSchedule{
-		{ID: "pulse", PulseReviewOnly: true, Enabled: false, CronExpression: "0 9 * * *", Timezone: "UTC"},
+	disabled := &WorkflowManifest{ID: "demo", Schedules: []WorkflowSchedule{
+		{ID: "daily", Enabled: true, CronExpression: "0 9 * * *", Timezone: "UTC"},
 	}}
-	if got := pulseScheduleTimingSummary(disabledOnly); got != "" {
-		t.Fatalf("disabled pulse_review_only schedule: want empty summary (section omitted), got %q", got)
+	if got := pulseScheduleTimingSummary(ctx, "Workflow/demo", disabled); got != "" {
+		t.Fatalf("Pulse off: want empty summary (section omitted), got %q", got)
 	}
-
-	nonPulseEnabled := &WorkflowManifest{ID: "demo", Schedules: []WorkflowSchedule{
-		{ID: "daily", PulseReviewOnly: false, Enabled: true, CronExpression: "0 9 * * *", Timezone: "UTC"},
-	}}
-	if got := pulseScheduleTimingSummary(nonPulseEnabled); got != "" {
-		t.Fatalf("enabled non-pulse schedule: want empty summary (section omitted), got %q", got)
-	}
-
-	enabled := &WorkflowManifest{ID: "demo", Schedules: []WorkflowSchedule{
-		{ID: "pulse", PulseReviewOnly: true, Enabled: true, CronExpression: "0 9 * * *", Timezone: "UTC"},
-	}}
-	if got := pulseScheduleTimingSummary(enabled); got == "" {
-		t.Fatal("enabled pulse_review_only schedule: want a non-empty timing summary")
+	// A retired pulse_review_only entry alone no longer describes a schedule;
+	// it only migrates into pulse.enabled.
+	enabled := &WorkflowManifest{ID: "demo", Pulse: &WorkflowPulseConfig{Enabled: true}}
+	if got := pulseScheduleTimingSummary(ctx, "Workflow/pulse-timing-no-state", enabled); got == "" {
+		t.Fatal("Pulse on: want a non-empty timing summary even before a next time is chosen")
 	}
 }
 
@@ -1230,7 +1217,7 @@ func TestCreateAndUpdatePulseReviewOnlyScheduleSkipsGroupNamesRequirement(t *tes
 	}
 
 	if _, err := callbacks.CreateSchedule(context.Background(), workspacePath, "Periodic Pulse Review", "0 3 * * *", "Asia/Kolkata",
-		nil, nil, "workshop", nil, "", "run", nil, true, todo_creation_human.ScheduleRuntimePolicy{PulseMode: "full", PulseModeReason: "Legacy compatibility review fixture"}); err != nil {
+		nil, nil, "workshop", nil, "", "run", nil, true, todo_creation_human.ScheduleRuntimePolicy{PulseMode: "basic", PulseModeReason: "Legacy compatibility review fixture"}); err != nil {
 		t.Fatalf("CreateSchedule(pulseReviewOnly=true) error = %v, want success without group_names", err)
 	}
 	current := readManifest()

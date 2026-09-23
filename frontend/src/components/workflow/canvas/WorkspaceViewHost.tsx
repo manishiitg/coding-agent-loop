@@ -32,6 +32,7 @@ import type {
   PulseReviewFocus,
   PulseReviewerModule,
   PulseShadowSignalObservation,
+  PulseNextRun,
   VariablesManifest,
 } from '../../../services/api-types'
 import { PULSE_FIXED_COMMANDS, PULSE_MODULE_COMMANDS } from './pulseSections'
@@ -198,6 +199,7 @@ function InspectorBody({ workspacePath, presetQueryId }: { workspacePath: string
             planDriftDueItems={pulse.planDriftDueItems}
             planDriftDueError={pulse.planDriftDueError}
             finalCommandStates={pulse.finalCommandStates}
+            nextRun={pulse.nextRun}
             reviewFocuses={pulse.reviewFocuses}
             reviewFocusSelections={pulse.reviewFocusSelections}
             statusError={pulse.statusError}
@@ -339,6 +341,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
   const [pulseReviewFocuses, setPulseReviewFocuses] = useState<PulseReviewFocus[]>([])
   const [pulseReviewFocusSelections, setPulseReviewFocusSelections] = useState<PulseReviewFocus[]>([])
   const [pulseLoopClosureObservation, setPulseLoopClosureObservation] = useState<PulseShadowSignalObservation | null>(null)
+  const [pulseNextRun, setPulseNextRun] = useState<PulseNextRun | null>(null)
   const [pulseStatusLoading, setPulseStatusLoading] = useState(false)
   const [pulseStatusError, setPulseStatusError] = useState<string | null>(null)
 
@@ -366,6 +369,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
       setPlanDriftDue(!!resp.plan_drift_due)
       setPlanDriftDueItems(resp.plan_drift_due_items || [])
       setPlanDriftDueError(resp.plan_drift_due_error || null)
+      setPulseNextRun(resp.next_pulse || null)
       setPulseFinalCommandStates(resp.commands || [])
       setPulseReviewFocuses(resp.review_focus_history || [])
       setPulseReviewFocusSelections(resp.review_focus_selections || [])
@@ -443,6 +447,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     planDriftDueItems,
     planDriftDueError,
     finalCommandStates: pulseFinalCommandStates,
+    nextRun: pulseNextRun,
     reviewFocuses: pulseReviewFocuses,
     reviewFocusSelections: pulseReviewFocusSelections,
     statusError: pulseStatusError,
@@ -450,7 +455,7 @@ export const WorkspaceViewHost = React.memo(forwardRef<WorkflowCanvasRef, Workfl
     overview: pulseOverview,
     refresh: refreshPulseModuleStates,
   }), [
-    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates,
+    monitorOn, monitorSaving, toggleMonitor, disabledReviewModules, reviewModuleSaving, toggleReviewModule, pulseModuleStates, planDriftDue, planDriftDueItems, planDriftDueError, pulseFinalCommandStates, pulseNextRun,
     pulseReviewFocuses, pulseReviewFocusSelections, pulseStatusError, pulseStatusLoading,
     pulseOverview, refreshPulseModuleStates,
   ])

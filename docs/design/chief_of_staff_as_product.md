@@ -1,6 +1,8 @@
 # Chief of Staff as a standalone product
 
-Status: **shipped (MVP scope), as of 2026-08-16.** This document was
+Status: **REMOVED from main on 2026-08-18** (commit `413d8d32a`, "Remove what was left of Chief of Staff"). Org Pulse is removed as well. Kept as history only; nothing below describes current behavior.
+
+Previous status: shipped (MVP scope), as of 2026-08-16. This document was
 originally written as a pre-implementation requirements draft; several of its
 "Decided" calls changed shape once actual implementation started (most
 notably the UI scope and the LLM-selection model — see the corrections

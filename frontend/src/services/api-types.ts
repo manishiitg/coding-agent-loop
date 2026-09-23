@@ -566,7 +566,17 @@ export interface PulseModuleStateResponse {
   plan_drift_due?: boolean
   plan_drift_due_items?: PulsePlanDriftDueItem[]
   plan_drift_due_error?: string
+  next_pulse?: PulseNextRun | null
   error?: string
+}
+
+/** The workflow's own Pulse schedule. Normal schedules only back up, publish
+ * and notify; the full Pulse runs here and, in self mode, picks its own next time. */
+export interface PulseNextRun {
+  mode: 'self' | 'fixed'
+  next_at?: string
+  reason?: string
+  last_started_at?: string
 }
 
 export interface PulseInterventionSource {

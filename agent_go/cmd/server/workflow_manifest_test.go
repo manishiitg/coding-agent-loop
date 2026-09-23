@@ -525,8 +525,9 @@ func TestSetWorkflowPulseEnabledRemovesDedicatedSchedule(t *testing.T) {
 
 func TestEffectivePulseModeHonorsScheduleOverride(t *testing.T) {
 	manifest := &WorkflowManifest{Pulse: &WorkflowPulseConfig{Enabled: true}}
-	if got := manifest.EffectivePulseMode(WorkflowSchedule{}); got != schedulePulseModeFull {
-		t.Fatalf("inherited enabled Pulse mode = %q, want full", got)
+	// Normal schedules never run the full Pulse; it has its own schedule.
+	if got := manifest.EffectivePulseMode(WorkflowSchedule{}); got != schedulePulseModeBasic {
+		t.Fatalf("inherited enabled Pulse mode = %q, want basic", got)
 	}
 	if got := manifest.EffectivePulseMode(WorkflowSchedule{PulseMode: schedulePulseModeOff}); got != schedulePulseModeOff {
 		t.Fatalf("explicit off Pulse mode = %q, want off", got)
@@ -538,7 +539,7 @@ func TestEffectivePulseModeHonorsScheduleOverride(t *testing.T) {
 	if got := manifest.EffectivePulseMode(WorkflowSchedule{}); got != schedulePulseModeOff {
 		t.Fatalf("inherited disabled Pulse mode = %q, want off", got)
 	}
-	if got := manifest.EffectivePulseMode(WorkflowSchedule{PulseMode: schedulePulseModeFull}); got != schedulePulseModeFull {
-		t.Fatalf("explicit full Pulse mode = %q, want full", got)
+	if got := manifest.EffectivePulseMode(WorkflowSchedule{PulseMode: schedulePulseModeFull}); got != schedulePulseModeBasic {
+		t.Fatalf("legacy full Pulse mode = %q, want basic", got)
 	}
 }

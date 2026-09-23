@@ -86,7 +86,15 @@ facts that are missing from the neutral summary. Never read webhook secrets or
 post directly.
 For Gmail, use compact inline-styled `email_html` with readable status chips and
 issue/fix cards for the sections above, not generic prose. Put takeaway first
-and evidence last. Stop after all three terminal statuses.
+and evidence last.
+
+4. **Choose the next Pulse.** Normal workflow runs never run the full Pulse;
+   this workflow's own Pulse schedule does, and this pass chooses its next time.
+   Call `record_pulse_next_run` once with `pulse_run_id`, the time when useful new
+   evidence will exist (an outcome maturing, a pending user decision, an
+   experiment checkpoint, the next run whose results matter) and that reason in
+   one plain sentence for the user. The platform keeps it between once a day and
+   once a week and tells you if it moved the time. Then stop.
 
 Use ordinary language. Do not expose manifests, finding IDs, hashes, packet
 names, paths, or state codes in notifications. Keep them in SQLite-backed

@@ -1524,6 +1524,8 @@ func GetToolsForWorkshopMode(mode string) []string {
 		"record_pulse_result",
 		"resolve_run_concern",
 		"mark_changelog_artifact_reviewed",
+		"record_pulse_next_run",
+		"record_pulse_fast_request",
 	}
 
 	var tools []string
@@ -6402,12 +6404,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"pulse_review_only": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Legacy compatibility field only. Do not set true for new workflows: recurring Pulse is workflow-wide workflow.json.pulse.enabled and runs after each normal scheduled run. An enabled legacy value is migrated to that setting and is not registered as an independent cron. Omit or false for ordinary schedules.",
+					"description": "Legacy compatibility field only. Do not set true for new workflows: recurring Pulse is workflow-wide workflow.json.pulse.enabled and runs on the workflow's own self-deciding Pulse schedule, never after a normal run. An enabled legacy value is migrated to that setting and is not registered as an independent cron. Omit or false for ordinary schedules.",
 				},
 				"pulse_mode_reason": map[string]interface{}{"type": "string", "minLength": 1, "description": "Explain this schedule's purpose, frequency, review needs and why this Pulse mode fits. Required on create and when changing mode."},
 				"pulse_mode": map[string]interface{}{
-					"type": "string", "enum": []string{"off", "basic", "full"},
-					"description": "Required explicit Pulse policy; also provide pulse_mode_reason. off: no Pulse actions. basic: backup, report publish, and run-summary notification only. full: Gate, drift review, technical/strategic review+fix, then finalization. Do not omit or inherit.",
+					"type": "string", "enum": []string{"off", "basic"},
+					"description": "Required explicit post-run policy; also provide pulse_mode_reason. off: no Pulse actions. basic: backup, report publish, and run-summary notification only. The full Pulse review never runs after a normal run; it runs on the workflow's own self-deciding Pulse schedule (workflow.json pulse). Do not omit or inherit.",
 				},
 				"execution_mode": map[string]interface{}{
 					"type": "string", "enum": []string{"close_only"},
@@ -6550,7 +6552,7 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 		map[string]interface{}{
 			"type": "object",
 			"properties": map[string]interface{}{
-				"pulse_mode":        map[string]interface{}{"type": "string", "enum": []string{"off", "basic", "full"}, "description": "Required explicit post-run Pulse policy."},
+				"pulse_mode":        map[string]interface{}{"type": "string", "enum": []string{"off", "basic"}, "description": "Required explicit post-run policy: off, or basic (backup, report publish, run-summary notification). The full Pulse review runs on the workflow's own Pulse schedule, never after a normal run."},
 				"pulse_mode_reason": map[string]interface{}{"type": "string", "minLength": 1, "description": "Explain the calendar schedule purpose, frequency and review needs."},
 				"name":              map[string]interface{}{"type": "string", "description": "Display name for the calendar schedule."},
 				"timezone":          map[string]interface{}{"type": "string", "description": "Required IANA timezone (e.g. 'UTC', 'America/New_York', 'Asia/Kolkata')."},
@@ -6725,12 +6727,12 @@ func registerInteractiveWorkshopTools(iwm *InteractiveWorkshopManager, mcpAgent 
 				},
 				"pulse_review_only": map[string]interface{}{
 					"type":        "boolean",
-					"description": "Legacy compatibility field only. Do not use it to configure Pulse: recurring Pulse is workflow-wide workflow.json.pulse.enabled and runs after each normal scheduled run. Omit to leave any legacy value unchanged.",
+					"description": "Legacy compatibility field only. Do not use it to configure Pulse: recurring Pulse is workflow-wide workflow.json.pulse.enabled and runs on the workflow's own self-deciding Pulse schedule, never after a normal run. Omit to leave any legacy value unchanged.",
 				},
 				"pulse_mode_reason": map[string]interface{}{"type": "string", "minLength": 1, "description": "Explain this schedule's purpose, frequency, review needs and why this Pulse mode fits. Required on create and when changing mode."},
 				"pulse_mode": map[string]interface{}{
-					"type": "string", "enum": []string{"off", "basic", "full"},
-					"description": "Set this schedule's Pulse behavior: off skips all Pulse actions; basic runs backup, report publish, and run-summary notification only; full runs Gate, drift review, review+fix, and finalization. Omit to preserve its current value.",
+					"type": "string", "enum": []string{"off", "basic"},
+					"description": "Set this schedule's post-run behavior: off skips all Pulse actions; basic runs backup, report publish, and run-summary notification only. The full Pulse review runs on the workflow's own Pulse schedule, never after a normal run. Omit to preserve its current value (a legacy full is saved as basic).",
 				},
 				"execution_mode": map[string]interface{}{
 					"type": "string", "description": "Set close_only, or an empty string to clear the backend-enforced execution mode.",

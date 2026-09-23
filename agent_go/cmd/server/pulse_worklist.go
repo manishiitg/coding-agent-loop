@@ -2324,6 +2324,7 @@ func (api *StreamingAPI) handleGetPulseModuleState(w http.ResponseWriter, r *htt
 		"plan_drift_due":             len(planDriftDueItems) > 0,
 		"plan_drift_due_items":       planDriftDueItems,
 		"plan_drift_due_error":       planDriftDueError,
+		"next_pulse":                 pulseNextRunView(r.Context(), workspacePath),
 	})
 }
 
@@ -2945,7 +2946,46 @@ func createPulseWorklistTools() ([]llmtypes.Tool, map[string]interface{}, map[st
 		return fmt.Sprintf("Issue %s marked %s.", step_based_workflow.NewPulseIssue(finding).ID, status), nil
 	}
 
-	return []llmtypes.Tool{recordFindingTool, mergeIssuesTool, recordTool, stateTool, resultTool, resolveConcernTool}, executors, categories
+	scheduleNextTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "record_pulse_next_run",
+			Description: "Choose when this workflow's next full Pulse should run, at the end of a Pulse pass. Pick the time when useful new evidence will exist: an outcome maturing, a decision the user must answer, a run whose results matter, or an experiment checkpoint. Give the concrete reason; it is shown to the user. The platform enforces at most one Pulse per min interval (default daily) and at least one per max interval (default weekly) and reports any adjustment. Normal workflow runs never run the full Pulse; this is the only way the next one is chosen.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/linkedin."},
+					"next_at":        map[string]interface{}{"type": "string", "description": "RFC3339 time with offset, e.g. 2026-09-25T07:00:00+05:30."},
+					"reason":         map[string]interface{}{"type": "string", "minLength": 1, "description": "Why this time: the evidence that will exist then. One plain sentence for the user."},
+					"pulse_run_id":   map[string]interface{}{"type": "string", "description": "The current Pulse run id."},
+				},
+				"required": []string{"workspace_path", "next_at", "reason"},
+			}),
+		},
+	}
+	executors["record_pulse_next_run"] = recordPulseNextRunFromToolArgs
+	categories["record_pulse_next_run"] = "workflow"
+	fastRequestTool := llmtypes.Tool{
+		Type: "function",
+		Function: &llmtypes.FunctionDefinition{
+			Name:        "record_pulse_fast_request",
+			Description: "From a normal run's finalizer only: ask for the workflow's next full Pulse as soon as its once-a-day guard allows, because this run produced material new evidence (a serious failure or regression, a plan/schema/evaluation change, abnormal cost or runtime) where waiting for the chosen Pulse time is worse. Routine runs must not call it. It never runs a review inline or changes any schedule.",
+			Parameters: llmtypes.NewParameters(map[string]interface{}{
+				"type": "object",
+				"properties": map[string]interface{}{
+					"workspace_path": map[string]interface{}{"type": "string", "description": "Workflow-relative path, e.g. Workflow/linkedin."},
+					"run_id":         map[string]interface{}{"type": "string", "description": "The finalizer's run_id."},
+					"reason":         map[string]interface{}{"type": "string", "minLength": 1, "description": "The concrete material evidence."},
+					"evidence":       map[string]interface{}{"type": "array", "items": map[string]interface{}{"type": "string"}, "maxItems": 10, "description": "Bounded artifact references."},
+				},
+				"required": []string{"workspace_path", "run_id", "reason"},
+			}),
+		},
+	}
+	executors["record_pulse_fast_request"] = recordPulseFastRequestFromToolArgs
+	categories["record_pulse_fast_request"] = "workflow"
+
+	return []llmtypes.Tool{recordFindingTool, mergeIssuesTool, recordTool, stateTool, resultTool, resolveConcernTool, scheduleNextTool, fastRequestTool}, executors, categories
 }
 
 func stringToolArg(args map[string]interface{}, key string) string {

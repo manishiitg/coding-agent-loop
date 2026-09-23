@@ -19,6 +19,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/workflowtypes"
 
 	"github.com/google/uuid"
+	"github.com/robfig/cron/v3"
 )
 
 // Current manifest schema version. This is the JSON shape version.
@@ -212,14 +213,103 @@ type InstalledPlaybook struct {
 }
 
 type WorkflowPulseConfig struct {
-	// Enabled runs Pulse Gate after each normal scheduled workflow run. Pulse
-	// does not own a separate recurring cron; the completed run is its trigger.
-	Enabled               bool                           `json:"enabled,omitempty"`
+	// Enabled turns on the workflow's own Pulse schedule (see Schedule). Normal
+	// schedules only run basic stewardship (backup, publish, notify) after a run;
+	// the full Pulse review never runs inline after a normal run.
+	Enabled bool `json:"enabled,omitempty"`
+	// Schedule controls when the full Pulse runs. Nil means the defaults of
+	// EffectivePulseSchedule: self-deciding, at most daily, at least weekly.
+	Schedule              *WorkflowPulseSchedule         `json:"schedule,omitempty"`
 	AdvisorSpecialization *WorkflowAdvisorSpecialization `json:"advisor_specialization,omitempty"`
 	// DisabledReviewModules is the owner-controlled denylist for optional Pulse
 	// reviewers. Gate still records these modules in each worklist for an
 	// auditable skip, but the scheduler never launches their review agents.
 	DisabledReviewModules []string `json:"disabled_review_modules,omitempty"`
+}
+
+const (
+	pulseScheduleModeSelf  = "self"
+	pulseScheduleModeFixed = "fixed"
+
+	defaultPulseMinIntervalHours = 24
+	defaultPulseMaxIntervalHours = 168
+	// defaultPulseFirstRunHour is the local hour of a workflow's first
+	// self-scheduled Pulse when it has not yet chosen a time itself.
+	defaultPulseFirstRunHour = 6
+)
+
+// WorkflowPulseSchedule is the workflow's own Pulse schedule. In "self" mode
+// each Pulse pass chooses its next run (record_pulse_next_run) and the platform
+// only enforces the min/max interval guards. "fixed" pins a cron instead.
+type WorkflowPulseSchedule struct {
+	Mode             string `json:"mode,omitempty"`
+	Cron             string `json:"cron,omitempty"`
+	Timezone         string `json:"timezone,omitempty"`
+	MinIntervalHours int    `json:"min_interval_hours,omitempty"`
+	MaxIntervalHours int    `json:"max_interval_hours,omitempty"`
+}
+
+// EffectivePulseSchedule fills defaults. The timezone falls back to the most
+// common timezone of the workflow's enabled schedules, then the server's.
+func (m *WorkflowManifest) EffectivePulseSchedule() WorkflowPulseSchedule {
+	schedule := WorkflowPulseSchedule{}
+	if m != nil && m.Pulse != nil && m.Pulse.Schedule != nil {
+		schedule = *m.Pulse.Schedule
+	}
+	schedule.Mode = strings.ToLower(strings.TrimSpace(schedule.Mode))
+	if schedule.Mode != pulseScheduleModeFixed {
+		schedule.Mode = pulseScheduleModeSelf
+	}
+	if schedule.MinIntervalHours <= 0 {
+		schedule.MinIntervalHours = defaultPulseMinIntervalHours
+	}
+	if schedule.MaxIntervalHours <= 0 {
+		schedule.MaxIntervalHours = defaultPulseMaxIntervalHours
+	}
+	if schedule.MaxIntervalHours < schedule.MinIntervalHours {
+		schedule.MaxIntervalHours = schedule.MinIntervalHours
+	}
+	if strings.TrimSpace(schedule.Timezone) == "" && m != nil {
+		counts := map[string]int{}
+		best := ""
+		for _, s := range m.Schedules {
+			tz := strings.TrimSpace(s.Timezone)
+			if !s.Enabled || tz == "" {
+				continue
+			}
+			counts[tz]++
+			if best == "" || counts[tz] > counts[best] {
+				best = tz
+			}
+		}
+		schedule.Timezone = best
+	}
+	return schedule
+}
+
+func validateWorkflowPulseSchedule(schedule *WorkflowPulseSchedule) error {
+	if schedule == nil {
+		return nil
+	}
+	switch strings.ToLower(strings.TrimSpace(schedule.Mode)) {
+	case "", pulseScheduleModeSelf:
+	case pulseScheduleModeFixed:
+		parser := cron.NewParser(cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow)
+		if _, err := parser.Parse(strings.TrimSpace(schedule.Cron)); err != nil {
+			return fmt.Errorf("pulse.schedule.cron is invalid for fixed mode: %w", err)
+		}
+	default:
+		return fmt.Errorf("pulse.schedule.mode must be self or fixed")
+	}
+	if tz := strings.TrimSpace(schedule.Timezone); tz != "" {
+		if _, err := time.LoadLocation(tz); err != nil {
+			return fmt.Errorf("pulse.schedule.timezone %q is invalid: %w", tz, err)
+		}
+	}
+	if schedule.MinIntervalHours < 0 || schedule.MaxIntervalHours < 0 {
+		return fmt.Errorf("pulse.schedule intervals must not be negative")
+	}
+	return nil
 }
 
 var configurablePulseReviewModules = map[string]bool{
@@ -290,7 +380,23 @@ func (m *WorkflowManifest) PulseEnabled() bool {
 	if m.Pulse != nil && m.Pulse.Enabled {
 		return true
 	}
-	return m.HasEnabledPulseReviewSchedule()
+	return m.HasEnabledPulseReviewSchedule() || m.hasLegacyFullPulseSchedule()
+}
+
+// hasLegacyFullPulseSchedule keeps Pulse on for workflows that opted into
+// review only through a schedule's legacy pulse_mode=full. Normal schedules
+// now run basic stewardship; the review moved to the workflow's own Pulse
+// schedule, which must not silently turn off for them.
+func (m *WorkflowManifest) hasLegacyFullPulseSchedule() bool {
+	if m == nil {
+		return false
+	}
+	for _, schedule := range m.Schedules {
+		if schedule.Enabled && strings.EqualFold(strings.TrimSpace(schedule.PulseMode), schedulepolicy.LegacyFullPulseMode) {
+			return true
+		}
+	}
+	return false
 }
 
 const (
@@ -304,16 +410,17 @@ const (
 // existing manifests retain their behavior: enabled means full Pulse, disabled
 // means no post-run Pulse work. Explicit schedule values override that default.
 func (m *WorkflowManifest) EffectivePulseMode(schedule WorkflowSchedule) string {
-	switch strings.ToLower(strings.TrimSpace(schedule.PulseMode)) {
+	// A normal schedule never runs the full Pulse review; that runs on the
+	// workflow's own Pulse schedule (pulse_schedule.go). Legacy "full" and the
+	// legacy empty-with-Pulse-enabled default both mean basic stewardship.
+	switch schedulepolicy.NormalizePulse(schedule.PulseMode) {
 	case schedulePulseModeOff:
 		return schedulePulseModeOff
 	case schedulePulseModeBasic:
 		return schedulePulseModeBasic
-	case schedulePulseModeFull:
-		return schedulePulseModeFull
 	}
 	if m.PulseEnabled() {
-		return schedulePulseModeFull
+		return schedulePulseModeBasic
 	}
 	return schedulePulseModeOff
 }
@@ -866,6 +973,9 @@ func ValidateManifest(m *WorkflowManifest) error {
 	}
 	if m.Pulse != nil {
 		if _, err := normalizeDisabledPulseReviewModules(m.Pulse.DisabledReviewModules); err != nil {
+			return err
+		}
+		if err := validateWorkflowPulseSchedule(m.Pulse.Schedule); err != nil {
 			return err
 		}
 	}

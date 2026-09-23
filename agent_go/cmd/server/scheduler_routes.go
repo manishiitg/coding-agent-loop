@@ -818,6 +818,7 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		idx := result.Index
 
 		sched := &manifest.Schedules[idx]
+		legacyFull := strings.EqualFold(strings.TrimSpace(sched.PulseMode), schedulepolicy.LegacyFullPulseMode)
 		if req.Name != "" {
 			sched.Name = req.Name
 		}
@@ -934,6 +935,14 @@ func updateScheduledJobHandler(svc *SchedulerService) http.HandlerFunc {
 		// its effective value. Explicitly requesting full is still rejected.
 		if req.PulseMode == nil {
 			sched.PulseMode = schedulepolicy.NormalizePulse(sched.PulseMode)
+		}
+		// Leaving legacy full keeps the workflow's review: it now runs on the
+		// workflow's own Pulse schedule, so record that intent explicitly.
+		if legacyFull && sched.Enabled && sched.PulseMode != schedulepolicy.LegacyFullPulseMode {
+			if manifest.Pulse == nil {
+				manifest.Pulse = &WorkflowPulseConfig{}
+			}
+			manifest.Pulse.Enabled = true
 		}
 		if err := schedulepolicy.ValidatePulse(sched.PulseMode, sched.PulseModeReason); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)

@@ -33,6 +33,13 @@ var pulseReviewerWriteToolNames = []string{
 	"merge_pulse_issues",
 }
 
+// pulseScheduleToolNames drive the workflow's own Pulse schedule: a Pulse pass
+// chooses its next run, and a normal run's finalizer can ask for it earlier.
+var pulseScheduleToolNames = []string{
+	"record_pulse_next_run",
+	"record_pulse_fast_request",
+}
+
 // pulseRemovedToolNames must never reappear. Each was folded into one of the
 // four above; a stale registration would give the agent two ways to say the
 // same thing, which is the condition this consolidation removed.
@@ -114,6 +121,9 @@ func TestPulseToolSurfaceIncludesTypedReviewerWrites(t *testing.T) {
 		expected[name] = true
 	}
 	for _, name := range pulseReviewerWriteToolNames {
+		expected[name] = true
+	}
+	for _, name := range pulseScheduleToolNames {
 		expected[name] = true
 	}
 	for name := range registered {

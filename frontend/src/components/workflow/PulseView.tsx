@@ -3,7 +3,7 @@ import { PulseWorkspace } from './PulseWorkspace'
 import { WorkspaceViewHeader } from './WorkspaceViewHeader'
 import { WorkspaceViewIconButton } from './WorkspaceViewIconButton'
 import { WORKFLOW_SOUL_REFRESH_EVENT } from './SoulViewer'
-import type { PulseFinalCommandState, PulseModuleState, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
+import type { PulseFinalCommandState, PulseModuleState, PulseNextRun, PulsePlanDriftDueItem, PulseReviewFocus, PulseReviewerModule } from '../../services/api-types'
 
 export interface PulseOverview {
   recorded: number
@@ -24,6 +24,7 @@ interface PulseViewProps {
   planDriftDueItems: PulsePlanDriftDueItem[]
   planDriftDueError: string | null
   finalCommandStates: PulseFinalCommandState[]
+  nextRun?: PulseNextRun | null
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null
@@ -31,6 +32,14 @@ interface PulseViewProps {
   overview: PulseOverview
   onRefresh: () => void
   headerAction?: React.ReactNode
+}
+
+function nextPulseLabel(nextRun: PulseNextRun | null): string {
+  if (!nextRun?.next_at) return 'Pulse is choosing its next run'
+  const date = new Date(nextRun.next_at)
+  if (Number.isNaN(date.getTime())) return 'Pulse is choosing its next run'
+  const when = date.toLocaleString(undefined, { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })
+  return date.getTime() <= Date.now() ? `Next Pulse due now (${when})` : `Next Pulse: ${when}`
 }
 
 export default function PulseView({
@@ -46,6 +55,7 @@ export default function PulseView({
   planDriftDueItems,
   planDriftDueError,
   finalCommandStates,
+  nextRun = null,
   reviewFocuses,
   reviewFocusSelections,
   statusError,
@@ -111,8 +121,10 @@ export default function PulseView({
           <span className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition-transform ${monitorOn ? 'translate-x-[18px]' : 'translate-x-[2px]'}`} />
         </button>
         <div className="min-w-0">
-          <div className="text-xs font-medium text-foreground">{monitorOn ? 'Reviews scheduled runs' : 'Pulse is off'}</div>
-          <div className="truncate text-[11px] text-muted-foreground">{monitorOn ? 'Pulse Gate runs after each normal scheduled run.' : 'Turn on to review completed scheduled runs.'}</div>
+          <div className="text-xs font-medium text-foreground">{monitorOn ? nextPulseLabel(nextRun) : 'Pulse is off'}</div>
+          <div className="truncate text-[11px] text-muted-foreground" title={monitorOn ? nextRun?.reason : undefined}>{monitorOn
+            ? (nextRun?.reason ? `Because ${nextRun.reason}` : 'Pulse runs on its own schedule. Normal runs only back up, publish and notify.')
+            : 'Turn on to let Pulse review this workflow on its own schedule.'}</div>
         </div>
       </div>
     </div>

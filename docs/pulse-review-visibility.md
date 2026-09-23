@@ -1,10 +1,20 @@
 # Pulse review visibility
 
-The Pulse workspace has three selectable areas: Drift check, Technical Review,
-and Strategic Review. Technical Review opens by default. Each selection shows
-its summary, coverage where applicable, Markdown reports, checks, and findings
-below the selector. Human decisions and finalization remain workflow-wide.
-Clearing the review-area filter makes the issue queue and checks cover all areas.
+> Updated 2026-09-23. Current layout per PLAT-305 (2026-09-17): Strategy leads
+> and opens by default; Technical, Architecture and Plan Drift are grouped as
+> platform health, each with Run automatically / Run now controls (Plan Drift
+> is mandatory). See [pulse-workflow-improvement-system.md](pulse-workflow-improvement-system.md).
+> Markdown reports below are legacy: since PLAT-306 reasoning lives in SQLite
+> review notes, and PLAT-326 is moving Pulse to `pulse_reviews` /
+> `pulse_issues` / `pulse_decisions`.
+
+The Pulse workspace has four review areas: Strategic Review, plus Technical
+Review, Architecture Review and Plan Drift grouped as platform health.
+Strategic Review opens by default without filtering the full issue backlog.
+Each selection shows its summary, coverage where applicable, reports, checks,
+and findings below the selector. Human decisions and finalization remain
+workflow-wide. Clearing the review-area filter makes the issue queue and checks
+cover all areas.
 
 Only the latest report and latest check appear by default. Older reports and
 reviews are behind separate history controls; review history loads ten entries

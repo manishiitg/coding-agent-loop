@@ -1,28 +1,74 @@
 # Workflow improvement through Pulse
 
-Implemented first release: 2026-09-10. Platform tracking: PLAT-305 and PLAT-303.
+Implemented first release: 2026-09-10. Platform tracking: PLAT-305, PLAT-303
+and PLAT-326 (persistence simplification, 2026-09-18). Last synchronized with
+code: 2026-09-23.
 
 ## Responsibilities
 
 | Perspective | Question | Output |
 |---|---|---|
-| Technical / Health | Is required behavior correct? | Verified repairs or a linked platform/human/evidence handoff |
-| Architecture | Can this approach be built better? | Measurable prompt, orchestration, script, learning, KB, DB, report or efficiency improvements |
-| Strategy | Is this the right approach to the goal? | Researched alternatives, assumptions, proposals and outcome assessments |
-| Drift Check | Did plan changes leave dependent contracts inconsistent? | Scoped drift receipts and safe corrections |
+| Plan Drift | Did plan changes leave dependent contracts inconsistent? | Scoped drift results and safe corrections |
+| Technical | Is required behavior correct? | Repairs of concrete correctness failures and regressions, or a canonical open issue |
+| Architecture | Can this working approach be built better? | Evidence-backed prompt, orchestration, script, learning, KB, DB, report, model-tier or efficiency proposals |
+| Strategy | Is this the right approach to the goal? | Goal-derived conclusions, researched alternatives, measurement proposals |
 
-Architecture has a new canonical `architecture_review` identity. Existing
+Plan Drift preserves an approved plan after a change; Technical repairs concrete
+execution failures; Architecture proposes a better technical structure for an
+otherwise working plan; Strategy owns goals, outcomes, measurement, assumptions
+and alternatives. Execution-tier/model choices belong to Architecture.
+
+Architecture has a canonical `architecture_review` identity. Existing
 technical/strategic history and legacy aliases retain their meaning. Historical
 technical optimization reviews are not silently reassigned to Architecture.
 
-## Independent scheduling
+## Pass order and scheduling
 
-Gate submits all four module decisions. Multiple reviews may be due in the same
-pass. The backend waits for each stage before starting the next: Drift, Health,
-Architecture, Strategy, then finalization. Each stage checks only its own receipt
-and records only its own interrupted recovery. Technical repair debt cannot fail
-a strategic/architecture completion. A failed earlier review leaves the overall
-pass partial but does not cancel later research. Explicit user cancellation does.
+A Pulse pass runs after a normal scheduled run whose `pulse_mode` is `full`
+(`off` = nothing, `basic` = backup/publish/notify only), or from a manual
+launch. The old dedicated `pulse_review_only` schedule was retired on
+2026-08-30 (`de8f24a95`) and is migrated into `pulse.enabled`. Code:
+`EffectivePulseMode` in `workflow_manifest.go`, `pulsemodules.ExecutionOrder`
+and `cmd/server/scheduler.go`.
+
+1. **Gate** reads compact evidence and records one worklist with a decision per
+   module. It does not review, fix, or launch reviewers.
+2. **Plan Drift** is due whenever `plan_drift_candidates` is non-empty (the
+   backend rejects a worklist that says otherwise). When it is due it runs
+   **alone**: Architecture, Technical and Strategy wait for the next pass so
+   they never judge a plan already known to drift.
+3. Otherwise the due reviewers run in order **Architecture → Technical →
+   Strategy**, one `run_in_background` child per blocking step.
+4. **Finalizer**: Backup, Publish, Notify.
+
+Each stage checks only its own result and records only its own interrupted
+recovery. Technical repair debt cannot fail a strategic/architecture completion.
+A failed earlier review leaves the pass partial but does not cancel later
+research. Explicit user cancellation does.
+
+Research horizons are asymmetric without new cron jobs. Architecture normally
+waits across several comparable producing runs for stable structural evidence.
+Strategy is reconsidered at the next meaningful goal, outcome, feedback,
+experiment, decision or measurement checkpoint. Material evidence can override
+either wait.
+
+## Per-reviewer controls
+
+Technical, Architecture and Strategy each have a durable **Run automatically**
+toggle and an independent **Run now** action; a disabled reviewer can still run
+once by hand. Plan Drift is mandatory, cannot be disabled, and has its own
+manual drift-check action. While Plan Drift is due or unavailable, the three
+downstream Run now actions are disabled. Manual actions reuse the same guided
+review contracts in the workflow's Builder chat.
+
+Installed playbook custom focus applies to Strategy only; Technical and
+Architecture keep their platform-owned scopes.
+
+Strategy has a symptom-loop guard: a recurring operational label is Technical
+context, not a strategic agenda. The reviewer hands off the concrete defect,
+assumes it is fixed, and asks what would still limit the primary goal. Every
+completed Strategic Review must contain a goal-derived conclusion (an honest
+no-change conclusion counts); a technical handoff alone is not completion.
 
 Use `next_check_at` for protected Architecture/Strategy boundaries. A skipped
 Gate cannot push an outstanding saved date forward; at the next Pulse pass after
@@ -58,37 +104,55 @@ in the Pulse report reader. Runtime interruption tracking references the source
 run and saved notes; legacy Markdown files are optional historical evidence. Reuse current
 research instead of automatically repeating it.
 
-## One improvement lifecycle
+## Persistence: reviews, issues, decisions (PLAT-326)
 
-The existing impact ledger now accepts `architecture_improvement` alongside
-`strategy_experiment` and `fix_bundle`. Architecture uses the planned experiment
-lifecycle, baselines, metrics, guardrails, rollback conditions and interference
-domains. It links to a typed `architecture_review` decision, using an
-`architecture-proposal-` id and the existing approved apply contract.
+The 2026-09-10 release introduced an impact ledger (`fix_bundle`,
+`architecture_improvement`, `strategy_experiment`) with a
+proposal → approval → application → assessment → adoption lifecycle. PLAT-326
+(2026-09-17/18) collapses Pulse to a much smaller product lifecycle:
 
-User approval updates linked planned improvements to approved in the same DB
-transaction. Recording the application through decision consumption advances it
-to running and retains the application summary as provenance. Approval alone
-never performs the edit. The existing decision-drain/targeted-fixer mechanism
-owns applying the approved scope and checks. Rejection/defer also update the
-linked proposal. Applied records cannot be reset to proposed by a later review.
+```text
+review concludes -> issue open -> action taken -> issue closed
+```
 
-Architecture cannot report running/measuring/adopted without a consumed approval
-receipt. Adoption additionally requires the latest outcome assessment to support
-it. Existing strategy experiments retain compatibility with their prior evidence
-contract while benefiting from decision/application synchronization. Assessments
-remain evidence-grounded reviewer judgments, not proof generated by the platform.
-An inconclusive or confounded result must remain visible; missing values are not 0.
+There is no separate verification, monitoring or fix-attempt lifecycle. If
+Pulse cannot complete a fix, the issue stays open; a later review updates the
+same canonical issue instead of filing a second one.
+
+| Table | Holds |
+|---|---|
+| `pulse_reviews` | One user-readable result per Plan Drift / Technical / Architecture / Strategic review. Activity reads these directly. |
+| `pulse_issues` | Canonical issue: description, evidence, `open`/`closed`, `action_taken` when closed. |
+| `pulse_decisions` | Human decisions, each tied to an open issue. Approval leaves the issue open until the action is applied; rejection records the choice as `action_taken` and closes it. |
+
+A reviewer now has three persistence actions: record one concise review result,
+open or update a canonical issue, and record a human decision only when one is
+genuinely required. `record_pulse_result` is also the Activity summary; there is
+no separate publish/update step. `record_pulse_impact` is no longer registered
+for reviewers or Workshop.
+
+**Rollout state (2026-09-23):**
+
+- Done: schema v2 migration (runs at server startup and on each Pulse DB open,
+  backs up to `db/migrations/.backups/` first), backfill of the three tables,
+  and the reviewer skill/tool cutover. All local workflow databases are migrated.
+- Pending: switching every Gate/UI/Activity read to the three tables, removing
+  the legacy compatibility writes, and dropping retired tables after the
+  rollback window. RTS and other hosts migrate when the code is deployed there.
+- Until then, legacy tables (module audit, review notes, finding details,
+  impact records, and so on) remain and are still written behind the compact
+  contract, so some UI and API fields below still come from them.
 
 ## UI
 
-Health, Architecture, Strategy are the three main review areas. Drift Check is a
-separate compact control. Selected content, reports and checks appear below.
-Architecture has its own scope coverage. Improvements show proposal/application
-status separately from the latest measured verdict, with baselines, checkpoints,
-guardrails and evidence in expandable details. Review history stays collapsed.
+The Pulse workspace leads with goals, metrics and Strategy, which opens by
+default. Strategic proposals appear directly under the Strategy card. Technical,
+Architecture and Plan Drift are grouped as platform health and stability, with a
+lower **Platform improvements** section for Technical and Architecture work.
+Goal progress shows primary metrics first; supporting metrics stay collapsed
+until their primary is opened. Review history stays collapsed.
 
-## Validation and rollout
+## Validation and rollout (2026-09-10 release)
 
 Automated integration coverage exercises four due modules, independent receipts,
 protected dates across actual worklist persistence, research custom-tool filtering,
@@ -112,6 +176,9 @@ it is not a claim that business outcomes have improved.
   than treating the number of reports or ideas as success.
 
 ## Minimal review recording — PLAT-306
+
+`pulse_review_notes` is on PLAT-326's retirement list, but reviewers still read
+and write notes this way until the cutover completes.
 
 Reviewers save information once. `record_pulse_result` already records the short
 `reason`, evidence and actual outcomes; optional `review_note` adds only reasoning,

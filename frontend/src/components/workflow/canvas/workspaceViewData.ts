@@ -8,8 +8,7 @@ import type {
   PulsePlanDriftDueItem,
   PulseReviewFocus,
   PulseReviewerModule,
-  VariablesManifest,
-} from '../../../services/api-types'
+  VariablesManifest, PulseNextRun } from '../../../services/api-types'
 import type { PulseOverview } from '../PulseView'
 
 export type WorkflowImageExportFormat = 'svg' | 'png' | 'jpeg'
@@ -29,6 +28,7 @@ export interface PulseData {
   planDriftDueItems: PulsePlanDriftDueItem[]
   planDriftDueError: string | null
   finalCommandStates: PulseFinalCommandState[]
+  nextRun: PulseNextRun | null
   reviewFocuses: PulseReviewFocus[]
   reviewFocusSelections: PulseReviewFocus[]
   statusError: string | null

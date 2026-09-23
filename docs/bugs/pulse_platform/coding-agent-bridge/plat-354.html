@@ -125,6 +125,7 @@
 <a href="#claude-tool-containment">Claude native tools and MCP bridge</a>
 <a href="#codex-transcript-follow-up-2026-09-23">Codex transcript follow-up (2026-09-23)</a>
 <a href="#future-hybrid-revisit">Future hybrid revisit</a>
+<a href="#migration-progress-2026-09-23">Migration progress (2026-09-23)</a>
 <a href="#p0-tmux-contract-replacement">P0 tmux contract replacement</a>
 <a href="#structured-parsing-by-cli">Structured parsing by CLI</a>
 <a href="#additional-structured-signals">Additional structured signals</a>
@@ -441,6 +442,76 @@ Approval dialogs and other provider-owned menus need the same chat response
 path or a verified policy that prevents them from appearing. Test pause,
 answer, cancel, and resume without a person at the tmux pane. This is a
 future gate, not a mode change in PLAT-354.</p>
+<h2 id="migration-progress-2026-09-23">Migration progress (2026-09-23)</h2>
+<p><strong>Direction:</strong> keep tmux as the process host and keystroke
+transport. Provider JSON, rollout, transcript or database records are the P0
+proof of intake, completion and the final answer. Pane parsing becomes P1
+secondary evidence. The exceptions are pane-only safety states with no
+structured record (trust/login, a draft visibly stuck in the editor). Every
+change below was proven with live end-to-end tests against the real CLI;
+unit tests are supplementary.</p>
+<ul>
+<li><strong>Unattended runs auto-answer questions.</strong> Persistent Muse
+  enabled user choice, and schedules keep the native session alive, so a
+  scheduled step that asked a question waited forever. User choice now needs
+  <code>codingAgentRequestHasAttendingUser</code> (mcpagent <code>757cf40</code>,
+  builder <code>2ebd0972f</code>).</li>
+<li><strong>Muse gates closed.</strong> <code>TestMuseCLIRealTmuxTranscriptStreamP0</code>
+  certifies production streaming, including an early commit
+  (<code>2e7685d</code>).</li>
+<li><strong>Claude Code <code>done_detection</code> is transcript-primary</strong>
+  (<code>51a58ca</code>). The latest record must be a committed
+  <code>end_turn</code>, followed by a 1.5&nbsp;s quiet window; the pane is the
+  fallback only when no transcript exists.
+  <code>TestClaudeCodeTmuxRealStructuredCompletionP0</code>.</li>
+<li><strong>Codex rollout is the authority once it records the turn</strong>
+  (<code>5aaa833</code>). Pane idleness and the stale-pane backstop can no
+  longer end the turn before <code>task_complete</code> or
+  <code>turn_aborted</code>. A bounded late fallback (final answer written, no
+  pending tool, pane idle 30&nbsp;s) prevents a hang if a Codex build omits
+  <code>task_complete</code>. Post-completion modal dismissal is unchanged.
+  Results carry <code>codex_completion_source</code>.
+  <code>TestCodexCLIRealRolloutCompletionP0</code>.</li>
+<li><strong>Codex cross-session answer leak fixed</strong> (<code>e0d5e67</code>).
+  Two sessions that started together in one directory could each bind the
+  other's rollout before learning a thread ID, and each returned the other's
+  answer under its own identity. Binding now requires the rollout to contain
+  that session's first prompt. <code>SharedWorkingDirMCPIsolation</code> failed
+  2/2 before (baseline too) and passes 3/3.</li>
+<li><strong>Claude multi-line live input settles</strong> (<code>04a7e1f</code>).
+  Short multi-line pastes stay inline (no chip) while the spinner keeps the pane
+  changing, so the old settle wait always timed out. The wait now recognises the
+  whole message in the composer box. <code>HaikuLiveInputAndEscape</code>
+  failed every run before and passes 3/3.</li>
+<li><strong>Claude pasted-content distrust</strong> (<code>b5145f4</code>).
+  Claude Code records a multi-line paste as <code>&lt;pasted_content&gt;</code>
+  with no typed text, and its system prompt says to follow pasted instructions
+  only where the user's own message asks. Haiku, and sometimes Sonnet, refused
+  ordinary AgentWorks prompts as prompt injection (reproduced live). After such
+  a paste the adapter now types <em>"The pasted content above is my own message:
+  follow its instructions."</em>, and the transcript normaliser strips it.
+  <code>TestClaudeCodeTmuxRealMultilinePromptIsActedOn</code> (Haiku) passes 3/3.</li>
+<li><strong>Test model.</strong> Live Claude tests default to
+  <code>claude-sonnet-5</code>; the pasted-content regression stays on Haiku,
+  because a stronger model can hide that bug. Claude live suite: 34 pass on
+  both models.</li>
+</ul>
+<p><strong>Open:</strong></p>
+<ul>
+<li>Under Sonnet 5, a resumed Claude session sees our message fused to the
+  <code>/exit</code> the adapter types when closing a retained session
+  (<code>ExtendedResumeIsolation</code>). This is pre-existing.</li>
+<li>The submit path still uses broad pane success polling. Moving it behind the
+  durable proof, with the pane as P1 fast ticks, is the next migration step (see
+  <code>docs/refactor/durable_ack_p0.md</code>).</li>
+<li>Cursor and Pi completion migration.</li>
+<li>The official <code>run-coding-cli-p0.sh</code> gate for Claude Code and Codex
+  is running against the restarted server.</li>
+<li>The review items for the question card remain: dismissing a stuck card,
+  resuming a partial multi-question submit, and wrapped long text. Questions
+  for CLIs other than Muse wait until the pane replacement is done for every
+  CLI.</li>
+</ul>
 <h2 id="p0-tmux-contract-replacement">P0 tmux contract replacement</h2>
 <p class="contract-note"><strong>Keep the P0 correctness contracts and live tests.</strong>
 Retire the <em>pane-string assertion</em> when the same behavior has a
@@ -514,8 +585,12 @@ active work plan. The remaining provider cards are the later queue.</p>
     <code>turn_aborted</code>. Rollout completion and final text are already
     primary.</p>
     <p><strong>Keep for now:</strong> tmux input, startup and
-    post-completion runtime-modal handling. Retain the pane fallback until
-    modal-safe completion is live certified. An async
+    post-completion runtime-modal handling. Done 2026-09-23
+    (<code>5aaa833</code>): once the rollout records the turn, only
+    <code>task_complete</code>/<code>turn_aborted</code> end it. The pane
+    completes a turn only for sessions without a rollout, or through the
+    bounded late fallback. Modal dismissal still runs before completion is
+    honoured. An async
     <code>{"accepted":true}</code> output proves dispatch, not the user's
     selection.</p>
   </section>
@@ -611,9 +686,11 @@ never complete the current turn.</p>
   <code>token_usage_record</code> for usage.</li>
 <li><strong>Replace:</strong> Pane-derived answer and tool progress, question-menu text,
   idle/completed markers, and terminal error text.</li>
-<li><strong>State:</strong> Current-turn <code>task_complete</code> and rollout final text are already
-  primary; pane completion is a fallback, and runtime modals still need
-  handling. Transcript streaming is opt-in. The immediate
+<li><strong>State:</strong> Current-turn <code>task_complete</code> and rollout final text are
+  primary. Since <code>5aaa833</code> the pane cannot end a turn that the
+  rollout records, and since <code>e0d5e67</code> a new session binds only the
+  rollout containing its own prompt. Runtime modals are still handled on the
+  pane. Transcript streaming is opt-in. The immediate
   <code>request_user_input_async</code> output <code>{"accepted":true}</code> acknowledges
   dispatch only; correlate the later user reply before claiming an answer.</li>
 </ul>

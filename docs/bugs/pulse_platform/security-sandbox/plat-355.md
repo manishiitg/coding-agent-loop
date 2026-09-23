@@ -64,6 +64,21 @@ The existing safeguards still hold:
 - A session that has its own registry is unchanged.
 - The no-borrow rule for existing registries still holds.
 
+### Refinement (mcpagent `af11626`)
+
+A self-review found that the first version could turn a working call into a
+failure, in two ways:
+
+- It also applied the parent chat's per-turn allow list to the step script.
+- It returned "not registered" for a tool the parent never registered, where
+  the legacy lookup had resolved it (for example `record_goal_observations`
+  or `get_human_input_request`).
+
+The parent is now used only after the calling session's own allow-list check,
+and only when the parent actually registered that tool. Otherwise the call
+behaves exactly as before. `TestCallCustomToolWithSessionParentResolutionIsConservative`
+fails on `445e64f` and passes on `af11626`.
+
 ## Regression coverage
 
 `TestCallCustomToolWithSessionUsesRegisteredParentRegistry` (mcpagent
@@ -83,7 +98,7 @@ caused by this change.
 ## Live acceptance
 
 Verified on 2026-09-23 on the local server (restarted 11:51:44 with mcpagent
-`445e64f`), in `websiteaeo` run `workflow-full-mudpu2g001`, launched from the
+`445e64f`; the refinement is not live-run yet), in `websiteaeo` run `workflow-full-mudpu2g001`, launched from the
 builder chat:
 
 - Step `collect-goal-observations` is the scripted step that failed at 11:08.

@@ -536,6 +536,53 @@ func TestAccessTokenReachesAppWithoutGatewaySession(t *testing.T) {
 	}
 }
 
+func TestMCPOAuthDiscoveryAndChallengeReachAgentWithoutGatewaySession(t *testing.T) {
+	for _, disableGate := range []bool{false, true} {
+		upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("X-User-ID") != "" {
+				t.Fatalf("spoofed user id reached OAuth route: %s", r.URL.Path)
+			}
+			if r.URL.Path == hostedMCPPath && r.Header.Get("Authorization") == "" {
+				w.Header().Set("WWW-Authenticate", `Bearer resource_metadata="https://example.com/.well-known/oauth-protected-resource/api/external/v1/mcp"`)
+				w.WriteHeader(http.StatusUnauthorized)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		g := &gateway{secret: []byte("0123456789abcdef0123456789abcdef"), disablePasswordGate: disableGate}
+		g.agent = proxyFor(upstream.URL)
+		g.workspace = proxyFor(upstream.URL)
+		for _, path := range []string{
+			"/.well-known/oauth-protected-resource/api/external/v1/mcp",
+			"/.well-known/oauth-authorization-server",
+			"/api/oauth/mcp/register", "/api/oauth/mcp/authorize", "/api/oauth/mcp/token",
+		} {
+			req := httptest.NewRequest(http.MethodGet, path, nil)
+			req.Header.Set("X-User-ID", "spoofed")
+			w := httptest.NewRecorder()
+			g.ServeHTTP(w, req)
+			if w.Code != http.StatusOK {
+				t.Fatalf("disableGate=%v path=%s got %d", disableGate, path, w.Code)
+			}
+		}
+		req := httptest.NewRequest(http.MethodGet, hostedMCPPath, nil)
+		req.Header.Set("X-User-ID", "spoofed")
+		w := httptest.NewRecorder()
+		g.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized || w.Header().Get("WWW-Authenticate") == "" || w.Header().Get(authRequiredHeader) != "" {
+			t.Fatalf("disableGate=%v MCP challenge: code=%d headers=%v", disableGate, w.Code, w.Header())
+		}
+		req = httptest.NewRequest(http.MethodPost, hostedMCPPath, nil)
+		req.Header.Set("Authorization", "Bearer aw_mcp_test")
+		w = httptest.NewRecorder()
+		g.ServeHTTP(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("disableGate=%v OAuth bearer got %d", disableGate, w.Code)
+		}
+		upstream.Close()
+	}
+}
+
 func TestAccessTokenStaysOutOfWorkspaceRoutes(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)

@@ -398,6 +398,15 @@ func bearerToken(r *http.Request) string {
 // for the app to authenticate, exactly like the webhook exception. The app
 // fail-closes on unknown, expired, or revoked tokens.
 const accessTokenPrefix = "aw_pat_"
+const hostedMCPPath = "/api/external/v1/mcp"
+
+func isMCPOAuthDiscoveryPath(path string) bool {
+	return path == "/.well-known/oauth-protected-resource" || path == "/.well-known/oauth-protected-resource/api/external/v1/mcp" || path == "/.well-known/oauth-authorization-server"
+}
+
+func isMCPOAuthPublicAPIPath(path string) bool {
+	return path == "/api/oauth/mcp/register" || path == "/api/oauth/mcp/authorize" || path == "/api/oauth/mcp/token" || path == hostedMCPPath
+}
 
 func isAccessTokenCredential(r *http.Request) bool {
 	return strings.HasPrefix(bearerToken(r), accessTokenPrefix)
@@ -407,6 +416,9 @@ func isAccessTokenCredential(r *http.Request) bool {
 // (auth_middleware.go shouldSkipAuth): what a browser needs before it has a
 // token. Everything else needs one when the password gate is off.
 func agentPublicPath(path string) bool {
+	if isMCPOAuthDiscoveryPath(path) || isMCPOAuthPublicAPIPath(path) {
+		return true
+	}
 	for _, p := range []string{
 		"/api/auth/login", "/api/auth/register", "/api/auth/mode", "/api/auth/start", "/api/auth/callback",
 		"/api/auth/desktop/exchange", "/api/auth/providers", "/api/health", "/api/capabilities",
@@ -464,6 +476,9 @@ func (g *gateway) serveAgent(w http.ResponseWriter, r *http.Request) {
 		if !agentPublicPath(r.URL.Path) && !g.requireUserToken(w, r) {
 			return
 		}
+		if isMCPOAuthPublicAPIPath(r.URL.Path) || isMCPOAuthDiscoveryPath(r.URL.Path) {
+			r.Header.Del("X-User-ID")
+		}
 		g.agent.ServeHTTP(w, r)
 		return
 	}
@@ -479,6 +494,12 @@ func (g *gateway) serveAgent(w http.ResponseWriter, r *http.Request) {
 	if r.Header.Get("Authorization") == "" {
 		if token := strings.TrimSpace(r.URL.Query().Get("token")); token != "" {
 			r.Header.Set("Authorization", "Bearer "+token)
+		} else if r.URL.Path == hostedMCPPath || isMCPOAuthPublicAPIPath(r.URL.Path) || isMCPOAuthDiscoveryPath(r.URL.Path) {
+			// Let the agent issue its OAuth challenge or handle the public
+			// authorization endpoints without a gateway service identity.
+			r.Header.Del("X-User-ID")
+			g.agent.ServeHTTP(w, r)
+			return
 		} else {
 			token, err := g.agentToken()
 			if err != nil {
@@ -625,6 +646,11 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 	expiresAt, authenticated := g.sessionExpiry(r)
 	if !authenticated {
 		if isGatewayAPIRoute(r.URL.Path) {
+			if isMCPOAuthPublicAPIPath(r.URL.Path) {
+				r.Header.Del("X-User-ID")
+				g.route(w, r)
+				return
+			}
 			// PAT clients (CLI/MCP) carry no browser session; the app
 			// verifies the token itself. Workspace routes stay cookie-only.
 			if isAccessTokenCredential(r) && !strings.HasPrefix(r.URL.Path, "/api/wp") {
@@ -637,6 +663,11 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
 			_, _ = fmt.Fprint(w, `{"error":"authentication_required"}`)
+			return
+		}
+		if isMCPOAuthDiscoveryPath(r.URL.Path) {
+			r.Header.Del("X-User-ID")
+			g.agent.ServeHTTP(w, r)
 			return
 		}
 		loginURL := "/login?next=" + url.QueryEscape(r.URL.RequestURI())
@@ -654,6 +685,9 @@ func (g *gateway) serveHTTP(w http.ResponseWriter, r *http.Request) {
 
 func (g *gateway) route(w http.ResponseWriter, r *http.Request) {
 	switch {
+	case isMCPOAuthDiscoveryPath(r.URL.Path):
+		r.Header.Del("X-User-ID")
+		g.agent.ServeHTTP(w, r)
 	case strings.HasPrefix(r.URL.Path, "/api/wp"):
 		// The workspace API has no auth of its own beyond X-User-ID. Behind
 		// the password gate the cookie covered it; without that gate the

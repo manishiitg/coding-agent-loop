@@ -37,6 +37,7 @@ import { createHydrationGate, HydrationBackstopError, type HydrationGateSnapshot
 import { createBufferedPersistStorage } from '../utils/bufferedPersistStorage'
 import { retainEventInSessionWorkingSet } from '../utils/sessionEventWorkingSet'
 import { autoNotificationDedupKey } from '../utils/internalChatEvents'
+import { durableStreamStartCursor } from '../utils/forwardCursor'
 
 // Active sessions cache TTL (30 seconds - shorter than polling interval to allow force refresh)
 const ACTIVE_SESSIONS_CACHE_TTL = 30000
@@ -1966,7 +1967,9 @@ export const useChatStore = create<ChatState>()(
           state.sseConnections[sessionId].close()
         }
         const storedLastIndex = state.tabEventIndices[sessionId] ?? 0
-        const lastIndex = storedLastIndex < 0 ? 0 : storedLastIndex
+        const lastIndex = durableChat
+          ? durableStreamStartCursor(storedLastIndex, state.tabEvents[sessionId] || [])
+          : (storedLastIndex < 0 ? 0 : storedLastIndex)
         const conn = new SSEConnection(sessionId, lastIndex, {
           onMessage: message => { if (isChatIdentityCurrent(identity)) onMessage(message) },
           onStatusUpdate: message => { if (isChatIdentityCurrent(identity)) onStatus(message) },

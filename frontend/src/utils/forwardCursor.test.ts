@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { nextForwardCursor } from './forwardCursor'
+import { nextForwardCursor, durableStreamStartCursor } from './forwardCursor'
 
 describe('nextForwardCursor', () => {
   it('advances on newer rows', () => {
@@ -20,5 +20,19 @@ describe('nextForwardCursor', () => {
 
   it('lets execution tabs follow in-memory indices that restart after a restart', () => {
     expect(nextForwardCursor(5000, 3, 3, false)).toBe(3)
+  })
+})
+
+describe('durableStreamStartCursor', () => {
+  it('starts after the newest journal row the tab already holds when the stored cursor was reset', () => {
+    expect(durableStreamStartCursor(0, [{ sequence: 3 }, { sequence: 470 }, {}])).toBe(470)
+  })
+
+  it('keeps a stored cursor that is already ahead of the held rows', () => {
+    expect(durableStreamStartCursor(528, [{ sequence: 470 }])).toBe(528)
+  })
+
+  it('starts from zero only for a tab with no journal rows', () => {
+    expect(durableStreamStartCursor(-1, [])).toBe(0)
   })
 })

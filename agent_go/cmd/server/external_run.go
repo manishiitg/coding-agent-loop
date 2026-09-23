@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -19,13 +20,11 @@ import (
 // catalog. Display-only: membership comes from product.yaml run.tools, and a
 // tool without a hint here still proxies with the generic description.
 var externalRunToolHints = map[string]string{
-	"execute_step":       "Start one workflow step in the background. Arguments: step_id (required; plan step ID or positional like '1'), group_name, human_input, script_parameters (object), tier (high|medium|low).",
-	"run_full_workflow":  "Run all steps end-to-end for one variable group. Arguments: group_name (required), human_inputs (object keyed by step ID), route_selections (object keyed by routing step ID).",
-	"run_in_background":  "Start a background agent task. Arguments: name (required), instruction (required), access_mode, agent_type, completion_mode.",
-	"send_step_message":  "Steer a live execution. Arguments: execution_id (required), message (required).",
-	"stop_step":          "Stop one execution. Arguments: execution_id (required).",
-	"stop_all_executions": "Stop all running executions in the run session. No arguments.",
-	"query_step":         "One-off live status check for a tracked execution. Arguments: step_id or execution_id.",
+	"execute_step":      "Start one workflow step in the background. Arguments: step_id (required; plan step ID or positional like '1'), group_name, human_input, script_parameters (object), tier (high|medium|low).",
+	"run_full_workflow": "Run all steps end-to-end for one variable group. Arguments: group_name (required), human_inputs (object keyed by step ID), route_selections (object keyed by routing step ID).",
+	"run_in_background": "Start a background agent task. Arguments: name (required), instruction (required), access_mode, agent_type, completion_mode.",
+	"send_step_message": "Steer a live execution. Arguments: execution_id (required), message (required).",
+	"query_step":        "One-off live status check for a tracked execution. Arguments: step_id or execution_id.",
 }
 
 // externalRunProxyTool builds the catalog entry for a run.tools name with no
@@ -204,6 +203,10 @@ func (api *StreamingAPI) externalRunCall(w http.ResponseWriter, r *http.Request,
 		api.externalChat(w, r, args, workflow)
 	case "run_reply_input":
 		api.externalRunReplyInput(w, r, args, workflow)
+	case "stop_step":
+		api.externalStopStep(w, r, args, workflow)
+	case "stop_all_executions":
+		api.externalStopAllExecutions(w, r, args, workflow)
 	case "list_executions":
 		executions := api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath)
 		if executions == nil {
@@ -219,6 +222,93 @@ func (api *StreamingAPI) externalRunCall(w http.ResponseWriter, r *http.Request,
 	default:
 		externalError(w, http.StatusBadRequest, "unknown_tool", "Unknown run operation")
 	}
+}
+
+// externalStopStep cancels one running execution directly. The execution_id
+// from run_status or list_executions resolves to a tracked execution whose
+// session must belong to this connection; unlike the assistant-mediated
+// proxy, the target and the action are exact.
+func (api *StreamingAPI) externalStopStep(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {
+	claims := GetUserFromContext(r.Context())
+	execID, err := externalBuilderString(args, "execution_id")
+	if err != nil || strings.TrimSpace(execID) == "" {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "execution_id is required")
+		return
+	}
+	sessionFilter, err := externalBuilderString(args, "session_id")
+	if err != nil {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
+		return
+	}
+	var target *ActiveWorkflowExecution
+	for _, execution := range api.listRunningWorkflowExecutionsForWorkspace(workflow.WorkspacePath) {
+		if execution.QueryID == execID {
+			match := execution
+			target = &match
+			break
+		}
+	}
+	if target == nil {
+		externalError(w, http.StatusNotFound, "execution_not_found", "No running execution with that ID in this workflow; see run_status or list_executions")
+		return
+	}
+	if sessionFilter != "" && sessionFilter != target.SessionID {
+		externalError(w, http.StatusNotFound, "execution_not_found", "That execution is not in the given session")
+		return
+	}
+	if claims.AccessToken != nil && !strings.HasPrefix(target.SessionID, accessTokenSessionPrefix(claims)) {
+		externalError(w, http.StatusNotFound, "execution_not_found", "This access token does not own that execution.")
+		return
+	}
+	api.cancelSessionRuntimeWork(target.SessionID, "external stop_step", runtimePhaseCanceled)
+	externalJSON(w, map[string]any{"stopped": true, "execution_id": execID, "session_id": target.SessionID})
+}
+
+// externalStopAllExecutions cancels running work directly: one owned
+// session when session_id is given, else every session this token owns in
+// the workflow. App callers must name a session; stopping other users'
+// runs by omission is never allowed.
+func (api *StreamingAPI) externalStopAllExecutions(w http.ResponseWriter, r *http.Request, args map[string]any, workflow DiscoveredWorkflow) {
+	claims := GetUserFromContext(r.Context())
+	sessionID, err := externalBuilderString(args, "session_id")
+	if err != nil {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
+		return
+	}
+	if sessionID != "" {
+		if sanitizeChatHistorySessionID(sessionID) != sessionID {
+			externalError(w, http.StatusBadRequest, "invalid_arguments", "Invalid session_id")
+			return
+		}
+		if claims.AccessToken != nil && !strings.HasPrefix(sessionID, accessTokenSessionPrefix(claims)) {
+			externalError(w, http.StatusNotFound, "session_not_found", "This access token does not own that run session.")
+			return
+		}
+		if _, _, err := api.externalBuilderSession(r, workflow.WorkspacePath, sessionID); err != nil {
+			externalError(w, http.StatusNotFound, "session_not_found", "Run session not found in this workflow")
+			return
+		}
+		api.cancelSessionRuntimeWork(sessionID, "external stop_all_executions", runtimePhaseCanceled)
+		externalJSON(w, map[string]any{"stopped_sessions": []string{sessionID}})
+		return
+	}
+	if claims.AccessToken == nil {
+		externalError(w, http.StatusBadRequest, "invalid_arguments", "session_id is required")
+		return
+	}
+	api.accessTokenSessions.Lock()
+	stopped := []string{}
+	for sid, s := range api.accessTokenSessions.sessions {
+		if s.tokenID == claims.AccessToken.ID && s.workspace == workflow.WorkspacePath {
+			stopped = append(stopped, sid)
+		}
+	}
+	api.accessTokenSessions.Unlock()
+	sort.Strings(stopped)
+	for _, sid := range stopped {
+		api.cancelSessionRuntimeWork(sid, "external stop_all_executions", runtimePhaseCanceled)
+	}
+	externalJSON(w, map[string]any{"stopped_sessions": stopped})
 }
 
 // externalRunStatus mirrors the builder status poller for run sessions: one

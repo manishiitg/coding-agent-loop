@@ -5752,7 +5752,8 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 				extraFolders := append(append([]string{}, extraWriteFolders...), perUserChatHistory)
 				workspaceExecutors = wrapExecutorsWithWorkflowPhaseFolderGuard(workspaceExecutors, effectiveWorkflowPhaseFolderForWrites, workflowReadOnlyFolders, fileContextBlockedWriteFolders, extraFolders...)
 				workspace.SetSessionWorkingDir(sessionID, chatWorkingFolder)
-				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", "Workflow/"}, extraFolders...)
+				workflowReadRoot := tokenSessionWorkflowReadRoot(GetUserFromContext(r.Context()), workflowPhaseFolder)
+				readPaths := append([]string{perUserChatsWrite, perUserChatHistory, "Downloads/", "skills/", "subagents/", workflowReadRoot}, extraFolders...)
 				readPaths = append(readPaths, workflowReadOnlyFolders...)
 				writePaths := workflowPhaseWriteFolders(effectiveWorkflowPhaseFolderForWrites, extraFolders...)
 				workspace.SetSessionFolderGuard(sessionID,

@@ -118,6 +118,10 @@ func externalTools() ([]externalTool, error) {
 		addRun("trigger_schedule", "Trigger a schedule to run immediately, outside its normal timing. Requires the runs:execute scope.", true, map[string]any{"schedule_id": externalString("Schedule ID from list_schedules.")}, "schedule_id")
 		addRun("chat", "Chat with the workflow assistant in a pinned Run-mode session: ask questions, request analysis, or direct runs conversationally. Starts a new session, or continues session_id for multi-turn conversation. Requires the runs:execute scope. Poll run_status for the reply.", true, map[string]any{"message": externalString("The question or instruction to send."), "session_id": map[string]any{"type": "string", "description": "Existing run session ID to continue. Omit to start a new conversation."}}, "message")
 		addRun("run_reply_input", "Answer a pending human-input request in a run session (see run_status pending_inputs). Requires the runs:execute scope.", true, map[string]any{"session_id": externalString("Run session ID from run_status."), "request_id": externalString("Pending input request ID from run_status."), "response": externalString("The answer to submit.")}, "session_id", "request_id", "response")
+		// Stop commands execute directly instead of through the assistant
+		// proxy: halting the wrong execution (or none) is not acceptable.
+		addRun("stop_step", "Stop one running execution by its execution ID from run_status or list_executions. Executes directly against the tracked execution; the execution's session must belong to this connection.", true, map[string]any{"execution_id": externalString("Execution ID from run_status or list_executions."), "session_id": map[string]any{"type": "string", "description": "Optional run session ID; the execution must belong to it."}}, "execution_id")
+		addRun("stop_all_executions", "Stop all running executions owned by this connection in the workflow, or one session when session_id is given. Executes directly.", true, map[string]any{"session_id": map[string]any{"type": "string", "description": "Optional run session ID to stop instead of every owned session."}})
 		// Membership comes from product.yaml's run mode: external_tools
 		// first, in yaml order, then every run.tools name (the single
 		// source of truth for the run surface) that has no native
@@ -129,9 +133,17 @@ func externalTools() ([]externalTool, error) {
 		for _, tool := range defined {
 			byName[tool.Name] = tool
 		}
+		denied := make(map[string]bool)
+		for _, name := range agentworksproduct.RunExternalDenylist() {
+			denied[name] = true
+		}
 		admitted := agentworksproduct.RunExternalTools()
 		seen := make(map[string]bool, len(admitted))
 		for _, name := range admitted {
+			if denied[name] {
+				externalCatalogErr = fmt.Errorf("product.yaml both admits and withholds external tool %q", name)
+				return
+			}
 			tool, ok := byName[name]
 			if !ok {
 				externalCatalogErr = fmt.Errorf("product.yaml admits unknown external tool %q", name)
@@ -144,6 +156,9 @@ func externalTools() ([]externalTool, error) {
 		runSet := make(map[string]bool, len(runNames))
 		for _, name := range runNames {
 			runSet[name] = true
+			if denied[name] {
+				continue
+			}
 			if seen[name] {
 				continue
 			}
@@ -340,7 +355,7 @@ func (api *StreamingAPI) handleExternalCall(w http.ResponseWriter, r *http.Reque
 	// to the asynchronous query runtime (which must never run under this
 	// lock), and the status and schedule readers need no lock.
 	switch tool.Name {
-	case "run_status", "list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule", "chat", "run_reply_input":
+	case "run_status", "list_executions", "list_schedules", "get_schedule_runs", "trigger_schedule", "chat", "run_reply_input", "stop_step", "stop_all_executions":
 		api.externalRunCall(w, r, tool.Name, args, *selected)
 		return
 	}

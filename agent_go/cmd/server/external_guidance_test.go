@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"unicode"
 
+	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 )
 
@@ -112,7 +114,7 @@ func TestExternalGuidanceTopicsRoundTrip(t *testing.T) {
 func TestExternalWorkflowKnowledgeListsAndReads(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	f.write(t, "Workflow/invoices/workflow.json", `{"id":"invoices","label":"Invoice processing","created_by":"owner","access":{"owners":["owner","readonly-owner"],"readers":["reader"]},"capabilities":{"selected_servers":["accounting"],"selected_skills":["invoice-skill","ghost-skill"]}}`)
-	f.write(t, "Workflow/invoices/planning/step_config.json", `[{"step_id":"fetch-invoices","enabled_skills":["step-skill"]}]`)
+	f.write(t, "Workflow/invoices/planning/step_config.json", `{"steps":[{"id":"fetch-invoices","agent_configs":{"enabled_skills":["step-skill"]}}]}`)
 	f.write(t, "Workflow/invoices/learnings/_global/SKILL.md", "# Invoice know-how\n")
 	f.write(t, "Workflow/invoices/knowledgebase/notes/pricing.md", "# Pricing\n")
 	f.write(t, "skills/invoice-skill/SKILL.md", "# Invoice skill\n")
@@ -141,6 +143,11 @@ func TestExternalWorkflowKnowledgeListsAndReads(t *testing.T) {
 	if content, _ := skill["content"].(string); !strings.Contains(content, "Invoice skill") {
 		t.Fatalf("wrong skill content: %v", skill)
 	}
+	// A step-only skill (production {"steps": [...]} shape) reads too.
+	stepSkill := externalTestBody(t, f.call(t, "owner", "read_workflow_knowledge", map[string]any{"workflow_id": "invoices", "path": "skills/step-skill/SKILL.md"}), 200)
+	if content, _ := stepSkill["content"].(string); !strings.Contains(content, "Step skill") {
+		t.Fatalf("wrong step skill content: %v", stepSkill)
+	}
 	// A skill the workflow does not use is denied even though it exists.
 	unrelated := f.call(t, "owner", "read_workflow_knowledge", map[string]any{"workflow_id": "invoices", "path": "skills/other-skill/SKILL.md"})
 	if code := externalTestBody(t, unrelated, 403)["error"].(map[string]any)["code"]; code != "forbidden" {
@@ -162,34 +169,84 @@ func TestExternalWorkflowKnowledgeListsAndReads(t *testing.T) {
 }
 
 // TestExternalGuidanceTopicsDiscloseUnavailableTools enforces the external
-// filtering contract: any internal-only operation named by served guidance
-// must also be named by that topic's external mapping note, so the agent is
-// told what not to call instead of discovering unknown_tool by trial.
+// filtering contract against the actual tool surfaces, not a fixed list:
+// any known operation named by served guidance that is NOT in the external
+// catalog must also be named by that topic's external mapping note, so the
+// agent is told what not to call instead of discovering unknown_tool by
+// trial. New builder/run tools are covered automatically; newly exposed
+// external tools stop requiring disclosure automatically.
 func TestExternalGuidanceTopicsDiscloseUnavailableTools(t *testing.T) {
-	deny := []string{"read_skill", "get_goal_metrics", "mark_changelog_artifact_reviewed", "review-artifact-drift", "get_report_link", "get_step_prompts", "query_workflow_db", "mutate_workflow_db", "execute_step", "run_full_workflow", "list_skills", "search_skills", "install_skill", "import_skill", "uninstall_skill", "update_workflow_config"}
+	catalog, err := externalTools()
+	if err != nil {
+		t.Fatal(err)
+	}
+	exposed := map[string]bool{}
+	for _, tool := range catalog {
+		exposed[tool.Name] = true
+	}
+	vocab := map[string]bool{}
+	for _, name := range agentworksproduct.ChatTools("builder") {
+		vocab[name] = true
+	}
+	for _, name := range agentworksproduct.RunTools() {
+		vocab[name] = true
+	}
+	// Operations guidance can name that live outside product.yaml:
+	// get_goal_metrics is Go-registered, review-artifact-drift is a
+	// get_workflow_command_guidance kind, not a tool.
+	supplemental := []string{"get_goal_metrics", "review-artifact-drift"}
+	for _, name := range supplemental {
+		vocab[name] = true
+	}
 	covered := map[string]bool{}
 	for _, topic := range externalGuidanceTopics {
 		_, content, err := externalGuidanceContent(topic.Name)
 		if err != nil {
 			t.Fatalf("render %s: %v", topic.Name, err)
 		}
-		for _, name := range deny {
-			if strings.Contains(content, name) {
-				covered[name] = true
-				if !strings.Contains(topic.ExternalNote, name) {
-					t.Errorf("topic %s names %s without disclosing it in the external note", topic.Name, name)
-				}
+		for name := range vocab {
+			if exposed[name] || !externalGuidanceMentions(content, name) {
+				continue
+			}
+			covered[name] = true
+			if !externalGuidanceMentions(topic.ExternalNote, name) {
+				t.Errorf("topic %s names unavailable %s without disclosing it in the external note", topic.Name, name)
 			}
 		}
 	}
-	// The denylist must actually bite: every name above appears in at least
-	// one served topic, so a silent guidance addition cannot dodge the rule
-	// by using an unlisted operation name.
-	for _, name := range deny {
+	// The supplemental names must actually bite: each appears in at least
+	// one served topic, so the extras cannot rot silently.
+	for _, name := range supplemental {
 		if !covered[name] {
-			t.Errorf("denylisted %s appears in no served topic; prune it or widen coverage", name)
+			t.Errorf("supplemental %s appears in no served topic; prune it", name)
 		}
 	}
+	if len(covered) == 0 {
+		t.Error("no unavailable operation is named by any served topic; the disclosure rule is vacuous")
+	}
+}
+
+// externalGuidanceMentions reports whether text names an operation as a
+// standalone token: word boundaries on both sides, so "step" prose never
+// matches and "send_slack_message" never matches "slack".
+func externalGuidanceMentions(text, name string) bool {
+	if name == "" {
+		return false
+	}
+	isWord := func(r rune) bool {
+		return r == '_' || r == '-' || unicode.IsLetter(r) || unicode.IsDigit(r)
+	}
+	for i := 0; i+len(name) <= len(text); i++ {
+		if !strings.HasPrefix(text[i:], name) {
+			continue
+		}
+		before := i == 0 || !isWord(rune(text[i-1]))
+		after := i+len(name) == len(text) || !isWord(rune(text[i+len(name)]))
+		if before && after {
+			return true
+		}
+	}
+	return false
 }
 
 func TestExternalWorkflowKnowledgeRequiresFilesRead(t *testing.T) {

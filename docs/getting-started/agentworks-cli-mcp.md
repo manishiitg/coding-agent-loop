@@ -113,6 +113,15 @@ or the workspace proxy; only the external tool, asset-content, skill, and
 remote MCP endpoints accept them. A token still cannot exceed the user's
 normal account permissions.
 
+Precisely, a token authorizes: reading the account's workflows, files,
+plans, runs, guidance, and knowledge; starting, steering, observing, and
+stopping executions; triggering the workflow's saved schedules (which run
+with their owner-configured definition); and the workflow's own outbound
+actions (Slack routes, user notifications). It never authorizes authoring
+(plans, configs, files, workflows), account management, or account-wide
+service shells — `google_workspace_cli` stays out of the external catalog
+for exactly this reason, while run channels keep it.
+
 In the account menu, inspect the token's expiry and last-used time, revoke
 it, or generate a replacement. Every CLI/MCP HTTP request checks the
 persisted token record. Revocation — explicit or by replacement — rejects
@@ -264,13 +273,31 @@ agentworks schedules trigger --workflow WORKFLOW_ID --schedule-id daily
 ```
 
 `runs:execute` implies workflow visibility (`list_workflows`, `get_plan`,
-run evidence, status), never file content, which stays behind `files:read`.
+run evidence, status). Direct file content (`list_files`, `search_files`,
+`read_file`, `get_file_link`, knowledge reads) stays behind `files:read` —
+but a run or chat session necessarily reads its own workflow's files to
+execute, so `runs:execute` includes those in-session reads and the results
+derived from them. Sessions are scoped to the single workflow they run:
+even a token allowed many workflows cannot reach another workflow's files
+through an assistant turn.
 A read-only token sees neither the run tools in `tools list` nor their MCP
 entries, and calling one returns `insufficient_scope`. Sessions are owned by
 the token that started them: revoking the token cancels its runs, and one
 token can never status, message, or stop another token's session. New tools
 added to run mode later work immediately through `tools call`; typed
 subcommands cover the core operations above.
+
+`runs:execute` authority, stated precisely: a token may invoke the run
+operations of the workflows it can see, converse with those workflows'
+Run-mode assistant, and trigger those workflows' own saved schedules.
+"Never authors" means no plan, configuration, schedule, secret, or file
+change outside the run's own execution outputs — but executing a run
+still performs the workflow's configured steps, including its configured
+notifications. Only account-scoped tools are withheld from direct calls:
+`google_workspace_cli` (arbitrary commands against the account's Google
+connection) is not exposed. Deliberately kept: `send_slack_message`
+(configured workflow routes only), `notify_user` (the user's own
+channels), and `trigger_schedule` (this workflow's own schedules).
 
 ## Chatting with the workflow assistant
 

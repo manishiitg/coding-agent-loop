@@ -1,0 +1,53 @@
+package virtualtools
+
+import (
+	"strings"
+	"testing"
+
+	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/common"
+)
+
+// 2026-09-23: attaching salesoutreach's knowledgebase to the websiteaeo builder
+// made every query_workflow_db call in that session fail as "ambiguous".
+func TestResolveWorkflowWorkspaceFolderIgnoresAttachedKnowledgebaseSources(t *testing.T) {
+	cfg := &common.SessionShellConfig{
+		ReadPaths: []string{
+			"Workflow/websiteaeo", "Chats", "skills",
+			"/srv/workspace-docs/Workflow/salesoutreach/knowledgebase",
+		},
+		WritePaths: []string{"Workflow/websiteaeo", "/srv/workspace-docs/Workflow/salesoutreach/knowledgebase"},
+	}
+	got, err := resolveWorkflowWorkspaceFolder("s", cfg)
+	if err != nil || got != "Workflow/websiteaeo" {
+		t.Fatalf("resolveWorkflowWorkspaceFolder() = %q, %v; want Workflow/websiteaeo", got, err)
+	}
+}
+
+// A Crew or workflow chat with another Crew project or workflow attached as
+// context gets that whole root as a read grant; its own writable root decides.
+func TestResolveWorkflowWorkspaceFolderPrefersOwnRootOverAttachedContext(t *testing.T) {
+	got, err := resolveWorkflowWorkspaceFolder("s", &common.SessionShellConfig{
+		ReadPaths:  []string{"_users/u1/Chats/Work/projects/crew-a", "_users/u1/Chats/Work/projects/crew-b", "Workflow/linked"},
+		WritePaths: []string{"_users/u1/Chats/Work/projects/crew-a"},
+	})
+	if err != nil || got != "Chats/Work/projects/crew-a" {
+		t.Fatalf("crew with attachments = %q, %v; want Chats/Work/projects/crew-a", got, err)
+	}
+}
+
+func TestResolveWorkflowWorkspaceFolderKnowledgebaseOnlyAndRealConflicts(t *testing.T) {
+	// A session granted only a knowledgebase still resolves to that workflow.
+	got, err := resolveWorkflowWorkspaceFolder("s", &common.SessionShellConfig{
+		ReadPaths: []string{"Workflow/alpha/knowledgebase"},
+	})
+	if err != nil || got != "Workflow/alpha" {
+		t.Fatalf("kb-only = %q, %v; want Workflow/alpha", got, err)
+	}
+	// Two genuine workflow grants remain ambiguous.
+	_, err = resolveWorkflowWorkspaceFolder("s", &common.SessionShellConfig{
+		ReadPaths: []string{"Workflow/alpha", "Workflow/beta/db"},
+	})
+	if err == nil || !strings.Contains(err.Error(), "ambiguous") {
+		t.Fatalf("two workflows err = %v, want ambiguous", err)
+	}
+}

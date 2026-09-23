@@ -2508,8 +2508,6 @@ func runServer(cmd *cobra.Command, args []string) {
 	apiRouter.HandleFunc("/sessions/{session_id}/llm-guidance", api.handleSetLLMGuidance).Methods("POST", "OPTIONS")
 
 	apiRouter.HandleFunc("/sessions/{session_id}/live-input", api.handleLiveInputMessage).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/sessions/{session_id}/coding-agent-question/answer", api.handleCodingAgentQuestionAnswer).Methods("POST", "OPTIONS")
-	apiRouter.HandleFunc("/sessions/{session_id}/muse-question/answer", api.handleCodingAgentQuestionAnswer).Methods("POST", "OPTIONS") // Existing clients.
 	apiRouter.HandleFunc("/chat/submissions/{submission_id}", api.handleChatSubmissionStatus).Methods("GET")
 	apiRouter.HandleFunc("/sessions/{session_id}/control", api.handleControlKey).Methods("POST", "OPTIONS")
 
@@ -5444,7 +5442,6 @@ func (api *StreamingAPI) handleQuery(w http.ResponseWriter, r *http.Request) {
 			BridgeRoutingInstructionsOverride:      profileBridgeRoutingInstructions,
 			PiPersistentInteractiveSession:         piPersistentInteractive,
 			MusePersistentInteractiveSession:       musePersistentInteractive,
-			CodingAgentUserAnswersNativeQuestions:  codingAgentRequestHasAttendingUser(&req, sessionID),
 			ClaudeCodeTransport:                    claudeCodeTransport,
 			ForceStructuredCodingAgent:             forceStructuredCodingAgent,
 			CodingAgentWorkingDir:                  chatWorkingDir,

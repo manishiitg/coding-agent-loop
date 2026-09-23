@@ -79,7 +79,7 @@ import type {
   BackgroundAgentCompletedEvent,
   BackgroundAgentTerminatedEvent,
   CodingAgentBackgroundTaskEvent,
-  MuseQuestionEvent,
+  CodingAgentQuestionEvent,
   SyntheticTurnReadyEvent,
   AutoNotificationSteeredEvent,
   // Presentation Events
@@ -275,7 +275,7 @@ export interface EventTypeToDataMap {
   'background_agent_completed': BackgroundAgentCompletedEvent;
   'background_agent_terminated': BackgroundAgentTerminatedEvent;
   'coding_agent_background_task': CodingAgentBackgroundTaskEvent;
-  'coding_agent_question': MuseQuestionEvent;
+  'coding_agent_question': CodingAgentQuestionEvent;
   'synthetic_turn_ready': SyntheticTurnReadyEvent;
   'auto_notification_steered': AutoNotificationSteeredEvent;
   // Presentation Events

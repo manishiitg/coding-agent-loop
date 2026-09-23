@@ -958,8 +958,8 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
       ? [...olderHistory.events, ...displayEvents]
       : displayEvents
   ), [activeSessionId, displayEvents, olderHistory.events, olderHistory.sessionId])
-  const pendingMuseChoice = useMemo(() => buildCleanConversationItems(transcriptEvents).some(
-    (item) => item.museQuestion?.state === 'pending',
+  const pendingCodingAgentChoice = useMemo(() => buildCleanConversationItems(transcriptEvents).some(
+    (item) => item.codingAgentQuestion?.state === 'pending',
   ), [transcriptEvents])
 
   // Primitive deps only: the tab object changes on every composer keystroke,
@@ -3819,9 +3819,9 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
             onLoadOlder={historyPagination?.hasMore ? loadOlderConversationPage : undefined}
             landingContent={landingContent}
             onRetryLastMessage={retryLastProductMessage}
-            onAnswerMuseQuestion={async (promptId, answers) => {
-              if (!activeSessionId) throw new Error('The Muse session is no longer active')
-              await agentApi.submitMuseQuestion(activeSessionId, promptId, answers)
+            onAnswerCodingAgentQuestion={async (provider, promptId, answers) => {
+              if (!activeSessionId) throw new Error('The coding agent session is no longer active')
+              await agentApi.submitCodingAgentQuestion(activeSessionId, provider, promptId, answers)
             }}
             onSubmitQuery={(query) => submitQueryWithQuery(query)}
           />
@@ -3975,7 +3975,7 @@ const ChatAreaInner = forwardRef((props: ChatAreaProps, ref: ForwardedRef<ChatAr
           showProductTerminalControl={showProductTerminalControl}
           showNewChatAction={showNewChatAction}
           placeholderOverride={composerPlaceholder}
-          pendingNativeChoice={pendingMuseChoice}
+          pendingNativeChoice={pendingCodingAgentChoice}
         />
       )}
 

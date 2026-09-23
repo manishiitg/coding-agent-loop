@@ -120,7 +120,7 @@ type EventDataUnion struct {
 	BackgroundAgentCompleted  *orchestrator_events.BackgroundAgentCompletedEvent  `json:"background_agent_completed,omitempty"`
 	BackgroundAgentTerminated *orchestrator_events.BackgroundAgentTerminatedEvent `json:"background_agent_terminated,omitempty"`
 	CodingAgentBackgroundTask *events.CodingAgentBackgroundTaskEvent              `json:"coding_agent_background_task,omitempty"`
-	CodingAgentQuestion       *events.MuseQuestionEvent                           `json:"coding_agent_question,omitempty"`
+	CodingAgentQuestion       *events.CodingAgentQuestionEvent                    `json:"coding_agent_question,omitempty"`
 	SyntheticTurnReady        *orchestrator_events.SyntheticTurnReadyEvent        `json:"synthetic_turn_ready,omitempty"`
 	AutoNotificationSteered   *orchestrator_events.AutoNotificationSteeredEvent   `json:"auto_notification_steered,omitempty"`
 
@@ -464,7 +464,7 @@ type UnifiedEvent struct {
 	BackgroundAgentCompletedEvent  orchestrator_events.BackgroundAgentCompletedEvent  `json:"background_agent_completed"`
 	BackgroundAgentTerminatedEvent orchestrator_events.BackgroundAgentTerminatedEvent `json:"background_agent_terminated"`
 	CodingAgentBackgroundTaskEvent events.CodingAgentBackgroundTaskEvent              `json:"coding_agent_background_task"`
-	CodingAgentQuestionEvent       events.MuseQuestionEvent                           `json:"coding_agent_question"`
+	CodingAgentQuestionEvent       events.CodingAgentQuestionEvent                    `json:"coding_agent_question"`
 	SyntheticTurnReadyEvent        orchestrator_events.SyntheticTurnReadyEvent        `json:"synthetic_turn_ready"`
 	AutoNotificationSteeredEvent   orchestrator_events.AutoNotificationSteeredEvent   `json:"auto_notification_steered"`
 	PresentationUpdatedEvent       orchestrator_events.PresentationUpdatedEvent       `json:"presentation_updated"`

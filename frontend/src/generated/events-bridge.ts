@@ -136,7 +136,7 @@ export interface EventDataUnion {
   background_agent_completed?: BackgroundAgentCompletedEvent;
   background_agent_terminated?: BackgroundAgentTerminatedEvent;
   coding_agent_background_task?: CodingAgentBackgroundTaskEvent;
-  coding_agent_question?: MuseQuestionEvent;
+  coding_agent_question?: CodingAgentQuestionEvent;
   synthetic_turn_ready?: SyntheticTurnReadyEvent;
   auto_notification_steered?: AutoNotificationSteeredEvent;
   presentation_updated?: PresentationUpdatedEvent;
@@ -952,7 +952,7 @@ export interface CodingAgentBackgroundTaskEvent {
   kind?: string;
   message?: string;
 }
-export interface MuseQuestionEvent {
+export interface CodingAgentQuestionEvent {
   timestamp?: string;
   trace_id?: string;
   span_id?: string;
@@ -972,23 +972,24 @@ export interface MuseQuestionEvent {
   native_sequence?: number;
   prompt_id?: string;
   kind?: string;
-  questions?: Question[];
-  answers?: QuestionAnswer[];
+  questions?: CodingAgentQuestionPrompt[];
+  answers?: CodingAgentQuestionAnswer[];
   outcome?: string;
 }
-export interface Question {
+export interface CodingAgentQuestionPrompt {
   id?: string;
   header?: string;
   question?: string;
-  options?: QuestionOption[];
+  multi_select?: boolean;
+  options?: CodingAgentQuestionOption[];
 }
-export interface QuestionOption {
+export interface CodingAgentQuestionOption {
   label?: string;
   description?: string;
 }
-export interface QuestionAnswer {
+export interface CodingAgentQuestionAnswer {
   id?: string;
-  selected_label?: string;
+  selected_labels?: string[];
 }
 export interface SyntheticTurnReadyEvent {
   timestamp?: string;

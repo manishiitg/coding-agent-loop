@@ -8269,8 +8269,12 @@ func (api *StreamingAPI) markRetainedMainCodingTurnRunningWithOwner(sessionID st
 						break
 					}
 				}
-				if !alreadyPending {
+				// PLAT-178: a pending entry must be an input the CLI has not
+				// answered yet. Never queue an execution that already finished.
+				if !alreadyPending && !api.trackedExecutionFinished(executionID) {
 					api.retainedMainTurnPendingExecutionIDs[sessionID] = append(pending, executionID)
+				} else if !alreadyPending {
+					log.Printf("[RETAINED_TURN] Not queueing already-finished execution %s behind session=%s", executionID, sessionID)
 				}
 			}
 			api.retainedMainTurnsMu.Unlock()
@@ -8325,7 +8329,24 @@ var (
 	// when a turn still has neither pane-idle nor a durable final response.
 	// It never settles the turn: marathon turns stay untouched.
 	retainedMainTurnStuckWarnAfter = 30 * time.Minute
+	// retainedMainTurnStuckFailAfter is the PLAT-178 backstop: an observer
+	// that has seen neither pane-idle nor a durable final response for this
+	// long fails the turn so the chat lane is released and queued turns run
+	// instead of waiting behind it forever.
+	retainedMainTurnStuckFailAfter = 30 * time.Minute
+	// retainedMainTurnPromotionEvidenceGrace bounds how long a promoted
+	// pending input may show no new CLI output before it is treated as already
+	// answered by the previous response. CLIs often answer several rapid inputs
+	// in one response, which leaves pending entries with no reply of their own.
+	retainedMainTurnPromotionEvidenceGrace = 75 * time.Second
+	// retainedMainTurnPaneCheckInterval throttles the tmux existence check the
+	// observer runs while a turn stays busy.
+	retainedMainTurnPaneCheckInterval = 5 * time.Second
 )
+
+// retainedMainTurnPaneMissesToFail is how many consecutive missing/dead pane
+// checks fail a busy retained turn; one transient tmux miss never does.
+const retainedMainTurnPaneMissesToFail = 3
 
 // retainedTurnFinalResponse reads the provider's durable retained-turn
 // sidecar for this turn. Providers with retained-turn readers report their
@@ -8377,6 +8398,19 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 	snapshot terminals.Snapshot,
 	provider llmproviders.Provider,
 ) {
+	api.observeRetainedMainTurnStreamMode(ctx, sessionID, snapshot, provider, false)
+}
+
+// observeRetainedMainTurnStreamMode is observeRetainedMainTurnStream; promoted
+// marks a turn promoted from the pending list after an earlier completion,
+// which must show new CLI output before it can be trusted as a live turn.
+func (api *StreamingAPI) observeRetainedMainTurnStreamMode(
+	ctx context.Context,
+	sessionID string,
+	snapshot terminals.Snapshot,
+	provider llmproviders.Provider,
+	promoted bool,
+) {
 	if api == nil || api.liveAttach == nil || strings.TrimSpace(snapshot.TmuxSession) == "" || provider == "" {
 		return
 	}
@@ -8387,7 +8421,9 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 		turnStartedAt = time.Now()
 	}
 	output := make(chan struct{}, 1)
+	var realOutputSeen atomic.Bool
 	stream, unsubscribe, err := api.liveAttach.observeOutput(snapshot.TmuxSession, func([]byte) {
+		realOutputSeen.Store(true)
 		select {
 		case output <- struct{}{}:
 		default:
@@ -8421,6 +8457,8 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 	observeStartedAt := time.Now()
 	lastOutputAt := observeStartedAt
 	var lastDurableCheck time.Time
+	var lastPaneCheck time.Time
+	paneMisses := 0
 	warnedStuck := false
 	for {
 		select {
@@ -8469,6 +8507,45 @@ func (api *StreamingAPI) observeRetainedMainTurnStream(
 				if !warnedStuck && now.Sub(observeStartedAt) >= retainedMainTurnStuckWarnAfter {
 					warnedStuck = true
 					log.Printf("[RETAINED_TURN] WARNING: turn still observed with no pane-idle and no durable final response session=%s terminal=%s provider=%s elapsed=%s quiet=%s", sessionID, snapshot.TerminalID, provider, now.Sub(observeStartedAt).Round(time.Second), now.Sub(lastOutputAt).Round(time.Second))
+				}
+				// PLAT-178: a promoted pending input that never produced new CLI
+				// output was already answered by the previous response. Settle it
+				// (and any backlog behind it) instead of waiting for a reply that
+				// will never come.
+				if promoted && !realOutputSeen.Load() && now.Sub(observeStartedAt) >= retainedMainTurnPromotionEvidenceGrace {
+					api.settleUnansweredRetainedPromotion(sessionID, snapshot, provider, now.Sub(observeStartedAt))
+					return
+				}
+				// PLAT-178: a vanished pane can never report idle or write a new
+				// durable response. Fail after consecutive misses.
+				if now.Sub(lastPaneCheck) >= retainedMainTurnPaneCheckInterval {
+					lastPaneCheck = now
+					switch inspectRetainedMainTurnTmuxState(snapshot.TmuxSession) {
+					case codingTmuxPaneMissing, codingTmuxPaneDead:
+						paneMisses++
+					default:
+						paneMisses = 0
+					}
+					if paneMisses >= retainedMainTurnPaneMissesToFail {
+						reason := "retained pane gone"
+						log.Printf("[RETAINED_TURN] %s after %d consecutive checks; failing turn session=%s terminal=%s tmux=%s", reason, paneMisses, sessionID, snapshot.TerminalID, snapshot.TmuxSession)
+						api.reconcileUnexpectedTerminalExit(snapshot, reason)
+						api.terminalStore.MarkFailed(snapshot.TerminalID)
+						api.terminalStore.MarkProcessClosed(snapshot.TerminalID, reason)
+						api.emitRetainedMainTurnStreamCompletion(sessionID, snapshot, provider, "failed", reason)
+						return
+					}
+				}
+				// PLAT-178 backstop: never hold the chat lane forever.
+				if now.Sub(observeStartedAt) >= retainedMainTurnStuckFailAfter {
+					reason := fmt.Sprintf("retained coding-agent turn produced no completion within %s; releasing the chat", retainedMainTurnStuckFailAfter)
+					log.Printf("[RETAINED_TURN] %s session=%s terminal=%s provider=%s quiet=%s", reason, sessionID, snapshot.TerminalID, provider, now.Sub(lastOutputAt).Round(time.Second))
+					// The pane may still be alive, so the terminal is not marked
+					// failed; fail the tracked inputs directly so the settle below
+					// releases the lane instead of promoting the backlog.
+					api.failRetainedTurnExecutions(sessionID, reason)
+					api.emitRetainedMainTurnStreamCompletion(sessionID, snapshot, provider, "failed", reason)
+					return
 				}
 				// A capture can race the final repaint and leave no later output
 				// to wake this observer. Keep checking while the turn is active.
@@ -8526,6 +8603,42 @@ func (api *StreamingAPI) handleRetainedMainTurnStreamClosed(
 			return
 		case <-timer.C:
 			go api.observeRetainedMainTurnStream(ctx, sessionID, snapshot, provider)
+		}
+	}
+}
+
+// settleUnansweredRetainedPromotion completes a promoted pending input that
+// never produced CLI output of its own, plus any inputs still pending behind
+// it: the idle CLI already answered them in its previous response. The
+// completion it emits then finds no pending work, releases the chat lane and
+// kicks the conversation-turn queue.
+func (api *StreamingAPI) settleUnansweredRetainedPromotion(sessionID string, snapshot terminals.Snapshot, provider llmproviders.Provider, waited time.Duration) {
+	api.retainedMainTurnsMu.Lock()
+	promotedID := strings.TrimSpace(api.retainedMainTurnExecutionIDs[sessionID])
+	backlog := append([]string(nil), api.retainedMainTurnPendingExecutionIDs[sessionID]...)
+	delete(api.retainedMainTurnPendingExecutionIDs, sessionID)
+	api.retainedMainTurnsMu.Unlock()
+	log.Printf("[RETAINED_TURN] Promoted execution %s showed no new CLI output within %s; treating it and %d pending input(s) as answered by the previous response session=%s terminal=%s provider=%s",
+		promotedID, waited.Round(time.Second), len(backlog), sessionID, snapshot.TerminalID, provider)
+	meta := map[string]string{"settled_reason": "answered_by_previous_response"}
+	for _, pendingID := range backlog {
+		if pendingID = strings.TrimSpace(pendingID); pendingID != "" && pendingID != promotedID {
+			api.completeTrackedExecution(pendingID, trackedExecutionStatusCompleted, "", meta)
+		}
+	}
+	api.emitRetainedMainTurnStreamCompletion(sessionID, snapshot, provider, "completed", "")
+}
+
+// failRetainedTurnExecutions fails the active retained execution and every
+// input pending behind it, and clears the pending list.
+func (api *StreamingAPI) failRetainedTurnExecutions(sessionID, reason string) {
+	api.retainedMainTurnsMu.Lock()
+	ids := append([]string{api.retainedMainTurnExecutionIDs[sessionID]}, api.retainedMainTurnPendingExecutionIDs[sessionID]...)
+	delete(api.retainedMainTurnPendingExecutionIDs, sessionID)
+	api.retainedMainTurnsMu.Unlock()
+	for _, id := range ids {
+		if id = strings.TrimSpace(id); id != "" {
+			api.completeTrackedExecution(id, trackedExecutionStatusFailed, reason, nil)
 		}
 	}
 }
@@ -8753,7 +8866,7 @@ func (api *StreamingAPI) observeRetainedMainTurnEvent(sessionID string, event ev
 			api.setSessionBusy(sessionID, true)
 			api.updateSessionStatus(sessionID, "running")
 			if nextWatchCtx != nil {
-				go api.observeRetainedMainTurnStream(nextWatchCtx, sessionID, nextSnapshot, nextProvider)
+				go api.observeRetainedMainTurnStreamMode(nextWatchCtx, sessionID, nextSnapshot, nextProvider, true)
 			}
 		} else {
 			api.setSessionBusy(sessionID, false)

@@ -234,7 +234,7 @@ func (api *StreamingAPI) handlePlaywrightRecording(w http.ResponseWriter, r *htt
 	api.playwrightLive.Lock()
 	rec := api.playwrightLive.recordings[id]
 	api.playwrightLive.Unlock()
-	if rec == nil || rec.owner != GetUserIDFromContext(r.Context()) || rec.workspace != strings.TrimRight(r.URL.Query().Get("workspace_path"), "/") {
+	if rec == nil || !api.playwrightVisible(GetUserFromContext(r.Context()), r.URL.Query().Get("workspace_path"), rec.owner, rec.workspace) {
 		http.NotFound(w, r)
 		return
 	}

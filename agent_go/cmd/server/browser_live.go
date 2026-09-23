@@ -26,9 +26,9 @@ func (api *StreamingAPI) liveBrowserSessions(r *http.Request) []map[string]strin
 	if workspace == "" {
 		return result
 	}
-	result = api.playwrightSessions(GetUserIDFromContext(r.Context()), workspace)
 	userID := GetUserIDFromContext(r.Context())
 	claims := GetUserFromContext(r.Context())
+	result = api.playwrightSessionsFor(claims, workspace)
 	shared := browserSessionForWorkspace(userID, workspace)
 	for _, item := range browser.GetSessionTracker().ActiveSessions() {
 		if browser.IsUserBrowserSession(item["browser_session"]) {

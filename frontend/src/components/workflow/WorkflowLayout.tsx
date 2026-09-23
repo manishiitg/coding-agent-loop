@@ -152,6 +152,7 @@ import {
 import { isVisibleActivitySession } from '../../utils/activitySessions'
 import { sendWorkspacePaneMessageToChat } from '../../utils/workspacePaneChat'
 import { isPreviewView, isWorkspacePaneView } from './workspaceViews'
+import { MANUAL_CONTRACT_UPGRADE_MESSAGE, WORKFLOW_CONTRACT_UPGRADE_CHAT_EVENT, WORKFLOW_CONTRACT_UPGRADE_STATUS_EVENT, type WorkflowContractUpgradeChatEvent } from './workflowContractUpgradeEvents'
 // Inactive workflow tabs hydrate lazily and fall back to workflow-scoped chat history.
 
 const WORKFLOW_RESTORE_TIMEOUT_MS = 8000
@@ -840,8 +841,33 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     return null
   }, [activePresetId, activeWorkflowWorkspacePath])
 
+  const activeWorkflowChatTabId = useChatStore(state => {
+    const tabId = activeWorkflowTabIdForPreset(state.activeTabId, activePresetId, state.chatTabs)
+    const tab = tabId ? state.chatTabs[tabId] : undefined
+    return tab &&
+      tab.metadata?.isViewOnly !== true &&
+      tab.metadata?.isScheduledRun !== true &&
+      tab.metadata?.isBotRun !== true
+      ? tabId : null
+  })
+
   const [contractUpgrade, setContractUpgrade] = useState<WorkflowContractUpgradeStatus | null>(null)
   const [startingContractUpgrade, setStartingContractUpgrade] = useState(false)
+  const [contractUpgradeChat, setContractUpgradeChat] = useState<{ workspacePath: string; tabId: string } | null>(null)
+  useEffect(() => {
+    const onChatRequest = (event: Event) => {
+      const detail = (event as WorkflowContractUpgradeChatEvent).detail
+      if (detail?.workspacePath === workspacePath) setContractUpgradeChat(detail)
+    }
+    window.addEventListener(WORKFLOW_CONTRACT_UPGRADE_CHAT_EVENT, onChatRequest)
+    return () => window.removeEventListener(WORKFLOW_CONTRACT_UPGRADE_CHAT_EVENT, onChatRequest)
+  }, [workspacePath])
+  const contractUpgradeTab = useChatStore(state =>
+    contractUpgradeChat?.workspacePath === workspacePath ? state.chatTabs[contractUpgradeChat.tabId] : undefined
+  )
+  const contractUpgradeQueued = contractUpgradeTab?.config.queuedMessages?.includes(MANUAL_CONTRACT_UPGRADE_MESSAGE) ?? false
+  const contractUpgradeTabId = contractUpgradeTab?.tabId
+  const contractUpgradeStreaming = contractUpgradeTab?.isStreaming ?? false
   const activeWorkflowAccess = useMemo(() => (
     workflowManifests.find(workflow => workflow.manifest.id === activePresetId || workflow.workspace_path === workspacePath)?.my_access
   ), [activePresetId, workflowManifests, workspacePath])
@@ -854,7 +880,11 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
     }
     try {
       const response = await workflowManifestApi.getWorkflowManifest(workspacePath)
-      setContractUpgrade(response.contract_upgrade ?? null)
+      const status = response.contract_upgrade ?? null
+      setContractUpgrade(status)
+      window.dispatchEvent(new CustomEvent(WORKFLOW_CONTRACT_UPGRADE_STATUS_EVENT, {
+        detail: { workspacePath, status },
+      }))
     } catch {
       setContractUpgrade(null)
     }
@@ -862,32 +892,32 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
 
   useEffect(() => {
     void refreshContractUpgrade()
-    window.addEventListener('focus', refreshContractUpgrade)
-    return () => {
-      window.removeEventListener('focus', refreshContractUpgrade)
-    }
-  }, [refreshContractUpgrade])
+  }, [activeWorkflowChatTabId, refreshContractUpgrade])
 
   useEffect(() => {
-    if (!contractUpgrade?.required) return
-    const interval = window.setInterval(() => void refreshContractUpgrade(), 10_000)
-    return () => window.clearInterval(interval)
-  }, [contractUpgrade?.required, refreshContractUpgrade])
+    if (contractUpgrade && !contractUpgrade.required) setContractUpgradeChat(null)
+  }, [contractUpgrade])
+
+  useEffect(() => {
+    if (!contractUpgradeTabId || contractUpgradeQueued || contractUpgradeStreaming) return
+    void refreshContractUpgrade()
+  }, [contractUpgradeTabId, contractUpgradeStreaming, contractUpgradeQueued, refreshContractUpgrade])
 
   const startManualContractUpgrade = useCallback(async () => {
-    if (!workspacePath || startingContractUpgrade) return
+    if (!workspacePath || startingContractUpgrade || contractUpgradeTab) return
     setStartingContractUpgrade(true)
     try {
-      await sendWorkspacePaneMessageToChat({
+      const result = await sendWorkspacePaneMessageToChat({
         workspacePath,
-        message: 'Update this workflow to the current platform contract now. Use get_contract_upgrades, complete and verify each pending migration in order, and stamp each completed version before continuing to the next. Do not run the workflow as part of the migration. If a migration requires a genuine product, business, or safety choice, stop and ask me in this chat instead of guessing. When all migrations are complete, confirm the final workflow contract version.',
+        message: MANUAL_CONTRACT_UPGRADE_MESSAGE,
       })
+      setContractUpgradeChat({ workspacePath, tabId: result.tabId })
     } catch (cause) {
       useChatStore.getState().addToast(cause instanceof Error ? cause.message : 'Could not start the workflow update.', 'error')
     } finally {
       setStartingContractUpgrade(false)
     }
-  }, [startingContractUpgrade, workspacePath])
+  }, [contractUpgradeTab, startingContractUpgrade, workspacePath])
 
   // Never expose the previous workflow's messages or a false first-time chat
   // while the durable conversation for a newly selected workflow is resolving.
@@ -2284,22 +2314,39 @@ export const WorkflowLayout: React.FC<WorkflowLayoutProps> = ({
             {contractUpgrade?.required && (
               <div className="flex items-center justify-between gap-3 border-b border-border bg-muted/60 px-4 py-2 text-sm">
                 <span className="min-w-0 flex-1 text-muted-foreground">
-                  This workflow needs a manual platform update before you can start it from chat
-                  {contractUpgrade.current_version && contractUpgrade.platform_version
-                    ? contractUpgrade.current_version === contractUpgrade.platform_version
-                      ? ' (code layout update required).'
-                      : ` (v${contractUpgrade.current_version} → v${contractUpgrade.platform_version}).`
-                    : '.'}
-                  {' '}Schedules keep running the saved version and will not update it automatically.
+                  {startingContractUpgrade
+                    ? 'Opening the workflow update in chat…'
+                    : contractUpgradeTab
+                      ? contractUpgradeQueued
+                        ? 'Workflow update requested. The message is queued in chat and will start when the chat is ready.'
+                        : contractUpgradeStreaming
+                          ? 'Workflow update is in progress in chat. The pending notice will clear when the migrations are applied.'
+                          : 'Workflow update requested in chat. Continue there to finish the migrations or answer any questions.'
+                      : <>
+                        This workflow needs a manual platform update before you can start it from chat
+                        {contractUpgrade.current_version && contractUpgrade.platform_version
+                          ? contractUpgrade.current_version === contractUpgrade.platform_version
+                            ? ' (code layout update required).'
+                            : ` (v${contractUpgrade.current_version} → v${contractUpgrade.platform_version}).`
+                          : '.'}
+                        {' '}Schedules keep running the saved version and will not update it automatically.
+                      </>}
                 </span>
                 {canStartContractUpgrade ? (
                   <button
                     type="button"
-                    onClick={() => void startManualContractUpgrade()}
+                    onClick={() => {
+                      if (contractUpgradeTab) {
+                        activateTab(contractUpgradeTab.tabId)
+                        setFocusedPane('chat')
+                      } else {
+                        void startManualContractUpgrade()
+                      }
+                    }}
                     disabled={startingContractUpgrade}
                     className="shrink-0 rounded-md bg-primary px-2.5 py-1 text-xs font-medium text-primary-foreground hover:bg-primary/90 disabled:cursor-not-allowed disabled:opacity-60"
                   >
-                    {startingContractUpgrade ? 'Opening…' : 'Update workflow'}
+                    {startingContractUpgrade ? 'Opening…' : contractUpgradeTab ? 'Open chat' : 'Update workflow'}
                   </button>
                 ) : null}
               </div>

@@ -685,6 +685,20 @@ func isExplicitCreationDiff(diffContent string) bool {
 	return len(fields) >= 2 && fields[0] == "---" && fields[1] == "/dev/null"
 }
 
+// hasZeroLineInsertionHunk reports a hunk whose old side is empty at line 0.
+func hasZeroLineInsertionHunk(diffContent string) bool {
+	for _, line := range strings.Split(normalizeLineEndings(diffContent), "\n") {
+		match := creationHunkHeader.FindStringSubmatch(strings.TrimSpace(line))
+		if match == nil {
+			continue
+		}
+		if match[1] == "0" && (match[2] == "" || match[2] == "0") {
+			return true
+		}
+	}
+	return false
+}
+
 var creationHunkHeader = regexp.MustCompile(`^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@$`)
 
 // applyExplicitCreationDiff handles the one case patch(1) cannot be allowed to
@@ -795,6 +809,12 @@ func applyDiffPatchFlexibleContext(ctx context.Context, currentContent, diffCont
 			return "", creationErr
 		}
 		return result, nil
+	}
+	// A pure-insertion hunk at line 0 ("@@ -0,0 +1,N @@") with ordinary
+	// headers is a creation in disguise; patch(1) would prepend it to an
+	// existing file (PUL-4AD362CD: a degraded rerun doubled daily_report.json).
+	if strings.TrimSpace(currentContent) != "" && hasZeroLineInsertionHunk(correctedDiff) {
+		return "", fmt.Errorf("diff inserts new content before line 1 of a file that already exists; read the current file and send an update diff that replaces its lines")
 	}
 	if correctedDiff != diffContent {
 		fmt.Printf("🔧 Applied automatic corrections to agent-generated diff\n")

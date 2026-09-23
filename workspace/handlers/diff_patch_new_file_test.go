@@ -180,3 +180,18 @@ func TestDiffPatchDocumentErrorDoesNotEchoFullDiff(t *testing.T) {
 		t.Fatalf("failed creation patch left a target file behind: %v", err)
 	}
 }
+
+// PUL-4AD362CD (rtslatency): a degraded rerun "created" a report that already
+// existed with ordinary --- a/ headers and a @@ -0,0 @@ hunk; patch(1)
+// prepended it, leaving two concatenated JSON documents.
+func TestDiffPatchRejectsLineZeroInsertionIntoExistingFile(t *testing.T) {
+	existing := "{\"ok\": true}\n"
+	diff := "--- a/daily_report.json\n+++ b/daily_report.json\n@@ -0,0 +1 @@\n+{\"ok\": false}\n"
+	got, err := ApplyDiffPatchDirect(existing, diff)
+	if err == nil {
+		t.Fatalf("line-0 insertion into an existing file was applied: %q", got)
+	}
+	if created, err := ApplyDiffPatchDirect("", diff); err != nil || created != "{\"ok\": false}\n" {
+		t.Fatalf("creating content in an empty file must still work: %q %v", created, err)
+	}
+}

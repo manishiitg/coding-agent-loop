@@ -2121,7 +2121,16 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 					}
 					mainPyRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 					_, mainPyExistsErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
-					if !hcpo.usesCodeTree() && preValResults != nil && preValResults.OverallPass && mainPyExistsErr == nil {
+					// PUL-4FE07CD2: valid-looking outputs must not override a script
+					// whose latest run failed (a fail-closed gate exiting 1 left the
+					// step "completed"). Only a detected non-zero exit blocks
+					// acceptance; the saved-script fast path already fails closed.
+					_, lastExitCode, lastRunFound := extractLastMainPyRunOutput(executionConversationHistory, mainPyPath)
+					lastRunFailed := lastRunFound && lastExitCode != 0
+					if lastRunFailed {
+						hcpo.GetLogger().Info(fmt.Sprintf("🧪 [scripted] Outputs validate but main.py's latest run exited %d for step %d — not accepting; entering fix loop", lastExitCode, stepIndex+1))
+					}
+					if !hcpo.usesCodeTree() && !lastRunFailed && preValResults != nil && preValResults.OverallPass && mainPyExistsErr == nil {
 						learnCodePreValidationResultsOverride = preValResults
 						// Try to get exit code from LLM self-run detection (optional — for logging)
 						var exitCode int
@@ -2187,7 +2196,9 @@ func (hcpo *StepBasedWorkflowOrchestrator) executeSingleStep(
 						mainPyRelPath := hcpo.scriptedWorkingDir(step.GetID(), stepExecutionPath) + "/main.py"
 						_, mainPyErr := hcpo.ReadWorkspaceFile(ctx, mainPyRelPath)
 
-						if !hcpo.usesCodeTree() && fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
+						_, fixLastExitCode, fixLastRunFound := extractLastMainPyRunOutput(executionConversationHistory, mainPyPath)
+						fixLastRunFailed := fixLastRunFound && fixLastExitCode != 0
+						if !hcpo.usesCodeTree() && !fixLastRunFailed && fixPreValResults != nil && fixPreValResults.OverallPass && mainPyErr == nil {
 							// Outputs valid + main.py exists → success
 							lastLcResult = &ScriptedFastPathResult{RanScript: true, Success: true}
 							hcpo.emitScriptedExecutionEvent(ctx, step, stepIndex, stepPath,

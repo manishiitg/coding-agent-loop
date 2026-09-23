@@ -60,7 +60,7 @@ can continue watching.
 ## Server deployment
 
 This uses the shared agent API and workspace service, so the same implementation
-works in native/rootless, Docker, and Kubernetes deployments. Deploy both backend
+works in native/rootless and Docker deployments. Deploy both backend
 binaries and the frontend together. Install a streaming-capable agent-browser in
 the workspace service's environment; tested with 0.37.0 and headless Chrome.
 Existing native installations may need an agent-browser upgrade; presence-only
@@ -122,9 +122,9 @@ Frontend validation: `cd frontend && npm run build`.
 The implementation was validated locally with agent-browser 0.37.0: real headless
 frames, tab discovery, mouse focus, typing, workflow isolation, watch-mode input
 blocking, exclusive control, and disconnect recovery. Backend race checks and
-desktop/mobile UI checks also passed. Container and Kubernetes topology support
-comes from routing through the workspace service; it has not been verified by a
-live rollout to each deployment.
+desktop/mobile UI checks also passed. Container topology support comes from
+routing through the workspace service; it has not been verified by a live
+rollout to each deployment.
 
 ## Deployment scope and rollout order
 

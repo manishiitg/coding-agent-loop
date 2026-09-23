@@ -25,8 +25,8 @@ for automatic rollback until the new deployment passes health checks.
 
 No rollback archive is kept after successful deployment. Application data,
 logs, source checkouts, unknown directories, and symlink targets are not removed.
-The other VM/Docker, Azure, and Kubernetes deployment scripts overwrite source
-directories or deploy container images; they do not create release directories.
+Dominion's deploy-dominion.sh manages its own releases; container images built
+from docker-compose.yml are not release directories.
 This helper does not prune container images, registries, or Docker volumes.
 
 Preview or apply cleanup on a server:

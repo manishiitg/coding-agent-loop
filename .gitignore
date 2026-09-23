@@ -139,8 +139,6 @@ gcp-oauth.keys.json
 Workflow/*
 agent_go/Workflow/
 
-# K8s deployment secrets
-deploy/k8s/.env
 workspace/workspace
 
 # SQLite temporary files

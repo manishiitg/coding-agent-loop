@@ -55,7 +55,7 @@ func (api *StreamingAPI) watchLiveInputDurableRecording(sessionID, provider, mes
 	}
 	if deferred != nil {
 		// Answer rows written before the ack must not land above this message.
-		api.eventStore.BeginDeferredSteer(sessionID)
+		api.eventStore.BeginDeferredSteer(sessionID, *deferred)
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(context.Background(), liveInputDurableWatchTimeout)
@@ -82,8 +82,7 @@ func (api *StreamingAPI) watchLiveInputDurableRecording(sessionID, provider, mes
 		// Whatever the verdict, the message was sent: record it now, at the
 		// point the CLI took it (or gave up), then its receipt.
 		if deferred != nil {
-			api.eventStore.AddEvent(sessionID, deferredUserMessageAt(*deferred, time.Now()))
-			api.eventStore.EndDeferredSteer(sessionID)
+			api.eventStore.CompleteDeferredSteer(sessionID, deferredUserMessageAt(*deferred, time.Now()))
 		}
 		api.recordLiveInputConfirmed(sessionID, messageID, outcome, proof, provider, latencyMs, clientMessageID)
 	}()

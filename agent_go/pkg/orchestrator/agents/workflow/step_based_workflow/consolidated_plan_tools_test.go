@@ -221,3 +221,31 @@ func TestConsolidatedConversionRetainsNativeRestrictions(t *testing.T) {
 		t.Fatal("conversion lost identity or type")
 	}
 }
+
+// RTS: a crew add_step missing id was rejected with every oneOf branch's
+// complaints (including other types' validation_schema rules), which led the
+// agent to add fields crew steps do not take. The error now names the chosen
+// type's own problems only.
+func TestConsolidatedAddReportsTheChosenTypesSchemaError(t *testing.T) {
+	d := consolidatedPlanDraft(t, newExternalPlanTestFiles(t, regularStep("fetch")))
+	step := map[string]interface{}{
+		"title": "Crew flow test", "crew_profile_id": "work", "crew_project_id": "p1", "trigger_id": "t1",
+		"instruction": "Exercise the flow.", "context_dependencies": []string{}, "insert_after_step_id": "fetch",
+		"reason": "Delegate flow testing",
+	}
+	typ := "crew"
+	if _, ok := d.tools["add_step"]; !ok {
+		t.Fatal("add_step missing")
+	}
+	_, err := d.tools["add_step"].Execute(context.Background(), map[string]interface{}{"type": typ, "step": step})
+	if err == nil {
+		t.Fatal("crew step without id was accepted")
+	}
+	msg := err.Error()
+	if !strings.Contains(msg, `type "crew"`) || !strings.Contains(msg, "'id'") {
+		t.Fatalf("error does not name the crew schema's missing id: %s", msg)
+	}
+	if strings.Contains(msg, "validation_schema") || strings.Contains(msg, "oneOf") {
+		t.Fatalf("error still mixes other step types' rules: %s", msg)
+	}
+}

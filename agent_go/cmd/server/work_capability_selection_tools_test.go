@@ -89,3 +89,22 @@ func TestWorkSkillSelectionToolRequiresOwnedActiveProject(t *testing.T) {
 		}
 	}
 }
+
+func TestWorkSkillSelectionToolAcceptsBuiltinSkill(t *testing.T) {
+	const workspacePath = "_users/user-1/Chats/Work/projects/release"
+	workspace := &mockWorkspaceAPI{files: map[string]string{
+		workspacePath + "/workflow.json": `{"schema_version":1,"id":"release","capabilities":{"selected_skills":[]}}`,
+	}}
+	host := httptest.NewServer(workspace)
+	defer host.Close()
+	t.Setenv("WORKSPACE_API_URL", host.URL)
+
+	registrar := &recordingRegistrar{}
+	if err := (&StreamingAPI{}).registerWorkSkillSelectionTool(registrar, "user-1", workspacePath); err != nil {
+		t.Fatal(err)
+	}
+	out, err := registrar.tools[updateProjectSkillSelectionTool].exec(context.Background(), map[string]interface{}{"action": "select", "skill": "agent-browser"})
+	if err != nil || !strings.Contains(out, `"selected_skills":["agent-browser"]`) {
+		t.Fatalf("built-in skill select output=%s err=%v", out, err)
+	}
+}

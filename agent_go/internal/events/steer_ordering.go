@@ -6,16 +6,23 @@ import (
 	"time"
 )
 
-// A message steered into a busy CLI is journalled when the CLI confirms it
-// took the message, which can be a fraction of a second after the CLI started
-// answering it. Rows of that answer must not land above the question, so while
-// a deferred steer awaits its row, answer rows that follow the in-flight
-// answer's completion are held and released right after the user row.
+// A steered message is journalled when the CLI confirms it took the message,
+// which can be after the CLI started answering it (Cursor only writes its chat
+// store once output begins). Rows of that answer must not land above the
+// question: while a deferred steer awaits its row, answer rows that belong to
+// it are held and released right after the user row. If the session was busy
+// when the message was steered, the rows up to the in-flight answer's end still
+// belong to that answer and pass through; an idle session holds immediately.
 
 var deferredSteerHoldTimeout = 20 * time.Second
 
+type pendingSteer struct {
+	event   Event
+	written bool
+}
+
 type deferredSteerHold struct {
-	pending        int
+	pending        []*pendingSteer
 	boundaryPassed bool
 	releasing      bool
 	held           []Event
@@ -23,18 +30,29 @@ type deferredSteerHold struct {
 }
 
 type steerOrdering struct {
-	mu    sync.Mutex
-	holds map[string]*deferredSteerHold
+	mu       sync.Mutex
+	holds    map[string]*deferredSteerHold
+	inFlight map[string]bool
+	// User rows written by a timeout; the late ack must not write them again.
+	timedOut map[string]bool
 }
 
 func (es *EventStore) steerHoldState() *steerOrdering {
-	es.steerOrderingOnce.Do(func() { es.steerOrdering = &steerOrdering{holds: make(map[string]*deferredSteerHold)} })
+	es.steerOrderingOnce.Do(func() {
+		es.steerOrdering = &steerOrdering{
+			holds:    make(map[string]*deferredSteerHold),
+			inFlight: make(map[string]bool),
+			timedOut: make(map[string]bool),
+		}
+	})
 	return es.steerOrdering
 }
 
-// BeginDeferredSteer marks a steered message whose user row will be written
-// later (at the CLI's durable ack). Pair every call with EndDeferredSteer.
-func (es *EventStore) BeginDeferredSteer(sessionID string) {
+func steerKey(sessionID, eventID string) string { return sessionID + "\x00" + eventID }
+
+// BeginDeferredSteer registers a steered message whose user row will be written
+// at the CLI's durable ack. Pair every call with CompleteDeferredSteer.
+func (es *EventStore) BeginDeferredSteer(sessionID string, user Event) {
 	if es == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
@@ -43,26 +61,54 @@ func (es *EventStore) BeginDeferredSteer(sessionID string) {
 	defer state.mu.Unlock()
 	hold := state.holds[sessionID]
 	if hold == nil {
-		hold = &deferredSteerHold{}
+		hold = &deferredSteerHold{boundaryPassed: !state.inFlight[sessionID]}
 		state.holds[sessionID] = hold
 	}
-	hold.pending++
+	hold.pending = append(hold.pending, &pendingSteer{event: user})
 	if hold.timer != nil {
 		hold.timer.Stop()
 	}
-	hold.timer = time.AfterFunc(deferredSteerHoldTimeout, func() { es.releaseSteerHold(sessionID, true) })
+	hold.timer = time.AfterFunc(deferredSteerHoldTimeout, func() { es.timeoutSteerHold(sessionID) })
 }
 
-// EndDeferredSteer is called right after the deferred user row was added. The
-// last pending steer releases the held answer rows after it, in order.
-func (es *EventStore) EndDeferredSteer(sessionID string) {
+// CompleteDeferredSteer writes the user row at the CLI's ack (unless a timeout
+// already wrote it) and, once no steer is pending, releases the held answer
+// rows after it in order.
+func (es *EventStore) CompleteDeferredSteer(sessionID string, user Event) {
 	if es == nil || strings.TrimSpace(sessionID) == "" {
 		return
 	}
-	es.releaseSteerHold(sessionID, false)
+	state := es.steerHoldState()
+	state.mu.Lock()
+	key := steerKey(sessionID, user.ID)
+	if state.timedOut[key] {
+		delete(state.timedOut, key)
+		state.mu.Unlock()
+		return
+	}
+	hold := state.holds[sessionID]
+	if hold == nil {
+		state.mu.Unlock()
+		_ = es.addEventUnheld(sessionID, user)
+		return
+	}
+	for i, pending := range hold.pending {
+		if pending.event.ID == user.ID {
+			hold.pending = append(hold.pending[:i], hold.pending[i+1:]...)
+			break
+		}
+	}
+	remaining := len(hold.pending)
+	state.mu.Unlock()
+	_ = es.addEventUnheld(sessionID, user)
+	if remaining == 0 {
+		es.releaseSteerHold(sessionID, hold)
+	}
 }
 
-func (es *EventStore) releaseSteerHold(sessionID string, timedOut bool) {
+// timeoutSteerHold never strands rows: it writes every still-pending user row
+// first, then releases the held answer rows, so the order stays user → reply.
+func (es *EventStore) timeoutSteerHold(sessionID string) {
 	state := es.steerHoldState()
 	state.mu.Lock()
 	hold := state.holds[sessionID]
@@ -70,13 +116,27 @@ func (es *EventStore) releaseSteerHold(sessionID string, timedOut bool) {
 		state.mu.Unlock()
 		return
 	}
-	if !timedOut {
-		hold.pending--
-		if hold.pending > 0 {
-			state.mu.Unlock()
-			return
+	var users []Event
+	for _, pending := range hold.pending {
+		if !pending.written {
+			pending.written = true
+			state.timedOut[steerKey(sessionID, pending.event.ID)] = true
+			event := pending.event
+			event.Timestamp = time.Now()
+			users = append(users, event)
 		}
 	}
+	hold.pending = nil
+	state.mu.Unlock()
+	for _, user := range users {
+		_ = es.addEventUnheld(sessionID, user)
+	}
+	es.releaseSteerHold(sessionID, hold)
+}
+
+func (es *EventStore) releaseSteerHold(sessionID string, hold *deferredSteerHold) {
+	state := es.steerHoldState()
+	state.mu.Lock()
 	if hold.timer != nil {
 		hold.timer.Stop()
 	}
@@ -100,16 +160,34 @@ func (es *EventStore) releaseSteerHold(sessionID string, timedOut bool) {
 	}
 }
 
-// holdForDeferredSteer reports whether the event was taken into a hold.
+// holdForDeferredSteer reports whether the event was taken into a hold. It also
+// tracks whether the session has an answer in flight, which decides whether a
+// new deferred steer must first let that answer finish.
 func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
-	if !isSteerOrderedAnswerRow(event) {
+	answerRow := isSteerOrderedAnswerRow(event)
+	ends := answerRow && event.Type == "unified_completion" || isMainTurnEnd(event)
+	// A turn is in flight from its user message on, before any answer row.
+	// Deferred steer rows are written past this hook and never start a turn.
+	startsTurn := event.Type == "user_message" && isMainKind(event)
+	if !answerRow && !ends && !startsTurn {
 		return false
 	}
 	state := es.steerHoldState()
 	state.mu.Lock()
 	defer state.mu.Unlock()
+	if ends {
+		delete(state.inFlight, sessionID)
+	} else {
+		state.inFlight[sessionID] = true
+	}
 	hold := state.holds[sessionID]
-	if hold == nil {
+	if startsTurn {
+		return false
+	}
+	if hold == nil || !answerRow {
+		if hold != nil && ends && !hold.boundaryPassed {
+			hold.boundaryPassed = true
+		}
 		return false
 	}
 	if hold.releasing {
@@ -118,8 +196,8 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 		return true
 	}
 	if !hold.boundaryPassed {
-		// Rows up to the in-flight answer's completion belong to that answer.
-		if event.Type == "unified_completion" {
+		// Rows up to the in-flight answer's end belong to that answer.
+		if ends {
 			hold.boundaryPassed = true
 		}
 		return false
@@ -128,9 +206,25 @@ func (es *EventStore) holdForDeferredSteer(sessionID string, event Event) bool {
 	return true
 }
 
-func isSteerOrderedAnswerRow(event Event) bool {
+func isMainKind(event Event) bool {
 	kind := strings.ToLower(strings.TrimSpace(event.ExecutionKind))
-	if kind != "" && kind != "main" && kind != "main_agent" && kind != "chat" {
+	return kind == "" || kind == "main" || kind == "main_agent" || kind == "chat"
+}
+
+// isMainTurnEnd covers turns that end without a unified_completion.
+func isMainTurnEnd(event Event) bool {
+	if !isMainKind(event) {
+		return false
+	}
+	switch event.Type {
+	case "agent_end", "conversation_end", "conversation_error", "agent_error", "context_cancelled":
+		return true
+	}
+	return false
+}
+
+func isSteerOrderedAnswerRow(event Event) bool {
+	if !isMainKind(event) {
 		return false
 	}
 	switch event.Type {

@@ -128,6 +128,23 @@ func (r *consolidatedPlanRegistrar) invoke(ctx context.Context, n string, args m
 	out, err := t.execute(ctx, normalized)
 	return consolidatedPlanToolText(out), err
 }
+// addStepTypeError validates step against the named type's native schema so
+// the error lists that type's missing or unknown fields only.
+func (r *consolidatedPlanRegistrar) addStepTypeError(args map[string]interface{}) error {
+	typ, _ := args["type"].(string)
+	native, ok := r.tools["add_"+typ+"_step"]
+	if !ok {
+		return nil
+	}
+	step, ok := args["step"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("invalid add_step arguments: step must be an object")
+	}
+	if err := native.validator.Validate(step); err != nil {
+		return fmt.Errorf("invalid add_step arguments for type %q (fix only these fields): %w", typ, err)
+	}
+	return nil
+}
 func objectToolSchema(props map[string]interface{}, required ...string) map[string]interface{} {
 	return map[string]interface{}{"type": "object", "properties": props, "required": required, "additionalProperties": false}
 }
@@ -171,6 +188,13 @@ func toolObjectArg(args map[string]interface{}, key string) (map[string]interfac
 	return out, nil
 }
 func (r *consolidatedPlanRegistrar) register(n, d string, s map[string]interface{}, e func(context.Context, map[string]interface{}) (string, error)) error {
+	return r.registerRefined(n, d, s, e, nil)
+}
+
+// registerRefined lets a tool replace a generic schema error with a more
+// specific one (add_step: the selected type's own validation error instead of
+// every oneOf branch's complaints, which pointed agents at other types' fields).
+func (r *consolidatedPlanRegistrar) registerRefined(n, d string, s map[string]interface{}, e func(context.Context, map[string]interface{}) (string, error), refine func(map[string]interface{}) error) error {
 	validator, err := compilePlanToolSchema(s)
 	if err != nil {
 		return err
@@ -185,6 +209,11 @@ func (r *consolidatedPlanRegistrar) register(n, d string, s map[string]interface
 			return "", err
 		}
 		if err = validator.Validate(value); err != nil {
+			if refine != nil {
+				if specific := refine(value); specific != nil {
+					return "", specific
+				}
+			}
 			return "", fmt.Errorf("invalid %s arguments: %w", n, err)
 		}
 		return e(ctx, value)
@@ -206,13 +235,13 @@ func (r *consolidatedPlanRegistrar) flush() error {
 	if len(addBranches) > 0 {
 		s := objectToolSchema(map[string]interface{}{"type": stringToolSchema(addTypes...), "step": map[string]interface{}{"type": "object"}}, "type", "step")
 		s["oneOf"] = addBranches
-		if err := r.register("add_step", "Add a typed plan step. Put the native step fields, including reason, in step. Discover the type-specific schema; scripted is deterministic code, message_sequence is conversational, routing selects a mode, branch selects a path, human_input captures free-form input, orchestrator delegates. Uses the existing validated mutation handlers.", s, func(ctx context.Context, args map[string]interface{}) (string, error) {
+		if err := r.registerRefined("add_step", "Add a typed plan step. Put the native step fields, including reason, in step. Discover the type-specific schema; scripted is deterministic code, message_sequence is conversational, routing selects a mode, branch selects a path, human_input captures free-form input, orchestrator delegates. Uses the existing validated mutation handlers.", s, func(ctx context.Context, args map[string]interface{}) (string, error) {
 			v, err := toolObjectArg(args, "step")
 			if err != nil {
 				return "", err
 			}
 			return r.invoke(ctx, "add_"+args["type"].(string)+"_step", v)
-		}); err != nil {
+		}, r.addStepTypeError); err != nil {
 			return err
 		}
 	}

@@ -12,6 +12,30 @@ import (
 	"time"
 )
 
+func TestRecentSuccessfulRunAveragesUsesNewestCompletedSuccesses(t *testing.T) {
+	now := time.Now()
+	ms := func(value int64) *int64 { return &value }
+	runs := []ScheduleRunEntry{
+		{ScheduleID: "daily", Status: "success", DurationMs: ms(1000), StartedAt: now.Add(-3 * time.Hour)},
+		{ScheduleID: "daily", Status: "error", DurationMs: ms(9000), StartedAt: now.Add(-2 * time.Hour)},
+		{ScheduleID: "daily", Status: "success", DurationMs: ms(3000), StartedAt: now.Add(-time.Hour)},
+		{ScheduleID: "daily", Status: "running", StartedAt: now},
+		{ScheduleID: "daily", TriggerSource: "manual", Status: "success", DurationMs: ms(12000), StartedAt: now},
+		{ScheduleID: "other", Status: "success", DurationMs: ms(5000), StartedAt: now},
+	}
+
+	averages := recentSuccessfulRunAverages(runs, 2)
+	if got := averages["daily"]; got.DurationMs != 2000 || got.Samples != 2 {
+		t.Fatalf("daily average = %+v, want 2000ms from two successes", got)
+	}
+	if got := averages["other"]; got.DurationMs != 5000 || got.Samples != 1 {
+		t.Fatalf("other average = %+v, want 5000ms from one success", got)
+	}
+	if got := recentSuccessfulRunAverages(runs, 1)["daily"]; got.DurationMs != 3000 || got.Samples != 1 {
+		t.Fatalf("newest daily average = %+v, want the latest success only", got)
+	}
+}
+
 type scheduleRunWorkspaceStub struct {
 	mu    sync.Mutex
 	files map[string]string

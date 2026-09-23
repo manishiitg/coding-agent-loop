@@ -505,6 +505,16 @@ func (s *WorkshopChatSession) MainSessionID() string {
 	return s.mainSessionID
 }
 
+// StopExecution uses the same step registry and termination notification as
+// the run-mode stop_step tool. External callers can invoke it after checking
+// the session and execution ownership without cancelling sibling work.
+func (s *WorkshopChatSession) StopExecution(executionID string) (WorkshopStepSnapshot, error) {
+	if s == nil {
+		return WorkshopStepSnapshot{}, ErrWorkshopExecutionNotFound
+	}
+	return stopWorkshopExecution(s.StepRegistry, s.executionNotifier, executionID)
+}
+
 func (s *WorkshopChatSession) combinedSubAgentNotifier() SubAgentNotifier {
 	if s == nil {
 		return nil

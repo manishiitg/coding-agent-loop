@@ -1,4 +1,4 @@
-import React from 'react'
+import React, { useMemo, useState } from 'react'
 import { X, ChevronLeft, ChevronRight } from 'lucide-react'
 import { dateKeyFromLocalDate, formatLocalDayLabel } from './cron'
 import type { ScheduleRunsPanelState } from './useScheduleRunsData'
@@ -6,7 +6,7 @@ import type { ScheduleRunsPanelState } from './useScheduleRunsData'
 type ScheduleCalendarViewProps = {
   panel: Pick<ScheduleRunsPanelState,
     | 'setCalendarMonth' | 'monthlyCalendar' | 'selectedCalendarDate' | 'setSelectedCalendarDate'
-    | 'showJobInWorkflowGroups' | 'selectedCalendarCell'
+    | 'showJobInWorkflowGroups'
   >
 }
 
@@ -17,10 +17,16 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
     selectedCalendarDate,
     setSelectedCalendarDate,
     showJobInWorkflowGroups,
-    selectedCalendarCell,
   } = panel
 
   const today = dateKeyFromLocalDate(new Date())
+  const [showPaused, setShowPaused] = useState(false)
+  const visibleCells = useMemo(() => monthlyCalendar.cells.map(cell => ({
+    ...cell,
+    items: showPaused ? cell.items : cell.items.filter(item => item.job.enabled),
+  })), [monthlyCalendar.cells, showPaused])
+  const visibleTotal = visibleCells.reduce((sum, cell) => sum + cell.items.length, 0)
+  const selectedItems = visibleCells.find(cell => cell.date === selectedCalendarDate)?.items ?? []
 
   return (
     <div className="px-4 py-3 sm:px-6 space-y-3">
@@ -35,7 +41,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
         <div className="text-center">
           <div className="text-sm font-semibold text-foreground">{monthlyCalendar.label}</div>
           <div className="text-xs text-muted-foreground">
-            {monthlyCalendar.total} scheduled item{monthlyCalendar.total === 1 ? '' : 's'} · local time ({monthlyCalendar.localTimeZone})
+            {visibleTotal} planned occurrence{visibleTotal === 1 ? '' : 's'} · local time ({monthlyCalendar.localTimeZone})
           </div>
         </div>
         <button
@@ -47,13 +53,21 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
         </button>
       </div>
 
+      <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-muted-foreground">
+        <span>This calendar shows planned times. For actual run results and missed occurrences, use List.</span>
+        <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-border px-2.5 py-1.5 text-foreground">
+          <input type="checkbox" checked={showPaused} onChange={event => setShowPaused(event.target.checked)} className="accent-primary" />
+          Include paused schedules
+        </label>
+      </div>
+
       {selectedCalendarDate && (
         <div className="rounded-xl border border-border bg-card">
           <div className="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
             <div>
               <div className="text-sm font-semibold text-foreground">{formatLocalDayLabel(selectedCalendarDate)}</div>
               <div className="text-xs text-muted-foreground">
-                {(selectedCalendarCell?.items.length ?? 0)} scheduled item{(selectedCalendarCell?.items.length ?? 0) === 1 ? '' : 's'} · local time
+                {selectedItems.length} planned occurrence{selectedItems.length === 1 ? '' : 's'} · local time
               </div>
             </div>
             <button
@@ -65,10 +79,10 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
               <X className="h-4 w-4" />
             </button>
           </div>
-          <div className="max-h-48 overflow-y-auto p-3">
-            {selectedCalendarCell?.items.length ? (
+          <div className="max-h-[55vh] overflow-y-auto p-3">
+            {selectedItems.length ? (
               <div className="space-y-2">
-                {selectedCalendarCell.items.map((item, index) => (
+                {selectedItems.map((item, index) => (
                   <button
                     key={`${selectedCalendarDate}-${item.job.id}-${index}`}
                     type="button"
@@ -80,7 +94,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
                     </div>
                     <div className="min-w-0 flex-1">
                       <div className="truncate text-sm font-medium text-foreground">{item.label}</div>
-                      <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.note || item.job.name}</div>
+                      <div className="mt-0.5 truncate text-xs text-muted-foreground">{item.note || item.job.name}{!item.job.enabled ? ' · Paused' : ''}</div>
                       {item.timezone && item.timezone !== monthlyCalendar.localTimeZone && (
                         <div className="mt-1 text-[11px] text-muted-foreground">
                           Source: {item.sourceTime} {item.timezone}
@@ -92,7 +106,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
               </div>
             ) : (
               <div className="rounded-lg border border-dashed border-border px-3 py-6 text-center text-sm text-muted-foreground">
-                No schedules on this day.
+                No planned active schedules on this day.
               </div>
             )}
           </div>
@@ -106,7 +120,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
           ))}
         </div>
         <div className="mt-1 grid grid-cols-7 gap-1">
-          {monthlyCalendar.cells.map((cell) => (
+          {visibleCells.map((cell) => (
             <div
               key={cell.key}
               className={`min-h-[100px] min-w-0 rounded-md border p-2 text-left ${cell.day
@@ -121,12 +135,12 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
                       className={`flex h-6 min-w-6 items-center justify-center rounded-md text-xs font-medium hover:bg-muted ${cell.date === today ? 'bg-primary/15 text-primary' : 'text-foreground'}`}>{cell.day}</button>
                     {cell.items.length > 0 && (
                       <span className="text-[10px] text-muted-foreground">
-                        {cell.items.length}
+                        {cell.items.length} planned
                       </span>
                     )}
                   </div>
                   <div className="space-y-1">
-                    {cell.items.slice(0, 3).map((item, index) => (
+                    {cell.items.slice(0, 2).map((item, index) => (
                       <button
                         key={`${cell.date}-${item.job.id}-${index}`}
                         onClick={(event) => {
@@ -140,7 +154,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
                         <span className="ml-1">{item.label}</span>
                       </button>
                     ))}
-                    {cell.items.length > 3 && (
+                    {cell.items.length > 2 && (
                       <button
                         type="button"
                         onClick={(event) => {
@@ -149,7 +163,7 @@ export const ScheduleCalendarView: React.FC<ScheduleCalendarViewProps> = ({ pane
                         }}
                         className="rounded px-1 text-left text-[11px] text-muted-foreground hover:bg-muted hover:text-foreground"
                       >
-                        +{cell.items.length - 3} more
+                        +{cell.items.length - 2} more · view day
                       </button>
                     )}
                   </div>

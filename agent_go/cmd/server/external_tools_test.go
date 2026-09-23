@@ -19,6 +19,7 @@ import (
 	"github.com/manishiitg/coding-agent-loop/agent_go/internal/agentworksproduct"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/accesstokens"
 	"github.com/manishiitg/coding-agent-loop/agent_go/pkg/agentworksclient"
+	stepworkflow "github.com/manishiitg/coding-agent-loop/agent_go/pkg/orchestrator/agents/workflow/step_based_workflow"
 	workspacehandlers "github.com/manishiitg/coding-agent-loop/workspace/handlers"
 	"github.com/spf13/viper"
 )
@@ -397,12 +398,17 @@ func TestExternalToolsHTTPRejectsUnknownArguments(t *testing.T) {
 	}
 }
 
-func TestExternalStopStepDirectExecution(t *testing.T) {
+func TestExternalStopStepDoesNotCancelSession(t *testing.T) {
 	f := newExternalToolsFixture(t)
 	f.api.stoppedSessions = map[string]bool{}
 	f.api.trackedWorkflowExecutions = map[string]*TrackedWorkflowExecution{
-		"exec-1": {ExecutionID: "exec-1", SessionID: "sess-1", WorkspacePath: "Workflow/invoices", Status: trackedExecutionStatusRunning, Source: trackedExecutionSourceWorkflowRun},
+		"exec-1": {ExecutionID: "exec-1", SessionID: "sess-1", WorkspacePath: "Workflow/invoices", Status: trackedExecutionStatusRunning, Source: trackedExecutionSourceWorkshopBackground, Kind: "step"},
+		"exec-2": {ExecutionID: "exec-2", SessionID: "sess-1", WorkspacePath: "Workflow/invoices", Status: trackedExecutionStatusRunning, Source: trackedExecutionSourceWorkshopBackground, Kind: "step"},
 	}
+	registry := stepworkflow.NewWorkshopStepRegistry()
+	registry.Register(&stepworkflow.WorkshopStepExecution{ID: "exec-1", StepID: "fetch-invoices", Status: stepworkflow.WorkshopStepRunning})
+	registry.Register(&stepworkflow.WorkshopStepExecution{ID: "exec-2", StepID: "notify", Status: stepworkflow.WorkshopStepRunning})
+	f.api.workshopChatSessions.Store("sess-1", &stepworkflow.WorkshopChatSession{StepRegistry: registry})
 	// Missing execution_id fails schema validation before dispatch.
 	externalTestBody(t, f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices"}), 400)
 	// Unknown execution resolves to nothing.
@@ -415,17 +421,16 @@ func TestExternalStopStepDirectExecution(t *testing.T) {
 	if mismatch.Code != http.StatusNotFound {
 		t.Fatalf("session mismatch status %d, want 404", mismatch.Code)
 	}
-	// Success cancels exactly the execution's session runtime.
+	// A tracked step without a cancel function must not cancel its entire session.
 	stopped := f.call(t, "owner", "stop_step", map[string]any{"workflow_id": "invoices", "execution_id": "exec-1"})
-	body := externalTestBody(t, stopped, 200)
-	if body["stopped"] != true || body["session_id"] != "sess-1" {
-		t.Fatalf("stop result %v", body)
+	if stopped.Code != http.StatusConflict || !strings.Contains(stopped.Body.String(), "execution_not_cancelable") {
+		t.Fatalf("non-cancelable step status %d: %s", stopped.Code, stopped.Body.String())
 	}
-	if !f.api.stoppedSessions["sess-1"] {
-		t.Fatal("execution session was not marked stopped")
+	if f.api.stoppedSessions["sess-1"] {
+		t.Fatal("stop_step stopped the whole session")
 	}
-	if got := f.api.trackedWorkflowExecutions["exec-1"].Status; got != trackedExecutionStatusCanceled {
-		t.Fatalf("tracked execution status %q, want canceled", got)
+	if got := f.api.trackedWorkflowExecutions["exec-2"].Status; got != trackedExecutionStatusRunning {
+		t.Fatalf("sibling execution status %q, want running", got)
 	}
 }
 

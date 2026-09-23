@@ -120,7 +120,8 @@ with their owner-configured definition); and the workflow's own outbound
 actions (Slack routes, user notifications). It never authorizes authoring
 (plans, configs, files, workflows), account management, or account-wide
 service shells — `google_workspace_cli` stays out of the external catalog
-for exactly this reason, while run channels keep it.
+and token-backed chat sessions for exactly this reason. Slack and WhatsApp
+Run-mode bot channels retain it under their own route grants.
 
 In the account menu, inspect the token's expiry and last-used time, revoke
 it, or generate a replacement. Every CLI/MCP HTTP request checks the
@@ -252,10 +253,10 @@ this surface.
 
 ## Running steps, workflows, and schedules
 
-Every run-mode chat tool from `product.yaml` is callable here under the
-`runs:execute` scope — the run list is the single source of truth, so a tool
-added to run mode appears in `tools list` and `mcp serve` with no client
-change. Each call starts a new pinned Run-mode session (or continues
+Run-mode chat tools from `product.yaml` are callable here under the
+`runs:execute` scope, except names in `external_denylist`. A tool added to
+run mode appears in `tools list` and `mcp serve` unless it is denylisted.
+Each proxied call starts a new pinned Run-mode session (or continues
 `--session`), and its reply carries `session_id`; poll `runs status` for
 completion. Structured arguments travel via `--set key=JSON`.
 
@@ -284,7 +285,8 @@ A read-only token sees neither the run tools in `tools list` nor their MCP
 entries, and calling one returns `insufficient_scope`. Sessions are owned by
 the token that started them: revoking the token cancels its runs, and one
 token can never status, message, or stop another token's session. New tools
-added to run mode later work immediately through `tools call`; typed
+added to run mode later work immediately through `tools call` unless
+denylisted; typed
 subcommands cover the core operations above.
 
 `runs:execute` authority, stated precisely: a token may invoke the run
@@ -295,7 +297,8 @@ change outside the run's own execution outputs — but executing a run
 still performs the workflow's configured steps, including its configured
 notifications. Only account-scoped tools are withheld from direct calls:
 `google_workspace_cli` (arbitrary commands against the account's Google
-connection) is not exposed. Deliberately kept: `send_slack_message`
+connection) is unavailable to token-backed sessions, including `chat`.
+Deliberately kept: `send_slack_message`
 (configured workflow routes only), `notify_user` (the user's own
 channels), and `trigger_schedule` (this workflow's own schedules).
 
@@ -528,16 +531,17 @@ test build.
 
 The exposed tool set has one source of truth:
 `agent_go/internal/agentworksproduct/product.yaml`, `chat.run`. The server
-exposes `external_tools` first, in yaml order, then every `tools` name without
+exposes `external_tools` first, in yaml order, then every non-denylisted `tools` name without
 a native implementation, proxied to a pinned Run-mode session in yaml order;
 names with a native implementation (`get_file_link`, `list_executions`,
-`list_schedules`, `get_schedule_runs`, `trigger_schedule`) keep it. Go defines
+`list_schedules`, `get_schedule_runs`, `trigger_schedule`, `stop_step`,
+`stop_all_executions`) keep it. Go defines
 the implementations (schemas, dispatch) while the yaml admits them. A yaml
 name without an implementation — or an implementation missing from both
 lists — fails server startup, and the CLI subcommand mappings are test-pinned
 to the union. Changing the surface means editing the yaml and the golden test
-together, deliberately; adding a tool to run mode exposes it externally with
-no further change.
+together, deliberately; adding a tool to run mode exposes it externally unless
+it appears in `external_denylist`.
 
 Public tool endpoints are `GET /api/external/v1/tools`,
 `POST /api/external/v1/call`, and the MCP Streamable HTTP endpoint
